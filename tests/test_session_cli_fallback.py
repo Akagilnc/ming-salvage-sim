@@ -2221,27 +2221,40 @@ def test_non_parallel_safe_runner_skips_concurrent_classifier(read_game, monkeyp
 
 
 @pytest.mark.parametrize(
-    ("message", "classified", "expected_kind"),
+    ("message", "classified", "expected_kind", "audience_context"),
     [
-        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive"),
+        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "plain"),
         (
             "另遣人暗查晋商输饷去向。",
             [{"kind": "secret", "secret_action": "新建"}],
             "secret_order",
+            "plain",
         ),
+        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "active_secret"),
+        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive", "consort"),
     ],
 )
 def test_non_parallel_safe_chat_serially_classifies_new_actions(
-    game, monkeypatch, message, classified, expected_kind,
+    game, monkeypatch, message, classified, expected_kind, audience_context,
 ):
-    """agy/claude 不并发时，回话后仍走统一结构化 classifier 再暂存新动作。"""
+    """agy/claude 不并发时按 runtime 串行分类；既有业务状态不吞 fresh draft。"""
     db, state, content = game
-    minister = next(
-        ch for ch in content.characters.values()
-        if getattr(ch, "office_type", "") != "后宫"
-        and db.resolve_power_id(ch) == "ming"
-        and db.get_character_status(ch.name)[0] == "active"
-    )
+    if audience_context == "consort":
+        minister = next(
+            ch for ch in content.characters.values()
+            if getattr(ch, "office_type", "") == "后宫"
+            and db.resolve_power_id(ch) == "ming"
+            and db.get_character_status(ch.name)[0] == "active"
+        )
+    else:
+        minister = next(
+            ch for ch in content.characters.values()
+            if getattr(ch, "office_type", "") != "后宫"
+            and db.resolve_power_id(ch) == "ming"
+            and db.get_character_status(ch.name)[0] == "active"
+        )
+    if audience_context == "active_secret":
+        db.create_secret_order(state, minister.name, "暗查旧案", "继续暗查旧案。", [])
     calls = []
 
     class FakeAgent:
@@ -2288,6 +2301,45 @@ def test_non_parallel_safe_chat_serially_classifies_new_actions(
         row["kind"] == expected_kind
         for row in db.list_pending_actions(state.turn, minister_name=minister.name)
     )
+
+
+def test_api_chat_never_calls_cli_classifier(game, monkeypatch):
+    """API 真实 session.chat 入口不因无 active 业务状态而额外调用 CLI classifier。"""
+    db, state, content = game
+    minister = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") != "后宫"
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+
+    class FakeAgent:
+        def run(self, _message):
+            return SimpleNamespace(content="臣谨奏：陕西赈务尚待核实。", tools=[])
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(
+        get=lambda _character: FakeAgent(),
+        build_draft_line=lambda: "无",
+    )
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda text: text
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cb,
+        "classify_cli_action_intent",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("API channel must not invoke CLI classifier")
+        ),
+    )
+
+    result = sess.chat(minister.name, "陕西赈务如何？")
+
+    assert result.answer == "臣谨奏：陕西赈务尚待核实。"
 
 
 def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
