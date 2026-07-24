@@ -26,6 +26,7 @@ from ming_sim.constants import (
     SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
+from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -1778,6 +1779,7 @@ class GameDB:
             "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
+        self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
         self.ensure_column("chat_turns", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -9448,17 +9450,77 @@ class GameDB:
 
     # ── #571 旨意案卷公共接口 ──────────────────────────────────────
 
+    def _migrate_legacy_secret_order_dossiers(self) -> None:
+        """旧密令单向补建案卷；唯一索引使重复开库幂等。"""
+        self.conn.execute(
+            "UPDATE decree_dossiers SET action_type='protection' "
+            "WHERE action_type='private_protection'"
+        )
+        rows = self.conn.execute(
+            """
+            SELECT s.* FROM secret_orders s
+            LEFT JOIN decree_dossiers d ON d.secret_order_id=s.id
+            WHERE d.id IS NULL
+            ORDER BY s.id
+            """
+        ).fetchall()
+        for row in rows:
+            secret_status = str(row["status"] or "active")
+            has_progress = bool(str(row["result"] or "").strip()) or bool(
+                str(row["sim_note"] or "").strip()
+            )
+            if secret_status in {"done", "completed"}:
+                status, outcome = "closed", "fulfilled"
+            elif secret_status == "failed":
+                status, outcome = "closed", "failed"
+            elif secret_status in {"pending_review", "in-progress", "in_progress"} or has_progress:
+                status, outcome = "executing", "executing"
+            else:
+                status, outcome = "promulgated", ""
+            note = str(row["result"] or row["sim_note"] or "")
+            closed_turn = (
+                int(row["turn_closed"] or row["turn_issued"] or 0)
+                if status == "closed" else 0
+            )
+            payload = {
+                "title": str(row["title"] or ""),
+                "content": str(row["content"] or ""),
+            }
+            cur = self.conn.execute(
+                """
+                INSERT INTO decree_dossiers
+                    (action_type,executor_kind,executor_id,secret_order_id,
+                     decree_text,payload_json,status,promulgation_decision,
+                     promulgation_blocked_layer,promulgation_reason,due_turn,
+                     execution_outcome,execution_note,closed_turn,
+                     interruption_reason,created_turn,created_year,created_period)
+                VALUES
+                    ('secret_order','character',?,?,?,?,?,'promulgated',
+                     'palace_rescript','内批自动顺颁',?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(row["minister_name"] or ""), int(row["id"]),
+                    str(row["content"] or row["title"] or ""),
+                    json.dumps(payload, ensure_ascii=False), status,
+                    int(row["due_turn"] or 0), outcome, note, closed_turn,
+                    note if outcome == "failed" else "",
+                    int(row["turn_issued"] or 0),
+                    int(row["year_issued"] or 0),
+                    int(row["period_issued"] or 0),
+                ),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO decree_dossier_decisions
+                    (dossier_id,turn,decision,blocked_layer,reason)
+                VALUES (?,?,'promulgated','palace_rescript','内批自动顺颁')
+                """,
+                (int(cur.lastrowid), int(row["turn_issued"] or 0)),
+            )
+        self.conn.commit()
+
     _DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
-    _DOSSIER_ACTION_TYPES = frozenset({
-        "policy", "appointment", "assignment", "military_order",
-        "grant_allocation", "authorization", "strategy_selection",
-        "secret_order", "approve_reject", "special_decree",
-        "acting_appointment", "secret_authorization",
-        "secret_investigation", "protection", "revoke_decree",
-        "private_protection", "punishment",
-        "pacification", "referral", "revoke_authority",
-        "dismiss_assignment",
-    })
+    _DOSSIER_ACTION_TYPES = DOSSIER_ACTION_TYPES
     _DOSSIER_TRANSITIONS = {
         "proposed": frozenset({"promulgated"}),
         "promulgated": frozenset({"executing", "closed"}),
@@ -9488,10 +9550,8 @@ class GameDB:
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
         explicit = str(payload.get("dossier_action_type") or "").strip()
         if explicit:
-            if explicit not in cls._DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}:
+            if explicit not in DIRECTIVE_ACTION_TYPES:
                 raise ValueError(f"旨意 action_type 非法：{explicit}")
-            if explicit == "strategy_selection":
-                raise ValueError(f"结构化旨意尚无合法 materializer：{explicit}")
             return explicit
         if payload.get("authorization_id") or payload.get("authorized_scope"):
             return "authorization"
@@ -9823,6 +9883,8 @@ class GameDB:
         blocked_layer: str = "", legal_reason_code: str = "", commit: bool = True,
     ) -> None:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
+        if str(legal_reason_code or "").strip():
+            raise ValueError("legal_reason_code 仅供尚未落地的依律集写入路径")
         decision = str(decision or "").strip()
         if decision not in {"promulgated", "rejected", "hold", "withdrawn"}:
             raise ValueError(f"案卷判决非法：{decision}")
@@ -9957,7 +10019,11 @@ class GameDB:
             ),
         )
         if close:
-            self.close_decree_dossier(dossier_id, str(note or ""), commit=False)
+            self.close_decree_dossier(
+                dossier_id,
+                str(note or "") if outcome == "failed" else "",
+                commit=False,
+            )
         self._commit_dossier_write(commit)
 
     def apply_dossier_promulgation(

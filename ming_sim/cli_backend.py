@@ -47,6 +47,7 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
@@ -1062,8 +1063,10 @@ def extract_draft_intent(
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
-        '  "动作类型": "policy|assignment|grant_allocation|authorization|punishment|'
-        'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
+        '  "动作类型": "policy|approve_reject|acting_appointment|assignment|'
+        'grant_allocation|authorization|secret_authorization|secret_investigation|'
+        'protection|strategy_selection|punishment|pacification|referral|'
+        'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
         '  "目标ID": "",\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
@@ -1121,12 +1124,7 @@ def extract_draft_intent(
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
-    allowed_actions = {
-        "policy", "assignment", "grant_allocation", "authorization", "punishment",
-        "pacification", "referral", "revoke_decree", "revoke_authority",
-        "dismiss_assignment", "military_order", "special_decree",
-    }
-    if dossier_action not in allowed_actions:
+    if dossier_action not in DIRECTIVE_ACTION_TYPES:
         dossier_action = "special_decree"
     target_kind = str(obj.get("目标类型") or "policy").strip()
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:

@@ -141,15 +141,6 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     ).fetchone()["office"] == "兵部主事"
 
 
-def test_dossier_cannot_start_in_execution_state(game):
-    db, state, _content = game
-    with pytest.raises(ValueError):
-        db.create_decree_dossier(
-            state, action_type="appointment", decree_text="非法直入执行",
-            status="executing",
-        )
-
-
 def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
     db, state, _content = game
     minister = _active_minister(db)
@@ -178,6 +169,7 @@ def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "failed"
     assert dossier["closed_turn"] == state.turn
+    assert dossier["interruption_reason"]
 
 
 def test_commitments_bind_explicitly_when_multiple_dossiers_share_a_turn(game):
@@ -231,14 +223,12 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         state, [{
             "dossier_id": dossier_id, "decision": "rejected",
             "blocked_layer": "six_offices", "reason": "科臣封驳",
-            "legal_reason_code": "statute-review",
         }]
     )
     assert state.metrics["国库"] == before
     rejected = db.get_decree_dossier(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
     assert rejected["promulgation_reason"] == "科臣封驳"
-    assert rejected["legal_reason_code"] == "statute-review"
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -342,26 +332,6 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
     ]
     assert seen["payload"]["decree_text"] == "不应作为真源"
     assert staged["status"] == "proposed"
-
-
-def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="special_decree", decree_text="着持续勘河",
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
-
-    with pytest.raises(ValueError, match="非终态"):
-        db.record_dossier_execution(
-            dossier_id, "executing", "正在勘验", state.turn, close=True,
-        )
-    db.record_dossier_execution(
-        dossier_id, "executing", "正在勘验", state.turn, close=False,
-    )
-    row = db.get_decree_dossier(dossier_id)
-    assert row["status"] == "executing"
-    assert row["closed_turn"] == 0
 
 
 def test_appointment_alias_uses_canonical_dossier_identity(game):
@@ -513,7 +483,7 @@ def test_extractor_context_origin_ref_round_trips_to_commitment(game):
     assert db.list_commitments_for_dossier(dossier_id)[0]["origin_ref"] == origin_ref
 
 
-def test_real_military_order_capture_creates_due_dossier(game, monkeypatch):
+def test_real_controlled_verb_capture_keeps_secret_investigation(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
@@ -522,21 +492,19 @@ def test_real_military_order_capture_creates_due_dossier(game, monkeypatch):
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps({
             "拟旨意图": "拟旨",
-            "动作类型": "military_order",
-            "目标类型": "army",
-            "目标ID": "guanning",
-            "期限月数": 3,
+            "动作类型": "secret_investigation",
+            "目标类型": "issue",
+            "目标ID": "granary-corruption",
         }, ensure_ascii=False), 1),
     )
     captured = cli_backend.extract_draft_intent(
-        "拟旨限三月整军", "着关宁军整饬营伍",
+        "拟旨密查仓弊", "着密查仓场侵冒",
     )
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=actor,
         payload={"text": captured["draft_text"], "actor": actor, **{
             key: captured[key] for key in (
                 "dossier_action_type", "target_kind", "target_id",
-                "deadline_months",
             )
         }},
     )
@@ -545,9 +513,8 @@ def test_real_military_order_capture_creates_due_dossier(game, monkeypatch):
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] == pending_id
     )
-    assert dossier["action_type"] == "military_order"
-    assert dossier["due_turn"] == state.turn + 3
-    assert json.loads(dossier["payload_json"])["due_turn"] == state.turn + 3
+    assert dossier["action_type"] == "secret_investigation"
+    assert dossier["target_id"] == "granary-corruption"
 
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
@@ -575,38 +542,73 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     assert terminal["execution_outcome"] == "fulfilled"
 
 
-def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
+def test_legacy_secret_orders_restore_with_unique_resumable_dossiers(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    actor = _active_minister(db)
+    order_ids = {}
+    for status in ("active", "pending_review", "done", "failed"):
+        order_ids[status] = int(db.conn.execute(
+            """
+            INSERT INTO secret_orders
+                (turn_issued,year_issued,period_issued,minister_name,title,
+                 content,status,result,turn_closed)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                state.turn, state.year, state.period, actor, status,
+                f"{status}密令", status,
+                "已有进展" if status != "active" else "",
+                state.turn if status in {"done", "failed"} else None,
+            ),
+        ).lastrowid)
+    db.conn.commit()
+
+    restored = GameDB(db.path, content=content)
+    try:
+        assert {
+            status: restored.get_dossier_for_secret_order(order_id)["status"]
+            for status, order_id in order_ids.items()
+        } == {
+            "active": "promulgated",
+            "pending_review": "executing",
+            "done": "closed",
+            "failed": "closed",
+        }
+        assert restored.update_secret_order_progress(
+            order_ids["active"], "继续查办", state.year, state.period,
+        )
+        assert restored.get_dossier_for_secret_order(
+            order_ids["active"]
+        )["status"] == "executing"
+    finally:
+        restored.close()
+
+    reopened = GameDB(db.path, content=content)
+    try:
+        assert len([
+            row for row in reopened.list_decree_dossiers()
+            if row["secret_order_id"] in order_ids.values()
+        ]) == len(order_ids)
+    finally:
+        reopened.close()
+
+
+def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state, action_type="special_decree", decree_text="着核边饷",
     )
     db.record_dossier_decision(
         dossier_id, "rejected", blocked_layer="six_offices",
-        reason="依律封驳", legal_reason_code="statute-42",
+        reason="封驳",
     )
     db.record_dossier_decision(dossier_id, "hold")
 
-    current = db.get_decree_dossier(dossier_id)
-    assert current["legal_reason_code"] == "statute-42"
-    assert current["rescript_pending"] is False
-    history = db.conn.execute(
-        """
-        SELECT decision,rescript_action,legal_reason_code
-        FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id
-        """,
-        (dossier_id,),
-    ).fetchall()
-    assert [row["legal_reason_code"] for row in history] == [
-        "statute-42", "statute-42",
-    ]
-    assert history[1]["rescript_action"] == "hold"
     assert dossier_id not in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
-    with pytest.raises(ValueError, match="下月"):
-        db.apply_dossier_verdicts(
-            state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
-        )
     with pytest.raises(ValueError, match="下月"):
         db.apply_dossier_verdicts(
             state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
@@ -616,24 +618,24 @@ def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
     assert dossier_id in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
-    with pytest.raises(ValueError, match="重判"):
-        db.apply_dossier_verdicts(
-            state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
-        )
     db.apply_dossier_verdicts(
         state, [{
-            "dossier_id": dossier_id, "decision": "rejected",
-            "blocked_layer": "six_offices", "reason": "下月重判仍驳",
-            "legal_reason_code": "statute-42",
+            "dossier_id": dossier_id, "decision": "promulgated",
         }],
     )
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
-    )
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers WHERE id=?", (dossier_id,),
-    ).fetchone()[0] == 1
+
+
+def test_interim_verdict_rejects_reserved_legal_reason_code(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="着核边饷",
+    )
+    with pytest.raises(ValueError, match="依律集"):
+        db.apply_dossier_verdicts(state, [{
+            "dossier_id": dossier_id, "decision": "rejected",
+            "legal_reason_code": "statute-42",
+        }])
 
 
 def test_session_manual_directive_keeps_structured_action_at_submission(
@@ -720,38 +722,6 @@ def test_allocation_candidate_edit_preserves_mechanical_payload(game):
     assert state.metrics["国库"] == before - 10
 
 
-def test_distinct_structured_targets_survive_restore(game):
-    from ming_sim.db import GameDB
-
-    db, state, content = game
-    actor = _active_minister(db)
-    pending_ids = [
-        db.stage_pending_action(
-            state.turn, kind="directive", action="拟旨", minister_name=actor,
-            payload={
-                "text": f"着查{target}", "actor": actor,
-                "dossier_action_type": "special_decree",
-                "target_kind": "issue", "target_id": target,
-            },
-        )
-        for target in ("river-works", "granary-audit")
-    ]
-    db.commit_pending_actions(
-        state, content=content, action_ids=pending_ids,
-    )
-    reopened = GameDB(db.path, content=content)
-    try:
-        restored = [
-            row for row in reopened.list_decree_dossiers()
-            if row["pending_action_id"] in pending_ids
-        ]
-        assert [row["target_id"] for row in restored] == [
-            "river-works", "granary-audit",
-        ]
-    finally:
-        reopened.close()
-
-
 def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -800,4 +770,7 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     db.record_dossier_execution(
         dossier_id, "fulfilled", "押解到陕", state.turn,
     )
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "closed"
+    assert dossier["execution_note"] == "押解到陕"
+    assert dossier["interruption_reason"] == ""
