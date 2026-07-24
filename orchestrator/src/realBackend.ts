@@ -3253,7 +3253,6 @@ export class RealBackend implements Backend {
       options,
       { requireSingleIter: true },
     );
-    // Fixed point is review-panel-leg only (#1126 R3) — not every worker.
     const box = this.box(issueNumber, spec, options);
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
@@ -3315,7 +3314,6 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    // Fixed point is review-panel-leg only (#1126 R3) — not every worker.
     const box = this.box(issueNumber, spec, options);
     try {
       const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
@@ -3416,18 +3414,9 @@ export class RealBackend implements Backend {
       );
     }
     const worktree = ctx.worktree;
-    const stepSpec: StepSpec = {
-      id: spec.id,
-      role: spec.role,
-      promptFile: spec.promptFile,
-      model: spec.model,
-      maxIter: spec.maxIter,
-      soul: spec.soul,
-      toolchain: spec.toolchain,
-    };
     const issueNumber = this.issueOf(worktree);
-    await this.preflightToolchain(stepSpec);
-    const box = this.box(issueNumber, stepSpec, undefined, worktree.base);
+    await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, undefined, worktree.base);
     try {
       const pool = isBillingPoolDispatchId(ctx.billingPool)
         ? ctx.billingPool

@@ -39,6 +39,7 @@ import {
   openCourtWorkerResultIfMatch,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 const UNCOMMITTED_MARKER = ".orchestrator-1083-uncommitted-plan.md";
 const UNCOMMITTED_BODY = "plan beat draft — must survive bounce (#1083)\n";
@@ -113,6 +114,8 @@ class HubBackend implements Backend {
     this.specs.push(spec);
     this.ctxs.push(ctx);
     this.landings.push(landing);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     const openCourt = openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION);
     if (openCourt !== undefined) return openCourt;
@@ -156,7 +159,13 @@ class HubBackend implements Backend {
         ];
       const result = scripts[this.judgeRound] ??
         completedJudge(judgeConverged(), OPEN_COURT_SESSION);
-      this.judgeRound += 1;
+      const isContinue =
+        result.kind === "completed" &&
+        result.output?.kind === "judge" &&
+        result.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -369,8 +378,8 @@ describe("#1083 e2e: fixer hub + bounce resume", () => {
 
       // Judge hub: both S3 and S6 resume the open-court session.
       const judgeCtxs = backend.ctxs.filter((_, i) => {
-        const id = backend.specs[i]?.id;
-        return id === "S3" || id === "S6";
+        const spec = backend.specs[i];
+        return spec?.kind === "verify" && (spec.id === "S3" || spec.id === "S6");
       });
       expect(judgeCtxs.length).toBeGreaterThanOrEqual(2);
       for (const ctx of judgeCtxs) {

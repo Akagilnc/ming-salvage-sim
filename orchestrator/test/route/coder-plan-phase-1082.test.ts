@@ -393,8 +393,8 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
     const backend = new PlanPhaseBackend({
       judgeResults: [
         completedJudge(judgePlanContinue()),
-        // #1126: first empty continue requests legs; second empty with paper
-        // is still contract drift (must not resume S2 / spin S5).
+        // #1126: first construction-phase continue triggers Runner-owned legs;
+        // a later empty continue with paper is still contract drift.
         completedJudge(judgePlanContinue()),
       ],
     });

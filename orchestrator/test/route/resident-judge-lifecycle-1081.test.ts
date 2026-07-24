@@ -24,6 +24,7 @@ import type {
   DispatchContext,
   IssueMeta,
   PersistentLedgerEntry,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -37,6 +38,7 @@ import {
   openCourtWorkerResultIfMatch,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/orchestrator/issue-1081",
@@ -98,9 +100,12 @@ class LifecycleBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     if (isJudgeOpenCourtSpec(spec)) {
       if (
@@ -128,7 +133,13 @@ class LifecycleBackend implements Backend {
     }
     if (spec.id === "S3" || spec.id === "S6" || spec.kind === "verify") {
       const scripted = this.judgeResults[this.judgeRound];
-      this.judgeRound += 1;
+      const isContinue =
+        scripted?.kind === "completed" &&
+        scripted.output?.kind === "judge" &&
+        scripted.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
