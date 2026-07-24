@@ -852,6 +852,16 @@ def build_extractor_shared_context(
     )
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    slim["decree_dossiers"] = [
+        {
+            "id": int(row["id"]),
+            "origin_ref": f"dossier:{int(row['id'])}",
+            "action_type": str(row["action_type"]),
+            "decree_text": str(row["decree_text"]),
+        }
+        for row in db.list_decree_dossiers_for_simulation(state.turn)
+        if row["action_type"] != "secret_order"
+    ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
     slim["_dedup_note"] = (
