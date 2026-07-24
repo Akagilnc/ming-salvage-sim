@@ -676,6 +676,15 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           },
         });
         expect(backend.ctxs[0]?.resumeSessionId).toBeUndefined();
+
+        const writeFailureBackend = new LifecycleBackend([], undefined, {
+          resumeState: await backend.findResumeState(),
+        });
+        vi.spyOn(writeFailureBackend, "writeLedger").mockRejectedValueOnce(
+          new Error("continuity ledger unavailable"),
+        );
+        const failed = await runOrchestrator({ issueNumber: 1135, backend: writeFailureBackend });
+        expect([failed.status, writeFailureBackend.specs.length]).toEqual(["failed", 0]);
       } finally {
         resetRoutePresetsCacheForTests();
         rmSync(routeDir, { recursive: true, force: true });

@@ -4168,11 +4168,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   pendingEntries.push(lostEntry);
                 }
               } catch (err) {
-                console.warn(
-                  `[orchestrator] session_continuity_lost ledger write failed (fail-open): ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-                );
+                return await errorTermination(step, err instanceof Error ? err : new Error(String(err)));
               }
             }
             resumeFor = undefined;
