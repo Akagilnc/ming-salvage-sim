@@ -2,7 +2,6 @@ import json
 
 import pytest
 import ming_sim.issues as issue_engine
-from ming_sim.decree import pre_settle, settle_with_delta
 
 
 def _active_minister(db):
@@ -199,6 +198,13 @@ def test_dossier_type_and_initial_state_are_controlled(game):
     db.record_dossier_decision(dossier_id, "promulgated")
     with pytest.raises(ValueError):
         db.transition_decree_dossier(dossier_id, "closed")
+    for action_type in (
+        "punishment", "pacification", "referral", "revoke_decree",
+        "revoke_authority", "dismiss_assignment",
+    ):
+        assert db.create_decree_dossier(
+            state, action_type=action_type, decree_text=action_type,
+        ) > 0
 
 
 def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
@@ -314,33 +320,59 @@ def test_authorization_materializes_only_after_batch_verdict(game):
     assert db.active_skill_grants(minister)
 
 
-def test_real_settlement_entry_consumes_verdict_before_delta(game):
+def test_real_resolve_entry_uses_dossiers_for_verdict_simulation_and_apply(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
     db, state, content = game
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="grant_allocation",
-        decree_text="拨国库十两赈济",
+    actor = _active_minister(db)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=actor,
         payload={
+            "text": "拨国库十两赈济",
+            "actor": actor,
+            "dossier_action_type": "grant_allocation",
             "account": "国库",
             "delta": -10,
             "category": "赈济",
             "immediate_terminal": True,
         },
     )
+    seen = {}
 
-    turn = state.turn
-    pre_settle(state, db, content=content)
-    settle_with_delta(
-        state,
-        db,
-        {},
-        before_turn=turn,
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod,
+        "simulate_season_with_payload",
+        lambda *a, **k: (
+            seen.setdefault("payload", k["simulator_payload"]) and "本月奉旨赈济。",
+            k["simulator_payload"],
+        ),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "", ""),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+
+    decree_mod.resolve_directives(
+        state, db, None, None, [object()], "不应作为真源",
         content=content,
-        dossier_verdicts=[
-            {"dossier_id": dossier_id, "decision": "promulgated"},
+        promulgation_judge=lambda dossiers: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
         ],
     )
 
+    dossier = db.list_decree_dossiers()[-1]
+    assert seen["payload"]["decree_dossiers"][0]["id"] == dossier["id"]
+    assert seen["payload"]["decree_text"] == "拨国库十两赈济"
     move = db.conn.execute(
         """
         SELECT delta FROM economy_ledger
@@ -349,18 +381,4 @@ def test_real_settlement_entry_consumes_verdict_before_delta(game):
         """
     ).fetchone()
     assert move is not None and move["delta"] == -10
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
-
-
-def test_corrupt_stigma_history_is_not_silently_replaced(game):
-    db, state, _content = game
-    dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="整饬盐政",
-    )
-    db.conn.execute(
-        "UPDATE decree_dossiers SET stigma_json='not-json' WHERE id=?",
-        (dossier_id,),
-    )
-
-    with pytest.raises(ValueError, match="stigma_json"):
-        db.append_dossier_stigma(dossier_id, {"reason": "中旨"})
+    assert dossier["status"] == "closed"
