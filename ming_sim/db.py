@@ -1292,6 +1292,61 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_secret_orders_status
                 ON secret_orders(status);
 
+            -- #571：旨意案卷是一等 durable truth。status 主链恰四值；封驳/留中
+            -- 只落 promulgation_decision + rescript_pending 组合态，不污染主链枚举。
+            CREATE TABLE IF NOT EXISTS decree_dossiers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                target_kind TEXT NOT NULL DEFAULT '',
+                target_id TEXT NOT NULL DEFAULT '',
+                source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
+                pending_action_id INTEGER NOT NULL DEFAULT 0,
+                directive_id INTEGER,
+                secret_order_id INTEGER,
+                decree_text TEXT NOT NULL DEFAULT '',
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'proposed'
+                    CHECK(status IN ('proposed','promulgated','executing','closed')),
+                promulgation_decision TEXT NOT NULL DEFAULT '',
+                rescript_pending INTEGER NOT NULL DEFAULT 0,
+                legal_reason_code TEXT NOT NULL DEFAULT '',
+                stigma_json TEXT NOT NULL DEFAULT '[]',
+                extension_json TEXT NOT NULL DEFAULT '{}',
+                due_turn INTEGER NOT NULL DEFAULT 0,
+                interruption_reason TEXT NOT NULL DEFAULT '',
+                created_turn INTEGER NOT NULL,
+                created_year INTEGER NOT NULL,
+                created_period INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT,
+                FOREIGN KEY(directive_id) REFERENCES turn_directives(id) ON DELETE CASCADE,
+                FOREIGN KEY(secret_order_id) REFERENCES secret_orders(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_pending_action
+                ON decree_dossiers(pending_action_id) WHERE pending_action_id > 0;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_directive
+                ON decree_dossiers(directive_id) WHERE directive_id > 0;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_decree_dossiers_secret_order
+                ON decree_dossiers(secret_order_id) WHERE secret_order_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_status
+                ON decree_dossiers(status, id);
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
+                ON decree_dossiers(target_kind, target_id, status);
+
+            CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                decision TEXT NOT NULL,
+                rescript_action TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
+                ON decree_dossier_decisions(dossier_id, id);
+
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_name TEXT NOT NULL,
@@ -4303,6 +4358,11 @@ class GameDB:
         # #9：状态变更后全重算该人物所属朝堂派系 leverage（绝对值、读当前所有在朝成员 → 无漂移）。
         if prev is not None:
             self.recompute_faction_leverage(str(prev["faction"] or ""))
+        if status in _OUSTED_STATES:
+            self.close_decree_dossiers_for_target(
+                "character", name, f"人物终态：{status}；{reason}".rstrip("；"),
+                commit=False,
+            )
         if commit:
             self.conn.commit()
 
@@ -9347,6 +9407,286 @@ class GameDB:
             return 0
         return int(row["id"]) if row is not None else 0
 
+    # ── #571 旨意案卷公共接口 ──────────────────────────────────────
+
+    _DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
+    _DOSSIER_TRANSITIONS = {
+        "proposed": frozenset({"promulgated"}),
+        "promulgated": frozenset({"executing", "closed"}),
+        "executing": frozenset({"closed"}),
+        "closed": frozenset(),
+    }
+
+    def _commit_dossier_write(self, commit: bool) -> None:
+        if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+            getattr(self.conn, "_atomic_depth", 0) or 0
+        ) == 0:
+            self.conn.commit()
+
+    @staticmethod
+    def _dossier_row(row: Any) -> Dict[str, object]:
+        out = dict(row)
+        out["id"] = int(out["id"])
+        for key in (
+            "source_chat_turn_id", "pending_action_id", "directive_id",
+            "due_turn", "created_turn", "created_year", "created_period",
+        ):
+            out[key] = int(out.get(key) or 0)
+        if out.get("secret_order_id") is not None:
+            out["secret_order_id"] = int(out["secret_order_id"])
+        out["rescript_pending"] = bool(out.get("rescript_pending"))
+        return out
+
+    def create_decree_dossier(
+        self,
+        state: GameState,
+        *,
+        action_type: str,
+        decree_text: str,
+        target_kind: str = "",
+        target_id: object = "",
+        source_chat_turn_id: int = 0,
+        pending_action_id: int = 0,
+        directive_id: int = 0,
+        secret_order_id: Optional[int] = None,
+        payload: Optional[Dict[str, object]] = None,
+        status: str = "proposed",
+        due_turn: int = 0,
+        extension: Optional[Dict[str, object]] = None,
+        commit: bool = True,
+    ) -> int:
+        """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。"""
+        action = str(action_type or "").strip()
+        text = str(decree_text or "").strip()
+        if not action or not text:
+            raise ValueError("案卷 action_type/decree_text 不能为空")
+        if status not in self._DOSSIER_STATUSES:
+            raise ValueError(f"案卷 status 非法：{status}")
+        lookup_sql = ""
+        lookup_value: object = 0
+        if secret_order_id is not None:
+            lookup_sql, lookup_value = "secret_order_id = ?", int(secret_order_id)
+        elif int(directive_id or 0) > 0:
+            lookup_sql, lookup_value = "directive_id = ?", int(directive_id)
+        elif int(pending_action_id or 0) > 0:
+            lookup_sql, lookup_value = "pending_action_id = ?", int(pending_action_id)
+        if lookup_sql:
+            existing = self.conn.execute(
+                f"SELECT id FROM decree_dossiers WHERE {lookup_sql}", (lookup_value,)
+            ).fetchone()
+            if existing is not None:
+                return int(existing["id"])
+        source_turn_id = int(source_chat_turn_id or 0)
+        if source_turn_id <= 0 and int(pending_action_id or 0) > 0:
+            origin = self.conn.execute(
+                """
+                SELECT chat_turn_id FROM chat_turn_rollback_items
+                WHERE target_table='pending_actions' AND target_id=?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (str(int(pending_action_id)),),
+            ).fetchone()
+            if origin is not None:
+                source_turn_id = int(origin["chat_turn_id"])
+        cur = self.conn.execute(
+            """
+            INSERT INTO decree_dossiers
+                (action_type,target_kind,target_id,source_chat_turn_id,pending_action_id,
+                 directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
+                 extension_json,created_turn,created_year,created_period)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                action, str(target_kind or ""), str(target_id or ""),
+                source_turn_id, int(pending_action_id or 0),
+                None if int(directive_id or 0) <= 0 else int(directive_id),
+                None if secret_order_id is None else int(secret_order_id),
+                text, json.dumps(payload or {}, ensure_ascii=False), status,
+                max(0, int(due_turn or 0)),
+                json.dumps(extension or {}, ensure_ascii=False),
+                int(state.turn), int(state.year), int(state.period),
+            ),
+        )
+        self._commit_dossier_write(commit)
+        return int(cur.lastrowid)
+
+    def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        return None if row is None else self._dossier_row(row)
+
+    def get_dossier_for_secret_order(self, secret_order_id: int) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM decree_dossiers WHERE secret_order_id=?",
+            (int(secret_order_id),),
+        ).fetchone()
+        return None if row is None else self._dossier_row(row)
+
+    def list_commitments_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        """承诺只从 issue.origin_ref 反查；案卷表不复制 commitment id。"""
+        rows = self.conn.execute(
+            "SELECT * FROM issues WHERE origin_ref=? ORDER BY id",
+            (f"dossier:{int(dossier_id)}",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def append_dossier_stigma(
+        self, dossier_id: int, entry: Dict[str, object], *, commit: bool = True,
+    ) -> None:
+        """中旨污名只追加不覆写；legal_reason_code 保持依律集专用。"""
+        row = self.conn.execute(
+            "SELECT stigma_json FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        try:
+            entries = json.loads(row["stigma_json"] or "[]")
+        except (TypeError, ValueError):
+            entries = []
+        if not isinstance(entries, list):
+            entries = []
+        entries.append(dict(entry or {}))
+        self.conn.execute(
+            "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(entries, ensure_ascii=False), int(dossier_id)),
+        )
+        self._commit_dossier_write(commit)
+
+    def list_decree_dossiers(
+        self, *, status: Optional[str] = None, target_kind: Optional[str] = None,
+        target_id: Optional[object] = None,
+    ) -> List[Dict[str, object]]:
+        clauses: List[str] = []
+        params: List[object] = []
+        if status is not None:
+            if status not in self._DOSSIER_STATUSES:
+                raise ValueError(f"案卷 status 非法：{status}")
+            clauses.append("status=?")
+            params.append(status)
+        if target_kind is not None:
+            clauses.append("target_kind=?")
+            params.append(str(target_kind))
+        if target_id is not None:
+            clauses.append("target_id=?")
+            params.append(str(target_id))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossiers{where} ORDER BY id", params
+        ).fetchall()
+        return [self._dossier_row(row) for row in rows]
+
+    def transition_decree_dossier(
+        self, dossier_id: int, new_status: str, *, commit: bool = True,
+    ) -> None:
+        row = self.conn.execute(
+            "SELECT status FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        old_status = str(row["status"])
+        if new_status == old_status:
+            return
+        if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
+            raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
+        closed_sql = ", closed_at=CURRENT_TIMESTAMP" if new_status == "closed" else ""
+        self.conn.execute(
+            f"UPDATE decree_dossiers SET status=?,updated_at=CURRENT_TIMESTAMP{closed_sql} "
+            "WHERE id=?",
+            (new_status, int(dossier_id)),
+        )
+        self._commit_dossier_write(commit)
+
+    def record_dossier_decision(
+        self, dossier_id: int, decision: str, *, reason: str = "",
+        legal_reason_code: str = "", commit: bool = True,
+    ) -> None:
+        """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
+        decision = str(decision or "").strip()
+        if decision not in {"promulgated", "rejected", "hold", "withdrawn"}:
+            raise ValueError(f"案卷判决非法：{decision}")
+        row = self.get_decree_dossier(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        if row["status"] != "proposed":
+            raise ValueError("只有 proposed 案卷可写颁布/批红判决")
+        if decision == "promulgated":
+            status, promulgation, pending = "promulgated", "promulgated", 0
+        elif decision == "rejected":
+            status, promulgation, pending = "proposed", "rejected", 1
+        elif decision == "hold":
+            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
+                raise ValueError("留中只可承接打回＋批红待抉择组合态")
+            status, promulgation, pending = "proposed", "rejected", 0
+        else:
+            if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
+                raise ValueError("收回只可承接打回＋批红待抉择组合态")
+            status, promulgation, pending = "closed", "rejected", 0
+        self.conn.execute(
+            """
+            UPDATE decree_dossiers
+            SET status=?,promulgation_decision=?,rescript_pending=?,
+                legal_reason_code=?,updated_at=CURRENT_TIMESTAMP,
+                closed_at=CASE WHEN ?='closed' THEN CURRENT_TIMESTAMP ELSE closed_at END
+            WHERE id=?
+            """,
+            (
+                status, promulgation, pending, str(legal_reason_code or ""),
+                status, int(dossier_id),
+            ),
+        )
+        turn_row = self.conn.execute(
+            "SELECT turn FROM game_state WHERE id=1"
+        ).fetchone()
+        self.conn.execute(
+            """
+            INSERT INTO decree_dossier_decisions
+                (dossier_id,turn,decision,rescript_action,reason)
+            VALUES (?,?,?,?,?)
+            """,
+            (
+                int(dossier_id), int(turn_row["turn"] if turn_row else 0),
+                promulgation if decision != "hold" else "rejected",
+                decision if decision in {"hold", "withdrawn"} else "",
+                str(reason or ""),
+            ),
+        )
+        self._commit_dossier_write(commit)
+
+    def close_decree_dossier(
+        self, dossier_id: int, reason: str = "", *, commit: bool = True,
+    ) -> None:
+        row = self.get_decree_dossier(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        if row["status"] == "proposed":
+            raise ValueError("待判案卷不能绕过颁布格直接结案")
+        if row["status"] != "closed":
+            self.transition_decree_dossier(dossier_id, "closed", commit=False)
+        self.conn.execute(
+            "UPDATE decree_dossiers SET interruption_reason=? WHERE id=?",
+            (str(reason or ""), int(dossier_id)),
+        )
+        self._commit_dossier_write(commit)
+
+    def close_decree_dossiers_for_target(
+        self, target_kind: str, target_id: object, reason: str, *,
+        commit: bool = True,
+    ) -> int:
+        rows = self.conn.execute(
+            """
+            SELECT id FROM decree_dossiers
+            WHERE target_kind=? AND target_id=?
+              AND status IN ('promulgated','executing')
+            ORDER BY id
+            """,
+            (str(target_kind), str(target_id)),
+        ).fetchall()
+        for row in rows:
+            self.close_decree_dossier(int(row["id"]), reason, commit=False)
+        self._commit_dossier_write(commit)
+        return len(rows)
+
     def stage_pending_action(
         self, turn: int, kind: str, action: str, minister_name: str,
         payload: Dict[str, object], target_id: Optional[int] = None,
@@ -9951,7 +10291,27 @@ class GameDB:
         commit_pending_actions 标 failed,不静默丢——终态失败,不再重试)。
         office(任免)落库需 content/registry(注册新臣);缺则返 False(标 failed,不静默)。"""
         if pa["kind"] == "office":
-            return self._commit_office_action(state, pa, payload, content, registry)
+            ok = self._commit_office_action(state, pa, payload, content, registry)
+            if ok:
+                name = str(payload.get("name") or "").strip()
+                office = str(payload.get("office") or "").strip()
+                dossier_id = self.create_decree_dossier(
+                    state,
+                    action_type="office",
+                    decree_text=(
+                        f"{pa['action']}{name}"
+                        + (f"为{office}" if office else "")
+                    ),
+                    target_kind="character",
+                    target_id=name,
+                    pending_action_id=int(pa["id"]),
+                    payload=payload,
+                    status="promulgated",
+                    commit=False,
+                )
+                # 任免有就任/辞不拜判定面，不能从已颁直达结案。
+                self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            return ok
         if pa["kind"] == "secret_order":
             oid = pa["target_id"]
             if pa["action"] == "新建":
@@ -10077,6 +10437,20 @@ class GameDB:
             self.conn.execute(
                 "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
                 (int(did), int(pa["id"])),
+            )
+            self.create_decree_dossier(
+                state,
+                action_type="directive",
+                decree_text=text,
+                target_kind=str(payload.get("target_kind") or ""),
+                target_id=payload.get("target_id") or "",
+                source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
+                pending_action_id=int(pa["id"]),
+                directive_id=did,
+                payload=payload,
+                status="proposed",
+                due_turn=int(payload.get("due_turn") or 0),
+                commit=False,
             )
             return True
         return False
@@ -12041,6 +12415,24 @@ class GameDB:
             origin_chat_message_id=origin_chat_message_id,
             origin_chat_message_ids=origin_chat_message_ids,
         )
+        self.create_decree_dossier(
+            state,
+            action_type="secret_order",
+            decree_text=title,
+            target_kind="character",
+            target_id=minister_name,
+            secret_order_id=int(cur.lastrowid),
+            payload={
+                "title": title,
+                "content": content,
+                "tags": list(tags),
+                "importance": int(importance),
+                "excluded_names": list(raw_excluded_names),
+                "excluded_offices": list(excluded_offices),
+            },
+            status="promulgated",
+            due_turn=due_turn,
+        )
         tlog(f"[secret_order] create id={cur.lastrowid} minister={minister_name} title={title[:20]}")
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -12218,6 +12610,11 @@ class GameDB:
             """,
             (status, result, turn_closed, int(order_id)),
         )
+        dossier = self.get_dossier_for_secret_order(int(order_id))
+        if dossier is not None and dossier["status"] != "closed":
+            self.close_decree_dossier(
+                int(dossier["id"]), f"密令结案：{status}；{result}", commit=False,
+            )
         if commit:
             self.conn.commit()
         tlog(f"[secret_order] close id={order_id} status={status}")
