@@ -105,6 +105,19 @@ def test_registry_rows_generate_shape_contract_matrix():
     host_kind = next(
         c.kind for c in ACTION_CLUSTERS if c.kind not in ("none",) and c.kind != "confirmation"
     )
+    # 分类器会为不适用的共享 enum 字段回空串；空白等同字段缺席，不得毙掉候选。
+    for c in ACTION_CLUSTERS:
+        if c.kind == "none":
+            continue
+        for spec in enum_specs:
+            for key in (spec.name, spec.zh):
+                for blank in ("", " \t\n"):
+                    got = candidates_from_classifier_payload(
+                        {"kind": c.kind, key: blank}, soft=True,
+                    )
+                    assert len(got) == 1 and got[0]["kind"] == c.kind
+                    assert got[0][spec.name] == spec.default
+
     for spec in enum_specs:
         payload = {"kind": host_kind, spec.name: "__not_in_enum__"}
         ok, reason = validate_action_candidate_shape(payload)
