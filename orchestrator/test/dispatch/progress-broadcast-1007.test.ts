@@ -1152,6 +1152,14 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
         reason: "cmr needs human disposition",
         escalationKind: "decision",
         familyHeadAfter: "head-park",
+        terminalStatus: "parked",
+        terminalChildren: [
+          { issue: 10, status: "skipped", reason: "not_scheduled_this_invocation" },
+        ],
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "cmr needs human disposition",
+        },
       },
     ];
     const familyBackend = {

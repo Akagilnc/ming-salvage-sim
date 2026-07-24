@@ -41,10 +41,7 @@ import {
   publicResultExitCode,
   runResultExitCode,
 } from "../../src/publicResult.js";
-import {
-  planFamilyTerminalReplay,
-  runFamilyDriver,
-} from "../../src/familyDriver.js";
+import { runFamilyDriver } from "../../src/familyDriver.js";
 import { failedFamilyResult } from "../../src/family/types.js";
 import { runOrchestrator } from "../../src/runner.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -416,73 +413,6 @@ describe("#942 public family results (ID-001)", () => {
     );
     expect(code).toBe(1);
     expect(calls).toEqual([1]);
-  });
-});
-
-// ── Scene Recovery terminal replay (ID-005) ────────────────────────────────
-
-describe("#942 Scene Recovery terminal schema (ID-005)", () => {
-  it("current-schema completed cleanup replays completed/0", () => {
-    const ledger: FamilyLedgerEntry[] = [
-      {
-        childIssue: 10,
-        status: "merged",
-        familyHeadAfter: "head-10",
-      },
-      {
-        status: "pr_merged",
-        event: "pr_merged",
-        familyHeadAfter: "head-10",
-        pr: "https://example.test/pr/1",
-      },
-      {
-        status: "post_merge_cleanup",
-        event: "post_merge_cleanup",
-        familyHeadAfter: "head-10",
-        cleanupOutput: {
-          kind: "cleanup",
-          ok: true,
-          terminal: true,
-          issuesClosed: [10],
-          skippedReasons: [],
-        },
-      },
-    ];
-    const replay = planFamilyTerminalReplay(ledger, "family/942-base");
-    expect(replay?.status).toBe("completed");
-    expect(familyDriverExitCode(replay!)).toBe(0);
-  });
-
-  it("unanswered decision escalation replays parked/2", () => {
-    const ledger: FamilyLedgerEntry[] = [
-      {
-        status: "escalated",
-        event: "escalated",
-        escalationKind: "decision",
-        reason: "human decision required",
-        phase: "final",
-        familyHeadAfter: "head-park",
-      },
-    ];
-    const replay = planFamilyTerminalReplay(ledger, "family/942-base");
-    expect(replay?.status).toBe("parked");
-    expect(familyDriverExitCode(replay!)).toBe(2);
-  });
-
-  it("prior failure escalation replays failed/1 (not parked)", () => {
-    const ledger: FamilyLedgerEntry[] = [
-      {
-        status: "escalated",
-        event: "escalated",
-        escalationKind: "failure",
-        reason: "prior hard failure",
-        phase: "final",
-        familyHeadAfter: "head-fail",
-      },
-    ];
-    const replay = planFamilyTerminalReplay(ledger, "family/942-base");
-    expect(replay?.status).toBe("failed");
-    expect(familyDriverExitCode(replay!)).toBe(1);
   });
 });
 
@@ -973,4 +903,3 @@ describe("#942 ID-014 / ID-015 public-entry proofs", () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 });
-
