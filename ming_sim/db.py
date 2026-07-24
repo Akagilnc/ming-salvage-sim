@@ -11061,30 +11061,33 @@ class GameDB:
                 "UPDATE pending_actions SET committed_directive_id=? WHERE id=?",
                 (int(did), int(pa["id"])),
             )
-            self.create_decree_dossier(
-                state,
-                action_type=self._directive_dossier_action_type(payload),
-                decree_text=text,
-                target_kind=str(payload.get("target_kind") or ""),
-                target_id=payload.get("target_id") or "",
-                executor_kind=(
-                    "character"
-                    if self._directive_dossier_action_type(payload) == "assignment"
-                    else ""
-                ),
-                executor_id=(
-                    payload.get("assignee_id") or payload.get("assignee") or ""
-                    if self._directive_dossier_action_type(payload) == "assignment"
-                    else ""
-                ),
-                source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
-                pending_action_id=int(pa["id"]),
-                directive_id=did,
-                payload=payload,
-                status="proposed",
-                due_turn=int(payload.get("due_turn") or 0),
-                commit=False,
-            )
+            # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
+            # draft 时则已越过最终提交边界，应当立即取得案卷身份。
+            if status == "draft":
+                self.create_decree_dossier(
+                    state,
+                    action_type=self._directive_dossier_action_type(payload),
+                    decree_text=text,
+                    target_kind=str(payload.get("target_kind") or ""),
+                    target_id=payload.get("target_id") or "",
+                    executor_kind=(
+                        "character"
+                        if self._directive_dossier_action_type(payload) == "assignment"
+                        else ""
+                    ),
+                    executor_id=(
+                        payload.get("assignee_id") or payload.get("assignee") or ""
+                        if self._directive_dossier_action_type(payload) == "assignment"
+                        else ""
+                    ),
+                    source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
+                    pending_action_id=int(pa["id"]),
+                    directive_id=did,
+                    payload=payload,
+                    status="proposed",
+                    due_turn=int(payload.get("due_turn") or 0),
+                    commit=False,
+                )
             return True
         return False
 
@@ -11499,6 +11502,14 @@ class GameDB:
         target_id = str(structured.get("target_id") or "").strip()
         if not target_kind or not target_id:
             raise ValueError("普通旨意缺少受控目标，拒绝成案")
+        pending = self.conn.execute(
+            """
+            SELECT id FROM pending_actions
+            WHERE committed_directive_id=?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (int(directive_id),),
+        ).fetchone()
         return self.create_decree_dossier(
             state,
             action_type=action_type,
@@ -11510,6 +11521,7 @@ class GameDB:
                 structured.get("assignee_id") or structured.get("assignee") or ""
                 if action_type == "assignment" else ""
             ),
+            pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
             commit=commit,
@@ -11531,10 +11543,10 @@ class GameDB:
             (state.turn, *statuses),
         ).fetchall()
 
-    def confirm_directive(self, directive_id: int) -> None:
+    def confirm_directive(self, directive_id: int, state: GameState) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
         with atomic(self):
-            self.conn.execute(
+            changed = self.conn.execute(
                 """
                 UPDATE turn_directives
                 SET status = 'draft', updated_at = CURRENT_TIMESTAMP
@@ -11543,11 +11555,20 @@ class GameDB:
                 (directive_id,),
             )
             row = self.conn.execute(
-                "SELECT status FROM turn_directives WHERE id=?",
+                "SELECT status,text,dossier_payload_json FROM turn_directives WHERE id=?",
                 (int(directive_id),),
             ).fetchone()
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
+            if int(changed.rowcount or 0) > 0:
+                try:
+                    payload = json.loads(row["dossier_payload_json"] or "{}")
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"旨稿#{directive_id} 结构化载荷损坏") from exc
+                self._ensure_directive_dossier(
+                    state, int(directive_id), str(row["text"]),
+                    payload if isinstance(payload, dict) else {}, commit=False,
+                )
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""

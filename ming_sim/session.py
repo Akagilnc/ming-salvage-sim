@@ -2218,7 +2218,7 @@ class GameSession:
 
     def confirm_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()
-        self.db.confirm_directive(directive_id)
+        self.db.confirm_directive(directive_id, self.state)
 
     def reject_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()
@@ -2394,7 +2394,7 @@ class GameSession:
         # 结束回合才执行“不回=默认同意”；preview 阶段仍可撤回。旧式 pending
         # turn_directives 与 pending_actions 都汇入各自既有幂等确认/成案口。
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
-            self.db.confirm_directive(int(pending["id"]))
+            self.db.confirm_directive(int(pending["id"]), self.state)
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
