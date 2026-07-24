@@ -1063,13 +1063,14 @@ def extract_draft_intent(
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
         '  "动作类型": "policy|assignment|grant_allocation|authorization|punishment|'
-        'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment",\n'
+        'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
         '  "目标ID": "",\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
         '  "账户": "",\n'
         '  "承办人": "",\n'
-        '  "授权ID": ""\n'
+        '  "授权ID": "",\n'
+        '  "期限月数": null           // 军令必填正整数；非军令留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -1122,7 +1123,7 @@ def extract_draft_intent(
     allowed_actions = {
         "policy", "assignment", "grant_allocation", "authorization", "punishment",
         "pacification", "referral", "revoke_decree", "revoke_authority",
-        "dismiss_assignment", "special_decree",
+        "dismiss_assignment", "military_order", "special_decree",
     }
     if dossier_action not in allowed_actions:
         dossier_action = "special_decree"
@@ -1135,6 +1136,7 @@ def extract_draft_intent(
         "account": str(obj.get("账户") or "").strip(),
         "assignee": str(obj.get("承办人") or "").strip(),
         "authorization_id": str(obj.get("授权ID") or "").strip(),
+        "deadline_months": obj.get("期限月数"),
     }
     try:
         mechanical["amount"] = (
@@ -1142,6 +1144,13 @@ def extract_draft_intent(
         )
     except (TypeError, ValueError):
         mechanical["amount"] = None
+    try:
+        mechanical["deadline_months"] = (
+            int(mechanical["deadline_months"])
+            if mechanical["deadline_months"] is not None else None
+        )
+    except (TypeError, ValueError):
+        mechanical["deadline_months"] = None
     complete = {
         "grant_allocation": (
             mechanical["amount"] is not None
@@ -1151,6 +1160,10 @@ def extract_draft_intent(
         "assignment": bool(mechanical["assignee"]),
         "authorization": bool(
             mechanical["authorization_id"] and mechanical["assignee"]
+        ),
+        "military_order": bool(
+            mechanical["deadline_months"] is not None
+            and mechanical["deadline_months"] > 0
         ),
     }
     if dossier_action in complete and not complete[dossier_action]:

@@ -9470,7 +9470,7 @@ class GameDB:
         if explicit:
             if explicit not in cls._DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}:
                 raise ValueError(f"旨意 action_type 非法：{explicit}")
-            if explicit in {"military_order", "strategy_selection"}:
+            if explicit == "strategy_selection":
                 raise ValueError(f"结构化旨意尚无合法 materializer：{explicit}")
             return explicit
         if payload.get("authorization_id") or payload.get("authorized_scope"):
@@ -9484,7 +9484,7 @@ class GameDB:
         return "special_decree"
 
     def _normalize_directive_dossier_payload(
-        self, payload: Dict[str, object], *, content=None,
+        self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷明确降为叙事旨。"""
         normalized = dict(payload)
@@ -9521,6 +9521,20 @@ class GameDB:
                 normalized.pop("assignee", None)
                 if action == "authorization":
                     normalized["authorization_id"] = authorization_id
+        elif action == "military_order":
+            try:
+                due_turn = int(normalized.get("due_turn") or 0)
+                deadline = int(normalized.get("deadline_months") or 0)
+            except (TypeError, ValueError):
+                due_turn = deadline = 0
+            if due_turn <= 0 and deadline > 0 and current_turn > 0:
+                due_turn = int(current_turn) + deadline
+            if due_turn <= int(current_turn or 0):
+                normalized["dossier_action_type"] = "special_decree"
+                normalized.pop("due_turn", None)
+            else:
+                normalized["due_turn"] = due_turn
+                normalized.pop("deadline_months", None)
         return normalized
 
     def _commit_dossier_write(self, commit: bool) -> None:
@@ -10823,7 +10837,7 @@ class GameDB:
             return True
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
             payload = self._normalize_directive_dossier_payload(
-                payload, content=content,
+                payload, content=content, current_turn=int(state.turn),
             )
             text = str(payload.get("text") or "").strip()
             actor = str(payload.get("actor") or pa["minister_name"] or "")
@@ -13207,15 +13221,26 @@ class GameDB:
     ) -> bool:
         """承办人推进一步：按年月追加进 result 历史时间线，不改 status。
         同月再报则替换当月行（修改最新进度，不叠加多条）。"""
-        ok = self._append_secret_order_line(
-            order_id,
-            "result",
-            progress_note,
-            year,
-            period,
-            reject_if_same_period=False,
-            commit=commit,
-        )
+        with atomic(self):
+            ok = self._append_secret_order_line(
+                order_id,
+                "result",
+                progress_note,
+                year,
+                period,
+                reject_if_same_period=False,
+                commit=False,
+            )
+            if ok:
+                dossier = self.get_dossier_for_secret_order(order_id)
+                if dossier is None:
+                    raise ValueError("密令进展缺少对应案卷")
+                if dossier["status"] == "promulgated":
+                    self.transition_decree_dossier(
+                        int(dossier["id"]), "executing", commit=False,
+                    )
+                elif dossier["status"] != "executing":
+                    raise ValueError("在办密令的案卷不处于可执行状态")
         tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
         return ok
 

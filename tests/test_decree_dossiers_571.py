@@ -582,3 +582,95 @@ def test_real_authorization_capture_resolves_assignee_before_grant(
         state, dossier["id"], "promulgated", content=content,
     )
     assert "理财" in db.active_skill_grants(actor)
+
+
+def test_extractor_context_origin_ref_round_trips_to_commitment(game):
+    from ming_sim.simulation import build_extractor_shared_context
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="今后每月修河",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    extractor_context = build_extractor_shared_context(
+        db, state, "河工已经开办", "今后每月修河", module="issues",
+    )
+    origin_ref = next(
+        row["origin_ref"] for row in extractor_context["decree_dossiers"]
+        if row["id"] == dossier_id
+    )
+
+    issue_engine.apply_score_extraction(
+        db, state, {"new_issues": [{
+            "origin_kind": "decree",
+            "origin_ref": origin_ref,
+            "kind": "initiative",
+            "title": "逐月修河",
+            "end_turn": state.turn + 2,
+            "commitment_kind": "until_stop",
+        }]}, content=content,
+    )
+
+    assert db.list_commitments_for_dossier(dossier_id)[0]["origin_ref"] == origin_ref
+
+
+def test_real_military_order_capture_creates_due_dossier(game, monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    actor = _active_minister(db)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "military_order",
+            "目标类型": "army",
+            "目标ID": "guanning",
+            "期限月数": 3,
+        }, ensure_ascii=False), 1),
+    )
+    captured = cli_backend.extract_draft_intent(
+        "拟旨限三月整军", "着关宁军整饬营伍",
+    )
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=actor,
+        payload={"text": captured["draft_text"], "actor": actor, **{
+            key: captured[key] for key in (
+                "dossier_action_type", "target_kind", "target_id",
+                "deadline_months",
+            )
+        }},
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    assert dossier["action_type"] == "military_order"
+    assert dossier["due_turn"] == state.turn + 3
+    assert json.loads(dossier["payload_json"])["due_turn"] == state.turn + 3
+
+
+def test_secret_order_progress_persists_executing_until_terminal(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    actor = _active_minister(db)
+    order_id = db.create_secret_order(state, actor, "密查仓储", "核清仓储", [])
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier["status"] == "promulgated"
+
+    db.update_secret_order_progress(
+        order_id, "已开始核账", state.year, state.period,
+    )
+    assert db.get_dossier_for_secret_order(order_id)["status"] == "executing"
+    reopened = GameDB(db.path, content=content)
+    try:
+        assert reopened.get_dossier_for_secret_order(order_id)["status"] == "executing"
+    finally:
+        reopened.close()
+
+    db.close_secret_order(order_id, "done", "账目核清", state.turn)
+    terminal = db.get_dossier_for_secret_order(order_id)
+    assert terminal["status"] == "closed"
+    assert terminal["execution_outcome"] == "fulfilled"

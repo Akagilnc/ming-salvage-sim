@@ -1664,7 +1664,10 @@ class GameSession:
                     "target_kind": draft_res.get("target_kind") or "policy",
                     "target_id": draft_res.get("target_id") or "narrative",
                 }
-                for _field in ("amount", "account", "assignee", "authorization_id"):
+                for _field in (
+                    "amount", "account", "assignee", "authorization_id",
+                    "deadline_months",
+                ):
                     if draft_res.get(_field) not in (None, ""):
                         semantic_payload[_field] = draft_res[_field]
                 _target = str(draft_res.get("target_candidate") or "")
