@@ -371,10 +371,9 @@ def test_explicit_secret_order_prefix_stages_pending_candidate(game, monkeypatch
 
 
 def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatch):
-    """#413：自然语言下密令与按钮/前缀同形，先暂存候选，等待皇帝确认。"""
+    """#513：真实 chat 入口只按结构化判词暂存新密令候选。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     def _extractors(prompt, llm_config=None, tag=""):
         if tag == "secret_extract":
@@ -388,16 +387,31 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
         return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="你替朕下一道密令，暗查关宁诸将虚冒兵额，两月内回奏。",
-        answer="臣领密旨，可先密访粮道账册，再核诸将营册，请陛下定夺。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
 
-    assert out["secret_order_id"] in (None, 0)
-    assert out["pending_action_id"]
+    class Agent:
+        def run(self, _message):
+            return types.SimpleNamespace(
+                content="臣领密旨，可先密访粮道账册，再核诸将营册，请陛下定夺。",
+                tools=[],
+            )
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = types.SimpleNamespace(get=lambda _character: Agent())
+    sess.llm_config = types.SimpleNamespace(channel="cli")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    scripted = [{"kind": "secret", "secret_action": "新建"}]
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: scripted
+    sess._finish_cli_action_intent = lambda future: future
+
+    result = GameSession.chat(
+        sess, name, "你替朕下一道密令，暗查关宁诸将虚冒兵额，两月内回奏。")
+
+    assert result.secret_order_id in (None, 0)
+    assert result.pending_action_id
     assert db.list_secret_orders() == []
     pending = db.list_pending_actions(state.turn)
     assert len(pending) == 1
@@ -406,45 +420,6 @@ def test_natural_language_secret_order_stages_pending_candidate(game, monkeypatc
     payload = json.loads(pending[0]["payload_json"])
     assert payload["title"] == "暗查关宁"
     assert "粮道账册" in payload["content"]
-
-
-def test_covert_task_without_secret_order_keyword_stages_pending_candidate(game, monkeypatch):
-    """#413/#405：隐秘差事即便不写“密令”二字，也要进入同一密令确认流。"""
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    calls = []
-
-    def _extractors(prompt, llm_config=None, tag=""):
-        calls.append(tag)
-        if tag == "secret_extract":
-            return (json.dumps({
-                "标题": "暗查辽饷",
-                "内容": "着锦衣卫暗查辽饷侵冒，三月内回奏，不可声张。",
-                "承办人": name,
-                "期限月数": 3,
-                "标签": ["辽饷"],
-            }, ensure_ascii=False), 1)
-        return (json.dumps({"任免动作": "无", "拟旨意图": "无"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="着锦衣卫暗查辽饷侵冒，三月内回奏，不可声张。",
-        answer="臣领命，当暗调旧册，密访经手吏员，请陛下定夺。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert "secret_extract" in calls
-    assert out["secret_order_id"] in (None, 0)
-    assert out["pending_action_id"]
-    assert db.list_secret_orders() == []
-    pending = db.list_pending_actions(state.turn)
-    assert len(pending) == 1
-    payload = json.loads(pending[0]["payload_json"])
-    assert payload["title"] == "暗查辽饷"
-    assert "不可声张" in payload["content"]
 
 
 def test_secret_order_status_query_does_not_stage_new_hidden_order(game, monkeypatch):
@@ -539,168 +514,6 @@ def test_secret_order_chaban_query_does_not_stage_new_hidden_order(read_game, mo
 
     assert not out.get("pending_action_id")
     assert db.list_pending_actions(state.turn) == []
-
-
-def test_explicit_secret_order_imperative_stages_new_candidate(game, monkeypatch):
-    """“密令锦衣卫暗查…”这类省略“下/发”的祈使句也应识别为新密令。"""
-    db, state, content = game
-    minister = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
-    monkeypatch.setattr(
-        cb,
-        "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": (json.dumps({
-            "标题": "暗查辽饷",
-            "内容": "密令锦衣卫暗查辽饷，三月内回奏。",
-            "承办人": "锦衣卫",
-            "标签": ["辽饷"],
-            "期限月数": 3,
-        }, ensure_ascii=False), 1),
-    )
-
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="密令锦衣卫暗查辽饷，三月内回奏。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert out["pending_action_id"]
-    assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
-
-
-def test_private_investigation_language_stages_secret_order(game, monkeypatch):
-    """无“密令”字样但具备祈使、私下、回奏语义时，应识别为新密令候选。"""
-    db, state, content = game
-    minister = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
-    monkeypatch.setattr(
-        cb,
-        "_run_backend_for_config",
-        lambda prompt, llm_config=None, tag="": (json.dumps({
-            "标题": "私查辽饷",
-            "内容": "派锦衣卫私下查辽饷，别声张，月底回奏。",
-            "承办人": "锦衣卫",
-            "标签": ["辽饷"],
-            "期限月数": 1,
-        }, ensure_ascii=False), 1),
-    )
-
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="派锦衣卫私下查辽饷，别声张，月底回奏。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert out["pending_action_id"]
-    assert any(p["kind"] == "secret_order" for p in db.list_pending_actions(state.turn))
-
-
-def test_no_keyword_covert_investigation_stages_secret_order(game, monkeypatch):
-    """“暗查…回奏…不可声张”本身就是密令语义，不应要求另有“派/命”等动词。"""
-    db, state, content = game
-    minister = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
-
-    def _extractors(prompt, llm_config=None, tag=""):
-        assert tag == "secret_extract"
-        return (json.dumps({
-            "标题": "暗查辽饷",
-            "内容": "暗查辽饷，三月内回奏，不可声张。",
-            "承办人": minister,
-            "标签": ["辽饷"],
-            "期限月数": 3,
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
-
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="暗查辽饷，三月内回奏，不可声张。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert out["pending_action_id"]
-    pending = db.list_pending_actions(state.turn)
-    assert [(p["kind"], p["action"], json.loads(p["payload_json"])["title"]) for p in pending] == [
-        ("secret_order", "新建", "暗查辽饷")
-    ]
-
-
-def test_secret_investigation_language_stages_secret_order(game, monkeypatch):
-    """“派锦衣卫秘密调查…回奏”应进入新密令确认流，不能被关键词预筛漏掉。"""
-    db, state, content = game
-    minister = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
-
-    def _extractors(prompt, llm_config=None, tag=""):
-        assert tag == "secret_extract"
-        return (json.dumps({
-            "标题": "秘密调查辽饷",
-            "内容": "派锦衣卫秘密调查辽饷，月底回奏。",
-            "承办人": "锦衣卫",
-            "标签": ["辽饷"],
-            "期限月数": 1,
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
-
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="派锦衣卫秘密调查辽饷，月底回奏。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert out["pending_action_id"]
-    pending = db.list_pending_actions(state.turn)
-    assert [(p["kind"], p["action"], json.loads(p["payload_json"])["title"]) for p in pending] == [
-        ("secret_order", "新建", "秘密调查辽饷")
-    ]
-
-
-def test_split_secret_investigation_language_stages_secret_order(game, monkeypatch):
-    """“秘密 + 派 + 调查 + 回奏”即便不是连续“秘密调查”，也应识别为新密令。"""
-    db, state, content = game
-    minister = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == minister)
-
-    def _extractors(prompt, llm_config=None, tag=""):
-        assert tag == "secret_extract"
-        return (json.dumps({
-            "标题": "秘密调查辽饷",
-            "内容": "秘密派锦衣卫调查辽饷，月底回奏。",
-            "承办人": "锦衣卫",
-            "标签": ["辽饷"],
-            "期限月数": 1,
-        }, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _extractors)
-
-    out = GameSession.apply_cli_conversation_actions(
-        _fake_session(db, state), ch,
-        player_message="秘密派锦衣卫调查辽饷，月底回奏。",
-        answer="臣领旨。",
-        has_directive=False,
-        secret_order_id=None,
-        preclassified_intent={"kind": "secret", "secret_action": "新建"},
-    )
-
-    assert out["pending_action_id"]
-    pending = db.list_pending_actions(state.turn)
-    assert [(p["kind"], p["action"], json.loads(p["payload_json"])["title"]) for p in pending] == [
-        ("secret_order", "新建", "秘密调查辽饷")
-    ]
 
 
 def test_new_secret_order_with_existing_order_stages_only_new_candidate(game, monkeypatch):
