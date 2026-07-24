@@ -20,6 +20,12 @@ import types
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
@@ -1358,7 +1364,7 @@ def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeyp
     name = _active_minister_name(db, content)
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "严查辽饷。", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "严查辽饷。", "actor": name},
     )
 
     def partial_apply(_state, _pa, _payload, **_kwargs):
@@ -2357,7 +2363,11 @@ def test_front_half_done_directive_confirmation_commits_without_second_review(ga
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": name},
+        payload={
+            "text": "着户部清核辽饷。", "actor": name,
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        },
     )
     state.turn_phase = "settling"
 

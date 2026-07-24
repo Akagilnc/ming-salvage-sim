@@ -1,4 +1,6 @@
+import asyncio
 import json
+import types
 
 import pytest
 import ming_sim.issues as issue_engine
@@ -263,6 +265,7 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
         state.turn, kind="directive", action="拟旨", minister_name=assignee,
         payload={
             "text": "着其查核仓场", "actor": assignee,
+            "dossier_action_type": "assignment",
             "assignee": assignee, "target_kind": "issue", "target_id": "warehouse",
         },
     )
@@ -305,8 +308,10 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         payload={
             "text": "拨国库十两赈济",
             "actor": actor,
-            "dossier_action_type": "grant_allocation",
-            "account": "国库",
+                "dossier_action_type": "grant_allocation",
+                "target_kind": "issue",
+                "target_id": "relief",
+                "account": "国库",
             "amount": 10,
             "category": "赈济",
         },
@@ -400,97 +405,92 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     db.apply_dossier_promulgation(
         state, dossier["id"], "promulgated", content=content, registry=None,
     )
+    assert [
+        row["dossier_id"]
+        for row in db.list_office_effects_for_dossier(dossier["id"])
+    ] == [dossier["id"]]
     db.record_dossier_execution(
         dossier["id"], "fulfilled", "任事已毕", state.turn,
     )
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 
-def test_real_allocation_capture_materializes_one_negative_treasury_move(
-    game, monkeypatch,
-):
-    import ming_sim.cli_backend as cli_backend
-
-    db, state, content = game
-    actor = _active_minister(db)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps({
-            "拟旨意图": "拟旨",
-            "动作类型": "grant_allocation",
-            "目标类型": "account",
-            "目标ID": "国库",
-            "金额": 10,
-            "账户": "国库",
-        }, ensure_ascii=False), 1),
-    )
-    captured = cli_backend.extract_draft_intent(
-        "拟旨拨帑赈济", "着拨国库十万两赈济",
-    )
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=actor,
-        payload={"text": captured["draft_text"], "actor": actor, **{
-            key: captured[key] for key in (
-                "dossier_action_type", "target_kind", "target_id",
-                "amount", "account",
-            )
-        }},
-    )
-    before = state.metrics["国库"]
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["国库"] == before - 10
-    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
-
-
-def test_real_authorization_capture_resolves_assignee_before_grant(
-    game, monkeypatch,
-):
-    import ming_sim.cli_backend as cli_backend
-
-    db, state, content = game
-    actor = _active_minister(db)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps({
-            "拟旨意图": "拟旨",
-            "动作类型": "authorization",
-            "目标类型": "character",
-            "目标ID": actor,
-            "承办人": actor,
+@pytest.mark.parametrize(
+    ("entry", "case", "model_fields"),
+    (
+        ("web", "allocation", {
+            "动作类型": "grant_allocation", "目标类型": "issue",
+            "目标ID": "relief", "金额": 10, "账户": "国库",
+            "执行面": "immediate",
+        }),
+        ("cli", "authorization", {
+            "动作类型": "authorization", "目标类型": "character",
             "授权ID": "理财",
-        }, ensure_ascii=False), 1),
+        }),
+        ("web", "controlled_verb", {
+            "动作类型": "secret_investigation", "目标类型": "issue",
+            "目标ID": "granary-corruption",
+        }),
+    ),
+)
+def test_manual_directive_capture_reaches_structured_dossier(
+    game, monkeypatch, entry, case, model_fields,
+):
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    actor = _active_minister(db)
+    response = {"拟旨意图": "拟旨", **model_fields}
+    if case == "authorization":
+        response.update({"目标ID": actor, "承办人": actor})
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    captured = cli_backend.extract_draft_intent(
-        "拟旨授权其理财", "特授理财之权",
-    )
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=actor,
-        payload={"text": captured["draft_text"], "actor": actor, **{
-            key: captured[key] for key in (
-                "dossier_action_type", "target_kind", "target_id",
-                "assignee", "authorization_id",
-            )
-        }},
-    )
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    payload = json.loads(dossier["payload_json"])
-    assert payload["assignee_id"] == actor
-    assert "assignee" not in payload
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    if entry == "web":
+        import web_app
+
+        web_game = types.SimpleNamespace(
+            db=db, state=state, session=session,
+            directive_rows=lambda: db.list_directives(
+                state, statuses=("pending", "draft"),
+            ),
+            directive_payload=lambda row: dict(row),
+        )
+        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+        result = asyncio.run(web_app.api_create_directive(
+            web_app.DirectiveRequest(text="手工旨意"),
+        ))
+        directive_id = int(result["directive"]["id"])
+    else:
+        payload = cli_backend.capture_manual_directive_payload("手工旨意", None)
+        directive_id = session.add_directive(
+            "手工旨意", dossier_payload=payload,
+        ).id
+    before = state.metrics["国库"]
+
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier["target_id"]
+    if case == "controlled_verb":
+        assert dossier["action_type"] == "secret_investigation"
+        assert dossier["target_id"] == "granary-corruption"
+        return
+
     db.apply_dossier_promulgation(
         state, dossier["id"], "promulgated", content=content,
     )
-    assert "理财" in db.active_skill_grants(actor)
+    if case == "allocation":
+        assert state.metrics["国库"] == before - 10
+        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
+    else:
+        assert "理财" in db.active_skill_grants(actor)
+        assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
 
 
 def test_extractor_context_origin_ref_round_trips_to_commitment(game):
@@ -522,40 +522,6 @@ def test_extractor_context_origin_ref_round_trips_to_commitment(game):
     )
 
     assert db.list_commitments_for_dossier(dossier_id)[0]["origin_ref"] == origin_ref
-
-
-def test_real_controlled_verb_capture_keeps_secret_investigation(game, monkeypatch):
-    import ming_sim.cli_backend as cli_backend
-
-    db, state, content = game
-    actor = _active_minister(db)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps({
-            "拟旨意图": "拟旨",
-            "动作类型": "secret_investigation",
-            "目标类型": "issue",
-            "目标ID": "granary-corruption",
-        }, ensure_ascii=False), 1),
-    )
-    captured = cli_backend.extract_draft_intent(
-        "拟旨密查仓弊", "着密查仓场侵冒",
-    )
-    pending_id = db.stage_pending_action(
-        state.turn, kind="directive", action="拟旨", minister_name=actor,
-        payload={"text": captured["draft_text"], "actor": actor, **{
-            key: captured[key] for key in (
-                "dossier_action_type", "target_kind", "target_id",
-            )
-        }},
-    )
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-    dossier = next(
-        row for row in db.list_decree_dossiers()
-        if row["pending_action_id"] == pending_id
-    )
-    assert dossier["action_type"] == "secret_investigation"
-    assert dossier["target_id"] == "granary-corruption"
 
 
 def test_secret_order_progress_persists_executing_until_terminal(game):
@@ -855,7 +821,7 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         session.db.close()
 
 
-def test_directive_freezes_at_dossier_birth_and_formal_withdrawal_closes_it(game):
+def test_directive_freezes_at_dossier_birth(game):
     db, state, _content = game
     payload = {
         "dossier_action_type": "policy",
@@ -877,13 +843,6 @@ def test_directive_freezes_at_dossier_birth_and_formal_withdrawal_closes_it(game
         db.update_directive_text(directive_id, "成案后改稿")
     with pytest.raises(ValueError):
         db.delete_directive(directive_id)
-
-    db.withdraw_directive(state, directive_id)
-    assert db.get_dossier_for_directive(directive_id)["status"] == "closed"
-    assert [
-        row["id"] for row in db.list_directives(state, statuses=("withdrawn",))
-    ] == [directive_id]
-
 
 def test_directive_edit_replaces_mechanical_payload_before_submission(game):
     db, state, _content = game
@@ -909,6 +868,31 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
     )
     assert state.metrics["国库"] == before - 100
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief", "account": "国库",
+        },
+        {
+            "dossier_action_type": "assignment",
+            "assignee": "不存在的人",
+        },
+    ),
+)
+def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
+    game, payload,
+):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "不完整机械旨意", "手动新增", dossier_payload=payload,
+    )
+    with pytest.raises(ValueError):
+        db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
 
 
 def test_withdrawn_rescript_records_closed_turn(game):

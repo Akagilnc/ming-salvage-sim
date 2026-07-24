@@ -5487,14 +5487,15 @@ def _restore_person_write_state(
     )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(character_name, office_title, office_type, source, dossier_id, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
                 row["office_title"],
                 row["office_type"],
                 row["source"],
+                row.get("dossier_id"),
                 row["updated_at"],
             )
             for row in office_rows

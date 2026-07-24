@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 from ming_sim import audience_night as an
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -260,7 +266,7 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
             "SELECT office FROM characters WHERE name=?", (minister,),
         ).fetchone()["office"]
         pid = db.upsert_pending_directive(
-            state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
         # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
         with pytest.raises(ValueError, match="草案"):
             sess.write_decree()
@@ -279,14 +285,14 @@ def test_cross_night_directive_reassigned_to_second_night(game):
     minister = _active_minister(db, content)
 
     n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "初稿：缓征辽饷", "actor": minister})
+    d_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister})
     # 第一夜不应允 → 留 pending；收夜不提交
     an.close_night(db, state, night_id=n1["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
 
     n2 = an.open_night(db, state, location="文华殿")
     # 同臣同回合复用更新（last-write-wins）→ 归属须迁到第二夜、清 approval
-    same_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "定稿：改折色", "actor": minister})
+    same_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister})
     assert same_id == d_id
     row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
     assert int(row["night_id"]) == n2["id"]
@@ -329,7 +335,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         )
         db.mark_pending_night_approved([pa_id], night_id=night["id"])
         dir_id = db.upsert_pending_directive(
-            state.turn, minister, payload={"text": "着户部清查边饷", "actor": minister},
+            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
         )
         db.mark_pending_night_approved([dir_id], night_id=night["id"])
 
