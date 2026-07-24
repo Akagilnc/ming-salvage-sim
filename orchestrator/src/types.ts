@@ -1952,6 +1952,12 @@ export interface AgentStepRunOptions {
    * Rendered from ledger memory at dispatch — never a worktree focus file.
    */
   readonly relayBrief?: string;
+  /**
+   * Durable judge history used by the owning Judge Action's typed receipt
+   * validator. Illegal findings-store transitions are returned to the same
+   * resident session through Sandcastle structured-output correction.
+   */
+  readonly priorJudgeVerdicts?: DispatchContext["priorJudgeVerdicts"];
 }
 
 // ──────────────────────────── run result ────────────────────────────

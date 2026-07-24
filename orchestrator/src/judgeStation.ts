@@ -954,17 +954,7 @@ export function judgeStatusFromOutput(
   const projected = projectJudgeSeatOutput(output);
   if (projected.kind === "judge") {
     if (projected.status === "converged") return "converged";
-    if (projected.status === "continue") {
-      // #952: terminal-only continue (suppress/refute flips, 0 live) routes like
-      // converged so single-slice S7 / resume do not empty-spin S5. Envelope
-      // status string stays `continue` on the ledger for queryable flips.
-      // Disposition-table only — never walk findings cargo here (opaque/residual
-      // rows must not crash topology; store flips stay on the live gate).
-      if (isTerminalOnlyContinueDispositions(projected.findingDispositions)) {
-        return "converged";
-      }
-      return "continue";
-    }
+    if (projected.status === "continue") return "continue";
     if (projected.status === "escalate") return "escalate";
     // toolchain (#1027 S1): single-slice S3/S6 has no wave-verify triage
     // scenario. Never silent-clean (converged/S7) and never mis-route as a
@@ -1040,6 +1030,7 @@ export type ResidentJudgeLifecycle =
 type ResidentJudgeLedgerRow = {
   readonly event?: string;
   readonly step?: string;
+  readonly runId?: string;
   readonly sessionId?: string;
   readonly modelSlug?: string;
   /** Topology output when present (judge converge heals dismiss crash window). */
@@ -1132,7 +1123,8 @@ export function rebuildResidentJudgeFromLedger(
       entry.event === undefined &&
       isJudgeSeat({ step: entry.step }) &&
       typeof entry.sessionId === "string" &&
-      entry.sessionId.length > 0
+      entry.sessionId.length > 0 &&
+      entry.sessionId !== entry.runId
     ) {
       return {
         status: "open",
