@@ -38,7 +38,6 @@ import {
 import {
   cutFamilyBase,
   discoverFamilyResidentScene,
-  planFamilyTerminalReplay,
   runFamilyDriver,
 } from "../../src/familyDriver.js";
 import { FAMILY_LEDGER_FILENAME } from "../../src/family/realFamilyBackend.js";
@@ -374,6 +373,10 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
 
   it("public family driver aggregates every planned child Coder-Rec before worksite", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const warnings: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((...args) => {
+      warnings.push(args.map(String).join(" "));
+    });
     let cloneCalls = 0;
     const sh = (_file: string, args: string[]): string => {
       const joined = args.join(" ");
@@ -416,6 +419,23 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(result.escalation?.diagnosis).toMatch(/2 errors/);
     expect(result.escalation?.diagnosis).toContain("issue #935");
     expect(result.escalation?.diagnosis).toContain("issue #936");
+    expect(result.children).toEqual([
+      {
+        issue: 935,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+      {
+        issue: 936,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
+    expect(
+      warnings.filter((line) =>
+        /family child #(935|936) skipped: startup_preflight_failed/.test(line),
+      ),
+    ).toHaveLength(2);
     expect(cloneCalls).toBe(0);
   });
 
@@ -848,6 +868,10 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         ].join("\n") + "\n",
         "utf8",
       );
+      const progress: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args) => {
+        progress.push(args.map(String).join(" "));
+      });
       const result = await runFamilyDriver({
         epicIssue: 934,
         sourceRepo: "/tmp/no-such-source",
@@ -874,6 +898,13 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(result.children).toEqual([{ issue: 936, status: "already_done" }]);
       expect(ghCalls).toBe(0);
       expect(cloneCalls).toBe(0);
+      expect(
+        progress.filter(
+          (line) =>
+            line.includes("[orchestrator:progress] terminal") &&
+            line.includes("epic #934"),
+        ),
+      ).toHaveLength(1);
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -948,11 +979,68 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(result.children).toEqual(
         expect.arrayContaining([
           { issue: 936, status: "already_done" },
-          { issue: 935, status: "skipped" },
+          {
+            issue: 935,
+            status: "skipped",
+            reason: "admission_skipped",
+          },
         ]),
       );
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("runFamilyDriver rejects malformed current-schema terminal cargo before external calls", async () => {
+    const malformed = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "failure",
+        reason: "missing status",
+        stopSummary: { reason: "infra_failure", summary: "missing status" },
+        terminalChildren: [],
+        terminalCause: "runner_internal_error",
+      },
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "failure",
+        reason: "missing child cause",
+        terminalStatus: "failed",
+        terminalCause: "child_execution_failed",
+        stopSummary: { reason: "infra_failure", summary: "missing child cause" },
+        terminalChildren: [{ issue: 936, status: "failed" }],
+      },
+    ];
+    for (const [index, row] of malformed.entries()) {
+      const ledgerDir = mkdtempSync(join(tmpdir(), `family-bad-cargo-${index}-`));
+      try {
+        writeFileSync(
+          join(ledgerDir, FAMILY_LEDGER_FILENAME),
+          `${JSON.stringify(row)}\n`,
+          "utf8",
+        );
+        await expect(
+          runFamilyDriver({
+            epicIssue: 934,
+            sourceRepo: "/tmp/no-such-source",
+            repo: "Akagilnc/ming-salvage-sim",
+            familyBase: "family/934-base",
+            base: "main",
+            promptsDir: "/tmp/prompts",
+            familyPromptsDir: "/tmp/family-prompts",
+            soulsDir: "/tmp/souls",
+            ledgerDir,
+            imageName: "img",
+            sh: () => {
+              throw new Error("malformed replay must not read GitHub");
+            },
+          }),
+        ).rejects.toThrow(/terminalStatus invalid|failureCause required/);
+      } finally {
+        rmSync(ledgerDir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -1017,17 +1105,10 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
-  it("discoverFamilyResidentScene: no ledger → fresh; planFamilyTerminalReplay non-terminal → undefined", () => {
+  it("discoverFamilyResidentScene: no ledger → fresh", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-fresh-"));
     try {
       expect(discoverFamilyResidentScene(ledgerDir)).toEqual({ kind: "fresh" });
-      expect(planFamilyTerminalReplay([], "family/934-base")).toBeUndefined();
-      expect(
-        planFamilyTerminalReplay(
-          [{ status: "merged", event: "reconciled", childIssue: 1 }],
-          "family/934-base",
-        ),
-      ).toBeUndefined();
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1106,11 +1187,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       );
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")?.status).toBe(
-          "completed",
-        );
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1132,9 +1208,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       writeFileSync(join(ledgerDir, "family-base-start-head"), "start0\n", "utf8");
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")).toBeUndefined();
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1159,12 +1232,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         expect(scene.reason).toMatch(/incomplete status:escalated|damaged park/i);
       }
       expect(
-        planFamilyTerminalReplay(
-          [{ status: "escalated", escalationKind: "decision", reason: "partial" } as never],
-          "family/934-base",
-        ),
-      ).toBeUndefined();
-      expect(
         isCompleteFamilyEscalation({
           status: "escalated",
           event: "escalated",
@@ -1182,7 +1249,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
-  it("discoverFamilyResidentScene: complete escalated decision without worksite is resident+replayable", () => {
+  it("discoverFamilyResidentScene: complete escalated decision without worksite is resident", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-complete-esc-"));
     try {
       writeFileSync(
@@ -1199,11 +1266,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       );
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        const replay = planFamilyTerminalReplay(scene.ledger, "family/934-base");
-        expect(replay?.status).toBe("parked");
-        expect(replay?.stopSummary?.reason).toBe("decision_gate_park");
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
