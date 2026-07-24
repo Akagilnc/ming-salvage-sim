@@ -39,6 +39,11 @@ export const CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE =
 /** Single-slice Spec-axis review leg (#1126). */
 export const CODE_REVIEW_SPEC_LEG_PROMPT_FILE = "code_review_spec_leg.md";
 
+export const SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES: ReadonlyArray<string> = [
+  CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE,
+  CODE_REVIEW_SPEC_LEG_PROMPT_FILE,
+];
+
 /** Single-slice review axis — one Runner-owned worker per axis. */
 export type ReviewPanelAxis = "standards" | "spec";
 
@@ -69,8 +74,7 @@ export type ReviewLegScope =
 export function isReviewPanelLegPromptFile(promptFile: string): boolean {
   return (
     promptFile === CMR_PANEL_LEG_PROMPT_FILE ||
-    promptFile === CODE_REVIEW_STANDARDS_LEG_PROMPT_FILE ||
-    promptFile === CODE_REVIEW_SPEC_LEG_PROMPT_FILE
+    SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES.includes(promptFile)
   );
 }
 
