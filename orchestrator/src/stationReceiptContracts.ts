@@ -623,13 +623,12 @@ export function judgeStationReceiptSchema(
     if (value.status !== "continue") return;
     const statuses = { ...priorStatuses };
     value.findingDispositions.forEach((disposition, index) => {
-      if (
-        disposition.action !== "refute" &&
-        disposition.action !== "suppress"
-      ) {
-        return;
-      }
-      const to = disposition.action === "refute" ? "refuted" : "suppressed";
+      const to =
+        disposition.action === "live"
+          ? OPEN_FINDING_STORE_STATUS
+          : disposition.action === "refute"
+            ? "refuted"
+            : "suppressed";
       const transition = validateFindingStoreTransition(
         statuses[disposition.identityKey] ?? OPEN_FINDING_STORE_STATUS,
         to,
