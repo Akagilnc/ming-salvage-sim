@@ -435,6 +435,10 @@ export interface FamilyLedgerEntry {
    * durable carrier for cross-restart public children identity.
    */
   readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
+  /** #1125 schema A — public terminal status preserved byte-for-byte on replay. */
+  readonly terminalStatus?: FamilyRunStatus;
+  /** #1125 schema A — mandatory public cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
   readonly ts?: string;
   /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
@@ -870,6 +874,10 @@ export interface FamilyEscalation {
    * Same shape as public FamilyRunResult.children.
    */
   readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
+  /** Public terminal ABI persisted with terminalChildren for exact replay. */
+  readonly terminalStatus?: FamilyRunStatus;
+  /** Mandatory public failure cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   /** Durable escalation semantic; every caller must declare the factual source. */
   readonly escalationKind: "decision" | "failure";
   /** Durable escalation phase; defaults to the final family gate. */

@@ -160,6 +160,12 @@ class RecordingFamilyBackend implements FamilyBackend {
       ...(escalation.terminalChildren !== undefined
         ? { terminalChildren: escalation.terminalChildren }
         : {}),
+      ...(escalation.terminalStatus !== undefined
+        ? { terminalStatus: escalation.terminalStatus }
+        : {}),
+      ...(escalation.terminalCause !== undefined
+        ? { terminalCause: escalation.terminalCause }
+        : {}),
     } as FamilyLedgerEntry);
   }
 }
@@ -622,9 +628,8 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       if (second.status === "failed" && result.status === "failed") {
         expect(second.cause).toBe(result.cause);
       }
-      expect(
-        second.children.map((c) => ({ issue: c.issue, status: c.status })),
-      ).toEqual(firstChildren.map((c) => ({ issue: c.issue, status: c.status })));
+      expect(second.stopSummary).toEqual(result.stopSummary);
+      expect(second.children).toEqual(firstChildren);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -871,8 +876,8 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       now: () => now,
     });
 
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.status).toBe("failed");
+    expect(result.stopSummary.reason).not.toBe("provider_degraded");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("ran");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
     expect(result.diagnostics ?? []).toEqual(
