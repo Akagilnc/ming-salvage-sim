@@ -571,23 +571,33 @@ export type FamilyCmrPanelRoundPrep =
  *
  * Court-generation scoped (not HEAD-only): reuse requires matching
  * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, and
- * legal transports. Generation advances at builder-beat completion
+ * non-empty opaque transport/skip cargo. Generation advances at builder-beat completion
  * (`cmr_fix_committed` boundary) so cold crash before pure receive cannot
  * reuse pre-builder 卷面; soft-accept may advance again as belt-and-suspenders.
  */
-export type FamilyPanelLegEvidence = PanelLegEvidenceCargo & {
-  readonly familyHeadAfter?: string;
+export type PanelLegEvidenceIdentity = {
+  readonly familyHeadAfter: string;
   /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
-  readonly ledgerPhase?: "final" | "correctness_checkpoint";
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
   /** Route + declared-leg roster fingerprint (modelRouteFingerprint). */
-  readonly routeFingerprint?: string;
+  readonly routeFingerprint: string;
   /**
    * Court evidence generation. Cold resume of the same generation may no-reburn;
    * advanced when the builder beat lands (`cmr_fix_committed`) so outer gates
    * after refuse/no-op reburn even if HEAD is unchanged.
    */
-  readonly courtGeneration?: number;
+  readonly courtGeneration: number;
 };
+
+export type PanelLegEvidenceIdentitySeed = Omit<
+  PanelLegEvidenceIdentity,
+  "familyHeadAfter" | "courtGeneration"
+> &
+  Partial<Pick<PanelLegEvidenceIdentity, "familyHeadAfter">>;
+
+/** Old evidence files may predate one or more identity dimensions. */
+export type FamilyPanelLegEvidence = PanelLegEvidenceCargo &
+  Partial<PanelLegEvidenceIdentity>;
 
 /**
  * THE family seam (parallel to the single-slice {@link Backend}): the family
