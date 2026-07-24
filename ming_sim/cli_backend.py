@@ -1216,6 +1216,33 @@ def extract_draft_intent(
     }
 
 
+def capture_manual_directive_payload(
+    text: str, llm_config: Any = None,
+) -> Dict[str, object]:
+    """Web/CLI 手工下旨共用既有草稿抽取 seam；只搬运结构化结果。"""
+    captured = extract_draft_intent(
+        "请据此拟旨", str(text or ""), llm_config=llm_config,
+    )
+    if captured.get("draft_action") != "拟旨":
+        raise ValueError("手工旨意结构化捕获失败")
+    payload = {
+        "dossier_action_type": captured.get("dossier_action_type"),
+        "target_kind": captured.get("target_kind"),
+        "target_id": captured.get("target_id"),
+    }
+    for field in (
+        "amount", "account", "execution_surface", "assignee",
+        "authorization_id", "deadline_months",
+    ):
+        if captured.get(field) not in (None, ""):
+            payload[field] = captured[field]
+    if not all(str(payload.get(key) or "").strip() for key in (
+        "dossier_action_type", "target_kind", "target_id",
+    )):
+        raise ValueError("手工旨意缺少结构化动作或目标")
+    return payload
+
+
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
 # 不并进 extract_minister_actions、不挂密令那个 active gate。随召对触发（任何召对都
 # 可能口头派官/罢官，含跟太监说），ungated；过判由「应允才落、拒绝就丢」兜底。

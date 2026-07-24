@@ -9848,7 +9848,10 @@ class GameDB:
             """,
             (int(turn), int(turn), int(turn), int(turn)),
         ).fetchall()
-        return [self._dossier_row(row) for row in rows]
+        return [
+            self._dossier_row(row) for row in rows
+            if str(row["action_type"]) != "secret_order"
+        ]
 
     def transition_decree_dossier(
         self, dossier_id: int, new_status: str, *, commit: bool = True,
@@ -10385,12 +10388,14 @@ class GameDB:
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
         静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。"""
         row = self.conn.execute(
-            "SELECT id, payload_json FROM pending_actions "
-            "WHERE id=? AND kind='directive' AND status='pending'",
+            "SELECT id,payload_json,status FROM pending_actions "
+            "WHERE id=? AND kind='directive'",
             (int(candidate_id),),
         ).fetchone()
         if row is None:
             return 0
+        if row["status"] != "pending":
+            raise ValueError("已成案旨意不得改草")
         merged = self._merge_directive_payload(row["payload_json"], payload)
         self.conn.execute(
             "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
@@ -11508,6 +11513,8 @@ class GameDB:
         return int(row["n"]) if row else 0
 
     def update_directive_text(self, directive_id: int, text: str) -> None:
+        if self.get_dossier_for_directive(directive_id) is not None:
+            raise ValueError("已成案旨意不得编辑")
         self.conn.execute(
             """
             UPDATE turn_directives
@@ -11543,6 +11550,8 @@ class GameDB:
         self.conn.commit()
 
     def delete_directive(self, directive_id: int) -> None:
+        if self.get_dossier_for_directive(directive_id) is not None:
+            raise ValueError("已成案旨意不得删除；请撤回成命")
         self.conn.execute(
             """
             UPDATE turn_directives
@@ -11552,6 +11561,40 @@ class GameDB:
             (directive_id,),
         )
         self.conn.commit()
+
+    def withdraw_directive(self, state: GameState, directive_id: int) -> None:
+        """正式撤回成命：保留原旨行，并同步同源案卷结案。"""
+        dossier = self.get_dossier_for_directive(directive_id)
+        if dossier is None:
+            raise ValueError("未成案旨意不走撤回成命")
+        with atomic(self):
+            self.conn.execute(
+                "UPDATE turn_directives SET status='withdrawn',updated_at=CURRENT_TIMESTAMP "
+                "WHERE id=?",
+                (int(directive_id),),
+            )
+            if dossier["status"] == "proposed":
+                self.conn.execute(
+                    """
+                    UPDATE decree_dossiers
+                    SET status='closed',execution_outcome='failed',
+                        execution_note='撤回成命',closed_turn=?,
+                        interruption_reason='撤回成命',
+                        closed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (int(state.turn), int(dossier["id"])),
+                )
+            else:
+                if dossier["status"] == "promulgated":
+                    self.transition_decree_dossier(
+                        int(dossier["id"]), "executing", commit=False,
+                    )
+                if dossier["status"] != "closed":
+                    self.record_dossier_execution(
+                        int(dossier["id"]), "failed", "撤回成命", state.turn,
+                        close=True, commit=False,
+                    )
 
     def mark_directives_issued(self, state: GameState) -> None:
         self.conn.execute(

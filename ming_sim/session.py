@@ -2246,6 +2246,10 @@ class GameSession:
         self._refuse_if_settling()
         self.db.delete_directive(directive_id)
 
+    def withdraw_directive(self, directive_id: int) -> None:
+        self._refuse_if_settling()
+        self.db.withdraw_directive(self.state, directive_id)
+
     def pending_count(self) -> int:
         return self.db.count_pending_directives(self.state)
 
