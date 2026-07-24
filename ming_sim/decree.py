@@ -19,9 +19,11 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_promulgation_judge_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     run_agent_text,
+    parse_agent_json,
 )
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
 from ming_sim.cli_backend import cli_backend_parallel_safe
@@ -338,6 +340,21 @@ def resolve_directives(
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     if proposed_dossiers:
+        if promulgation_judge is None and dossier_verdicts is None:
+            judge = create_promulgation_judge_agent(llm_config, agno_db)
+            raw = run_agent_text(
+                judge,
+                json.dumps(
+                    {"dossiers": proposed_dossiers, "state": dict(state.metrics)},
+                    ensure_ascii=False,
+                ),
+                "promulgation-judge",
+            )
+            parsed = parse_agent_json(raw, "颁布判官")
+            generated = parsed.get("verdicts")
+            if not isinstance(generated, list):
+                raise LLMContractError("颁布判官 verdicts 必须为列表")
+            dossier_verdicts = generated
         verdict_rows = list(
             promulgation_judge(proposed_dossiers)
             if promulgation_judge is not None else (dossier_verdicts or [])
@@ -362,6 +379,16 @@ def resolve_directives(
         # Compatibility prose is rendered from the durable list; it is no
         # longer an independent settlement truth.
         decree_text = "\n".join(str(row["decree_text"]) for row in dossier_payload)
+        # Common path before simulator/fallback: verdict and structured effects
+        # are durable before either narrative branch runs.
+        db.apply_dossier_verdicts(
+            state, verdict_rows, content=content, registry=registry,
+        )
+        dossier_payload = [
+            {**db.get_decree_dossier(int(row["id"])),
+             "settlement_verdict": verdict_by_id[int(row["id"])]}
+            for row in proposed_dossiers
+        ]
     else:
         verdict_rows = []
         dossier_payload = []
@@ -405,7 +432,7 @@ def resolve_directives(
         secret_orders=secret_orders_for_sim,
         decree_dossiers=dossier_payload,
     )
-    simulator_payload["dossier_verdicts"] = verdict_rows
+    simulator_payload["dossier_verdicts"] = []
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
     )
