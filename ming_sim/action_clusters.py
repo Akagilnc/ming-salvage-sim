@@ -191,7 +191,10 @@ def validate_action_candidate_shape(obj: Any) -> Tuple[bool, str]:
         raw = _field_raw(obj, spec)
         if raw is None:
             continue
-        if str(raw).strip() not in spec.allowed:
+        normalized = str(raw).strip()
+        if not normalized:
+            continue
+        if normalized not in spec.allowed:
             return False, f"{spec.name} out of enum: {raw!r}"
     return True, ""
 
@@ -221,6 +224,8 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
 
     def _enum(value: object, allowed: FrozenSet[str], default: str) -> str:
         v = str(value if value is not None else default).strip()
+        if not v:
+            return default
         if v in allowed:
             return v
         if soft:
