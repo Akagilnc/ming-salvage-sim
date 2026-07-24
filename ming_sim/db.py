@@ -9736,28 +9736,6 @@ class GameDB:
                 )
         return supplied
 
-    def append_dossier_stigma(
-        self, dossier_id: int, entry: Dict[str, object], *, commit: bool = True,
-    ) -> None:
-        """中旨污名只追加不覆写；legal_reason_code 保持依律集专用。"""
-        row = self.conn.execute(
-            "SELECT stigma_json FROM decree_dossiers WHERE id=?", (int(dossier_id),)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"案卷不存在：{dossier_id}")
-        try:
-            entries = json.loads(row["stigma_json"] or "[]")
-        except (TypeError, ValueError) as exc:
-            raise ValueError("案卷 stigma_json 已损坏，拒绝静默覆写") from exc
-        if not isinstance(entries, list):
-            raise ValueError("案卷 stigma_json 必须为列表，拒绝静默覆写")
-        entries.append(dict(entry or {}))
-        self.conn.execute(
-            "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (json.dumps(entries, ensure_ascii=False), int(dossier_id)),
-        )
-        self._commit_dossier_write(commit)
-
     def list_decree_dossiers(
         self, *, status: Optional[str] = None, target_kind: Optional[str] = None,
         target_id: Optional[object] = None,
@@ -10008,21 +9986,13 @@ class GameDB:
                     or row["status"] != "proposed"
                 ):
                     raise ValueError("强颁只可承接同一打回/留中案卷")
-                if int(row.get("held_turn") or 0) <= 0:
-                    raise ValueError("强颁必须承接留中案卷")
-                if current_turn <= int(row["held_turn"]):
+                held_turn = int(row.get("held_turn") or 0)
+                if held_turn > 0 and current_turn <= held_turn:
                     raise ValueError("留中案卷只可在下月重判或强颁")
-                rejudged = self.conn.execute(
-                    """
-                    SELECT 1 FROM decree_dossier_decisions
-                    WHERE dossier_id=? AND turn=? AND decision='rejected'
-                      AND rescript_action=''
-                    LIMIT 1
-                    """,
-                    (int(dossier_id), current_turn),
-                ).fetchone()
-                if rejudged is None:
-                    raise ValueError("留中案卷须先完成下月重判方可强颁")
+                if not row["rescript_pending"]:
+                    if held_turn > 0:
+                        raise ValueError("留中案卷须先完成下月重判方可强颁")
+                    raise ValueError("强颁只可承接首次打回或下月重判")
                 self.conn.execute(
                     """
                     UPDATE decree_dossiers
@@ -11384,12 +11354,16 @@ class GameDB:
             structured, content=self.content, current_turn=int(state.turn),
         )
         action_type = self._directive_dossier_action_type(structured)
+        target_kind = str(structured.get("target_kind") or "").strip()
+        target_id = str(structured.get("target_id") or "").strip()
+        if not target_kind or not target_id:
+            raise ValueError("普通旨意缺少受控目标，拒绝成案")
         return self.create_decree_dossier(
             state,
             action_type=action_type,
             decree_text=text,
-            target_kind=str(structured.get("target_kind") or "policy"),
-            target_id=structured.get("target_id") or "",
+            target_kind=target_kind,
+            target_id=target_id,
             executor_kind="character" if action_type == "assignment" else "",
             executor_id=(
                 structured.get("assignee_id") or structured.get("assignee") or ""

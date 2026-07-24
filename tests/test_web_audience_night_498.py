@@ -216,7 +216,11 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
             # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={
+                    "text": "着户部核边饷", "actor": minister,
+                    "dossier_action_type": "policy",
+                    "target_kind": "issue", "target_id": "border-pay",
+                })
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
