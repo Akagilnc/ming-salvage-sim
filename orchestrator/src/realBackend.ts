@@ -115,6 +115,7 @@ import { EXECUTABLE_SOUL_FILES } from "./soulInstructions.js";
 import {
   agentForSlug,
   appendAgySoulMount,
+  freshReviewPanelAgentForSlug,
   resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
@@ -3416,7 +3417,7 @@ export class RealBackend implements Backend {
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: box.sandbox,
-        agent: agentForSlug(spec.model, pool, spec.soul),
+        agent: freshReviewPanelAgentForSlug(spec.model, pool, spec.soul),
         maxIterations: 1,
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),
