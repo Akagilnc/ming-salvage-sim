@@ -98,6 +98,8 @@ describe("family startup smoke gate (#685)", () => {
             event: "escalated",
             escalationKind: "failure",
             reason: "test stop",
+            terminalStatus: "failed",
+            terminalCause: "runner_internal_error",
             // #1125 schema A — durable failure authority carries terminalChildren
             terminalChildren: [
               {
@@ -157,6 +159,8 @@ describe("family startup smoke gate (#685)", () => {
             event: "escalated",
             escalationKind: "failure",
             reason: "test stop",
+            terminalStatus: "failed",
+            terminalCause: "runner_internal_error",
             terminalChildren: [
               {
                 issue: 847,

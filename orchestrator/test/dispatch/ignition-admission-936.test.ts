@@ -38,7 +38,6 @@ import {
 import {
   cutFamilyBase,
   discoverFamilyResidentScene,
-  planFamilyTerminalReplay,
   runFamilyDriver,
 } from "../../src/familyDriver.js";
 import { FAMILY_LEDGER_FILENAME } from "../../src/family/realFamilyBackend.js";
@@ -960,6 +959,59 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
+  it("runFamilyDriver rejects malformed current-schema terminal cargo before external calls", async () => {
+    const malformed = [
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "failure",
+        reason: "missing status",
+        stopSummary: { reason: "infra_failure", summary: "missing status" },
+        terminalChildren: [],
+        terminalCause: "runner_internal_error",
+      },
+      {
+        status: "escalated",
+        event: "escalated",
+        escalationKind: "failure",
+        reason: "missing child cause",
+        terminalStatus: "failed",
+        terminalCause: "child_execution_failed",
+        stopSummary: { reason: "infra_failure", summary: "missing child cause" },
+        terminalChildren: [{ issue: 936, status: "failed" }],
+      },
+    ];
+    for (const [index, row] of malformed.entries()) {
+      const ledgerDir = mkdtempSync(join(tmpdir(), `family-bad-cargo-${index}-`));
+      try {
+        writeFileSync(
+          join(ledgerDir, FAMILY_LEDGER_FILENAME),
+          `${JSON.stringify(row)}\n`,
+          "utf8",
+        );
+        await expect(
+          runFamilyDriver({
+            epicIssue: 934,
+            sourceRepo: "/tmp/no-such-source",
+            repo: "Akagilnc/ming-salvage-sim",
+            familyBase: "family/934-base",
+            base: "main",
+            promptsDir: "/tmp/prompts",
+            familyPromptsDir: "/tmp/family-prompts",
+            soulsDir: "/tmp/souls",
+            ledgerDir,
+            imageName: "img",
+            sh: () => {
+              throw new Error("malformed replay must not read GitHub");
+            },
+          }),
+        ).rejects.toThrow(/terminalStatus invalid|failureCause required/);
+      } finally {
+        rmSync(ledgerDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("public family driver: corrupt resident ledger fails closed with zero external calls", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-corrupt-ledger-"));
@@ -1021,17 +1073,10 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
-  it("discoverFamilyResidentScene: no ledger → fresh; planFamilyTerminalReplay non-terminal → undefined", () => {
+  it("discoverFamilyResidentScene: no ledger → fresh", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-fresh-"));
     try {
       expect(discoverFamilyResidentScene(ledgerDir)).toEqual({ kind: "fresh" });
-      expect(planFamilyTerminalReplay([], "family/934-base")).toBeUndefined();
-      expect(
-        planFamilyTerminalReplay(
-          [{ status: "merged", event: "reconciled", childIssue: 1 }],
-          "family/934-base",
-        ),
-      ).toBeUndefined();
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1110,11 +1155,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       );
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")?.status).toBe(
-          "completed",
-        );
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1136,9 +1176,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       writeFileSync(join(ledgerDir, "family-base-start-head"), "start0\n", "utf8");
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")).toBeUndefined();
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
@@ -1163,12 +1200,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
         expect(scene.reason).toMatch(/incomplete status:escalated|damaged park/i);
       }
       expect(
-        planFamilyTerminalReplay(
-          [{ status: "escalated", escalationKind: "decision", reason: "partial" } as never],
-          "family/934-base",
-        ),
-      ).toBeUndefined();
-      expect(
         isCompleteFamilyEscalation({
           status: "escalated",
           event: "escalated",
@@ -1186,7 +1217,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
-  it("discoverFamilyResidentScene: complete escalated decision without worksite is resident+replayable", () => {
+  it("discoverFamilyResidentScene: complete escalated decision without worksite is resident", () => {
     const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-complete-esc-"));
     try {
       writeFileSync(
@@ -1203,11 +1234,6 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       );
       const scene = discoverFamilyResidentScene(ledgerDir);
       expect(scene.kind).toBe("resident");
-      if (scene.kind === "resident") {
-        const replay = planFamilyTerminalReplay(scene.ledger, "family/934-base");
-        expect(replay?.status).toBe("parked");
-        expect(replay?.stopSummary?.reason).toBe("decision_gate_park");
-      }
     } finally {
       rmSync(ledgerDir, { recursive: true, force: true });
     }
