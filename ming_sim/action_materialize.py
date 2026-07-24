@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.action_clusters import (
@@ -19,6 +19,7 @@ from ming_sim.action_clusters import (
     EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
     EFFECT_NOOP,
+    cluster_by_kind,
     install_action_catalog,
     materialize_clusters_ordered,
 )
@@ -40,6 +41,10 @@ class MaterializeCtx:
     intent: Optional[Dict[str, Any]]
     intent_kind: str
     llm_config: Any
+    intent_candidates: Optional[List[Dict[str, Any]]] = None
+    candidate_kind_index: int = 0
+    candidate_kind_count: int = 1
+    batch_state: Dict[str, Any] = field(default_factory=dict)
     conversation_intent_handled: bool = False
     draft_staged: bool = False
 
@@ -51,6 +56,41 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     secret/cultivate/draft/appointment 字面量分叉。
     同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
     """
+    if ctx.intent_candidates:
+        # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
+        # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
+        baseline_out = dict(ctx.out)
+        kind_counts: Dict[str, int] = {}
+        for candidate in ctx.intent_candidates:
+            kind = str(candidate.get("kind") or "")
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        kind_indexes: Dict[str, int] = {}
+        for candidate in ctx.intent_candidates:
+            kind = str(candidate.get("kind") or "")
+            cluster = cluster_by_kind(kind)
+            if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
+                continue
+            fn = cluster.materialize_fn
+            if fn is None:
+                continue
+            kind_index = kind_indexes.get(kind, 0)
+            kind_indexes[kind] = kind_index + 1
+            candidate_out = dict(baseline_out)
+            candidate_ctx = replace(
+                ctx,
+                out=candidate_out,
+                intent=candidate,
+                intent_kind=cluster.kind,
+                intent_candidates=None,
+                candidate_kind_index=kind_index,
+                candidate_kind_count=kind_counts[kind],
+                conversation_intent_handled=False,
+                draft_staged=False,
+            )
+            fn(candidate_ctx)
+            ctx.out.update(candidate_out)
+        return
+
     seen: set = set()
     for cluster in materialize_clusters_ordered():
         fn = cluster.materialize_fn
@@ -239,7 +279,28 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     elif committed_draft is not None and not has_pending_directive:
         existing_draft_text = str(committed_draft["text"] or "")
 
-    if intent is not None and intent_kind == "draft" and not has_existing_draft:
+    if (
+        intent is not None
+        and intent_kind == "draft"
+        and ctx.candidate_kind_count > 1
+    ):
+        if "draft_texts" not in ctx.batch_state:
+            batch_res = extract_draft_intent(
+                ctx.player_message,
+                ctx.reply,
+                llm_config=ctx.llm_config,
+                draft_count=ctx.candidate_kind_count,
+            )
+            ctx.batch_state["draft_texts"] = list(batch_res.get("draft_texts") or [])
+        draft_texts = ctx.batch_state["draft_texts"]
+        if ctx.candidate_kind_index >= len(draft_texts):
+            return
+        draft_res = {
+            "draft_action": "拟旨",
+            "draft_text": draft_texts[ctx.candidate_kind_index],
+            "target_candidate": "",
+        }
+    elif intent is not None and intent_kind == "draft" and not has_existing_draft:
         draft_res = {"draft_action": "拟旨", "draft_text": ctx.reply, "target_candidate": ""}
     else:
         draft_res = extract_draft_intent(
@@ -258,7 +319,12 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
-        if dir_candidates and _target == "新":
+        if ctx.candidate_kind_count > 1:
+            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
+                session.state.turn, minister_name,
+                payload={"text": draft_res["draft_text"], "actor": minister_name},
+            )
+        elif dir_candidates and _target == "新":
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
                 payload={"text": draft_res["draft_text"], "actor": minister_name},
