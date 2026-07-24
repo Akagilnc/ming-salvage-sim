@@ -1170,12 +1170,32 @@ def test_advance_without_edict_preserves_default_consented_directive(game):
                                 payload={"text": "孤儿草稿", "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
-    with pytest.raises(ValueError, match="默认同意拟旨待成案"):
-        advance_without_edict(state, db, content=content)
+    assert advance_without_edict(state, db, content=content) is False
 
     assert state.turn == turn_before
     rows = db.list_pending_actions(turn_before)
     assert len(rows) == 1 and rows[0]["kind"] == "directive"
+
+
+def test_session_end_turn_routes_default_consent_through_normal_settlement(
+    game, monkeypatch,
+):
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    db.upsert_pending_directive(
+        state.turn, name, payload={"text": "着查河工", "actor": name},
+    )
+    sess = _fake_session(db, state)
+    sess.content = content
+    called = []
+    monkeypatch.setattr(
+        sess, "resolve_turn", lambda: called.append(state.turn), raising=False,
+    )
+
+    GameSession.advance_without_decree(sess)
+
+    assert called == [state.turn]
+    assert db.list_pending_actions(state.turn)
 
 
 def test_discard_pending_directives_does_not_commit_outer_transaction(game):
@@ -1300,14 +1320,14 @@ def test_extract_draft_intent_preserves_complete_mechanical_payload(monkeypatch)
             "动作类型": "grant_allocation",
             "目标类型": "account",
             "目标ID": "国库",
-            "金额": -10,
+            "金额": 10,
             "账户": "国库",
         }, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
     result = cb.extract_draft_intent("拟旨拨帑", "着拨国库十两赈济")
     assert result["dossier_action_type"] == "grant_allocation"
-    assert result["amount"] == -10
+    assert result["amount"] == 10
     assert result["account"] == "国库"
 
 

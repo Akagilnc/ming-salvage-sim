@@ -2296,6 +2296,14 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
+            self.db.list_directives(self.state, statuses=("pending",))
+            or any(
+                row.get("kind") == "directive"
+                for row in self.db.list_pending_actions(self.state.turn)
+            )
+        ):
+            raise ValueError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
             # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
@@ -2360,6 +2368,10 @@ class GameSession:
             wait_timeout_s=inflight_wait_s,
             beat_generator=production_beat_generator,
         )
+        # 结束回合才执行“不回=默认同意”；preview 阶段仍可撤回。旧式 pending
+        # turn_directives 与 pending_actions 都汇入各自既有幂等确认/成案口。
+        for pending in self.db.list_directives(self.state, statuses=("pending",)):
+            self.db.confirm_directive(int(pending["id"]))
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
@@ -2441,6 +2453,14 @@ class GameSession:
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+        if (
+            self.db.list_directives(self.state, statuses=("pending",))
+            or any(
+                row.get("kind") == "directive"
+                for row in self.db.list_pending_actions(self.state.turn)
+            )
+        ):
+            raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
         # 与 resolve_turn 同守门（cmr S7 r8/r9 对称面）：暂停期大臣新拟的 pending 旨
         # 未核定不得推进——phase2（重放或重抽）随 next_period 会把它孤儿在旧回合。
         # 回写选择
@@ -2492,8 +2512,20 @@ class GameSession:
 
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
-        advance_without_edict(
+        has_default_approved_work = bool(
+            self.db.list_directives(self.state, statuses=("pending",))
+        ) or any(
+            row.get("kind") == "directive"
+            for row in self.db.list_pending_actions(self.state.turn)
+        )
+        if has_default_approved_work:
+            self.resolve_turn()
+            return
+        advanced = advance_without_edict(
             self.state, self.db, content=self.content, registry=self.registry)
+        if not advanced:
+            self.resolve_turn()
+            return
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
 

@@ -1066,7 +1066,7 @@ def extract_draft_intent(
         'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment",\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
         '  "目标ID": "",\n'
-        '  "金额": null,\n'
+        '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
         '  "账户": "",\n'
         '  "承办人": "",\n'
         '  "授权ID": ""\n'
@@ -1136,10 +1136,22 @@ def extract_draft_intent(
         "assignee": str(obj.get("承办人") or "").strip(),
         "authorization_id": str(obj.get("授权ID") or "").strip(),
     }
+    try:
+        mechanical["amount"] = (
+            int(mechanical["amount"]) if mechanical["amount"] is not None else None
+        )
+    except (TypeError, ValueError):
+        mechanical["amount"] = None
     complete = {
-        "grant_allocation": mechanical["amount"] is not None and bool(mechanical["account"]),
+        "grant_allocation": (
+            mechanical["amount"] is not None
+            and mechanical["amount"] > 0
+            and bool(mechanical["account"])
+        ),
         "assignment": bool(mechanical["assignee"]),
-        "authorization": bool(mechanical["authorization_id"]),
+        "authorization": bool(
+            mechanical["authorization_id"] and mechanical["assignee"]
+        ),
     }
     if dossier_action in complete and not complete[dossier_action]:
         dossier_action = "special_decree"

@@ -295,7 +295,7 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         action_type="grant_allocation",
         decree_text="拨国库十两赈济",
         payload={
-            "account": "国库", "delta": -10, "category": "赈济",
+            "account": "国库", "amount": 10, "category": "赈济",
             "reason": "奉旨赈济", "immediate_terminal": True,
         },
     )
@@ -392,7 +392,7 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
             "actor": actor,
             "dossier_action_type": "grant_allocation",
             "account": "国库",
-            "delta": -10,
+            "amount": 10,
             "category": "赈济",
             "immediate_terminal": True,
         },
@@ -495,3 +495,90 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         dossier["id"], "fulfilled", "任事已毕", state.turn,
     )
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
+
+
+def test_real_allocation_capture_materializes_one_negative_treasury_move(
+    game, monkeypatch,
+):
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    actor = _active_minister(db)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "目标类型": "account",
+            "目标ID": "国库",
+            "金额": 10,
+            "账户": "国库",
+        }, ensure_ascii=False), 1),
+    )
+    captured = cli_backend.extract_draft_intent(
+        "拟旨拨帑赈济", "着拨国库十万两赈济",
+    )
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=actor,
+        payload={"text": captured["draft_text"], "actor": actor, **{
+            key: captured[key] for key in (
+                "dossier_action_type", "target_kind", "target_id",
+                "amount", "account",
+            )
+        }},
+    )
+    before = state.metrics["国库"]
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content,
+    )
+    assert state.metrics["国库"] == before - 10
+    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
+
+
+def test_real_authorization_capture_resolves_assignee_before_grant(
+    game, monkeypatch,
+):
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    actor = _active_minister(db)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "authorization",
+            "目标类型": "character",
+            "目标ID": actor,
+            "承办人": actor,
+            "授权ID": "理财",
+        }, ensure_ascii=False), 1),
+    )
+    captured = cli_backend.extract_draft_intent(
+        "拟旨授权其理财", "特授理财之权",
+    )
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=actor,
+        payload={"text": captured["draft_text"], "actor": actor, **{
+            key: captured[key] for key in (
+                "dossier_action_type", "target_kind", "target_id",
+                "assignee", "authorization_id",
+            )
+        }},
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    payload = json.loads(dossier["payload_json"])
+    assert payload["assignee_id"] == actor
+    assert "assignee" not in payload
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content,
+    )
+    assert "理财" in db.active_skill_grants(actor)
