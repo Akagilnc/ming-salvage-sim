@@ -44,6 +44,65 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
 
+def test_pending_directive_only_enters_settlement_after_final_approval(game):
+    db, state, content = game
+    minister = _active_minister(db)
+    before = state.metrics["国库"]
+
+    rejected_candidate_id = db.stage_directive_candidate(
+        state.turn, minister, {
+            "text": "拟拨十两赈济", "actor": minister,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief-rejected",
+            "amount": 10, "account": "国库",
+            "execution_surface": "immediate",
+        },
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[rejected_candidate_id],
+        directive_status="pending",
+    )
+    rejected_directive_id = int(db.conn.execute(
+        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        (rejected_candidate_id,),
+    ).fetchone()["committed_directive_id"])
+
+    assert db.get_dossier_for_directive(rejected_directive_id) is None
+    assert db.list_decree_dossiers_for_simulation(state.turn) == []
+    db.reject_directive(rejected_directive_id)
+    assert db.get_dossier_for_directive(rejected_directive_id) is None
+    assert db.list_decree_dossiers_for_simulation(state.turn) == []
+    assert state.metrics["国库"] == before
+
+    approved_candidate_id = db.stage_directive_candidate(
+        state.turn, minister, {
+            "text": "准拨十两赈济", "actor": minister,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief-approved",
+            "amount": 10, "account": "国库",
+            "execution_surface": "immediate",
+        },
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[approved_candidate_id],
+        directive_status="pending",
+    )
+    approved_directive_id = int(db.conn.execute(
+        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        (approved_candidate_id,),
+    ).fetchone()["committed_directive_id"])
+    db.confirm_directive(approved_directive_id, state)
+
+    dossier = db.get_dossier_for_directive(approved_directive_id)
+    assert [row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)] == [
+        dossier["id"],
+    ]
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+    )
+    assert state.metrics["国库"] == before - 10
+
+
 def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     db, state, content = game
     minister = _active_minister(db)
