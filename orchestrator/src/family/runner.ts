@@ -1449,6 +1449,50 @@ export async function runFamily(
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
     if (escalation.escalationKind !== "decision" || answer === undefined) {
+      const isLegacyCargoLess =
+        escalation.terminalStatus === undefined ||
+        escalation.terminalChildren === undefined ||
+        (escalation.terminalStatus === "failed" &&
+          escalation.terminalCause === undefined);
+      if (isLegacyCargoLess) {
+        const isDecisionPark =
+          escalation.escalationKind === "decision" && answer === undefined;
+        const reason =
+          typeof escalation.reason === "string" &&
+          escalation.reason.trim().length > 0
+            ? escalation.reason
+            : "family escalation is not answered";
+        return await finalizeFamilyTerminal({
+          familyBackend,
+          epic: input.epic,
+          epicIssue: input.epic.issue,
+          familyBase,
+          familyHead: escalation.familyHeadAfter,
+          recordedResults: [],
+          familyStopSummary,
+          intent: isDecisionPark
+            ? {
+                kind: "parked",
+                parkReason: "decision_gate_park",
+                escalationReason: reason,
+                escalation: {
+                  reason,
+                  diagnosis:
+                    "Legacy family decision escalation has no terminal replay cargo and no later valid answer.",
+                },
+              }
+            : {
+                kind: "failed",
+                cause: "runner_internal_error",
+                escalationReason: reason,
+                escalation: {
+                  reason,
+                  diagnosis:
+                    "Legacy family failure escalation has no terminal replay cargo.",
+                },
+              },
+        });
+      }
       return await replayPriorFamilyEscalation({
         epicIssue: input.epic.issue,
         familyBase,

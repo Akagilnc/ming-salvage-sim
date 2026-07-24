@@ -553,6 +553,24 @@ export async function finalizeFamilyTerminal(opts: {
         headMetadata: input.headMetadata,
       });
     }
+    const terminalChildren =
+      input.ignoreFailedIssues === undefined
+        ? children
+        : children.map((child) =>
+            child.status === "failed" &&
+            input.ignoreFailedIssues!.has(child.issue)
+              ? {
+                  issue: child.issue,
+                  status: "escalated" as const,
+                  escalation: {
+                    reason: input.escalation.reason,
+                    diagnosis:
+                      input.escalation.diagnosis ?? input.escalation.reason,
+                    escalationKind: "decision" as const,
+                  },
+                }
+              : child,
+          );
     const thisRunHead =
       typeof opts.familyHead === "string" && opts.familyHead.trim().length > 0
         ? opts.familyHead
@@ -579,7 +597,7 @@ export async function finalizeFamilyTerminal(opts: {
             status: "parked",
             familyBase: opts.familyBase,
             ...(familyHead !== undefined ? { familyHead } : {}),
-            children,
+            children: terminalChildren,
             escalationReason: input.escalationReason,
             decisionGatePark: true,
             admissionSkipped: opts.epic.admissionSkipped,
@@ -594,7 +612,7 @@ export async function finalizeFamilyTerminal(opts: {
         diagnosis: input.escalation.diagnosis,
         familyHeadAfter: familyHead,
         stopSummary,
-        terminalChildren: children,
+        terminalChildren,
         terminalStatus: "parked",
       });
     }
@@ -614,7 +632,7 @@ export async function finalizeFamilyTerminal(opts: {
       ...(familyHead !== undefined ? { familyHead } : {}),
       escalation: input.escalation,
       stopSummary,
-      children,
+      children: terminalChildren,
       ...(opts.epic.admissionSkipped !== undefined &&
       opts.epic.admissionSkipped.length > 0
         ? { admissionSkipped: opts.epic.admissionSkipped }

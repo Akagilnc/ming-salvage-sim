@@ -184,4 +184,35 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     expect(result.stopSummary?.reason).toBe("infra_failure");
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
   });
+
+  it("legacy unanswered decision without terminal cargo uses the resumable park fallback", async () => {
+    const familyBackend = new SeededFamilyBackend([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "legacy family decision still needs an answer",
+        familyHeadAfter: "family-head-legacy",
+      } as FamilyLedgerEntry,
+    ]);
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: "family/604-base",
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.children).toEqual([
+      {
+        issue: 11,
+        status: "skipped",
+        reason: "not_scheduled_this_invocation",
+      },
+    ]);
+  });
 });
