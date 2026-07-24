@@ -289,53 +289,41 @@ async function decideFamilyQuotaWall(opts: {
    * Mutated here when this wall's pool is recorded.
    */
   readonly wallHitBillingPools?: Set<BillingPoolId>;
-  /**
-   * #1125: when true, skip normalize here — caller drains then normalizes once
-   * (merge / IC remount paths). Default false: normalize once in this helper.
-   */
-  readonly deferChildNormalize?: boolean;
 }): Promise<FamilyQuotaWallDecision> {
   const buildParkResult = async (
     stopSummary: StopSummary,
     escalation?: { readonly reason: string; readonly diagnosis: string },
   ): Promise<FamilyQuotaWallDecision> => {
-    // #1125: at most one normalize per terminal. Defer when caller remounts.
-    const children = opts.deferChildNormalize
-      ? [...opts.recordedResults]
-      : await normalizeTerminalChildren({
-          epicChildren: opts.epicChildren,
-          recordedResults: opts.recordedResults,
-          familyBackend: opts.familyBackend,
-        });
-    // #1007: quota / relay-admission park (all barrier.kind==="park" early returns).
-    emitExitProgress({
-      epic: opts.epicIssue,
-      status: "parked",
-      stopReason: stopSummary.reason,
-      gateSummary:
-        escalation?.diagnosis ??
-        escalation?.reason ??
-        stopSummary.summary,
-    });
-    return {
-      kind: "park",
-      result: {
-        status: "parked",
-        familyBase: opts.familyBase,
-        familyHead: opts.familyHead,
+    const result = await finalizeFamilyTerminal({
+      familyBackend: opts.familyBackend,
+      epic: {
+        issue: opts.epicIssue,
+        children: opts.epicChildren,
+        ...(opts.admissionSkipped !== undefined
+          ? { admissionSkipped: opts.admissionSkipped }
+          : {}),
+      },
+      epicIssue: opts.epicIssue,
+      familyBase: opts.familyBase,
+      ...(opts.familyHead !== undefined ? { familyHead: opts.familyHead } : {}),
+      recordedResults: opts.recordedResults,
+      familyStopSummary,
+      intent: {
+        kind: "parked",
+        parkReason: "provider_degraded",
+        escalationReason: escalation?.reason ?? stopSummary.summary,
         escalation: escalation ?? {
           reason: stopSummary.summary,
           diagnosis:
             stopSummary.repairHint ??
             "wait for provider quota reset, then re-feed the family run",
         },
-        stopSummary,
-        children,
-        ...(opts.admissionSkipped !== undefined &&
-        opts.admissionSkipped.length > 0
-          ? { admissionSkipped: opts.admissionSkipped }
-          : {}),
+        stopSummaryOverride: stopSummary,
       },
+    });
+    return {
+      kind: "park",
+      result,
     };
   };
 
@@ -617,8 +605,6 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
    * Seed so a baton pool from a prior barrier is not dropped on the next.
    */
   readonly initialRelayBilling?: FamilyRelayBillingBinding;
-  /** #1125: pass through to decideFamilyQuotaWall (caller remounts once). */
-  readonly deferChildNormalize?: boolean;
 }): Promise<
   | {
       readonly kind: "ok";
@@ -663,9 +649,6 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
           : {}),
         ...(opts.wallHitBillingPools !== undefined
           ? { wallHitBillingPools: opts.wallHitBillingPools }
-          : {}),
-        ...(opts.deferChildNormalize === true
-          ? { deferChildNormalize: true }
           : {}),
         relayHandoffsSoFar: opts.relayHandoffs.count,
       });
@@ -2378,25 +2361,26 @@ export async function runFamily(
    * - Hard fail: optional `beforeFailFinalize` runs first so call sites can
    *   #938-drain settled wave siblings into `childResults` before finalize
    *   residual-maps them to fake `skipped` (CORR-C1).
-   * - Quota park: park snapshot was built from pre-drain `recordedResults`;
-   *   optional `remountChildrenOnPark` drains + remounts honest children onto
-   *   the park result (CORR-C2; mirrors merge-wall residualChildrenAfterDrain).
+   * Quota parks are finalized once inside the quota wall from the shared
+   * recorded-results array; callers never remount a terminal result.
    */
   const awaitPendingCorrectnessCheckpoint = async (opts?: {
     readonly beforeFailFinalize?: () => void;
-    readonly remountChildrenOnPark?: () => Promise<FamilyChildResult[]>;
   }): Promise<FamilyRunResult | undefined> => {
     if (pendingCorrectnessCheckpoint === undefined) return undefined;
     const barrier = await pendingCorrectnessCheckpoint;
     pendingCorrectnessCheckpoint = undefined;
     if (barrier.kind === "park") {
-      // #1125: single normalize after optional drain (barrier deferred children).
-      if (opts?.remountChildrenOnPark !== undefined) {
-        const children = await opts.remountChildrenOnPark();
-        return attachDiagnostics({ ...barrier.result, children });
-      }
-      const children = await normalizeChildren(childResults);
-      return attachDiagnostics({ ...barrier.result, children });
+      // The checkpoint may have hit quota while the next wave was still
+      // settling. Overlay those now-durable in-memory outcomes without a second
+      // ledger read/normalization or another skip warning.
+      const settledByIssue = new Map(childResults.map((child) => [child.issue, child]));
+      return attachDiagnostics({
+        ...barrier.result,
+        children: barrier.result.children.map(
+          (child) => settledByIssue.get(child.issue) ?? child,
+        ),
+      });
     }
     activeRoute = barrier.route;
     if (barrier.relayBilling !== undefined) {
@@ -2425,7 +2409,6 @@ export async function runFamily(
     const checkpointHead = familyHead;
     pendingCorrectnessCheckpoint = runFamilyBarrierWithQuotaRelay({
       phase: "correctness_checkpoint",
-      deferChildNormalize: true,
       familyBackend,
       singleSliceBackend,
       familyBase,
@@ -2630,11 +2613,6 @@ export async function runFamily(
         recorded.add(sibling.issue);
       }
     };
-    /** #938 / #1125: drain allSettled peers then sole normalizer for early exits. */
-    const residualChildrenAfterDrain = async (): Promise<FamilyChildResult[]> => {
-      drainRemainingWaveSiblings();
-      return normalizeChildren(childResults);
-    };
     // #961: await in-flight IC before parent merge (ADR 0139: merge + CMR fix
     // serial under Family Flow). Child coding above already ran in parallel with
     // any prior checkpoint — no Runner lock on lastCorrectnessConvergedHead.
@@ -2643,19 +2621,21 @@ export async function runFamily(
     // CORR-C2: same drain+remount on IC quota-park (park snapshot otherwise
     // residual-maps executed siblings to fake `skipped`).
     {
+      drainRemainingWaveSiblings();
       const icStopBeforeMerge = await awaitPendingCorrectnessCheckpoint({
         beforeFailFinalize: drainRemainingWaveSiblings,
-        remountChildrenOnPark: residualChildrenAfterDrain,
       });
       if (icStopBeforeMerge !== undefined) return icStopBeforeMerge;
     }
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
+        // The quota terminal must see every already-settled sibling before its
+        // single normalization; later successful merge records supersede `ran`.
+        drainRemainingWaveSiblings();
         // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
         // not kill the family run outside the decision loop.
         const mergeBarrier = await runFamilyBarrierWithQuotaRelay({
           phase: "merge",
-          deferChildNormalize: true,
           familyBackend,
           singleSliceBackend,
           familyBase,
@@ -2690,10 +2670,7 @@ export async function runFamily(
             }),
         });
         if (mergeBarrier.kind === "park") {
-          // #938: remount residual children after drain so executed siblings stay
-          // honest `ran`, not fake `skipped`; attach wave diagnostics too.
-          const children = await residualChildrenAfterDrain();
-          return attachDiagnostics({ ...mergeBarrier.result, children });
+          return attachDiagnostics(mergeBarrier.result);
         }
         activeRoute = mergeBarrier.route;
         if (mergeBarrier.relayBilling !== undefined) {
