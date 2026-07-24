@@ -13431,12 +13431,25 @@ class GameDB:
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
-        with atomic(self):
-            self._append_secret_order_line(
-                order_id, "sim_note", sim_note, year, period, commit=False,
+        if commit:
+            with atomic(self):
+                self._update_secret_order_sim_note_in_transaction(
+                    order_id, sim_note, year, period,
+                )
+        else:
+            self._update_secret_order_sim_note_in_transaction(
+                order_id, sim_note, year, period,
             )
-            self.mark_secret_order_in_progress(order_id, commit=False)
         tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+
+    def _update_secret_order_sim_note_in_transaction(
+        self, order_id: int, sim_note: str, year: int, period: int,
+    ) -> None:
+        """调用方持有事务时写密令实况并同步案卷，不自行落定。"""
+        self._append_secret_order_line(
+            order_id, "sim_note", sim_note, year, period, commit=False,
+        )
+        self.mark_secret_order_in_progress(order_id, commit=False)
 
     def mark_secret_order_in_progress(
         self, order_id: int, *, commit: bool = True,
