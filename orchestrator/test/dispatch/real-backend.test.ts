@@ -1626,6 +1626,42 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
+  it("#924 dead coder session falls back to a fresh RealBackend run and survives", async () => {
+    const backend = makeBackend();
+    backend.agentFailures.push(
+      new Error(
+        'resumeSession "prior-coder-session" not found under /tmp/sc',
+      ),
+    );
+    backend.agentResult = agentRunResult({
+      stdout: "fresh coder continued from the preserved worktree",
+      commits: [{ sha: "abc123" }],
+      sessionId: "fresh-coder-session",
+      output: CODER_COMPLETED_ENVELOPE,
+    });
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-924",
+          base: "main",
+          path: "/tmp/worktree/issue-924",
+        },
+        "prior-coder-session",
+      ),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "fresh-coder-session",
+    });
+
+    expect(backend.agentOptions).toHaveLength(2);
+    expect(backend.agentOptions[0]!.resumeSession).toBe(
+      "prior-coder-session",
+    );
+    expect(backend.agentOptions[1]!.resumeSession).toBeUndefined();
+  });
+
   it("propagates nested StructuredOutputError on resume without dead-session fresh-run (G-R4-1)", async () => {
     // Outer wrapper message looks like dead-session, but cause is SOE.
     // Resume must walk the chain (isReceiptRecoveryFailure) — not classify outer
