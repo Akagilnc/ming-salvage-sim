@@ -963,8 +963,8 @@ def classify_cli_action_intent(
     schema_obj = classifier_json_fields_prompt()
     prompt = (
         "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
-        "判断本轮是否属于一个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
-        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+        "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
+        "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
         "规则：确认优先于新动作；拟旨优先于任免；问询、查账、问军情、泛泛商议填无。\n"
         "没有现有密令时不要硬判密令动作；非妃嫔不要硬判调教。\n\n"
@@ -980,7 +980,9 @@ def classify_cli_action_intent(
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
         return []
-    obj = _loads_lenient(raw) or {}
+    obj = _loads_lenient(raw, accepted_types=(dict, list))
+    if obj is None:
+        obj = {}
     # 列表契约：对象或 list 均走登记表 soft 归一；坏 shape / 无 → []。
     return candidates_from_classifier_payload(obj, soft=True)
 
@@ -1337,14 +1339,25 @@ def _strip_jsonc(body: str) -> str:
     return _scan_outside_strings(_scan_outside_strings(body, _strip_comment), _strip_trailing_comma)
 
 
-def _loads_lenient(raw: str) -> Optional[dict]:
-    """容错解析 JSON：剥代码围栏、截首 { 到末 }。失败返回 None。"""
+def _loads_lenient(
+    raw: str, *, accepted_types: tuple[type, ...] = (dict,),
+) -> Optional[Any]:
+    """容错解析 JSON：剥代码围栏并截取首个受理容器。失败返回 None。"""
     t = (raw or "").strip()
     if t.startswith("```"):
         t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
         t = re.sub(r"\s*```$", "", t).strip()
-    i, j = t.find("{"), t.rfind("}")
-    if i == -1 or j == -1 or j <= i:
+    starts = []
+    if dict in accepted_types:
+        starts.append((t.find("{"), "}"))
+    if list in accepted_types:
+        starts.append((t.find("["), "]"))
+    starts = [(index, closer) for index, closer in starts if index >= 0]
+    if not starts:
+        return None
+    i, closer = min(starts, key=lambda item: item[0])
+    j = t.rfind(closer)
+    if j <= i:
         return None
     body = t[i:j + 1]
     try:
@@ -1357,7 +1370,7 @@ def _loads_lenient(raw: str) -> Optional[dict]:
             obj = json.loads(_strip_jsonc(body))
         except (ValueError, TypeError):
             return None
-    return obj if isinstance(obj, dict) else None
+    return obj if isinstance(obj, accepted_types) else None
 
 
 def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:

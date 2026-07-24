@@ -294,6 +294,28 @@ def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
     assert sess._finish_cli_action_intent(None) is None
 
 
+def test_classifier_accepts_top_level_candidate_array(monkeypatch):
+    """真实 classifier 入口保留一句多旨的顶层候选数组。"""
+    raw = json.dumps([
+        {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
+        {
+            "动作类型": "任免",
+            "确认": "",
+            "密令动作": "",
+            "任免动作": "任命",
+            "姓名": "孙传庭",
+            "官职": "陕西巡抚",
+        },
+    ], ensure_ascii=False)
+    monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 0))
+
+    candidates = cb.classify_cli_action_intent("拟旨赈灾，并任孙传庭为陕西巡抚")
+    assert [candidate["kind"] for candidate in candidates] == ["draft", "appointment"]
+    assert candidates[1]["appoint_action"] == "任命"
+    assert candidates[1]["name"] == "孙传庭"
+    assert candidates[1]["office"] == "陕西巡抚"
+
+
 def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
     """双向 barrier：classifier 进入后等 reply 进入；reply 进入后确认 classifier 在飞。
 
