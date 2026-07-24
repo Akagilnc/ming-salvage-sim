@@ -1158,10 +1158,8 @@ def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
 
 # ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
 
-def test_advance_without_edict_discards_pending_directive(game):
-    """退朝无诏时，advance_without_edict 必须丢弃 kind=directive pending，
-    不得把它 commit 成 turn_directives(draft) 孤儿（codex r5 F2）。
-    孤儿 draft 永不经 extractor、不可见；本测试确认退朝后 turn_directives 为空。"""
+def test_advance_without_edict_preserves_default_consented_directive(game):
+    """无诏快路不能删除默认同意的拟旨，须交回正常案卷结算路。"""
     from ming_sim.decree import advance_without_edict
 
     db, state, content = game
@@ -1172,23 +1170,12 @@ def test_advance_without_edict_discards_pending_directive(game):
                                 payload={"text": "孤儿草稿", "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
-    advance_without_edict(state, db, content=content)
+    with pytest.raises(ValueError, match="默认同意拟旨待成案"):
+        advance_without_edict(state, db, content=content)
 
-    # 退朝后回合推进
-    assert state.turn == turn_before + 1
-
-    # 旧回合 pending_actions 全部清空（directive 已被 discard，不留 pending）
-    old_pa = db.conn.execute(
-        "SELECT * FROM pending_actions WHERE turn=? AND status='pending'",
-        (turn_before,)).fetchall()
-    assert old_pa == [], "退朝后旧回合不得有 pending 行残留"
-
-    # 旧回合 turn_directives 不应有任何行（directive 被丢弃，不插成孤儿 draft）
-    orphan_drafts = db.conn.execute(
-        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (turn_before,)).fetchone()[0]
-    assert orphan_drafts == 0, (
-        f"退朝无诏不应在旧回合建 turn_directives 行，找到 {orphan_drafts} 行（codex r5 F2）"
-    )
+    assert state.turn == turn_before
+    rows = db.list_pending_actions(turn_before)
+    assert len(rows) == 1 and rows[0]["kind"] == "directive"
 
 
 def test_discard_pending_directives_does_not_commit_outer_transaction(game):

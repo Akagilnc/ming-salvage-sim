@@ -1299,6 +1299,8 @@ class GameDB:
                 action_type TEXT NOT NULL,
                 target_kind TEXT NOT NULL DEFAULT '',
                 target_id TEXT NOT NULL DEFAULT '',
+                executor_kind TEXT NOT NULL DEFAULT '',
+                executor_id TEXT NOT NULL DEFAULT '',
                 source_chat_turn_id INTEGER NOT NULL DEFAULT 0,
                 pending_action_id INTEGER NOT NULL DEFAULT 0,
                 directive_id INTEGER,
@@ -1336,6 +1338,8 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
+            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor
+                ON decree_dossiers(executor_kind, executor_id, status);
 
             CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1851,6 +1855,12 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
+            "ON decree_dossiers(executor_kind, executor_id, status)"
+        )
         self.conn.commit()
         self._migrate_legacy_office_pollution()
         # #9 R1 finding#1 [P1]：老档迁移校准须放在「seed 路 + driver 路」都过的点。driver.open_game
@@ -9480,6 +9490,8 @@ class GameDB:
         decree_text: str,
         target_kind: str = "",
         target_id: object = "",
+        executor_kind: str = "",
+        executor_id: object = "",
         source_chat_turn_id: int = 0,
         pending_action_id: int = 0,
         directive_id: int = 0,
@@ -9533,13 +9545,15 @@ class GameDB:
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
-                (action_type,target_kind,target_id,source_chat_turn_id,pending_action_id,
+                (action_type,target_kind,target_id,executor_kind,executor_id,
+                 source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
                  extension_json,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, str(target_kind or ""), str(target_id or ""),
+                str(executor_kind or ""), str(executor_id or ""),
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
@@ -9607,10 +9621,10 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         try:
             entries = json.loads(row["stigma_json"] or "[]")
-        except (TypeError, ValueError):
-            entries = []
+        except (TypeError, ValueError) as exc:
+            raise ValueError("案卷 stigma_json 已损坏，拒绝静默覆写") from exc
         if not isinstance(entries, list):
-            entries = []
+            raise ValueError("案卷 stigma_json 必须为列表，拒绝静默覆写")
         entries.append(dict(entry or {}))
         self.conn.execute(
             "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -9899,11 +9913,14 @@ class GameDB:
         rows = self.conn.execute(
             """
             SELECT id,secret_order_id,status FROM decree_dossiers
-            WHERE target_kind='character' AND target_id=?
+            WHERE (
+                    (target_kind='character' AND target_id=?)
+                 OR (executor_kind='character' AND executor_id=?)
+                  )
               AND status IN ('promulgated','executing')
             ORDER BY id
             """,
-            (str(character_name),),
+            (str(character_name), str(character_name)),
         ).fetchall()
         materializing = int(getattr(self.conn, "_materializing_dossier_id", 0) or 0)
         rows = [row for row in rows if int(row["id"]) != materializing]
@@ -12714,8 +12731,8 @@ class GameDB:
                 state,
                 action_type="secret_order",
                 decree_text=content,
-                target_kind="character",
-                target_id=minister_name,
+                executor_kind="character",
+                executor_id=minister_name,
                 source_chat_turn_id=source_chat_turn_id,
                 pending_action_id=int(pending_action_id or 0),
                 secret_order_id=order_id,

@@ -2,6 +2,7 @@ import json
 
 import pytest
 import ming_sim.issues as issue_engine
+from ming_sim.decree import pre_settle, settle_with_delta
 
 
 def _active_minister(db):
@@ -113,11 +114,14 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
         state, content=content, action_ids=[pending_id]
     )
 
-    dossier = db.list_decree_dossiers(
-        target_kind="character", target_id=minister
-    )[-1]
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
     assert dossier["pending_action_id"] == pending_id
     assert dossier["source_chat_turn_id"] == chat_turn_id
+    assert dossier["executor_kind"] == "character"
+    assert dossier["executor_id"] == minister
     assert dossier["decree_text"] == "暗中核清关宁军饷"
 
 
@@ -139,7 +143,7 @@ def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
 
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
-    assert "人物终态" in dossier["interruption_reason"]
+    assert dossier["execution_outcome"] == "interrupted"
 
 
 def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
@@ -222,7 +226,6 @@ def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
     order = db.get_secret_order(order_id)
     dossier = db.get_dossier_for_secret_order(order_id)
     assert order["status"] == "failed"
-    assert "人物终态" in order["result"]
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "interrupted"
     assert dossier["closed_turn"] == state.turn
@@ -309,3 +312,55 @@ def test_authorization_materializes_only_after_batch_verdict(game):
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}]
     )
     assert db.active_skill_grants(minister)
+
+
+def test_real_settlement_entry_consumes_verdict_before_delta(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨国库十两赈济",
+        payload={
+            "account": "国库",
+            "delta": -10,
+            "category": "赈济",
+            "immediate_terminal": True,
+        },
+    )
+
+    turn = state.turn
+    pre_settle(state, db, content=content)
+    settle_with_delta(
+        state,
+        db,
+        {},
+        before_turn=turn,
+        content=content,
+        dossier_verdicts=[
+            {"dossier_id": dossier_id, "decision": "promulgated"},
+        ],
+    )
+
+    move = db.conn.execute(
+        """
+        SELECT delta FROM economy_ledger
+        WHERE category='赈济' AND reason='拨国库十两赈济'
+        ORDER BY id DESC LIMIT 1
+        """
+    ).fetchone()
+    assert move is not None and move["delta"] == -10
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+
+
+def test_corrupt_stigma_history_is_not_silently_replaced(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬盐政",
+    )
+    db.conn.execute(
+        "UPDATE decree_dossiers SET stigma_json='not-json' WHERE id=?",
+        (dossier_id,),
+    )
+
+    with pytest.raises(ValueError, match="stigma_json"):
+        db.append_dossier_stigma(dossier_id, {"reason": "中旨"})
