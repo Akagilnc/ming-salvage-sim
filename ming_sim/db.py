@@ -9483,6 +9483,46 @@ class GameDB:
             return "assignment"
         return "special_decree"
 
+    def _normalize_directive_dossier_payload(
+        self, payload: Dict[str, object], *, content=None,
+    ) -> Dict[str, object]:
+        """机械旨意的唯一结构边界；不完整载荷明确降为叙事旨。"""
+        normalized = dict(payload)
+        action = str(normalized.get("dossier_action_type") or "").strip()
+        if action == "grant_allocation":
+            try:
+                amount = int(normalized.get("amount"))
+            except (TypeError, ValueError):
+                amount = 0
+            account = str(normalized.get("account") or "").strip()
+            if amount <= 0 or not account:
+                normalized["dossier_action_type"] = "special_decree"
+            else:
+                normalized["amount"] = amount
+                normalized["account"] = account
+                normalized.pop("delta", None)
+        elif action in {"assignment", "authorization"}:
+            assignee = str(
+                normalized.get("assignee_id") or normalized.get("assignee") or ""
+            ).strip()
+            if assignee and content is not None:
+                from ming_sim.session import _find_existing_minister
+                assignee = _find_existing_minister(content, assignee, self) or ""
+            authorization_id = str(
+                normalized.get("authorization_id") or ""
+            ).strip()
+            complete = bool(assignee) and (
+                action != "authorization" or bool(authorization_id)
+            )
+            if not complete:
+                normalized["dossier_action_type"] = "special_decree"
+            else:
+                normalized["assignee_id"] = assignee
+                normalized.pop("assignee", None)
+                if action == "authorization":
+                    normalized["authorization_id"] = authorization_id
+        return normalized
+
     def _commit_dossier_write(self, commit: bool) -> None:
         if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
             getattr(self.conn, "_atomic_depth", 0) or 0
@@ -9929,10 +9969,13 @@ class GameDB:
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
+                amount = int(payload.get("amount") or 0)
+                if amount <= 0:
+                    raise ValueError("拨帑案卷 amount 必须为正数")
                 self.record_issue_economy_move(
                     state,
                     str(payload.get("account") or payload.get("target_account") or ""),
-                    int(payload.get("delta") or payload.get("amount") or 0),
+                    -amount,
                     str(payload.get("category") or "奉旨拨帑"),
                     str(payload.get("reason") or row["decree_text"]),
                     purpose=str(payload.get("purpose") or "") or None,
@@ -10779,6 +10822,9 @@ class GameDB:
                 registry.refresh(name)
             return True
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
+            payload = self._normalize_directive_dossier_payload(
+                payload, content=content,
+            )
             text = str(payload.get("text") or "").strip()
             actor = str(payload.get("actor") or pa["minister_name"] or "")
             if not text:
@@ -11208,6 +11254,7 @@ class GameDB:
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
+        structured = self._normalize_directive_dossier_payload(structured)
         action_type = self._directive_dossier_action_type(structured)
         return self.create_decree_dossier(
             state,
