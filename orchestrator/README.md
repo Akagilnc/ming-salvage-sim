@@ -15,6 +15,9 @@ same judge session (S3/S6 resume; `forbidFreshRetry`). Plan-phase `continue`
 resumes S2 until a construct beat lands; `converged` dismisses the court;
 `escalate` parks for a human answer then resumes in place. Fresh outer-gate
 panel legs still run after pure-judge receive when the topology requires them.
+If the backend explicitly reports that the judge session is unrecoverable, the
+seat reopens fresh at S6 with its durable prior verdicts; unknown network,
+authentication, and protocol failures still fail loudly.
 Operator truth for the child loop lives in the per-issue step ledger
 (`court_opened` / `court_dismissed`, plan|construct beat tags, progress
 `beat` events).
