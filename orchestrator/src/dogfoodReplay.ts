@@ -28,9 +28,9 @@ import {
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import {
-  isCmrPanelLegPromptFile,
+  isReviewPanelLegPromptFile,
   panelLegCompletedResult,
-} from "./family/cmrPanelLegs.js";
+} from "./family/reviewPanelLegs.js";
 import { runOrchestrator } from "./runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
@@ -638,7 +638,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     if (
       spec.kind === "reviewer" &&
       spec.role === "reviewer" &&
-      isCmrPanelLegPromptFile(spec.promptFile)
+      isReviewPanelLegPromptFile(spec.promptFile)
     ) {
       if (this.panelLegFailures.has(spec.model)) {
         return {

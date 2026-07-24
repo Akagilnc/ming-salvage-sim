@@ -3,7 +3,7 @@
  * (isomorphic to single-slice fresh reviewer), not nested CLIs inside the judge.
  *
  * Seams:
- *   1. cmrPanelLegWorkerSpec — one WorkerSpec per route leg (model/soul/session)
+ *   1. reviewPanelLegWorkerSpec — one WorkerSpec per route leg (model/soul/session)
  *   2. family CMR round — dispatches N leg workers, then judge with their prose
  *   3. leg failure/degradation — surfaces as degraded evidence, not silent success
  *   4. demolition — nested-CLI claude mount/assert plumbing is gone
@@ -24,11 +24,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   CMR_PANEL_LEG_PROMPT_FILE,
-  cmrPanelLegWorkerSpec,
-  dispatchFamilyCmrPanelLegs,
+  reviewPanelLegWorkerSpec,
+  dispatchReviewPanelLegs,
   legTransportFromPanelLegResult,
   skippedLegsFromTransports,
-} from "../../../src/family/cmrPanelLegs.js";
+} from "../../../src/family/reviewPanelLegs.js";
 import { cmrWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
 import { provisionWorkerAuth } from "../../../src/realBackend.js";
 import { successfulLegsFromTransports } from "../../../src/legPaper.js";
@@ -49,7 +49,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const soulsDir = join(here, "..", "..", "..", "image", "souls");
 const promptsDir = join(here, "..", "..", "..", "prompts");
 
-describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", () => {
+describe("#1094 reviewPanelLegWorkerSpec — fresh reviewer worker per route leg", () => {
   it("freezes each correctness leg under the explicit single-lens soul", () => {
     const legs: WorkerCmrReviewLeg[] = [
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -62,7 +62,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       "grok-4.5": "grok",
     };
     for (const leg of legs) {
-      const spec = cmrPanelLegWorkerSpec(leg, "correctness");
+      const spec = reviewPanelLegWorkerSpec(leg, { kind: "family", pass: "correctness" });
       expect(spec.kind).toBe("reviewer");
       expect(spec.role).toBe("reviewer");
       expect(spec.soul).toBe("cmr-correctness");
@@ -76,7 +76,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
       expect(spec.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
     }
     const hosts = new Set(
-      legs.map((leg) => cmrPanelLegWorkerSpec(leg, "correctness").host),
+      legs.map((leg) => reviewPanelLegWorkerSpec(leg, { kind: "family", pass: "correctness" }).host),
     );
     expect(hosts.size).toBe(legs.length);
   });
@@ -84,7 +84,7 @@ describe("#1094 cmrPanelLegWorkerSpec — fresh reviewer worker per route leg", 
 });
 
 describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
-  it("successful legs are transport-present; failed legs are skipped not silent success", () => {
+  it("only absent or non-zero transports are skipped", () => {
     const ok: WorkerResult = {
       kind: "completed",
       output: {
@@ -130,42 +130,47 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
       { family: "grok", slug: "grok-4.5" },
     ];
 
-    expect(successfulLegsFromTransports(transports)).toEqual(["gpt-5.6-sol"]);
     const skipped = skippedLegsFromTransports(declared, transports);
-    expect(skipped.map((s) => s.slug).sort()).toEqual(
-      ["agy", "grok-4.5", "opus"].sort(),
-    );
+    expect(skipped.map((s) => s.slug)).toEqual(["opus"]);
     expect(skipped.every((s) => s.reason.length > 0)).toBe(true);
   });
 });
 
 describe("#1094 family CMR round dispatches N leg workers then the judge", () => {
-  it("dispatchFamilyCmrPanelLegs fans out one worker per declared leg", async () => {
+  it("dispatchReviewPanelLegs fans out one worker per declared leg", async () => {
     const dispatched: string[] = [];
     const legs: WorkerCmrReviewLeg[] = [
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
       { family: "agy", slug: "agy" },
     ];
-    const round = await dispatchFamilyCmrPanelLegs({
+    const round = await dispatchReviewPanelLegs({
       legs,
-      cmrPass: "correctness",
+      scope: { kind: "family", pass: "correctness" },
       dispatch: async (spec) => {
         dispatched.push(`${spec.kind}:${spec.model}:${spec.soul}`);
         if (spec.model === "opus") {
-          return { kind: "failed", reason: "quota exhausted" };
+          return {
+            kind: "leg_result",
+            result: { kind: "failed", reason: "quota exhausted" },
+          };
         }
         return {
-          kind: "completed",
-          output: {
-            kind: "reviewer",
-            findingsCount: 0,
-            findings: [],
-            rawStdout: `Review from ${spec.model}: seam looks correct.\n`,
+          kind: "leg_result",
+          result: {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findingsCount: 0,
+              findings: [],
+              rawStdout: `Review from ${spec.model}: seam looks correct.\n`,
+            },
           },
         };
       },
     });
+    expect(round.kind).toBe("round");
+    if (round.kind !== "round") throw new Error("expected round");
     expect(dispatched.sort()).toEqual(
       [
         "reviewer:agy:cmr-correctness",
@@ -179,7 +184,7 @@ describe("#1094 family CMR round dispatches N leg workers then the judge", () =>
     expect(round.skippedLegs).toEqual([
       {
         slug: "opus",
-        reason: expect.stringMatching(/opus.*quota exhausted/i),
+        reason: "panel leg opus failed (exit 1)",
       },
     ]);
     expect(successfulLegsFromTransports(round.transports)).not.toContain("opus");
@@ -227,9 +232,9 @@ describe("#1094 demolition — nested-CLI claude mount plumbing is gone", () => 
     expect(cmrWorkerSpec("fresh", "correctness").promptFile).toBe(
       "integrated_cmr_correctness.md",
     );
-    const leg = cmrPanelLegWorkerSpec(
+    const leg = reviewPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
-      "completeness",
+      { kind: "family", pass: "completeness" },
     );
     expect(leg.kind).not.toBe(judge.kind);
     expect(leg.soul).not.toBe(judge.soul);
@@ -245,9 +250,9 @@ describe("#1094 F1 — concurrent panel legs get unique monitor job/log paths", 
     const telemetryDir = mkdtempSync(join(tmpdir(), "1094-monitor-"));
     try {
       const legs = [
-        cmrPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }),
-        cmrPanelLegWorkerSpec({ family: "claude", slug: "opus" }),
-        cmrPanelLegWorkerSpec({ family: "agy", slug: "agy" }),
+        reviewPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }, { kind: "family", pass: "correctness" }),
+        reviewPanelLegWorkerSpec({ family: "claude", slug: "opus" }, { kind: "family", pass: "correctness" }),
+        reviewPanelLegWorkerSpec({ family: "agy", slug: "agy" }, { kind: "family", pass: "correctness" }),
       ];
       const jobPaths = new Set<string>();
       const logBasenames = new Set<string>();
@@ -294,8 +299,9 @@ describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
       { family: "agy", slug: "agy" },
     ];
     await expect(
-      dispatchFamilyCmrPanelLegs({
+      dispatchReviewPanelLegs({
         legs,
+        scope: { kind: "family", pass: "correctness" },
         dispatch: async () => {
           settled += 1;
           await new Promise((r) => setTimeout(r, 5));
@@ -305,17 +311,55 @@ describe("#1094 F3 — sibling leg rejections do not become unhandled", () => {
     ).rejects.toBeInstanceOf(AdoptionPersistFailedError);
     expect(settled).toBe(3);
   });
+
+  it("returns fulfilled seat control only after every sibling settles", async () => {
+    let settled = 0;
+    const round = await dispatchReviewPanelLegs({
+      legs: [
+        { family: "codex", slug: "gpt-5.6-sol" },
+        { family: "claude", slug: "opus" },
+      ],
+      scope: { kind: "family", pass: "correctness" },
+      dispatch: async (spec) => {
+        settled += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return spec.model === "gpt-5.6-sol"
+          ? {
+              kind: "seat_control" as const,
+              control: { kind: "relay" as const },
+            }
+          : {
+              kind: "leg_result" as const,
+              result: {
+                kind: "completed" as const,
+                output: {
+                  kind: "reviewer" as const,
+                  findingsCount: 0,
+                  findings: [],
+                  rawStdout: "family panel review paper",
+                },
+              },
+            };
+      },
+    });
+
+    expect(settled).toBe(2);
+    expect(round).toEqual({
+      kind: "seat_control",
+      control: { kind: "relay" },
+    });
+  });
 });
 
 describe("#1094 R2 F8 — pass-distinct routing souls", () => {
   it("selects one explicit lens soul behind the shared task prompt", () => {
-    const completeness = cmrPanelLegWorkerSpec(
+    const completeness = reviewPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
-      "completeness",
+      { kind: "family", pass: "completeness" },
     );
-    const correctness = cmrPanelLegWorkerSpec(
+    const correctness = reviewPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
-      "correctness",
+      { kind: "family", pass: "correctness" },
     );
     expect(completeness.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
     expect(correctness.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
@@ -327,30 +371,38 @@ describe("#1094 R2 F8 — pass-distinct routing souls", () => {
 describe("#1094 R2 F7 — CMR-leg-only slug degrades loudly (never crashes the family run)", () => {
   it("historical gpt-5.5 leg degrades as skipped evidence without throwing", async () => {
     let dispatched = 0;
-    const round = await dispatchFamilyCmrPanelLegs({
+    const round = await dispatchReviewPanelLegs({
       legs: [
         { family: "codex", slug: "gpt-5.5" },
         { family: "claude", slug: "opus" },
       ],
-      cmrPass: "correctness",
+      scope: { kind: "family", pass: "correctness" },
       dispatch: async (spec) => {
         dispatched += 1;
         expect(spec.model).not.toBe("gpt-5.5");
         return {
-          kind: "completed",
-          output: {
-            kind: "reviewer",
-            findingsCount: 0,
-            findings: [],
-            rawStdout: `ok from ${spec.model}\n`,
+          kind: "leg_result",
+          result: {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findingsCount: 0,
+              findings: [],
+              rawStdout: `ok from ${spec.model}\n`,
+            },
           },
         };
       },
     });
+    expect(round.kind).toBe("round");
+    if (round.kind !== "round") throw new Error("expected round");
     expect(dispatched).toBe(1);
     expect(successfulLegsFromTransports(round.transports)).toEqual(["opus"]);
     expect(round.skippedLegs.map((s) => s.slug)).toContain("gpt-5.5");
-    expect(round.skippedLegs.find((s) => s.slug === "gpt-5.5")!.reason).toMatch(
+    expect(round.skippedLegs.find((s) => s.slug === "gpt-5.5")!.reason).toBe(
+      "panel leg gpt-5.5 failed (exit 1)",
+    );
+    expect(round.transports.find((t) => t.slug === "gpt-5.5")?.stdout).toMatch(
       /CMR-leg-only|not a live worker/i,
     );
   });
@@ -371,7 +423,7 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
     class SeamBackend extends RealFamilyBackend {
       public legConfig(
         auth: CmrAuth,
-        spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+        spec: ReturnType<typeof reviewPanelLegWorkerSpec>,
       ) {
         return this.panelLegSandboxConfig(auth, spec, {
           familyBase: "family/1094",
@@ -402,7 +454,7 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
 
       const codex = be.legConfig(
         auth,
-        cmrPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }),
+        reviewPanelLegWorkerSpec({ family: "codex", slug: "gpt-5.6-sol" }, { kind: "family", pass: "correctness" }),
       );
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
       expect(codex.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
@@ -411,21 +463,21 @@ describe("#1094 F9 — panelLegSandboxConfig credential seams", () => {
 
       const agy = be.legConfig(
         auth,
-        cmrPanelLegWorkerSpec({ family: "agy", slug: "agy" }),
+        reviewPanelLegWorkerSpec({ family: "agy", slug: "agy" }, { kind: "family", pass: "correctness" }),
       );
       expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(true);
       expect(agy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
 
       const grok = be.legConfig(
         auth,
-        cmrPanelLegWorkerSpec({ family: "grok", slug: "grok-4.5" }),
+        reviewPanelLegWorkerSpec({ family: "grok", slug: "grok-4.5" }, { kind: "family", pass: "correctness" }),
       );
       expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(true);
       expect(grok.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
 
       const claude = be.legConfig(
         auth,
-        cmrPanelLegWorkerSpec({ family: "claude", slug: "opus" }),
+        reviewPanelLegWorkerSpec({ family: "claude", slug: "opus" }, { kind: "family", pass: "correctness" }),
       );
       expect(claude.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
       expect(claude.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
@@ -676,8 +728,8 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
     );
-    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
+    const { completeReviewPanelLegWorker, isReviewPanelLegWorker } = await import(
+      "../../helpers/review-panel-leg-dispatch.js"
     );
     const { legacyCmrScriptToWorkerOutput } = await import(
       "../../helpers/judge-fixtures.js"
@@ -722,10 +774,10 @@ describe("#1094 R3 F2 — panel legs do not inherit the judge billingPool", () =
         spec: WorkerSpec,
         ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
+        if (isReviewPanelLegWorker(spec)) {
           legPools.push(ctx.billingPool);
           return (
-            completeCmrPanelLegWorker(spec) ?? {
+            completeReviewPanelLegWorker(spec) ?? {
               kind: "failed",
               reason: "panel leg fixture missing",
             }
@@ -788,8 +840,8 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
     );
-    const { completeCmrPanelLegWorker, isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
+    const { completeReviewPanelLegWorker, isReviewPanelLegWorker } = await import(
+      "../../helpers/review-panel-leg-dispatch.js"
     );
     const {
       completedJudge,
@@ -839,10 +891,10 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
         spec: WorkerSpec,
         ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
+        if (isReviewPanelLegWorker(spec)) {
           legResumes.push(ctx.resumeSessionId);
           return (
-            completeCmrPanelLegWorker(spec) ?? {
+            completeReviewPanelLegWorker(spec) ?? {
               kind: "failed",
               reason: "panel leg fixture missing",
             }
@@ -905,20 +957,21 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
   });
 });
 
-describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
-  it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
+describe("#1094 R3 F3 — settled panel transports reach the family judge", () => {
+  it("all failed legs still reach the judge and its typed verdict decides", async () => {
     const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
     );
-    const { isCmrPanelLegWorker } = await import(
-      "../../helpers/cmr-panel-leg-dispatch.js"
+    const { isReviewPanelLegWorker } = await import(
+      "../../helpers/review-panel-leg-dispatch.js"
     );
     const { legacyCmrScriptToWorkerOutput } = await import(
       "../../helpers/judge-fixtures.js"
     );
 
     let judgeDispatched = 0;
+    let judgeTransports: DispatchContext["panelLegTransports"];
     const backend = {
       ledger: [] as FamilyLedgerEntry[],
       escalations: [] as FamilyEscalation[],
@@ -955,7 +1008,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
         spec: WorkerSpec,
         ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        if (isCmrPanelLegWorker(spec)) {
+        if (isReviewPanelLegWorker(spec)) {
           return {
             kind: "failed",
             reason: `docker flake on ${spec.model}`,
@@ -963,7 +1016,7 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
         }
         if (spec.kind === "cmr") {
           judgeDispatched += 1;
-          // Would have converged on empty evidence — host must not reach here.
+          judgeTransports = ctx.panelLegTransports;
           return {
             kind: "completed",
             output: legacyCmrScriptToWorkerOutput({
@@ -983,21 +1036,17 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       },
     };
 
-    const result = await runVerifyCmr({
+    await runVerifyCmr({
       phase: "final",
       familyBase: "family/1094-r3-f3",
       familyBackend: backend,
     });
 
-    expect(result.ok).toBe(false);
-    expect(judgeDispatched).toBe(0);
-    expect(
-      backend.ledger.some((e) => e.status === "cmr_passed"),
-    ).toBe(false);
-    expect(backend.escalations.length).toBeGreaterThan(0);
-    expect(backend.escalations[0]?.escalationKind).toBe("decision");
-    expect(backend.escalations[0]?.reason).toMatch(/zero successful panel legs/i);
-    expect(backend.escalations[0]?.diagnosis).toMatch(/docker flake/i);
+    expect(judgeDispatched).toBe(2);
+    expect(judgeTransports).toHaveLength(3);
+    expect(judgeTransports?.every((transport) => transport.exitCode !== 0)).toBe(
+      true,
+    );
   });
 });
 
@@ -1008,7 +1057,7 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
       "../../../src/family/realFamilyBackend.js"
     );
     const { legTransportFromPanelLegResult } = await import(
-      "../../../src/family/cmrPanelLegs.js"
+      "../../../src/family/reviewPanelLegs.js"
     );
     const { isLegalLegPaper } = await import("../../../src/legPaper.js");
 
@@ -1026,7 +1075,7 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
 
       class FocusFailBackend extends RealFamilyBackend {
         public async runLeg(
-          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          spec: ReturnType<typeof reviewPanelLegWorkerSpec>,
           ctx: DispatchContext,
         ) {
           return this.runCmrPanelLegWorker(spec, ctx);
@@ -1059,9 +1108,9 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
         soulsDir,
         imageName: "img",
       });
-      const spec = cmrPanelLegWorkerSpec(
+      const spec = reviewPanelLegWorkerSpec(
         { family: "codex", slug: "gpt-5.6-sol" },
-        "correctness",
+        { kind: "family", pass: "correctness" },
       );
       const result = await be.runLeg(spec, { familyBase: "main" });
       expect(result.kind).toBe("failed");
@@ -1102,7 +1151,7 @@ describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
 
       class LensBackend extends RealFamilyBackend {
         public async runLeg(
-          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          spec: ReturnType<typeof reviewPanelLegWorkerSpec>,
           ctx: DispatchContext,
         ) {
           return this.runCmrPanelLegWorker(spec, ctx);
@@ -1148,9 +1197,9 @@ describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
         imageName: "img",
       });
       // The spec Soul pins completeness; ctx deliberately disagrees.
-      const spec = cmrPanelLegWorkerSpec(
+      const spec = reviewPanelLegWorkerSpec(
         { family: "codex", slug: "gpt-5.6-sol" },
-        "completeness",
+        { kind: "family", pass: "completeness" },
       );
       expect(spec.promptFile).toBe(CMR_PANEL_LEG_PROMPT_FILE);
       expect(spec.soul).toBe("cmr-completeness");
@@ -1207,7 +1256,7 @@ describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pas
       "../../../src/family/realFamilyBackend.js"
     );
     const { panelLegCompletedResult } = await import(
-      "../../../src/family/cmrPanelLegs.js"
+      "../../../src/family/reviewPanelLegs.js"
     );
     const { isLegalLegPaper } = await import("../../../src/legPaper.js");
 
@@ -1228,7 +1277,7 @@ describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pas
 
       class SetupFailBackend extends RealFamilyBackend {
         public async runLeg(
-          spec: ReturnType<typeof cmrPanelLegWorkerSpec>,
+          spec: ReturnType<typeof reviewPanelLegWorkerSpec>,
           ctx: DispatchContext,
         ) {
           return this.runCmrPanelLegWorker(spec, ctx);
@@ -1264,9 +1313,9 @@ describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pas
         soulsDir,
         imageName: "img",
       });
-      const failingSpec = cmrPanelLegWorkerSpec(
+      const failingSpec = reviewPanelLegWorkerSpec(
         { family: "codex", slug: "gpt-5.6-sol" },
-        "correctness",
+        { kind: "family", pass: "correctness" },
       );
       const failed = await be.runLeg(failingSpec, { familyBase: "main" });
       expect(failed.kind).toBe("failed");
@@ -1282,19 +1331,27 @@ describe("#1094 R4 F-A — setup/clone failure degrades the leg (never whole-pas
       // Fan-out: one failed transport + one legal sibling — judge still opens
       // (siblings settle; zero-success path stays R3 F3 escalate, not touched).
       let siblingRan = false;
-      const round = await dispatchFamilyCmrPanelLegs({
+      const round = await dispatchReviewPanelLegs({
         legs: [
           { family: "codex", slug: "gpt-5.6-sol" },
           { family: "claude", slug: "opus" },
         ],
+        scope: { kind: "family", pass: "correctness" },
         dispatch: async (spec) => {
-          if (spec.model === "gpt-5.6-sol") return failed;
+          if (spec.model === "gpt-5.6-sol") {
+            return { kind: "leg_result", result: failed };
+          }
           siblingRan = true;
-          return panelLegCompletedResult(
-            "P1: sibling panel leg still ran after peer clone failure.\n",
-          );
+          return {
+            kind: "leg_result",
+            result: panelLegCompletedResult(
+              "P1: sibling panel leg still ran after peer clone failure.\n",
+            ),
+          };
         },
       });
+      expect(round.kind).toBe("round");
+      if (round.kind !== "round") throw new Error("expected round");
       expect(siblingRan).toBe(true);
       expect(round.transports).toHaveLength(2);
       expect(successfulLegsFromTransports(round.transports)).toEqual(["opus"]);

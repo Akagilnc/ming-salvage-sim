@@ -73,8 +73,10 @@ import {
   familyShipWorkerSpec,
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import { dispatchFamilyCmrPanelLegs } from "./cmrPanelLegs.js";
-import { successfulLegsFromTransports } from "../legPaper.js";
+import {
+  dispatchReviewPanelLegs,
+  omitJudgeBoundDispatchFields,
+} from "./reviewPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -2675,26 +2677,16 @@ async function runIntegratedCmrPass(input: {
         };
       }
     }
-    const panelRound = await dispatchFamilyCmrPanelLegs({
+    const panelRoundOutcome = await dispatchReviewPanelLegs({
       legs: frozenLegs,
-      cmrPass: pass,
+      scope: { kind: "family", pass },
       // #1094 R3 F2: legs must NOT inherit the judge's billingPool — that pool
       // binding is for the cmr court slot (quota relay). Cross-vendor panel
       // legs keep their own registry providers (or none).
-      dispatch: (legSpec) => {
-        // #1094 R3 F2: legs must NOT inherit the judge billingPool.
-        // #1080 R3: panel legs are always fresh (cmrPanelLegWorkerSpec session:
-        // "fresh") — strip the pure-court resumeSessionId so a transient leg
-        // failure keeps its full process-root retry budget and is never
-        // misclassified as a resident-judge resume (forbidFreshRetry).
-        const {
-          billingPool: _judgePool,
-          resumeSessionId: _judgeResume,
-          ...legDispatchCtx
-        } = dispatchCtx;
-        void _judgePool;
-        void _judgeResume;
-        return dispatchOrAbort(
+      dispatch: async (legSpec) => {
+        // #1094 R3 F2 / #1080 R3: strip judge-bound baton; panel legs are fresh.
+        const legDispatchCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+        const result = await dispatchOrAbort(
           familyBackend,
           legSpec,
           legDispatchCtx,
@@ -2705,62 +2697,16 @@ async function runIntegratedCmrPass(input: {
             },
           },
         );
+        return { kind: "leg_result" as const, result };
       },
     });
-    // #1094 F4: host-mechanical skippedLegs are authoritative for stop summary
-    // (not judge prose cargo). Empty array after a real fan-out still wins.
-    const hostSkippedLegs = panelRound.skippedLegs;
-    // #1094 R3 F3: pure court with declared legs but ZERO successful transports
-    // must not converge — escalate (decision park) with skippedLegs reasons.
-    // One or more successful legs → optional-leg degrade still never blocks.
-    const successfulPanelLegs = successfulLegsFromTransports(
-      panelRound.transports,
-    );
-    if (frozenLegs.length > 0 && successfulPanelLegs.length === 0) {
-      const reason = `family integrated cmr ${pass}: zero successful panel legs`;
-      const diagnosis =
-        hostSkippedLegs.length > 0
-          ? hostSkippedLegs
-              .map((leg) => `${leg.slug}: ${leg.reason}`)
-              .join("; ")
-          : "all declared panel legs failed or produced no legal review paper";
-      reviewRoundResult = {
-        kind: "escalated",
-        escalation: { reason, diagnosis },
-      };
-      const stopSummary = decisionGateParkStopSummary({
-        summary: `${reason} — ${diagnosis}`,
-        repairHint:
-          "restore at least one panel-leg provider/auth/transport so the pure court has review evidence, then resume the family court in place",
-        heads:
-          resolvedFamilyHeadAfter !== undefined
-            ? { actualFamilyHead: resolvedFamilyHeadAfter }
-            : undefined,
-      });
-      await persistFinalReviewRound("accepted", async () => {
-        await recordCmrReviewed(familyBackend, {
-          phase: ledgerPhase,
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          blockingFindingIdentityKeys: [],
-          judgeStatus: "escalate",
-          stopSummary,
-        });
-        await familyBackend.escalateFamily?.({
-          reason,
-          diagnosis,
-          familyHeadAfter: resolvedFamilyHeadAfter,
-          stopSummary,
-          escalationKind: "decision",
-        });
-      });
-      return {
-        result: { ok: false, ran: true },
-        familyHeadAfter: resolvedFamilyHeadAfter,
-        resolvedRoute: activeRoute,
-      };
+    if (panelRoundOutcome.kind !== "round") {
+      throw new Error(
+        "family CMR panel legs: unexpected seat_control (family wraps WorkerResult)",
+      );
     }
+    const panelRound = panelRoundOutcome;
+    const hostSkippedLegs = panelRound.skippedLegs;
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       panelLegTransports: panelRound.transports.map((t) => ({

@@ -35,8 +35,8 @@ import type {
 export type { LegalRefuseReason };
 
 /**
- * Review legs dispatched by the judge are always fresh sessions.
- * Resume is illegal (negative AC: 续腿不合法).
+ * Review legs requested by the judge are Runner-dispatched fresh sessions
+ * (#1126 / #1094 one mechanism). Resume is illegal (negative AC: 续腿不合法).
  */
 export function judgeReviewLegSessionMode(): "fresh" {
   return "fresh";

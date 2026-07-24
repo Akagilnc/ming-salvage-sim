@@ -5,23 +5,24 @@
 Status: Proposed
 
 > **限缩（ADR 0131，2026-07-13 owner 裁决；#899 typed-signal 终局；#925 判词化）**：
-> findings 状态库是 reviewer-leg / fixer / 判官 之间的专业材料与状态真源，不是
+> findings 状态库是判官 / owning Review Action / fixer 之间的专业材料与状态真源，不是
 > Runner 的信号来源。判官读库并自报判词三态；Runner 说判词是什么就是什么，
-> 不查询、不派生、不对账 open-count。写入错误由写入 worker / Action 当场自纠；
+> 不查询、不派生、不对账 open-count。写入错误由 owning Review Action / fixer 当场自纠；
 > Action-owned structured retry 耗尽则当前 Action 非零退出。格式或写入失败不得
 > 变成 decision gate；只有 worker 成功提交的真实专业、设计或范围决策请求才走
 > decision gate。Runner 仍只消费三通道。
 
-# 0129: findings 状态库——复审写行、修复翻状态、复审再验再翻；纠错在写入点
+# 0129: findings 状态库——判官写行、修复翻状态、fresh 复审后判官再验再翻；纠错在写入点
 
 ## 决定
 
-评审循环的发现流转从「散文卷面 + runner 收账」改为 **findings 状态库**：
+评审循环的发现流转从「散文卷面 + runner 收账」改为 **raw prose + findings 状态库**：
 
-- 审卷腿 / 判官以**写行**交发现；
+- 审卷腿只产 raw prose 交判官 / owning Review Action，不写库、不翻态；
+- 判官 / owning Review Action 裁决后以**写行**交发现；
 - 修复腿修复后**翻该行状态**（fixed，或 refuted + 证据——fixer 第二道闸）；
 - **判官毙单**按四理由翻 `refuted`（#925：与 fresh 终翻并列的合法终翻）；
-- 下一轮 fresh 审卷腿 + 判官验证后**再翻**（确认关闭 / 打回重开）并可选留言。
+- 下一轮 fresh 审卷腿只交 raw prose，由判官验证后**再翻**（确认关闭 / 打回重开）并可选留言。
 
 写入接口在**写入点**做字段与状态跳转校验，错误即时反馈给写入方自行改写；
 Runner 不承担卷面审判，也不查询状态库。
