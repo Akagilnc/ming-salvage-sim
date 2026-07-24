@@ -1293,6 +1293,39 @@ def test_undo_chat_turn_removes_write_decree_draft(game):
 
 # ── ⑫ extract_draft_intent 降级分支（issue #137 覆盖补缺）──────────────────────
 
+def test_extract_draft_intent_preserves_complete_mechanical_payload(monkeypatch):
+    def _canned(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "grant_allocation",
+            "目标类型": "account",
+            "目标ID": "国库",
+            "金额": -10,
+            "账户": "国库",
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+    result = cb.extract_draft_intent("拟旨拨帑", "着拨国库十两赈济")
+    assert result["dossier_action_type"] == "grant_allocation"
+    assert result["amount"] == -10
+    assert result["account"] == "国库"
+
+
+def test_incomplete_mechanical_draft_becomes_explicit_narrative(monkeypatch):
+    def _canned(prompt, llm_config=None, tag=""):
+        return (json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "assignment",
+            "目标类型": "issue",
+            "目标ID": "河工",
+            "承办人": "",
+        }, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
+    result = cb.extract_draft_intent("拟旨查河工", "着查河工")
+    assert result["dossier_action_type"] == "special_decree"
+    assert result["target_id"] == "河工"
+
 def test_supplement_mode_falls_back_to_existing_draft_when_merged_empty(monkeypatch):
     """补充模式（has_pending_draft + existing_draft_text）拟旨，但 LLM 未填「合并草案」：
     draft_text 应保留 existing_draft_text，避免用确认回话覆盖旧草案。"""
