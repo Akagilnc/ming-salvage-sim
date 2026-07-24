@@ -5,7 +5,7 @@
 **runner = 交通警察，只准做三件事，三件之外零判断权（ADR 0131，母法沿革 0062）：**
 
 1. **数 exit code** —— 进程死活。进程崩的机械重试（#598）挂在这条通道上，不读任何字。
-2. **读审卷状态枚举** —— 单切片 S3/S6 与 family 后段双闸（completeness / correctness）只读 judge **自报** `status: converged | continue | escalate`（ADR 0131 channel (b) / ADR 0132 / #925 / #930）；按 #869 fixed topology 走边。runner 不解释 severity、不读 findings 正文、不派生/对账数组长度。S4 机械 open-count 分类已溶解；family 第二台 open-count 数数机已删（#930）。历史 residual open-count 纸在边界投影为判词后进入同一台机，不是并行通道 (b)。
+2. **读审卷状态枚举** —— 单切片驻庭判官（S1 开庭、S3/S6 resume；ADR 0147 / #1081–#1086）与 family 后段双闸（completeness / correctness）只读 judge **自报** `status: converged | continue | escalate`（ADR 0131 channel (b) / ADR 0132 / #925 / #930）；按 #869 fixed topology 走边。runner 不解释 severity、不读 findings 正文、不派生/对账数组长度。S4 机械 open-count 分类已溶解；family 第二台 open-count 数数机已删（#930）。历史 residual open-count 纸在边界投影为判词后进入同一台机，不是并行通道 (b)。
 3. **转决策门** —— worker 自己按的 decision/raise 原样递给人。转运，不裁决。
 
 **没有例外（owner 2026-07-13）**：三件之外不存在第四通道——「coder/ship 真源 = git/host 外部事实」的例外**已废止**。coder/ship 说 OK 就是 OK：completed = 进下一棒，交卷条内容只作 cargo 透传（cargo 缺失不改命运，下一棒 worker 自己能查）；交付/提交的自证归 worker soul（报成功前自验 + 幂等条款）；白跑由下一棒智慧体接住（reviewer 判空 diff，打回或 raise）。Generic Runner 永不用 `git rev-list` / `ls-remote` / `gh pr view` 裁 worker 成败，也不直接开切 worktree、维护 family merge queue 或解释恢复记录；这些外部副作用分别归 Scene Provisioning / Recovery、Family Integration Merge 与对应专业 owner。
@@ -26,11 +26,11 @@
 
 **#896 目标态：编排器实跑默认先起一个顶层隔离 worktree（实现沿用 `family worktree` 名称）。** 这是代码隔离边界，不是把单 issue 伪装成 family-of-one：single 把它作为唯一 scene/worktree，不建立 parent base、child worktree 或 child merge；family 才建立父集成面与子工作树。当前仍是 family-of-one legacy path；目标态的两种模式其 slice、merge（如适用）、integrated CMR 与 ship 都留在各自顶层隔离代码真源里，不在主工作区或临时散 worktree 上直接跑。
 
-**`sc.run()` 严禁 `prompt` 参数；传指令只准用 `promptFile`**（指向版本化、可评审的 `.md`），且内容必须 **thin**：只准「读 baked soul / 触发对应 skill（`/tdd`、integrated completeness 的 `ak-cmr-completeness`、integrated correctness 的 `ak-cmr-correctness`、`gstack-ship`…）+ 指向落盘运行参数文件 + 输出契约」，**绝不写 method**。generic `ak-cross-m-review` 只由两个具名 wrapper 内部共享，不能作为编排器 integrated Action 的直接入口。怎么 review / 怎么 fix / 怎么收敛、各家 CLI 怎么 invoke skill，全住在 versioned soul / skill / 镜像里；runner 不感知、不每轮换 prompt。实证：本仓三道 cmr 闸全栽在 promptFile 手搓「review-only / no-loop」。**promptFile 长成 mini-wiki = 回归。**
+**`sc.run()` 严禁 `prompt` 参数；传任务只准用 `promptFile`**（指向版本化、可评审的 `.md`），且内容必须 **thin**：只含任务 / 参数文件指针 / 输出契约，**绝不写角色方法**。角色方法由独立 live-mounted soul 经 provider-native instruction layer 自动加载，装配代码真源见 `src/modelRegistry.ts` 与 `src/soulInstructions.ts`；skill routing 留在 soul / skill 真源，不复制进 prompt。generic `ak-cross-m-review` 只由两个具名 wrapper 内部共享，不能作为编排器 integrated Action 的直接入口。runner 不感知方法、不每轮换 prompt。实证：本仓三道 cmr 闸全栽在 promptFile 手搓「review-only / no-loop」。**promptFile 长成 mini-wiki = 回归。**
 
 **ADR 只定决策/要求，编码细节归 issue 验收点。** ADR 写不可逆决策 / 不变式 / 契约（薄，1-3 句单决策）；算法、数值、重试上限、身份匹配方式等「怎么实现」一律归对应子 issue 的验收点。改每条评审 finding 前自问「这是**决策**还是**编码**？」——编码默认归 issue，ADR 顶多留一句要求 + 指针「细节归 #N」。实证：#425 把「优先显式 `tightFamilies`、前缀 fallback」塞进 ADR 0031 被纠，移到 #422。
 
-**容器内（`sc.run`）产生的 commit 自动冠 `sandcastle:` 前缀**，由烤进镜像的 `image/hooks/commit-msg`（经 `git config --global core.hooksPath`）确定性强制——不靠 soul / promptFile 指示（那样会漏：gstack-ship 自己的 commit 绕过 soul）。用途：`git log --grep '^sandcastle:'` 框出某次 family run 的全部机器产出；可与模型层前缀叠（`sandcastle: claude: …`，`sandcastle:` 最前）。
+**容器内（`sc.run`）产生的 commit 自动冠 `sandcastle:` 前缀**，由 image-provided `image/hooks/commit-msg`（经 `git config --global core.hooksPath`）确定性强制——不靠 soul / promptFile 指示（那样会漏：gstack-ship 自己的 commit 绕过 soul）。用途：`git log --grep '^sandcastle:'` 框出某次 family run 的全部机器产出；可与模型层前缀叠（`sandcastle: claude: …`，`sandcastle:` 最前）。
 
 ## 类型逃生舱审计模式（escape-hatch audit patterns）
 

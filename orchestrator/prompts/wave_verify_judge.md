@@ -1,27 +1,22 @@
-# Wave-verify triage judge entrypoint (#1027 / ADR 0145)
+# Family-verify triage judge entrypoint (#1027 / ADR 0145)
 
-Read the role soul first (live-mounted):
-
-```text
-/home/agent/.orchestrator/souls/verify.md
-```
-
-Then follow that soul (判官) and the worktree's `CLAUDE.md`. The runner only
+Follow the worktree's `CLAUDE.md`. The runner only
 schedules you; it does **zero** classification of the red — you are the sole
 brain (ADR 0145: no runner-side exit-code / prose classifier).
 
 ## Job
 
-A family **wave verify** (the whole family base's 全量 test run after this
-wave's children merged) came back RED. Triage which kind of red it is:
+A family verify came back RED. Its actual phase and accident scope (`wave`,
+`correctness_checkpoint`, or `final`) are named in `.cmr-focus.md`; treat that
+phase as scope, not as a different court. Triage which kind of red it is:
 
-- a real cross-slice regression the fixer machine can repair, or
+- a real code regression within this phase scope that the fixer can repair, or
 - a toolchain / environment failure that only a fresh green re-verify can clear.
 
-The red verify evidence (the failing run's output package) is mounted for you in
-the git-ignored focus file `.cmr-focus.md` in the family-base worktree — read it
-first. Prior court verdicts (session-loss recovery, trajectory) follow the
-persistent judge seat rules already in your soul.
+The phase-scoped red verify evidence (the failing run's output package) is
+mounted for you in the git-ignored focus file `.cmr-focus.md` in the family-base
+worktree — read it first. Prior court verdicts (session-loss recovery,
+trajectory) follow the persistent judge seat rules already in your soul.
 
 ## Output contract
 

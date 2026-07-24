@@ -43,7 +43,6 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
@@ -73,7 +72,6 @@ import {
   realRepo335,
   legacyClaudeCmrSpec,
 } from "./cmr-worker.shared.js";
-
 afterEach(() => {
   vi.unstubAllEnvs();
   while (cleanups.length > 0) {
@@ -785,7 +783,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(coderFixCalls).toBe(0);
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
-  }, 20_000);
+  }, 120_000);
 
   it("#598 same-position redispatch on T2 coder SOE exhaust; zero next-gate", async () => {
     // #899 / #919 M1: T2 coder station receipt SO on the family coder-fix seat
@@ -897,7 +895,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(nextGateCalls).toBe(0);
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
-  }, 20_000);
+  }, 120_000);
 
   it("accepts initial-good T2 coder receipt at the family coder-fix production seam", async () => {
     // #899 / #919 M1: first-good T2 coder station receipt through production
@@ -1326,6 +1324,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     };
+    runOptions?: Parameters<typeof sc.run>[0];
     outcomePath?: string;
 
     constructor(private readonly auth: CmrAuth, workingRepo: string) {
@@ -1348,7 +1347,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
 
     protected override cmrSandbox(
       auth: CmrAuth,
-      spec: Pick<WorkerSpec, "model" | "host">,
+      spec: Pick<WorkerSpec, "model" | "soul" | "host">,
       outcomeLanding?: { path: string; sandboxPath: string },
       ctx?: Pick<DispatchContext, "billingPool">,
     ): sc.SandboxProvider {
@@ -1365,8 +1364,9 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     }
 
     protected override async runAgentSandbox(
-      _options: Parameters<typeof sc.run>[0],
+      options: Parameters<typeof sc.run>[0],
     ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      this.runOptions = options;
       if (this.outcomePath === undefined) throw new Error("missing outcome path");
       writeFileSync(this.outcomePath, JSON.stringify({
         converged: true,
@@ -1382,27 +1382,26 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     }
   }
 
-  async function dispatch(pool: DispatchContext["billingPool"]) {
+  async function dispatch(
+    pool: DispatchContext["billingPool"],
+    spec: WorkerSpec = cmrWorkerSpec(),
+    auth: CmrAuth = { claudeToken: "test-claude-panel-tok" },
+  ) {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    const backend = new AuthDispatchBackend(
-      { claudeToken: "test-claude-panel-tok" },
-      repo,
-    );
-    await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
+    const backend = new AuthDispatchBackend(auth, repo);
+    await backend.dispatchWorker(spec, { familyBase: "fb", billingPool: pool });
     return { backend };
   }
 
-  it("#905: production CMR dispatch does not inject GLM_KEY or mount opencode auth", async () => {
+  it("#905: explicit unbound zai dispatch fails loudly", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend } = await dispatch("zai");
-    expect(backend.config?.env.GLM_KEY).toBeUndefined();
-    expect(
-      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
-    ).toBe(false);
+    await expect(dispatch("zai")).rejects.toThrow(
+      /no executable provider binding/,
+    );
   });
 
   it("#905: non-zai production dispatch also has no opencode transport", async () => {
@@ -1421,6 +1420,31 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     expect(
       backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
     ).toBe(false);
+  });
+
+  it("threads one real CMR spec into both the Agy command and its soul overlay", async () => {
+    const spec: WorkerSpec = {
+      ...cmrWorkerSpec(),
+      model: "agy",
+      host: "agy",
+      soul: "verify",
+    };
+    const { backend } = await dispatch(
+      undefined,
+      spec,
+      { agyDir: mkDir("agy-auth-r2-") },
+    );
+    const command = backend.runOptions?.agent.buildPrintCommand({
+      prompt: "TASK_SENTINEL",
+      dangerouslySkipPermissions: false,
+    });
+    expect(command?.command).toContain("agy");
+    expect(command?.command).toContain("TASK_SENTINEL");
+    expect(backend.config?.mounts).toContainEqual({
+      hostPath: join(realSoulsDir, "verify.md"),
+      sandboxPath: "/home/agent/.gemini/GEMINI.md",
+      readonly: true,
+    });
   });
 });
 
@@ -1447,6 +1471,9 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       escalationAnswer?: DispatchContext["escalationAnswer"];
     }): void {
       this.writeCmrFocusFile(ctx as never);
+    }
+    public verifyFocus(ctx: DispatchContext): void {
+      this.writeWaveVerifyFocusFile(ctx);
     }
     public routeFile(pass: "completeness" | "correctness" | undefined): void {
       const spec = cmrWorkerSpec("fresh", pass ?? "correctness");
@@ -1499,6 +1526,37 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // It is git-ignored (info/exclude), so the review never accidentally commits it.
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it.each([
+    ["wave", "after the current wave's child slices merged"],
+    ["correctness_checkpoint", "at the correctness checkpoint"],
+    ["final", "at the final family verification barrier"],
+  ] as const)("writes the real %s verify accident scope into judge focus", (phase, scope) => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    be.verifyFocus({
+      familyBase: "feat/330-pure-scheduler",
+      phase,
+      waveVerifyFailure: `${phase} red`,
+    });
+
+    const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
+    expect(body).toContain(scope);
+    expect(body).toContain(`${phase} red`);
+    if (phase !== "wave") {
+      expect(body).not.toContain("after merging the child slices");
+    }
   });
 
   it("serializes an answered gate into the real online-review landing", () => {

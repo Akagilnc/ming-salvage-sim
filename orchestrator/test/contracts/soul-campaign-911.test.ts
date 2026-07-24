@@ -95,6 +95,7 @@ describe("#911 container home environment dual-mount", () => {
       model?: string;
     }): {
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+      env: Record<string, string>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-911", claudeToken: "tok", ghToken: "gho_test" },
@@ -174,7 +175,7 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     public cmrCfg() {
       return this.cmrSandboxConfig(
         { claudeToken: "tok", codexAuthDir: "/tmp/cmr-codex-911" },
-        { model: "gpt-5.6-sol", host: "codex" },
+        { model: "gpt-5.6-sol", soul: "verify", host: "codex" },
       );
     }
     public familyCoderCfg() {
@@ -314,7 +315,11 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     tempHomes.push(home);
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{}}\n');
-    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-token-xyz\n");
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    writeFileSync(
+      join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
+      "agy-token-xyz\n",
+    );
     writeFileSync(join(home, ".sc-claude-token"), "claude-tok\n");
 
     class AgyShipProbe extends FamilyProbe {

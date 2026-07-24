@@ -6,15 +6,21 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925 / #1081–#1083 (ADR 0147): the child runner owns the visible
+ * per-slice review/fix loop with a resident judge born at dispatch — **judge hub**:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
- *     converged → S7(local handoff) → S8(handoff)
- *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *   S0(gate) → S1(context + open court) → S2(builder beat) → S3(judge resume)
+ *     continue (plan phase, #1082) → S2(construct|re-plan) → S3(...)
+ *     converged → dismiss court → S7(local handoff) → S8(handoff)
+ *     continue (post-construction, live findings) → S5(builder beat) → S6(judge resume)
  *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
- * open-count classification is dissolved into the judge verdict tri-state.
+ * S2/S5 are builder beats (coder implement / coder-fix). Every beat dumb-relays
+ * to the resident judge with no envelope classification; builder never connects
+ * straight to a fresh reviewer. S3/S6 resume the same verify judge session
+ * created at S1 open court. #1082 plan pre-review continues resume the same S2
+ * builder (no fresh legs). S4 mechanical open-count classification is dissolved
+ * into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -45,6 +51,7 @@ import { route } from "./route.js";
 // instead of reaching for runStep/resumeSession directly.
 import {
   dispatchWorkerWithMonitor,
+  shouldOpenResidentJudgeCourtAtDispatch,
   stepSpecToWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
@@ -55,12 +62,26 @@ import {
 import { routeSmokeFailure } from "./modelRoutes.js";
 import { logDriverStage } from "./stageLog.js";
 import {
+  isBuilderBeatStep,
+  isJudgeBeatStep,
+  projectBeatFromEntry,
+  projectCompletedBeats,
+  shouldForcePlanBeatStamp,
+  stampBuilderBeatOnOutput,
+} from "./builderJudgeBeat.js";
+import {
   clearProgressBroadcastConfig,
   configureProgressBroadcast,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   getProgressBroadcastConfig,
 } from "./progressBroadcast.js";
+import {
+  clonePathFromSandcastleWorktree,
+  healBeforeWorktreeCut,
+} from "./gitWorktreePreflight.js";
+import { runExclusive } from "./gitMutex.js";
 import {
   withMechanicalRetry,
   type MechanicalRetryOptions,
@@ -68,7 +89,6 @@ import {
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
-  poolForModelRef,
 } from "./quotaProbe.js";
 import {
   parkOrRelayQuotaWall,
@@ -131,15 +151,23 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-
+  JUDGE_OPEN_COURT_PROMPT_FILE,
+  judgeStatusFromOutput,
+  mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
-  projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
+  rebuildResidentJudgeFromLedger,
   requireFixPacketBody,
-  storeStatusByIdentityFromDispositions,
+  requireOpenCourtSession,
+  requireResidentJudgeResume,
+  usesJudgeReceiptChannel,
 } from "./judgeStation.js";
 import {
-  rebuildBlockingFromLedger,
+  latestPlanBodyFromLedger,
+  scanCoderPlanPhase,
+  shouldRunCoderPlanPhase,
+} from "./coderPlanPhase.js";
+import {
   reviewerRawArtifactPointers,
 } from "./residualLedger.js";
 import {
@@ -150,13 +178,20 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
-import { resumeCapableForSlug } from "./modelRegistry.js";
+import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
+import {
+  dispatchReviewPanelLegs,
+  omitJudgeBoundDispatchFields,
+} from "./family/reviewPanelLegs.js";
+import { isSessionContinuityLostError } from "./receiptRecovery.js";
+import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
 } from "./types.js";
 import type {
   Backend,
   ContinueFixingEvent,
+  DispatchContext,
   ErrorPackage,
   Escalation,
   EscalationAnswerEvent,
@@ -166,6 +201,7 @@ import type {
   FindingRepairScope,
   HandoffStatus,
   IssueMeta,
+  LedgerBookkeepingEvent,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -177,6 +213,9 @@ import type {
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
+  WorkerResult,
+  WorkerSpec,
   WorktreeHandle,
 } from "./types.js";
 import {
@@ -332,6 +371,13 @@ function buildPersistentEntry(opts: {
    * Written on agent steps so planResume / resumeFor never guesses from memory.
    */
   modelSlug?: string;
+  /**
+   * Optional bookkeeping event folded onto the same durable write as an agent
+   * step (e.g. court_dismissed + judge converge — #1081 atomic dismiss).
+   */
+  event?: LedgerBookkeepingEvent["event"];
+  /** Human-readable note for a folded lifecycle event. */
+  reason?: string;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -364,6 +410,12 @@ function buildPersistentEntry(opts: {
   }
   if (opts.modelSlug !== undefined) {
     entry = { ...entry, modelSlug: opts.modelSlug };
+  }
+  if (opts.event !== undefined) {
+    entry = { ...entry, event: opts.event };
+  }
+  if (opts.reason !== undefined) {
+    entry = { ...entry, reason: opts.reason };
   }
   return entry;
 }
@@ -470,8 +522,29 @@ function answerPayload(
   };
 }
 
+/**
+ * Topology / executable ledger progress (not pure bookkeeping).
+ *
+ * Dual-field agent rows that fold a lifecycle event onto the same durable write
+ * as StepOutput (e.g. #1081 court_dismissed + judge converge) count as
+ * executable — sole dual-field awareness used by bookkeeping filters, quota
+ * park clearing, and mechanical-retry attempt scan.
+ */
+function isExecutableLedgerProgress(entry: {
+  readonly event?: string | null;
+  readonly output?: unknown;
+}): boolean {
+  // Pure bookkeeping: event set, no topology output.
+  return !(entry.event != null && entry.output == null);
+}
+
+/**
+ * Pure bookkeeping rows (event marker, no topology output). Agent steps that
+ * fold a lifecycle event onto the same durable write as their StepOutput
+ * remain executable resume truth ({@link isExecutableLedgerProgress}).
+ */
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
-  return entry.event != null;
+  return !isExecutableLedgerProgress(entry);
 }
 
 /**
@@ -479,11 +552,15 @@ function isBookkeepingEntry(entry: LedgerEntry): boolean {
  * parked step (not S8(failed)). Same family as `online_review_ci_pending` parks.
  * #686 — a newer `relay_baton_handoff` also resumes the interrupted step so the
  * next baton can continue from the preserved worktree.
+ *
+ * Exported for pure dual-field regression probes (#1081 atomic dismiss fold
+ * must clear a prior quota park the same way an event-less step row does).
  */
-function sliceQuotaWaitPending(
+export function sliceQuotaWaitPending(
   ledger: ReadonlyArray<{
     readonly step?: string;
     readonly event?: string;
+    readonly output?: unknown;
   }>,
 ): SliceStepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -498,9 +575,11 @@ function sliceQuotaWaitPending(
       }
       return "S2";
     }
-    // Any newer executable agent/handoff progress clears the park.
+    // Any newer executable agent/handoff progress clears the park — including
+    // dual-field fold rows (output + court_dismissed) that isBookkeepingEntry
+    // already treats as executable.
     if (
-      entry.event === undefined &&
+      isExecutableLedgerProgress(entry) &&
       (entry.step === "S2" ||
         entry.step === "S3" ||
         entry.step === "S5" ||
@@ -985,7 +1064,6 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -995,14 +1073,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             ) ??
-            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
+            continueRepairFromAnswer(answer, 0)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -1168,9 +1246,14 @@ function planResume(
     throw new Error("planResume: executable ledger row must use a canonical step id");
   }
   const routeOutput = agentEntry?.output;
+  // #1082: plan-phase continue resumes S2; ledger is sole phase truth.
+  const coderPlanPhase =
+    shouldRunCoderPlanPhase() &&
+    scanCoderPlanPhase(ledger as ReadonlyArray<LedgerEntry>).planPhase;
   const decision = route({
     from: routeFrom,
     output: routeOutput,
+    ...(coderPlanPhase ? { coderPlanPhase: true } : {}),
   });
   const priorForResume = ledger as ReadonlyArray<LedgerEntry>;
   // #683: quota wait park → re-enter the parked step (not S8(failed)).
@@ -1220,9 +1303,9 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
- * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
- * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
+ * #925 / ADR 0132 / #1081: S1 opens the resident verify judge; S2 implements;
+ * S3/S6 resume the same judge session; S5 fixes live findings. maxIter is 1
+ * on every seat (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
  * #253/#928 fields: model (CLI slug), maxIter (per-seat Sandcastle iteration
  * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
@@ -1246,6 +1329,21 @@ type WorkerStepId = "S2" | "S3" | "S5" | "S6";
 /** Type-guard for the single-slice agent worker seats (S2/S3/S5/S6). */
 function isWorkerStep(s: unknown): s is WorkerStepId {
   return s === "S2" || s === "S3" || s === "S5" || s === "S6";
+}
+
+/**
+ * #955 / #1080: seat model recorded on ledger rows for resume identity.
+ * Worker seats use their StepSpec; S1 open-court runs the verify seat
+ * (same model binding as S3). Without this, S1 escalate parks never carry
+ * `modelSlug` and the open-court resume identity gate is dead.
+ */
+function modelSlugForLedgerStep(
+  s: SliceStepId,
+  specs: Readonly<Record<WorkerStepId, StepSpec>>,
+): string | undefined {
+  if (isWorkerStep(s)) return specs[s].model;
+  if (s === "S1") return specs.S3.model;
+  return undefined;
 }
 
 export function stepSpecsForRoute(
@@ -1286,7 +1384,7 @@ export function stepSpecsForRoute(
       model: route.slots.coderFix,
       // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
       maxIter: 1,
-      soul: "coder",
+      soul: "fixer",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S6: {
@@ -1672,7 +1770,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // relay / first-seat Coder-Rec model changes can invalidate it).
   let coderSessionId: string | undefined;
   let coderSessionModel: string | undefined;
-  // #925: judge persistent session across S3 → S6 rounds (same model).
+  // #925 / #1081: resident judge session — born at S1 open court, resumed on
+  // every S3/S6, cleared on court_dismissed after convergence (same model).
   let judgeSessionId: string | undefined;
   let judgeSessionModel: string | undefined;
 
@@ -1800,9 +1899,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     modelRoute = admittedRec.route;
     // #686 P1: a coder-slot change must not inherit the prior resource-relay
     // pool — reselect from the new model's dispatch binding.
-    currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coder),
-    );
+    currentBillingPool = billingPoolForModelRef(modelRoute.slots.coder);
     stepSpecs = stepSpecsForRoute(modelRoute);
     // #924: model change invalidates the prior Sandcastle session — next
     // coder seat establishes a new session (cannot resume across providers).
@@ -1963,19 +2060,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    // advanced — hold sticky repair seat; retire prior coder session (S5 model
-    // changed); billing pool follows the repair seat.
+    // advanced — hold sticky repair seat; billing pool follows the repair seat.
     modelRoute = effect.route;
     stickyJudgeAdvanceCoderSlug = effect.toSlug;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Candidate already smoked — skip the next ensureRouteSmoke gate.
     routeSmokeChecked = true;
-    // New repair seat: fresh session (cannot resume across model change).
-    coderSessionId = undefined;
-    coderSessionModel = undefined;
-    currentBillingPool = billingPoolFromQuotaPool(
-      poolForModelRef(modelRoute.slots.coderFix),
-    );
+    // Retire the shared coder session only when the next builder is the repair
+    // seat (S5). #1082 plan-phase continue re-enters S2 under the coder slot
+    // (advanceCoder rewrites coderFix only) — clearing here would force a
+    // fresh plan/construct beat and discard the cheap-resume continuity the
+    // plan-phase loop was built for.
+    const planPhaseOpen =
+      shouldRunCoderPlanPhase() && scanCoderPlanPhase(ledger).planPhase;
+    if (!planPhaseOpen) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
+    currentBillingPool = billingPoolForModelRef(modelRoute.slots.coderFix);
 
     await persistAdvanceBookkeeping(
       {
@@ -2042,9 +2144,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let durableAttempts = 0;
     // A canonical completed row starts a new logical invocation.  Markers
     // before it have already been consumed by a successful invocation.
+    // Dual-field fold (output + court_dismissed) is a completed agent row too —
+    // same dual-field awareness as isBookkeepingEntry / sliceQuotaWaitPending.
     for (let index = history.length - 1; index >= 0; index--) {
       const entry = history[index]!;
-      if (entry.step === step && entry.event === undefined) break;
+      if (entry.step === step && isExecutableLedgerProgress(entry)) break;
       // A relay baton re-enters the same step under a new worker/model scene.
       // Its prior crash streak is audit history, not the next invocation's
       // dispatch budget.
@@ -2075,6 +2179,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): MechanicalRetryOptions => ({
     ...options,
     attemptsAlreadyUsed: mechanicalRedispatchAttemptsFor(step),
+    healWorktreeConsistency: async (ctx) => {
+      await options.healWorktreeConsistency?.(ctx);
+      const handle = ctx.worktree ?? worktree;
+      if (handle === undefined) return;
+      const clone = clonePathFromSandcastleWorktree(handle.path);
+      if (clone === null) return;
+      await runExclusive(clone, () => {
+        // #1105 R6 F1: same durable-ledger quarantine as prepareWorktreeLocked.
+        healBeforeWorktreeCut(clone, handle.branch, undefined, {
+          quarantineBaseDir: join(
+            clone,
+            `.ledger-${issueNumber}`,
+            "quarantine-orphans",
+          ),
+        });
+      });
+      // Sandcastle path is deterministic per branch — rebuild keeps the same
+      // path so the in-flight dispatchCtx.worktree handle stays valid.
+      worktree = await backend.prepareWorktree(issueNumber, sliceBase);
+    },
     onAttempt: async (attempt) => {
       await options.onAttempt?.(attempt);
       const marker: LedgerEntry = {
@@ -2140,9 +2264,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     readonly currentPool: BillingPoolId;
     readonly pools: ReadonlyArray<BillingPoolEntry>;
   } => {
-    const inferredPool =
-      billingPoolForModelRef(input.modelRef) ??
-      billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const inferredPool = billingPoolForModelRef(input.modelRef);
+    if (inferredPool === undefined) {
+      throw new Error(`model ${input.modelRef} has no billing pool`);
+    }
     const configuredPools = resolveRelayPools(inferredPool, undefined);
     const confirmedPool =
       input.knownPool ??
@@ -2303,11 +2428,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
     monitorHandle?: import("./types.js").WorkerMonitorHandle,
+    /**
+     * #1081: optional lifecycle event folded into the same durable write as
+     * this step (court_dismissed + judge converge atomicity).
+     */
+    lifecycleEvent?: {
+      readonly event: LedgerBookkeepingEvent["event"];
+      readonly reason?: string;
+    },
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
-    // #955: record seat model on agent steps so resume identity is ledger truth.
-    const stepModelSlug = isWorkerStep(s) ? stepSpecs[s].model : undefined;
+    // #955 / #1080: record seat model on agent steps (incl. S1 open-court)
+    // so resume identity is ledger truth.
+    const stepModelSlug = modelSlugForLedgerStep(s, stepSpecs);
     const entry = buildPersistentEntry({
       step: s,
       output,
@@ -2322,6 +2456,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stopSummary,
       monitorHandle,
       ...(stepModelSlug !== undefined ? { modelSlug: stepModelSlug } : {}),
+      ...(lifecycleEvent !== undefined
+        ? {
+            event: lifecycleEvent.event,
+            ...(lifecycleEvent.reason !== undefined
+              ? { reason: lifecycleEvent.reason }
+              : {}),
+          }
+        : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -2595,15 +2737,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
     );
     if (failedStep !== "S8") {
-      // #955 r7: escalated agent rows must carry modelSlug (creator identity)
-      // for human-answer resume — same source as main-path emitLedger /
-      // in-memory ledger push (isWorkerStep → seat model). Without it, r5's
+      // #955 r7 / #1080: escalated agent rows must carry modelSlug (creator
+      // identity) for human-answer resume — same source as main-path emitLedger
+      // / in-memory ledger push (modelSlugForLedgerStep). Without it, r5's
       // identity gate falls back to the current seat and can false-match after
-      // Coder-Rec seat swaps. persistBestEffort → emitLedger already stamps
-      // modelSlug for worker steps; in-memory RunResult.stepLedger must match.
-      const escalatedModelSlug = isWorkerStep(failedStep)
-        ? stepSpecs[failedStep].model
-        : undefined;
+      // Coder-Rec seat swaps; S1 open-court escalate was similarly unstamped.
+      // persistBestEffort → emitLedger stamps the same helper; in-memory
+      // RunResult.stepLedger must match.
+      const escalatedModelSlug = modelSlugForLedgerStep(failedStep, stepSpecs);
       ledger.push({
         step: failedStep,
         ...(output !== undefined ? { output } : {}),
@@ -2661,6 +2802,339 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   }
   // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * #1112: one seat-dispatch protocol for open-court (S1) and S2/S3/S5/S6.
+   * Differences are parameters only (step / wallStep / retry / copy / no-baton).
+   */
+  type SeatDispatchNoBaton =
+    | { readonly kind: "terminal"; readonly result: RunResult }
+    | { readonly kind: "stay_put_break" };
+
+  type SeatDispatchProtocolOutcome =
+    | { readonly kind: "dispatched"; readonly result: WorkerResult }
+    | { readonly kind: "relay" }
+    | { readonly kind: "terminal"; readonly result: RunResult }
+    | { readonly kind: "stay_put_break" };
+
+  const dispatchSeatWithProtocol = async (args: {
+    readonly step: SliceStepId;
+    readonly wallStep: StepId;
+    readonly spec: WorkerSpec;
+    readonly ctx: DispatchContext;
+    readonly retryOpts: MechanicalRetryOptions;
+    readonly landingPayload?: WorkerLandingPayload;
+    readonly capacityStateSummary: string;
+    readonly setMonitorHandle: (handle: WorkerMonitorHandle) => void;
+    readonly onDispatchCompleted?: () => void;
+    readonly unexpectedError?: (err: unknown) => {
+      readonly error: Error;
+      readonly options?: Parameters<typeof errorTermination>[2];
+    };
+    /** Review/fix stay-put. Omitted → quota park / capacity errorTermination. */
+    readonly onNoBaton?: (input: {
+      readonly trigger:
+        | "quota_no_relay"
+        | "quota_park"
+        | "capacity_no_relay"
+        | "capacity_no_handoff";
+      readonly err: unknown;
+      readonly parkResult?: RunResult;
+    }) => Promise<SeatDispatchNoBaton>;
+  }): Promise<SeatDispatchProtocolOutcome> => {
+    const {
+      step,
+      wallStep,
+      spec,
+      ctx,
+      retryOpts,
+      landingPayload,
+      capacityStateSummary,
+      setMonitorHandle,
+      onDispatchCompleted,
+      unexpectedError,
+      onNoBaton,
+    } = args;
+    const hashPromptForPark = (pf: string | undefined, s: SliceStepId) =>
+      hashPrompt(pf, s, backend);
+    const terminalFromWriteErr = async (
+      writeErr: unknown,
+    ): Promise<SeatDispatchProtocolOutcome> => ({
+      kind: "terminal",
+      result: await errorTermination(
+        step,
+        writeErr instanceof Error ? writeErr : new Error(String(writeErr)),
+      ),
+    });
+    const maybeNoBaton = async (
+      trigger: Parameters<NonNullable<typeof onNoBaton>>[0]["trigger"],
+      err: unknown,
+      parkResult?: RunResult,
+    ): Promise<SeatDispatchProtocolOutcome | undefined> => {
+      if (onNoBaton === undefined) return undefined;
+      const resolved = await onNoBaton(
+        parkResult !== undefined
+          ? { trigger, err, parkResult }
+          : { trigger, err },
+      );
+      if (resolved.kind === "terminal") {
+        return { kind: "terminal", result: resolved.result };
+      }
+      return { kind: "stay_put_break" };
+    };
+    const applyBatonOrStop = async (
+      baton: Parameters<typeof applyRelayBaton>[0],
+    ): Promise<SeatDispatchProtocolOutcome | undefined> => {
+      const applied = applyRelayBaton(baton, wallStep);
+      if (applied.kind === "stop") {
+        return {
+          kind: "terminal",
+          result: await stopForCoderRecTightRoutePolicy(applied.escalation),
+        };
+      }
+      return undefined;
+    };
+
+    try {
+      const result = await withMechanicalRetry(
+        spec,
+        ctx,
+        async (s, c) => {
+          // #684: persist monitor handle AT SPAWN (not post-exit).
+          const outcome = await dispatchWorkerWithMonitor(
+            backend,
+            s,
+            c,
+            landingPayload,
+            {
+              onMonitorHandleSpawned: async (handle) => {
+                setMonitorHandle(handle);
+                // #934 ID-006 / #937: persist failure → terminateSpawnedChild.
+                if (isValidStepId(s.id)) {
+                  await persistMonitorHandleAtSpawn(s.id, handle);
+                }
+              },
+            },
+          );
+          if (outcome.monitorHandle !== undefined) {
+            setMonitorHandle(outcome.monitorHandle);
+          }
+          await outcome.telemetryEnvironmentStamp;
+          return outcome.result;
+        },
+        retryOpts,
+      );
+      if (result.kind === "completed") {
+        completeMechanicalRetryInvocation(step);
+        onDispatchCompleted?.();
+      }
+      return { kind: "dispatched", result };
+    } catch (err) {
+      if (
+        usesJudgeReceiptChannel(spec) &&
+        typeof ctx.resumeSessionId === "string" &&
+        isSessionContinuityLostError(err)
+      ) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const ts = new Date().toISOString();
+        const lostEntry: PersistentLedgerEntry = {
+          step,
+          event: "session_continuity_lost",
+          reason,
+          sessionId: ctx.resumeSessionId,
+          modelSlug: spec.model,
+          runId,
+          prompt_hash: await hashPromptForPark(spec.promptFile, step),
+          branchHEAD: await resolveBranchHEAD(),
+          ts,
+        };
+        ledger.push(lostEntry);
+        try {
+          if (stateDir !== undefined) {
+            await backend.writeLedger(lostEntry, stateDir);
+          } else {
+            pendingEntries.push(lostEntry);
+          }
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+
+        const { resumeSessionId: _lost, ...freshCtx } = ctx;
+        const freshSpec: WorkerSpec = { ...spec, session: "fresh" };
+        try {
+          const result = await withMechanicalRetry(
+            freshSpec,
+            freshCtx,
+            async (s, c) => {
+              const outcome = await dispatchWorkerWithMonitor(
+                backend,
+                s,
+                c,
+                landingPayload,
+                {
+                  onMonitorHandleSpawned: async (handle) => {
+                    setMonitorHandle(handle);
+                    if (isValidStepId(s.id)) {
+                      await persistMonitorHandleAtSpawn(s.id, handle);
+                    }
+                  },
+                },
+              );
+              if (outcome.monitorHandle !== undefined) {
+                setMonitorHandle(outcome.monitorHandle);
+              }
+              await outcome.telemetryEnvironmentStamp;
+              return outcome.result;
+            },
+            { ...retryOpts, forbidFreshRetry: false },
+          );
+          if (result.kind === "completed") {
+            completeMechanicalRetryInvocation(step);
+            onDispatchCompleted?.();
+          }
+          return { kind: "dispatched", result };
+        } catch (freshErr) {
+          return {
+            kind: "terminal",
+            result: await errorTermination(step, freshErr),
+          };
+        }
+      }
+      // #683/#686: 429 → park within T / relay beyond T with live baton.
+      if (isQuotaWaitForResetError(err)) {
+        const currentPool =
+          currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
+        if (!canRelayInProcess()) {
+          const override = await maybeNoBaton("quota_no_relay", err);
+          if (override !== undefined) return override;
+          try {
+            return {
+              kind: "terminal",
+              result: await parkQuotaWaitForReset({
+                step,
+                err,
+                ledger,
+                stateDir,
+                sessionId,
+                backend,
+                resolveBranchHEAD,
+                hashPrompt: hashPromptForPark,
+                issue: issueNumber,
+              }),
+            };
+          } catch (writeErr) {
+            return await terminalFromWriteErr(writeErr);
+          }
+        }
+        let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
+        try {
+          outcome = await parkOrRelayQuotaWall({
+            step,
+            err,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            resolveBranchHEAD,
+            hashPrompt: hashPromptForPark,
+            worktreePath: worktree?.path,
+            currentModelId: modelIdForWallStep(wallStep),
+            currentPool,
+            rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+            pools: resolveRelayPools(
+              currentPool,
+              err.disposition.resetAt,
+              true,
+            ),
+            now: relayNow(),
+            issue: issueNumber,
+          });
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+        if (outcome.kind === "park") {
+          const override = await maybeNoBaton(
+            "quota_park",
+            err,
+            outcome.result,
+          );
+          if (override !== undefined) return override;
+          return { kind: "terminal", result: outcome.result };
+        }
+        if (outcome.relayBrief !== undefined) {
+          activeRelayBrief = outcome.relayBrief;
+        }
+        const stop = await applyBatonOrStop(outcome.nextBaton);
+        if (stop !== undefined) return stop;
+        return { kind: "relay" };
+      }
+      // #686/#787/#937: capacity relays without mechanical retry.
+      if (isCapacityRelayError(err)) {
+        if (!canRelayInProcess()) {
+          const override = await maybeNoBaton("capacity_no_relay", err);
+          if (override !== undefined) return override;
+          return {
+            kind: "terminal",
+            result: await errorTermination(step, err),
+          };
+        }
+        const { currentPool, pools } = resolveResourceFailurePool({
+          modelRef: modelRefForWallStep(wallStep),
+          capacity: true,
+        });
+        const handoff = await applyResourceFailureHandoff({
+          trigger: "capacity",
+          state_summary: capacityStateSummary,
+          reason: err instanceof Error ? err.message : String(err),
+          currentModelId: modelIdForWallStep(wallStep),
+          currentPool,
+          rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
+          pools,
+          now: relayNow(),
+          step: wallStep,
+        });
+        if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+          const override = await maybeNoBaton("capacity_no_handoff", err);
+          if (override !== undefined) return override;
+          return {
+            kind: "terminal",
+            result: await errorTermination(step, err),
+          };
+        }
+        try {
+          await persistRelayBatonHandoff({
+            entry: handoff.ledgerEntry,
+            step,
+            ledger,
+            stateDir,
+            sessionId,
+            backend,
+            resolveBranchHEAD,
+            hashPrompt: hashPromptForPark,
+            persistClass: "capacity",
+          });
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+        activeRelayBrief = renderEphemeralRelayBrief(handoff.ledgerEntry);
+        completeMechanicalRetryInvocation(step);
+        const stop = await applyBatonOrStop(handoff.nextBaton);
+        if (stop !== undefined) return stop;
+        return { kind: "relay" };
+      }
+      if (unexpectedError !== undefined) {
+        const packed = unexpectedError(err);
+        return {
+          kind: "terminal",
+          result: await errorTermination(step, packed.error, packed.options),
+        };
+      }
+      return {
+        kind: "terminal",
+        result: await errorTermination(step, err),
+      };
+    }
+  };
 
   // ── #255 / #936: idempotent resume from Scene Action discovery ───────────
   // discoverResidentScene already ran at ignition (ID-005 Recovery first).
@@ -2870,20 +3344,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
-    // prior ledger (judge continue + residual historical S4/reviewer open-count).
-    // Each projection replaces the pending blocker set; prose dispositions do
-    // not reopen findings. Terminal flips include refute→refuted and
-    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
-    // a crash/resume after S4 still hands the fixer host paths (materialised at
-    // landing).
-    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
-    pendingBlockingFindings = [...rebuiltBlocking.blocking];
-    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
-    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
-    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
-    findingDispositions = [...rebuiltBlocking.findingDispositions];
-    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
+    pendingFixPacketBody =
+      plan.lastOutput?.kind === "judge" &&
+      plan.lastOutput.status === "continue"
+        ? plan.lastOutput.fixPacketBody
+        : undefined;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
@@ -2927,26 +3392,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
       }
     }
-    // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
-    // #955 r7: same bookkeeping exclusion as coder rebuild above.
-    // #1019: same fresh-session rule as coder on family redispatch.
+    // #925 / #1081: rebuild resident judge from ledger sole truth (court_opened
+    // / judge seats / court_dismissed). #1019: family redispatch starts fresh.
     if (!familyRedispatch) {
-      for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
-        const entry = plan.priorLedger[i]!;
-        if (isBookkeepingEntry(entry)) continue;
-        if (
-          isJudgeSeat({ step: entry.step }) &&
-          typeof entry.sessionId === "string"
-        ) {
-          judgeSessionId = entry.sessionId;
-          judgeSessionModel =
-            typeof entry.modelSlug === "string"
-              ? entry.modelSlug
-              : entry.step === "S6"
-                ? stepSpecs.S6.model
-                : stepSpecs.S3.model;
-          break;
-        }
+      const lifecycle = rebuildResidentJudgeFromLedger(plan.priorLedger);
+      if (lifecycle.status === "open") {
+        judgeSessionId = lifecycle.sessionId;
+        judgeSessionModel =
+          lifecycle.modelSlug !== "unknown"
+            ? lifecycle.modelSlug
+            : stepSpecs.S3.model;
       }
     }
 
@@ -3309,6 +3764,272 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             configureProgressBroadcast({ ledgerDir: stateDir });
           }
         }
+
+        // #1081 / ADR 0147: open resident judge court at slice dispatch.
+        // Not a topology 拍 — bookkeeping birth so every later S3/S6 resumes
+        // the same session. Create failure is loud (no silent fresh judge).
+        // Skip when crash-resume already rebuilt an open court from ledger.
+        //
+        // Vitest skips birth unless ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1
+        // so existing scripted backends keep the pre-#1081 S3-establish shape;
+        // production always opens court here.
+        if (
+          typeof judgeSessionId !== "string" &&
+          shouldOpenResidentJudgeCourtAtDispatch()
+        ) {
+          const openCourtSmoke = await ensureRouteSmoke();
+          if (openCourtSmoke !== undefined) return openCourtSmoke;
+          // Resume after open-court escalate park: re-enter the same judge
+          // session with the human answer (mirror S2/S3/S5/S6 resumeFor +
+          // escalationAnswerForStep). Never mint a silent orphan fresh court
+          // when planResume already recorded the escalated session id.
+          const openCourtResumeTarget =
+            resumeFor !== undefined &&
+            resumeFor.step === "S1" &&
+            typeof resumeFor.sessionId === "string"
+              ? resumeFor
+              : undefined;
+          if (openCourtResumeTarget !== undefined) {
+            resumeFor = undefined;
+          }
+          const openEscalationAnswer =
+            resumedEscalationAnswer !== undefined &&
+            resumedEscalationAnswer.forStep === "S1"
+              ? resumedEscalationAnswer
+              : undefined;
+          if (openEscalationAnswer !== undefined) {
+            resumedEscalationAnswer = undefined;
+          }
+          let openResult: Awaited<
+            ReturnType<typeof dispatchWorkerWithMonitor>
+          >["result"];
+          let openModel = stepSpecs.S3.model;
+          let openResumeCapable = resumeCapableForSlug(
+            openModel,
+            relayBillingPoolForDispatch("S3"),
+          );
+          // #1111/#1112: same dispatchSeatWithProtocol as S2/S3/S5/S6.
+          openCourtDispatch: for (;;) {
+            // Re-read verify seat after any in-loop baton (capacity/quota relay).
+            openModel = stepSpecs.S3.model;
+            const openDispatchPool = relayBillingPoolForDispatch("S3");
+            openResumeCapable = resumeCapableForSlug(
+              openModel,
+              openDispatchPool,
+            );
+            let openResumeSessionId: string | undefined;
+            if (openCourtResumeTarget !== undefined) {
+              const sessionModel = openCourtResumeTarget.sessionModel;
+              const identityOk =
+                sessionModel === undefined || sessionModel === openModel;
+              if (identityOk && openResumeCapable) {
+                openResumeSessionId = openCourtResumeTarget.sessionId;
+              } else {
+                const lostReason = !openResumeCapable
+                  ? `provider_incapable (seat=${openModel})`
+                  : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${openModel})`;
+                return await errorTermination(
+                  "S1",
+                  new Error(
+                    `resident judge open-court resume refused: ${lostReason} ` +
+                      `(sessionId=${openCourtResumeTarget.sessionId}); silent fresh judge is illegal`,
+                  ),
+                  {
+                    stopSummary: infraFailureStopSummary({
+                      summary: `resident judge open-court session continuity lost: ${lostReason}`,
+                      repairHint:
+                        "restore the verify seat model that owns the open court " +
+                        "or re-open the slice; do not fresh a new judge mid-slice",
+                    }),
+                  },
+                );
+              }
+            }
+            const openSessionMode =
+              typeof openResumeSessionId === "string" ? "resume" : "fresh";
+            const openSpec = {
+              id: "S1" as const,
+              kind: "verify" as const,
+              role: "verify" as const,
+              host: stepSpecToWorkerSpec(
+                stepSpecs.S3,
+                openSessionMode,
+                openDispatchPool,
+              ).host,
+              session: openSessionMode as "fresh" | "resume",
+              contextRetention: "clean" as const,
+              promptFile: JUDGE_OPEN_COURT_PROMPT_FILE,
+              maxIter: 1 as const,
+              model: openModel,
+              soul: "verify" as const,
+              toolchain: stepSpecs.S3.toolchain,
+            };
+            const openDispatchCtx = {
+              runId,
+              worktree,
+              stateDir,
+              modelRoute,
+              ...(openDispatchPool !== undefined
+                ? { billingPool: openDispatchPool }
+                : {}),
+              ...(typeof openResumeSessionId === "string"
+                ? { resumeSessionId: openResumeSessionId }
+                : {}),
+              ...(openEscalationAnswer !== undefined
+                ? { escalationAnswer: openEscalationAnswer }
+                : {}),
+            };
+            const openProtocol = await dispatchSeatWithProtocol({
+              step: "S1",
+              // Verify seat owns open-court model (S3 slot), not coder.
+              wallStep: "S3",
+              spec: openSpec,
+              ctx: openDispatchCtx,
+              retryOpts: durableMechanicalRetryOptions("S1", {
+                rethrowOnExhaustion: true,
+                // Resume open-court must not silent-fresh (#1081); fresh birth
+                // still retries fresh when resumeSessionId is absent.
+                forbidFreshRetry: typeof openResumeSessionId === "string",
+              }),
+              capacityStateSummary:
+                "open-court verify seat at capacity; drift preserved",
+              setMonitorHandle: (handle) => {
+                stepMonitorHandle = handle;
+              },
+              unexpectedError: (err) => ({
+                error:
+                  err instanceof Error
+                    ? err
+                    : new Error(`open court dispatch threw: ${String(err)}`),
+                options: {
+                  stopSummary: infraFailureStopSummary({
+                    summary:
+                      "resident judge open court failed at slice dispatch",
+                    repairHint:
+                      "inspect open-court worker failure and re-run the slice; " +
+                      "do not continue without a resident judge session",
+                  }),
+                },
+              }),
+            });
+            if (openProtocol.kind === "dispatched") {
+              openResult = openProtocol.result;
+              break openCourtDispatch;
+            }
+            if (openProtocol.kind === "terminal") {
+              return openProtocol.result;
+            }
+            if (openProtocol.kind === "relay") {
+              continue openCourtDispatch;
+            }
+            return await errorTermination(
+              "S1",
+              new Error("open-court dispatch: unexpected stay_put_break"),
+            );
+          }
+          // Legal open-court escalate (same judgeStationReceiptSchema as S3/S6)
+          // must park via the global decision-gate edge — never swallow into
+          // court_opened / S2. Thread output into the loop so route(escalateOf)
+          // sees it (S1 previously left lastOutput stale).
+          const openCourtOutput: StepOutput | undefined =
+            openResult.kind === "completed"
+              ? openResult.output
+              : openResult.kind === "escalated"
+                ? mintJudgeEscalate(openResult.escalation)
+                : undefined;
+          const openCourtEscalate =
+            escalateOf(openCourtOutput) != null ||
+            (openCourtOutput?.kind === "judge" &&
+              openCourtOutput.status === "escalate");
+          if (openCourtEscalate && openCourtOutput !== undefined) {
+            const parked: StepOutput =
+              openCourtOutput.kind === "judge" &&
+              openCourtOutput.status === "escalate" &&
+              escalateOf(openCourtOutput) != null
+                ? openCourtOutput
+                : mintJudgeEscalate(
+                    escalateOf(openCourtOutput) ?? {
+                      reason: "open court escalated",
+                      diagnosis:
+                        "resident judge open court escalated at slice dispatch",
+                    },
+                  );
+            output = parked;
+            lastOutput = parked;
+            stepSessionId =
+              openResult.kind === "completed" || openResult.kind === "escalated"
+                ? openResult.sessionId
+                : undefined;
+            promptFile = JUDGE_OPEN_COURT_PROMPT_FILE;
+            break;
+          }
+          const openGate = requireOpenCourtSession({
+            resultKind: openResult.kind,
+            sessionId:
+              openResult.kind === "completed" || openResult.kind === "escalated"
+                ? openResult.sessionId
+                : undefined,
+            seatResumeCapable: openResumeCapable,
+            seatModel: openModel,
+          });
+          if (openGate.kind === "fail") {
+            return await errorTermination("S1", new Error(openGate.reason), {
+              stopSummary: infraFailureStopSummary({
+                summary: openGate.reason,
+                repairHint:
+                  "resident judge requires a resume-capable verify seat that " +
+                  "surfaces a session id at open court; fix staffing/provider " +
+                  "and re-run — silent fresh-per-round judge is illegal",
+              }),
+            });
+          }
+          judgeSessionId = openGate.sessionId;
+          judgeSessionModel = openModel;
+          // Success path MUST clear any stale escalate lastOutput seeded by
+          // planResume after an S1 park. Leaving the prior escalate object would
+          // re-park with the old reason regardless of this successful re-open.
+          output = undefined;
+          lastOutput = undefined;
+          promptFile = JUDGE_OPEN_COURT_PROMPT_FILE;
+          stepSessionId = openGate.sessionId;
+          const openTs = new Date().toISOString();
+          const openEntry = {
+            step: "S1" as const,
+            event: "court_opened" as const,
+            sessionId: openGate.sessionId,
+            modelSlug: openModel,
+            reason: "resident judge court opened at slice dispatch (#1081)",
+            ts: openTs,
+          };
+          ledger.push(openEntry);
+          try {
+            await backend.writeLedger(
+              {
+                ...openEntry,
+                sessionId: openGate.sessionId,
+                prompt_hash: await hashPrompt(
+                  JUDGE_OPEN_COURT_PROMPT_FILE,
+                  "S1",
+                  backend,
+                ),
+                branchHEAD: await resolveBranchHEAD(),
+                ts: openTs,
+                runId,
+              },
+              stateDir,
+            );
+          } catch (err) {
+            return await errorTermination(
+              "S1",
+              new Error(
+                `record_persist_failed: court_opened: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+              { cause: "record_persist_failed" },
+            );
+          }
+        }
         break;
       }
 
@@ -3378,8 +4099,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             // #955: crash/escalate resumeFor — identity match AND capability.
             // Stored session id may only re-enter the model binding that created
-            // it. Mismatch / incapable → fresh (answer still delivered below);
-            // never hand a foreign id to the provider; never silent-drop.
+            // it. Mismatch / incapable → coder: fresh (answer still delivered);
+            // #1081 judge: fail loud (silent fresh resident judge is illegal).
             const sessionModel = resumeFor.sessionModel;
             const identityOk =
               sessionModel === undefined || sessionModel === seatModel;
@@ -3389,6 +4110,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const lostReason = !seatResumeCapable
                 ? `provider_incapable (seat=${seatModel})`
                 : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
+              if (isJudgeSeat({ step })) {
+                return await errorTermination(
+                  step,
+                  new Error(
+                    `resident judge resume refused at ${step}: ${lostReason} ` +
+                      `(sessionId=${resumeFor.sessionId}); silent fresh judge is illegal`,
+                  ),
+                  {
+                    stopSummary: infraFailureStopSummary({
+                      summary: `resident judge session continuity lost: ${lostReason}`,
+                      repairHint:
+                        "restore the verify seat model that owns the open court " +
+                        "or re-open the slice; do not fresh a new judge mid-slice",
+                    }),
+                  },
+                );
+              }
               console.warn(
                 `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
                   `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
@@ -3445,16 +4183,49 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             seatResumeCapable
           ) {
             resumeSessionId = coderSessionId;
-          } else if (
-            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge
-            // session only when the bound provider is resume-capable.
-            isJudgeSeat({ step }) &&
-            typeof judgeSessionId === "string" &&
-            judgeSessionModel !== undefined &&
-            seatModel === judgeSessionModel &&
-            seatResumeCapable
-          ) {
-            resumeSessionId = judgeSessionId;
+          } else if (isJudgeSeat({ step })) {
+            // #1081 / ADR 0147: judging seats resume the resident court when
+            // open; establish (fresh) only when court was never opened or the
+            // verify model moved. Never silent fresh while court is open on
+            // the same model.
+            const lifecycle =
+              typeof judgeSessionId === "string"
+                ? {
+                    status: "open" as const,
+                    sessionId: judgeSessionId,
+                    modelSlug: judgeSessionModel ?? "unknown",
+                  }
+                : rebuildResidentJudgeFromLedger(ledger);
+            const resumeGate = requireResidentJudgeResume({
+              lifecycle,
+              seatModel,
+              seatResumeCapable,
+            });
+            if (resumeGate.kind === "fail") {
+              return await errorTermination(step, new Error(resumeGate.reason), {
+                stopSummary: infraFailureStopSummary({
+                  summary: resumeGate.reason,
+                  repairHint:
+                    "resident judge session must be opened at S1 and resumed " +
+                    "on every S3/S6; do not fresh a new judge mid-slice",
+                }),
+              });
+            }
+            if (resumeGate.kind === "resume") {
+              resumeSessionId = resumeGate.sessionId;
+              judgeSessionId = resumeGate.sessionId;
+              if (
+                lifecycle.status === "open" &&
+                lifecycle.modelSlug !== "unknown"
+              ) {
+                judgeSessionModel = lifecycle.modelSlug;
+              }
+            } else {
+              // establish — fresh birth / re-birth; clear stale continuity.
+              resumeSessionId = undefined;
+              judgeSessionId = undefined;
+              judgeSessionModel = undefined;
+            }
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -3466,6 +4237,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
+          let singleSlicePanelTransports:
+            | ReadonlyArray<LegTransport>
+            | undefined;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -3560,7 +4334,39 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   });
                 }
               }
-              const landingPayload =
+              // #1082: plan-phase landing — transport plan body to judge and
+              // judge boundary prose / beat hint to S2 without reading content.
+              // One ledger scan for phase + beat hint (no double walk).
+              const planScan = shouldRunCoderPlanPhase()
+                ? scanCoderPlanPhase(ledger)
+                : undefined;
+              const planLanding =
+                planScan?.planPhase === true && (step === "S2" || step === "S3")
+                  ? {
+                      ...(step === "S2"
+                        ? {
+                            builderBeat: planScan.beatHint,
+                            ...(pendingFixPacketBody !== undefined
+                              ? { fixPacketBody: pendingFixPacketBody }
+                              : {}),
+                          }
+                        : {}),
+                      ...(step === "S3"
+                        ? (() => {
+                            const planBody =
+                              latestPlanBodyFromLedger(ledger) ??
+                              (lastOutput?.kind === "coder"
+                                ? lastOutput.planBody
+                                : undefined);
+                            return typeof planBody === "string" &&
+                              planBody.trim().length > 0
+                              ? { builderPlanBody: planBody }
+                              : {};
+                          })()
+                        : {}),
+                    }
+                  : undefined;
+              const fixLanding =
                 step === "S5" || step === "S6"
                   ? {
                       // ADR 0138: sole packet content path (verbatim judge body).
@@ -3587,6 +4393,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : {}),
                     }
                   : undefined;
+              const landingPayloadBase =
+                planLanding !== undefined || fixLanding !== undefined
+                  ? { ...(fixLanding ?? {}), ...(planLanding ?? {}) }
+                  : undefined;
+              // #1126: Runner-landed single-slice review paper (same seam as family).
+              const landingPayload: WorkerLandingPayload | undefined =
+                singleSlicePanelTransports !== undefined &&
+                singleSlicePanelTransports.length > 0
+                  ? {
+                      ...(landingPayloadBase ?? {}),
+                      panelLegTransports: singleSlicePanelTransports,
+                    }
+                  : landingPayloadBase;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (`failed` / throw, including StructuredOutputError after
               // Sandcastle maxRetries exhaust) with a fresh worker at the same
@@ -3607,60 +4426,254 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Coder keeps default failed→durable abort (existing escalate path).
               // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
               // (role is always "verify" on those seats; dual-OR deleted).
+              // #934 ID-008 / #926: review/fix no-baton → stay-put (onNoBaton).
+              const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
+              const applyReviewFixStayPut = async (
+                stayReason: string,
+                stateSummary: string,
+                parkErr?: QuotaWaitForResetError,
+              ): Promise<"break" | RunResult> => {
+                const stayModel = modelIdForWallStep(step);
+                const stayTs = new Date().toISOString();
+                const stayEntry = {
+                  step,
+                  event: "coder_advance_stay_put" as const,
+                  reason: stayReason,
+                  fromModelId: stayModel,
+                  toModelId: stayModel,
+                  state_summary: stateSummary,
+                  ts: stayTs,
+                };
+                ledger.push(stayEntry);
+                // #926 / #934 ID-015: stay-put audit is required durable truth — not
+                // fail-open. writeLedger failure surfaces as typed failed.
+                if (stateDir !== undefined) {
+                  try {
+                    await backend.writeLedger(
+                      {
+                        ...stayEntry,
+                        sessionId,
+                        prompt_hash: await hashPrompt(undefined, step, backend),
+                        branchHEAD: await resolveBranchHEAD(),
+                        ts: stayTs,
+                      },
+                      stateDir,
+                    );
+                  } catch (writeErr) {
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `record_persist_failed: coder_advance_stay_put audit: ${
+                          writeErr instanceof Error
+                            ? writeErr.message
+                            : String(writeErr)
+                        }`,
+                      ),
+                      { cause: "record_persist_failed" },
+                    );
+                  }
+                }
+                consecutiveReviewFixStayPuts += 1;
+                // Second consecutive no-baton wall after return-to-judge: wait for
+                // external quota reset (ID-001 park) — never invent terminal from
+                // candidate exhaustion (#926 / ID-008).
+                if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
+                  try {
+                    return await parkQuotaWaitForReset({
+                      step,
+                      err: parkErr,
+                      ledger,
+                      stateDir,
+                      sessionId,
+                      backend,
+                      resolveBranchHEAD,
+                      hashPrompt: (promptFile, s) =>
+                        hashPrompt(promptFile, s, backend),
+                      issue: issueNumber,
+                    });
+                  } catch (writeErr) {
+                    return await errorTermination(
+                      step,
+                      writeErr instanceof Error
+                        ? writeErr
+                        : new Error(String(writeErr)),
+                    );
+                  }
+                }
+                if (step === "S5") {
+                  // #926: return result to persistent judge (S5→S6). Noop fix
+                  // receipt — live findings stay in pending* for S6.
+                  output = {
+                    kind: "coder",
+                    committed: false,
+                    commitsAdded: 0,
+                  };
+                  lastOutput = output;
+                  reviewFixStayPutRouted = true;
+                  return "break";
+                }
+                // S3/S6: never invent empty judge paper; never clear live findings.
+                // Prefer prior continue paper so route → S5 with the same open set;
+                // otherwise leave output undefined → unusable → S5 topology.
+                if (
+                  lastOutput?.kind === "judge" &&
+                  lastOutput.status === "continue" &&
+                  pendingBlockingFindingCount > 0
+                ) {
+                  output = lastOutput;
+                } else {
+                  output = undefined;
+                }
+                // pendingBlockingFindings intentionally untouched.
+                reviewFixStayPutRouted = true;
+                return "break";
+              };
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
                 isJudgeSeat({ step })
-                  ? { rethrowOnExhaustion: true }
+                  ? {
+                      rethrowOnExhaustion: true,
+                      // #1081: never strip resume and re-open a fresh judge.
+                      forbidFreshRetry: true,
+                    }
                   : {},
               );
-              result = await withMechanicalRetry(
-                workerSpec,
-                dispatchCtx,
-                async (s, c) => {
-                  // #684: production path — CLI workers go through
-                  // dispatchMonitoredCliWorker atomically via
-                  // dispatchWorkerWithMonitor; RealBackend hooks make this the
-                  // production branch. Handle persisted AT SPAWN (not post-exit).
-                  const outcome = await dispatchWorkerWithMonitor(
-                    backend,
-                    s,
-                    c,
-                    landingPayload,
-                    {
-                      onMonitorHandleSpawned: async (handle) => {
-                        stepMonitorHandle = handle;
-                        // #934 ID-006 / #937: adoption/persist failure must
-                        // terminate the exact ChildProcess — rethrow so
-                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
-                        if (isValidStepId(s.id)) {
-                          await persistMonitorHandleAtSpawn(s.id, handle);
-                        }
-                      },
-                    },
-                  );
-                  if (outcome.monitorHandle !== undefined) {
-                    stepMonitorHandle = outcome.monitorHandle;
-                  }
-                  // The worker has already exited and its result is collected;
-                  // join the first-run environment side effect before this
-                  // runner advances or returns to an external caller. This
-                  // deliberately does not delay spawn / first output (#793).
-                  await outcome.telemetryEnvironmentStamp;
-                  const dispatched = outcome.result;
-                  if (dispatched.kind !== "completed") return dispatched;
-                  const dispatchedEscalation = escalateOf(dispatched.output);
-                  if (dispatchedEscalation !== undefined) {
-                    return dispatched;
-                  }
-
-                  return dispatched;
+              const seatProtocol = await dispatchSeatWithProtocol({
+                step,
+                wallStep: step,
+                spec: workerSpec,
+                ctx: dispatchCtx,
+                retryOpts: durableRetryOpts,
+                landingPayload,
+                capacityStateSummary:
+                  "model checkpoint at capacity; drift preserved",
+                setMonitorHandle: (handle) => {
+                  stepMonitorHandle = handle;
                 },
-                durableRetryOpts,
-              );
-              if (result.kind === "completed") {
-                completeMechanicalRetryInvocation(step);
-                // Successful productive dispatch breaks the stay-put streak.
-                consecutiveReviewFixStayPuts = 0;
+                onDispatchCompleted: () => {
+                  // Successful productive dispatch breaks the stay-put streak.
+                  consecutiveReviewFixStayPuts = 0;
+                },
+                onNoBaton: isReviewFixSeat
+                  ? async ({ trigger, err }) => {
+                      const msg =
+                        err instanceof Error ? err.message : String(err);
+                      const parkErr = isQuotaWaitForResetError(err)
+                        ? err
+                        : undefined;
+                      const stay =
+                        trigger === "quota_no_relay"
+                          ? await applyReviewFixStayPut(
+                              `quota wall stay-put on ${step}: no live baton`,
+                              msg,
+                              parkErr,
+                            )
+                          : trigger === "quota_park"
+                            ? await applyReviewFixStayPut(
+                                `quota wall stay-put on ${step}: park/no baton`,
+                                msg,
+                                parkErr,
+                              )
+                            : await applyReviewFixStayPut(
+                                `capacity stay-put on ${step}: no live baton`,
+                                msg,
+                              );
+                      return stay === "break"
+                        ? { kind: "stay_put_break" as const }
+                        : { kind: "terminal" as const, result: stay };
+                    }
+                  : undefined,
+              });
+              if (seatProtocol.kind === "terminal") {
+                return seatProtocol.result;
+              }
+              if (seatProtocol.kind === "relay") {
+                continue orchestratorStepLoop;
+              }
+              if (seatProtocol.kind === "stay_put_break") {
+                break;
+              }
+              result = seatProtocol.result;
+              // #1126: after construction, Runner topology fans out fresh review
+              // legs on judge continue — same #1094 dispatchReviewPanelLegs
+              // mechanism, scope=single. No durable ledger events; papers land
+              // back on this same judge session.
+              if (
+                isJudgeSeat({ step }) &&
+                result.kind === "completed" &&
+                result.output !== undefined &&
+                result.output.kind === "judge" &&
+                result.output.status === "continue" &&
+                singleSlicePanelTransports === undefined
+              ) {
+                const inPlanPhase =
+                  shouldRunCoderPlanPhase() &&
+                  scanCoderPlanPhase(ledger).planPhase;
+                if (!inPlanPhase) {
+                  const judgeStep = step === "S3" ? "S3" : "S6";
+                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+                  const reviewLegs = [
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "standards" as const,
+                    },
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "spec" as const,
+                    },
+                  ];
+                  const reviewRound = await dispatchReviewPanelLegs({
+                    legs: reviewLegs,
+                    scope: { kind: "single", judgeStep },
+                    dispatch: async (reviewSpec) => {
+                      const protocol = await dispatchSeatWithProtocol({
+                        step,
+                        wallStep: step,
+                        spec: reviewSpec,
+                        ctx: reviewLegCtx,
+                        retryOpts: durableMechanicalRetryOptions(step),
+                        capacityStateSummary:
+                          "fresh reviewer checkpoint at capacity; drift preserved",
+                        setMonitorHandle: (handle) => {
+                          stepMonitorHandle = handle;
+                        },
+                      });
+                      if (protocol.kind === "dispatched") {
+                        return {
+                          kind: "leg_result" as const,
+                          result: protocol.result,
+                        };
+                      }
+                      return {
+                        kind: "seat_control" as const,
+                        control: protocol,
+                      };
+                    },
+                  });
+                  if (reviewRound.kind === "seat_control") {
+                    if (reviewRound.control.kind === "terminal") {
+                      return reviewRound.control.result;
+                    }
+                    if (reviewRound.control.kind === "relay") {
+                      continue orchestratorStepLoop;
+                    }
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `fresh reviewer ${step} stopped without a dispatch result`,
+                      ),
+                    );
+                  }
+                  singleSlicePanelTransports = reviewRound.transports;
+                  if (typeof result.sessionId === "string") {
+                    resumeSessionId = result.sessionId;
+                    judgeSessionId = result.sessionId;
+                    judgeSessionModel = stepSpecs[step].model;
+                  }
+                  continue;
+                }
               }
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
@@ -3707,296 +4720,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
-          // with the fourth fate channel. Decision gates arrive via typed station
-          // escalate; hang no longer invents host kill+relay from silence.
-          // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (ephemeral brief, apply next baton, re-enter).
-          //
-          // #934 ID-008 / #926 / #937: review/fix (S3/S5/S6) no-candidate is
-          // one stay-put seam — durable audit, keep owning coder, never invent
-          // terminal solely from candidate exhaustion, no fabricated judge paper,
-          // no clearing live findings. Topology returns to the persistent judge
-          // (S5→S6) or re-enters the fix desk with preserved findings (S3/S6→S5).
-          // After a full return-to-judge cycle still no baton: park for external
-          // quota reset when the wall is typed 429 (ID-001 park), never S8 error.
-          const isReviewFixSeat = isJudgeSeat({ step }) || step === "S5";
-          const applyReviewFixStayPut = async (
-            stayReason: string,
-            stateSummary: string,
-            parkErr?: QuotaWaitForResetError,
-          ): Promise<"break" | RunResult> => {
-            const stayModel = modelIdForWallStep(step);
-            const stayTs = new Date().toISOString();
-            const stayEntry = {
-              step,
-              event: "coder_advance_stay_put" as const,
-              reason: stayReason,
-              fromModelId: stayModel,
-              toModelId: stayModel,
-              state_summary: stateSummary,
-              ts: stayTs,
-            };
-            ledger.push(stayEntry);
-            // #926 / #934 ID-015: stay-put audit is required durable truth — not
-            // fail-open. writeLedger failure surfaces as typed failed.
-            if (stateDir !== undefined) {
-              try {
-                await backend.writeLedger(
-                  {
-                    ...stayEntry,
-                    sessionId,
-                    prompt_hash: await hashPrompt(undefined, step, backend),
-                    branchHEAD: await resolveBranchHEAD(),
-                    ts: stayTs,
-                  },
-                  stateDir,
-                );
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  new Error(
-                    `record_persist_failed: coder_advance_stay_put audit: ${
-                      writeErr instanceof Error
-                        ? writeErr.message
-                        : String(writeErr)
-                    }`,
-                  ),
-                  { cause: "record_persist_failed" },
-                );
-              }
-            }
-            consecutiveReviewFixStayPuts += 1;
-            // Second consecutive no-baton wall after return-to-judge: wait for
-            // external quota reset (ID-001 park) — never invent terminal from
-            // candidate exhaustion (#926 / ID-008).
-            if (consecutiveReviewFixStayPuts > 1 && parkErr !== undefined) {
-              // Mirror capacity path: park ledger-write failure → errorTermination
-              // (not raw rejection from inside this catch).
-              try {
-                return await parkQuotaWaitForReset({
-                  step,
-                  err: parkErr,
-                  ledger,
-                  stateDir,
-                  sessionId,
-                  backend,
-                  resolveBranchHEAD,
-                  hashPrompt: (promptFile, s) =>
-                    hashPrompt(promptFile, s, backend),
-                  issue: issueNumber,
-                });
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  writeErr instanceof Error
-                    ? writeErr
-                    : new Error(String(writeErr)),
-                );
-              }
-            }
-            if (step === "S5") {
-              // #926: return result to persistent judge (S5→S6). Noop fix
-              // receipt — live findings stay in pending* for S6.
-              output = {
-                kind: "coder",
-                committed: false,
-                commitsAdded: 0,
-              };
-              lastOutput = output;
-              reviewFixStayPutRouted = true;
-              return "break";
-            }
-            // S3/S6: never invent empty judge paper; never clear live findings.
-            // Prefer prior continue paper so route → S5 with the same open set;
-            // otherwise leave output undefined → unusable → S5 topology.
-            if (
-              lastOutput?.kind === "judge" &&
-              lastOutput.status === "continue" &&
-              pendingBlockingFindingCount > 0
-            ) {
-              output = lastOutput;
-            } else {
-              output = undefined;
-            }
-            // pendingBlockingFindings intentionally untouched.
-            reviewFixStayPutRouted = true;
-            return "break";
-          };
-
-          if (isQuotaWaitForResetError(err)) {
-            const currentPool =
-              currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
-            if (!canRelayInProcess()) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `quota wall stay-put on ${step}: no live baton`,
-                  err.message,
-                  err,
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              // Mirror capacity path: park ledger-write failure → errorTermination
-              // (not raw rejection from inside this catch).
-              try {
-                return await parkQuotaWaitForReset({
-                  step,
-                  err,
-                  ledger,
-                  stateDir,
-                  sessionId,
-                  backend,
-                  resolveBranchHEAD,
-                  hashPrompt: (promptFile, s) =>
-                    hashPrompt(promptFile, s, backend),
-                  issue: issueNumber,
-                });
-              } catch (writeErr) {
-                return await errorTermination(
-                  step,
-                  writeErr instanceof Error
-                    ? writeErr
-                    : new Error(String(writeErr)),
-                );
-              }
-            }
-            // parkOrRelayQuotaWall may throw on required ledger writes; surface
-            // via errorTermination so runOrchestrator returns S8, not rejects.
-            let outcome: Awaited<ReturnType<typeof parkOrRelayQuotaWall>>;
-            try {
-              outcome = await parkOrRelayQuotaWall({
-                step,
-                err,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-                worktreePath: worktree?.path,
-                currentModelId: modelIdForWallStep(step),
-                currentPool,
-                rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                // #909 production live path: route-smoke knownLive for quota walls.
-                pools: resolveRelayPools(
-                  currentPool,
-                  err.disposition.resetAt,
-                  true,
-                ),
-                now: relayNow(),
-                issue: issueNumber,
-              });
-            } catch (writeErr) {
-              return await errorTermination(
-                step,
-                writeErr instanceof Error
-                  ? writeErr
-                  : new Error(String(writeErr)),
-              );
-            }
-            if (outcome.kind === "park") {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `quota wall stay-put on ${step}: park/no baton`,
-                  err.message,
-                  err,
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return outcome.result;
-            }
-            if (outcome.relayBrief !== undefined) {
-              activeRelayBrief = outcome.relayBrief;
-            }
-            {
-              const applied = applyRelayBaton(outcome.nextBaton, step);
-              if (applied.kind === "stop") {
-                return await stopForCoderRecTightRoutePolicy(applied.escalation);
-              }
-            }
-            continue orchestratorStepLoop;
-          }
-          // #686/#787/#937: capacity resource failure relays without retry
-          // (never mechanical-retry / never reset). Hang/self-report free-log
-          // constructors deleted with ID-006/007.
-          // #934 ID-008: review/fix no-candidate is stay-put even when the
-          // handoff chain is exhausted (canRelayInProcess false) — never invent
-          // terminal solely from capacity candidate exhaustion.
-          if (isCapacityRelayError(err)) {
-            if (!canRelayInProcess()) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `capacity stay-put on ${step}: no live baton`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return await errorTermination(step, err);
-            }
-            const { currentPool, pools } = resolveResourceFailurePool({
-              modelRef: modelRefForWallStep(step),
-              capacity: true,
-            });
-            const handoff = await applyResourceFailureHandoff({
-              trigger: "capacity",
-              state_summary: "model checkpoint at capacity; drift preserved",
-              reason: err instanceof Error ? err.message : String(err),
-              currentModelId: modelIdForWallStep(step),
-              currentPool,
-              rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools,
-              now: relayNow(),
-              step,
-            });
-            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
-              if (isReviewFixSeat) {
-                const stay = await applyReviewFixStayPut(
-                  `capacity stay-put on ${step}: no live baton`,
-                  err instanceof Error ? err.message : String(err),
-                );
-                if (stay !== "break") return stay;
-                break;
-              }
-              return await errorTermination(step, err);
-            }
-            const entry = handoff.ledgerEntry;
-            // #934 S2: single durable court (shared with quota-wall relay).
-            try {
-              await persistRelayBatonHandoff({
-                entry,
-                step,
-                ledger,
-                stateDir,
-                sessionId,
-                backend,
-                resolveBranchHEAD,
-                hashPrompt: (promptFile, s) =>
-                  hashPrompt(promptFile, s, backend),
-                persistClass: "capacity",
-              });
-            } catch (writeErr) {
-              // Surface write failure class via errorTermination (not throw out).
-              return await errorTermination(
-                step,
-                writeErr instanceof Error
-                  ? writeErr
-                  : new Error(String(writeErr)),
-              );
-            }
-            activeRelayBrief = renderEphemeralRelayBrief(entry);
-            completeMechanicalRetryInvocation(step);
-            {
-              const applied = applyRelayBaton(handoff.nextBaton, step);
-              if (applied.kind === "stop") {
-                return await stopForCoderRecTightRoutePolicy(applied.escalation);
-              }
-            }
-            continue orchestratorStepLoop;
-          }
+          // Residual non-dispatch errors (setup / post-projection). Quota /
+          // capacity / monitor protocol lives in dispatchSeatWithProtocol.
           return await errorTermination(step, err);
         }
 
@@ -4010,6 +4735,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // skip worker-output projection so we do not clear the open set.
         if (reviewFixStayPutRouted) {
           if (output !== undefined) lastOutput = output;
+          break;
+        }
+        // Success path always assigns output above; narrow for the projection
+        // that follows (stay-put exits via the branch above).
+        if (output === undefined) {
           break;
         }
 
@@ -4044,6 +4774,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // #1007 AC1: always echo typed judge tri-state (including escalate) so
         // latest verdict/counts are on the feed. Park/terminal alone do not fill
         // AC1. Open-set projection stays gated on !carriesEscalate below.
+        // #1086: builder↔judge rotation rides the beat channel only (not judge).
         if (isJudgeSeat({ step }) && output?.kind === "judge") {
           const judgeRound =
             ledger.filter((e) => e.step === "S3" || e.step === "S6").length + 1;
@@ -4052,8 +4783,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             step,
             round: judgeRound,
             verdict: output.status,
-            findingDispositions: output.findingDispositions,
-            findings: output.findings,
             cargoPointer:
               typeof output.fixPacketBody === "string" &&
               output.fixPacketBody.length > 0
@@ -4062,109 +4791,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           });
         }
         if (!carriesEscalate) {
-          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
-          // Production role is always "verify" on those seats; expectedKind OR
-          // was redundant. Residual role:"reviewer" is not live here.
           if (isJudgeSeat({ step })) {
-            // #925: judge typed verdict is the sole routing signal. Unusable
-            // envelope → fixer path with raw artifact pointers (never silent clean).
-            if (output?.kind !== "judge") {
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingBlockingFindingCount = 0;
-              pendingFixPacketBody = undefined;
+            // ADR 0129/0131: the resident Judge Action owns findings-store
+            // writes, transitions and correction. Runner transports only the
+            // authored packet and routes on the typed verdict.
+            pendingBlockingFindings = [];
+            pendingBlockingFindingIdentityKeys = [];
+            pendingBlockingFindingCount = 0;
+            pendingFixPacketBody =
+              output.kind === "judge" && output.status === "continue"
+                ? output.fixPacketBody
+                : undefined;
+            if (output.kind !== "judge") {
               pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                 stepMonitorHandle,
                 stepSessionId,
               );
-              // Seed findingDispositions empty; route() will send unusable → S5.
-              lastOutput = output;
-              break;
-            }
-            // Apply continue dispositions via the shared projection helper
-            // (same helper resume rebuild uses — F2 single open-set seam).
-            if (output.status === "continue") {
-              // ADR 0138: missing/empty fixPacketBody is contract drift — fail
-              // loud here so S5 never falls back to bare-findings packing.
-              let authoredBody: string;
-              try {
-                authoredBody = requireFixPacketBody(output);
-              } catch (err) {
-                const reason =
-                  err instanceof Error
-                    ? err.message
-                    : "judge continue missing fixPacketBody (ADR 0138)";
-                return await errorTermination(step, new Error(reason), {
-                  output,
-                  findingDispositions,
-                  stopSummary: contractDriftStopSummary({
-                    summary: reason,
-                    repairHint:
-                      "judge status:continue must author non-empty fixPacketBody; " +
-                      "runner transports it verbatim and will not pack bare findings",
-                  }),
-                });
-              }
-              // #952 R6-C2: pass accumulated store statuses so terminal→terminal
-              // morphs fail at the write point (no open hardcode laundering).
-              const projected = projectJudgeContinueBlocking(
-                output,
-                storeStatusByIdentityFromDispositions(findingDispositions),
-              );
-              if (projected !== undefined) {
-                // Apply terminal store flips first, then gate empty live set (#919 M6).
-                if (projected.terminalDispositions.length > 0) {
-                  findingDispositions = [
-                    ...findingDispositions,
-                    ...projected.terminalDispositions,
-                  ];
-                }
-                pendingBlockingFindings = projected.blocking;
-                pendingBlockingFindingIdentityKeys =
-                  projected.blockingIdentityKeys;
-                pendingBlockingFindingCount = projected.blockingFindingCount;
-                pendingFixPacketBody = authoredBody;
-                if (pendingBlockingFindingCount > 0) {
-                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                    stepMonitorHandle,
-                    stepSessionId,
-                  );
-                } else if (projected.blockingIdentityKeys.length === 0) {
-                  // #952: 0 live + non-empty terminal flips (suppress/refute) =
-                  // terminal court closure — apply flips (above), do not S5,
-                  // route like converged via judgeStatusFromOutput. True empty
-                  // (0 live AND 0 terminals) remains M6 contract drift.
-                  if (projected.terminalDispositions.length === 0) {
-                    // #919 M6 / family M1 isomorphic: true empty continue is
-                    // court contract drift — never empty-spin S5. Unusable
-                    // (non-judge) still routes to S5 above; route() continue→S5
-                    // stays for non-empty live sets only.
-                    const reason =
-                      `judge ${step} continue with 0 live findings ` +
-                      `(court contract drift; empty continue must not spin coder-fix)`;
-                    return await errorTermination(step, new Error(reason), {
-                      output,
-                      findingDispositions,
-                      stopSummary: contractDriftStopSummary({
-                        summary: reason,
-                        repairHint:
-                          "judge status:continue requires non-empty live identity keys " +
-                          "or terminal-only dispositions (suppress/refute); " +
-                          "re-open the same judge seat or repair the seat envelope — " +
-                          "do not empty-spin S5 coder-fix",
-                      }),
-                    });
-                  }
-                  // Terminal-only: pending open set already 0; fall through so
-                  // ledger records flips + continue envelope, then route → S7.
-                }
-              }
             } else {
-              // converged / escalate: no open findings for S5.
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingBlockingFindingCount = 0;
-              pendingFixPacketBody = undefined;
+              pendingRawReviewerArtifacts = undefined;
             }
           }
         }
@@ -4235,17 +4879,57 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // land on judge seats (S4 residual). Residual S4 still accepts dispositions
     // if a legacy path writes them.
     const stepFindingDispositions =
-      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
+      step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
     // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
     // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
     // (zero readers; dual-write already gone). #926 owns any roster consumption.
-    // #955: in-memory parity with emitLedger modelSlug (resume identity).
-    const inMemoryModelSlug = isWorkerStep(step)
-      ? stepSpecs[step].model
-      : undefined;
+    // #955 / #1080: in-memory parity with emitLedger modelSlug (resume identity),
+    // including S1 open-court escalate rows.
+    //
+    // #1081 / ADR 0147: fold court_dismissed into the SAME durable write as the
+    // product-converge judge step (no two-write crash window that leaves a
+    // permanently open court after full completion). Product convergence
+    // includes terminal-only continue that routes like converged. Only when
+    // court was opened at dispatch (court_opened row) — late S3 establish
+    // without birth has no hanging court to dismiss.
+    //
+    // #1086 / ADR 0147 S6: stamp typed builder 拍别 onto coder cargo so each
+    // product beat row carries 拍别 (plan|construct) without prose; judge rows
+    // already carry 判词终态 via output.status.
+    let durableOutput = output;
+    if (
+      isBuilderBeatStep(step) &&
+      durableOutput !== undefined &&
+      durableOutput.kind === "coder"
+    ) {
+      durableOutput = stampBuilderBeatOnOutput(step, durableOutput, {
+        forcePlan:
+          step === "S2" &&
+          shouldRunCoderPlanPhase() &&
+          shouldForcePlanBeatStamp(ledger),
+      });
+      // Keep in-flight lastOutput aligned with durable stamp for route consumers.
+      if (lastOutput?.kind === "coder") lastOutput = durableOutput;
+      output = durableOutput;
+    }
+    const inMemoryModelSlug = modelSlugForLedgerStep(step, stepSpecs);
+    const dismissCourtOnThisWrite =
+      isJudgeSeat({ step }) &&
+      output !== undefined &&
+      judgeStatusFromOutput(output) === "converged" &&
+      typeof judgeSessionId === "string" &&
+      ledger.some((e) => e.event === "court_opened");
+    const courtDismissReason =
+      "resident judge court dismissed after slice convergence (#1081)";
+    if (dismissCourtOnThisWrite) {
+      // Clear in-memory resident handle before the write so a later failure
+      // path cannot resume a court we already decided to close.
+      judgeSessionId = undefined;
+      judgeSessionModel = undefined;
+    }
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
@@ -4264,7 +4948,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepMonitorHandle !== undefined
         ? { monitorHandle: stepMonitorHandle }
         : {}),
+      ...(dismissCourtOnThisWrite
+        ? {
+            event: "court_dismissed" as const,
+            reason: courtDismissReason,
+          }
+        : {}),
     });
+    // #1086: progress line for every product beat (builder + judge). Fail-open
+    // feed; durable ledger write below remains fail-loud (AC4).
+    // Project the just-pushed row only — unusable judge envelopes do not project
+    // as beats; never re-emit the previous beat's role/rotation (phantom replay).
+    if (
+      (isBuilderBeatStep(step) || isJudgeBeatStep(step)) &&
+      output !== undefined
+    ) {
+      const justPushed = ledger[ledger.length - 1]!;
+      const completed = projectCompletedBeats(ledger);
+      const justLanded = projectBeatFromEntry(justPushed, completed.length);
+      if (justLanded !== undefined) {
+        emitBeatProgress({
+          issue: issueNumber,
+          role: justLanded.role,
+          step: justLanded.step,
+          rotation: justLanded.rotation,
+          beatKind: justLanded.beatKind ?? null,
+          verdict: justLanded.verdict ?? null,
+        });
+      }
+    }
     // #6: a writeLedger failure here is a backend-call exception → it must
     // converge to S8(failed) with an error package, NOT raw-reject out of
     // runOrchestrator (PRD route table: any backend call throwing → S8(failed)).
@@ -4283,6 +4995,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         undefined,
         undefined,
         stepMonitorHandle,
+        dismissCourtOnThisWrite
+          ? {
+              event: "court_dismissed",
+              reason: courtDismissReason,
+            }
+          : undefined,
       );
     } catch (err) {
       // integ-cmr base r2 (D): the step is already in the in-memory ledger
@@ -4330,9 +5048,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #925 / ADR 0132: topology advances from the judge status tri-state
     // (converged|continue|escalate) and explicit escalation; receipt cargo is
     // not a fate input. Residual open-count paper is projected before route().
+    // #1082: ledger already includes this step row — plan phase is sole truth.
+    const coderPlanPhase =
+      shouldRunCoderPlanPhase() && scanCoderPlanPhase(ledger).planPhase;
     const decision = route({
       from: step,
       output: lastOutput,
+      ...(coderPlanPhase ? { coderPlanPhase: true } : {}),
     });
 
     if (decision.kind === "handoff") {

@@ -94,7 +94,6 @@ import {
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
 import {
-  buildJudgeReviewLegPrompt,
   judgeResultFromVerdict,
   materializeLandingFixPacketBody,
   unusableResidualOpenCountPaper,
@@ -104,10 +103,9 @@ import {
   type LegTransport,
 } from "../legPaper.js";
 import {
-  CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE,
-  CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE,
+  CMR_PANEL_LEG_PROMPT_FILE,
   panelLegCompletedResult,
-} from "./cmrPanelLegs.js";
+} from "./reviewPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";
@@ -118,7 +116,11 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { findingIdentityKey } from "../findings.js";
-import { runExclusive } from "../gitMutex.js";
+import {
+  isGitMutexHeldInProcess,
+  runExclusive,
+  runExclusiveSync,
+} from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
@@ -127,6 +129,7 @@ import {
   unavailableProviderAuth,
   type ProviderAuthAvailability,
   resumeCapableForSlug,
+  appendAgySoulMount,
 } from "../modelRegistry.js";
 import {
   agentForSlug,
@@ -141,12 +144,10 @@ import {
   type FamilyWorkerAuthCore,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
-  soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
   SANDBOX_REPO_ENV,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   SANDBOX_OUTCOME_PATH_ENV,
   SPAWNED_WORKER_ENV,
   WORKER_IDLE_TIMEOUT_SECONDS,
@@ -226,7 +227,6 @@ import type {
   OnlineReviewFindingDisposition,
   OnlineReviewThreadReply,
   PriorFindingDisposition,
-  StepSoul,
   VerifyResult,
   VerifyWorkerTerminalState,
   WorkerLandingPayload,
@@ -278,20 +278,6 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * infers the repo default branch and cannot honor a non-main integration target.
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-
-/**
- * #930: family integrated-cmr court soul = verify judge (same as single-slice
- * S3/S6). kind remains "cmr" for dispatch; traffic/soul is the convergence judge.
- */
-const CMR_SOUL: StepSoul = "verify";
-
-/**
- * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
- * DEDICATED ship soul (not the coder soul): the ship worker's discipline is
- * delivery via `gstack-ship` — stop at PR, deferred findings → tracker (issue /
- * TODOS.md) never the PR body — not the coder's TDD build loop.
- */
-const SHIP_SOUL: StepSoul = "ship";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {
@@ -372,7 +358,7 @@ export interface RealFamilyBackendOptions {
   readonly familyBaseStartHead?: string;
   /**
    * Override $HOME for the cmr worker's auth-source paths (`~/.codex/auth.json`,
-   * `~/.sc-agy-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
+   * `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.sc-claude-token`). Defaults to {@link homedir}.
    * Tests inject a fixture home so the auth copy/mount is exercised without the
    * real host credentials.
    */
@@ -390,9 +376,7 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
   ...new Set([
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
-    // #1094: pass-distinct panel-leg prompts (one authoritative source per lens).
-    "cmr_panel_leg_completeness.md",
-    "cmr_panel_leg_correctness.md",
+    CMR_PANEL_LEG_PROMPT_FILE,
     // #1068 added a thin wave-verify triage judge promptFile
     // (waveVerifyJudgeWorkerSpec); it is family-dispatched, so it belongs to the
     // construction-time inventory the same as the integrated CMR prompts.
@@ -410,22 +394,22 @@ export function mergerModel(route?: ResolvedModelRoute): string {
   return route?.slots.merger ?? modelForSlot("merger");
 }
 
-/**
- * The baked soul the merger agent runs under (F28 / ADR 0022: the conflict
- * fallback follows the "one mirror new soul" model). This is a THIRD baked soul
- * value alongside the step souls — it is deliberately NOT a {@link StepSoul},
- * because the merger is not an S0–S8 single-slice step driven by `soulForStep`
- * (which maps a step's `role` → "coder"/"READ-ONLY"). The merger has its own
- * activation path: it is injected into the sandbox via {@link SANDBOX_SOUL_ENV}
- * (`ORCHESTRATOR_SOUL`), the SAME env mechanism `RealBackend.box()` uses for
- * coder/reviewer — same image, same env var, a new soul value — so the v0.1
- * profile entrypoint activates the merger soul (with the `resolving-merge-conflicts`
- * skill), not whatever default soul it would otherwise pick. The merger soul's
- * CONTENT (the baked profile + `prompts/merger_resolve_conflict.md` behaviour) is
- * a production-image concern (it must be baked into the profile image); this
- * constant is the code-side selector that activates it.
- */
-export const MERGER_SOUL = "merger";
+function mergerWorkerSpec(model: string): WorkerSpec {
+  return {
+    id: "S1",
+    kind: "merge",
+    role: "coder",
+    host: workerHostForModel(model),
+    session: "fresh",
+    contextRetention: "clean",
+    skill: "resolving-merge-conflicts",
+    promptFile: MERGER_CONFLICT_PROMPT,
+    maxIter: 1,
+    model,
+    soul: "merger",
+    toolchain: [],
+  };
+}
 
 export class RealFamilyBackend implements FamilyBackend {
   private verificationStampTail: Promise<void> = Promise.resolve();
@@ -552,6 +536,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return agentForSlug(
       spec.model,
       isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+      spec.soul,
     );
   }
 
@@ -732,6 +717,22 @@ export class RealFamilyBackend implements FamilyBackend {
 
   // ─────────────────────────── merge ───────────────────────────
 
+  /**
+   * #1103 H2 / #1105 R4: `git checkout` on a shared clone mutates HEAD / index
+   * under the common `.git`. When already inside {@link runExclusive}, the file
+   * lock is held — do not nest {@link runExclusiveSync} (fail-fast on in-process
+   * overlap). Otherwise take the sync lock (cross-process wait still allowed).
+   */
+  private checkoutSharedRepo(branch: string, repo: string = this.opts.workingRepo): void {
+    if (isGitMutexHeldInProcess(repo)) {
+      this.sh("git", ["checkout", branch], repo);
+      return;
+    }
+    runExclusiveSync(repo, () => {
+      this.sh("git", ["checkout", branch], repo);
+    });
+  }
+
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
     // #291 B7: serialise this git-MUTATING merge under the SAME per-clone mutex the
     // single-slice prepareWorktree uses (keyed on the dedicated clone). The spine
@@ -748,7 +749,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const repo = this.opts.workingRepo;
     // Pin the SHAs BEFORE the merge: the family base HEAD before, and the child
     // branch HEAD being merged in (the ancestor reconcile branch ② confirms).
-    this.sh("git", ["checkout", this.opts.familyBase], repo);
+    this.checkoutSharedRepo(this.opts.familyBase, repo);
     const familyHeadBefore = this.sh("git", ["rev-parse", "HEAD"], repo);
     const childHead = this.sh("git", ["rev-parse", child.childBranch], repo);
     const msg = `Merge child #${child.childIssue} (${child.childBranch}) into ${this.opts.familyBase}`;
@@ -965,8 +966,9 @@ export class RealFamilyBackend implements FamilyBackend {
           resolved: false,
           reason:
             "merger worker cannot start without agy OAuth token — the merger slot is " +
-            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
-            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "agy-family; host agy OAuth token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir reads the live antigravity-cli token). " +
+            "Without it the worker fails to start " +
             "and never resolves; returning a structured non-resolve here keeps " +
             "resolveMergeConflict's loud-throw semantics.",
         };
@@ -989,20 +991,7 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const telemetrySpec: WorkerSpec = {
-          id: "S1",
-          kind: "merge",
-          role: "coder",
-          host: workerHostForModel(model),
-          session: "fresh",
-          contextRetention: "clean",
-          skill: "resolving-merge-conflicts",
-          promptFile: MERGER_CONFLICT_PROMPT,
-          maxIter: 1,
-          model,
-          soul: "coder",
-          toolchain: [],
-        };
+        const telemetrySpec = mergerWorkerSpec(model);
         const telemetryCtx: DispatchContext = {
           familyBase: this.opts.familyBase,
           familyIssue: req.childIssue,
@@ -1026,8 +1015,12 @@ export class RealFamilyBackend implements FamilyBackend {
             name: `merger-resolve-${req.childIssue}`,
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.mergerSandbox(auth, outcomeLanding, model),
-            agent: agentForSlug(model),
+            sandbox: this.mergerSandbox(auth, outcomeLanding, telemetrySpec),
+            agent: agentForSlug(
+              telemetrySpec.model,
+              undefined,
+              telemetrySpec.soul,
+            ),
             maxIterations: 1,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
@@ -1083,7 +1076,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
+  /** The merger agent's sandbox (live soul + image-provided skills + optional auth). */
   protected prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
@@ -1096,9 +1089,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandbox(
     auth: MergerAuth = this.mountMergerAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
-    modelSlug?: string,
+    spec: Pick<WorkerSpec, "model" | "soul"> = mergerWorkerSpec(mergerModel()),
   ): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth, outcomeLanding, modelSlug));
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding, spec));
   }
 
   /**
@@ -1120,21 +1113,13 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The docker options the merger sandbox runs under — the SOUL-SELECTION seam
-   * (F28 / ADR 0022). Pure (no container, no I/O) so a unit test asserts the
-   * baked-soul env + skills-mount path without spinning a real sandbox, mirroring
-   * how {@link soulForStep} is the testable seam on the single-slice path.
-   *
-   * The merger soul is activated the SAME way coder/reviewer are in
-   * `RealBackend.box()`: by injecting {@link SANDBOX_SOUL_ENV} (`ORCHESTRATOR_SOUL`)
-   * — same env var, same image, a new soul value ({@link MERGER_SOUL}) — NOT by the
-   * prompt alone. Before this the sandbox set no env, so `ORCHESTRATOR_SOUL` was
-   * never set and the merger ran under the image's default soul (the F28 PARTIAL).
+   * The docker options the merger sandbox runs under. Pure (no container, no I/O)
+   * so tests can assert its live soul mount without spinning a real sandbox.
    *
    * #334 (ADR 0026 / cross-slice note): the runtime host skills bind-mount onto
    * {@link SANDBOX_SKILLS_DIR} is DROPPED here too — the 2b image BAKES
    * `resolving-merge-conflicts` (+ its closure), so a runtime mount would SHADOW
-   * the baked skill. The merger soul finds the skill in the IMAGE, not a host mount.
+   * the image-provided skill. The merger finds the skill in the image, not a host mount.
    *
    * integ-cmr int-r2 (A-1): the merger is a TOP-LEVEL claude worker, so its claude
    * OAuth token is injected here as CLAUDE_CODE_OAUTH_TOKEN (symmetric with
@@ -1148,14 +1133,14 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandboxConfig(
     auth: MergerAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
-    modelSlug?: string,
+    spec: Pick<WorkerSpec, "model" | "soul"> = mergerWorkerSpec(mergerModel()),
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const model = modelSlug ?? mergerModel();
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    const model = spec.model;
+    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -1173,6 +1158,12 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // N3: mount agy OAuth when provisioned (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
+    appendAgySoulMount(
+      mounts,
+      spec,
+      undefined,
+      this.opts.soulsDir,
+    );
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1181,8 +1172,8 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // #372: souls mount live for merger worker (data files not baked).
     // Use shared helper (forces readonly:true, single hard-coded sandbox path).
-    mounts.push(soulsMount(this.opts.soulsDir));
     // #911: live-mount container home CLAUDE.md.
+    mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return {
       imageName: this.opts.imageName,
@@ -1215,7 +1206,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // + tests; "final" runs the FULL suite (vitest run is already the full suite
     // here — wave can scope narrower in a richer config, but the family base must
     // be GREEN end-to-end before the integrated cmr / PR either way).
-    this.sh("git", ["checkout", request.familyBase], repo);
+    this.checkoutSharedRepo(request.familyBase, repo);
     try {
       await this.runVerifyCommands(request);
     } catch (err) {
@@ -1710,7 +1701,7 @@ export class RealFamilyBackend implements FamilyBackend {
         escalation: runnerSynthesizedFailureEscalation({ reason, diagnosis }),
       };
     }
-    this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+    this.checkoutSharedRepo(ctx.familyBase);
     if (ctx.waveVerifyFailure === undefined) {
       this.writeCmrFocusFile(ctx);
     }
@@ -1802,31 +1793,17 @@ export class RealFamilyBackend implements FamilyBackend {
               `(pinned review scope) — ${detail}`,
           };
         }
-        const reviewerSoul = readFileSync(
-          join(this.opts.soulsDir, "reviewer.md"),
-          "utf8",
-        );
-        // #1094 R3 F5: lens authority is spec.promptFile only (cmrPanelLegWorkerSpec
-        // pins it from the pass). Do not re-derive from ctx.cmrPass / default.
         const promptTemplate = readFileSync(
           join(this.opts.promptsDir, spec.promptFile),
           "utf8",
         );
-        const passLabel =
-          spec.promptFile === CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE
-            ? "completeness"
-            : spec.promptFile === CMR_PANEL_LEG_CORRECTNESS_PROMPT_FILE
-              ? "correctness"
-              : spec.promptFile;
         const taskBody =
           `${promptTemplate.trim()}\n\n` +
           `Panel leg slug: ${spec.model}.\n` +
-          `CMR pass: ${passLabel}.\n` +
           `Review the family CMR focus in ${CMR_FOCUS_FILENAME} ` +
           `(or the assigned clone scope) and emit prose review on stdout.`;
-        const promptBody = buildJudgeReviewLegPrompt(reviewerSoul, taskBody);
         const promptPath = join(legClone, ".orchestrator-panel-leg-prompt.md");
-        writeFileSync(promptPath, promptBody, "utf8");
+        writeFileSync(promptPath, taskBody, "utf8");
         const result = await this.runAgentSandbox({
           name: `family-cmr-panel-${spec.model}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1916,14 +1893,8 @@ export class RealFamilyBackend implements FamilyBackend {
       readonly?: boolean;
     }>;
   } {
-    const soul = soulForStep({
-      id: spec.id,
-      role: spec.role,
-      soul: spec.soul,
-    });
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (ctx.familyIssue !== undefined) {
@@ -1955,6 +1926,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
+      appendAgySoulMount(mounts, spec, pool, this.opts.soulsDir);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -1981,9 +1953,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // predicate refuses (this file ~877-895). So escalate (verifyCmr routes it as
     // not-passed续跑) rather than checking out the base + spinning the container only
     // to review the wrong scope.
-    // #1027 S2 / ADR 0145: the wave-verify triage judge presides over the verify
-    // FAILURE, not a diff — there is no cut-SHA scope to pin, so this guard does
-    // not apply to it (its focus is ctx.waveVerifyFailure, written below).
+    // ADR 0145: the family-verify triage judge presides over the phase-scoped
+    // verify FAILURE, not a diff — there is no cut-SHA scope to pin.
     if (
       this.opts.familyBaseStartHead === undefined &&
       ctx.waveVerifyFailure === undefined
@@ -2071,7 +2042,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // RIGHT base diff (ctx.familyBase is the contract input — dispatchWorker
       // already asserted it is present). The cmr worker runs as the container's
       // route-selected top-level agent over THIS checked-out base.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // codex cmr R1 (F3+F2): thread the EXACT review scope + the LLM-resolved-child
       // FOCUS into the worker via a git-ignored focus file the prompt reads — the
       // skill can't reliably scope the family diff on its own (a stale local base
@@ -2079,9 +2050,9 @@ export class RealFamilyBackend implements FamilyBackend {
       // #291 缺口-1 focus signal must not be silently dropped. The focus file pins the
       // exact `git diff <familyBaseStartHead>...<familyBase>` scope command + the
       // baseline SHA + the machine-resolved children.
-      // #1027 S2 / ADR 0145: the wave-verify triage judge focuses on the verify
-      // FAILURE (a cross-slice-seam red), not a diff scope. Same judge decode +
-      // review-leg machinery; only the focus content differs.
+      // ADR 0145: the family-verify triage judge focuses on the phase-scoped
+      // verify FAILURE, not a diff scope. Same judge decode + review-leg
+      // machinery; only the focus content differs.
       if (ctx.waveVerifyFailure !== undefined) {
         this.writeWaveVerifyFocusFile(ctx);
       } else {
@@ -2157,7 +2128,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // Sandcastle owns malformed-receipt recovery; sidecar stays cargo.
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
-              judgeStationReceiptSchema(),
+              judgeStationReceiptSchema(ctx.priorJudgeVerdicts),
               resumeCapable,
             ),
           });
@@ -2227,7 +2198,6 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
     return this.invokeSandcastleRun(options);
   }
 
@@ -2278,7 +2248,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
@@ -2303,6 +2273,7 @@ export class RealFamilyBackend implements FamilyBackend {
               spec.model,
               ctx,
               outcomeLanding,
+              spec.soul,
             ),
             agent,
             maxIterations: spec.maxIter,
@@ -2456,9 +2427,10 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    soul: WorkerSpec["soul"] = "fixer",
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, soul),
     );
   }
 
@@ -2467,6 +2439,7 @@ export class RealFamilyBackend implements FamilyBackend {
     model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
+    soul: WorkerSpec["soul"] = "fixer",
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2474,7 +2447,6 @@ export class RealFamilyBackend implements FamilyBackend {
   } {
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: "coder",
       [SANDBOX_REPO_ENV]: this.opts.repo,
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
@@ -2498,6 +2470,12 @@ export class RealFamilyBackend implements FamilyBackend {
     appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
+    appendAgySoulMount(
+      mounts,
+      { model, soul },
+      isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
+      this.opts.soulsDir,
+    );
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2601,7 +2579,7 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase);
       // verify/fixer need the bot-evidence landing; landing only invokes
       // /gstack-document-release and does not read the online-review snapshot.
       const onlineReviewLanding =
@@ -2711,14 +2689,8 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     // #919 R8: pass id so isJudgeSeat (S3/S6 step/id only) is correct for family seats.
-    const soul = soulForStep({
-      id: spec.id,
-      role: spec.role,
-      soul: spec.soul,
-    });
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (onlineReviewLanding !== undefined) {
@@ -2755,6 +2727,12 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     appendAgyAuthMount(mounts, auth.agyDir);
+    appendAgySoulMount(
+      mounts,
+      spec,
+      isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined,
+      this.opts.soulsDir,
+    );
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2860,8 +2838,8 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nDo not invent claimed-fixed identity keys outside this list. If the list is empty, emit empty closure arrays unless this pass reports new findings.`
         : "\n\nRunner-owned prior CMR finding identity keys (#450 closure context): none supplied. Do not claim fixed prior findings; emit empty closure arrays unless this pass reports new findings.";
-    // #711: runner only carries prior-round data — method for synthesis lives in
-    // versioned cmr souls (cmr_completeness / cmr_correctness).
+    // #711: runner only carries prior-round data. Method lives in the
+    // live-mounted verify soul; pass scope lives in the selected CMR prompt.
     const priorRoundBlock =
       ctx.priorRoundFindings !== undefined && ctx.priorRoundFindings.length > 0
         ? `\n\nPrior integrated-CMR rounds from the family ledger (#711):\n\n\`\`\`json\n${JSON.stringify(
@@ -2883,34 +2861,32 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(target, body, "utf8");
   }
 
-  /**
-   * #1027 S2 / ADR 0145 — write the wave-verify triage judge focus file.
-   *
-   * The wave-verify judge presides over a red family wave verify (child slices
-   * green in isolation, red only once merged onto the family base). Its material
-   * is the verify FAILURE, pinned verbatim here (the runner carries it on
-   * {@link DispatchContext.waveVerifyFailure}; method for triage lives in the
-   * versioned wave-verify judge prompt/soul — #1068). Shares CMR_FOCUS_FILENAME
-   * so the same in-container judge seat reads one focus path.
-   */
+  /** ADR 0145 — write the phase-scoped family-verify judge focus file. */
   protected writeWaveVerifyFocusFile(ctx: DispatchContext): void {
     const failure = ctx.waveVerifyFailure ?? "";
+    const phase = ctx.phase ?? "wave";
+    const accidentScope =
+      phase === "wave"
+        ? "after the current wave's child slices merged"
+        : phase === "correctness_checkpoint"
+          ? "at the correctness checkpoint"
+          : "at the final family verification barrier";
     const answerBlock =
       ctx.escalationAnswer !== undefined
         ? `\n\nHuman escalation answer (#439):\n\n\`\`\`json\n${JSON.stringify(
             ctx.escalationAnswer,
             null,
             2,
-          )}\n\`\`\`\n\nRetry the previously paused wave-verify triage with this answer in force.`
+          )}\n\`\`\`\n\nRetry the previously paused family-verify triage with this answer in force.`
         : "";
     const body =
-      `# Wave-verify triage — the red family verify to classify (machine-generated; #1027 S2)\n\n` +
-      `The family base full verify (typecheck + tests) went RED after merging the\n` +
-      `child slices. Classify this red and return the shared typed judge verdict:\n` +
+      `# Family-verify triage — ${phase} (machine-generated; ADR 0145)\n\n` +
+      `The family base verify (typecheck + tests) went RED ${accidentScope}.\n` +
+      `Classify this phase-scoped red and return the shared typed judge verdict:\n` +
       `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
-      `cross-slice-seam regression) or \`toolchain\` (an environment/toolchain red\n` +
-      `the runner falls back to verify_failed on). Convergence is the deterministic\n` +
-      `green re-verify receipt — never your word alone.\n\n` +
+      `code regression within this phase scope) or \`toolchain\` (an environment/\n` +
+      `toolchain red the runner falls back to verify_failed on). Convergence is the\n` +
+      `deterministic green re-verify receipt — never your word alone.\n\n` +
       `## Verify failure output\n\n\`\`\`\n${failure}\n\`\`\`${answerBlock}\n`;
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
@@ -2972,7 +2948,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * The cmr worker's sandbox (souls + skills + CLIs baked into the 2b image).
+   * The cmr worker's sandbox (live soul + image-provided skills and CLIs).
    * `runCmrWorker` mounts the auth ONCE up-front (so it can fail-closed on the
    * worker's own Claude token — codex cmr R4) and passes it here, avoiding a
    * double-mount. Judge identity credential is keyed by {@link WorkerSpec.model}
@@ -2980,7 +2956,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected cmrSandbox(
     auth: CmrAuth,
-    spec: Pick<WorkerSpec, "model" | "host">,
+    spec: Pick<WorkerSpec, "model" | "soul" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -3060,7 +3036,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected cmrSandboxConfig(
     auth: CmrAuth,
-    spec: Pick<WorkerSpec, "model" | "host">,
+    spec: Pick<WorkerSpec, "model" | "soul" | "host">,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
     fixFindingsLanding?: { path: string; sandboxPath: string },
@@ -3073,7 +3049,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // needing `--repo "$ORCHESTRATOR_REPO"`.
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: CMR_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
@@ -3106,6 +3081,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (provider === "agy" && auth.agyDir !== undefined) {
       appendAgyAuthMount(mounts, auth.agyDir);
+      appendAgySoulMount(mounts, spec, pool, this.opts.soulsDir);
     }
     if (provider === "grok" && auth.grokAuthDir !== undefined) {
       mounts.push({
@@ -3181,7 +3157,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * runs on the driver / manual-smoke / e2e path).
    *
    * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
-   * retry cycles run there), under the WRITE (`coder`) soul (it
+   * retry cycles run there), under the dedicated WRITE (`ship`) soul (it
    * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
    * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
    * Completion is clean exit + legal sidecar / typed gate (#928); delivery cargo
@@ -3261,7 +3237,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
-      this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
+      this.checkoutSharedRepo(ctx.familyBase!);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
       // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
       // the repo default branch and misses a configured non-main target. Written
@@ -3308,7 +3284,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding),
+      sandbox: this.shipSandbox(auth, outcomeLanding, spec, ctx?.billingPool),
       // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
@@ -3371,12 +3347,14 @@ export class RealFamilyBackend implements FamilyBackend {
     writeFileSync(target, body, "utf8");
   }
 
-  /** The family ship worker's sandbox (souls + skills + CLIs baked into the 2b image). */
+  /** The family ship worker's sandbox (live soul + image-provided skills and CLIs). */
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    spec?: WorkerSpec,
+    billingPool?: DispatchContext["billingPool"],
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, spec, billingPool));
   }
 
   /**
@@ -3414,14 +3392,17 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors `cmrSandboxConfig`). No
-   * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
-   * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
+   * container, no I/O: a unit test asserts the mounts. The ship worker's
+   * `WorkerSpec.soul` selects the dedicated WRITE (`ship`) soul, live-mounted
+   * readonly; it commits the bump + pushes, with codex
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
    * (the 2b image BAKES gstack-ship — a runtime mount would SHADOW it, #334).
    */
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    spec?: WorkerSpec,
+    billingPool?: DispatchContext["billingPool"],
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3433,7 +3414,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // with the other family worker sandboxes).
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
@@ -3460,6 +3440,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
+    if (spec !== undefined) {
+      appendAgySoulMount(
+        mounts,
+        spec,
+        isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
+        this.opts.soulsDir,
+      );
+    }
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -3492,6 +3480,9 @@ export class RealFamilyBackend implements FamilyBackend {
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
       stopSummary: escalation.stopSummary,
+      terminalChildren: escalation.terminalChildren,
+      terminalStatus: escalation.terminalStatus,
+      terminalCause: escalation.terminalCause,
     });
   }
 

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### 新增
+- **#1080–#1086 驻庭判官枢纽**（根版记入 v0.42.0.0）：S1 开庭、coder 计划相、fixer 经 hub、非 continue 判词与保险丝、三环 hub、builder↔judge ledger/进度；详见仓库根 `CHANGELOG.md` `[0.42.0.0]`。
 - **#1007 active progress broadcast**：`<ledgerDir>/progress.jsonl` 追加式进度 feed + `status` 渲染（站位 step/stage/verdict/park）+ 可选 `ORCHESTRATOR_NOTIFY_CMD`（park/terminal）。共享 `emitExitProgress` 在 single-slice / family 的 park·terminal 退出 helper 内双写（fail-open），含 quota park、escalate、errorTermination、familyDriver 早退（blocked_by / gh auth / route preflight / metadata）。
 
 ## [0.31.0.0] - 2026-07-17

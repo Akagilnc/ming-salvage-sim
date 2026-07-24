@@ -500,6 +500,73 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     ).toHaveLength(1);
   });
 
+  it("open-shipped online-review decision park replays durably on re-entry", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    Object.assign(familyBackend, {
+      dispatchWorker: async (spec: { kind: string }) => {
+        if (spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              terminalState: "decision_gate_raised",
+            },
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      },
+    });
+    const { recordShipped } = await import("../../../src/family/ledger.js");
+    let finalCalls = 0;
+    const run = () =>
+      runFamily({
+        epic: epicWith(10),
+        familyBackend,
+        singleSliceBackend: new ChildBackend(),
+        familyBase: "family/909-base",
+        now: () => now,
+        relayPools: liveBatonRelayPools(resetAt),
+        verifyCmr: async (input) => {
+          if (input.phase !== "final") return { ok: true, ran: true };
+          finalCalls += 1;
+          await recordShipped(familyBackend, {
+            pr: "https://github.com/test/repo/pull/909",
+            familyHeadAfter: "family-base-0",
+          });
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
+        },
+      });
+
+    const first = await run();
+    const second = await run();
+
+    expect(first.status).toBe("parked");
+    expect(second).toMatchObject({
+      status: "parked",
+      familyHead: "family-base-0",
+      stopSummary: first.stopSummary,
+      children: first.children,
+    });
+    expect(finalCalls).toBe(1);
+    expect(
+      familyBackend.ledger.filter(
+        (entry) =>
+          entry.status === "escalated" &&
+          entry.event === "escalated" &&
+          entry.escalationKind === "decision",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("C1: QuotaWait step S9 rewrites verify, leaves ship unchanged", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
@@ -678,12 +745,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
           status: "dead",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
-        },
-        {
-          id: "cursor",
-          status: "dead",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: [] as string[],
         },
         {
           id: "zai",

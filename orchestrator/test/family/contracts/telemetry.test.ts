@@ -51,6 +51,8 @@ import {
   FamilyTelemetryBackend,
   SmokeOnlySingleSliceBackend,
 } from "./telemetry.shared.js";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { AGY_SOUL_RULES_FILE } from "../../../src/soulInstructions.js";
 
 afterEach(() => {
   clearTelemetryRunEnvironment();
@@ -319,6 +321,16 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
   it("writes telemetry when the real merger-agent sandbox path runs", async () => {
     const ledgerDir = join(tempDir("orch-786-real-merger-"), ".ledger");
     let outcomePath: string | undefined;
+    let runOptions: Parameters<typeof sc.run>[0] | undefined;
+    let mergerSpec: Pick<WorkerSpec, "model" | "soul"> | undefined;
+    let mergerMounts:
+      | ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>
+      | undefined;
+    const route = smokedRoute();
+    const agyRoute = {
+      ...route,
+      slots: { ...route.slots, merger: "agy" },
+    };
 
     class TelemetryMergerBackend extends RealFamilyBackend {
   resolveLandingLiveHooks(input: {
@@ -339,12 +351,23 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
           childBranch: "feat/child-786",
           // This is the startup-smoked family route. The production merger must
           // preserve it when its environment row is the run's first one.
-          modelRoute: smokedRoute(),
+          modelRoute: agyRoute,
         });
       }
 
       protected override mountMergerAuth(): MergerAuth {
-        return { claudeToken: "test-token" };
+        return { agyDir: tempDir("orch-786-merger-agy-auth-") };
+      }
+
+      protected override mergerSandbox(
+        auth: MergerAuth,
+        outcomeLanding: { path: string; sandboxPath: string } | undefined,
+        spec: Pick<WorkerSpec, "model" | "soul">,
+      ): sc.SandboxProvider {
+        mergerSpec = spec;
+        const config = this.mergerSandboxConfig(auth, outcomeLanding, spec);
+        mergerMounts = config.mounts;
+        return docker(config);
       }
 
       protected override prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
@@ -354,8 +377,9 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
       }
 
       protected override async runAgentSandbox(
-        _options: Parameters<typeof sc.run>[0],
+        options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runOptions = options;
         if (outcomePath === undefined) throw new Error("missing merger outcome landing");
         writeFileSync(outcomePath, JSON.stringify({ resolved: true }), "utf8");
         return {
@@ -396,6 +420,19 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
     );
     expect(dispatch).toMatchObject({ kind: "merge", issue: 786 });
     expect(collect).toMatchObject({ legId: dispatch?.legId, terminal: "completed" });
+    expect(mergerSpec).toMatchObject({ model: "agy", soul: "merger" });
+    expect(
+      runOptions?.agent.buildPrintCommand({
+        prompt: "TASK_SENTINEL",
+        dangerouslySkipPermissions: false,
+      })
+        .command,
+    ).toContain("TASK_SENTINEL");
+    expect(mergerMounts).toContainEqual({
+      hostPath: join(realSoulsDir, "merger.md"),
+      sandboxPath: AGY_SOUL_RULES_FILE,
+      readonly: true,
+    });
   });
 
   it("keeps family dispatch alive when resolveTelemetryDir throws", async () => {

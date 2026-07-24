@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_DISPATCH_ATTEMPTS,
+  isWorktreeConsistencyFailure,
   retryProcessCrash,
   withMechanicalRetry,
 } from "../../src/dispatchRetry.js";
@@ -122,6 +123,81 @@ describe("#598 withMechanicalRetry", () => {
 
     expect(result).toEqual(COMPLETED);
     expect(delays).toEqual([15_000, 15_000]);
+  });
+
+  it("#1105 A6: worktree consistency failure heals once then short-circuits (#1092 shape)", async () => {
+    expect(
+      isWorktreeConsistencyFailure(
+        "fatal: not a git repository: /tmp/iso/.git/worktrees/feat-issue-1084",
+      ),
+    ).toBe(true);
+    expect(isWorktreeConsistencyFailure("connection reset by peer")).toBe(false);
+
+    let calls = 0;
+    let heals = 0;
+    const wreckage =
+      "fatal: not a git repository: /x/.git/worktrees/feat-issue-1084";
+    const result = await withMechanicalRetry(
+      coderSpec(),
+      {
+        worktree: {
+          branch: "feat/issue-1084",
+          base: "main",
+          path: "/x/.sandcastle/worktrees/feat-issue-1084",
+        },
+      },
+      async () => {
+        calls += 1;
+        return { kind: "failed", reason: wreckage };
+      },
+      {
+        sleepMs: async () => undefined,
+        healWorktreeConsistency: async () => {
+          heals += 1;
+        },
+      },
+    );
+    expect(result.kind).toBe("failed");
+    // Attempt 1 fails → heal → attempt 2 fails → stop (not 6).
+    expect(calls).toBe(2);
+    expect(heals).toBe(1);
+    if (result.kind !== "failed") throw new Error("expected failed");
+    expect(result.reason).toContain("not a git repository");
+    // #1105 R4 F-P2: exhaustion suffix must reflect real attempts (2), not MAX.
+    expect(result.reason).toMatch(/\(after 2 dispatch attempts\)$/);
+  });
+
+  it("NEGATIVE: healWorktreeConsistency throw funnels into failed channel (#1105 R7 F2)", async () => {
+    const wreckage =
+      "fatal: not a git repository: /x/.git/worktrees/feat-issue-1105";
+    const onFailures: unknown[] = [];
+    const result = await withMechanicalRetry(
+      coderSpec(),
+      {
+        worktree: {
+          branch: "feat/issue-1105",
+          base: "main",
+          path: "/x/.sandcastle/worktrees/feat-issue-1105",
+        },
+      },
+      async () => ({ kind: "failed", reason: wreckage }),
+      {
+        sleepMs: async () => undefined,
+        healWorktreeConsistency: async () => {
+          throw new Error("prepareWorktree boom");
+        },
+        onFailure: async (outcome) => {
+          onFailures.push(outcome);
+        },
+      },
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind !== "failed") throw new Error("expected failed");
+    expect(result.reason).toContain("worktree consistency heal failed");
+    expect(result.reason).toContain("prepareWorktree boom");
+    expect(result.reason).toMatch(/\(after 1 dispatch attempts\)$/);
+    // Must not escape withMechanicalRetry as a raw throw.
+    expect(onFailures.length).toBeGreaterThanOrEqual(1);
   });
 
   it("re-entry with attemptsAlreadyUsed>0 sleeps the next 15s slot before first dispatch (#934 ID-004)", async () => {
@@ -237,7 +313,116 @@ describe("#598 withMechanicalRetry", () => {
     );
     expect(calls).toBe(1);
   });
+
+  // ── #1081 / ADR 0147: forbidFreshRetry on resident-judge resume ──
+
+  it("#1081 positive: resume + forbidFreshRetry + process failure stops after one attempt (no silent fresh)", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "resident judge resume crashed mid-run" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-1081" },
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.reason).toMatch(/resident judge resume crashed/);
+    }
+    // Load-bearing: do not strip resume and re-dispatch fresh.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-1081");
+  });
+
+  it("#1081 positive: resume + forbidFreshRetry + thrown process error stops after one attempt", async () => {
+    const { dispatch, seen } = scripted([
+      new Error("resident judge resume threw"),
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-throw" },
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result.kind).toBe("failed");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-throw");
+  });
+
+  it("#1081 negative: same process failure without forbidFreshRetry falls through to fresh retry", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "resident judge resume crashed mid-run" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "sess-resident-judge-retry-ok" },
+      dispatch,
+      { sleepMs: async () => {} },
+    );
+    expect(result).toEqual(COMPLETED);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("sess-resident-judge-retry-ok");
+    // Fresh retry strips resume.
+    expect(seen[1]?.ctx.resumeSessionId).toBeUndefined();
+    expect(seen[1]?.spec.session).toBe("fresh");
+  });
+
+  it("#1081 negative: forbidFreshRetry without resume still allows process-root retry", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "fresh judge seat crashed" },
+      COMPLETED,
+    ]);
+    const result = await withMechanicalRetry(
+      coderSpec("fresh"),
+      {},
+      dispatch,
+      { forbidFreshRetry: true, sleepMs: async () => {} },
+    );
+    expect(result).toEqual(COMPLETED);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.ctx.resumeSessionId).toBeUndefined();
+  });
+
+  it("F1: healable worktree consistency failure + forbidFreshRetry heals first, then resumes original judge session", async () => {
+    let calls = 0;
+    let heals = 0;
+    const seen: Array<{ spec: WorkerSpec; ctx: DispatchContext }> = [];
+    const wreckage = "fatal: not a git repository: /tmp/worktrees/feat-issue-1111";
+
+    const result = await withMechanicalRetry(
+      coderSpec("resume"),
+      { resumeSessionId: "session-orig-judge-1111" },
+      async (spec, ctx) => {
+        calls += 1;
+        seen.push({ spec, ctx });
+        if (calls === 1) {
+          return { kind: "failed", reason: wreckage };
+        }
+        return COMPLETED;
+      },
+      {
+        forbidFreshRetry: true,
+        sleepMs: async () => {},
+        healWorktreeConsistency: async () => {
+          heals += 1;
+        },
+      },
+    );
+
+    expect(result).toEqual(COMPLETED);
+    expect(calls).toBe(2);
+    expect(heals).toBe(1);
+    expect(seen[0]?.ctx.resumeSessionId).toBe("session-orig-judge-1111");
+    expect(seen[0]?.spec.session).toBe("resume");
+    expect(seen[1]?.ctx.resumeSessionId).toBe("session-orig-judge-1111");
+    expect(seen[1]?.spec.session).toBe("resume");
+  });
 });
+
 
 describe("#909 retryProcessCrash must not thrash on quota wait", () => {
   it("QuotaWaitForResetError rethrows on first attempt (no mechanical retry)", async () => {
