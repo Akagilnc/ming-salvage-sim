@@ -267,6 +267,14 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
             state, content=content, registry=None, action_ids=[action_id]
         )
         assert result and result[0]["id"] == action_id
+        dossier = next(
+            item for item in db.list_decree_dossiers(status="proposed")
+            if item["pending_action_id"] == action_id
+        )
+        db.apply_dossier_promulgation(
+            state, dossier["id"], "promulgated",
+            content=content, registry=None,
+        )
 
     restored = db.load_state()
     events = db.list_recommendation_events(restored, recommender.name)

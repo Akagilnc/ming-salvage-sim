@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import ming_sim.issues as issue_engine
 
 
 def _active_minister(db):
@@ -15,7 +16,7 @@ def test_dossier_public_state_machine_and_hold_round_trip(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
         state,
-        action_type="directive",
+        action_type="policy",
         decree_text="着户部清核辽饷。",
         payload={"text": "着户部清核辽饷。"},
     )
@@ -34,7 +35,9 @@ def test_dossier_public_state_machine_and_hold_round_trip(game):
 
     db.record_dossier_decision(dossier_id, "promulgated", reason="下月重判顺颁")
     db.transition_decree_dossier(dossier_id, "executing")
-    db.close_decree_dossier(dossier_id, "差事办结")
+    db.record_dossier_execution(
+        dossier_id, "completed", "差事办结", state.turn
+    )
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
     with pytest.raises(ValueError):
         db.transition_decree_dossier(dossier_id, "promulgated")
@@ -84,13 +87,14 @@ def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
     minister = _active_minister(db)
     dossier_id = db.create_decree_dossier(
         state,
-        action_type="office",
+        action_type="appointment",
         target_kind="character",
         target_id=minister,
         decree_text=f"着{minister}承办清查。",
         payload={"name": minister},
-        status="executing",
     )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
 
     db.set_character_status(state, minister, "dead", reason="阵亡")
 
@@ -99,7 +103,7 @@ def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
     assert "人物终态" in dossier["interruption_reason"]
 
 
-def test_office_action_enters_executing_dossier_instead_of_direct_close(game):
+def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
     db, state, content = game
     minister = _active_minister(db)
     pending_id = db.stage_pending_action(
@@ -111,10 +115,97 @@ def test_office_action_enters_executing_dossier_instead_of_direct_close(game):
         payload={"name": minister, "office": "兵部主事"},
     )
 
+    before = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"]
     db.commit_pending_actions(state, content=content, registry=None)
 
     dossier = next(
         row for row in db.list_decree_dossiers(target_kind="character", target_id=minister)
         if row["pending_action_id"] == pending_id
     )
+    assert dossier["status"] == "proposed"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"] == before
+
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content, registry=None
+    )
+    dossier = db.get_decree_dossier(dossier["id"])
     assert dossier["status"] == "executing"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (minister,)
+    ).fetchone()["office"] == "兵部主事"
+
+
+def test_dossier_type_and_initial_state_are_controlled(game):
+    db, state, _content = game
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(
+            state, action_type="made_up", decree_text="无效类型"
+        )
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(
+            state, action_type="appointment", decree_text="非法直入执行",
+            status="executing",
+        )
+
+
+def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
+    db, state, _content = game
+    minister = _active_minister(db)
+
+    def fail_dossier(*_args, **_kwargs):
+        raise RuntimeError("dossier write failed")
+
+    monkeypatch.setattr(db, "create_decree_dossier", fail_dossier)
+    with pytest.raises(RuntimeError):
+        db.create_secret_order(state, minister, "密查", "查账", [])
+    assert db.conn.execute("SELECT COUNT(*) FROM secret_orders").fetchone()[0] == 0
+
+
+def test_character_terminal_state_closes_secret_order_and_execution_slot(game):
+    db, state, _content = game
+    minister = _active_minister(db)
+    order_id = db.create_secret_order(state, minister, "密查", "查账", [])
+    dossier = db.get_dossier_for_secret_order(order_id)
+    db.transition_decree_dossier(dossier["id"], "executing")
+
+    db.set_character_status(state, minister, "imprisoned", reason="下狱")
+
+    order = db.get_secret_order(order_id)
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert order["status"] == "failed"
+    assert "人物终态" in order["result"]
+    assert dossier["status"] == "closed"
+    assert dossier["execution_outcome"] == "interrupted"
+    assert dossier["closed_turn"] == state.turn
+
+
+def test_commitment_creation_repoints_origin_to_the_single_promulgated_dossier(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="今后每月赈济灾民"
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    issue_engine.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{
+                "origin_kind": "decree",
+                "origin_ref": "decree:legacy-ref",
+                "kind": "initiative",
+                "title": "每月赈济",
+                "end_turn": state.turn + 2,
+                "commitment_kind": "until_stop",
+            }],
+        },
+        content=content,
+    )
+
+    commitments = db.list_commitments_for_dossier(dossier_id)
+    assert len(commitments) == 1
+    assert commitments[0]["origin_ref"] == f"dossier:{dossier_id}"
