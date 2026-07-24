@@ -24,6 +24,12 @@ import threading
 import httpx
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
@@ -216,7 +222,11 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
             # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={
+                    "text": "着户部核边饷", "actor": minister,
+                    "dossier_action_type": "policy",
+                    "target_kind": "issue", "target_id": "border-pay",
+                })
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
@@ -357,7 +367,7 @@ def test_asgi_write_decree_preview_does_not_close_night(web_game, monkeypatch):
             night = an.get_open_night(game.db)
             # 一条有效 draft（应允/默认同意路径）
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
             game.db.commit_pending_actions(game.state, kind_filter="directive")
             resp = await client.post("/api/decree/write", json={})
             return night, resp

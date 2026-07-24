@@ -1010,7 +1010,8 @@ def build_extractor_tools(context: CourtContext):
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
                               buildings每项：{action:create/modify/remove,...}
                             圣旨承诺(#136)固定 kind:"initiative" 且必须有
-                              origin_ref(指回诏书),commitment_kind:"until_stop"；
+                              origin_ref(只能从 extractor_context.decree_dossiers 选择
+                              dossier:<id>),commitment_kind:"until_stop"；
                               直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
                               人物安抚类 ongoing_effects 写 {"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2}]}
                               连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N，且必须大于当前turn)
@@ -1066,7 +1067,7 @@ def build_extractor_tools(context: CourtContext):
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
           "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"},
-                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"decree:turn-1:sun-review","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
+                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"dossier:17","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
           "cancels": [],
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],

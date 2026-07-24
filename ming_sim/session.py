@@ -1635,10 +1635,7 @@ class GameSession:
                 _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
             elif _committed_draft is not None and not _has_pending_draft:
                 _existing_draft_text = str(_committed_draft["text"] or "")
-            if intent is not None and intent_kind == "draft" and not _has_existing_draft:
-                # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
-                draft_res = {"draft_action": "拟旨", "draft_text": reply, "target_candidate": ""}
-            elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
+            if intent is not None and not _has_existing_draft and not draft_keyword_requested:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
                 draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
             else:
@@ -1646,7 +1643,7 @@ class GameSession:
                 # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
                 # committed draft，无论它判 none 还是 draft，直接拿回话覆盖都会丢掉原草案内容
                 # （codex correctness：none 半与 draft 半是同一覆盖丢失的两面，统一收敛到 merge）。
-                # 额外 LLM 只在「已有草案」这一动作场景发生，普通无草案消息不受影响。
+                # 拟旨动作必须经结构化抽取保全 action/target/机械载荷；普通无草案消息不受影响。
                 draft_res = extract_draft_intent(
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
@@ -1660,23 +1657,40 @@ class GameSession:
                 }
                 return True
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+                semantic_payload = {
+                    "text": draft_res["draft_text"],
+                    "actor": minister_name,
+                    "dossier_action_type": draft_res.get("dossier_action_type") or "special_decree",
+                    "target_kind": draft_res.get("target_kind") or "policy",
+                    "target_id": draft_res.get("target_id") or "",
+                }
+                for _field in (
+                    "amount", "account", "execution_surface",
+                    "assignee", "authorization_id",
+                    "deadline_months",
+                ):
+                    if draft_res.get(_field) not in (None, ""):
+                        semantic_payload[_field] = draft_res[_field]
                 _target = str(draft_res.get("target_candidate") or "")
                 _target_id = int(_target) if _target.isdigit() else None
                 if _dir_candidates and _target == "新":
                     # 新拟独立一道 → INSERT 新候选，不并进任一现有候选（AC1）。
                     out["pending_action_id"] = self.db.stage_directive_candidate(
                         self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                 elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
                     # 补充/改草某一道 → 原地更新那道候选正文（不冻结、不新增行；AC2）。
                     out["pending_action_id"] = self.db.update_directive_candidate(
                         _target_id,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                 elif _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
-                    self.db.update_directive_text(did, draft_res["draft_text"])
+                    self.db.update_directive_text(
+                        did, draft_res["draft_text"],
+                        dossier_payload=semantic_payload,
+                    )
                     out["directive"] = {
                         "id": did,
                         "text": draft_res["draft_text"],
@@ -1686,7 +1700,7 @@ class GameSession:
                 else:
                     pid = self.db.upsert_pending_directive(
                         self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                     out["pending_action_id"] = pid
                 return True
@@ -2210,15 +2224,31 @@ class GameSession:
         self._refuse_if_settling()
         self.db.reject_directive(directive_id)
 
-    def add_directive(self, text: str, notes: str = "") -> DirectiveView:
+    def add_directive(
+        self, text: str, notes: str = "",
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> DirectiveView:
         self._refuse_if_settling()
-        directive_id = self.db.add_directive(self.state, None, text, "手动新增", notes=notes)
+        payload = dict(dossier_payload or {})
+        if not all(str(payload.get(key) or "").strip() for key in (
+            "dossier_action_type", "target_kind", "target_id",
+        )):
+            raise ValueError("新增旨意须由上游提供完整结构化动作与目标")
+        directive_id = self.db.add_directive(
+            self.state, None, text, "手动新增", notes=notes,
+            dossier_payload=payload,
+        )
         return DirectiveView(id=directive_id, text=text, status="draft",
                              source="手动新增", notes=notes)
 
-    def update_directive(self, directive_id: int, text: str) -> None:
+    def update_directive(
+        self, directive_id: int, text: str, *,
+        dossier_payload: Optional[Dict[str, object]] = None,
+    ) -> None:
         self._refuse_if_settling()
-        self.db.update_directive_text(directive_id, text)
+        self.db.update_directive_text(
+            directive_id, text, dossier_payload=dossier_payload,
+        )
 
     def delete_directive(self, directive_id: int) -> None:
         self._refuse_if_settling()
@@ -2253,8 +2283,6 @@ class GameSession:
         # （resolve_turn / advance_without_edict）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
         # （#497：未表态只到真实颁诏/过回合才 default-agree；拟诏改 pending status = 制造持久副作用）。
         # 无 draft 可预览 → 响亮拒绝，不为 preview 造持久态。
@@ -2291,6 +2319,14 @@ class GameSession:
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
         回合已结算推进，置 issued 态。
         """
+        if self.state.turn_phase in FRONT_HALF_DONE_PHASES and (
+            self.db.list_directives(self.state, statuses=("pending",))
+            or any(
+                row.get("kind") == "directive"
+                for row in self.db.list_pending_actions(self.state.turn)
+            )
+        ):
+            raise ValueError("月末结算恢复期新增拟旨须先核定，不能并入已冻结的结算")
         if self.state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             # HITL 暂停期重发 issue：幂等返回已存决策点，不二跑 simulator——二跑会覆盖
             # pending_decisions，或第二次输出无决策块时绕过亲裁直接结算（cmr S4 r3 F3）。
@@ -2311,9 +2347,6 @@ class GameSession:
             if ctx is not None and ctx.get("extracted") is not None:
                 # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
                 # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。
-                if self.pending_count() > 0:
-                    raise ValueError(
-                        f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
                 # 重试新传的 decree/cheat 在重放叉被忽略（重放使用崩溃前真源），留痕（cmr S7 r4）。
                 if (decree or "").strip() or (cheat_directive or "").strip():
                     from ming_sim.token_stats import tlog
@@ -2358,11 +2391,13 @@ class GameSession:
             wait_timeout_s=inflight_wait_s,
             beat_generator=production_beat_generator,
         )
+        # 结束回合才执行“不回=默认同意”；preview 阶段仍可撤回。旧式 pending
+        # turn_directives 与 pending_actions 都汇入各自既有幂等确认/成案口。
+        for pending in self.db.list_directives(self.state, statuses=("pending",)):
+            self.db.confirm_directive(int(pending["id"]))
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
         # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
-        if self.pending_count() > 0:
-            raise ValueError(f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
         # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
         # 收夜已交本夜已应允；此处交剩余未应允 default-agree。
@@ -2370,6 +2405,7 @@ class GameSession:
             self.state, kind_filter="directive",
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None))
+        self.db.ensure_dossiers_for_draft_directives(self.state)
         if committed_directives and recovered_source is None and (decree or "").strip():
             # 外部传入的 decree 早于本次 auto-commit 出来的对话草案；若继续使用，会把新 draft
             # 标为 issued 却不进诏书正文/extractor 输入。强制按当前 draft 集重拟。
@@ -2441,11 +2477,16 @@ class GameSession:
         要求当前处于 awaiting_decision 态。返回完整结算报告，置 issued。"""
         if self.current_phase() != TurnPhase.AWAITING_DECISION:
             raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
+        if (
+            self.db.list_directives(self.state, statuses=("pending",))
+            or any(
+                row.get("kind") == "directive"
+                for row in self.db.list_pending_actions(self.state.turn)
+            )
+        ):
+            raise ValueError("月末亲裁期新增拟旨须先核定，不能并入已冻结的结算")
         # 与 resolve_turn 同守门（cmr S7 r8/r9 对称面）：暂停期大臣新拟的 pending 旨
         # 未核定不得推进——phase2（重放或重抽）随 next_period 会把它孤儿在旧回合。
-        if self.pending_count() > 0:
-            raise ValueError(
-                f"尚有 {self.pending_count()} 道大臣拟旨待陛下核定（准/驳），不能颁诏。")
         # 回写选择
         stored = self.db.list_pending_decisions(self.state.turn)
         ctx_for_event_binding = self.db.get_resolve_context(self.state.turn)
@@ -2495,8 +2536,20 @@ class GameSession:
 
     def advance_without_decree(self) -> None:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
-        advance_without_edict(
+        has_default_approved_work = bool(
+            self.db.list_directives(self.state, statuses=("pending", "draft"))
+        ) or any(
+            row.get("kind") == "directive"
+            for row in self.db.list_pending_actions(self.state.turn)
+        )
+        if has_default_approved_work:
+            self.resolve_turn()
+            return
+        advanced = advance_without_edict(
             self.state, self.db, content=self.content, registry=self.registry)
+        if not advanced:
+            self.resolve_turn()
+            return
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
 

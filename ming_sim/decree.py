@@ -196,7 +196,7 @@ def write_decree_with_agno(
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None) -> None:
+                          inflight_wait_s: float | None = None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -219,15 +219,20 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=production_beat_generator)
+    # ADR 0049/0055: an unspoken-on directive is default-approved and must enter
+    # the dossier/judge route.  This deterministic fast path has no judge
+    # dependency, so fail loudly and let the caller route through normal
+    # settlement; never delete the player's directive to manufacture "no edict".
+    pending_directives = [
+        row for row in db.list_pending_actions(state.turn)
+        if row.get("kind") == "directive"
+    ]
+    if pending_directives:
+        return False
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
-            # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
-            # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
-            # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
-            # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
-            db.discard_pending_directives(state.turn)
             db.commit_pending_actions(state, content=content, registry=registry)
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
@@ -249,6 +254,7 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+    return True
 
 
 def resolve_directives(
@@ -287,7 +293,11 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    if not directives:
+    pending_dossier_work = bool(db.list_decree_dossiers(status="proposed")) or any(
+        row.get("kind") == "directive"
+        for row in db.list_pending_actions(state.turn)
+    )
+    if not directives and not pending_dossier_work:
         advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
@@ -322,6 +332,8 @@ def resolve_directives(
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+
+    dossier_payload = db.list_decree_dossiers_for_simulation(state.turn)
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -360,6 +372,7 @@ def resolve_directives(
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
+        decree_dossiers=dossier_payload,
     )
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload

@@ -4944,6 +4944,9 @@ def apply_issue_tracker_output(
                     "item": ni, "title": title,
                 })
                 continue
+            origin_ref = db.resolve_commitment_origin_ref(
+                state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
+            )
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff and not is_commitment:
@@ -5484,14 +5487,15 @@ def _restore_person_write_state(
     )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(character_name, office_title, office_type, source, dossier_id, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
                 row["office_title"],
                 row["office_type"],
                 row["source"],
+                row.get("dossier_id"),
                 row["updated_at"],
             )
             for row in office_rows

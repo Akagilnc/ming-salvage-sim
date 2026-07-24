@@ -17,9 +17,16 @@ from types import SimpleNamespace
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def _result():
@@ -625,7 +632,7 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -662,7 +669,7 @@ def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
@@ -716,7 +723,7 @@ def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -785,7 +792,7 @@ def test_mixed_directive_and_secret_rejection_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -819,7 +826,7 @@ def test_mixed_directive_and_secret_bare_doubuzhun_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -956,6 +963,9 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     ).fetchone() is None
 
     db.commit_pending_actions(state, content=content, registry=sess.registry)
+    promulgate_proposed_appointments(
+        db, state, content, registry=sess.registry,
+    )
 
     assert content.characters[appointee].faction == "阉党"
 
@@ -2069,7 +2079,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
 
     def fake_draft(player_message, reply, **kwargs):
         called.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+            "dossier_action_type": "assignment",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -2110,7 +2124,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
 
     def fake_draft(player_message, reply, **kwargs):
         fed_existing.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+            "dossier_action_type": "assignment",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {

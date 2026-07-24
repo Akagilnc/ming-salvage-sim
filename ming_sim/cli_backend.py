@@ -47,6 +47,7 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
@@ -1061,9 +1062,19 @@ def extract_draft_intent(
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
-        '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
-        if _supplement_mode else
-        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        '  "拟旨意图": "无|拟旨",\n'
+        '  "动作类型": "policy|approve_reject|acting_appointment|assignment|'
+        'grant_allocation|authorization|secret_authorization|secret_investigation|'
+        'protection|strategy_selection|punishment|pacification|referral|'
+        'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
+        '  "目标类型": "policy|character|office|army|region|issue|account",\n'
+        '  "目标ID": "",\n'
+        '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
+        '  "账户": "",\n'
+        '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
+        '  "承办人": "",\n'
+        '  "授权ID": "",\n'
+        '  "期限月数": null           // 军令必填正整数；非军令留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -1112,6 +1123,55 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    dossier_action = str(obj.get("动作类型") or "special_decree").strip()
+    if dossier_action not in DIRECTIVE_ACTION_TYPES:
+        dossier_action = "special_decree"
+    target_kind = str(obj.get("目标类型") or "policy").strip()
+    if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
+        target_kind = "policy"
+    target_id_value = str(obj.get("目标ID") or "").strip()
+    mechanical = {
+        "amount": obj.get("金额"),
+        "account": str(obj.get("账户") or "").strip(),
+        "execution_surface": (
+            str(obj.get("执行面") or "in_transit").strip()
+            if dossier_action == "grant_allocation" else ""
+        ),
+        "assignee": str(obj.get("承办人") or "").strip(),
+        "authorization_id": str(obj.get("授权ID") or "").strip(),
+        "deadline_months": obj.get("期限月数"),
+    }
+    try:
+        mechanical["amount"] = (
+            int(mechanical["amount"]) if mechanical["amount"] is not None else None
+        )
+    except (TypeError, ValueError):
+        mechanical["amount"] = None
+    try:
+        mechanical["deadline_months"] = (
+            int(mechanical["deadline_months"])
+            if mechanical["deadline_months"] is not None else None
+        )
+    except (TypeError, ValueError):
+        mechanical["deadline_months"] = None
+    complete = {
+        "grant_allocation": (
+            mechanical["amount"] is not None
+            and mechanical["amount"] > 0
+            and bool(mechanical["account"])
+            and mechanical["execution_surface"] in {"immediate", "in_transit"}
+        ),
+        "assignment": bool(mechanical["assignee"]),
+        "authorization": bool(
+            mechanical["authorization_id"] and mechanical["assignee"]
+        ),
+        "military_order": bool(
+            mechanical["deadline_months"] is not None
+            and mechanical["deadline_months"] > 0
+        ),
+    }
+    if dossier_action in complete and not complete[dossier_action]:
+        dossier_action = "special_decree"
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
@@ -1121,7 +1181,9 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": ""}
+        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+                "dossier_action_type": dossier_action,
+                "target_kind": target_kind, "target_id": target_id_value, **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1147,7 +1209,38 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {"draft_action": _action, "draft_text": draft_text, "target_candidate": target}
+    return {
+        "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
+        "dossier_action_type": dossier_action,
+        "target_kind": target_kind, "target_id": target_id_value, **mechanical,
+    }
+
+
+def capture_manual_directive_payload(
+    text: str, llm_config: Any = None,
+) -> Dict[str, object]:
+    """Web/CLI 手工下旨共用既有草稿抽取 seam；只搬运结构化结果。"""
+    captured = extract_draft_intent(
+        "请据此拟旨", str(text or ""), llm_config=llm_config,
+    )
+    if captured.get("draft_action") != "拟旨":
+        raise ValueError("手工旨意结构化捕获失败")
+    payload = {
+        "dossier_action_type": captured.get("dossier_action_type"),
+        "target_kind": captured.get("target_kind"),
+        "target_id": captured.get("target_id"),
+    }
+    for field in (
+        "amount", "account", "execution_surface", "assignee",
+        "authorization_id", "deadline_months",
+    ):
+        if captured.get(field) not in (None, ""):
+            payload[field] = captured[field]
+    if not all(str(payload.get(key) or "").strip() for key in (
+        "dossier_action_type", "target_kind", "target_id",
+    )):
+        raise ValueError("手工旨意缺少结构化动作或目标")
+    return payload
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，
