@@ -43,7 +43,13 @@ describe("family startup smoke gate (#685)", () => {
 
     expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/smoke executor/i);
-    expect(result.children).toEqual([{ issue: 686, status: "skipped" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 686,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
   });
 
   it("refuses before family work when route smoke fails", async () => {
@@ -67,7 +73,13 @@ describe("family startup smoke gate (#685)", () => {
 
     expect(result.status).toBe("failed");
     expect(result.escalation?.diagnosis).toMatch(/route smoke failed/i);
-    expect(result.children).toEqual([{ issue: 687, status: "skipped" }]);
+    expect(result.children).toEqual([
+      {
+        issue: 687,
+        status: "skipped",
+        reason: "startup_preflight_failed",
+      },
+    ]);
   });
 
   it("drops an optional smoke failure, records it durably, and echoes the effective lineup", async () => {
@@ -87,7 +99,13 @@ describe("family startup smoke gate (#685)", () => {
             escalationKind: "failure",
             reason: "test stop",
             // #1125 schema A — durable failure authority carries terminalChildren
-            terminalChildren: [{ issue: 847, status: "skipped" }],
+            terminalChildren: [
+              {
+                issue: 847,
+                status: "skipped",
+                reason: "startup_preflight_failed",
+              },
+            ],
             stopSummary: {
               reason: "infra_failure",
               summary: "test stop",
@@ -139,7 +157,13 @@ describe("family startup smoke gate (#685)", () => {
             event: "escalated",
             escalationKind: "failure",
             reason: "test stop",
-            terminalChildren: [{ issue: 847, status: "skipped" }],
+            terminalChildren: [
+              {
+                issue: 847,
+                status: "skipped",
+                reason: "startup_preflight_failed",
+              },
+            ],
             stopSummary: { reason: "infra_failure", summary: "test stop" },
           },
         ];

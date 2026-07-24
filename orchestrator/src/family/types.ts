@@ -1116,6 +1116,16 @@ export type FamilyChildStatus =
    */
   | "escalated";
 
+export type FamilySkipReason =
+  | "not_scheduled_this_invocation"
+  | "unanswered_sibling_park_residual"
+  | "startup_preflight_failed"
+  | "refetch_failed"
+  | "reconcile_inconsistent"
+  | "dependency_cycle_residual"
+  | "admission_skipped"
+  | "baseline_health_failed";
+
 /**
  * The decision escalation a child slice PARKED on (#604 slice 5).
  *
@@ -1144,9 +1154,8 @@ export interface FamilyChildDiagnostic {
 }
 
 /** Per-child outcome record in the family result. */
-export interface FamilyChildResult {
+interface FamilyChildResultBase {
   readonly issue: number;
-  readonly status: FamilyChildStatus;
   /** The child's reviewed branch (set when the single-slice run succeeded). */
   readonly branch?: string;
   /**
@@ -1159,6 +1168,17 @@ export interface FamilyChildResult {
   /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */
   readonly failureCause?: string;
 }
+
+export type FamilyChildResult =
+  | (FamilyChildResultBase & {
+      readonly status: "skipped";
+      /** Same stable machine token emitted in the skip warning. */
+      readonly reason: FamilySkipReason;
+    })
+  | (FamilyChildResultBase & {
+      readonly status: Exclude<FamilyChildStatus, "skipped">;
+      readonly reason?: never;
+    });
 
 /** Public family-run outcome: completed | parked | failed (#942 / ID-001). */
 export type FamilyRunStatus = PublicRunResult;

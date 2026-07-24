@@ -903,7 +903,14 @@ describe("#1125 — unanswered park dispatch + terminal normalization", () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
     class QuotaParkFamilyBackend extends FakeFamilyBackend {
+      readCalls = 0;
+      readsAtQuota = 0;
+      override async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        this.readCalls += 1;
+        return await super.readFamilyLedger();
+      }
       override async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+        this.readsAtQuota = this.readCalls;
         throw new QuotaWaitForResetError({
           disposition: {
             kind: "wait_for_reset",
@@ -944,6 +951,7 @@ describe("#1125 — unanswered park dispatch + terminal normalization", () => {
           children: [
             { issue: 10, blockedBy: [] },
             { issue: 11, blockedBy: [] },
+            { issue: 12, blockedBy: [11] },
           ],
         },
         familyBackend,
@@ -956,8 +964,18 @@ describe("#1125 — unanswered park dispatch + terminal normalization", () => {
       const parkChild = result.children.find((c) => c.issue === 11);
       expect(parkChild?.status).toBe("escalated");
       expect(parkChild?.escalation?.sessionId).toBe("quota-park-sess-11");
-      // Single normalize: at most one skip warn line for residual issues.
-      expect(warnings.filter((w) => w.includes("skipped:")).length).toBeLessThanOrEqual(1);
+      expect(result.children.find((c) => c.issue === 12)).toMatchObject({
+        status: "skipped",
+        reason: "not_scheduled_this_invocation",
+      });
+      expect(
+        warnings.filter(
+          (w) =>
+            w.includes("#12") &&
+            w.includes("skipped: not_scheduled_this_invocation"),
+        ),
+      ).toHaveLength(1);
+      expect(familyBackend.readCalls - familyBackend.readsAtQuota).toBe(1);
     } finally {
       restore();
     }

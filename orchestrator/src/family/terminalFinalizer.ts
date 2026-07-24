@@ -27,7 +27,10 @@ import {
   type PublicFailedCause,
 } from "../publicResult.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
-import type { FamilyStageFailureStatus } from "./familyTerminal.js";
+import {
+  resolveFamilyStageTerminal,
+  type FamilyStageFailureStatus,
+} from "./familyTerminal.js";
 import {
   failedFamilyResult,
   type ChildSlice,
@@ -35,6 +38,7 @@ import {
   type FamilyChildEscalation,
   type FamilyChildResult,
   type FamilyChildStatus,
+  type FamilySkipReason,
   type FamilyEpic,
   type FamilyLedgerEntry,
   type FamilyRunResult,
@@ -47,14 +51,6 @@ import {
 } from "./ledger.js";
 
 // ─── skip tokens ────────────────────────────────────────────────────────────
-
-export type FamilySkipReason =
-  | "not_scheduled_this_invocation"
-  | "unanswered_sibling_park_residual"
-  | "startup_preflight_failed"
-  | "refetch_failed"
-  | "reconcile_inconsistent"
-  | "dependency_cycle_residual";
 
 const CHILD_STATUSES: ReadonlySet<string> = new Set([
   "ran",
@@ -71,7 +67,7 @@ function skippedChild(
   reason: FamilySkipReason,
 ): FamilyChildResult {
   console.warn(`family child #${issue} skipped: ${reason}`);
-  return { issue, status: "skipped" };
+  return { issue, status: "skipped", reason };
 }
 
 function escalationFromChildParkRow(
@@ -133,6 +129,29 @@ export function parseTerminalChildrenCargo(
       );
     }
     const status = row.status as FamilyChildStatus;
+    if (status === "skipped") {
+      if (
+        typeof row.reason !== "string" ||
+        !([
+          "not_scheduled_this_invocation",
+          "unanswered_sibling_park_residual",
+          "startup_preflight_failed",
+          "refetch_failed",
+          "reconcile_inconsistent",
+          "dependency_cycle_residual",
+          "admission_skipped",
+          "baseline_health_failed",
+        ] as const).includes(row.reason as FamilySkipReason)
+      ) {
+        throw new Error(
+          `${context}: terminalChildren[${i}].reason required for skipped`,
+        );
+      }
+    } else if (row.reason !== undefined) {
+      throw new Error(
+        `${context}: terminalChildren[${i}].reason only legal for skipped`,
+      );
+    }
     if (row.branch !== undefined && typeof row.branch !== "string") {
       throw new Error(
         `${context}: terminalChildren[${i}].branch must be string when present`,
@@ -179,9 +198,8 @@ export function parseTerminalChildrenCargo(
         );
       }
     }
-    out.push({
+    const shared = {
       issue: row.issue,
-      status,
       ...(typeof row.branch === "string" ? { branch: row.branch } : {}),
       ...(typeof row.failureCause === "string"
         ? { failureCause: row.failureCause }
@@ -189,7 +207,16 @@ export function parseTerminalChildrenCargo(
       ...(row.escalation !== undefined
         ? { escalation: row.escalation as FamilyChildEscalation }
         : {}),
-    });
+    };
+    out.push(
+      status === "skipped"
+        ? {
+            ...shared,
+            status,
+            reason: row.reason as FamilySkipReason,
+          }
+        : { ...shared, status },
+    );
   }
   return out;
 }
@@ -295,6 +322,7 @@ export type TerminalIntent =
       readonly headMetadata?: StopSummary["metadata"];
       /** When true, failure that coexists with unanswered parks is durable. */
       readonly persistFailureWithParks?: boolean;
+      readonly completedStopSummaryOverride?: StopSummary;
     }
   | {
       readonly kind: "failed";
@@ -303,6 +331,8 @@ export type TerminalIntent =
       readonly escalation?: Escalation;
       readonly residualSkipReason?: FamilySkipReason;
       readonly headMetadata?: StopSummary["metadata"];
+      readonly stopSummaryOverride?: StopSummary;
+      readonly failedPhase?: VerifyCmrPhase;
       readonly persistDurable?: boolean;
       readonly durableDecisionThenFailure?: {
         readonly reason: string;
@@ -423,10 +453,10 @@ export async function finalizeFamilyTerminal(opts: {
       readonly phase?: VerifyCmrPhase;
     };
     readonly headMetadata?: StopSummary["metadata"];
-    readonly stopSummaryOverride?: StopSummary;
     readonly barrierStopSummary?: StopSummary;
+    readonly stopSummaryOverride?: StopSummary;
   }): Promise<FamilyRunResult> => {
-    const stopSummary = opts.familyStopSummary({
+    const stopSummary = input.stopSummaryOverride ?? opts.familyStopSummary({
       status: "failed",
       familyBase: opts.familyBase,
       ...(opts.familyHead !== undefined ? { familyHead: opts.familyHead } : {}),
@@ -661,6 +691,8 @@ export async function finalizeFamilyTerminal(opts: {
         persistDurable: opts.intent.persistDurable,
         durableDecisionThenFailure: opts.intent.durableDecisionThenFailure,
         headMetadata: opts.intent.headMetadata,
+        stopSummaryOverride: opts.intent.stopSummaryOverride,
+        failedPhase: opts.intent.failedPhase,
       });
     case "parked":
       return await buildParked({
@@ -757,9 +789,35 @@ export async function finalizeFamilyTerminal(opts: {
             headMetadata: intent.headMetadata,
           });
         }
+        const terminal = resolveFamilyStageTerminal({
+          ...(intent.failedStatus !== undefined
+            ? { failedStatus: intent.failedStatus }
+            : {}),
+          ...(intent.barrierStopSummary !== undefined
+            ? { barrierStopSummary: intent.barrierStopSummary }
+            : {}),
+          defaultStatus: "verify_failed",
+        });
+        if (terminal.kind === "parked") {
+          return await buildParked({
+            parkReason:
+              terminal.stopSummary.reason === "provider_degraded"
+                ? "provider_degraded"
+                : "decision_gate_park",
+            escalationReason: terminal.stopSummary.summary,
+            escalation: {
+              reason: terminal.stopSummary.summary,
+              diagnosis:
+                terminal.stopSummary.repairHint ??
+                terminal.stopSummary.summary,
+            },
+            headMetadata: intent.headMetadata,
+            stopSummaryOverride: terminal.stopSummary,
+          });
+        }
         return await buildFailed({
-          cause: "child_execution_failed",
-          stage: intent.failedStatus,
+          cause: terminal.cause,
+          stage: terminal.stage,
           failedPhase: intent.failedPhase,
           barrierStopSummary: intent.barrierStopSummary,
           headMetadata: intent.headMetadata,
@@ -770,7 +828,7 @@ export async function finalizeFamilyTerminal(opts: {
           (c) => c.status === "merged" || c.status === "already_done",
         )
       ) {
-        const stopSummary = opts.familyStopSummary({
+        const computed = opts.familyStopSummary({
           status: "completed",
           familyBase: opts.familyBase,
           ...(opts.familyHead !== undefined
@@ -781,11 +839,31 @@ export async function finalizeFamilyTerminal(opts: {
           alreadyDone,
           headMetadata: intent.headMetadata,
         });
+        const stopSummary: StopSummary =
+          intent.completedStopSummaryOverride === undefined
+            ? computed
+            : {
+                ...intent.completedStopSummaryOverride,
+                metadata: {
+                  ...(intent.completedStopSummaryOverride.metadata ?? {}),
+                  ...(computed.metadata ?? {}),
+                },
+              };
+        const completedStopSummary: StopSummary =
+          children.length > 0 &&
+          children.every((child) => child.status === "already_done")
+            ? {
+                ...stopSummary,
+                reason: "already_done",
+                summary:
+                  "family resume found every child already merged and skipped rerun",
+              }
+            : stopSummary;
         emitExitProgress({
           epic: opts.epicIssue,
           status: "completed",
-          stopReason: stopSummary.reason,
-          gateSummary: stopSummary.summary,
+          stopReason: completedStopSummary.reason,
+          gateSummary: completedStopSummary.summary,
         });
         return {
           status: "completed",
@@ -793,7 +871,7 @@ export async function finalizeFamilyTerminal(opts: {
           ...(opts.familyHead !== undefined
             ? { familyHead: opts.familyHead }
             : {}),
-          stopSummary,
+          stopSummary: completedStopSummary,
           children,
           ...(opts.epic.admissionSkipped !== undefined &&
           opts.epic.admissionSkipped.length > 0

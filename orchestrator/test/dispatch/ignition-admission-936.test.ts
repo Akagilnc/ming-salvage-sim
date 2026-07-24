@@ -948,7 +948,11 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
       expect(result.children).toEqual(
         expect.arrayContaining([
           { issue: 936, status: "already_done" },
-          { issue: 935, status: "skipped" },
+          {
+            issue: 935,
+            status: "skipped",
+            reason: "admission_skipped",
+          },
         ]),
       );
     } finally {
