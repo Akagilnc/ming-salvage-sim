@@ -3,6 +3,11 @@ import { beforeEach, vi } from "vitest";
 import "../src/sandcastleCancelSeam.js";
 import { resetRoutePresetsCacheForTests } from "../src/modelRoutes.js";
 
+// #1081: vitest leaves open-court birth off by default (see
+// shouldOpenResidentJudgeCourtAtDispatch). Suites that exercise the birth
+// path set ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT=1 via vi.stubEnv.
+delete process.env.ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT;
+
 /**
  * #1090 — never let unit tests shell out to a real `gh pr list` for ship-PR
  * resolution. Suites that intentionally exercise resolveFamilyShipPr mock

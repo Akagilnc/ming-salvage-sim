@@ -34,6 +34,7 @@ import {
   quotaWallError,
 } from "./unified-worker-dispatch-937.shared.js";
 import { expectNoRelayFocusFile } from "../helpers/relayFocus.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -184,12 +185,6 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
           models: ["grok-4.5"],
         },
         {
-          id: "cursor",
-          status: "live",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["grok-4.5"],
-        },
-        {
           id: "codex-5h",
           status: "live",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
@@ -207,10 +202,9 @@ describe("#937 public driver seams — ID-007 silence + ID-008 relay", () => {
 
     expect(outcome.kind).toBe("relay");
     if (outcome.kind !== "relay") return;
-    // Same-model alternate live pool first (cursor), not roster-next terra.
-    expect(outcome.nextBaton.modelId).toBe("grok-4.5");
-    expect(outcome.nextBaton.pool).toBe("cursor");
-    expect(outcome.relayBrief).toMatch(/cursor/);
+    expect(outcome.nextBaton.modelId).toBe("terra@med");
+    expect(outcome.nextBaton.pool).toBe("codex-5h");
+    expect(outcome.relayBrief).toMatch(/codex-5h/);
     expectNoRelayFocusFile(dir);
   });
 
@@ -340,6 +334,8 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
     const backend = baseStayPutBackend(
       tmp,
       async (spec) => {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.id === "S2") {
           return {
             kind: "completed",
@@ -434,6 +430,8 @@ describe("#937 public runOrchestrator — ID-008 review/fix stay-put", () => {
     const backend = baseStayPutBackend(
       tmp,
       async (spec) => {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        if (panelLeg !== undefined) return panelLeg;
         if (spec.id === "S2") {
           return {
             kind: "completed",

@@ -178,14 +178,20 @@ export function capacityRelayErrorFrom(err: unknown): CapacityRelayError | undef
  * execution of that slot consumes/supersedes its earlier relay marker.
  */
 export function resumeRelayFromLedger(
-  ledger: ReadonlyArray<{ readonly event?: string; readonly step?: StepId }>,
+  ledger: ReadonlyArray<{
+    readonly event?: string;
+    readonly step?: StepId;
+    readonly output?: unknown;
+  }>,
   resumeStep: StepId,
 ): RelayHandoffLedgerEvent | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const row = ledger[i]!;
     if (row.step !== resumeStep) continue;
     if (row.event === "relay_baton_handoff") return row as RelayHandoffLedgerEvent;
-    if (row.event === undefined) return undefined;
+    // Executable topology progress (including dual-field fold: output +
+    // court_dismissed) supersedes an earlier relay marker for this step.
+    if (row.event === undefined || row.output != null) return undefined;
   }
   return undefined;
 }

@@ -39,7 +39,7 @@ import { resolveActiveModelRoute } from "../../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { StopSummary } from "../../../src/stopSummary.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
@@ -244,7 +244,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     );
     let verifyDispatches = 0;
-    familyBackend.dispatchWorker = async (spec: any) => {
+    familyBackend.dispatchWorker = async (spec: WorkerSpec) => {
       if (spec.kind === "verify") {
         verifyDispatches += 1;
         return { kind: "completed", output: { kind: "verify", converged: true } };
@@ -271,6 +271,72 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(familyBackend.ledger.some((e) => e.status === "review_loop_converged")).toBe(true);
   });
 
+  it("shipped-only online-review decision park replays durably on re-entry", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "https://github.com/test/repo/pull/293",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    let verifyDispatches = 0;
+    familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "verify") {
+        verifyDispatches += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            terminalState: "decision_gate_raised",
+          },
+        };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const first = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async () => {
+        throw new Error("final verify/cmr/ship must not rerun after recordShipped");
+      },
+    });
+    const second = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async () => {
+        throw new Error("durable decision park must replay before final verify");
+      },
+    });
+
+    expect(first.status).toBe("parked");
+    expect(second).toMatchObject({
+      status: "parked",
+      familyHead: "family-base-0",
+      stopSummary: first.stopSummary,
+      children: first.children,
+    });
+    expect(verifyDispatches).toBe(1);
+    expect(
+      familyBackend.ledger.filter(
+        (entry) =>
+          entry.status === "escalated" &&
+          entry.event === "escalated" &&
+          entry.escalationKind === "decision",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("a terminal family failure stays terminal even when a legacy ship_completed row exists", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
@@ -284,6 +350,16 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         escalationKind: "failure",
         reason: "terminal review infrastructure failure",
         familyHeadAfter: "family-base-0",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
+        stopSummary: {
+          reason: "infra_failure",
+          summary: "terminal review infrastructure failure",
+        },
+        // #1125 schema A — durable failure authority carries terminalChildren
+        terminalChildren: [
+          { issue: 10, status: "merged", branch: "feat/issue-10" },
+        ],
       },
     );
     let barrierCalls = 0;
@@ -468,7 +544,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       evidencePaths: [],
     };
     familyBackend.dispatchWorker = async (spec: any, _ctx?: any): Promise<any> => {
-      const panelLeg = completeCmrPanelLegWorker(spec);
+      const panelLeg = completeReviewPanelLegWorker(spec);
       if (panelLeg !== undefined) return panelLeg;
       if (spec.kind === "cmr") {
         return { kind: "completed", output: cmrOutput };

@@ -1,7 +1,5 @@
 # Online review verify worker (#600 / #940 / #934 ID-012)
 
-Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`)
-
 ## Params
 
 - `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` — bot snapshot + ship metadata landing file mounted by the runner.

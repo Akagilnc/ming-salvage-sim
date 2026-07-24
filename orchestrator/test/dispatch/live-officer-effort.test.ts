@@ -50,8 +50,8 @@ describe("live officer effort — registry/route authority only", () => {
   });
 
   // #916 F9: residual codexEffort overlay parameter deleted — signature is
-  // agentForSlug(slug, pool?) only; effort is never call-site overlaid.
-  it("agentForSlug accepts at most (slug, pool) — no codexEffort overlay", () => {
-    expect(agentForSlug.length).toBe(2);
+  // agentForSlug(slug, pool?, soul?) only; effort is never call-site overlaid.
+  it("agentForSlug accepts soul selection but no codexEffort overlay", () => {
+    expect(agentForSlug.length).toBe(3);
   });
 });

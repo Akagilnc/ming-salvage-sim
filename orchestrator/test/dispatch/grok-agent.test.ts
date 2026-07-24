@@ -148,7 +148,7 @@ describe("#807 modelRegistry grok-build wiring", () => {
       provider: "grok",
       model: "grok-4.5",
     });
-    // #905: default registry is SuperGrok CLI; no cursor transit.
+    // #905: default registry is the SuperGrok CLI.
     expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
   });
 

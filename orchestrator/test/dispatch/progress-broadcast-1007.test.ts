@@ -19,8 +19,7 @@ import {
   PROGRESS_SCHEMA_VERSION,
   clearProgressBroadcastConfig,
   configureProgressBroadcast,
-  countJudgeDispositions,
-  countSeverityFromFindings,
+  emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
   emitParkProgress,
@@ -112,34 +111,6 @@ const findings: readonly Finding[] = [
   },
 ];
 
-describe("#1007 disposition / severity pure counters", () => {
-  it("maps live→fix_now, refute→refuted, suppress→suppressed", () => {
-    expect(countJudgeDispositions(dispositions)).toEqual({
-      fix_now: 2,
-      refuted: 1,
-      suppressed: 1,
-    });
-  });
-
-  it("counts severity only from typed findings cargo (no invent)", () => {
-    expect(countSeverityFromFindings(findings)).toEqual({
-      critical: 0,
-      high: 2,
-      medium: 1,
-      low: 0,
-      clarity: 0,
-    });
-    expect(countSeverityFromFindings(undefined)).toBeNull();
-    expect(countSeverityFromFindings([])).toEqual({
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      clarity: 0,
-    });
-  });
-});
-
 describe("#1007 progress.jsonl append-only schema", () => {
   it("appends schema'd stage / judge / park / wave_close / terminal rows", () => {
     const ledgerDir = tempLedger();
@@ -160,8 +131,6 @@ describe("#1007 progress.jsonl append-only schema", () => {
       step: "S3",
       round: 1,
       verdict: "continue",
-      findingDispositions: dispositions,
-      findings,
       cargoPointer: "ledger://judge/S3",
     });
     emitParkProgress({
@@ -203,18 +172,8 @@ describe("#1007 progress.jsonl append-only schema", () => {
     if (judge.kind === "judge") {
       expect(judge.issue).toBe(1007);
       expect(judge.verdict).toBe("continue");
-      expect(judge.dispositions).toEqual({
-        fix_now: 2,
-        refuted: 1,
-        suppressed: 1,
-      });
-      expect(judge.severity).toEqual({
-        critical: 0,
-        high: 2,
-        medium: 1,
-        low: 0,
-        clarity: 0,
-      });
+      expect(judge).not.toHaveProperty("dispositions");
+      expect(judge).not.toHaveProperty("severity");
       expect(judge.cargoPointer).toBe("ledger://judge/S3");
       // Finding bodies never enter the feed.
       expect(JSON.stringify(judge)).not.toMatch(/suggested_fix|claim_quote|q1/);
@@ -344,8 +303,6 @@ describe("#1007 status renderer from progress feed + ledger", () => {
       step: "S3",
       round: 1,
       verdict: "continue",
-      findingDispositions: dispositions,
-      findings,
     });
     emitStageProgress({
       ledgerDir,
@@ -361,7 +318,6 @@ describe("#1007 status renderer from progress feed + ledger", () => {
       step: "S6",
       round: 2,
       verdict: "converged",
-      findingDispositions: [],
     });
     emitStageProgress({
       ledgerDir,
@@ -434,6 +390,78 @@ describe("#1007 status renderer from progress feed + ledger", () => {
     });
     expect(structured.issues).toEqual([]);
     expect(renderFamilyStatusFromDir(ledgerDir)).toMatch(/no progress/i);
+  });
+
+  it("#1086 AC3: family-status aggregates beat rotation without worker logs", () => {
+    // Value-night / morning report surface: renderFamilyStatus + FromDir.
+    // Emits real progress API events (not pre-seeded snapshot rows).
+    const ledgerDir = tempLedger();
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "builder",
+      step: "S2",
+      rotation: 1,
+      beatKind: "plan",
+    });
+    let snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "builder",
+      latestBeatKind: "plan",
+      latestRotation: 1,
+    });
+
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "judge",
+      step: "S3",
+      rotation: 2,
+      verdict: "continue",
+    });
+    snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "judge",
+      latestBeatKind: null,
+      latestRotation: 2,
+      latestVerdict: "continue",
+    });
+
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "builder",
+      step: "S2",
+      rotation: 3,
+      beatKind: "construct",
+    });
+    emitBeatProgress({
+      ledgerDir,
+      issue: 1086,
+      epic: 1080,
+      role: "judge",
+      step: "S3",
+      rotation: 4,
+      verdict: "converged",
+    });
+    snap = renderFamilyStatus({
+      events: readProgressEvents(ledgerDir),
+    });
+    expect(snap.issues.find((i) => i.issue === 1086)).toMatchObject({
+      latestBeatRole: "judge",
+      latestRotation: 4,
+      latestVerdict: "converged",
+    });
+
+    const text = renderFamilyStatusFromDir(ledgerDir);
+    expect(text).toMatch(/rotation=judge@4/);
   });
 
   it("#1017 R4: merge events without numeric issue do not poison snapshot", () => {
@@ -1124,6 +1152,14 @@ describe("#1007 first ship + family early-return park/terminal progress", () => 
         reason: "cmr needs human disposition",
         escalationKind: "decision",
         familyHeadAfter: "head-park",
+        terminalStatus: "parked",
+        terminalChildren: [
+          { issue: 10, status: "skipped", reason: "not_scheduled_this_invocation" },
+        ],
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "cmr needs human disposition",
+        },
       },
     ];
     const familyBackend = {
@@ -2223,8 +2259,8 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
     const { skeletonReviewLoopWorkerResult } = await import(
       "../../src/reviewLoopOutcome.js"
     );
-    const { completeCmrPanelLegWorker } = await import(
-      "../helpers/cmr-panel-leg-dispatch.js"
+    const { completeReviewPanelLegWorker } = await import(
+      "../helpers/review-panel-leg-dispatch.js"
     );
     const ledgerDir = tempLedger("progress-1007-fam-cmr-judge-");
     configureProgressBroadcast({ ledgerDir, epic: 909 });
@@ -2266,7 +2302,7 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
         return head;
       },
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext) {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2332,16 +2368,11 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
           e.verdict === "converged",
       ),
     ).toBe(true);
-    // Typed dispositions/severity only — no prose cargo in the feed row.
+    // Runner progress carries verdict only — no findings-derived counts.
     const completeness = judges.find(
       (e) => e.kind === "judge" && e.step === "cmr:completeness",
     );
-    expect(completeness).toMatchObject({
-      dispositions: {
-        fix_now: 2,
-        refuted: 1,
-        suppressed: 1,
-      },
-    });
+    expect(completeness).not.toHaveProperty("dispositions");
+    expect(completeness).not.toHaveProperty("severity");
   });
 });

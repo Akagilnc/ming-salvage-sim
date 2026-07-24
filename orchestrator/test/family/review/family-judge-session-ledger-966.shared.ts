@@ -32,7 +32,7 @@ import {
 
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 import type {
   FamilyBackend,
@@ -174,7 +174,7 @@ class FamilyJudgeLedgerBackend implements FamilyBackend {
     ctx: DispatchContext,
     _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     this.dispatches.push({
       kind: spec.kind,

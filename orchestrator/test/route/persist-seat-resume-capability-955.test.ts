@@ -157,26 +157,30 @@ describe("#955 persistent seat resume capability gate", () => {
     expect(resumeCapableForSlug("grok-4.5")).toBe(true);
   });
 
-  it("same slug but resume-incapable provider opens S5/S6 fresh — no resumeSessionId", async () => {
+  it("same slug but resume-incapable provider: coder S2 ok; judge establish fails loud (AC#3)", async () => {
     // #936: seat via Coder-Rec. Spy capability gate — no permanent incapable roster slug.
+    // Coder soft-degrades to fresh. Resident judge establish (absent + incapable)
+    // fails loud at create time — same gate as open-court (#1081 AC#3; never mint
+    // a non-resume-capable "resident" and waste a judging round).
     const backend = new SeatCapBackend("Coder-Rec: grok-4.5\n");
     const mod = await import("../../src/modelRegistry.js");
     const spy = vi.spyOn(mod, "resumeCapableForSlug").mockReturnValue(false);
     try {
       const result = await runOrchestrator({ issueNumber: 95501, backend });
-      expect(result.status).toBe("completed");
+      expect(result.status).toBe("failed");
       const byId = (id: string) => {
         const i = backend.specs.findIndex((s) => s.id === id);
         expect(i).toBeGreaterThanOrEqual(0);
         return { spec: backend.specs[i]!, ctx: backend.ctxs[i]! };
       };
       expect(byId("S2").spec.model).toBe("grok-4.5");
-      const s5 = byId("S5");
-      expect(s5.spec.session).toBe("fresh");
-      expect(s5.ctx.resumeSessionId).toBeUndefined();
-      const s6 = byId("S6");
-      expect(s6.spec.session).toBe("fresh");
-      expect(s6.ctx.resumeSessionId).toBeUndefined();
+      expect(byId("S2").spec.session).toBe("fresh");
+      // Negative: establish failed before any fix/re-judge round.
+      expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+      expect(backend.specs.some((s) => s.id === "S6")).toBe(false);
+      // Negative: establish refused before any S3 dispatch (fresh or resume).
+      // AC#3 / requireResidentJudgeResume: incapable seat → fail, never mint.
+      expect(backend.specs.some((s) => s.id === "S3")).toBe(false);
     } finally {
       spy.mockRestore();
     }

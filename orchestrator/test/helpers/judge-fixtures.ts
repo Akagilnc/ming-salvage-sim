@@ -1,13 +1,13 @@
 /**
- * #925 test fixtures — build legal judge StepOutputs / WorkerResults without
- * hand-copying disposition tables in every fake backend.
+ * #925 / #1081 test fixtures — build legal judge StepOutputs / WorkerResults
+ * without hand-copying disposition tables in every fake backend.
  */
 
 import type { IntegratedCmrResult } from "../../src/family/types.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import {
+  isJudgeOpenCourtSpec,
   liveDispositionsForFindings,
-  liveDispositionsForOpenCount,
   unusableResidualOpenCountPaper,
 } from "../../src/judgeStation.js";
 import type {
@@ -16,7 +16,32 @@ import type {
   JudgeResult,
   ReviewerOutput,
   WorkerResult,
+  WorkerSpec,
 } from "../../src/types.js";
+
+/** Default session id for #1081 open-court birth in scripted backends. */
+export const OPEN_COURT_SESSION = "sess-judge-court-open";
+
+/**
+ * #1081: open-court birth dispatch — return court-ready ack without consuming
+ * S3/S6 judge scripts. Callers check this before scripted judge queues.
+ *
+ * Default is the production court-ready ack (`converged`). Tests that exercise
+ * legal open-court escalate should pass a custom WorkerResult instead of this
+ * helper (or supply openCourtResult to the lifecycle backend).
+ */
+export function openCourtWorkerResultIfMatch(
+  spec: Pick<WorkerSpec, "promptFile">,
+  sessionId: string = OPEN_COURT_SESSION,
+  output: JudgeResult = { kind: "judge", status: "converged" },
+): WorkerResult | undefined {
+  if (!isJudgeOpenCourtSpec(spec)) return undefined;
+  return {
+    kind: "completed",
+    output,
+    sessionId,
+  };
+}
 
 /** Authored residual body for fixtures that exercise residual open-count transport. */
 export const FIXTURE_RESIDUAL_FIX_PACKET_BODY =
@@ -46,6 +71,21 @@ export function residualOpenContinue(
 
 export function judgeConverged(): JudgeResult {
   return { kind: "judge", status: "converged" };
+}
+
+/**
+ * #1082 plan pre-review continue — 0 live findings is legal; boundaries live
+ * in `fixPacketBody` prose (准/退/索证). Runner resumes same S2 builder.
+ */
+export function judgePlanContinue(
+  fixPacketBody = "fixture plan pre-review: boundaries approved (construct)",
+): JudgeResult {
+  return {
+    kind: "judge",
+    status: "continue",
+    findingDispositions: [],
+    fixPacketBody,
+  };
 }
 
 export function judgeContinue(
@@ -202,7 +242,10 @@ export function liveCmrJudgeContinue(
         ? ({
             kind: "judge",
             status: "continue",
-            findingDispositions: liveDispositionsForOpenCount(count, []),
+            findingDispositions: Array.from({ length: count }, (_, i) => ({
+              identityKey: `fixture-live-${i + 1}`,
+              action: "live" as const,
+            })),
             findings: [],
             fixPacketBody: `fixture family continue: ${count} live finding(s)`,
           } as JudgeResult)

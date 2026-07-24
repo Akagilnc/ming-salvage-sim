@@ -21,10 +21,12 @@ import type { ChildProcess } from "node:child_process";
 
 import { spawnDetached } from "./externalCall.js";
 import type {
-  Finding,
-  JudgeFindingDisposition,
-  JudgeVerdictStatus,
-} from "./types.js";
+  BeatRole,
+  BuilderBeatStepId,
+  JudgeBeatStepId,
+} from "./builderJudgeBeat.js";
+import type { CoderBeatKind } from "./coderPlanPhase.js";
+import type { JudgeVerdictStatus } from "./types.js";
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -77,74 +79,12 @@ export function progressPath(ledgerDir: string): string {
   return join(ledgerDir, PROGRESS_FILENAME);
 }
 
-// ─── disposition / severity counters (pure; typed envelope only) ─────────────
-
-export interface ProgressDispositionCounts {
-  readonly fix_now: number;
-  readonly refuted: number;
-  readonly suppressed: number;
-}
-
-export interface ProgressSeverityCounts {
-  readonly critical: number;
-  readonly high: number;
-  readonly medium: number;
-  readonly low: number;
-  readonly clarity: number;
-}
-
-/**
- * Map judge disposition actions → operator counts.
- * live → fix_now; refute → refuted; suppress → suppressed.
- */
-export function countJudgeDispositions(
-  rows: ReadonlyArray<JudgeFindingDisposition> | undefined,
-): ProgressDispositionCounts {
-  let fix_now = 0;
-  let refuted = 0;
-  let suppressed = 0;
-  for (const row of rows ?? []) {
-    if (row.action === "live") fix_now += 1;
-    else if (row.action === "refute") refuted += 1;
-    else if (row.action === "suppress") suppressed += 1;
-  }
-  return { fix_now, refuted, suppressed };
-}
-
-/** Severity histogram from typed findings cargo; null when cargo absent. */
-export function countSeverityFromFindings(
-  findings: ReadonlyArray<Finding> | undefined,
-): ProgressSeverityCounts | null {
-  if (findings === undefined) return null;
-  const counts: {
-    -readonly [K in keyof ProgressSeverityCounts]: number;
-  } = {
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    clarity: 0,
-  };
-  for (const f of findings) {
-    const sev = f.severity;
-    if (
-      sev === "critical" ||
-      sev === "high" ||
-      sev === "medium" ||
-      sev === "low" ||
-      sev === "clarity"
-    ) {
-      counts[sev] += 1;
-    }
-  }
-  return counts;
-}
-
 // ─── event schema ────────────────────────────────────────────────────────────
 
 export type ProgressEventKind =
   | "stage"
   | "judge"
+  | "beat"
   | "park"
   | "merge"
   | "ship"
@@ -173,10 +113,24 @@ export interface ProgressJudgeEvent extends ProgressEventBase {
   readonly step: string;
   readonly round?: number | null;
   readonly verdict: JudgeVerdictStatus;
-  readonly dispositions: ProgressDispositionCounts;
-  readonly severity?: ProgressSeverityCounts | null;
   /** Path pointer only — never finding body prose. */
   readonly cargoPointer?: string | null;
+}
+
+/**
+ * #1086 / ADR 0147 S6 — one progress line per builder or judge product beat.
+ * Typed surface only (拍别 + 判词终态); never worker prose.
+ */
+export interface ProgressBeatEvent extends ProgressEventBase {
+  readonly kind: "beat";
+  readonly role: BeatRole;
+  readonly step: string;
+  /** 1-based interleaved builder↔judge beat index. */
+  readonly rotation: number;
+  /** Builder only: plan | construct. */
+  readonly beatKind?: CoderBeatKind | null;
+  /** Judge only: tri-state terminal verdict. */
+  readonly verdict?: JudgeVerdictStatus | null;
 }
 
 export interface ProgressParkEvent extends ProgressEventBase {
@@ -219,6 +173,7 @@ export interface ProgressTerminalEvent extends ProgressEventBase {
 export type ProgressEvent =
   | ProgressStageEvent
   | ProgressJudgeEvent
+  | ProgressBeatEvent
   | ProgressParkEvent
   | ProgressMergeEvent
   | ProgressShipEvent
@@ -319,12 +274,6 @@ export function formatProgressLogLine(event: ProgressEvent): string {
       return `${base} stage=${event.stage}${issueTag(event.issue)}${epicTag(event.epic)}${step}${detail}`;
     }
     case "judge": {
-      const d = event.dispositions;
-      const sev = event.severity;
-      const sevPart =
-        sev !== undefined && sev !== null
-          ? ` severity={c:${sev.critical},h:${sev.high},m:${sev.medium},l:${sev.low},cl:${sev.clarity}}`
-          : "";
       const round =
         event.round !== undefined && event.round !== null
           ? ` round=${event.round}`
@@ -338,8 +287,22 @@ export function formatProgressLogLine(event: ProgressEvent): string {
       return (
         `${base} judge${issueTag(event.issue)}${epicTag(event.epic)}` +
         ` step=${event.step}${round} verdict=${event.verdict}` +
-        ` dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}` +
-        `${sevPart}${ptr}`
+        ptr
+      );
+    }
+    case "beat": {
+      const kindPart =
+        event.beatKind !== undefined && event.beatKind !== null
+          ? ` beatKind=${event.beatKind}`
+          : "";
+      const verdictPart =
+        event.verdict !== undefined && event.verdict !== null
+          ? ` verdict=${event.verdict}`
+          : "";
+      return (
+        `${base} beat${issueTag(event.issue)}${epicTag(event.epic)}` +
+        ` role=${event.role} step=${event.step} rotation=${event.rotation}` +
+        `${kindPart}${verdictPart}`
       );
     }
     case "park": {
@@ -530,14 +493,11 @@ export function emitJudgeProgress(input: {
   readonly step: string;
   readonly round?: number | null;
   readonly verdict: JudgeVerdictStatus;
-  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  readonly findings?: ReadonlyArray<Finding>;
   readonly cargoPointer?: string | null;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
   readonly now?: () => string;
 }): void {
-  const severity = countSeverityFromFindings(input.findings);
   const event: ProgressJudgeEvent = {
     v: PROGRESS_SCHEMA_VERSION,
     ts: (input.now ?? (() => new Date().toISOString()))(),
@@ -547,8 +507,6 @@ export function emitJudgeProgress(input: {
     step: input.step,
     round: input.round ?? null,
     verdict: input.verdict,
-    dispositions: countJudgeDispositions(input.findingDispositions),
-    severity,
     cargoPointer: input.cargoPointer ?? null,
   };
   emitProgressEvent({
@@ -559,6 +517,43 @@ export function emitJudgeProgress(input: {
   });
   // Judge escalate is a decision-gate path — also surface as park-class notify
   // via a follow-up park event when the runner parks; do not double-notify here.
+}
+
+/**
+ * #1086 — emit one beat progress line (builder or judge). Fail-open I/O
+ * (same as other progress kinds); durable ledger write is the fail-loud path.
+ */
+export function emitBeatProgress(input: {
+  readonly ledgerDir?: string;
+  readonly issue?: number | null;
+  readonly epic?: number | null;
+  readonly role: BeatRole;
+  readonly step: BuilderBeatStepId | JudgeBeatStepId | string;
+  readonly rotation: number;
+  readonly beatKind?: CoderBeatKind | null;
+  readonly verdict?: JudgeVerdictStatus | null;
+  readonly log?: (line: string) => void;
+  readonly notifySpawn?: NotifySpawn;
+  readonly now?: () => string;
+}): void {
+  const event: ProgressBeatEvent = {
+    v: PROGRESS_SCHEMA_VERSION,
+    ts: (input.now ?? (() => new Date().toISOString()))(),
+    kind: "beat",
+    epic: resolveEpic(input.epic) ?? null,
+    issue: input.issue ?? null,
+    role: input.role,
+    step: input.step,
+    rotation: input.rotation,
+    beatKind: input.beatKind ?? null,
+    verdict: input.verdict ?? null,
+  };
+  emitProgressEvent({
+    event,
+    ledgerDir: input.ledgerDir,
+    log: input.log,
+    notifySpawn: input.notifySpawn,
+  });
 }
 
 export function emitParkProgress(input: {
@@ -768,12 +763,17 @@ export interface IssueProgressSnapshot {
   readonly latestStage: string | null;
   readonly latestVerdict: JudgeVerdictStatus | null;
   readonly judgeRounds: number;
-  readonly dispositions: ProgressDispositionCounts | null;
-  readonly severity: ProgressSeverityCounts | null;
   readonly parked: boolean;
   readonly parkSummary: string | null;
   readonly merged: boolean;
   readonly cargoPointer: string | null;
+  /**
+   * #1086 — builder↔judge rotation from the latest beat event only.
+   * Operators locate the loop without reading worker prose.
+   */
+  readonly latestBeatRole: BeatRole | null;
+  readonly latestBeatKind: CoderBeatKind | null;
+  readonly latestRotation: number | null;
 }
 
 export interface FamilyStatusSnapshot {
@@ -833,11 +833,12 @@ export function renderFamilyStatus(input: {
       latestStage: string | null;
       latestVerdict: JudgeVerdictStatus | null;
       judgeRounds: number;
-      dispositions: ProgressDispositionCounts | null;
-      severity: ProgressSeverityCounts | null;
       parked: boolean;
       parkSummary: string | null;
       cargoPointer: string | null;
+      latestBeatRole: BeatRole | null;
+      latestBeatKind: CoderBeatKind | null;
+      latestRotation: number | null;
     }
   >();
 
@@ -849,11 +850,12 @@ export function renderFamilyStatus(input: {
         latestStage: null,
         latestVerdict: null,
         judgeRounds: 0,
-        dispositions: null,
-        severity: null,
         parked: false,
         parkSummary: null,
         cargoPointer: null,
+        latestBeatRole: null,
+        latestBeatKind: null,
+        latestRotation: null,
       };
       byIssue.set(issue, row);
     }
@@ -890,12 +892,29 @@ export function renderFamilyStatus(input: {
           row.latestStep = event.step;
           row.latestVerdict = event.verdict;
           row.judgeRounds += 1;
-          row.dispositions = event.dispositions;
-          row.severity = event.severity ?? null;
           row.cargoPointer = event.cargoPointer ?? null;
+          // Rotation is sole beat-channel truth (#1086 L4) — do not dual-write
+          // latestBeatRole / latestRotation from judge events.
           if (event.verdict === "escalate") {
             row.parked = true;
             row.parkSummary = row.parkSummary ?? "judge escalate";
+          }
+        }
+        break;
+      }
+      case "beat": {
+        if (event.issue !== undefined && event.issue !== null) {
+          const row = ensure(event.issue);
+          row.latestStep = event.step;
+          row.latestBeatRole = event.role;
+          row.latestRotation = event.rotation;
+          if (event.role === "builder") {
+            row.latestBeatKind = event.beatKind ?? null;
+          } else {
+            row.latestBeatKind = null;
+            if (event.verdict !== undefined && event.verdict !== null) {
+              row.latestVerdict = event.verdict;
+            }
           }
         }
         break;
@@ -969,12 +988,13 @@ export function renderFamilyStatus(input: {
       latestStage: row.latestStage,
       latestVerdict: row.latestVerdict,
       judgeRounds: row.judgeRounds,
-      dispositions: row.dispositions,
-      severity: row.severity,
       parked: row.parked,
       parkSummary: row.parkSummary,
       merged: mergedFromLedger.has(issue),
       cargoPointer: row.cargoPointer,
+      latestBeatRole: row.latestBeatRole,
+      latestBeatKind: row.latestBeatKind,
+      latestRotation: row.latestRotation,
     }));
 
   return { issues, waves, ships, landings, terminals };
@@ -1001,15 +1021,17 @@ export function renderFamilyStatusFromDir(ledgerDir: string): string {
       `rounds=${issue.judgeRounds}`,
       `verdict=${issue.latestVerdict ?? "—"}`,
     ];
+    // #1086: builder↔judge rotation without reading worker logs.
+    if (issue.latestBeatRole !== null) {
+      const rot =
+        issue.latestRotation !== null ? `@${issue.latestRotation}` : "";
+      const kind =
+        issue.latestBeatKind !== null ? `/${issue.latestBeatKind}` : "";
+      parts.push(`rotation=${issue.latestBeatRole}${kind}${rot}`);
+    }
     // AC 站位: surface latest stage token when the feed has one.
     if (issue.latestStage !== null && issue.latestStage.length > 0) {
       parts.push(`stage=${issue.latestStage}`);
-    }
-    if (issue.dispositions !== null) {
-      const d = issue.dispositions;
-      parts.push(
-        `dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}`,
-      );
     }
     if (issue.merged) parts.push("merged");
     if (issue.parked) {
@@ -1062,4 +1084,3 @@ export function formatDriverStageLine(
       : "";
   return `[orchestrator:stage] ${stage}${issuePart}${suffix}`;
 }
-

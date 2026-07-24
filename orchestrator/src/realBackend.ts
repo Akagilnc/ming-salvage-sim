@@ -68,6 +68,7 @@ import {
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
+  nestedStructuredOutputError,
   requireTypedTrafficSignal,
   runSandcastleWithOnlineReviewSoGuard,
   workerReceiptOutput,
@@ -83,10 +84,11 @@ import {
 } from "./stationReceiptContracts.js";
 import {
   isJudgeSeat,
+  JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeResultFromVerdict,
   mintJudgeEscalate,
-  projectResidualReviewerToJudge,
   unusableResidualOpenCountPaper,
+  usesJudgeReceiptChannel,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -97,6 +99,7 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
+import { healBeforeWorktreeCut } from "./gitWorktreePreflight.js";
 import { appendIsoOperationalExcludes } from "./gitInfoExclude.js";
 import {
   provisionRepoNodeModules,
@@ -108,8 +111,10 @@ import {
   type StopSummary,
 } from "./stopSummary.js";
 import { agyPrintInvocation } from "./agyAgent.js";
+import { EXECUTABLE_SOUL_FILES } from "./soulInstructions.js";
 import {
   agentForSlug,
+  appendAgySoulMount,
   resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
@@ -232,22 +237,6 @@ export function barePingArgv(
           "bypassPermissions",
         ],
       };
-    case "cursor":
-      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
-      return {
-        file: "agent",
-        args: ["-p", prompt, "--model", model, "--print"],
-      };
-    case "copilot":
-      return {
-        file: "copilot",
-        args: ["-p", prompt, "--model", model],
-      };
-    case "pi":
-      return {
-        file: "pi",
-        args: ["-p", prompt, "--mode", "json", "--model", model],
-      };
   }
 }
 export {
@@ -267,6 +256,11 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
+import {
+  isReviewPanelLegPromptFile,
+  panelLegCompletedResult,
+  SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES,
+} from "./family/reviewPanelLegs.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -695,8 +689,8 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 /**
  * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
- * runtime config INSIDE the worker container (#335 / #905). Host file
- * `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
+ * runtime config INSIDE the worker container (#335 / #905). The host LIVE
+ * token {@link agyHostTokenPath} is copied into a per-run dir mounted HERE as
  * `antigravity-oauth-token`. Writable (NOT read-only): the agy CLI writes
  * cache/log/state under its config dir. Host-mirrored auth-mount pattern
  * matches codex (`SANDBOX_CODEX_DIR`) / grok (`SANDBOX_GROK_DIR`).
@@ -704,22 +698,26 @@ export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
 /** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
 export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
-/** Where the baked dev skills are mounted inside the container. */
-export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
- * Env var the v0.1 one-image-two-roles profile reads to ACTIVATE the role's
- * baked soul (ship-pre 256 r1). Both souls are baked into the single image; this
- * tells the entrypoint which one this `run()` is under (#244 "role 决定注哪份
- * soul"). NOT an OS-level readonly mount — the reviewer's READ-ONLY stays a
- * prompt/soul soft constraint (ADR 0017 §4).
+ * Host LIVE source for the agy OAuth token — the antigravity CLI's own token
+ * file, read directly with NO manual `.sc-agy-oauth-token` sync copy. That
+ * snapshot went stale and silently degraded agy legs for weeks (#1106; same
+ * family as the claude stale-snapshot fix #1099). Single authoritative path —
+ * used by both {@link provisionAgyAuthDir} and the bare-ping availability probe.
  */
-export const SANDBOX_SOUL_ENV = "ORCHESTRATOR_SOUL";
+export function agyHostTokenPath(home: string): string {
+  return join(home, ".gemini", "antigravity-cli", AGY_TOKEN_FILENAME);
+}
+/** Where the image-provided dev skills are available inside the container. */
+export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /** The issue number handed to the worker; prompt/soul live-fetch the issue via gh. */
 export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 /** A short alias for tools/skills that conventionally read ISSUE_NUMBER. */
 export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 /** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
+/** #1126 review fixed point (WorktreeHandle.base) for axis legs. */
+export const SANDBOX_REVIEW_FIXED_POINT_ENV = "ORCHESTRATOR_REVIEW_FIXED_POINT";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
@@ -774,12 +772,15 @@ export const SPAWNED_WORKER_ENV: Record<string, string> = { OPENCLAW_SESSION: "1
 /**
  * Build the souls mount spec. Hardcodes the sandbox path once.
  * ALWAYS returns readonly:true so container workers cannot mutate the host
- * souls truth source (the image's baked souls are no longer present; host
- * souls/*.md are the single source of truth).
+ * souls truth source (host souls/*.md are the single source of truth).
  * Used at all 6 dispatch sites (RealBackend box/ship + RealFamilyBackend's
  * 4 workers: merger, coder-fix, integrated-cmr, family-ship).
  */
-export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: string; readonly: true } {
+export function soulsMount(soulsDir: string): {
+  hostPath: string;
+  sandboxPath: string;
+  readonly: true;
+} {
   return {
     hostPath: soulsDir,
     sandboxPath: "/home/agent/.orchestrator/souls",
@@ -845,7 +846,7 @@ export function provisionAgyAuthDir(
   try {
     mkdirSync(root, { recursive: true, mode: 0o700 });
     tempAgyDir = mkdtempSync(join(root, prefix));
-    const src = join(home, ".sc-agy-oauth-token");
+    const src = agyHostTokenPath(home);
     // C8: blank/whitespace-only token must NOT yield a defined agyDir that
     // skips fail-closed preflight — copy then reject empty bodies.
     const body = readFileSync(src, "utf8");
@@ -1201,73 +1202,6 @@ export function checkOwnGitDir(
   return { ok: own, commonDir: trimmed };
 }
 
-// ── model slug → agent provider selection (role decides soul/CLI) ───────────
-
-// ── role → baked soul selection (ship-pre 256 r1) ───────────────────────────
-
-/**
- * Select the soul a step runs under, consuming {@link StepSpec.soul} so the
- * contract field is NOT dead (ship-pre 256 r1, role-soul wiring).
- *
- * v0.1 = ONE image, TWO roles (ADR 0017 §4 + PRD #244): BOTH the coder soul and
- * the READ-ONLY reviewer soul are BAKED INTO the single profile image
- * ("烤进镜像的 reviewer soul 里写 READ-ONLY 硬约束"), and the soul is SELECTED
- * AT RUNTIME by `role` ("role 决定注哪份 soul ... runner 凭 StepSpec.role 选
- * coder/reviewer soul", issue body). The reviewer's READ-ONLY is a prompt/soul
- * SOFT constraint, NOT an OS-level readonly mount — same image, separate fresh
- * `run()` context (ADR 0017 §4 + Consequences; the runtime hard read-only mount
- * is explicitly deferred to a two-image split, issue body line 108).
- *
- * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
- * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
- * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
- * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
- * run.
- *
- * Why this closes the finding: previously `spec.soul` was declared in the
- * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
- * Backend (`grep spec.soul` = no hit) — a dead contract field. Now it is read
- * and asserted at the step's run-setup, so the v0.1 "role 决定注哪份 soul"
- * selection is realised and the field can no longer drift unnoticed.
- *
- * Pure (a check on the role/soul pair): unit-tested without a container.
- */
-export function soulForStep(
-  spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
-): StepSoul {
-  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
-  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
-  if (
-    spec.soul === "verify" &&
-    isJudgeSeat({ id: spec.id })
-  ) {
-    return "verify";
-  }
-  const expected: StepSoul =
-    spec.role === "reviewer"
-      ? "READ-ONLY"
-      : spec.role === "verify"
-        ? "verify"
-        : spec.role === "fixer"
-          ? "fixer"
-          : spec.role === "cleanup"
-            ? "cleanup"
-            : spec.role === "landing"
-              ? "landing"
-              : "coder";
-  if (spec.soul !== expected) {
-    throw new Error(
-      `realBackend: step role "${spec.role}" requires the "${expected}" soul ` +
-        `but the StepSpec carries "${spec.soul}". v0.1 selects the role soul ` +
-        `(live-mounted at /home/agent/.orchestrator/souls per #372) by role ` +
-        `(#244 "role 决定注哪份 soul"; ADR 0017 §4 one-image-two-roles); ` +
-        `a spec.soul that contradicts its role is misconfigured.`,
-    );
-  }
-  return expected;
-}
-
 // ── per-step session id extraction (#256 seam extension) ─────────────────────
 
 /** Minimal slice of Sandcastle's RunResult this Backend reads. */
@@ -1398,10 +1332,10 @@ function extractVerifyTag(stdout: string): unknown | undefined {
  */
 function extractRoleReceipt(
   stdout: string,
-  spec: Pick<StepSpec, "role" | "id" | "soul">,
+  spec: Pick<StepSpec, "role" | "id" | "soul" | "promptFile">,
 ): unknown | undefined {
   try {
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return extractJudgeTag(stdout);
     }
     return spec.role === "coder"
@@ -1438,18 +1372,29 @@ export function stripJsonFence(s: string): string {
 }
 
 /**
- * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
- * values default to the no-commit report — never invent escalate from cargo,
- * never schema-reject ordinary cargo (#899 / ADR 0131).
+ * Tolerant coder cargo fields (committed / commitsAdded / beat / planBody).
+ * Missing or off-shape values default to the no-commit report — never invent
+ * escalate from cargo, never schema-reject ordinary cargo (#899 / ADR 0131).
+ * #1082 beat/planBody are optional opaque siblings for plan-phase transport.
  */
 export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly beat?: "plan" | "construct";
+  readonly planBody?: string;
 } {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return { committed: false, commitsAdded: 0 };
   }
   const receipt = body as Record<string, unknown>;
+  const beat =
+    receipt.beat === "plan" || receipt.beat === "construct"
+      ? receipt.beat
+      : undefined;
+  const planBody =
+    typeof receipt.planBody === "string" && receipt.planBody.trim().length > 0
+      ? receipt.planBody
+      : undefined;
   return {
     committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
     commitsAdded:
@@ -1458,6 +1403,8 @@ export function coderCargoFields(body: unknown): {
       receipt.commitsAdded >= 0
         ? receipt.commitsAdded
         : 0,
+    ...(beat !== undefined ? { beat } : {}),
+    ...(planBody !== undefined ? { planBody } : {}),
   };
 }
 
@@ -1510,6 +1457,14 @@ export function projectCoderStationReceipt(
   if (!envelope.ok) {
     throw new Error(`illegal coder station receipt: ${envelope.reason}`);
   }
+  const beatCargo =
+    fields.beat !== undefined || fields.planBody !== undefined
+      ? {
+          ...(fields.beat !== undefined ? { beat: fields.beat } : {}),
+          ...(fields.planBody !== undefined ? { planBody: fields.planBody } : {}),
+        }
+      : {};
+
   if (envelope.value.status === "escalate") {
     // Escalate is orthogonal to commit cargo; refuse traffic is a different
     // status — do not smuggle refusedFindingIdentityKeys onto a bell.
@@ -1517,6 +1472,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       escalate: {
         reason: envelope.value.reason,
         diagnosis: envelope.value.diagnosis,
@@ -1529,6 +1485,7 @@ export function projectCoderStationReceipt(
       kind: "coder",
       committed: fields.committed,
       commitsAdded: fields.commitsAdded,
+      ...beatCargo,
       refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
       ...refuseRecordsExtra,
     };
@@ -1538,6 +1495,7 @@ export function projectCoderStationReceipt(
     kind: "coder",
     committed: fields.committed,
     commitsAdded: fields.commitsAdded,
+    ...beatCargo,
   };
 }
 
@@ -1762,7 +1720,13 @@ export function attributeFailure(
  * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set(Object.values(WORKER_PROMPT_FILES)),
+  ...new Set([
+    ...Object.values(WORKER_PROMPT_FILES),
+    // #1081: resident judge birth at slice dispatch (not a topology WORKER step).
+    JUDGE_OPEN_COURT_PROMPT_FILE,
+    // #1126: Runner-owned single-slice Standards + Spec legs (scope=single).
+    ...SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES,
+  ]),
 ];
 
 /**
@@ -1814,18 +1778,7 @@ export function promptsDirError(
  * so landing/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
-export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
-  "cmr.md",
-  "cmr_completeness.md",
-  "cmr_correctness.md",
-  "coder.md",
-  "landing.md",
-  "fixer.md",
-  "merger.md",
-  "reviewer.md",
-  "ship.md",
-  "verify.md",
-];
+export const REQUIRED_SOUL_FILES = EXECUTABLE_SOUL_FILES;
 
 /**
  * Build the construction-time `soulsDir` validation error message, or
@@ -1858,8 +1811,7 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. landing.md; ` +
-      `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
+      `must be present (every executable file under image/souls, incl. landing.md).`
     );
   }
   return undefined;
@@ -1918,9 +1870,8 @@ export interface RealBackendOptions {
   readonly imageName: string;
   /**
    * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
-   * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
-   * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
-   * are reviewer workers, and S5 is the coder-fix worker.
+   * `judge_station.md` for S3/S6 and `coder_fix.md` for S5).
+   * ADR 0147 keeps S3/S6 on the resident judge; S5 is the fixer worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
    * resolves `promptFile` against `process.cwd()`, NOT the run `cwd` option
@@ -1934,8 +1885,7 @@ export interface RealBackendOptions {
    * /home/agent/.orchestrator/souls . #372: souls are mounted live (rather than
    * baked) so source edits take effect on next dispatch without a full image
    * layer change for data files. REQUIRED: souls are no longer baked into the image.
-   * #911: output_protocol.md removed (home env + dispatch prompts cover it);
-   * cmr_completeness/cmr_correctness are relative symlinks to verify.md.
+   * #911: output_protocol.md removed (home env + dispatch prompts cover it).
    */
   readonly soulsDir: string;
   /**
@@ -2279,7 +2229,7 @@ export class RealBackend implements Backend {
     const grok = existsSync(join(home, ".grok", "auth.json"));
     let agy = false;
     try {
-      const tok = readFileSync(join(home, ".sc-agy-oauth-token"), "utf8").trim();
+      const tok = readFileSync(agyHostTokenPath(home), "utf8").trim();
       agy = tok.length > 0;
     } catch {
       agy = false;
@@ -2296,9 +2246,7 @@ export class RealBackend implements Backend {
     const command =
       provider === "claudeCode"
         ? "claude"
-        : provider === "cursor"
-          ? "agent"
-          : provider;
+        : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {
@@ -2635,6 +2583,23 @@ export class RealBackend implements Backend {
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
     // #936 / #934 ID-009: with a remote, fetch failure is loud — no stale base.
     const cutRef = cutRefFor(base, fetchedOk, localOnly, { hasRemote });
+    // #1103 H1: under the per-clone mutex, heal dir↔metadata wreckage + stale
+    // index.lock before Sandcastle createWorktree (prune alone is not enough
+    // when a timed-out cut left a directory with no worktree admin entry).
+    // #1105 R6 F1: quarantine under durable clone-root ledger (survives
+    // `.sandcastle/` wipe); clone-local default is last-resort only.
+    healBeforeWorktreeCut(
+      this.workingRepo,
+      branch,
+      (args) => this.sh("git", [...args], this.workingRepo),
+      {
+        quarantineBaseDir: join(
+          this.workingRepo,
+          `.ledger-${issueNumber}`,
+          "quarantine-orphans",
+        ),
+      },
+    );
     // Multi-phase S1: attribute a createWorktree throw as "S1: createWorktree"
     // for the US#30 error package (codex#3 attributeFailure — F6).
     const wt = await this.phaseAsync("S1", "createWorktree", () =>
@@ -2803,6 +2768,7 @@ export class RealBackend implements Backend {
     issueNumber: number,
     spec: Pick<StepSpec, "role" | "soul" | "model">,
     options?: AgentStepRunOptions,
+    reviewFixedPoint?: string,
   ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
     return {
@@ -2812,6 +2778,7 @@ export class RealBackend implements Backend {
           spec,
           issueNumber,
           options,
+          reviewFixedPoint,
         ),
       ),
       providerAuth: auth.providerAuth,
@@ -2888,11 +2855,7 @@ export class RealBackend implements Backend {
    * baked image is now the single source of skills; souls are mounted live (#372).
    * The only other mounts are per-issue auth + outcome files.
    *
-   * ship-pre 256 r1: `soulForStep(spec)` selects the role's soul and
-   * injects it via {@link SANDBOX_SOUL_ENV} so the v0.1 one-image-two-roles
-   * profile activates the right one (#244 "role 决定注哪份 soul"); it throws on a
-   * spec whose `soul` contradicts its `role` → S8(error). Still a soul ENV
-   * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
+   * `spec.soul` is consumed directly by the provider-neutral invocation seam.
    */
   protected boxConfig(
     auth: {
@@ -2907,15 +2870,14 @@ export class RealBackend implements Backend {
     spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
+    reviewFixedPoint?: string,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
-    const soul = soulForStep(spec);
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
@@ -2928,6 +2890,12 @@ export class RealBackend implements Backend {
       const issue = String(issueNumber);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
       env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (
+      typeof reviewFixedPoint === "string" &&
+      reviewFixedPoint.trim().length > 0
+    ) {
+      env[SANDBOX_REVIEW_FIXED_POINT_ENV] = reviewFixedPoint.trim();
     }
     if (auth.ghToken !== undefined) {
       env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
@@ -2953,11 +2921,21 @@ export class RealBackend implements Backend {
     }
     // #905: agy OAuth — same CMR seam (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
+    if (typeof spec.model === "string" && typeof spec.soul === "string") {
+      appendAgySoulMount(
+        mounts,
+        { model: spec.model, soul: spec.soul as StepSoul },
+        isBillingPoolDispatchId(options?.billingPool)
+          ? options.billingPool
+          : undefined,
+        this.opts.soulsDir,
+      );
+    }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
-    mounts.push(soulsMount(this.opts.soulsDir));
     // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
+    mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
       // #1012: host file must exist as a regular file before docker bind-mount
@@ -2997,6 +2975,7 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // #1081: open-court birth (judge_open_court.md) also takes JUDGE_RECEIPT.
     // S9 online-review must not take JUDGE_RECEIPT.
     // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
     // resume capability. #955 r7: same (slug, pool) binding as agentForSlug —
@@ -3005,10 +2984,10 @@ export class RealBackend implements Backend {
       ? options.billingPool
       : undefined;
     const resumeCapable = resumeCapableForSlug(spec.model, pool);
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
-        judgeStationReceiptSchema(),
+        judgeStationReceiptSchema(options?.priorJudgeVerdicts),
         resumeCapable,
       );
     }
@@ -3118,7 +3097,7 @@ export class RealBackend implements Backend {
     const cargo =
       typedOutputUsed &&
       (spec.role === "coder" ||
-        isJudgeSeat({ id: spec.id }))
+        usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3140,9 +3119,10 @@ export class RealBackend implements Backend {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
     // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // #1081: open-court birth reuses the same judge receipt decode (ack only).
     // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
     // here on RealBackend (family review-loop owns verify decode).
-    if (isJudgeSeat({ id: spec.id })) {
+    if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper
@@ -3200,28 +3180,6 @@ export class RealBackend implements Backend {
         }
       }
       return judgeResultFromVerdict(envelope.value, findings);
-    }
-
-    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay).
-    // #919 CR N4: single-slice historical residual only — positive count may
-    // project continue for resume compatibility. Live seats emit T2 kind:judge;
-    // family court never closes on residual open-count (unusable paper only).
-    // Never re-open a second open-count routing path (#919 CR U3).
-    const openCount = decodeReviewerOpenCountReceipt(raw);
-    if (openCount !== undefined) {
-      const projected = projectResidualReviewerToJudge(openCount);
-      if (projected !== undefined) {
-        return projected;
-      }
-      // Residual open-count present but not positive continue → honest residual
-      // unusable paper (#919 AS4). Never kind:fixer placeholder.
-      return unusableResidualOpenCountPaper();
-    }
-
-    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
-    // never silent converged / never kind:fixer placeholder.
-    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      return unusableResidualOpenCountPaper();
     }
 
     throw new Error(
@@ -3288,7 +3246,7 @@ export class RealBackend implements Backend {
       // overrides the channel when the same model lives on multiple pools.
       // Effort comes from the registry row for `spec.model` only (#916: no
       // role/soul hard override of reasoning effort at dispatch).
-      agent: agentForSlug(spec.model, pool),
+      agent: agentForSlug(spec.model, pool, spec.soul),
       // #899 / ADR 0128 / #928: every selected seat is single-iteration
       // (maxIter:1). Sandcastle completionSignal forced off at
       // invokeSandcastleRun (`[]` — omit falls back to default password).
@@ -3347,7 +3305,7 @@ export class RealBackend implements Backend {
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
         // channel must match the fresh dispatch. Effort = registry row only (#916).
-        agent: agentForSlug(spec.model, pool),
+        agent: agentForSlug(spec.model, pool, spec.soul),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         branchStrategy: { type: "head" },
@@ -3367,7 +3325,7 @@ export class RealBackend implements Backend {
       // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
       // fresh-run typed seats). Nested / name-only SOE must not fall through to
       // dead-session fresh-run — walk the cause chain like the fresh path.
-      if (isReceiptRecoveryFailure(err)) {
+      if (nestedStructuredOutputError(err) !== undefined) {
         logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
       }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
@@ -3377,7 +3335,20 @@ export class RealBackend implements Backend {
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
+        if (
+          usesJudgeReceiptChannel({
+            id: spec.id,
+            promptFile: spec.promptFile,
+          })
+        ) {
+          // The Runner owns judge continuity recovery because it must durably
+          // record session_continuity_lost and preserve prior verdict transport.
+          throw err;
+        }
         return await this.runFreshAgentStep(spec, worktree, options);
+      }
+      if (isReceiptRecoveryFailure(err)) {
+        logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
       }
       throw err;
     } finally {
@@ -3411,8 +3382,60 @@ export class RealBackend implements Backend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
     return await this.invokeSandcastleRun(options);
+  }
+
+  /**
+   * #1126 / #1094 — runner-owned review-panel legs (single Standards/Spec or
+   * family CMR panel). Thin raw-prose path: reuse preflight/box/sandbox/agent,
+   * inject ORCHESTRATOR_REVIEW_FIXED_POINT from worktree.base only here, return
+   * {@link panelLegCompletedResult}(stdout). Bypasses legacyDispatchWorker,
+   * judge/open-count SO, and fix-findings landing — legs keep judgeStep id
+   * (S3/S6) for monitor bookkeeping without hanging judge schema.
+   */
+  protected async runReviewPanelLegWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.worktree === undefined) {
+      throw new Error(
+        `dispatchWorker(review panel leg ${spec.id}): requires a worktree`,
+      );
+    }
+    const worktree = ctx.worktree;
+    const issueNumber = this.issueOf(worktree);
+    await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, undefined, worktree.base);
+    try {
+      const pool = isBillingPoolDispatchId(ctx.billingPool)
+        ? ctx.billingPool
+        : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
+      const result = await this.runAgentSandbox({
+        name: `${spec.id}-panel-leg`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+        cwd: worktree.path,
+        sandbox: box.sandbox,
+        agent: agentForSlug(spec.model, pool, spec.soul),
+        maxIterations: 1,
+        branchStrategy: { type: "head" },
+        promptFile: join(this.opts.promptsDir, spec.promptFile),
+        // No Output.object — ADR 0141 prose stdout is the legal paper.
+      });
+      const stdout =
+        typeof (result as { stdout?: unknown }).stdout === "string"
+          ? (result as { stdout: string }).stdout
+          : "";
+      return panelLegCompletedResult(stdout);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "failed",
+        reason: `panel leg ${spec.model}: ${reason}`,
+      };
+    } finally {
+      box.cleanup();
+    }
   }
 
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */
@@ -3421,6 +3444,10 @@ export class RealBackend implements Backend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
+    // #1126 R3: review-panel legs before legacy — keep judgeStep id, skip SO.
+    if (isReviewPanelLegPromptFile(spec.promptFile)) {
+      return this.runReviewPanelLegWorker(spec, ctx);
+    }
     return legacyDispatchWorker(this, spec, ctx, landing);
   }
 

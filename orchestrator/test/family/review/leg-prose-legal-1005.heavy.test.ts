@@ -56,7 +56,7 @@ import type {
 } from "../../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "..", "prompts");
@@ -351,11 +351,22 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // Production consumer: runCmrWorker extracts transports + overlays.
-      return super.dispatchWorker(spec, ctx);
+      const result = await super.dispatchWorker(spec, ctx);
+      if (
+        result.kind === "completed" &&
+        result.sessionId === undefined &&
+        result.output.kind === "judge"
+      ) {
+        return {
+          ...result,
+          sessionId: `fixture-1005-${ctx.cmrPass ?? "cmr"}`,
+        };
+      }
+      return result;
     }
     if (spec.kind === "ship") {
       return {

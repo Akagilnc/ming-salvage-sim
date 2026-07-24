@@ -62,7 +62,6 @@ import type {
 // #919 CR N2: residualIntegratedCmrToJudgeOutput DELETED — it always returned
 // undefined (family residual never mints continue). Production residual maps
 // to unusableResidualOpenCountPaper at cmrOutcomeToWorkerResult; single-slice
-// historical resume alone uses projectResidualReviewerToJudge.
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "python",
@@ -182,7 +181,7 @@ export function familyCoderFixWorkerSpec(
     // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
-    soul: "coder",
+    soul: "fixer",
     toolchain: IMAGE_TOOLCHAIN,
   };
 }
@@ -203,11 +202,7 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     // inside the skill invocation, not as an outer Sandcastle multi-iter budget.
     maxIter: 1,
     model,
-    // The family ship worker runs under the dedicated "ship" soul (delivery
-    // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
-    // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the
-    // spec must not still declare the coder soul (CodeRabbit #384: unify the
-    // ship-worker soul contract).
+    // WorkerSpec.soul is the single runtime truth for the dedicated ship soul.
     soul: "ship",
     toolchain: [],
   };

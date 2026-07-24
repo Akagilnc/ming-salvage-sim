@@ -42,7 +42,6 @@ import {
   resumeRelayFromLedger,
   RelayHandoffLedgerEvent,
   QuotaWaitForResetError,
-  buildCliMonitorSpawnSpec,
   dispatchWorkerWithMonitor,
   legacyDispatchWorker,
   runOrchestrator,
@@ -165,15 +164,15 @@ describe("#686 route pool table + three-tier park/relay (ADR 0124/0125)", () => 
         parkThresholdMs: 15 * 60 * 1000,
         models: ["grok-4.5"],
       },
-      cursor: {
-        id: "cursor",
+      zai: {
+        id: "zai",
         status: "live",
         parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
         models: ["grok-4.5"],
       },
     };
     expect(table["grok-build"]!.parkThresholdMs).toBe(15 * 60 * 1000);
-    expect(table.cursor!.status).toBe("live");
+    expect(table.zai!.status).toBe("live");
     expect(table["grok-build"]!.resetAt?.toISOString()).toBe(
       "2026-07-10T13:00:00.000Z",
     );
@@ -205,7 +204,7 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
     };
   }
 
-  it("same model on a live alternate pool wins first (换马甲)", () => {
+  it("skips non-executable live pools and selects the next executable roster baton", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
     );
@@ -215,14 +214,14 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       rosterOrder: order,
       pools: [
         deadPool("grok-build", ["grok-4.5"]),
-        livePool("cursor", ["grok-4.5"]),
+        livePool("zai", ["grok-4.5", "terra@med"]),
         livePool("codex-5h", ["terra@med", "luna@med"]),
       ],
     });
     expect(next).toEqual({
-      modelId: "grok-4.5",
-      slug: "grok-4.5",
-      pool: "cursor",
+      modelId: "terra@med",
+      slug: "gpt-5.6-terra",
+      pool: "codex-5h",
     });
   });
 
@@ -236,7 +235,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       rosterOrder: order,
       pools: [
         deadPool("grok-build", ["grok-4.5"]),
-        deadPool("cursor", ["grok-4.5"]),
         livePool("codex-5h", ["terra@med", "luna@med"]),
       ],
     });
@@ -294,6 +292,7 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       expect.arrayContaining(["haiku-4.5", "sonnet-5", "haiku", "sonnet"]),
     );
     expect(billingPoolFromQuotaPool("claude")).toBe("claude");
+    expect(() => billingPoolFromQuotaPool("unknown")).toThrow(/unknown quota pool/);
 
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → haiku-4.5 → sonnet-5",
@@ -310,7 +309,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       rosterOrder: order,
       pools: [
         deadPool("grok-build", DEFAULT_POOL_MODELS["grok-build"]),
-        deadPool("cursor", DEFAULT_POOL_MODELS.cursor),
         deadPool("zai", DEFAULT_POOL_MODELS.zai),
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
@@ -344,7 +342,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
       rosterOrder: order,
       pools: [
         deadPool("grok-build", DEFAULT_POOL_MODELS["grok-build"]),
-        deadPool("cursor", DEFAULT_POOL_MODELS.cursor),
         deadPool("zai", DEFAULT_POOL_MODELS.zai),
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
@@ -442,6 +439,23 @@ describe("#787 capacity relay", () => {
       pool: "codex-5h",
     });
     expect(handoff.ledgerEntry?.trigger).toBe("capacity");
+
+    expect(
+      selectCapacityRelayBaton({
+        currentModelId: "terra@med",
+        currentPool: "zai",
+        rosterOrder: order,
+        pools: [
+          {
+            id: "zai",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["terra@med", "luna@med"],
+          },
+          ...pools,
+        ],
+      }),
+    ).toMatchObject({ modelId: "terra@med", pool: "codex-5h" });
   });
 
   it("#920: capacity relay picks the next same-pool roster entry without conflict filter", () => {
@@ -833,17 +847,23 @@ describe("#686 three handoff triggers (quota wall fork; #937 idle path deleted)"
           models: ["grok-4.5"],
         },
         {
-          id: "cursor",
+          id: "zai",
           status: "live",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
+        },
+        {
+          id: "codex-5h",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med"],
         },
       ],
     });
     expect(result.tier).toBe("relay");
     expect(result.nextBaton).toMatchObject({
-      modelId: "grok-4.5",
-      pool: "cursor",
+      modelId: "terra@med",
+      pool: "codex-5h",
     });
   });
 
@@ -953,7 +973,7 @@ describe("#686 state_summary ledger + ephemeral relay brief (#937)", () => {
   it("does not replay an S2 baton while resuming a later S9 slot", () => {
     const s2Relay = buildRelayHandoffLedgerEntry({
       trigger: "quota_wall", state_summary: "S2 handoff", fromModelId: "a",
-      fromPool: "cursor", toModelId: "b", toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:00:00.000Z"),
+      fromPool: "grok-build", toModelId: "b", toPool: "codex-5h", step: "S2", now: new Date("2026-07-10T12:00:00.000Z"),
     });
     expect(resumeRelayFromLedger([s2Relay, { step: "S2" }, { step: "S9" }], "S9")).toBeUndefined();
   });
@@ -984,7 +1004,7 @@ describe("#686 fork at #683 quota disposition point", () => {
       ),
       pools: [
         {
-          id: "cursor",
+          id: "zai",
           status: "live",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
@@ -1004,17 +1024,23 @@ describe("#686 fork at #683 quota disposition point", () => {
       ),
       pools: [
         {
-          id: "cursor",
+          id: "zai",
           status: "live",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
+        },
+        {
+          id: "codex-5h",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med"],
         },
       ],
     });
     expect(beyondT.tier).toBe("relay");
     expect(beyondT.nextBaton).toMatchObject({
-      modelId: "grok-4.5",
-      pool: "cursor",
+      modelId: "terra@med",
+      pool: "codex-5h",
     });
     expect(beyondT.ledgerEntry?.event).toBe("relay_baton_handoff");
   });
@@ -1169,12 +1195,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       relayPools: [
         {
           id: "grok-build",
-          status: "dead",
-          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-          models: ["grok-4.5"],
-        },
-        {
-          id: "cursor",
           status: "dead",
           parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
           models: ["grok-4.5"],
@@ -1729,49 +1749,23 @@ describe("#686 R2 production seams", () => {
     }
   });
 
-  it("P1-3: #905 pins grok-4.5 to SuperGrok CLI regardless of pool 换马甲", async () => {
+  it("P1-3: #905 pins grok-4.5 to SuperGrok and rejects unbound pools", async () => {
     const {
       resolveModelSlugForPool,
       POOL_DISPATCH_BINDINGS,
     } = await import("../../src/modelRegistry.js");
     expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("grok");
-    expect(POOL_DISPATCH_BINDINGS.cursor).toBe("cursor");
+    expect(POOL_DISPATCH_BINDINGS.zai).toBeUndefined();
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
       "grok",
     );
-    // cursor pool no longer rewrites grok-4.5 onto the cursor channel.
-    expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
-      "grok",
+    expect(() => resolveModelSlugForPool("grok-4.5", "zai")).toThrow(
+      /no executable provider binding/,
     );
     expect(resolveModelSlugForPool("grok-4.5").provider).toBe("grok");
-  });
-
-  it("P1: monitor attribution follows the active billing pool after a relay", () => {
-    const stateDir = mkdtempSync(join(tmpdir(), "relay-686-monitor-pool-"));
-    try {
-      const spawn = buildCliMonitorSpawnSpec({
-        backendKind: "real",
-        backendOpts: {},
-        spec: {
-          id: "S2",
-          kind: "coder",
-          role: "coder",
-          host: "codex",
-          session: "fresh",
-          contextRetention: "retain",
-          promptFile: "coder.md",
-          maxIter: 1,
-          model: "grok-4.5",
-          soul: "coder",
-          toolchain: [],
-        },
-        ctx: { stateDir, billingPool: "cursor" },
-        runnerPath: "/tmp/runner.js",
-      });
-      expect(spawn?.poolId).toBe("cursor");
-    } finally {
-      rmSync(stateDir, { recursive: true, force: true });
-    }
+    expect(() => resolveModelSlugForPool("gpt-5.6-sol", "zai")).toThrow(
+      /no executable provider binding/,
+    );
   });
 
   it("P2: legacy dispatch forwards relayBrief as a run option", async () => {
@@ -1886,13 +1880,13 @@ describe("#686 R2 production seams", () => {
       state_summary: "x",
       fromModelId: "grok-4.5",
       fromPool: "grok-build",
-      toModelId: "grok-4.5",
-      toPool: "cursor",
+      toModelId: "terra@med",
+      toPool: "codex-5h",
       now: NOW,
     });
     const brief = renderEphemeralRelayBrief(entry);
     expect(brief).toContain("x");
-    expect(brief).toContain("cursor");
+    expect(brief).toContain("codex-5h");
   });
 
   it("P1-2: free-log hang/self-report constructors deleted (#937)", async () => {
@@ -2012,12 +2006,6 @@ describe("#686 R2 production seams", () => {
             id: "grok-build",
             status: "limited",
             resetAt,
-            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-            models: ["grok-4.5"],
-          },
-          {
-            id: "cursor",
-            status: "dead",
             parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
             models: ["grok-4.5"],
           },
