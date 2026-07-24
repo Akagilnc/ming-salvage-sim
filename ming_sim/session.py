@@ -1662,7 +1662,7 @@ class GameSession:
                     "actor": minister_name,
                     "dossier_action_type": draft_res.get("dossier_action_type") or "special_decree",
                     "target_kind": draft_res.get("target_kind") or "policy",
-                    "target_id": draft_res.get("target_id") or "narrative",
+                    "target_id": draft_res.get("target_id") or "",
                 }
                 for _field in (
                     "amount", "account", "assignee", "authorization_id",
