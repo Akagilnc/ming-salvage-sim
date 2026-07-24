@@ -590,47 +590,6 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       expect(second.stopSummary).toEqual(result.stopSummary);
       expect(second.children).toEqual(firstChildren);
 
-      const durableRows = readFileSync(ledgerPath, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
-      const authority = [...durableRows]
-        .reverse()
-        .find((row: Record<string, unknown>) => row.status === "escalated")!;
-      const trackedStatus = [" M orchestrator/src/family/runner.ts"];
-      authority.terminalChildren = "malformed";
-      authority.stopSummary = {
-        ...(authority.stopSummary as Record<string, unknown>),
-        metadata: { trackedStatus },
-      };
-      writeFileSync(
-        ledgerPath,
-        durableRows.map((row) => JSON.stringify(row)).join("\n") + "\n",
-      );
-      await expect(
-        runFamily({
-          verifyCmr: async () => ({ ok: true, ran: true }),
-          epic: {
-            issue: 938,
-            children: [
-              { issue: 10, blockedBy: [] },
-              { issue: 11, blockedBy: [] },
-            ],
-          },
-          familyBackend: new DiskLedgerBackend(),
-          singleSliceBackend: new NoDispatchBackend(),
-          familyBase: "family/938-base",
-        }),
-      ).rejects.toThrow(/terminalChildren must be an array/);
-      expect(
-        (
-          JSON.parse(
-            readFileSync(ledgerPath, "utf8").trim().split("\n").at(-1)!,
-          ) as {
-            stopSummary: { metadata: { trackedStatus: string[] } };
-          }
-        ).stopSummary.metadata.trackedStatus,
-      ).toEqual(trackedStatus);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

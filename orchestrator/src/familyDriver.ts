@@ -95,7 +95,10 @@ import {
   recordBaselineHealthFailed,
 } from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
-import { replayPriorFamilyEscalation } from "./family/terminalFinalizer.js";
+import {
+  finalizeFamilyTerminal,
+  replayPriorFamilyEscalation,
+} from "./family/terminalFinalizer.js";
 import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
@@ -1264,20 +1267,11 @@ export async function runFamilyDriver(
   }
   if (familyScene.kind === "resident") {
     const prior = familyEscalationState(familyScene.ledger);
-    const terminal = shouldReclaimFamilyHost(familyScene.ledger)
-      ? replayCompletedCleanup(familyScene.ledger, options.familyBase)
-      : prior !== undefined &&
-          isCompleteFamilyEscalation(prior.escalation) &&
-          (prior.escalation.escalationKind !== "decision" ||
-            prior.answer === undefined)
-        ? await replayPriorFamilyEscalation({
-            epicIssue: options.epicIssue,
-            familyBase: options.familyBase,
-            escalation: prior.escalation,
-          })
-        : undefined;
-    if (terminal !== undefined) {
-      // #1007: durable terminal replay must self-describe this invocation's feed.
+    if (shouldReclaimFamilyHost(familyScene.ledger)) {
+      const terminal = replayCompletedCleanup(
+        familyScene.ledger,
+        options.familyBase,
+      );
       emitExitProgress({
         epic: options.epicIssue,
         status: terminal.status,
@@ -1285,6 +1279,18 @@ export async function runFamilyDriver(
         gateSummary: terminal.stopSummary?.summary,
       });
       return terminal;
+    }
+    if (
+      prior !== undefined &&
+      isCompleteFamilyEscalation(prior.escalation) &&
+      (prior.escalation.escalationKind !== "decision" ||
+        prior.answer === undefined)
+    ) {
+      return await replayPriorFamilyEscalation({
+        epicIssue: options.epicIssue,
+        familyBase: options.familyBase,
+        escalation: prior.escalation,
+      });
     }
   }
 
@@ -1473,48 +1479,19 @@ export async function runFamilyDriver(
       summary: diagnosis,
       repairHint: "repair every listed owner-authored Coder-Rec before rerun",
     });
-    // #1007: Coder-Rec admission fail — dual-write terminal.
-    emitExitProgress({
-      epic: options.epicIssue,
-      status: "failed",
-      stopReason: stopSummary.reason,
-      gateSummary: stopSummary.summary,
-    });
-    return failedFamilyResult({
+    return await finalizeKnownEpicFailure({
+      options,
+      epic,
+      ledger: familyScene.kind === "resident" ? familyScene.ledger : [],
       cause: "coder_rec_invalid",
-      familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary,
-      children: [],
-      ...(epic.admissionSkipped !== undefined
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
     });
   }
-  // All planned issues admitted — parent is ready (errors would have returned).
-  if (parentCoderRec.kind !== "ready") {
-    // Unreachable: empty errors + parent stop is contradictory, but keep the
-    // exhaustiveness net for the type checker.
-    const diagnosis = parentCoderRec.escalation.diagnosis;
-    const stopSummary = infraFailureStopSummary({
-      summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
-      repairHint: "repair the owner-authored Coder-Rec before rerun",
-    });
-    emitExitProgress({
-      epic: options.epicIssue,
-      status: "failed",
-      stopReason: stopSummary.reason,
-      gateSummary: stopSummary.summary,
-    });
-    return failedFamilyResult({
-      cause: "coder_rec_invalid",
-      familyBase: options.familyBase,
-      escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
-      stopSummary,
-      children: [],
-    });
-  }
-  const coderRec = parentCoderRec;
+  const coderRec = parentCoderRec as Extract<
+    typeof parentCoderRec,
+    { readonly kind: "ready" }
+  >;
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
@@ -1541,7 +1518,14 @@ export async function runFamilyDriver(
     | undefined;
   if (options.singleSliceBackendFactory === undefined) {
     const result = await admitPlannedRouteSmoke(realSingleSlice, plannedRoutes);
-    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    if (result.kind === "stop") {
+      return await routeSmokeFailureResult(
+        options,
+        epic,
+        familyScene.kind === "resident" ? familyScene.ledger : [],
+        result.escalation,
+      );
+    }
     smoke = result;
   }
   const workingRepo = realSingleSlice.workingRepoPath();
@@ -1570,7 +1554,14 @@ export async function runFamilyDriver(
   if (smoke === undefined) {
     logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
     const result = await admitPlannedRouteSmoke(singleSliceBackend, plannedRoutes);
-    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    if (result.kind === "stop") {
+      return await routeSmokeFailureResult(
+        options,
+        epic,
+        familyScene.kind === "resident" ? familyScene.ledger : [],
+        result.escalation,
+      );
+    }
     smoke = result;
   }
 
@@ -1762,29 +1753,53 @@ function resolveBaselineVerifyCwd(workingRepo: string): string {
   return workingRepo;
 }
 
-function routeSmokeFailureResult(
+async function finalizeKnownEpicFailure(input: {
+  readonly options: Pick<FamilyDriverOptions, "familyBase" | "epicIssue">;
+  readonly epic: FamilyEpic;
+  readonly ledger: ReadonlyArray<FamilyLedgerEntry>;
+  readonly cause: "coder_rec_invalid" | "route_smoke_failed";
+  readonly escalation: { readonly reason: string; readonly diagnosis: string };
+  readonly stopSummary: ReturnType<typeof infraFailureStopSummary>;
+}): Promise<FamilyRunResult> {
+  const readOnlyBackend = {
+    async readFamilyLedger() {
+      return input.ledger;
+    },
+  } as FamilyBackend;
+  return await finalizeFamilyTerminal({
+    familyBackend: readOnlyBackend,
+    epic: input.epic,
+    epicIssue: input.options.epicIssue,
+    familyBase: input.options.familyBase,
+    recordedResults: [],
+    familyStopSummary: () => input.stopSummary,
+    intent: {
+      kind: "failed",
+      cause: input.cause,
+      escalation: input.escalation,
+      residualSkipReason: "startup_preflight_failed",
+      stopSummaryOverride: input.stopSummary,
+    },
+  });
+}
+
+async function routeSmokeFailureResult(
   options: Pick<FamilyDriverOptions, "familyBase" | "epicIssue">,
+  epic: FamilyEpic,
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
   escalation: { readonly reason: string; readonly diagnosis: string },
-): FamilyRunResult {
+): Promise<FamilyRunResult> {
   const stopSummary = infraFailureStopSummary({
     summary: escalation.diagnosis,
     repairHint: "repair the selected model×pipe smoke before rerun",
   });
-  // #1007: shared driver smoke-fail helper dual-writes terminal.
-  emitExitProgress({
-    epic: options.epicIssue,
-    status: "failed",
-    stopReason: stopSummary.reason,
-    gateSummary: stopSummary.summary,
-  });
-  return failedFamilyResult({
-    // #942 public cause: same smoke-stop as family/single-slice runners
-    // (not worktree_prepare_failed — PR #982 C2).
+  return await finalizeKnownEpicFailure({
+    options,
+    epic,
+    ledger,
     cause: "route_smoke_failed",
-    familyBase: options.familyBase,
     escalation,
     stopSummary,
-    children: [],
   });
 }
 

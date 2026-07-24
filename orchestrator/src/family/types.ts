@@ -1097,34 +1097,28 @@ export interface FamilyRunInput {
  *   stayed blocked when the wave loop terminated). Recorded so the family result
  *   accounts for every child (#294's richer wave/cycle logic refines this).
  */
-export type FamilyChildStatus =
-  | "ran"
-  | "merged"
-  | "already_done"
-  | "resumed"
-  | "skipped"
-  | "failed"
-  /**
-   * `"escalated"` — (#604 slice 5) the child's single-slice run hit a
-   * product/design DECISION题 (`escalationKind:"decision"`) and PARKED. Distinct
-   * from `"failed"` (an infra `escalationKind:"failure"` / retries-exhausted child,
-   * which is terminal until manual repair): a decision escalation is answerable —
-   * a later `escalation_answered` ledger row bound to this childIssue re-opens it
-   * and the family runner resumes the child IN PLACE (原 sessionId, 退出-重入 per
-   * ADR 0062). runChild returns this ONLY for the decision bucket; the failure
-   * bucket keeps the current `"failed"` behaviour (A/B分家).
-   */
-  | "escalated";
+export const FAMILY_CHILD_STATUSES = [
+  "ran",
+  "merged",
+  "already_done",
+  "resumed",
+  "skipped",
+  "failed",
+  "escalated",
+] as const;
+export type FamilyChildStatus = (typeof FAMILY_CHILD_STATUSES)[number];
 
-export type FamilySkipReason =
-  | "not_scheduled_this_invocation"
-  | "unanswered_sibling_park_residual"
-  | "startup_preflight_failed"
-  | "refetch_failed"
-  | "reconcile_inconsistent"
-  | "dependency_cycle_residual"
-  | "admission_skipped"
-  | "baseline_health_failed";
+export const FAMILY_SKIP_REASONS = [
+  "not_scheduled_this_invocation",
+  "unanswered_sibling_park_residual",
+  "startup_preflight_failed",
+  "refetch_failed",
+  "reconcile_inconsistent",
+  "dependency_cycle_residual",
+  "admission_skipped",
+  "baseline_health_failed",
+] as const;
+export type FamilySkipReason = (typeof FAMILY_SKIP_REASONS)[number];
 
 /**
  * The decision escalation a child slice PARKED on (#604 slice 5).

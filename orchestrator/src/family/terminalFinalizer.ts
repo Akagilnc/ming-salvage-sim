@@ -42,6 +42,8 @@ import {
   type FamilyLedgerEntry,
   type FamilyRunResult,
   type FamilyRunStatus,
+  FAMILY_CHILD_STATUSES,
+  FAMILY_SKIP_REASONS,
 } from "./types.js";
 import {
   mergedSet,
@@ -49,15 +51,7 @@ import {
   unansweredChildEscalations,
 } from "./ledger.js";
 // ─── skip tokens ────────────────────────────────────────────────────────────
-const CHILD_STATUSES: ReadonlySet<string> = new Set([
-  "ran",
-  "merged",
-  "already_done",
-  "resumed",
-  "skipped",
-  "failed",
-  "escalated",
-]);
+const CHILD_STATUSES: ReadonlySet<string> = new Set(FAMILY_CHILD_STATUSES);
 function skippedChild(
   issue: number,
   reason: FamilySkipReason,
@@ -84,7 +78,7 @@ function escalationFromChildParkRow(
  * Validate durable terminalChildren cargo (schema A). Malformed → throw (ADR 0005).
  * Never returns undefined on bad input; never silently renormalizes.
  */
-export function parseTerminalChildrenCargo(
+function parseTerminalChildrenCargo(
   value: unknown,
   context: string,
 ): ReadonlyArray<FamilyChildResult> {
@@ -125,16 +119,7 @@ export function parseTerminalChildrenCargo(
     if (status === "skipped") {
       if (
         typeof row.reason !== "string" ||
-        !([
-          "not_scheduled_this_invocation",
-          "unanswered_sibling_park_residual",
-          "startup_preflight_failed",
-          "refetch_failed",
-          "reconcile_inconsistent",
-          "dependency_cycle_residual",
-          "admission_skipped",
-          "baseline_health_failed",
-        ] as const).includes(row.reason as FamilySkipReason)
+        !FAMILY_SKIP_REASONS.includes(row.reason as FamilySkipReason)
       ) {
         throw new Error(
           `${context}: terminalChildren[${i}].reason required for skipped`,
@@ -221,7 +206,7 @@ export function parseTerminalChildrenCargo(
   return out;
 }
 // ─── normalize ──────────────────────────────────────────────────────────────
-export function remountDecisionParkChildren(opts: {
+function remountDecisionParkChildren(opts: {
   readonly epicChildren: ReadonlyArray<ChildSlice>;
   readonly recordedResults: ReadonlyArray<FamilyChildResult>;
   readonly ledgerMerged: ReadonlySet<number>;
@@ -245,7 +230,7 @@ export function remountDecisionParkChildren(opts: {
   });
 }
 /** Required ledger read (throws) + epic-order normalize. */
-export async function normalizeTerminalChildren(opts: {
+async function normalizeTerminalChildren(opts: {
   readonly epicChildren: ReadonlyArray<ChildSlice>;
   readonly recordedResults: ReadonlyArray<FamilyChildResult>;
   readonly familyBackend: FamilyBackend;
@@ -306,7 +291,7 @@ export type FamilyStopSummaryFn = (input: {
  * Discriminated terminal intent. Durable write is semantic of the intent kind
  * for failure/park that must survive restart — not optional caller booleans.
  */
-export type TerminalIntent =
+type TerminalIntent =
   | {
       readonly kind: "auto";
       readonly barrierStopSummary?: StopSummary;
@@ -696,32 +681,39 @@ export async function finalizeFamilyTerminal(opts: {
         stopSummaryOverride: opts.intent.stopSummaryOverride,
       });
     case "merger_decision": {
-      const m = opts.intent;
+      const mergerDecision = opts.intent;
       const hasRealSiblingFailure = children.some(
-        (c) => c.status === "failed" && c.issue !== m.mergerIssue,
+        (c) =>
+          c.status === "failed" && c.issue !== mergerDecision.mergerIssue,
       );
       if (hasRealSiblingFailure) {
         return await buildFailed({
           cause: "child_execution_failed",
-          escalationReason: m.reason,
-          escalation: { reason: m.reason, diagnosis: m.diagnosis },
+          escalationReason: mergerDecision.reason,
+          escalation: {
+            reason: mergerDecision.reason,
+            diagnosis: mergerDecision.diagnosis,
+          },
           durableDecisionThenFailure: {
-            reason: m.reason,
-            diagnosis: m.diagnosis,
+            reason: mergerDecision.reason,
+            diagnosis: mergerDecision.diagnosis,
             phase: "wave",
           },
-          headMetadata: m.headMetadata,
+          headMetadata: mergerDecision.headMetadata,
         });
       }
       return await buildParked({
         parkReason: "decision_gate_park",
-        escalationReason: m.reason,
-        escalation: { reason: m.reason, diagnosis: m.diagnosis },
-        parkedIssue: m.mergerIssue,
+        escalationReason: mergerDecision.reason,
+        escalation: {
+          reason: mergerDecision.reason,
+          diagnosis: mergerDecision.diagnosis,
+        },
+        parkedIssue: mergerDecision.mergerIssue,
         persistFamilyDecision: true,
         durablePhase: "wave",
-        headMetadata: m.headMetadata,
-        ignoreFailedIssues: new Set([m.mergerIssue]),
+        headMetadata: mergerDecision.headMetadata,
+        ignoreFailedIssues: new Set([mergerDecision.mergerIssue]),
       });
     }
     case "auto": {
