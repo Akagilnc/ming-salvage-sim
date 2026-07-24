@@ -1270,6 +1270,7 @@ class GameSession:
         from ming_sim.action_clusters import (
             EFFECT_ANSWER_EXISTING,
             cluster_effect,
+            normalize_intent_candidates,
             resolve_primary_intent,
         )
         out: Dict[str, Any] = {
@@ -1277,7 +1278,8 @@ class GameSession:
             "secret_order_id": secret_order_id,
             "pending_action_failures": [],
         }
-        intent = resolve_primary_intent(preclassified_intent)
+        intent_candidates = normalize_intent_candidates(preclassified_intent)
+        intent = resolve_primary_intent(intent_candidates)
         # intent is None only when classifier did not run; [] → primary {kind:none}.
         intent_kind = str((intent or {}).get("kind") or "none")
         minister_name = character.name
@@ -1468,7 +1470,8 @@ class GameSession:
             # 空判词仍保留既有任免结构化 extractor 兜底；只有 classifier
             # 真给出候选时才阻断后续类别专用 extractor。
             if serial_candidates:
-                intent = resolve_primary_intent(serial_candidates)
+                intent_candidates = serial_candidates
+                intent = resolve_primary_intent(intent_candidates)
                 intent_kind = str((intent or {}).get("kind") or "none")
         needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
         needs_secret_fallback = (
@@ -1524,6 +1527,7 @@ class GameSession:
             intent=intent,
             intent_kind=intent_kind,
             llm_config=llm_config,
+            intent_candidates=intent_candidates,
         )
         run_materialize_pipeline(mat_ctx)
         return out

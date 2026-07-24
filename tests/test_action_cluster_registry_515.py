@@ -294,8 +294,10 @@ def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
     assert sess._finish_cli_action_intent(None) is None
 
 
-def test_classifier_accepts_top_level_candidate_array(monkeypatch):
-    """真实 classifier 入口保留一句多旨的顶层候选数组。"""
+def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monkeypatch):
+    """一句多旨经真实 session.chat 串行 classifier 后逐项暂存。"""
+    db, state, content = game
+    minister = _active_ch(db, content)
     raw = json.dumps([
         {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
         {
@@ -309,11 +311,30 @@ def test_classifier_accepts_top_level_candidate_array(monkeypatch):
     ], ensure_ascii=False)
     monkeypatch.setattr(cb, "_run_backend_for_config", lambda *a, **k: (raw, 0))
 
-    candidates = cb.classify_cli_action_intent("拟旨赈灾，并任孙传庭为陕西巡抚")
-    assert [candidate["kind"] for candidate in candidates] == ["draft", "appointment"]
-    assert candidates[1]["appoint_action"] == "任命"
-    assert candidates[1]["name"] == "孙传庭"
-    assert candidates[1]["office"] == "陕西巡抚"
+    class FakeAgent:
+        def run(self, _msg):
+            return SimpleNamespace(content="臣拟请发帑赈陕西，并任孙传庭为陕西巡抚。", tools=[])
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(
+        get=lambda character: FakeAgent(),
+        build_draft_line=lambda: "无",
+    )
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda message: message
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+
+    sess.chat(minister.name, "拟旨赈灾，并任孙传庭为陕西巡抚。")
+
+    rows = db.list_pending_actions(int(state.turn), minister_name=minister.name)
+    assert [row["kind"] for row in rows] == ["directive", "office"]
+    office = json.loads(rows[1]["payload_json"] or "{}")
+    assert office["name"] == "孙传庭"
+    assert office["office"] == "陕西巡抚"
 
 
 def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):

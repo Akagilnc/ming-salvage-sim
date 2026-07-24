@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.action_clusters import (
@@ -19,6 +19,7 @@ from ming_sim.action_clusters import (
     EFFECT_ANSWER_EXISTING,
     EFFECT_MATERIALIZE,
     EFFECT_NOOP,
+    cluster_by_kind,
     install_action_catalog,
     materialize_clusters_ordered,
 )
@@ -40,6 +41,7 @@ class MaterializeCtx:
     intent: Optional[Dict[str, Any]]
     intent_kind: str
     llm_config: Any
+    intent_candidates: Optional[List[Dict[str, Any]]] = None
     conversation_intent_handled: bool = False
     draft_staged: bool = False
 
@@ -51,6 +53,31 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     secret/cultivate/draft/appointment 字面量分叉。
     同一 callable 只跑一次（secret/cultivate 共享 extract 缝）。
     """
+    if ctx.intent_candidates:
+        # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
+        # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
+        baseline_out = dict(ctx.out)
+        for candidate in ctx.intent_candidates:
+            cluster = cluster_by_kind(str(candidate.get("kind") or ""))
+            if cluster is None or cluster.effect != EFFECT_MATERIALIZE:
+                continue
+            fn = cluster.materialize_fn
+            if fn is None:
+                continue
+            candidate_out = dict(baseline_out)
+            candidate_ctx = replace(
+                ctx,
+                out=candidate_out,
+                intent=candidate,
+                intent_kind=cluster.kind,
+                intent_candidates=None,
+                conversation_intent_handled=False,
+                draft_staged=False,
+            )
+            fn(candidate_ctx)
+            ctx.out.update(candidate_out)
+        return
+
     seen: set = set()
     for cluster in materialize_clusters_ordered():
         fn = cluster.materialize_fn
