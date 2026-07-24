@@ -1843,13 +1843,11 @@ class WebGame:
                 character.name, text, answer, preclassified_intent, preexisting_pending_action_ids)
         message_text = (text or "").strip()
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES
+        from ming_sim.action_clusters import is_confirmation_decision, resolve_primary_intent
         explicit_draft_prefix = message_text.startswith(_DRAFT_PREFIXES)
         explicit_secret_prefix = message_text.startswith(_SECRET_PREFIXES)
-        confirmation_turn = (
-            isinstance(preclassified_intent, dict)
-            and str(preclassified_intent.get("kind") or "") == "confirmation"
-            and str(preclassified_intent.get("confirmation") or "") in {"应允", "拒绝"}
-        )
+        confirmation_turn = is_confirmation_decision(
+            resolve_primary_intent(preclassified_intent))
         if run_output is not None:
             for tool_exec in getattr(run_output, "tools", None) or []:
                 res = str(getattr(tool_exec, "result", "") or "")
@@ -2344,21 +2342,16 @@ class WebGame:
             if item.get("type") in {"end", "error"}:
                 break
 
-    def suggestions_for(self, character: Character) -> List[Dict[str, str]]:
-        suggestions = [
-            {"label": "问在办事项", "text": "当前在办的事项里，哪几件轻重缓急最该先理？"},
-            {"label": "问阻力", "text": "眼下推进朝政，最大的阻力来自哪一方？"},
+    def suggestions_for(self, character: Character) -> List[Dict[str, Any]]:
+        """召对快捷钮：仅保留意图声明前缀（拟旨/下密令）。
+
+        ADR 0042 / #527：旧询问 chips（问在办事项/问阻力/查钱粮/查驻军/密查）已砍；
+        问事走直接开口 + 角色见闻。character 保留在签名上以兼容三处 payload 调用点。
+        """
+        return [
             {"label": "拟旨", "text": "拟旨如下：", "prefix": True},
             {"label": "下密令", "text": "密令如下：", "prefix": True},
         ]
-        skill_ids = set(available_skill_ids(character, self.db))
-        if "check_treasury" in skill_ids:
-            suggestions.insert(1, {"label": "查钱粮", "text": "太仓和内库实数如何？本月哪些钱最急？"})
-        if "check_military" in skill_ids or "front_line_plan" in skill_ids or "strategic_review" in skill_ids:
-            suggestions.insert(1, {"label": "查驻军", "text": "查一下关宁军、京营和陕西边军的士气、欠饷与补给。"})
-        if "secret_investigation" in skill_ids:
-            suggestions.insert(1, {"label": "密查", "text": "哪些账册和人物最该先密查？"})
-        return suggestions[:6]
 
 
 def sse_event(event: str, data: Dict[str, Any]) -> str:
