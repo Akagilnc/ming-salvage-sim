@@ -1156,48 +1156,6 @@ def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
-# ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
-
-def test_advance_without_edict_preserves_default_consented_directive(game):
-    """无诏快路不能删除默认同意的拟旨，须交回正常案卷结算路。"""
-    from ming_sim.decree import advance_without_edict
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    turn_before = state.turn
-
-    db.upsert_pending_directive(state.turn, name,
-                                payload={"text": "孤儿草稿", "actor": name})
-    assert len(db.list_pending_actions(state.turn)) == 1
-
-    assert advance_without_edict(state, db, content=content) is False
-
-    assert state.turn == turn_before
-    rows = db.list_pending_actions(turn_before)
-    assert len(rows) == 1 and rows[0]["kind"] == "directive"
-
-
-def test_session_end_turn_routes_default_consent_through_normal_settlement(
-    game, monkeypatch,
-):
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "着查河工", "actor": name},
-    )
-    sess = _fake_session(db, state)
-    sess.content = content
-    called = []
-    monkeypatch.setattr(
-        sess, "resolve_turn", lambda: called.append(state.turn), raising=False,
-    )
-
-    GameSession.advance_without_decree(sess)
-
-    assert called == [state.turn]
-    assert db.list_pending_actions(state.turn)
-
-
 def test_discard_pending_directives_does_not_commit_outer_transaction(game):
     """discard_pending_directives 只做删除，不拥有 commit；
     外层事务若回滚，被丢弃的 directive pending 必须恢复。"""

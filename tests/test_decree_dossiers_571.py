@@ -583,6 +583,64 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     assert terminal["execution_outcome"] == "fulfilled"
 
 
+def test_secret_order_progress_undo_restores_order_and_dossier_axes(game):
+    db, state, _content = game
+    actor = _active_minister(db)
+    order_id = db.create_secret_order(
+        state, actor, "密查仓储", "核清仓储", [],
+    )
+    chat_turn_id = db.create_chat_turn(state, actor, "dossier-undo", 0)
+    db.update_chat_turn_messages(
+        chat_turn_id,
+        db.append_chat_message(actor, state.turn, "user", "继续查办"),
+        db.append_chat_message(actor, state.turn, "minister", "臣遵旨"),
+    )
+    before = db.capture_chat_rollback_snapshot()
+    db.update_secret_order_progress(
+        order_id, "已开始核账", state.year, state.period,
+    )
+    db.record_chat_turn_rollback_diffs(
+        chat_turn_id, before, db.capture_chat_rollback_snapshot(),
+    )
+
+    db.undo_chat_turn(chat_turn_id)
+
+    assert db.get_secret_order(order_id)["result"] == ""
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert dossier["status"] == "promulgated"
+    assert dossier["execution_outcome"] == ""
+
+
+def test_secret_order_close_failure_rolls_back_only_its_two_axes(game, monkeypatch):
+    from ming_sim.applier import atomic
+
+    db, state, _content = game
+    order_id = db.create_secret_order(
+        state, _active_minister(db), "密查仓储", "核清仓储", [],
+    )
+    dossier_before = db.get_dossier_for_secret_order(order_id)
+
+    def fail_execution(*_args, **_kwargs):
+        raise RuntimeError("dossier close failed")
+
+    monkeypatch.setattr(db, "record_dossier_execution", fail_execution)
+    with atomic(db):
+        with pytest.raises(RuntimeError, match="dossier close failed"):
+            db.close_secret_order(
+                order_id, "done", "账目核清", state.turn, commit=False,
+            )
+        db.conn.execute(
+            "UPDATE game_state SET ending_status='caller-continued' WHERE id=1"
+        )
+
+    assert db.get_secret_order(order_id)["status"] == "active"
+    assert db.get_secret_order(order_id)["result"] == ""
+    assert db.get_dossier_for_secret_order(order_id) == dossier_before
+    assert db.conn.execute(
+        "SELECT ending_status FROM game_state WHERE id=1"
+    ).fetchone()["ending_status"] == "caller-continued"
+
+
 def test_secret_order_progress_rolls_back_both_axes_in_outer_atomic(game):
     from ming_sim.applier import atomic
 
