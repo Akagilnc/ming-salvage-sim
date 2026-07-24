@@ -54,6 +54,7 @@ import {
   judgeContinue,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const PROMPTS = join(ROOT, "prompts");
@@ -125,6 +126,8 @@ class RefuseExitBackend implements Backend {
     this.specs.push(spec);
     this.ctxs.push(ctx);
     this.landings.push(landing);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     if (typeof ctx.resumeSessionId === "string") {
       this.resumeSessionCalls.push([spec.id, ctx.resumeSessionId]);
@@ -154,7 +157,13 @@ class RefuseExitBackend implements Backend {
       spec.id === "S6"
     ) {
       const scripted = this.opts.judgeScripts[this.judgeIdx];
-      this.judgeIdx += 1;
+      const isContinue =
+        scripted?.kind === "completed" &&
+        scripted.output?.kind === "judge" &&
+        scripted.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeIdx += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -474,10 +483,11 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     expect(refuseLanding?.landing).not.toHaveProperty("refusedFindingIdentityKeys");
     // Sequence includes S5 → S6 → S5 → S6
     const path = backend.dispatched.filter(
-      (d) => d.startsWith("S5:") || d.startsWith("S6:"),
+      (d) => d === "S5:coder" || d === "S6:verify",
     );
     expect(path).toEqual([
       "S5:coder",
+      "S6:verify",
       "S6:verify",
       "S5:coder",
       "S6:verify",
@@ -636,10 +646,11 @@ describe("#927 AC: S4 dissolved — fixer refuse second gate still reachable", (
 
     // Exact agent path: no S4 between continue and fix / re-adjudicate.
     const agentPath = backend.dispatched.filter((d) =>
-      /^(S[0-9]):/.test(d),
+      /^(S[0-9]):/.test(d) && !d.endsWith(":reviewer"),
     );
     expect(agentPath).toEqual([
       "S2:coder",
+      "S3:verify",
       "S3:verify",
       "S5:coder",
       "S6:verify",

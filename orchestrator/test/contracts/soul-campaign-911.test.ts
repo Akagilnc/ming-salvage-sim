@@ -95,6 +95,7 @@ describe("#911 container home environment dual-mount", () => {
       model?: string;
     }): {
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+      env: Record<string, string>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-911", claudeToken: "tok", ghToken: "gho_test" },

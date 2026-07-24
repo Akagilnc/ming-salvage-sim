@@ -77,6 +77,11 @@ import {
   tempHome,
   cleanupTempHomes,
 } from "./real-backend.shared.js";
+import { reviewPanelLegWorkerSpec } from "../../src/family/reviewPanelLegs.js";
+import {
+  SANDBOX_FIX_FINDINGS_PATH_ENV,
+  SANDBOX_REVIEW_FIXED_POINT_ENV,
+} from "../../src/realBackend.js";
 
 afterEach(cleanupTempHomes);
 afterEach(() => vi.restoreAllMocks());
@@ -713,6 +718,9 @@ describe("realBackend promptsDirError (F4)", () => {
         "judge_station.md",
         // #1081: resident judge open-court birth (not a topology WORKER step).
         "judge_open_court.md",
+        // #1126: Runner-owned single-slice Standards + Spec legs.
+        "code_review_standards_leg.md",
+        "code_review_spec_leg.md",
       ]),
     );
     // No duplicates.
@@ -1355,6 +1363,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     public agentOptions: Array<Parameters<typeof sc.run>[0]> = [];
     public preflightResults = new Map<string, boolean>();
     public preflightHook?: (tool: string) => Promise<void>;
+    public capturedEnv?: Record<string, string>;
     /** Final reachable commits after the fresh worker's pinned baseline. */
     public finalGraphCommitCount = 0;
 
@@ -1380,6 +1389,14 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       if (this.preflightResults.get(tool) === false) {
         throw new Error(`${tool}: command not found`);
       }
+    }
+
+    protected override boxConfig(
+      ...args: Parameters<RealBackend["boxConfig"]>
+    ): ReturnType<RealBackend["boxConfig"]> {
+      const config = super.boxConfig(...args);
+      this.capturedEnv = config.env;
+      return config;
     }
 
     protected override async runAgentSandbox(
@@ -1458,6 +1475,39 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(result).toEqual({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-286",
+    });
+  });
+
+  it("preserves review-panel raw prose through the production dispatch seam", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "AXIS_PANEL_PROSE_1126: standards findings in prose",
+      commits: [],
+      sessionId: "sess-panel-1126",
+    });
+    const worktree = {
+      branch: "feat/issue-1126",
+      base: "origin/codex/issue-1126-base",
+      path: tempHome("rb-panel-worktree-"),
+    };
+    const spec = reviewPanelLegWorkerSpec(
+      { family: "codex", slug: "gpt-5.6-sol", axis: "standards" },
+      { kind: "single", judgeStep: "S3" },
+    );
+
+    const result = await backend.dispatchWorker(spec, { worktree });
+
+    expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.capturedEnv?.[SANDBOX_REVIEW_FIXED_POINT_ENV]).toBe(
+      worktree.base,
+    );
+    expect(backend.capturedEnv?.[SANDBOX_FIX_FINDINGS_PATH_ENV]).toBeUndefined();
+    expect(result).toMatchObject({
+      kind: "completed",
+      output: {
+        kind: "reviewer",
+        rawStdout: "AXIS_PANEL_PROSE_1126: standards findings in prose",
+      },
     });
   });
 

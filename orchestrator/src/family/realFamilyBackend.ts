@@ -105,7 +105,7 @@ import {
 import {
   CMR_PANEL_LEG_PROMPT_FILE,
   panelLegCompletedResult,
-} from "./cmrPanelLegs.js";
+} from "./reviewPanelLegs.js";
 
 import "../sandcastleCancelSeam.js"; // #1010 first: patch before sandcastle load
 import * as sc from "@ai-hero/sandcastle";

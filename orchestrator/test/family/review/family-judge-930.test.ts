@@ -22,7 +22,7 @@ import { findingIdentityKey } from "../../../src/findings.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { cmrOutcomeFromResult } from "../../../src/family/realFamilyBackend.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -140,7 +140,7 @@ class FamilyJudgeBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     this.dispatches.push({
       kind: spec.kind,

@@ -61,7 +61,7 @@ import {
 } from "../../helpers/judge-fixtures.js";
 import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 
 /**
@@ -166,7 +166,7 @@ class CapableFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (this.script.worker !== undefined) {
       return this.script.worker(spec, ctx);
@@ -2229,7 +2229,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       }
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2440,7 +2440,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       }
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2517,7 +2517,7 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
         return { ok: true };
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2550,7 +2550,7 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
         return { ok: true };
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2683,7 +2683,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       this.aborted.push(event);
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-      const panelLeg = completeCmrPanelLegWorker(spec);
+      const panelLeg = completeReviewPanelLegWorker(spec);
       if (panelLeg !== undefined) return panelLeg;
       if (spec.kind === this.throwOnKind) {
         if (spec.kind === "ship") {
@@ -2749,7 +2749,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === this.throwOnKind) {
           this.throwKindDispatches += 1;
@@ -2811,7 +2811,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           this.dispatches += 1;
@@ -2874,7 +2874,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "ship") {
           this.shipDispatches += 1;
@@ -2929,7 +2929,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         super("ship");
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2991,7 +2991,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         super("cmr");
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {

@@ -37,6 +37,7 @@ import {
   openCourtWorkerResultIfMatch,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 import { entry } from "../helpers/resume-fixtures.js";
 
 const WORKTREE: WorktreeHandle = {
@@ -117,6 +118,8 @@ class BeatLedgerBackend implements Backend {
     this.specs.push(spec);
     this.ctxs.push(ctx);
     this.landings.push(landing);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     if (isJudgeOpenCourtSpec(spec)) {
       return openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION)!;
@@ -153,7 +156,17 @@ class BeatLedgerBackend implements Backend {
     }
     if (spec.id === "S3" || spec.id === "S6" || spec.kind === "verify") {
       const scripted = this.opts?.judgeResults?.[this.judgeRound];
-      this.judgeRound += 1;
+      const isContinue =
+        scripted?.kind === "completed" &&
+        scripted.output?.kind === "judge" &&
+        scripted.output.status === "continue";
+      if (
+        !isContinue ||
+        landing?.builderPlanBody !== undefined ||
+        (landing?.panelLegTransports?.length ?? 0) > 0
+      ) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId

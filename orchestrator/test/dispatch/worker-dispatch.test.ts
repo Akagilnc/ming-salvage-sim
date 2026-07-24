@@ -960,16 +960,16 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.contextRetention).toBe("retain");
   });
 
-  it("maps a reviewer StepSpec to a reviewer worker (fresh, clean eyes, invoke /code-review)", () => {
-    // dispatchWorker.ts stays generic (it serves the family layer's reviewer/cmr
-    // kinds too); the role→reviewer mapping is independent of the single-slice
-    // StepId set, so any valid id stands in here.
+  it("maps a residual reviewer StepSpec to reviewer kind (fresh, clean; skill undefined)", () => {
+    // Live reviewer workers are review-panel legs (#1094/#1126) with skill
+    // undefined on the declarative WorkerSpec. Residual role→kind mapping here
+    // must not reintroduce `/code-review` as a second dispatch truth.
     const reviewerSpec: StepSpec = { ...coderSpec, role: "reviewer" };
     const w = stepSpecToWorkerSpec(reviewerSpec);
     expect(w.kind).toBe("reviewer");
     expect(w.session).toBe("fresh");
     expect(w.contextRetention).toBe("clean");
-    expect(w.skill).toBe("/code-review");
+    expect(w.skill).toBeUndefined();
   });
 });
 

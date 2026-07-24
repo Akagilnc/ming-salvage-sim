@@ -37,6 +37,7 @@ import {
 } from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
+import { isReviewPanelLegPromptFile } from "../../src/family/reviewPanelLegs.js";
 
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
@@ -53,6 +54,7 @@ import type {
   StepSpec,
   WorkerResult,
   WorkerSpec,
+  WorkerLandingPayload,
   WorktreeHandle,
 } from "../../src/types.js";
 import {
@@ -65,6 +67,7 @@ import {
   OPEN_COURT_SESSION,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 import {
   DispatchRecordingResumeBackend,
   entry,
@@ -132,6 +135,7 @@ class JudgeBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.session}`);
     this.specs.push(spec);
@@ -150,6 +154,15 @@ class JudgeBackend implements Backend {
     const openCourt = openCourtWorkerResultIfMatch(spec, S3_SESSION);
     if (openCourt !== undefined) return openCourt;
 
+    // #1126 / #1094: Runner-dispatched panel legs are not the judge seat.
+    if (isReviewPanelLegPromptFile(spec.promptFile)) {
+      const panelLeg = completeReviewPanelLegWorker(spec);
+      if (panelLeg === undefined) {
+        throw new Error(`invalid panel worker ${spec.kind}:${spec.role}`);
+      }
+      return panelLeg;
+    }
+
     if (spec.kind === "coder") {
       const sessionId =
         typeof ctx.resumeSessionId === "string"
@@ -162,14 +175,12 @@ class JudgeBackend implements Backend {
       };
     }
 
-    if (
-      spec.kind === "verify" ||
-      spec.kind === "reviewer" ||
-      spec.id === "S3" ||
-      spec.id === "S6"
-    ) {
+    if (spec.kind === "verify" || spec.id === "S3" || spec.id === "S6") {
       const script = this.judgeScripts[this.judgeIdx] ?? { kind: "converged" };
-      this.judgeIdx += 1;
+      const hasPanelPapers = (landing?.panelLegTransports?.length ?? 0) > 0;
+      if (script.kind !== "continue" || hasPanelPapers) {
+        this.judgeIdx += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -762,7 +773,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         s6Round += 1;
         return {
           output:
-            s6Round === 1
+            s6Round <= 2
               ? judgeContinue([finding], { fixPacketBody })
               : judgeConverged(),
           sessionId: COURT,
@@ -800,6 +811,10 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         };
       },
       async writeLedger() {},
+      async dispatchWorker(spec, ctx, landing) {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        return panelLeg ?? legacyDispatchWorker(backend, spec, ctx, landing);
+      },
       runStep: packetRunStep,
     };
 
@@ -838,13 +853,17 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     ]);
   });
 
-  it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
+  it("M6: empty continue after review paper fails loud — never empty-spins S5 coder-fix", async () => {
     // #919 M6 / family M1 isomorphic: status:continue with empty live open set
-    // is court contract drift. openFindingsForFixer may yield [] for cargo filter;
-    // that does NOT authorize single-slice S5 with zero identity keys.
+    // is court contract drift — *after* Runner has already landed review paper
+    // (#1126). Runner topology dispatches legs on the first construction-phase
+    // continue; a later empty continue with paper present must not spin S5.
     // True empty = 0 live AND 0 terminal flips (suppress/refute). Terminal-only
     // continue is court closure (#952), not this drift case.
-    const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
+    const backend = new JudgeBackend([
+      { kind: "continue", findings: [] },
+      { kind: "continue", findings: [] },
+    ]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
 
     expect(result.status).toBe("failed");
@@ -855,8 +874,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
     expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
     expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
-    // Judge seat itself ran once; fail-loud after continue projection.
-    expect(backend.specs.filter((s) => s.id === "S3")).toHaveLength(1);
+    // Request + adjudicate visits; leg is Runner-dispatched between them.
+    expect(backend.specs.filter((s) => s.id === "S3" && s.kind === "verify")).toHaveLength(2);
+    expect(backend.specs.some((s) => s.kind === "reviewer")).toBe(true);
   });
 
   it("#952: suppress-only continue closes like converged — no S5, suppressed persists", async () => {
@@ -1037,6 +1057,10 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         return worktree;
       },
       async writeLedger() {},
+      async dispatchWorker(spec, ctx, landing) {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        return panelLeg ?? legacyDispatchWorker(backend, spec, ctx, landing);
+      },
       async resumeSession(spec, _wt, sessionId) {
         if (spec.id === "S3") {
           return {

@@ -256,6 +256,11 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
+import {
+  isReviewPanelLegPromptFile,
+  panelLegCompletedResult,
+  SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES,
+} from "./family/reviewPanelLegs.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -711,6 +716,8 @@ export const SANDBOX_ISSUE_NUMBER_ENV = "ORCHESTRATOR_ISSUE_NUMBER";
 export const SANDBOX_ISSUE_NUMBER_ALIAS_ENV = "ISSUE_NUMBER";
 /** GitHub repo slug (`owner/repo`) the worker should use for gh issue reads. */
 export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
+/** #1126 review fixed point (WorktreeHandle.base) for axis legs. */
+export const SANDBOX_REVIEW_FIXED_POINT_ENV = "ORCHESTRATOR_REVIEW_FIXED_POINT";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
@@ -1717,6 +1724,8 @@ export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
     ...Object.values(WORKER_PROMPT_FILES),
     // #1081: resident judge birth at slice dispatch (not a topology WORKER step).
     JUDGE_OPEN_COURT_PROMPT_FILE,
+    // #1126: Runner-owned single-slice Standards + Spec legs (scope=single).
+    ...SINGLE_SLICE_REVIEW_LEG_PROMPT_FILES,
   ]),
 ];
 
@@ -2759,6 +2768,7 @@ export class RealBackend implements Backend {
     issueNumber: number,
     spec: Pick<StepSpec, "role" | "soul" | "model">,
     options?: AgentStepRunOptions,
+    reviewFixedPoint?: string,
   ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
     return {
@@ -2768,6 +2778,7 @@ export class RealBackend implements Backend {
           spec,
           issueNumber,
           options,
+          reviewFixedPoint,
         ),
       ),
       providerAuth: auth.providerAuth,
@@ -2859,6 +2870,7 @@ export class RealBackend implements Backend {
     spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
+    reviewFixedPoint?: string,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2878,6 +2890,12 @@ export class RealBackend implements Backend {
       const issue = String(issueNumber);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
       env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
+    }
+    if (
+      typeof reviewFixedPoint === "string" &&
+      reviewFixedPoint.trim().length > 0
+    ) {
+      env[SANDBOX_REVIEW_FIXED_POINT_ENV] = reviewFixedPoint.trim();
     }
     if (auth.ghToken !== undefined) {
       env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
@@ -3376,12 +3394,69 @@ export class RealBackend implements Backend {
     return await this.invokeSandcastleRun(options);
   }
 
+  /**
+   * #1126 / #1094 — runner-owned review-panel legs (single Standards/Spec or
+   * family CMR panel). Thin raw-prose path: reuse preflight/box/sandbox/agent,
+   * inject ORCHESTRATOR_REVIEW_FIXED_POINT from worktree.base only here, return
+   * {@link panelLegCompletedResult}(stdout). Bypasses legacyDispatchWorker,
+   * judge/open-count SO, and fix-findings landing — legs keep judgeStep id
+   * (S3/S6) for monitor bookkeeping without hanging judge schema.
+   */
+  protected async runReviewPanelLegWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (ctx.worktree === undefined) {
+      throw new Error(
+        `dispatchWorker(review panel leg ${spec.id}): requires a worktree`,
+      );
+    }
+    const worktree = ctx.worktree;
+    const issueNumber = this.issueOf(worktree);
+    await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, undefined, worktree.base);
+    try {
+      const pool = isBillingPoolDispatchId(ctx.billingPool)
+        ? ctx.billingPool
+        : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
+      const result = await this.runAgentSandbox({
+        name: `${spec.id}-panel-leg`,
+        idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+        cwd: worktree.path,
+        sandbox: box.sandbox,
+        agent: agentForSlug(spec.model, pool, spec.soul),
+        maxIterations: 1,
+        branchStrategy: { type: "head" },
+        promptFile: join(this.opts.promptsDir, spec.promptFile),
+        // No Output.object — ADR 0141 prose stdout is the legal paper.
+      });
+      const stdout =
+        typeof (result as { stdout?: unknown }).stdout === "string"
+          ? (result as { stdout: string }).stdout
+          : "";
+      return panelLegCompletedResult(stdout);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "failed",
+        reason: `panel leg ${spec.model}: ${reason}`,
+      };
+    } finally {
+      box.cleanup();
+    }
+  }
+
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
+    // #1126 R3: review-panel legs before legacy — keep judgeStep id, skip SO.
+    if (isReviewPanelLegPromptFile(spec.promptFile)) {
+      return this.runReviewPanelLegWorker(spec, ctx);
+    }
     return legacyDispatchWorker(this, spec, ctx, landing);
   }
 

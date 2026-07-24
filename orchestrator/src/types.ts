@@ -740,7 +740,8 @@ export interface StepResult {
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
  * discriminant and the skill invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
- *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
+ *   - `reviewer` → runner-owned review-panel leg (#1094 / #1126); soul + thin
+ *     promptFile carry the axis/lens. No `/code-review` skill; fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
  *   - `ship`     → invoke `gstack-ship` for the family PR. Child S7 is a local handoff.
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段

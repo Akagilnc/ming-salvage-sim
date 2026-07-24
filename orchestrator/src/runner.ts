@@ -181,7 +181,12 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
-import { resumeCapableForSlug } from "./modelRegistry.js";
+import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
+import {
+  dispatchReviewPanelLegs,
+  omitJudgeBoundDispatchFields,
+} from "./family/reviewPanelLegs.js";
+import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
 } from "./types.js";
@@ -4174,6 +4179,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
+          let singleSlicePanelTransports:
+            | ReadonlyArray<LegTransport>
+            | undefined;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -4327,10 +4335,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         : {}),
                     }
                   : undefined;
-              const landingPayload =
+              const landingPayloadBase =
                 planLanding !== undefined || fixLanding !== undefined
                   ? { ...(fixLanding ?? {}), ...(planLanding ?? {}) }
                   : undefined;
+              // #1126: Runner-landed single-slice review paper (same seam as family).
+              const landingPayload: WorkerLandingPayload | undefined =
+                singleSlicePanelTransports !== undefined &&
+                singleSlicePanelTransports.length > 0
+                  ? {
+                      ...(landingPayloadBase ?? {}),
+                      panelLegTransports: singleSlicePanelTransports,
+                    }
+                  : landingPayloadBase;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (`failed` / throw, including StructuredOutputError after
               // Sandcastle maxRetries exhaust) with a fresh worker at the same
@@ -4519,6 +4536,87 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 break;
               }
               result = seatProtocol.result;
+              // #1126: after construction, Runner topology fans out fresh review
+              // legs on judge continue — same #1094 dispatchReviewPanelLegs
+              // mechanism, scope=single. No durable ledger events; papers land
+              // back on this same judge session.
+              if (
+                isJudgeSeat({ step }) &&
+                result.kind === "completed" &&
+                result.output !== undefined &&
+                result.output.kind === "judge" &&
+                result.output.status === "continue" &&
+                singleSlicePanelTransports === undefined
+              ) {
+                const inPlanPhase =
+                  shouldRunCoderPlanPhase() &&
+                  scanCoderPlanPhase(ledger).planPhase;
+                if (!inPlanPhase) {
+                  const judgeStep = step === "S3" ? "S3" : "S6";
+                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+                  const reviewLegs = [
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "standards" as const,
+                    },
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "spec" as const,
+                    },
+                  ];
+                  const reviewRound = await dispatchReviewPanelLegs({
+                    legs: reviewLegs,
+                    scope: { kind: "single", judgeStep },
+                    dispatch: async (reviewSpec) => {
+                      const protocol = await dispatchSeatWithProtocol({
+                        step,
+                        wallStep: step,
+                        spec: reviewSpec,
+                        ctx: reviewLegCtx,
+                        retryOpts: durableMechanicalRetryOptions(step),
+                        capacityStateSummary:
+                          "fresh reviewer checkpoint at capacity; drift preserved",
+                        setMonitorHandle: (handle) => {
+                          stepMonitorHandle = handle;
+                        },
+                      });
+                      if (protocol.kind === "dispatched") {
+                        return {
+                          kind: "leg_result" as const,
+                          result: protocol.result,
+                        };
+                      }
+                      return {
+                        kind: "seat_control" as const,
+                        control: protocol,
+                      };
+                    },
+                  });
+                  if (reviewRound.kind === "seat_control") {
+                    if (reviewRound.control.kind === "terminal") {
+                      return reviewRound.control.result;
+                    }
+                    if (reviewRound.control.kind === "relay") {
+                      continue orchestratorStepLoop;
+                    }
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `fresh reviewer ${step} stopped without a dispatch result`,
+                      ),
+                    );
+                  }
+                  singleSlicePanelTransports = reviewRound.transports;
+                  if (typeof result.sessionId === "string") {
+                    resumeSessionId = result.sessionId;
+                    judgeSessionId = result.sessionId;
+                    judgeSessionModel = stepSpecs[step].model;
+                  }
+                  continue;
+                }
+              }
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
