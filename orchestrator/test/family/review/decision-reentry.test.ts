@@ -120,6 +120,14 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
         escalationKind: "decision",
         reason: "family-level product decision needed before the epic can proceed",
         familyHeadAfter: "family-head-1",
+        terminalStatus: "parked",
+        terminalChildren: [
+          { issue: 11, status: "skipped", reason: "not_scheduled_this_invocation" },
+        ],
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "family-level product decision needed before the epic can proceed",
+        },
       } as FamilyLedgerEntry,
     ]);
 
@@ -147,6 +155,8 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
         escalationKind: "failure",
         reason: "family repair failed after exhausting retries",
         familyHeadAfter: "family-head-1",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
         terminalChildren: [
           {
             issue: 11,

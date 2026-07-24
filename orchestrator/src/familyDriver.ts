@@ -95,6 +95,7 @@ import {
   recordBaselineHealthFailed,
 } from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
+import { replayPriorFamilyEscalation } from "./family/terminalFinalizer.js";
 import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
@@ -1121,125 +1122,63 @@ export function admissionSkippedFromLedger(
 }
 
 /** Current-schema terminal replay (ID-005); undefined when non-terminal. */
-export function planFamilyTerminalReplay(
+function replayCompletedCleanup(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   familyBase: string,
-): FamilyRunResult | undefined {
-  if (shouldReclaimFamilyHost(ledger)) {
-    let familyHead: string | undefined;
-    for (let i = ledger.length - 1; i >= 0; i--) {
-      const entry = ledger[i]!;
-      if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
-        familyHead = entry.familyHeadAfter;
-        break;
-      }
+): FamilyRunResult {
+  let familyHead: string | undefined;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
+      familyHead = entry.familyHeadAfter;
+      break;
     }
-    const admissionSkipped = admissionSkippedFromLedger(ledger);
-    const children = [
-      ...[...mergedSet(ledger)].map((issue) => ({
-        issue,
-        status: "already_done" as const,
-      })),
-      // Codex C1: skipped children are not in mergedSet — surface them as
-      // `"skipped"` so the replay accounts for every epic child.
-      ...admissionSkipped.map((s) => ({
-        issue: s.issue,
-        status: "skipped" as const,
-        reason: "admission_skipped" as const,
-      })),
-    ];
-    const headsMeta =
-      familyHead !== undefined
-        ? {
-            heads: {
-              actualFamilyHead: familyHead,
-              sources: {
-                actualFamilyHead: "post_merge_cleanup ledger row",
-              },
-            },
-          }
-        : {};
-    const metadata = {
-      ...headsMeta,
-      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
-    };
-    return {
-      status: "completed",
-      familyBase,
-      ...(familyHead !== undefined ? { familyHead } : {}),
-      stopSummary: {
-        reason: "already_done",
-        summary:
-          "family durable terminal replay: post_merge_cleanup already completed",
-        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-      },
-      children,
-      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
-    };
   }
-
-  const prior = familyEscalationState(ledger);
-  if (prior === undefined) return undefined;
-  const { escalation, answer } = prior;
-  // Incomplete escalated rows are durable damage — never terminal-replay as park.
-  if (!isCompleteFamilyEscalation(escalation)) return undefined;
-  if (escalation.escalationKind === "decision" && answer !== undefined) {
-    // Answered decision → spine must resume productive work (not terminal).
-    return undefined;
+  const admissionSkipped = admissionSkippedFromLedger(ledger);
+  for (const skipped of admissionSkipped) {
+    console.warn(
+      `family child #${skipped.issue} skipped: admission_skipped`,
+    );
   }
-  const reason =
-    typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-      ? escalation.reason
-      : "family escalation is not answered";
-  const diagnosis =
-    escalation.escalationKind === "failure"
-      ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-      : "Prior family decision escalation has no later valid escalation_answered ledger event.";
-  const familyHead =
-    typeof escalation.familyHeadAfter === "string" &&
-    escalation.familyHeadAfter.trim().length > 0
-      ? escalation.familyHeadAfter
-      : undefined;
-  const children = [...mergedSet(ledger)].map((issue) => ({
-    issue,
-    status: "already_done" as const,
-  }));
-  const decisionGatePark = escalation.escalationKind === "decision";
-  const heads =
+  const children = [
+    ...[...mergedSet(ledger)].map((issue) => ({
+      issue,
+      status: "already_done" as const,
+    })),
+    ...admissionSkipped.map((s) => ({
+      issue: s.issue,
+      status: "skipped" as const,
+      reason: "admission_skipped" as const,
+    })),
+  ];
+  const headsMeta =
     familyHead !== undefined
       ? {
-          actualFamilyHead: familyHead,
-          sources: { actualFamilyHead: "family escalated ledger row" },
+          heads: {
+            actualFamilyHead: familyHead,
+            sources: {
+              actualFamilyHead: "post_merge_cleanup ledger row",
+            },
+          },
         }
-      : undefined;
-  const common = {
+      : {};
+  const metadata = {
+    ...headsMeta,
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
+  return {
+    status: "completed",
     familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
-    escalation: { reason, diagnosis },
+    stopSummary: {
+      reason: "already_done",
+      summary:
+        "family durable terminal replay: post_merge_cleanup already completed",
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+    },
     children,
-  } as const;
-  if (decisionGatePark) {
-    return {
-      status: "parked" as const,
-      ...common,
-      stopSummary: decisionGateParkStopSummary({
-        summary: reason,
-        repairHint:
-          "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
-        ...(heads !== undefined ? { heads } : {}),
-      }),
-    };
-  }
-  return failedFamilyResult({
-    cause: "runner_internal_error",
-    ...common,
-    stopSummary: infraFailureStopSummary({
-      summary: reason,
-      repairHint:
-        "inspect the family ledger escalation entry and repair before rerun",
-      ...(heads !== undefined ? { heads } : {}),
-    }),
-  });
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
 }
 
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
@@ -1324,10 +1263,19 @@ export async function runFamilyDriver(
     });
   }
   if (familyScene.kind === "resident") {
-    const terminal = planFamilyTerminalReplay(
-      familyScene.ledger,
-      options.familyBase,
-    );
+    const prior = familyEscalationState(familyScene.ledger);
+    const terminal = shouldReclaimFamilyHost(familyScene.ledger)
+      ? replayCompletedCleanup(familyScene.ledger, options.familyBase)
+      : prior !== undefined &&
+          isCompleteFamilyEscalation(prior.escalation) &&
+          (prior.escalation.escalationKind !== "decision" ||
+            prior.answer === undefined)
+        ? await replayPriorFamilyEscalation({
+            epicIssue: options.epicIssue,
+            familyBase: options.familyBase,
+            escalation: prior.escalation,
+          })
+        : undefined;
     if (terminal !== undefined) {
       // #1007: durable terminal replay must self-describe this invocation's feed.
       emitExitProgress({
