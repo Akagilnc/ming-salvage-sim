@@ -219,15 +219,20 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=production_beat_generator)
+    # ADR 0049/0055: an unspoken-on directive is default-approved and must enter
+    # the dossier/judge route.  This deterministic fast path has no judge
+    # dependency, so fail loudly and let the caller route through normal
+    # settlement; never delete the player's directive to manufacture "no edict".
+    pending_directives = [
+        row for row in db.list_pending_actions(state.turn)
+        if row.get("kind") == "directive"
+    ]
+    if pending_directives:
+        raise ValueError("有默认同意拟旨待成案，须走正常结算，不能按无诏退朝")
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
-            # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
-            # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
-            # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
-            # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
-            db.discard_pending_directives(state.turn)
             db.commit_pending_actions(state, content=content, registry=registry)
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
@@ -1068,6 +1073,7 @@ def settle_with_delta(
     delta_applier=None,
     on_stage=None,
     source: Provenance = Provenance.unknown,
+    dossier_verdicts: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
@@ -1129,6 +1135,13 @@ def settle_with_delta(
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
             db.commit_pending_actions(state, content=content, registry=registry)
+            # ADR 0055: the promulgation judge runs outside this transaction;
+            # its structured verdicts are consumed here so verdict effects and
+            # the remaining settlement either all commit or all roll back.
+            if dossier_verdicts:
+                db.apply_dossier_verdicts(
+                    state, dossier_verdicts, content=content, registry=registry,
+                )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
