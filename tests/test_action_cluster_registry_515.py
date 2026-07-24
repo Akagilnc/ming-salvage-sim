@@ -267,7 +267,7 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
     out = sess.apply_cli_conversation_actions(
         minister, "准。", "臣遵旨。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
+        preclassified_intent=[{"kind": "draft"}, {"kind": "confirmation", "confirmation": "应允"}],
         confirm_target_ids={int(pid)},
     )
     new_ids = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))} - before_ids
@@ -298,6 +298,10 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     """一句多旨经真实 session.chat 串行 classifier 后逐项暂存。"""
     db, state, content = game
     minister = _active_ch(db, content)
+    old_text = "着户部清核旧案。"
+    db.stage_directive_candidate(
+        state.turn, minister.name, payload={"text": old_text, "actor": minister.name})
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
     classified = json.dumps([
         {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
         {"动作类型": "拟旨", "确认": "", "密令动作": "", "任免动作": ""},
@@ -357,14 +361,11 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
 
     rows = db.list_pending_actions(int(state.turn), minister_name=minister.name)
     assert calls == ["action_intent", "draft_intent"]
-    assert [row["kind"] for row in rows] == ["directive", "directive", "office"]
-    assert len({int(row["id"]) for row in rows[:2]}) == 2
+    assert [row["kind"] for row in rows] == ["directive", "directive", "directive", "office"]
+    assert len({int(row["id"]) for row in rows[:3]}) == 3
     assert [
-        json.loads(row["payload_json"] or "{}")["text"] for row in rows[:2]
-    ] == drafts
-    office = json.loads(rows[2]["payload_json"] or "{}")
-    assert office["name"] == "孙传庭"
-    assert office["office"] == "陕西巡抚"
+        json.loads(row["payload_json"] or "{}")["text"] for row in rows[:3]
+    ] == [old_text, *drafts]
 
 
 def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):

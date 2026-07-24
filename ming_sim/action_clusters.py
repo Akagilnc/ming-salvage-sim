@@ -293,7 +293,7 @@ def primary_intent(candidates: Optional[List[Dict[str, Any]]]) -> Optional[Dict[
         return None
     if not candidates:
         return empty_none_candidate()
-    return candidates[0]
+    return min(candidates, key=lambda c: cluster_by_kind(str(c.get("kind") or "")).priority)
 
 
 def resolve_primary_intent(preclassified_intent: Any) -> Optional[Dict[str, Any]]:
