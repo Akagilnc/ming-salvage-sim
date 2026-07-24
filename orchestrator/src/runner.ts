@@ -4096,11 +4096,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const seatModel = stepSpecs[step].model;
           const seatResumeCapable = resumeCapableForSlug(seatModel, billingPool);
           let resumeSessionId: string | undefined;
+          let freshJudgeHistoryLedger: ReadonlyArray<LedgerEntry> | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             // #955: crash/escalate resumeFor — identity match AND capability.
             // Stored session id may only re-enter the model binding that created
-            // it. Mismatch / incapable → coder: fresh (answer still delivered);
-            // #1081 judge: fail loud (silent fresh resident judge is illegal).
+            // it. A coder model move, or an answered S6 resident-judge model
+            // move, drops the stale id and fresh-dispatches at the same durable
+            // boundary (answer still delivered). Other judge discontinuities
+            // still fail loud.
             const sessionModel = resumeFor.sessionModel;
             const identityOk =
               sessionModel === undefined || sessionModel === seatModel;
@@ -4110,7 +4113,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const lostReason = !seatResumeCapable
                 ? `provider_incapable (seat=${seatModel})`
                 : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
-              if (isJudgeSeat({ step })) {
+              const mayFreshReopenJudge =
+                step === "S6" && !identityOk && seatResumeCapable;
+              if (isJudgeSeat({ step }) && !mayFreshReopenJudge) {
                 return await errorTermination(
                   step,
                   new Error(
@@ -4131,6 +4136,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
                   `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
               );
+              freshJudgeHistoryLedger = mayFreshReopenJudge
+                ? mergeResumeLedgerHistory(resumeHistoryLedger, ledger)
+                : undefined;
               const lostEntry: PersistentLedgerEntry = {
                 step,
                 event: "session_continuity_lost",
@@ -4146,29 +4154,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 branchHEAD: await resolveBranchHEAD(),
                 ts: new Date().toISOString(),
               };
-              ledger.push({
-                step,
-                event: "session_continuity_lost",
-                reason: lostReason,
-                ...(typeof sessionModel === "string"
-                  ? { fromModelId: sessionModel }
-                  : {}),
-                toModelId: seatModel,
-                sessionId: resumeFor.sessionId,
-                ts: lostEntry.ts,
-              });
-              try {
-                if (stateDir !== undefined) {
-                  await backend.writeLedger(lostEntry, stateDir);
-                } else {
-                  pendingEntries.push(lostEntry);
+              const lossAlreadyPersisted =
+                freshJudgeHistoryLedger?.some(
+                  (entry) =>
+                    entry.event === "session_continuity_lost" &&
+                    entry.step === step &&
+                    entry.sessionId === resumeFor?.sessionId &&
+                    entry.fromModelId === sessionModel &&
+                    entry.toModelId === seatModel,
+                ) === true;
+              if (!lossAlreadyPersisted) {
+                try {
+                  if (stateDir !== undefined) {
+                    await backend.writeLedger(lostEntry, stateDir);
+                  } else {
+                    pendingEntries.push(lostEntry);
+                  }
+                } catch (err) {
+                  const detail = err instanceof Error ? err.message : String(err);
+                  return await errorTermination(
+                    step,
+                    new Error(
+                      `record_persist_failed: session_continuity_lost: ${detail}`,
+                    ),
+                    { cause: "record_persist_failed" },
+                  );
                 }
-              } catch (err) {
-                console.warn(
-                  `[orchestrator] session_continuity_lost ledger write failed (fail-open): ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-                );
+                ledger.push(lostEntry);
               }
             }
             resumeFor = undefined;
@@ -4258,7 +4270,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               const relayBrief = relayBriefForDispatch(step);
               const priorJudgeVerdicts = isJudgeSeat({ step }) || step === "S5"
-                ? priorJudgeVerdictRowsFromLedger(ledger)
+                ? priorJudgeVerdictRowsFromLedger(
+                    freshJudgeHistoryLedger ?? ledger,
+                  )
                 : undefined;
               const dispatchCtx = {
                 runId,

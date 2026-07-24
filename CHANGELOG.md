@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+## [0.43.1.0] - 2026-07-25
+
+### Fixed
+- **#1135 S6 判官模型迁移续跑**：旧判官 session 与当前 verify 席模型不兼容时，先持久化 `session_continuity_lost`，再携既判史与 owner answer 从同一 S6 边界 fresh 重开；原 scene、worktree 与已完成步骤保持不变。
+- continuity-loss 台账写入失败时改为 `record_persist_failed` 响亮终止，且不会先派出新的 S6 判官；写入后若进程中断，复飞也不会重复追加同一条 loss 记录。
+
 ## [0.43.0.0] - 2026-07-25
 
 ### Added
