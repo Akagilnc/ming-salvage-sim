@@ -24,6 +24,7 @@ import {
 } from "../modelRegistry.js";
 import type {
   CmrSkippedLeg,
+  PanelLegEvidenceCargo,
   ReviewerOutput,
   WorkerCmrReviewLeg,
   WorkerResult,
@@ -209,19 +210,6 @@ export type PanelLegsRoundResult = {
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
 };
 
-/**
- * True when at least one transport is legal ADR 0141 review paper.
- * Court-open gate: valid evidence → no reburn; absent → fan-out.
- */
-export function hasValidPanelLegTransports(
-  transports: ReadonlyArray<LegTransport> | undefined | null,
-): boolean {
-  if (transports === undefined || transports === null || transports.length === 0) {
-    return false;
-  }
-  return successfulLegsFromTransports(transports).length > 0;
-}
-
 /** Current court scope for durable panel-evidence identity (#1119 P1). */
 export type PanelLegEvidenceScope = {
   readonly familyHeadAfter?: string;
@@ -230,28 +218,36 @@ export type PanelLegEvidenceScope = {
   readonly courtGeneration: number;
 };
 
+/** Mechanical presence predicate for the two-field panel evidence cargo. */
+export function landedPanelLegEvidence(
+  evidence: PanelLegEvidenceCargo | undefined | null,
+): PanelLegEvidenceCargo | undefined {
+  if (
+    evidence?.panelLegTransports === undefined &&
+    evidence?.panelLegSkippedLegs === undefined
+  ) {
+    return undefined;
+  }
+  return evidence;
+}
+
 /**
- * #1119 — durable evidence is admissible only when full court identity matches
- * (head + barrier phase + route/leg fingerprint + generation) AND transports
- * contain legal paper. Missing identity fields fail closed (no silent reuse).
+ * #1119 — durable evidence belongs to this court only when the full identity
+ * matches and at least one official cargo class has landed. Cargo is opaque:
+ * the host neither normalizes nor judges leg paper before handing it to court.
  */
-export function admissibleDurablePanelLegTransports(
+export function admissibleDurablePanelLegEvidence(
   evidence:
-    | {
+    | (PanelLegEvidenceCargo & {
         readonly familyHeadAfter?: string;
         readonly ledgerPhase?: string;
         readonly routeFingerprint?: string;
         readonly courtGeneration?: number;
-        readonly panelLegTransports?: ReadonlyArray<{
-          readonly slug?: unknown;
-          readonly exitCode?: unknown;
-          readonly stdout?: unknown;
-        }>;
-      }
+      })
     | undefined
     | null,
   scope: PanelLegEvidenceScope,
-): ReadonlyArray<LegTransport> | undefined {
+): PanelLegEvidenceCargo | undefined {
   if (evidence === undefined || evidence === null) return undefined;
   const durableHead =
     typeof evidence.familyHeadAfter === "string"
@@ -278,11 +274,7 @@ export function admissibleDurablePanelLegTransports(
   ) {
     return undefined;
   }
-  const transports = normalizePanelLegTransportCargo(
-    evidence.panelLegTransports,
-  );
-  if (!hasValidPanelLegTransports(transports)) return undefined;
-  return transports;
+  return landedPanelLegEvidence(evidence);
 }
 
 /**
@@ -305,36 +297,6 @@ export function courtGenerationFromDurableEvidence(
 }
 
 /**
- * Normalize landing/ctx transport cargo into {@link LegTransport} rows.
- * Invalid rows are dropped (never invent legal paper).
- */
-export function normalizePanelLegTransportCargo(
-  rows:
-    | ReadonlyArray<{
-        readonly slug?: unknown;
-        readonly exitCode?: unknown;
-        readonly stdout?: unknown;
-      }>
-    | undefined
-    | null,
-): LegTransport[] {
-  if (rows === undefined || rows === null || rows.length === 0) return [];
-  const out: LegTransport[] = [];
-  for (const row of rows) {
-    if (typeof row.slug !== "string" || row.slug.trim().length === 0) continue;
-    if (typeof row.exitCode !== "number" || !Number.isFinite(row.exitCode)) {
-      continue;
-    }
-    out.push({
-      slug: row.slug.trim(),
-      exitCode: row.exitCode,
-      stdout: typeof row.stdout === "string" ? row.stdout : "",
-    });
-  }
-  return out;
-}
-
-/**
  * #1117 / #1118 / #1119 — one panel-evidence gate for first open, in-process
  * resume, and cold-start ledger re-entry.
  *
@@ -347,28 +309,21 @@ export function normalizePanelLegTransportCargo(
 export async function ensureFamilyCmrPanelEvidence(input: {
   readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
   readonly cmrPass?: IntegratedCmrPass;
-  readonly existingTransports?:
-    | ReadonlyArray<{
-        readonly slug?: unknown;
-        readonly exitCode?: unknown;
-        readonly stdout?: unknown;
-      }>
-    | undefined;
+  readonly existingEvidence?: PanelLegEvidenceCargo;
   readonly dispatch: (spec: WorkerSpec) => Promise<WorkerResult>;
-}): Promise<PanelLegsRoundResult> {
+}): Promise<PanelLegEvidenceCargo> {
   const legs = input.legs;
-  const existing = normalizePanelLegTransportCargo(input.existingTransports);
-  if (hasValidPanelLegTransports(existing)) {
-    return {
-      transports: existing,
-      skippedLegs: skippedLegsFromTransports(legs, existing),
-    };
-  }
-  return dispatchFamilyCmrPanelLegs({
+  const existing = landedPanelLegEvidence(input.existingEvidence);
+  if (existing !== undefined) return existing;
+  const dispatched = await dispatchFamilyCmrPanelLegs({
     legs,
     ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
     dispatch: input.dispatch,
   });
+  return {
+    panelLegTransports: dispatched.transports,
+    panelLegSkippedLegs: dispatched.skippedLegs,
+  };
 }
 
 /**
