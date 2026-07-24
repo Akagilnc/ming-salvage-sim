@@ -2893,8 +2893,6 @@ async function runIntegratedCmrPass(input: {
       issue: familyIssue ?? null,
       step: `cmr:${pass}`,
       verdict: judgeTraffic.status,
-      findingDispositions: judgeDispositionsForLedger,
-      findings: judgeTraffic.findings,
     });
   }
   // #1094 F4: host-mechanical skippedLegs are authoritative when panel legs

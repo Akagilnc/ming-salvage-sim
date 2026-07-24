@@ -376,7 +376,13 @@ const RECEIPT_RECOVERY_MESSAGE =
   /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i;
 
 const SESSION_CONTINUITY_LOST_MESSAGE =
-  /(?:resume(?:Session|\s+session)?|session).*?(?:not found|expired|missing|unavailable|dead)/i;
+  /(?:(?:resume(?:Session|\s+session)?|session).*?(?:not found|expired|cannot be resumed|unrecoverable)|no such session)/i;
+
+const SESSION_CONTINUITY_LOST_CODES = new Set([
+  "SESSION_NOT_FOUND",
+  "SESSION_EXPIRED",
+  "SESSION_UNRECOVERABLE",
+]);
 
 /**
  * Walk Effect/Fiber wrappers that Sandcastle may put around a native error
@@ -421,6 +427,15 @@ export function* walkErrorChain(error: unknown): Generator<unknown> {
  */
 export function isSessionContinuityLostError(error: unknown): boolean {
   for (const node of walkErrorChain(error)) {
+    if (
+      typeof node === "object" &&
+      node !== null &&
+      "code" in node &&
+      typeof node.code === "string" &&
+      SESSION_CONTINUITY_LOST_CODES.has(node.code)
+    ) {
+      return true;
+    }
     if (
       node instanceof Error &&
       SESSION_CONTINUITY_LOST_MESSAGE.test(node.message)
