@@ -65,19 +65,50 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
 
 def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
     """密令会话动作 + 调教：并发判词与串行 extract_minister_actions 同缝。"""
-    from ming_sim.cli_backend import extract_minister_actions
+    from ming_sim.cli_backend import _extract_secret_order, extract_minister_actions
 
     if ctx.out.get("pending_action_id") or ctx.out.get("secret_order_id") or ctx.explicit_prefixed:
         return
     session = ctx.session
     minister_name = ctx.character.name
+    intent = ctx.intent
+    intent_kind = ctx.intent_kind
+    if (
+        intent is not None
+        and intent_kind == "secret"
+        and intent.get("secret_action") == "新建"
+    ):
+        secret = _extract_secret_order(
+            ctx.player_message,
+            ctx.reply,
+            minister_name,
+            ctx.llm_config,
+            force_default_assignee=False,
+        )
+        ctx.conversation_intent_handled = True
+        ctx.out["pending_action_id"] = session.db.stage_pending_action(
+            session.state.turn,
+            kind="secret_order",
+            action="新建",
+            minister_name=minister_name,
+            target_id=None,
+            payload={
+                "title": secret["title"],
+                "content": secret["content"],
+                "assignee": secret.get("assignee") or minister_name,
+                "tags": secret.get("tags") or [],
+                "deadline_months": secret.get("deadline_months", 0),
+                "excluded_names": secret.get("excluded_names") or [],
+                "excluded_offices": secret.get("excluded_offices") or [],
+            },
+        )
+        return
+
     is_consort = getattr(ctx.character, "office_type", "") == "后宫"
     active = session.db.get_active_secret_orders_for_minister(minister_name)
     if not (active or is_consort):
         return
 
-    intent = ctx.intent
-    intent_kind = ctx.intent_kind
     # 仅当分类器未跑，或判为 secret/cultivate 时走抽取/物化；
     # 其它 kind 的并发判词不得串行重抽密令。
     if intent is not None and intent_kind not in ("secret", "cultivate", "none"):
@@ -324,7 +355,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "secret_action", "密令动作",
-                    frozenset({"无", "更新", "提交核议", "催办", "记进展"}), "无",
+                    frozenset({"无", "新建", "更新", "提交核议", "催办", "记进展"}), "无",
                 ),
                 FieldSpec("order_id", "目标密令编号", None, 0, as_int=True),
                 FieldSpec("new_title", "新标题", None, ""),
