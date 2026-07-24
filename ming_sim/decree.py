@@ -270,6 +270,10 @@ def resolve_directives(
     registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
+    dossier_verdicts: Optional[List[Dict[str, object]]] = None,
+    promulgation_judge: Optional[
+        Callable[[List[Dict[str, object]]], List[Dict[str, object]]]
+    ] = None,
 ) -> ResolveResult:
     """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
 
@@ -292,7 +296,11 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    if not directives:
+    pending_dossier_work = bool(db.list_decree_dossiers(status="proposed")) or any(
+        row.get("kind") == "directive"
+        for row in db.list_pending_actions(state.turn)
+    )
+    if not directives and not pending_dossier_work:
         advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
@@ -327,6 +335,36 @@ def resolve_directives(
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+
+    proposed_dossiers = db.list_decree_dossiers(status="proposed")
+    if proposed_dossiers:
+        verdict_rows = list(
+            promulgation_judge(proposed_dossiers)
+            if promulgation_judge is not None else (dossier_verdicts or [])
+        )
+        verdict_ids = {
+            int(row.get("dossier_id") or 0)
+            for row in verdict_rows if isinstance(row, dict)
+        }
+        proposed_ids = {int(row["id"]) for row in proposed_dossiers}
+        if verdict_ids != proposed_ids:
+            raise LLMContractError(
+                "颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过"
+            )
+        verdict_by_id = {
+            int(row["dossier_id"]): str(row.get("decision") or "")
+            for row in verdict_rows
+        }
+        dossier_payload = [
+            {**row, "settlement_verdict": verdict_by_id[int(row["id"])]}
+            for row in proposed_dossiers
+        ]
+        # Compatibility prose is rendered from the durable list; it is no
+        # longer an independent settlement truth.
+        decree_text = "\n".join(str(row["decree_text"]) for row in dossier_payload)
+    else:
+        verdict_rows = []
+        dossier_payload = []
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -365,7 +403,9 @@ def resolve_directives(
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
+        decree_dossiers=dossier_payload,
     )
+    simulator_payload["dossier_verdicts"] = verdict_rows
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
     )
@@ -817,6 +857,10 @@ def _settle_after_narrative(
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
         # 无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source'] 继承、不因重抽改变。
         source=source,
+        dossier_verdicts=(
+            simulator_payload.get("dossier_verdicts")
+            if isinstance(simulator_payload, dict) else None
+        ),
     )
 
 

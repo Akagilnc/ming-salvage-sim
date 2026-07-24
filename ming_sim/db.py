@@ -9432,7 +9432,13 @@ class GameDB:
     _DOSSIER_ACTION_TYPES = frozenset({
         "policy", "appointment", "assignment", "military_order",
         "grant_allocation", "authorization", "strategy_selection",
-        "secret_order",
+        "secret_order", "extraordinary_summons", "summons", "inquiry",
+        "pressure_inquiry", "approve_reject", "special_decree",
+        "acting_appointment", "secret_authorization",
+        "secret_investigation", "protection", "revoke_decree",
+        "public_support", "private_protection", "punishment",
+        "pacification", "referral", "revoke_authority",
+        "dismiss_assignment",
     })
     _DOSSIER_TRANSITIONS = {
         "proposed": frozenset({"promulgated"}),
@@ -9771,8 +9777,12 @@ class GameDB:
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        if row["status"] != "executing":
-            raise ValueError("执行格只能写入 executing 案卷")
+        immediate = False
+        if row["status"] == "promulgated":
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+            immediate = isinstance(payload, dict) and bool(payload.get("immediate_terminal"))
+        if row["status"] != "executing" and not immediate:
+            raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
         outcome = str(outcome or "").strip()
         if not outcome:
             raise ValueError("执行 outcome 不能为空")
@@ -9877,9 +9887,6 @@ class GameDB:
                 ):
                     raise ValueError("授权案卷载荷物化失败")
             if bool(payload.get("immediate_terminal")):
-                self.transition_decree_dossier(
-                    dossier_id, "executing", commit=False,
-                )
                 self.record_dossier_execution(
                     dossier_id, "completed", "颁布即终局", state.turn,
                     close=True, commit=False,

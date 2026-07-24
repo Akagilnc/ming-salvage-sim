@@ -435,6 +435,7 @@ def build_simulator_payload(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
+    decree_dossiers: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
@@ -512,6 +513,9 @@ def build_simulator_payload(
         "year": state.year,
         "period": state.period,
         "decree_text": decree_text,
+        # ADR 0051/0055: structured dossier rows are the source; decree_text is
+        # only a compatibility rendering derived by the settlement caller.
+        "decree_dossiers": decree_dossiers or [],
         "current_state": dict(state.metrics),
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
