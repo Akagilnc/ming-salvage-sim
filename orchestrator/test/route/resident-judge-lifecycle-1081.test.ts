@@ -658,24 +658,83 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           ctx: backend.ctxs[0],
         }).toMatchObject({
           status: "completed",
-          lost: [{
-            step: "S6",
-            sessionId: oldJudgeSession,
-            fromModelId: "gpt-5.6-sol",
-            toModelId: "gpt-5.6-sol-high",
-          }],
+          lost: [
+            {
+              step: "S6",
+              sessionId: oldJudgeSession,
+              fromModelId: "gpt-5.6-sol",
+              toModelId: "gpt-5.6-sol-high",
+            },
+          ],
           specs: [{ id: "S6", model: "gpt-5.6-sol-high", session: "fresh" }],
           ctx: {
             worktree: WORKTREE,
             escalationAnswer: { forStep: "S6", answer: ownerAnswer },
-            priorJudgeVerdicts: [{
-              step: "S3",
-              sessionId: oldJudgeSession,
-              status: "continue",
-            }],
+            priorJudgeVerdicts: [
+              {
+                step: "S3",
+                sessionId: oldJudgeSession,
+                status: "continue",
+              },
+              {
+                step: "S6",
+                sessionId: oldJudgeSession,
+                status: "escalate",
+              },
+            ],
           },
         });
         expect(backend.ctxs[0]?.resumeSessionId).toBeUndefined();
+
+        const matchingLoss = persisted({
+          event: "session_continuity_lost",
+          step: "S6",
+          sessionId: oldJudgeSession,
+          fromModelId: "gpt-5.6-sol",
+          toModelId: "gpt-5.6-sol-high",
+          reason:
+            "model_mismatch (session=gpt-5.6-sol, seat=gpt-5.6-sol-high)",
+        });
+        const crashResumeLedger = [...priorLedger, matchingLoss];
+        const crashResumeBackend = new LifecycleBackend(
+          [completedJudge(judgeConverged())],
+          undefined,
+          {
+            resumeState: {
+              worktree: WORKTREE,
+              stateDir: "/resident/worktrees/.ledger-1135",
+              ledger: crashResumeLedger,
+            },
+          },
+        );
+        const crashResumed = await runOrchestrator({
+          issueNumber: 1135,
+          backend: crashResumeBackend,
+        });
+        expect({
+          status: crashResumed.status,
+          durableLosses: [
+            ...crashResumeLedger,
+            ...crashResumeBackend.ledgerWrites,
+          ].filter((entry) => entry.event === "session_continuity_lost"),
+          newLossWrites: crashResumeBackend.ledgerWrites.filter(
+            (entry) => entry.event === "session_continuity_lost",
+          ),
+          freshS6Dispatches: crashResumeBackend.specs.filter(
+            (spec) => spec.id === "S6" && spec.session === "fresh",
+          ),
+        }).toMatchObject({
+          status: "completed",
+          durableLosses: [matchingLoss],
+          newLossWrites: [],
+          freshS6Dispatches: [
+            {
+              id: "S6",
+              model: "gpt-5.6-sol-high",
+              session: "fresh",
+            },
+          ],
+        });
 
         const writeFailureBackend = new LifecycleBackend([], undefined, {
           resumeState: await backend.findResumeState(),
