@@ -30,7 +30,11 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
-import type { IntegratedCmrPass } from "./types.js";
+import type {
+  FamilyPanelLegEvidence,
+  IntegratedCmrPass,
+  PanelLegEvidenceIdentity,
+} from "./types.js";
 
 /** Completeness-pass panel-leg prompt (Clause–Wire–Exercise). */
 export const CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE =
@@ -210,25 +214,17 @@ export type PanelLegsRoundResult = {
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
 };
 
-/** Current court scope for durable panel-evidence identity (#1119 P1). */
-export type PanelLegEvidenceScope = {
-  readonly familyHeadAfter?: string;
-  readonly ledgerPhase: "final" | "correctness_checkpoint";
-  readonly routeFingerprint: string;
-  readonly courtGeneration: number;
-};
-
 /** Mechanical presence predicate for the two-field panel evidence cargo. */
 export function landedPanelLegEvidence(
   evidence: PanelLegEvidenceCargo | undefined | null,
 ): PanelLegEvidenceCargo | undefined {
   if (
-    evidence?.panelLegTransports === undefined &&
-    evidence?.panelLegSkippedLegs === undefined
+    (evidence?.panelLegTransports?.length ?? 0) === 0 &&
+    (evidence?.panelLegSkippedLegs?.length ?? 0) === 0
   ) {
     return undefined;
   }
-  return evidence;
+  return evidence ?? undefined;
 }
 
 /**
@@ -237,26 +233,17 @@ export function landedPanelLegEvidence(
  * the host neither normalizes nor judges leg paper before handing it to court.
  */
 export function admissibleDurablePanelLegEvidence(
-  evidence:
-    | (PanelLegEvidenceCargo & {
-        readonly familyHeadAfter?: string;
-        readonly ledgerPhase?: string;
-        readonly routeFingerprint?: string;
-        readonly courtGeneration?: number;
-      })
-    | undefined
-    | null,
-  scope: PanelLegEvidenceScope,
+  evidence: FamilyPanelLegEvidence | undefined | null,
+  scope: PanelLegEvidenceIdentity | undefined,
 ): PanelLegEvidenceCargo | undefined {
-  if (evidence === undefined || evidence === null) return undefined;
+  if (evidence === undefined || evidence === null || scope === undefined) {
+    return undefined;
+  }
   const durableHead =
     typeof evidence.familyHeadAfter === "string"
       ? evidence.familyHeadAfter.trim()
       : "";
-  const currentHead =
-    typeof scope.familyHeadAfter === "string"
-      ? scope.familyHeadAfter.trim()
-      : "";
+  const currentHead = scope.familyHeadAfter.trim();
   if (durableHead.length === 0 || currentHead.length === 0) return undefined;
   if (durableHead !== currentHead) return undefined;
   if (evidence.ledgerPhase !== scope.ledgerPhase) return undefined;

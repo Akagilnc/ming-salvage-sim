@@ -663,13 +663,25 @@ export class RealFamilyBackend implements FamilyBackend {
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed === null || typeof parsed !== "object") return undefined;
-      return parsed as FamilyPanelLegEvidence;
-    } catch {
-      return undefined;
+      parsed = JSON.parse(raw) as unknown;
+    } catch (err) {
+      throw new Error(
+        `readFamilyPanelLegEvidence: invalid JSON at ${path} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error(
+        `readFamilyPanelLegEvidence: expected object at ${path}`,
+      );
+    }
+    return parsed as FamilyPanelLegEvidence;
   }
 
   async writeFamilyPanelLegEvidence(

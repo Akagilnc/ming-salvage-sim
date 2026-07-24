@@ -19,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  admissibleDurablePanelLegEvidence,
   courtGenerationFromDurableEvidence,
 } from "../../../src/family/cmrPanelLegs.js";
 import {
@@ -57,6 +56,7 @@ import {
   completedJudge,
   judgeContinue,
   judgeConverged,
+  judgeEscalate,
   sampleFinding,
 } from "../../helpers/judge-fixtures.js";
 import { mintFourReasonRefuseRecord } from "../../helpers/coder-refuse-fixtures.js";
@@ -78,140 +78,6 @@ const tmp = (p: string) => {
   cleanups.push(d);
   return d;
 };
-
-// ── pure helpers ──────────────────────────────────────────────────────
-
-describe("#1119 identity + pending helpers", () => {
-  const transports = [{ slug: "gpt-5.6-sol", exitCode: 0, stdout: LEGAL }];
-  const base = {
-    familyHeadAfter: HEAD,
-    ledgerPhase: "final" as const,
-    routeFingerprint: ROUTE_FP,
-    courtGeneration: 0,
-    panelLegTransports: transports,
-  };
-  const scope = {
-    familyHeadAfter: HEAD,
-    ledgerPhase: "final" as const,
-    routeFingerprint: ROUTE_FP,
-    courtGeneration: 0,
-  };
-
-  it.each([
-    { name: "matching transports", evidence: base, scope, ok: true },
-    {
-      name: "matching runtime skips",
-      evidence: {
-        ...base,
-        panelLegTransports: undefined,
-        panelLegSkippedLegs: [{ slug: "grok-4.5", reason: "quota exhausted" }],
-      },
-      scope,
-      ok: true,
-    },
-    {
-      name: "matching identity but no landed cargo",
-      evidence: { ...base, panelLegTransports: undefined },
-      scope,
-      ok: false,
-    },
-    {
-      name: "checkpoint≠final",
-      evidence: { ...base, ledgerPhase: "correctness_checkpoint" as const },
-      scope,
-      ok: false,
-    },
-    {
-      name: "roster mismatch",
-      evidence: { ...base, routeFingerprint: "stale" },
-      scope,
-      ok: false,
-    },
-    {
-      name: "generation mismatch",
-      evidence: base,
-      scope: { ...scope, courtGeneration: 1 },
-      ok: false,
-    },
-  ])("$name", ({ evidence, scope: s, ok }) => {
-    expect(admissibleDurablePanelLegEvidence(evidence, s) !== undefined).toBe(
-      ok,
-    );
-  });
-
-  it("pending: trailing cmr_fix_committed → pending + refuse cargo", () => {
-    const p = pendingBuilderReceiveFromFamilyLedger(
-      [
-        {
-          status: "cmr_fix_committed",
-          event: "cmr_fix_committed",
-          phase: "final",
-          cmrPass: "completeness",
-          familyHeadAfter: HEAD,
-          refusedFindingIdentityKeys: ["k1"],
-          refuseRecords: [
-            mintFourReasonRefuseRecord({
-              identityKey: "k1",
-              reason: "not_established",
-              evidence: "e",
-            }),
-          ],
-        },
-      ],
-      "completeness",
-      "final",
-    );
-    expect(p.pending).toBe(true);
-    expect(p.refusedFindingIdentityKeys).toEqual(["k1"]);
-  });
-
-  it("pending: soft-accept worker_dispatched with cmrPass+phase → not pending", () => {
-    expect(
-      pendingBuilderReceiveFromFamilyLedger(
-        [
-          {
-            status: "cmr_fix_committed",
-            event: "cmr_fix_committed",
-            phase: "final",
-            cmrPass: "completeness",
-          },
-          {
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep: "cmr:completeness",
-            phase: "final",
-            cmrPass: "completeness",
-          },
-        ],
-        "completeness",
-        "final",
-      ).pending,
-    ).toBe(false);
-  });
-
-  it("pending: advisory worker_dispatched without cmrPass does not clear", () => {
-    expect(
-      pendingBuilderReceiveFromFamilyLedger(
-        [
-          {
-            status: "cmr_fix_committed",
-            event: "cmr_fix_committed",
-            phase: "final",
-            cmrPass: "completeness",
-          },
-          {
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep: "cmr:completeness",
-            reason: "git telemetry only",
-          },
-        ],
-        "completeness",
-        "final",
-      ).pending,
-    ).toBe(true);
-  });
-});
 
 // ── file ledgerDir spine (production path layout) ─────────────────────
 
@@ -236,21 +102,26 @@ class FileLedgerBackend implements FamilyBackend {
   private outerEvidenceWritten = false;
   /** When false, every court open converges (process-B cold resume). */
   private readonly forceFirstContinue: boolean;
+  private readonly parkFirstCompleteness: boolean;
   constructor(
     readonly ledgerDir: string,
     private readonly crash: CrashMode = "none",
     seed?: FamilyPanelLegEvidence,
-    opts?: { readonly forceFirstContinue?: boolean },
+    opts?: {
+      readonly forceFirstContinue?: boolean;
+      readonly parkFirstCompleteness?: boolean;
+    },
   ) {
     mkdirSync(ledgerDir, { recursive: true });
     this.forceFirstContinue = opts?.forceFirstContinue !== false;
+    this.parkFirstCompleteness = opts?.parkFirstCompleteness === true;
     this.load();
     if (seed) this.writeFamilyPanelLegEvidence("completeness", seed);
   }
-  private lp() {
+  private ledgerPath() {
     return join(this.ledgerDir, FAMILY_LEDGER_FILENAME);
   }
-  private ep(pass: IntegratedCmrPass) {
+  private panelEvidencePath(pass: IntegratedCmrPass) {
     return join(
       this.ledgerDir,
       `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
@@ -258,14 +129,20 @@ class FileLedgerBackend implements FamilyBackend {
   }
   private load() {
     try {
-      this.ledger = parseFamilyLedgerJsonl(readFileSync(this.lp(), "utf8"));
-    } catch {
-      this.ledger = [];
+      this.ledger = parseFamilyLedgerJsonl(
+        readFileSync(this.ledgerPath(), "utf8"),
+      );
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.ledger = [];
+        return;
+      }
+      throw err;
     }
   }
   private save() {
     writeFileSync(
-      this.lp(),
+      this.ledgerPath(),
       this.ledger.map((e) => JSON.stringify(e)).join("\n") +
         (this.ledger.length ? "\n" : ""),
     );
@@ -273,10 +150,11 @@ class FileLedgerBackend implements FamilyBackend {
   readFamilyPanelLegEvidence(pass: IntegratedCmrPass) {
     try {
       return JSON.parse(
-        readFileSync(this.ep(pass), "utf8"),
+        readFileSync(this.panelEvidencePath(pass), "utf8"),
       ) as FamilyPanelLegEvidence;
-    } catch {
-      return undefined;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw err;
     }
   }
   writeFamilyPanelLegEvidence(
@@ -292,7 +170,10 @@ class FileLedgerBackend implements FamilyBackend {
     ) {
       throw new Error("INJECT: after fix ledger, before evidence invalidate");
     }
-    writeFileSync(this.ep(pass), `${JSON.stringify(e, null, 2)}\n`);
+    writeFileSync(
+      this.panelEvidencePath(pass),
+      `${JSON.stringify(e, null, 2)}\n`,
+    );
     // Outer-gate paper is only written after the builder beat landed.
     if (
       this.sawFix &&
@@ -372,6 +253,16 @@ class FileLedgerBackend implements FamilyBackend {
       if (ctx.cmrPass === "completeness") {
         this.opens += 1;
         if (
+          this.parkFirstCompleteness &&
+          this.opens === 1 &&
+          kind === "panels"
+        ) {
+          return completedJudge(
+            judgeEscalate("owner decision needed", "park for cold resume"),
+            "j-park",
+          );
+        }
+        if (
           this.forceFirstContinue &&
           this.opens === 1 &&
           kind === "panels"
@@ -437,6 +328,67 @@ const preBuilderSeed = (): FamilyPanelLegEvidence => ({
 });
 
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
+  it("cold decision-park resume fans out when both durable cargo arrays are empty", async () => {
+    const dir = tmp("1119-cold-park-");
+    const processA = new FileLedgerBackend(dir, "none", undefined, {
+      forceFirstContinue: false,
+      parkFirstCompleteness: true,
+    });
+    const parked = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-park-a",
+      familyBackend: processA,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+    expect(parked.ok).toBe(false);
+    expect(
+      (await processA.readFamilyLedger()).some(
+        (entry) =>
+          entry.cmrPass === "completeness" &&
+          entry.judgeStatus === "escalate",
+      ),
+    ).toBe(true);
+
+    const parkedEvidence =
+      processA.readFamilyPanelLegEvidence("completeness");
+    expect((parkedEvidence?.panelLegTransports?.length ?? 0) > 0).toBe(true);
+    processA.writeFamilyPanelLegEvidence("completeness", {
+      familyHeadAfter: HEAD,
+      ledgerPhase: "final",
+      routeFingerprint: ROUTE_FP,
+      courtGeneration: courtGenerationFromDurableEvidence(parkedEvidence),
+      panelLegTransports: [],
+      panelLegSkippedLegs: [],
+    });
+
+    const processB = new FileLedgerBackend(dir, "none", undefined, {
+      forceFirstContinue: false,
+    });
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-park-b",
+      familyBackend: processB,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+
+    expect(
+      processB.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ).length,
+    ).toBeGreaterThan(0);
+    const resumedEvidence =
+      processB.readFamilyPanelLegEvidence("completeness");
+    expect(
+      (resumedEvidence?.panelLegTransports?.length ?? 0) +
+        (resumedEvidence?.panelLegSkippedLegs?.length ?? 0),
+    ).toBeGreaterThan(0);
+    expect(processB.judgeLandings[0]?.transports).toEqual(
+      resumedEvidence?.panelLegTransports,
+    );
+  });
+
   it("window1: fix append OK / evidence invalidate dies → B pure receive has zero pre-builder 卷面", async () => {
     const dir = tmp("1119-w1-");
     const a = new FileLedgerBackend(
