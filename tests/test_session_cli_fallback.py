@@ -2073,7 +2073,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
 
     def fake_draft(player_message, reply, **kwargs):
         called.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+            "dossier_action_type": "assignment",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -2114,7 +2118,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
 
     def fake_draft(player_message, reply, **kwargs):
         fed_existing.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+            "dossier_action_type": "assignment",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
