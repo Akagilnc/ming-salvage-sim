@@ -1660,19 +1660,26 @@ class GameSession:
                 }
                 return True
             if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+                semantic_payload = {
+                    "text": draft_res["draft_text"],
+                    "actor": minister_name,
+                    "dossier_action_type": draft_res.get("dossier_action_type") or "policy",
+                    "target_kind": draft_res.get("target_kind") or "policy",
+                    "target_id": draft_res.get("target_id") or "narrative",
+                }
                 _target = str(draft_res.get("target_candidate") or "")
                 _target_id = int(_target) if _target.isdigit() else None
                 if _dir_candidates and _target == "新":
                     # 新拟独立一道 → INSERT 新候选，不并进任一现有候选（AC1）。
                     out["pending_action_id"] = self.db.stage_directive_candidate(
                         self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                 elif _target_id is not None and any(c["id"] == _target_id for c in _dir_candidates):
                     # 补充/改草某一道 → 原地更新那道候选正文（不冻结、不新增行；AC2）。
                     out["pending_action_id"] = self.db.update_directive_candidate(
                         _target_id,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                 elif _committed_draft is not None and not _has_pending_draft:
                     did = int(_committed_draft["id"])
@@ -1686,7 +1693,7 @@ class GameSession:
                 else:
                     pid = self.db.upsert_pending_directive(
                         self.state.turn, minister_name,
-                        payload={"text": draft_res["draft_text"], "actor": minister_name},
+                        payload=semantic_payload,
                     )
                     out["pending_action_id"] = pid
                 return True

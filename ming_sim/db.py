@@ -1032,6 +1032,7 @@ class GameDB:
                 purpose TEXT,
                 target_kind TEXT,
                 target_id TEXT,
+                dossier_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -1811,6 +1812,7 @@ class GameDB:
         self.ensure_column("economy_ledger", "purpose", "TEXT")
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
+        self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
@@ -9461,9 +9463,6 @@ class GameDB:
     _DOSSIER_EXECUTION_OUTCOMES = frozenset({
         "executing", "fulfilled", "degraded", "failed", "transformed",
     })
-    _DOSSIER_MATERIALIZERS = frozenset({
-        "appointment", "assignment", "grant_allocation", "authorization",
-    })
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9847,13 +9846,15 @@ class GameDB:
 
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
+        blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
         content=None, registry=None,
     ) -> None:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
         with atomic(self):
             if decision not in {"promulgated", "force_promulgated"}:
                 self.record_dossier_decision(
-                    dossier_id, decision, commit=False,
+                    dossier_id, decision, blocked_layer=blocked_layer,
+                    reason=reason, legal_reason_code=legal_reason_code, commit=False,
                 )
                 return
             row = self.get_decree_dossier(dossier_id)
@@ -9887,7 +9888,8 @@ class GameDB:
                 )
             else:
                 self.record_dossier_decision(
-                    dossier_id, "promulgated", commit=False,
+                    dossier_id, "promulgated", blocked_layer=blocked_layer,
+                    reason=reason, legal_reason_code=legal_reason_code, commit=False,
                 )
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
@@ -9921,6 +9923,7 @@ class GameDB:
                     purpose=str(payload.get("purpose") or "") or None,
                     target_kind=str(payload.get("target_kind") or "") or None,
                     target_id=str(payload.get("target_id") or "") or None,
+                    dossier_id=int(dossier_id),
                     commit=False,
                 )
             elif row["action_type"] == "authorization":
@@ -9958,6 +9961,9 @@ class GameDB:
                     state,
                     int(verdict.get("dossier_id") or 0),
                     str(verdict.get("decision") or ""),
+                    blocked_layer=str(verdict.get("blocked_layer") or ""),
+                    reason=str(verdict.get("reason") or ""),
+                    legal_reason_code=str(verdict.get("legal_reason_code") or ""),
                     content=content,
                     registry=registry,
                 )
@@ -11922,6 +11928,7 @@ class GameDB:
         purpose: str | None = None,
         target_kind: str | None = None,
         target_id: str | None = None,
+        dossier_id: int | None = None,
         commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
@@ -11952,16 +11959,24 @@ class GameDB:
             """
             INSERT INTO economy_ledger
             (turn, year, period, account, delta, balance_after, category, reason,
-             event_id, edict_id, actor, purpose, target_kind, target_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?)
+             event_id, edict_id, actor, purpose, target_kind, target_id,dossier_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, ?)
             """,
             (state.turn, state.year, state.period, account, actual, after,
-             category, reason, purpose, target_kind, target_id),
+             category, reason, purpose, target_kind, target_id, dossier_id),
         )
         self.sync_economy_accounts(state)
         if commit:
             self.conn.commit()
         return actual
+
+    def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        return [
+            dict(row) for row in self.conn.execute(
+                "SELECT * FROM economy_ledger WHERE dossier_id=? ORDER BY id",
+                (int(dossier_id),),
+            ).fetchall()
+        ]
 
     def kv_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()

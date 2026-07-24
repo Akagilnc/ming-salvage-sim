@@ -1061,9 +1061,11 @@ def extract_draft_intent(
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
-        '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
-        if _supplement_mode else
-        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        '  "拟旨意图": "无|拟旨",\n'
+        '  "动作类型": "policy|assignment|grant_allocation|authorization|punishment|'
+        'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment",\n'
+        '  "目标类型": "policy|character|office|army|region|issue|account",\n'
+        '  "目标ID": ""\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -1112,6 +1114,18 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    dossier_action = str(obj.get("动作类型") or "policy").strip()
+    allowed_actions = {
+        "policy", "assignment", "grant_allocation", "authorization", "punishment",
+        "pacification", "referral", "revoke_decree", "revoke_authority",
+        "dismiss_assignment",
+    }
+    if dossier_action not in allowed_actions:
+        dossier_action = "policy"
+    target_kind = str(obj.get("目标类型") or "policy").strip()
+    if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
+        target_kind = "policy"
+    target_id_value = str(obj.get("目标ID") or "narrative").strip() or "narrative"
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
@@ -1121,7 +1135,9 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": ""}
+        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+                "dossier_action_type": dossier_action,
+                "target_kind": target_kind, "target_id": target_id_value}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1147,7 +1163,11 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {"draft_action": _action, "draft_text": draft_text, "target_candidate": target}
+    return {
+        "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
+        "dossier_action_type": dossier_action,
+        "target_kind": target_kind, "target_id": target_id_value,
+    }
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，

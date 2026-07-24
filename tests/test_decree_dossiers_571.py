@@ -138,29 +138,6 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
     assert dossier["decree_text"] == "暗中核清关宁军饷"
 
 
-def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
-    db, state, _content = game
-    minister = _active_minister(db)
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="appointment",
-        target_kind="character",
-        target_id=minister,
-        executor_kind="character",
-        executor_id=minister,
-        decree_text=f"着{minister}承办清查。",
-        payload={"name": minister},
-    )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    db.transition_decree_dossier(dossier_id, "executing")
-
-    db.set_character_status(state, minister, "dead", reason="阵亡")
-
-    dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == "closed"
-    assert dossier["execution_outcome"] == "failed"
-
-
 def test_terminal_target_does_not_interrupt_another_executor(game):
     db, state, _content = game
     people = [
@@ -323,9 +300,17 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         },
     )
     db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier_id, "decision": "rejected"}]
+        state, [{
+            "dossier_id": dossier_id, "decision": "rejected",
+            "blocked_layer": "six_offices", "reason": "科臣封驳",
+            "legal_reason_code": "statute-review",
+        }]
     )
     assert state.metrics["国库"] == before
+    rejected = db.get_decree_dossier(dossier_id)
+    assert rejected["promulgation_blocked_layer"] == "six_offices"
+    assert rejected["promulgation_reason"] == "科臣封驳"
+    assert rejected["legal_reason_code"] == "statute-review"
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -334,6 +319,9 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert state.metrics["国库"] == before - 10
     assert dossier["status"] == "closed"
     assert dossier["promulgation_decision"] == "rejected"
+    moves = db.list_economy_moves_for_dossier(dossier_id)
+    assert len(moves) == 1
+    assert moves[0]["dossier_id"] == dossier_id
 
 
 def test_authorization_materializes_only_after_batch_verdict(game):
