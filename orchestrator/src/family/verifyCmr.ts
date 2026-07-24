@@ -78,7 +78,6 @@ import {
   courtGenerationFromDurableEvidence,
   ensureFamilyCmrPanelEvidence,
   landedPanelLegEvidence,
-  skippedLegsFromTransports,
 } from "./cmrPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
@@ -2812,21 +2811,16 @@ async function runIntegratedCmrPass(input: {
         );
       },
     });
-    // Preserve landed runtime skips verbatim. After a fresh fan-out, derive the
-    // same host-mechanical reasons once and hand them to the judge as evidence.
-    const hostSkippedLegs =
-      panelRound.panelLegSkippedLegs ??
-      skippedLegsFromTransports(
-        frozenLegs,
-        panelRound.panelLegTransports ?? [],
-      );
-    // Canonical landing cargo for transports + host skip reasons.
+    // Preserve producer-authored runtime skips verbatim. Transports-only cold
+    // cargo stays transports-only; the host never reparses its prose.
+    const hostSkippedLegs = panelRound.panelLegSkippedLegs;
+    // Canonical landing cargo for transports + explicit producer skip reasons.
     const panelLanding: WorkerLandingPayload = {
       ...(refuseReopenLanding ?? {}),
       ...(panelRound.panelLegTransports !== undefined
         ? { panelLegTransports: panelRound.panelLegTransports }
         : {}),
-      ...(hostSkippedLegs.length > 0
+      ...(hostSkippedLegs !== undefined && hostSkippedLegs.length > 0
         ? {
             panelLegSkippedLegs: hostSkippedLegs.map((leg) => ({
               slug: leg.slug,
@@ -3044,9 +3038,9 @@ async function runIntegratedCmrPass(input: {
       findings: judgeTraffic.findings,
     });
   }
-  // #1094 F4: host-mechanical skippedLegs are authoritative when panel legs
-  // were fan-out (including empty = none skipped). Judge cargo is fallback only
-  // when no legs were declared.
+  // #1094 F4: producer-authored skippedLegs are authoritative when panel legs
+  // were declared (including undefined for transports-only cold cargo). Judge
+  // cargo is fallback only when no legs were declared.
   const cargoSource =
     rawOutput !== null && typeof rawOutput === "object"
       ? (rawOutput as {
@@ -3057,7 +3051,7 @@ async function runIntegratedCmrPass(input: {
         })
       : undefined;
   const skippedLegs =
-    frozenLegs.length > 0 ? [...hostSkippedLegs] : cargoSource?.skippedLegs;
+    frozenLegs.length > 0 ? hostSkippedLegs : cargoSource?.skippedLegs;
 
   // #1085 / #1080: sole production edge source = shared hub table
   // (isomorphic with per-slice route.ts → routeResidentJudgeHub and wave
@@ -3508,8 +3502,12 @@ async function runIntegratedCmrPass(input: {
 type PendingBuilderReceiveHydration = {
   readonly familyHeadAfter?: string;
   readonly receiveBuilderBeat: boolean;
-  readonly refusedFindingIdentityKeys?: readonly string[];
-  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
+  readonly refusedFindingIdentityKeysByPass: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
+  readonly refuseRecordsByPass: Partial<
+    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
+  >;
 };
 
 async function hydratePendingBuilderReceive(input: {
@@ -3529,14 +3527,14 @@ async function hydratePendingBuilderReceive(input: {
         ? pending.familyHeadAfter
         : input.familyHeadAfter,
     receiveBuilderBeat: pending.pending,
-    ...(pending.refusedFindingIdentityKeys !== undefined
-      ? {
-          refusedFindingIdentityKeys: pending.refusedFindingIdentityKeys,
-        }
-      : {}),
-    ...(pending.refuseRecords !== undefined
-      ? { refuseRecords: pending.refuseRecords }
-      : {}),
+    refusedFindingIdentityKeysByPass:
+      pending.refusedFindingIdentityKeys !== undefined
+        ? { [input.pass]: pending.refusedFindingIdentityKeys }
+        : {},
+    refuseRecordsByPass:
+      pending.refuseRecords !== undefined
+        ? { [input.pass]: pending.refuseRecords }
+        : {},
   };
 }
 
@@ -3596,18 +3594,10 @@ async function runCorrectnessCourtLoop(input: {
   // durable cmr_fix_committed (#1119) — not process memory alone.
   let refusedFindingIdentityKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
-  > =
-    pendingReceive.refusedFindingIdentityKeys !== undefined
-      ? {
-          correctness: pendingReceive.refusedFindingIdentityKeys,
-        }
-      : {};
+  > = pendingReceive.refusedFindingIdentityKeysByPass;
   let refuseRecordsByPass: Partial<
     Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-  > =
-    pendingReceive.refuseRecords !== undefined
-      ? { correctness: pendingReceive.refuseRecords }
-      : {};
+  > = pendingReceive.refuseRecordsByPass;
   // #1085 / #1080: post-builder open is pure-judge receive (skip panels).
   // That flag is a one-shot for the immediate receive step only — when pure
   // receive soft-accepts (needsFreshOuterGate), clear it so the next open
@@ -3968,18 +3958,14 @@ export async function runVerifyCmr(
   });
   let completenessFamilyHeadAfter = pendingReceive.familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
-  if (pendingReceive.refusedFindingIdentityKeys !== undefined) {
-    refusedFindingIdentityKeysByPass = {
-      ...refusedFindingIdentityKeysByPass,
-      completeness: pendingReceive.refusedFindingIdentityKeys,
-    };
-  }
-  if (pendingReceive.refuseRecords !== undefined) {
-    refuseRecordsByPass = {
-      ...refuseRecordsByPass,
-      completeness: pendingReceive.refuseRecords,
-    };
-  }
+  refusedFindingIdentityKeysByPass = {
+    ...refusedFindingIdentityKeysByPass,
+    ...pendingReceive.refusedFindingIdentityKeysByPass,
+  };
+  refuseRecordsByPass = {
+    ...refuseRecordsByPass,
+    ...pendingReceive.refuseRecordsByPass,
+  };
   // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
   // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
   let completenessReceiveBuilderBeat = pendingReceive.receiveBuilderBeat;

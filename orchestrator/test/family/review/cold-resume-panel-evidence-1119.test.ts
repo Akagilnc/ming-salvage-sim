@@ -466,6 +466,17 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       ),
     ).toBe(false);
     const gen = courtGenerationFromDurableEvidence(mid);
+    const transportOnlyEvidence = {
+      ...mid,
+      panelLegTransports: [
+        {
+          slug: "gpt-5.6-sol",
+          exitCode: 1,
+          stdout: "opaque review prose carried for the judge",
+        },
+      ],
+    };
+    a.writeFamilyPanelLegEvidence("completeness", transportOnlyEvidence);
     // Soft-accept completion marker must be durable.
     const ledger = await a.readFamilyLedger();
     expect(
@@ -492,7 +503,10 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     // First completeness open on B is panel-backed reuse (not pure re-receive).
     expect(b.judgeLandings[0]?.kind).toBe("panels");
     expect(b.judgeLandings[0]?.hasPreBuilder).toBeFalsy();
-    expect(b.judgeLandings[0]?.transports).toEqual(mid?.panelLegTransports);
+    expect(b.judgeLandings[0]?.transports).toEqual(
+      transportOnlyEvidence.panelLegTransports,
+    );
+    expect(b.judgeLandings[0]?.skippedLegs).toBeUndefined();
   });
 
   it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
