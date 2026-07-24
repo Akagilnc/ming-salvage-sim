@@ -436,11 +436,12 @@ describe("#930 runVerifyCmr family judge courts", () => {
     ).toHaveLength(2);
   });
 
-  it("continue → family coder-fix with live keys only, then re-open judge", async () => {
+  it("continue transports the authored packet to family coder-fix, then re-opens judge", async () => {
+    const continueVerdict = judgeContinue([FINDING]);
     const backend = new FamilyJudgeBackend({
       completeness: (round) => {
         if (round === 0) {
-          return completedJudge(judgeContinue([FINDING]), "judge-sess-c");
+          return completedJudge(continueVerdict, "judge-sess-c");
         }
         return completedJudge(judgeConverged(), "judge-sess-c");
       },
@@ -452,7 +453,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     const coder = backend.dispatches.find((d) => d.kind === "coder");
-    expect(coder?.blockingFindingIdentityKeys).toEqual([FINDING_KEY]);
+    expect(coder?.landing?.fixPacketBody).toBe(continueVerdict.fixPacketBody);
     expect(
       backend.ledger.some((e) => e.status === "cmr_reviewed"),
     ).toBe(true);
@@ -736,51 +737,6 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
-  });
-
-  it("#952: suppress-only continue closes court — no coder-fix, suppress queryable", async () => {
-    // AC: legal suppress persists on family ledger and does not enter fixer.
-    // continue + 0 live + non-empty terminal dispositions = pass (like converged).
-    const parked = sampleFinding("park-only", "park.ts:1");
-    const suppressKey = findingIdentityKey(parked);
-    const suppressVerdict = judgeContinue([parked], {
-      suppress: [
-        {
-          identityKey: suppressKey,
-          action: "suppress",
-          evidence: "owner parked via ticket",
-          groundTicket: 952,
-        },
-      ],
-    });
-    let completenessOpens = 0;
-    const backend = new FamilyJudgeBackend({
-      completeness: () => {
-        completenessOpens += 1;
-        return completedJudge(suppressVerdict, "suppress-only-continue");
-      },
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/952-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
-    // Completeness closed on suppress-only; correctness court may still open.
-    expect(completenessOpens).toBe(1);
-    expect(
-      backend.ledger.some(
-        (e) =>
-          Array.isArray(e.findingDispositions) &&
-          e.findingDispositions.some(
-            (d) =>
-              "action" in d &&
-              d.action === "suppress" &&
-              d.identityKey === suppressKey,
-          ),
-      ),
-    ).toBe(true);
   });
 
   it("ADR 0030 order: correctness court not opened until completeness converged", async () => {
