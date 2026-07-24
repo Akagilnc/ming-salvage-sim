@@ -1270,6 +1270,7 @@ class GameSession:
         from ming_sim.action_clusters import (
             EFFECT_ANSWER_EXISTING,
             cluster_effect,
+            normalize_intent_candidates,
             resolve_primary_intent,
         )
         out: Dict[str, Any] = {
@@ -1277,7 +1278,8 @@ class GameSession:
             "secret_order_id": secret_order_id,
             "pending_action_failures": [],
         }
-        intent = resolve_primary_intent(preclassified_intent)
+        intent_candidates = normalize_intent_candidates(preclassified_intent)
+        intent = resolve_primary_intent(intent_candidates)
         # intent is None only when classifier did not run; [] → primary {kind:none}.
         intent_kind = str((intent or {}).get("kind") or "none")
         minister_name = character.name
@@ -1442,6 +1444,35 @@ class GameSession:
             # 拒绝丢弃）针对的是窗前已暂存的 pending，保持可用（ship-pre r2 设计）。
             # 抽取器（LLM 调用）一并跳过。
             return out
+        active_orders = self.db.get_active_secret_orders_for_minister(minister_name)
+        is_consort = getattr(character, "office_type", "") == "后宫"
+        from ming_sim.cli_backend import cli_backend_active, cli_backend_parallel_safe
+        if (
+            intent is None
+            and not explicit_prefixed
+            and cli_backend_active(llm_config)
+            and not cli_backend_parallel_safe(llm_config)
+        ):
+            # 非并发安全 CLI runner（agy/claude）不在回话同时启动 classifier；
+            # 故回话完成后串行跑同一结构化判词缝。是否串行只由实际 runtime
+            # route 决定，不能让既有密令/妃嫔等业务状态吞掉 fresh action。
+            from ming_sim.cli_backend import classify_cli_action_intent
+
+            has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            serial_candidates = classify_cli_action_intent(
+                message_text,
+                active_orders,
+                is_consort,
+                has_pending_draft,
+                [_pending_action_brief(p) for p in confirm_targets],
+                llm_config,
+            )
+            # 空判词仍保留既有任免结构化 extractor 兜底；只有 classifier
+            # 真给出候选时才阻断后续类别专用 extractor。
+            if serial_candidates:
+                intent_candidates = serial_candidates
+                intent = resolve_primary_intent(intent_candidates)
+                intent_kind = str((intent or {}).get("kind") or "none")
         needs_draft_fallback = not has_directive and message_text.startswith(_DRAFT_PREFIXES)
         needs_secret_fallback = (
             not has_directive
@@ -1496,6 +1527,7 @@ class GameSession:
             intent=intent,
             intent_kind=intent_kind,
             llm_config=llm_config,
+            intent_candidates=intent_candidates,
         )
         run_materialize_pipeline(mat_ctx)
         return out
