@@ -174,9 +174,7 @@ describe("#924 coder station-receipt Output.object (T2 schema)", () => {
 });
 
 describe("#924 session lost degrades to fresh (run survives)", () => {
-  it("classifyResumeError maps dead session to fresh-run (negative path stays alive)", () => {
-    // Production resumeSession already falls back to runFreshAgentStep on this
-    // class — the run does not die. Pin the pure classifier contract here.
+  it("classifyResumeError distinguishes dead sessions from other failures", () => {
     expect(
       classifyResumeError(
         new Error('resumeSession "sess-coder-s2-924" not found under /tmp/sc'),

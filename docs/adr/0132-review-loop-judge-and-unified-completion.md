@@ -6,7 +6,7 @@ Status: Accepted（2026-07-15，owner 拍板；cmr 7 轮收敛，处置台账见
 
 决策清单（详文与验收真源 = PRD #919 + #918 Grill D1-D8，本页只作宪法目录户口）：
 
-- **判官身份**：reviewer 槽并入 verify——单一判官、persistent 跨轮记忆；真审卷 = 每轮 fresh 的 subagent 腿（reviewer soul 拼腿 prompt 头）。S4 机械分类站溶解为判词三态 `converged | continue | escalate`（escalate 走既有决策门停车，答后原地 resume）。
+- **判官身份**：reviewer 槽并入 verify——单一判官、persistent 跨轮记忆；真审卷 = Runner 唯一派发的每轮 fresh 腿，reviewer soul 走 provider-native instruction channel、与 task prompt 分离，腿只产 raw prose 交判官。S4 机械分类站溶解为判词三态 `converged | continue | escalate`（escalate 走既有决策门停车，答后原地 resume）。
 - **毙单权**：判官按四理由（违宪/过度防御/事实不成立/越权加戏）毙单，毙单 = findings 状态翻 refuted，仅活单送修；fixer 的 refuse 通道保留为第二道闸。
 - **机械法废除**：数量清零/轮数阈值式收敛判定、`CODER_REC_FALLBACK_AFTER_ROUNDS` 轮数推进、池隔离（pool separation）、completionSignal 全链、Ralph 多迭代预算——全数拆除。
 - **换人**：advance_coder 归判官判词；推进目标无效则留守原 coder、结果回判官桌——run 永不因顺位问题退出。

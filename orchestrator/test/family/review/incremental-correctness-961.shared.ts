@@ -15,7 +15,7 @@ import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 import { dispatchReviewLoopThroughAdmission } from "../../helpers/review-loop-admission-dispatch.js";
 
@@ -186,7 +186,7 @@ class CapableFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (this.script.worker !== undefined) {
       return this.script.worker(spec, ctx);

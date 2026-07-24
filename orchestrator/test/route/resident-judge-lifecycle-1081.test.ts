@@ -24,6 +24,7 @@ import type {
   DispatchContext,
   IssueMeta,
   PersistentLedgerEntry,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -37,6 +38,7 @@ import {
   openCourtWorkerResultIfMatch,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/orchestrator/issue-1081",
@@ -50,6 +52,7 @@ class LifecycleBackend implements Backend {
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   private judgeRound = 0;
   private openCourtFirstThrowDone = false;
+  private judgeResumeFirstThrowDone = false;
 
   constructor(
     private readonly judgeResults: ReadonlyArray<WorkerResult> = [
@@ -61,6 +64,8 @@ class LifecycleBackend implements Backend {
       /** Open-court dispatch throws instead of returning (L5 throw arm). */
       readonly openCourtThrow?: Error;
       readonly openCourtFirstThrow?: Error;
+      readonly judgeResumeFirstThrow?: Error;
+      readonly judgeResumeThrowStep?: "S3" | "S6";
       readonly issueBody?: string;
     },
   ) {}
@@ -98,9 +103,12 @@ class LifecycleBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     if (isJudgeOpenCourtSpec(spec)) {
       if (
@@ -127,8 +135,24 @@ class LifecycleBackend implements Backend {
       };
     }
     if (spec.id === "S3" || spec.id === "S6" || spec.kind === "verify") {
+      if (
+        this.opts?.judgeResumeFirstThrow !== undefined &&
+        typeof ctx.resumeSessionId === "string" &&
+        (this.opts.judgeResumeThrowStep === undefined ||
+          this.opts.judgeResumeThrowStep === spec.id) &&
+        !this.judgeResumeFirstThrowDone
+      ) {
+        this.judgeResumeFirstThrowDone = true;
+        throw this.opts.judgeResumeFirstThrow;
+      }
       const scripted = this.judgeResults[this.judgeRound];
-      this.judgeRound += 1;
+      const isContinue =
+        scripted?.kind === "completed" &&
+        scripted.output?.kind === "judge" &&
+        scripted.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -232,6 +256,35 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
         },
       ]),
     ).toEqual({ status: "open", sessionId: "j1", modelSlug: "gpt-5.4" });
+  });
+
+  it("rebuild: runner/monitor UUID never replaces resident session authority", () => {
+    expect(
+      rebuildResidentJudgeFromLedger([
+        {
+          event: "court_opened",
+          sessionId: "real-judge-session",
+          modelSlug: "gpt-5.4",
+          runId: "run-uuid",
+        },
+        {
+          step: "S6",
+          sessionId: "run-uuid",
+          runId: "run-uuid",
+          modelSlug: "gpt-5.4",
+          output: {
+            kind: "judge",
+            status: "continue",
+            findingDispositions: [],
+            fixPacketBody: "继续修",
+          },
+        },
+      ]),
+    ).toEqual({
+      status: "open",
+      sessionId: "real-judge-session",
+      modelSlug: "gpt-5.4",
+    });
   });
 
   it("require resume: open→resume; absent/model-move→establish; incapable/dismissed fail", () => {
@@ -479,6 +532,132 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     expect(lastLifecycle?.event).toBe("court_dismissed");
     // Single durable write carries both converge output and dismiss event.
     expect(lastLifecycle?.output?.kind).toBe("judge");
+    });
+  });
+
+  it("explicit judge session-not-found records continuity loss and fresh-reopens with prior verdicts", async () => {
+    await runReal(async () => {
+      const live = sampleFinding("live-after-reopen", "resume.ts:1");
+      const backend = new LifecycleBackend(
+        [
+          completedJudge(judgeContinue([live]), "fresh-judge-session"),
+          completedJudge(judgeConverged(), "fresh-judge-session"),
+        ],
+        undefined,
+        {
+          judgeResumeFirstThrow: new Error(
+            `Session resume failed: session ${OPEN_COURT_SESSION} not found`,
+          ),
+          judgeResumeThrowStep: "S6",
+        },
+      );
+
+      const result = await runOrchestrator({ issueNumber: 11281, backend });
+      expect(result.status).toBe("completed");
+
+      const lost = backend.ledgerWrites.find(
+        (entry) =>
+          entry.event === "session_continuity_lost" && entry.step === "S6",
+      );
+      expect(lost).toMatchObject({
+        event: "session_continuity_lost",
+        step: "S6",
+        sessionId: "fresh-judge-session",
+      });
+      expect(lost?.reason).toContain("not found");
+
+      const freshReopenIndex = backend.specs.findIndex(
+        (spec, index) =>
+          spec.id === "S6" &&
+          spec.session === "fresh" &&
+          (backend.ctxs[index]?.priorJudgeVerdicts?.length ?? 0) > 0,
+      );
+      expect(freshReopenIndex).toBeGreaterThanOrEqual(0);
+      expect(backend.ctxs[freshReopenIndex]?.resumeSessionId).toBeUndefined();
+    });
+  });
+
+  it("judge session service/network unavailable stays loud and never opens fresh", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend(
+        [
+          completedJudge(
+            judgeContinue([
+              sampleFinding("network-loud", "network.ts:1"),
+            ]),
+            OPEN_COURT_SESSION,
+          ),
+        ],
+        undefined,
+        {
+          judgeResumeFirstThrow: new Error(
+            "resumeSession failed: session service/network unavailable",
+          ),
+          judgeResumeThrowStep: "S6",
+        },
+      );
+
+      const result = await runOrchestrator({ issueNumber: 11283, backend });
+      expect(result.status).toBe("failed");
+      expect(
+        backend.ledgerWrites.some(
+          (entry) => entry.event === "session_continuity_lost",
+        ),
+      ).toBe(false);
+      expect(
+        backend.specs.some(
+          (spec) => spec.id === "S6" && spec.session === "fresh",
+        ),
+      ).toBe(false);
+    });
+  });
+
+  it("judge continue is transported to S5 without runner findings-store judgment", async () => {
+    await runReal(async () => {
+      const live = sampleFinding("live", "live.ts:1");
+      const duplicateTerminal = {
+        action: "refute" as const,
+        identityKey: "same-refuted-row",
+        reason: "not_established" as const,
+        evidence: "same verdict repeated by the resident judge",
+      };
+      const backend = new LifecycleBackend([
+        completedJudge(
+          {
+            ...judgeContinue([live]),
+            findingDispositions: [
+              duplicateTerminal,
+              duplicateTerminal,
+              {
+                action: "live",
+                identityKey: "live",
+              },
+            ],
+          },
+          OPEN_COURT_SESSION,
+        ),
+        completedJudge(judgeConverged(), OPEN_COURT_SESSION),
+      ]);
+
+      const result = await runOrchestrator({ issueNumber: 11282, backend });
+      expect(result.status).toBe("completed");
+      expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
+      const authoredJudgeRow = backend.ledgerWrites.find(
+        (entry) =>
+          entry.step === "S3" &&
+          entry.output?.kind === "judge" &&
+          entry.output.status === "continue",
+      );
+      expect(authoredJudgeRow?.findingDispositions).toBeUndefined();
+      expect(
+        authoredJudgeRow?.output?.kind === "judge"
+          ? authoredJudgeRow.output.findingDispositions
+          : undefined,
+      ).toEqual([
+        duplicateTerminal,
+        duplicateTerminal,
+        { action: "live", identityKey: "live" },
+      ]);
     });
   });
 

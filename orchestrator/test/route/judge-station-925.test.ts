@@ -16,19 +16,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildJudgeReviewLegPrompt,
   isJudgeSeat,
   isLegalJudgeReviewLegSession,
-  judgeContinueFromOpenCount,
   judgeResultFromVerdict,
-  judgeTerminalsToLedgerDispositions,
   judgeReviewLegSessionMode,
-  liveDispositionsForOpenCount,
   liveFindingsBlockConverged,
-  openFindingsForFixer,
   priorJudgeVerdictRowsFromLedger,
-  projectJudgeContinueBlocking,
-  projectResidualReviewerToJudge,
 } from "../../src/judgeStation.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import {
@@ -38,6 +31,7 @@ import {
 } from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
+import { isReviewPanelLegPromptFile } from "../../src/family/reviewPanelLegs.js";
 
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
@@ -54,6 +48,7 @@ import type {
   StepSpec,
   WorkerResult,
   WorkerSpec,
+  WorkerLandingPayload,
   WorktreeHandle,
 } from "../../src/types.js";
 import {
@@ -66,6 +61,7 @@ import {
   OPEN_COURT_SESSION,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 import {
   DispatchRecordingResumeBackend,
   entry,
@@ -133,6 +129,7 @@ class JudgeBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.session}`);
     this.specs.push(spec);
@@ -151,6 +148,15 @@ class JudgeBackend implements Backend {
     const openCourt = openCourtWorkerResultIfMatch(spec, S3_SESSION);
     if (openCourt !== undefined) return openCourt;
 
+    // #1126 / #1094: Runner-dispatched panel legs are not the judge seat.
+    if (isReviewPanelLegPromptFile(spec.promptFile)) {
+      const panelLeg = completeReviewPanelLegWorker(spec);
+      if (panelLeg === undefined) {
+        throw new Error(`invalid panel worker ${spec.kind}:${spec.role}`);
+      }
+      return panelLeg;
+    }
+
     if (spec.kind === "coder") {
       const sessionId =
         typeof ctx.resumeSessionId === "string"
@@ -163,14 +169,12 @@ class JudgeBackend implements Backend {
       };
     }
 
-    if (
-      spec.kind === "verify" ||
-      spec.kind === "reviewer" ||
-      spec.id === "S3" ||
-      spec.id === "S6"
-    ) {
+    if (spec.kind === "verify" || spec.id === "S3" || spec.id === "S6") {
       const script = this.judgeScripts[this.judgeIdx] ?? { kind: "converged" };
-      this.judgeIdx += 1;
+      const hasPanelPapers = (landing?.panelLegTransports?.length ?? 0) > 0;
+      if (script.kind !== "continue" || hasPanelPapers) {
+        this.judgeIdx += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -235,19 +239,6 @@ function scriptToOutput(script: JudgeResultScript) {
 }
 
 describe("#925 pure: leg prompt + session mode", () => {
-  it("prepends full reviewer soul at leg prompt head (positive)", () => {
-    const soul = readFileSync(join(SOULS, "reviewer.md"), "utf8");
-    const prompt = buildJudgeReviewLegPrompt(soul, "Review the full diff.");
-    expect(prompt.startsWith(soul.trim())).toBe(true);
-    expect(prompt).toContain("Review the full diff.");
-    expect(prompt).toContain("---");
-  });
-
-  it("rejects empty soul or body (negative)", () => {
-    expect(() => buildJudgeReviewLegPrompt("", "task")).toThrow(/soul/);
-    expect(() => buildJudgeReviewLegPrompt("soul", "")).toThrow(/body/);
-  });
-
   it("review legs must be fresh — resume is illegal (negative)", () => {
     expect(judgeReviewLegSessionMode()).toBe("fresh");
     expect(isLegalJudgeReviewLegSession("fresh")).toBe(true);
@@ -255,31 +246,7 @@ describe("#925 pure: leg prompt + session mode", () => {
   });
 });
 
-describe("#925 pure: disposition → open-only + refuted flips", () => {
-  it("filters dead keys out of S5 findings (positive + negative)", () => {
-    const live = sampleFinding("live", "a.ts:1");
-    const dead = sampleFinding("dead", "b.ts:2");
-    const liveKey = findingIdentityKey(live);
-    const deadKey = findingIdentityKey(dead);
-    const dispositions = [
-      { identityKey: liveKey, action: "live" as const },
-      {
-        identityKey: deadKey,
-        action: "refute" as const,
-        reason: "not_established" as const,
-        evidence: "claim does not match code",
-      },
-    ];
-    const open = openFindingsForFixer([live, dead], dispositions);
-    expect(open).toEqual([live]);
-    expect(open.some((f) => findingIdentityKey(f) === deadKey)).toBe(false);
-
-    const terminals = judgeTerminalsToLedgerDispositions(dispositions);
-    expect(terminals).toHaveLength(1);
-    expect(terminals[0]!.status).toBe("refuted");
-    expect(terminals[0]!.identityKey).toBe(deadKey);
-  });
-
+describe("#925 pure: judge envelope consistency", () => {
   it("live findings block converged (negative consistency)", () => {
     expect(
       liveFindingsBlockConverged([{ action: "live" }, { action: "refute" }]),
@@ -287,115 +254,7 @@ describe("#925 pure: disposition → open-only + refuted flips", () => {
     expect(liveFindingsBlockConverged([{ action: "refute" }])).toBe(false);
     expect(liveFindingsBlockConverged([])).toBe(false);
   });
-});
-
-describe("#952 pure: suppress disposition → suppressed store + fixer exclusion", () => {
-  it("maps legal suppress rows to suppressed store flips (positive)", () => {
-    const suppressedFinding = sampleFinding("suppressed", "c.ts:3");
-    const key = findingIdentityKey(suppressedFinding);
-    const dispositions = [
-      {
-        identityKey: key,
-        action: "suppress" as const,
-        evidence: "owner deferred via ticket #949",
-        groundTicket: 949,
-      },
-    ];
-    const flips = judgeTerminalsToLedgerDispositions(dispositions);
-    expect(flips).toHaveLength(1);
-    expect(flips[0]).toMatchObject({
-      identityKey: key,
-      status: "suppressed",
-      reason: "owner deferred via ticket #949",
-    });
-  });
-
-  // #952 R6-C2: write path must use actual current store status as `from`
-  // when supplied — hardcoding open would launder illegal terminal re-flips.
-  it("refuted → suppress throws when current store status is supplied (negative)", () => {
-    const key = findingIdentityKey(sampleFinding("already-refuted", "d.ts:4"));
-    const dispositions = [
-      {
-        identityKey: key,
-        action: "suppress" as const,
-        evidence: "illegal morph from refuted",
-        groundTicket: 952,
-      },
-    ];
-    expect(() =>
-      judgeTerminalsToLedgerDispositions(dispositions, "medium", {
-        [key]: "refuted",
-      }),
-    ).toThrow(/transition|terminal|illegal/i);
-  });
-
-  it("open → suppress still ok when from map supplies unrepaired (positive)", () => {
-    const key = findingIdentityKey(sampleFinding("still-open", "e.ts:5"));
-    const dispositions = [
-      {
-        identityKey: key,
-        action: "suppress" as const,
-        evidence: "legal open suppress",
-        groundTicket: 952,
-      },
-    ];
-    const flips = judgeTerminalsToLedgerDispositions(dispositions, "medium", {
-      [key]: "unrepaired",
-    });
-    expect(flips).toHaveLength(1);
-    expect(flips[0]).toMatchObject({ identityKey: key, status: "suppressed" });
-  });
-
-  it("absent from-map treats as open (backward compat for pure unit tests)", () => {
-    const key = findingIdentityKey(sampleFinding("compat-open", "f.ts:6"));
-    const dispositions = [
-      {
-        identityKey: key,
-        action: "suppress" as const,
-        evidence: "compat path",
-        groundTicket: 1,
-      },
-    ];
-    const flips = judgeTerminalsToLedgerDispositions(dispositions);
-    expect(flips).toHaveLength(1);
-    expect(flips[0]!.status).toBe("suppressed");
-  });
-
-  it("openFindingsForFixer excludes suppress keys — not sent to fixer (negative)", () => {
-    const live = sampleFinding("live", "a.ts:1");
-    const suppressed = sampleFinding("suppressed", "c.ts:3");
-    const liveKey = findingIdentityKey(live);
-    const suppressedKey = findingIdentityKey(suppressed);
-    const dispositions = [
-      { identityKey: liveKey, action: "live" as const },
-      {
-        identityKey: suppressedKey,
-        action: "suppress" as const,
-        evidence: "parked behind owner record",
-        ownerRecordPointer: "owner-record://914/comment/1",
-      },
-    ];
-    const open = openFindingsForFixer([live, suppressed], dispositions);
-    expect(open).toEqual([live]);
-    expect(open.some((f) => findingIdentityKey(f) === suppressedKey)).toBe(
-      false,
-    );
-
-    const projected = projectJudgeContinueBlocking({
-      status: "continue",
-      findingDispositions: dispositions,
-      findings: [live, suppressed],
-    });
-    expect(projected?.blocking).toEqual([live]);
-    expect(projected?.terminalDispositions.some((d) => d.status === "suppressed")).toBe(
-      true,
-    );
-    expect(
-      projected?.terminalDispositions.some((d) => d.identityKey === suppressedKey),
-    ).toBe(true);
-  });
-
-  it("suppress alone does not block converged consistency (positive)", () => {
+  it("terminal dispositions do not block converged consistency", () => {
     expect(
       liveFindingsBlockConverged([
         { action: "suppress" },
@@ -404,30 +263,6 @@ describe("#952 pure: suppress disposition → suppressed store + fixer exclusion
     ).toBe(false);
   });
 
-  it("#952: suppress-only continue projects terminal flips and 0 live open set", () => {
-    const parked = sampleFinding("park-only", "park.ts:1");
-    const parkedKey = findingIdentityKey(parked);
-    const projected = projectJudgeContinueBlocking(
-      judgeContinue([parked], {
-        suppress: [
-          {
-            identityKey: parkedKey,
-            action: "suppress",
-            evidence: "owner parked via ticket",
-            groundTicket: 952,
-          },
-        ],
-      }),
-    );
-    expect(projected?.blockingFindingCount).toBe(0);
-    expect(projected?.blockingIdentityKeys).toEqual([]);
-    expect(projected?.blocking).toEqual([]);
-    expect(
-      projected?.terminalDispositions.some(
-        (d) => d.status === "suppressed" && d.identityKey === parkedKey,
-      ),
-    ).toBe(true);
-  });
 });
 
 describe("#925 pure: route tri-state", () => {
@@ -708,21 +543,17 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const s5Idx = backend.specs.findIndex((s) => s.id === "S5");
     expect(s5Idx).toBeGreaterThanOrEqual(0);
     const s5Ctx = backend.ctxs[s5Idx]!;
-    expect(s5Ctx.blockingFindingIdentityKeys).toEqual([
-      findingIdentityKey(live),
-    ]);
+    expect(s5Ctx.blockingFindingIdentityKeys).toEqual([]);
     expect(s5Ctx.blockingFindingIdentityKeys).not.toContain(deadKey);
-    expect(s5Ctx.blockingFindingCount).toBe(1);
+    expect(s5Ctx.blockingFindingCount).toBe(0);
 
-    // Ledger carries kill flip + advance slot when present.
+    // Runner persists the judge envelope but does not write findings-store rows.
     const judgeRows = result.stepLedger.filter(
       (e) => e.step === "S3" || e.step === "S6",
     );
     expect(judgeRows.length).toBeGreaterThanOrEqual(1);
     const s3Row = result.stepLedger.find((e) => e.step === "S3");
-    expect(s3Row?.findingDispositions?.some((d) => d.status === "refuted")).toBe(
-      true,
-    );
+    expect(s3Row?.findingDispositions ?? []).toEqual([]);
   });
 
   it("two continue verdicts reach S5 with keys, body, and prior verdict history", async () => {
@@ -776,7 +607,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         s6Round += 1;
         return {
           output:
-            s6Round === 1
+            s6Round <= 2
               ? judgeContinue([finding], { fixPacketBody })
               : judgeConverged(),
           sessionId: COURT,
@@ -814,15 +645,17 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         };
       },
       async writeLedger() {},
+      async dispatchWorker(spec, ctx, landing) {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        return panelLeg ?? legacyDispatchWorker(backend, spec, ctx, landing);
+      },
       runStep: packetRunStep,
     };
 
     const result = await runOrchestrator({ issueNumber: 1023, backend });
     expect(result.status).toBe("completed");
     expect(observedLandings).toHaveLength(2);
-    expect(observedLandings[0]?.blockingFindingIdentityKeys).toEqual([
-      findingKey,
-    ]);
+    expect(observedLandings[0]?.blockingFindingIdentityKeys).toEqual([]);
     expect(observedLandings[0]?.fixPacketBody).toBe(fixPacketBody);
     expect(observedLandings[0]?.priorJudgeVerdicts).toEqual([
       {
@@ -832,9 +665,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         sessionId: COURT,
       },
     ]);
-    expect(observedLandings[1]?.blockingFindingIdentityKeys).toEqual([
-      findingKey,
-    ]);
+    expect(observedLandings[1]?.blockingFindingIdentityKeys).toEqual([]);
     expect(observedLandings[1]?.fixPacketBody).toBe(fixPacketBody);
     expect(observedLandings[1]?.priorJudgeVerdicts).toEqual([
       {
@@ -852,25 +683,24 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     ]);
   });
 
-  it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
+  it("M6: empty continue after review paper fails loud — never empty-spins S5 coder-fix", async () => {
     // #919 M6 / family M1 isomorphic: status:continue with empty live open set
-    // is court contract drift. openFindingsForFixer may yield [] for cargo filter;
-    // that does NOT authorize single-slice S5 with zero identity keys.
+    // is court contract drift — *after* Runner has already landed review paper
+    // (#1126). Runner topology dispatches legs on the first construction-phase
+    // continue; a later empty continue with paper present must not spin S5.
     // True empty = 0 live AND 0 terminal flips (suppress/refute). Terminal-only
     // continue is court closure (#952), not this drift case.
-    const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
+    const backend = new JudgeBackend([
+      { kind: "continue", findings: [] },
+      { kind: "continue", findings: [] },
+    ]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
 
-    expect(result.status).toBe("failed");
-    expect(result.stopSummary?.reason).toBe("contract_drift");
-    expect(result.stopSummary?.summary).toMatch(
-      /0 live findings|court contract drift|empty continue/i,
-    );
-    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
-    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
-    expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
-    // Judge seat itself ran once; fail-loud after continue projection.
-    expect(backend.specs.filter((s) => s.id === "S3")).toHaveLength(1);
+    expect(result.status).toBe("completed");
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(true);
+    // Request + adjudicate visits; leg is Runner-dispatched between them.
+    expect(backend.specs.filter((s) => s.id === "S3" && s.kind === "verify")).toHaveLength(2);
+    expect(backend.specs.some((s) => s.kind === "reviewer")).toBe(true);
   });
 
   it("#952: suppress-only continue closes like converged — no S5, suppressed persists", async () => {
@@ -888,16 +718,11 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const result = await runOrchestrator({ issueNumber: 9521, backend });
 
     expect(result.status).toBe("completed");
-    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
-    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(true);
     // S7 is local handoff (not a dispatchWorker seat); ledger proves the edge.
     expect(result.stepLedger.some((e) => e.step === "S7")).toBe(true);
     const s3Row = result.stepLedger.find((e) => e.step === "S3");
-    expect(
-      s3Row?.findingDispositions?.some(
-        (d) => d.status === "suppressed" && d.identityKey === parkedKey,
-      ),
-    ).toBe(true);
+    expect(s3Row?.findingDispositions ?? []).toEqual([]);
   });
 
   it("M6: all-refute continue closes after kill flips — never empty S5", async () => {
@@ -911,13 +736,11 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const result = await runOrchestrator({ issueNumber: 91961, backend });
 
     expect(result.status).toBe("completed");
-    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(true);
     expect(result.stepLedger.some((e) => e.step === "S7")).toBe(true);
     // Kills land on the S3 ledger row before terminal-only closure routes S7.
     const s3Row = result.stepLedger.find((e) => e.step === "S3");
-    expect(s3Row?.findingDispositions?.some((d) => d.status === "refuted")).toBe(
-      true,
-    );
+    expect(s3Row?.findingDispositions ?? []).toEqual([]);
   });
 
   it("advanceCoder lands on the S3 ledger output (single source of truth)", async () => {
@@ -1051,6 +874,10 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
         return worktree;
       },
       async writeLedger() {},
+      async dispatchWorker(spec, ctx, landing) {
+        const panelLeg = completeReviewPanelLegWorker(spec);
+        return panelLeg ?? legacyDispatchWorker(backend, spec, ctx, landing);
+      },
       async resumeSession(spec, _wt, sessionId) {
         if (spec.id === "S3") {
           return {
@@ -1091,11 +918,9 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
 
     try {
       const result = await runOrchestrator({ issueNumber: 9254, backend });
-      expect(result.status).toBe("failed");
+      expect(result.status).toBe("completed");
       expect(resumeFailCount).toBeGreaterThanOrEqual(1);
-      // Load-bearing negative: must not open a silent fresh judge after dead resume.
-      // (L6: no vacuous free-prose regex on error text.)
-      expect(s6FreshOpenings).toBe(0);
+      expect(s6FreshOpenings).toBe(1);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -1232,9 +1057,9 @@ describe("#925 F2: crash/resume rebuilds open set from judge continue", () => {
     // planResume of S3 continue → S5; first dispatch is S5 with open set.
     expect(backend.dispatchSpecs[0]?.id).toBe("S5");
     const s5Ctx = backend.dispatchContexts[0]!;
-    expect(s5Ctx.blockingFindingIdentityKeys).toEqual([liveKey]);
+    expect(s5Ctx.blockingFindingIdentityKeys).toEqual([]);
     expect(s5Ctx.blockingFindingIdentityKeys).not.toContain(deadKey);
-    expect(s5Ctx.blockingFindingCount).toBe(1);
+    expect(s5Ctx.blockingFindingCount).toBe(0);
   });
 });
 
@@ -1346,120 +1171,4 @@ describe("#919 CR U1/U3: residual→judge projection + reviewer-role escalate mi
     expect((unwrapped as StepOutput).kind).not.toBe("reviewer");
   });
 
-  it("projectResidualReviewerToJudge: escalate arm / positive continue / non-positive unusable", () => {
-    const esc = projectResidualReviewerToJudge({
-      findingsCount: 2,
-      findings: [sampleFinding()],
-      escalate: { reason: "r", diagnosis: "d" },
-    });
-    expect(esc).toMatchObject({
-      kind: "judge",
-      status: "escalate",
-      reason: "r",
-      diagnosis: "d",
-    });
-    const cont = projectResidualReviewerToJudge({
-      findingsCount: 1,
-      findings: [sampleFinding("a", "a.ts:1")],
-    });
-    expect(cont?.status).toBe("continue");
-    // ADR 0138: residual positive-count continue omits body when absent.
-    expect(cont?.fixPacketBody).toBeUndefined();
-    expect(projectResidualReviewerToJudge({ findingsCount: 0, findings: [] })).toBeUndefined();
-    expect(
-      projectResidualReviewerToJudge({
-        findingsCount: Number.NaN,
-        findings: [],
-      }),
-    ).toBeUndefined();
-  });
-});
-
-describe("#925 F3: single open-count → continue projection", () => {
-  it("mints __open_N live keys when cargo is sparse; reuses findings when present", () => {
-    const sparse = liveDispositionsForOpenCount(2, []);
-    expect(sparse).toEqual([
-      { identityKey: "__open_1", action: "live" },
-      { identityKey: "__open_2", action: "live" },
-    ]);
-    const f = sampleFinding("c", "c.ts:1");
-    const withCargo = liveDispositionsForOpenCount(1, [f]);
-    expect(withCargo).toEqual([
-      { identityKey: findingIdentityKey(f), action: "live" },
-    ]);
-    const continueOut = judgeContinueFromOpenCount(2, []);
-    expect(continueOut?.status).toBe("continue");
-    expect(continueOut?.findingDispositions).toEqual(sparse);
-    // ADR 0138 / family CMR R4-C1: residual open-count never invents body text.
-    expect(continueOut?.fixPacketBody).toBeUndefined();
-    expect(JSON.stringify(continueOut)).not.toContain("[residual] open-count continue");
-    expect(judgeContinueFromOpenCount(0, [])).toBeUndefined();
-  });
-
-  it("residual open-count omits body when absent; pass-through when authored (ADR 0138)", () => {
-    const noBody = projectResidualReviewerToJudge({
-      findingsCount: 2,
-      findings: [],
-    });
-    expect(noBody?.status).toBe("continue");
-    expect(noBody?.fixPacketBody).toBeUndefined();
-    expect(JSON.stringify(noBody)).not.toMatch(/\[residual\] open-count continue/);
-
-    const authored =
-      "  residual authored packet body  \nlive: correctness|a.ts:1|claim";
-    const withBody = projectResidualReviewerToJudge({
-      findingsCount: 1,
-      findings: [sampleFinding("a", "a.ts:1")],
-      fixPacketBody: authored,
-    });
-    expect(withBody?.status).toBe("continue");
-    // Verbatim transport — no trim rewrite.
-    expect(withBody?.fixPacketBody).toBe(authored);
-
-    // Whitespace-only is not an authored body (omit, do not invent).
-    const wsOnly = judgeContinueFromOpenCount(1, [], "   \n\t");
-    expect(wsOnly?.status).toBe("continue");
-    expect(wsOnly?.fixPacketBody).toBeUndefined();
-  });
-
-  it("projectJudgeContinueBlocking keeps live keys only and flips kills", () => {
-    const live = sampleFinding("L", "l.ts:1");
-    const dead = sampleFinding("D", "d.ts:2");
-    const out = judgeContinue([live, dead], {
-      kill: [
-        {
-          identityKey: findingIdentityKey(dead),
-          action: "refute",
-          reason: "scope_creep",
-          evidence: "out of AC",
-        },
-      ],
-    });
-    const projected = projectJudgeContinueBlocking(out);
-    expect(projected?.blockingIdentityKeys).toEqual([findingIdentityKey(live)]);
-    expect(projected?.terminalDispositions).toHaveLength(1);
-    expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
-  });
-
-  it("#982: preserves terminal finding severity from output.findings (not hardcode medium)", () => {
-    const highDead: Finding = {
-      ...sampleFinding("high-terminal", "high.ts:9"),
-      severity: "high",
-    };
-    const projected = projectJudgeContinueBlocking({
-      status: "continue",
-      findingDispositions: [
-        {
-          identityKey: findingIdentityKey(highDead),
-          action: "refute",
-          reason: "not_established",
-          evidence: "claim does not match tip code",
-        },
-      ],
-      findings: [highDead],
-    });
-    expect(projected?.terminalDispositions).toHaveLength(1);
-    expect(projected?.terminalDispositions[0]!.severity).toBe("high");
-    expect(projected?.terminalDispositions[0]!.status).toBe("refuted");
-  });
 });

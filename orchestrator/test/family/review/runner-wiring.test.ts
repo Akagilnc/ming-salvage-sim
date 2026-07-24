@@ -44,7 +44,7 @@ import type {
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
@@ -1187,7 +1187,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         spec: WorkerSpec,
         _ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") return this.cmrOutput;
         // No coder-fix worker: the coder-fix dispatch fails → the family aborts,
@@ -1236,8 +1236,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         (entry) => entry.status === "cmr_reviewed",
       );
       expect(reviewed).toBeDefined();
-      // The runner's only pending-key source is present…
-      expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
+      // The runner does not derive fixer identity cargo from judge content.
+      expect(reviewed!.blockingFindingIdentityKeys).toEqual([]);
       // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     });
