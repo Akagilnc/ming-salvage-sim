@@ -2220,6 +2220,76 @@ def test_non_parallel_safe_runner_skips_concurrent_classifier(read_game, monkeyp
     fut.result(timeout=2)
 
 
+@pytest.mark.parametrize(
+    ("message", "classified", "expected_kind"),
+    [
+        ("请另拟一道赈陕西的旨。", [{"kind": "draft"}], "directive"),
+        (
+            "另遣人暗查晋商输饷去向。",
+            [{"kind": "secret", "secret_action": "新建"}],
+            "secret_order",
+        ),
+    ],
+)
+def test_non_parallel_safe_chat_serially_classifies_new_actions(
+    game, monkeypatch, message, classified, expected_kind,
+):
+    """agy/claude 不并发时，回话后仍走统一结构化 classifier 再暂存新动作。"""
+    db, state, content = game
+    minister = next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") != "后宫"
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+    )
+    calls = []
+
+    class FakeAgent:
+        def run(self, _message):
+            calls.append("reply")
+            return SimpleNamespace(content="臣已拟妥，伏候圣裁。", tools=[])
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(
+        get=lambda _character: FakeAgent(),
+        build_draft_line=lambda: "无",
+    )
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="agy")
+    sess.temporary_characters = {}
+    sess._retrieve_memories_for_message = lambda text: text
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+
+    def fake_classify(*_args, **_kwargs):
+        calls.append("classify")
+        return classified
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    monkeypatch.setattr(
+        cb,
+        "_extract_secret_order",
+        lambda *a, **k: {
+            "title": "暗查输饷",
+            "content": "暗查晋商输饷去向",
+            "assignee": minister.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+        },
+    )
+
+    sess.chat(minister.name, message)
+
+    assert calls == ["reply", "classify"]
+    assert any(
+        row["kind"] == expected_kind
+        for row in db.list_pending_actions(state.turn, minister_name=minister.name)
+    )
+
+
 def test_begin_turn_syncs_offices_with_runtime_llm_config(monkeypatch):
     seen = []
     cfg = SimpleNamespace(channel="api")
