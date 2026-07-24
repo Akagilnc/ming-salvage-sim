@@ -15,11 +15,7 @@
  */
 
 import { workerHostForModel } from "../dispatchWorker.js";
-import {
-  isLegalLegPaper,
-  successfulLegsFromTransports,
-  type LegTransport,
-} from "../legPaper.js";
+import type { LegTransport } from "../legPaper.js";
 import {
   modelFamilyForCmrReviewLeg,
   providerForModelSlug,
@@ -186,10 +182,7 @@ function panelLegStdoutFromOutput(output: unknown): string {
   return typeof raw === "string" ? raw : "";
 }
 
-/**
- * Declared legs absent from transport-present successfulLegs become skippedLegs
- * with a short degrade reason for the judge (never silent success).
- */
+/** Declared legs absent from transport or exiting non-zero are skipped. */
 export function skippedLegsFromTransports(
   declared: ReadonlyArray<ReviewPanelLeg>,
   transports: ReadonlyArray<LegTransport>,
@@ -199,7 +192,7 @@ export function skippedLegsFromTransports(
   for (const leg of declared) {
     const id = reviewPanelTransportId(leg);
     const transport = byId.get(id);
-    if (transport !== undefined && isLegalLegPaper(transport)) continue;
+    if (transport !== undefined && transport.exitCode === 0) continue;
     skipped.push({
       slug: id,
       reason: degradeReasonForTransport(id, transport),
@@ -215,60 +208,7 @@ function degradeReasonForTransport(
   if (transport === undefined) {
     return `panel leg ${slug} did not run`;
   }
-  if (transport.exitCode !== 0) {
-    const detail = (transport.stdout ?? "").trim();
-    return detail.length > 0
-      ? `panel leg ${slug} failed: ${detail.slice(0, 200)}`
-      : `panel leg ${slug} failed (exit ${transport.exitCode})`;
-  }
-  if ((transport.stdout ?? "").trim().length === 0) {
-    return `panel leg ${slug} produced empty stdout`;
-  }
-  return `panel leg ${slug} produced no legal review paper`;
-}
-
-/**
- * Single source for zero-success vs degrade-ok paper classification (#1094 /
- * #1126). Callers map {@link PanelRoundPaperClass} onto their park/stop surface.
- */
-export type PanelRoundPaperClass =
-  | {
-      readonly kind: "has_success";
-      readonly successful: ReadonlyArray<string>;
-      readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
-    }
-  | {
-      readonly kind: "zero_success";
-      readonly reason: string;
-      readonly diagnosis: string;
-      readonly successful: ReadonlyArray<string>;
-      readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
-    };
-
-export function classifyPanelRoundPapers(input: {
-  readonly declared: ReadonlyArray<ReviewPanelLeg>;
-  readonly transports: ReadonlyArray<LegTransport>;
-  readonly courtLabel: string;
-}): PanelRoundPaperClass {
-  const skippedLegs = skippedLegsFromTransports(
-    input.declared,
-    input.transports,
-  );
-  const successful = successfulLegsFromTransports(input.transports);
-  if (input.declared.length > 0 && successful.length === 0) {
-    const diagnosis =
-      skippedLegs.length > 0
-        ? skippedLegs.map((leg) => `${leg.slug}: ${leg.reason}`).join("; ")
-        : "all declared panel legs failed or produced no legal review paper";
-    return {
-      kind: "zero_success",
-      reason: `${input.courtLabel}: zero successful panel legs`,
-      diagnosis,
-      successful,
-      skippedLegs,
-    };
-  }
-  return { kind: "has_success", successful, skippedLegs };
+  return `panel leg ${slug} failed (exit ${transport.exitCode})`;
 }
 
 /**

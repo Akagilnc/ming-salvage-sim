@@ -183,7 +183,6 @@ import {
 } from "./stopSummary.js";
 import { resumeCapableForSlug, modelFamilyForSlug } from "./modelRegistry.js";
 import {
-  classifyPanelRoundPapers,
   dispatchReviewPanelLegs,
   omitJudgeBoundDispatchFields,
 } from "./family/reviewPanelLegs.js";
@@ -4607,30 +4606,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       new Error(
                         `fresh reviewer ${step} stopped without a dispatch result`,
                       ),
-                    );
-                  }
-                  const papers = classifyPanelRoundPapers({
-                    declared: reviewLegs,
-                    transports: reviewRound.transports,
-                    courtLabel: `single-slice review ${judgeStep}`,
-                  });
-                  if (papers.kind === "zero_success") {
-                    return await escalateTermination(
-                      step,
-                      {
-                        reason: papers.reason,
-                        diagnosis: papers.diagnosis,
-                      },
-                      typeof result.sessionId === "string"
-                        ? result.sessionId
-                        : undefined,
-                      "decision",
-                      undefined,
-                      decisionGateParkStopSummary({
-                        summary: `${papers.reason} — ${papers.diagnosis}`,
-                        repairHint:
-                          "restore at least one Standards/Spec panel-leg transport so the resident judge has review evidence, then resume the same judge seat",
-                      }),
                     );
                   }
                   singleSlicePanelTransports = reviewRound.transports;
