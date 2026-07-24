@@ -66,7 +66,6 @@ import {
   mergedSet,
   recordAdmissionSkipped,
   recordChildDecisionParked,
-  recordFamilyEscalated,
   recordMerged,
   recordReviewLoopConverged,
   unansweredChildEscalations,
@@ -2267,15 +2266,7 @@ export async function runFamily(
         stage: "online_review_failed",
         stopSummary: rawStop,
       });
-      if (terminal.status === "parked") {
-        await recordFamilyEscalated(familyBackend, {
-          escalationKind: "decision",
-          phase: "final",
-          reason: terminal.stopSummary.summary,
-          familyHeadAfter: preFinalFamilyHead,
-          stopSummary: terminal.stopSummary,
-        });
-      } else {
+      if (terminal.status !== "parked") {
         await familyBackend.appendFamilyLedger({
           status: "aborted",
           event: "aborted",
@@ -2303,6 +2294,8 @@ export async function runFamily(
               diagnosis:
                 terminal.stopSummary.repairHint ?? terminal.stopSummary.summary,
             },
+            persistFamilyDecision: true,
+            durablePhase: "final",
             stopSummaryOverride: terminal.stopSummary,
           },
         });
@@ -2468,15 +2461,7 @@ export async function runFamily(
             stage: "online_review_failed",
             stopSummary: rawStop,
           });
-          if (terminal.status === "parked") {
-            await recordFamilyEscalated(familyBackend, {
-              escalationKind: "decision",
-              phase: "final",
-              reason: terminal.stopSummary.summary,
-              familyHeadAfter: barrierHead,
-              stopSummary: terminal.stopSummary,
-            });
-          } else {
+          if (terminal.status !== "parked") {
             await familyBackend.appendFamilyLedger({
               status: "aborted",
               event: "aborted",
@@ -2506,6 +2491,8 @@ export async function runFamily(
                         terminal.stopSummary.repairHint ??
                         terminal.stopSummary.summary,
                     },
+                    persistFamilyDecision: true,
+                    durablePhase: "final",
                     stopSummaryOverride: terminal.stopSummary,
                   },
                 })
