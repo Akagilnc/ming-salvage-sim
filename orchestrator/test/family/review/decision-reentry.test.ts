@@ -106,6 +106,13 @@ class SeededFamilyBackend implements FamilyBackend {
 const epic: FamilyEpic = {
   issue: 604,
   children: [{ issue: 11, blockedBy: [] }],
+  admissionSkipped: [
+    {
+      issue: 12,
+      reason: "closed",
+      message: "child #12 was closed before admission",
+    },
+  ],
 };
 
 describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry is a decision_gate_park", () => {
@@ -144,6 +151,12 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     // not an A-class repair failure.
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.stopSummary?.reason).not.toBe("infra_failure");
+    expect(result.admissionSkipped).toEqual(epic.admissionSkipped);
+    expect(result.children).toContainEqual({
+      issue: 12,
+      status: "skipped",
+      reason: "admission_skipped",
+    });
   });
 
   it("unanswered family FAILURE escalation stays infra_failure (A-class, not a park)", async () => {

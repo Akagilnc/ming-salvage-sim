@@ -1185,6 +1185,48 @@ function replayCompletedCleanup(
   };
 }
 
+function replayLegacyDecisionEscalation(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  familyBase: string,
+  escalation: FamilyLedgerEntry,
+): FamilyRunResult {
+  const admissionSkipped = admissionSkippedFromLedger(ledger);
+  const children = [
+    ...[...mergedSet(ledger)].map((issue) => ({
+      issue,
+      status: "already_done" as const,
+    })),
+    ...admissionSkipped.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+      reason: "admission_skipped" as const,
+    })),
+  ];
+  const stopSummary =
+    escalation.stopSummary ??
+    decisionGateParkStopSummary({
+      summary: escalation.reason ?? "family decision is not answered",
+      repairHint: "answer the durable family decision before rerunning",
+    });
+  return {
+    status: "parked",
+    familyBase,
+    ...(typeof escalation.familyHeadAfter === "string" &&
+    escalation.familyHeadAfter.trim().length > 0
+      ? { familyHead: escalation.familyHeadAfter }
+      : {}),
+    escalation: {
+      reason: escalation.reason ?? "family decision is not answered",
+      diagnosis:
+        escalation.diagnosis ??
+        "Prior family decision escalation has no later valid escalation_answered ledger event.",
+    },
+    stopSummary,
+    children,
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
+}
+
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
 export function resolveCodexFast(options: Pick<FamilyDriverOptions, "codexFast">): boolean {
   return options.codexFast ?? process.env.ORCHESTRATOR_CODEX_FAST === "1";
@@ -1284,15 +1326,37 @@ export async function runFamilyDriver(
     if (
       prior !== undefined &&
       isCompleteFamilyEscalation(prior.escalation) &&
-      !isLegacyEscalationWithoutTerminalCargo(prior.escalation) &&
       (prior.escalation.escalationKind !== "decision" ||
         prior.answer === undefined)
     ) {
-      return await replayPriorFamilyEscalation({
-        epicIssue: options.epicIssue,
-        familyBase: options.familyBase,
-        escalation: prior.escalation,
-      });
+      if (
+        prior.escalation.escalationKind === "decision" &&
+        isLegacyEscalationWithoutTerminalCargo(prior.escalation)
+      ) {
+        const terminal = replayLegacyDecisionEscalation(
+          familyScene.ledger,
+          options.familyBase,
+          prior.escalation,
+        );
+        emitExitProgress({
+          epic: options.epicIssue,
+          status: terminal.status,
+          stopReason: terminal.stopSummary?.reason,
+          gateSummary: terminal.stopSummary?.summary,
+        });
+        return terminal;
+      }
+      if (isLegacyEscalationWithoutTerminalCargo(prior.escalation)) {
+        // Cargo-less failure rows remain on the compatibility path where the
+        // family flow can normalize them with the refreshed epic inventory.
+      } else {
+        return await replayPriorFamilyEscalation({
+          epicIssue: options.epicIssue,
+          familyBase: options.familyBase,
+          escalation: prior.escalation,
+          admissionSkipped: admissionSkippedFromLedger(familyScene.ledger),
+        });
+      }
     }
   }
 

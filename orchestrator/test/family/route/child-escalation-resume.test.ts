@@ -789,3 +789,26 @@ describe("#604 r1 (P1-a ②) / #1019 — mixed wave records parks but family sta
     expect(familyBackend.merges.some((m) => m.childIssue === 12)).toBe(false);
   });
 });
+
+describe("#1124 online review — a decision-only wave parks before its barrier", () => {
+  it("returns the child decision without dispatching verification on an unchanged family head", async () => {
+    const singleSliceBackend = new EscalatingChildBackend(11);
+    const familyBackend = new FakeFamilyBackend();
+    let barrierCalls = 0;
+
+    const result = await runFamily({
+      verifyCmr: async () => {
+        barrierCalls += 1;
+        return { ok: false, ran: true, quotaWait: true };
+      },
+      epic: epicWith(11),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/604-base",
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(barrierCalls).toBe(0);
+  });
+});

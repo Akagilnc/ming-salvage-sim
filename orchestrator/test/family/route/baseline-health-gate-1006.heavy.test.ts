@@ -1150,6 +1150,11 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
       "utf8",
     );
     writeFileSync(join(ledgerDir, "family-base-start-head"), `${startSha}\n`, "utf8");
+    let externalCalls = 0;
+    const noExternalSh: Sh = () => {
+      externalCalls += 1;
+      throw new Error("legacy decision replay must not invoke git or GitHub");
+    };
 
     const result = await runFamilyDriver({
       epicIssue: 1006,
@@ -1162,25 +1167,24 @@ describe("#1006 family admission entry (runFamilyDriver)", () => {
       soulsDir: familySoulsDir,
       ledgerDir,
       imageName: "ming-orchestrator-coder:test",
-      sh: makeSh(),
-      singleSliceBackendFactory: (clone) => new TrackingChildBackend(clone),
-      familyBackendFactory: (clone, startHead) =>
-        controlledFamilyBackend(
-          clone,
-          startHead,
-          ledgerDir,
-          "ming-orchestrator-coder:test",
-        ),
-      baselineFullTestRunner: async () => ({
-        ok: true,
-        exitCode: 0,
-        output: "green",
-        failedTests: [],
-      }),
+      sh: noExternalSh,
+      singleSliceBackendFactory: () => {
+        externalCalls += 1;
+        throw new Error("legacy decision replay must not create child backends");
+      },
+      familyBackendFactory: () => {
+        externalCalls += 1;
+        throw new Error("legacy decision replay must not create family backends");
+      },
+      baselineFullTestRunner: async () => {
+        externalCalls += 1;
+        throw new Error("legacy decision replay must not run the baseline suite");
+      },
     });
 
     expect(result.status).toBe("parked");
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(externalCalls).toBe(0);
   });
 
   it("#1017 C1: resident without child progress still fail-closes baseline red", async () => {

@@ -898,6 +898,7 @@ export async function replayPriorFamilyEscalation(opts: {
   readonly epicIssue: number;
   readonly familyBase: string;
   readonly escalation: FamilyLedgerEntry;
+  readonly admissionSkipped?: FamilyEpic["admissionSkipped"];
 }): Promise<FamilyRunResult> {
   if (!isPublicRunResult(opts.escalation.terminalStatus)) {
     throw new Error(
@@ -949,10 +950,22 @@ export async function replayPriorFamilyEscalation(opts: {
     opts.escalation.familyHeadAfter.trim().length > 0
       ? opts.escalation.familyHeadAfter
       : undefined;
-  const children = parseTerminalChildrenCargo(
+  const terminalChildren = parseTerminalChildrenCargo(
     opts.escalation.terminalChildren,
     "replay prior family terminal authority",
   );
+  const admissionSkipped = opts.admissionSkipped ?? [];
+  const terminalIssues = new Set(terminalChildren.map((child) => child.issue));
+  const children = [
+    ...terminalChildren,
+    ...admissionSkipped
+      .filter((child) => !terminalIssues.has(child.issue))
+      .map((child) => ({
+        issue: child.issue,
+        status: "skipped" as const,
+        reason: "admission_skipped" as const,
+      })),
+  ];
   const stopSummary = opts.escalation.stopSummary;
   emitExitProgress({
     epic: opts.epicIssue,
@@ -977,6 +990,7 @@ export async function replayPriorFamilyEscalation(opts: {
       escalation,
       stopSummary,
       children,
+      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
     });
   }
   return {
@@ -986,5 +1000,6 @@ export async function replayPriorFamilyEscalation(opts: {
     escalation,
     stopSummary,
     children,
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
   };
 }
