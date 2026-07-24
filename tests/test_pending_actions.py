@@ -65,6 +65,16 @@ def _fake_session(db, state):
     )
 
 
+def _promulgate_office_dossiers(db, state, content, registry=None):
+    """#571：任免成案与效果物化分两拍；测试从公共判决 seam 推进第二拍。"""
+    for dossier in db.list_decree_dossiers(status="proposed"):
+        if dossier["action_type"] == "appointment":
+            db.apply_dossier_promulgation(
+                state, dossier["id"], "promulgated",
+                content=content, registry=registry,
+            )
+
+
 def _drive_intent(db, state, content, monkeypatch, *, canned: dict, player_message: str):
     """给一个 active 大臣建一条 active 密令,喂 canned 意图,跑会话落地。返回 (oid, ch, out)。"""
     name = _active_minister_name(db, content)
@@ -1012,6 +1022,7 @@ def test_commit_appointment_applies_at_decree(game, monkeypatch):
         # 颁诏批量落库(带 content/registry)→ 任命才生效
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(a["kind"] == "office" for a in applied)
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT name, office FROM characters WHERE name=?", (new_name,)).fetchone()
         assert row is not None and row["name"] == new_name
@@ -1763,6 +1774,7 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
         GameSession.apply_cli_conversation_actions(
             sess, ch, player_message="准", answer="臣即拟铨。",
             has_directive=False, secret_order_id=None)
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone()
         assert row is not None and row["name"] == new_name
@@ -1793,11 +1805,9 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
     db.conn.commit()
 
     applied = db.commit_pending_actions(state, content=content, registry=None)
-
-    assert applied == []
-    assert db.list_pending_actions(state.turn) == []
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1
+    assert any(item["kind"] == "office" for item in applied)
+    with pytest.raises(ValueError):
+        _promulgate_office_dossiers(db, state, content)
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None
@@ -1831,6 +1841,7 @@ def test_commit_appointment_promotes_existing_minister(game, monkeypatch):
             "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"] == old_office
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(a["kind"] == "office" for a in applied)   # 落库成功,非 failed
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT office, status FROM characters WHERE name=?", (name,)).fetchone()
         assert row["office"] != old_office and row["office"]   # 改官生效
@@ -1856,6 +1867,7 @@ def test_commit_dismiss_clears_db_and_memory_office(game, monkeypatch):
             _fake_session(db, state), ch, player_message=f"革{name}职拿问",
             answer="臣无可辩,领罪。", has_directive=False, secret_order_id=None)
         db.commit_pending_actions(state, content=content, registry=None)
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "dismissed"
@@ -1947,6 +1959,7 @@ def test_commit_appointment_consort_gets_office_type(game, monkeypatch):
             _fake_session(db, state), ch, player_message=f"册{new_consort}为贵妃",
             answer="臣为陛下贺。", has_directive=False, secret_order_id=None)
         db.commit_pending_actions(state, content=content, registry=None)
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT office_type, faction FROM characters WHERE name=?", (new_consort,)).fetchone()
         assert row is not None
@@ -2006,6 +2019,7 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
             answer="臣领旨。", has_directive=False, secret_order_id=None)
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(x["kind"] == "office" for x in applied)   # 解析别名→在册调任,非拒
+        _promulgate_office_dossiers(db, state, content)
         row = db.conn.execute(
             "SELECT office, status FROM characters WHERE name=?", (target.name,)).fetchone()
         assert row["office"] and row["office"] != saved[0]   # 规范名被改官
@@ -2035,6 +2049,7 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
         reg = _FakeRegistry()
         applied = db.commit_pending_actions(state, content=content, registry=reg)
         assert any(x["kind"] == "office" for x in applied)
+        _promulgate_office_dossiers(db, state, content, reg)
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
         assert row["status"] == "active"        # 起复:改回 active
@@ -2184,6 +2199,7 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
         sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
         has_directive=False, secret_order_id=None)
     db.commit_pending_actions(state, content=content, registry=reg)
+    _promulgate_office_dossiers(db, state, content, reg)
     assert b.name in reg.refreshed
     assert db.conn.execute(
         "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dismissed"
