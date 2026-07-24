@@ -597,7 +597,7 @@ _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
-执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill、工具和同角色模型腿；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
+执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill 和工具；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
