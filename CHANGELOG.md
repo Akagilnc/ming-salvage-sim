@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+## [0.42.1.0] - 2026-07-25
+
+### Changed
+- 判官 Action 统一拥有 finding 状态写入、合法翻态与同 session 自纠；Runner 只运输 typed verdict 与判官原写的 fix packet。
+
+### Fixed
+- **#1128 resident judge 续跑**：明确 session 丢失时记录 `session_continuity_lost`，携既判史从原 S6 边界 fresh 重开；网络、鉴权与协议错误仍响亮失败。
+- **#924 coder 续跑回归**：coder session 明确失效时继续保留 worktree 进度并 fresh-run，不因判官恢复改造误杀切片。
+
+### Removed
+- 删除 Runner 内 findings-store 投影、disposition/open-count 判路与 residual 法庭，以及依赖这些旧职责的陈旧测试。
+
 ## [0.42.0.0] - 2026-07-22
 
 ### Added

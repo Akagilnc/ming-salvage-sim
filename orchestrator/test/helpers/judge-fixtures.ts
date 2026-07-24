@@ -8,7 +8,6 @@ import { findingIdentityKey } from "../../src/findings.js";
 import {
   isJudgeOpenCourtSpec,
   liveDispositionsForFindings,
-  liveDispositionsForOpenCount,
   unusableResidualOpenCountPaper,
 } from "../../src/judgeStation.js";
 import type {
@@ -243,7 +242,10 @@ export function liveCmrJudgeContinue(
         ? ({
             kind: "judge",
             status: "continue",
-            findingDispositions: liveDispositionsForOpenCount(count, []),
+            findingDispositions: Array.from({ length: count }, (_, i) => ({
+              identityKey: `fixture-live-${i + 1}`,
+              action: "live" as const,
+            })),
             findings: [],
             fixPacketBody: `fixture family continue: ${count} live finding(s)`,
           } as JudgeResult)

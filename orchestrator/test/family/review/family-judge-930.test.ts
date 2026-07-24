@@ -15,7 +15,6 @@ import {
   liveFindingsBlockConverged,
   priorFamilyJudgeVerdictRowsFromLedger,
   priorJudgeVerdictRowsFromLedger,
-  projectJudgeContinueBlocking,
   unusableResidualOpenCountPaper,
 } from "../../../src/judgeStation.js";
 import { findingIdentityKey } from "../../../src/findings.js";
@@ -217,124 +216,13 @@ describe("#930 pure family judge closure", () => {
     });
   });
 
-  it("continue → live-only open set for coder-fix", () => {
-    const killKey = findingIdentityKey(
-      sampleFinding("dead claim", "a.ts:1"),
-    );
-    const live = FINDING;
-    const verdict = judgeContinue([live, sampleFinding("dead claim", "a.ts:1")], {
-      kill: [
-        {
-          identityKey: killKey,
-          action: "refute",
-          reason: "not_established",
-          evidence: "claim fails on real code",
-        },
-      ],
-    });
+  it("continue transports only the authored fix packet", () => {
+    const verdict = judgeContinue([FINDING]);
     const closure = closeFamilyCourtFromJudgeOutput(verdict);
-    expect(closure.action).toBe("continue");
-    if (closure.action !== "continue") return;
-    expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
-    expect(closure.blocking).toEqual([live]);
-    expect(closure.blockingFindingCount).toBe(1);
-    expect(closure.terminalDispositions).toHaveLength(1);
-    expect(closure.terminalDispositions[0]?.status).toBe("refuted");
-  });
-
-  it("#952 continue → suppress parks as terminalDispositions suppressed (queryable)", () => {
-    const parked = sampleFinding("parked claim", "b.ts:2");
-    const suppressKey = findingIdentityKey(parked);
-    const live = FINDING;
-    const verdict = judgeContinue([live, parked], {
-      suppress: [
-        {
-          identityKey: suppressKey,
-          action: "suppress",
-          evidence: "owner parked via ticket",
-          groundTicket: 949,
-        },
-      ],
+    expect(closure).toEqual({
+      action: "continue",
+      fixPacketBody: verdict.fixPacketBody,
     });
-    // Schema table on the verdict is what family ledger persists (action:suppress).
-    expect(
-      verdict.findingDispositions?.some(
-        (d) => d.action === "suppress" && d.identityKey === suppressKey,
-      ),
-    ).toBe(true);
-
-    const closure = closeFamilyCourtFromJudgeOutput(verdict);
-    expect(closure.action).toBe("continue");
-    if (closure.action !== "continue") return;
-    expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
-    expect(closure.blocking).toEqual([live]);
-    // Shared projection still produces store-status suppressed flips for
-    // callers that need them (single-slice ledger); family live-set excludes
-    // the parked key either way.
-    expect(
-      closure.terminalDispositions.some(
-        (d) => d.status === "suppressed" && d.identityKey === suppressKey,
-      ),
-    ).toBe(true);
-  });
-
-  it("#952 suppress-only continue closes court (pass) — not empty-spin continue", () => {
-    // 0 live + non-empty terminal suppress flips = terminal court closure.
-    // True empty continue (0 live AND 0 terminals) remains unusable/fail-loud.
-    const parked = sampleFinding("park-only", "park.ts:1");
-    const suppressKey = findingIdentityKey(parked);
-    const verdict = judgeContinue([parked], {
-      suppress: [
-        {
-          identityKey: suppressKey,
-          action: "suppress",
-          evidence: "owner parked via ticket",
-          groundTicket: 952,
-        },
-      ],
-    });
-    const closure = closeFamilyCourtFromJudgeOutput(verdict);
-    expect(closure.action).toBe("pass");
-  });
-
-  // #952 R7-C1: family court must thread real prior store status so illegal
-  // terminal→terminal morphs fail loud (no open hardcode laundering).
-  it("#952 R7-C1: prior refuted + judge suppress fails loud (not pass)", () => {
-    const parked = sampleFinding("already-refuted", "refuted.ts:1");
-    const key = findingIdentityKey(parked);
-    const verdict = judgeContinue([parked], {
-      suppress: [
-        {
-          identityKey: key,
-          action: "suppress",
-          evidence: "illegal morph from refuted on family path",
-          groundTicket: 952,
-        },
-      ],
-    });
-    // Without prior store status this would launder as open→suppress → pass.
-    expect(() =>
-      closeFamilyCourtFromJudgeOutput(verdict, { [key]: "refuted" }),
-    ).toThrow(/transition|terminal|illegal/i);
-  });
-
-  it("#952 R7-C1: open/unrepaired + suppress-only still closes as pass", () => {
-    const parked = sampleFinding("still-open", "open.ts:1");
-    const key = findingIdentityKey(parked);
-    const verdict = judgeContinue([parked], {
-      suppress: [
-        {
-          identityKey: key,
-          action: "suppress",
-          evidence: "legal open suppress on family path",
-          groundTicket: 952,
-        },
-      ],
-    });
-    const closure = closeFamilyCourtFromJudgeOutput(verdict, {
-      [key]: "unrepaired",
-    });
-    expect(closure.action).toBe("pass");
   });
 
   it("escalate → escalate action with reason/diagnosis", () => {
@@ -389,14 +277,6 @@ describe("#930 pure family judge closure", () => {
     expect(liveFindingsBlockConverged(dispositions)).toBe(true);
     // Topology still trusts status enum — pure check for seat self-check.
     expect(closeFamilyCourtFromJudgeOutput(judgeConverged()).action).toBe("pass");
-  });
-
-  it("projectJudgeContinueBlocking shared with single-slice", () => {
-    const projected = projectJudgeContinueBlocking(
-      judgeContinue([FINDING]),
-    );
-    expect(projected?.blockingFindingCount).toBe(1);
-    expect(projected?.blockingIdentityKeys).toEqual([FINDING_KEY]);
   });
 
   it("S1: typed station:judge SO payload decodes to kind:judge (not open-count)", () => {
@@ -556,11 +436,12 @@ describe("#930 runVerifyCmr family judge courts", () => {
     ).toHaveLength(2);
   });
 
-  it("continue → family coder-fix with live keys only, then re-open judge", async () => {
+  it("continue transports the authored packet to family coder-fix, then re-opens judge", async () => {
+    const continueVerdict = judgeContinue([FINDING]);
     const backend = new FamilyJudgeBackend({
       completeness: (round) => {
         if (round === 0) {
-          return completedJudge(judgeContinue([FINDING]), "judge-sess-c");
+          return completedJudge(continueVerdict, "judge-sess-c");
         }
         return completedJudge(judgeConverged(), "judge-sess-c");
       },
@@ -572,7 +453,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     const coder = backend.dispatches.find((d) => d.kind === "coder");
-    expect(coder?.blockingFindingIdentityKeys).toEqual([FINDING_KEY]);
+    expect(coder?.landing?.fixPacketBody).toBe(continueVerdict.fixPacketBody);
     expect(
       backend.ledger.some((e) => e.status === "cmr_reviewed"),
     ).toBe(true);
@@ -856,94 +737,6 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
-  });
-
-  it("M1: empty continue (0 live keys) fails loud — never empty-spins coder-fix", async () => {
-    // #919 M1 / #930 AC: status:continue with empty live open set is court
-    // contract drift. openFindingsForFixer may yield [] for cargo filter; that
-    // does not authorize a family fix loop with zero identity keys.
-    // True empty = 0 live AND 0 terminal flips. Terminal-only suppress/refute
-    // is court closure (#952), not this drift case.
-    let opens = 0;
-    const backend = new FamilyJudgeBackend({
-      completeness: () => {
-        opens += 1;
-        return completedJudge(
-          {
-            kind: "judge",
-            status: "continue",
-            findingDispositions: [],
-            findings: [],
-            // Body present so the empty-live-keys gate (not body gate) fires.
-            fixPacketBody: "empty continue must not spin coder-fix",
-          },
-          "empty-continue",
-        );
-      },
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/919-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({
-      ok: false,
-      ran: true,
-      failedStatus: "cmr_failed",
-    });
-    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
-    expect(backend.prCalls).toEqual([]);
-    expect(opens).toBe(1);
-    expect(
-      backend.ledger.some(
-        (e) => e.status === "aborted" || e.event === "aborted",
-      ),
-    ).toBe(true);
-  });
-
-  it("#952: suppress-only continue closes court — no coder-fix, suppress queryable", async () => {
-    // AC: legal suppress persists on family ledger and does not enter fixer.
-    // continue + 0 live + non-empty terminal dispositions = pass (like converged).
-    const parked = sampleFinding("park-only", "park.ts:1");
-    const suppressKey = findingIdentityKey(parked);
-    const suppressVerdict = judgeContinue([parked], {
-      suppress: [
-        {
-          identityKey: suppressKey,
-          action: "suppress",
-          evidence: "owner parked via ticket",
-          groundTicket: 952,
-        },
-      ],
-    });
-    let completenessOpens = 0;
-    const backend = new FamilyJudgeBackend({
-      completeness: () => {
-        completenessOpens += 1;
-        return completedJudge(suppressVerdict, "suppress-only-continue");
-      },
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/952-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
-    // Completeness closed on suppress-only; correctness court may still open.
-    expect(completenessOpens).toBe(1);
-    expect(
-      backend.ledger.some(
-        (e) =>
-          Array.isArray(e.findingDispositions) &&
-          e.findingDispositions.some(
-            (d) =>
-              "action" in d &&
-              d.action === "suppress" &&
-              d.identityKey === suppressKey,
-          ),
-      ),
-    ).toBe(true);
   });
 
   it("ADR 0030 order: correctness court not opened until completeness converged", async () => {

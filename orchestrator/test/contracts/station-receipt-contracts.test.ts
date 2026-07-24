@@ -207,6 +207,120 @@ describe("#921 judge verdict three-state", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("owning judge SO rejects an illegal store transition with the exact reason", () => {
+    const parsed = judgeStationReceiptSchema([
+      {
+        findingDispositions: [
+          {
+            action: "refute",
+            identityKey: "already-terminal",
+          },
+        ],
+      },
+    ]).safeParse({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "仍有 live finding，继续修",
+      findingDispositions: [
+        {
+          action: "refute",
+          identityKey: "already-terminal",
+          reason: "not_established",
+          evidence: "重复终态应由同一判官修正",
+        },
+      ],
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe(
+        "illegal findings-store transition refuted → refuted (terminal status cannot re-flip)",
+      );
+    }
+  });
+
+  it.each([
+    {
+      name: "durable terminal → live",
+      priorJudgeVerdicts: [
+        {
+          findingDispositions: [
+            {
+              action: "refute",
+              identityKey: "terminal-to-live",
+            },
+          ],
+        },
+      ],
+      findingDispositions: [
+        {
+          action: "live",
+          identityKey: "terminal-to-live",
+        },
+      ],
+      expected:
+        "illegal findings-store transition refuted → unrepaired (terminal status cannot re-flip)",
+    },
+    {
+      name: "same receipt terminal → live",
+      priorJudgeVerdicts: [],
+      findingDispositions: [
+        {
+          action: "suppress",
+          identityKey: "terminal-to-live",
+          evidence: "owner deferred",
+          groundTicket: 1128,
+        },
+        {
+          action: "live",
+          identityKey: "terminal-to-live",
+        },
+      ],
+      expected:
+        "illegal findings-store transition suppressed → unrepaired (terminal status cannot re-flip)",
+    },
+  ])("owning judge SO rejects $name", ({
+    priorJudgeVerdicts,
+    findingDispositions,
+    expected,
+  }) => {
+    const parsed = judgeStationReceiptSchema(priorJudgeVerdicts).safeParse({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "继续修",
+      findingDispositions,
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe(expected);
+    }
+  });
+
+  it("owning judge SO accepts a new terminal transition from durable history", () => {
+    const parsed = judgeStationReceiptSchema([
+      {
+        findingDispositions: [
+          {
+            action: "refute",
+            identityKey: "other-terminal",
+          },
+        ],
+      },
+    ]).safeParse({
+      station: "judge",
+      status: "continue",
+      fixPacketBody: "继续修",
+      findingDispositions: [
+        {
+          action: "refute",
+          identityKey: "new-terminal",
+          reason: "not_established",
+          evidence: "新终态合法",
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it("round-trips encode → decode for toolchain terminal", () => {
     const verdict: JudgeVerdict = {
       station: "judge",

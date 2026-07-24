@@ -19,8 +19,6 @@ import {
   PROGRESS_SCHEMA_VERSION,
   clearProgressBroadcastConfig,
   configureProgressBroadcast,
-  countJudgeDispositions,
-  countSeverityFromFindings,
   emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
@@ -113,34 +111,6 @@ const findings: readonly Finding[] = [
   },
 ];
 
-describe("#1007 disposition / severity pure counters", () => {
-  it("maps live→fix_now, refute→refuted, suppress→suppressed", () => {
-    expect(countJudgeDispositions(dispositions)).toEqual({
-      fix_now: 2,
-      refuted: 1,
-      suppressed: 1,
-    });
-  });
-
-  it("counts severity only from typed findings cargo (no invent)", () => {
-    expect(countSeverityFromFindings(findings)).toEqual({
-      critical: 0,
-      high: 2,
-      medium: 1,
-      low: 0,
-      clarity: 0,
-    });
-    expect(countSeverityFromFindings(undefined)).toBeNull();
-    expect(countSeverityFromFindings([])).toEqual({
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      clarity: 0,
-    });
-  });
-});
-
 describe("#1007 progress.jsonl append-only schema", () => {
   it("appends schema'd stage / judge / park / wave_close / terminal rows", () => {
     const ledgerDir = tempLedger();
@@ -161,8 +131,6 @@ describe("#1007 progress.jsonl append-only schema", () => {
       step: "S3",
       round: 1,
       verdict: "continue",
-      findingDispositions: dispositions,
-      findings,
       cargoPointer: "ledger://judge/S3",
     });
     emitParkProgress({
@@ -204,18 +172,8 @@ describe("#1007 progress.jsonl append-only schema", () => {
     if (judge.kind === "judge") {
       expect(judge.issue).toBe(1007);
       expect(judge.verdict).toBe("continue");
-      expect(judge.dispositions).toEqual({
-        fix_now: 2,
-        refuted: 1,
-        suppressed: 1,
-      });
-      expect(judge.severity).toEqual({
-        critical: 0,
-        high: 2,
-        medium: 1,
-        low: 0,
-        clarity: 0,
-      });
+      expect(judge).not.toHaveProperty("dispositions");
+      expect(judge).not.toHaveProperty("severity");
       expect(judge.cargoPointer).toBe("ledger://judge/S3");
       // Finding bodies never enter the feed.
       expect(JSON.stringify(judge)).not.toMatch(/suggested_fix|claim_quote|q1/);
@@ -345,8 +303,6 @@ describe("#1007 status renderer from progress feed + ledger", () => {
       step: "S3",
       round: 1,
       verdict: "continue",
-      findingDispositions: dispositions,
-      findings,
     });
     emitStageProgress({
       ledgerDir,
@@ -362,7 +318,6 @@ describe("#1007 status renderer from progress feed + ledger", () => {
       step: "S6",
       round: 2,
       verdict: "converged",
-      findingDispositions: [],
     });
     emitStageProgress({
       ledgerDir,
@@ -2405,16 +2360,11 @@ describe("#1007 CR R5: family quota single emit + CMR judge progress", () => {
           e.verdict === "converged",
       ),
     ).toBe(true);
-    // Typed dispositions/severity only — no prose cargo in the feed row.
+    // Runner progress carries verdict only — no findings-derived counts.
     const completeness = judges.find(
       (e) => e.kind === "judge" && e.step === "cmr:completeness",
     );
-    expect(completeness).toMatchObject({
-      dispositions: {
-        fix_now: 2,
-        refuted: 1,
-        suppressed: 1,
-      },
-    });
+    expect(completeness).not.toHaveProperty("dispositions");
+    expect(completeness).not.toHaveProperty("severity");
   });
 });
