@@ -271,9 +271,11 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
             item for item in db.list_decree_dossiers(status="proposed")
             if item["pending_action_id"] == action_id
         )
-        db.apply_dossier_promulgation(
-            state, dossier["id"], "promulgated",
-            content=content, registry=None,
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+            registry=None,
         )
 
     restored = db.load_state()

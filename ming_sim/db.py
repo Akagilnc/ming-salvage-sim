@@ -9420,8 +9420,9 @@ class GameDB:
 
     _DOSSIER_STATUSES = frozenset({"proposed", "promulgated", "executing", "closed"})
     _DOSSIER_ACTION_TYPES = frozenset({
-        "policy", "appointment", "assignment", "allocation",
-        "authorization", "secret_order",
+        "policy", "appointment", "assignment", "military_order",
+        "grant_allocation", "authorization", "strategy_selection",
+        "secret_order",
     })
     _DOSSIER_TRANSITIONS = {
         "proposed": frozenset({"promulgated"}),
@@ -9437,14 +9438,18 @@ class GameDB:
             if explicit not in cls._DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}:
                 raise ValueError(f"旨意 action_type 非法：{explicit}")
             return explicit
+        if payload.get("selected_strategy_id") or payload.get("selected_strategy"):
+            return "strategy_selection"
+        if payload.get("authorization_id") or payload.get("authorized_scope"):
+            return "authorization"
+        if payload.get("military_target_id") or payload.get("army_id"):
+            return "military_order"
         if payload.get("amount") is not None and (
             payload.get("account") or payload.get("target_account")
         ):
-            return "allocation"
+            return "grant_allocation"
         if payload.get("assignee_id") or payload.get("assignee"):
             return "assignment"
-        if payload.get("authorization_id") or payload.get("authorized_scope"):
-            return "authorization"
         return "policy"
 
     def _commit_dossier_write(self, commit: bool) -> None:
@@ -9581,16 +9586,14 @@ class GameDB:
             if self.get_decree_dossier(dossier_id) is None:
                 raise ValueError("commitment origin_ref 指向不存在案卷")
             return supplied
-        rows = self.conn.execute(
-            """
-            SELECT id FROM decree_dossiers
-            WHERE created_turn=? AND status IN ('promulgated','executing','closed')
-            ORDER BY id DESC
-            """,
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?",
             (int(state.turn),),
-        ).fetchall()
-        if len(rows) == 1:
-            return f"dossier:{int(rows[0]['id'])}"
+        ).fetchone()
+        if row is not None and int(row["n"] or 0) > 0:
+            raise ValueError(
+                "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
+            )
         return supplied
 
     def append_dossier_stigma(
@@ -9642,7 +9645,8 @@ class GameDB:
         self, dossier_id: int, new_status: str, *, commit: bool = True,
     ) -> None:
         row = self.conn.execute(
-            "SELECT status FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+            "SELECT status,payload_json,execution_outcome FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -9651,6 +9655,15 @@ class GameDB:
             return
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
+        if old_status == "promulgated" and new_status == "closed":
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict) or not payload.get("immediate_terminal"):
+                raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
+            if not str(row["execution_outcome"] or ""):
+                raise ValueError("直达结案仍须填写执行格")
         closed_sql = ", closed_at=CURRENT_TIMESTAMP" if new_status == "closed" else ""
         self.conn.execute(
             f"UPDATE decree_dossiers SET status=?,updated_at=CURRENT_TIMESTAMP{closed_sql} "
@@ -9768,7 +9781,7 @@ class GameDB:
     ) -> None:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
         with atomic(self):
-            if decision != "promulgated":
+            if decision not in {"promulgated", "force_promulgated"}:
                 self.record_dossier_decision(
                     dossier_id, decision, commit=False,
                 )
@@ -9776,9 +9789,36 @@ class GameDB:
             row = self.get_decree_dossier(dossier_id)
             if row is None:
                 raise KeyError(f"案卷不存在：{dossier_id}")
-            self.record_dossier_decision(
-                dossier_id, "promulgated", commit=False,
-            )
+            if decision == "force_promulgated":
+                if (
+                    row["promulgation_decision"] != "rejected"
+                    or not row["rescript_pending"]
+                ):
+                    raise ValueError("强颁只可承接打回＋批红待抉择组合态")
+                turn_row = self.conn.execute(
+                    "SELECT turn FROM game_state WHERE id=1"
+                ).fetchone()
+                self.conn.execute(
+                    """
+                    UPDATE decree_dossiers
+                    SET status='promulgated',rescript_pending=0,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (int(dossier_id),),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO decree_dossier_decisions
+                        (dossier_id,turn,decision,rescript_action,reason)
+                    VALUES (?,?,'rejected','force_promulgated','批红强颁')
+                    """,
+                    (int(dossier_id), int(turn_row["turn"] if turn_row else 0)),
+                )
+            else:
+                self.record_dossier_decision(
+                    dossier_id, "promulgated", commit=False,
+                )
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
                 raise ValueError("案卷 payload 非对象")
@@ -9801,6 +9841,27 @@ class GameDB:
                         raise ValueError("任免案卷载荷物化失败")
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
+            elif row["action_type"] == "grant_allocation":
+                self.record_issue_economy_move(
+                    state,
+                    str(payload.get("account") or payload.get("target_account") or ""),
+                    int(payload.get("delta") or payload.get("amount") or 0),
+                    str(payload.get("category") or "奉旨拨帑"),
+                    str(payload.get("reason") or row["decree_text"]),
+                    purpose=str(payload.get("purpose") or "") or None,
+                    target_kind=str(payload.get("target_kind") or "") or None,
+                    target_id=str(payload.get("target_id") or "") or None,
+                    commit=False,
+                )
+            elif row["action_type"] == "authorization":
+                if not self.grant_skill(
+                    state,
+                    str(payload.get("character_id") or payload.get("assignee_id") or ""),
+                    str(payload.get("skill_id") or payload.get("authorization_id") or ""),
+                    granted_by=str(payload.get("granted_by") or "皇帝"),
+                    commit=False,
+                ):
+                    raise ValueError("授权案卷载荷物化失败")
             if bool(payload.get("immediate_terminal")):
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
@@ -9812,6 +9873,23 @@ class GameDB:
             else:
                 self.transition_decree_dossier(
                     dossier_id, "executing", commit=False,
+                )
+
+    def apply_dossier_verdicts(
+        self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
+        content=None, registry=None,
+    ) -> None:
+        """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
+        with atomic(self):
+            for verdict in verdicts:
+                if not isinstance(verdict, dict):
+                    raise ValueError("案卷 verdict 须为对象")
+                self.apply_dossier_promulgation(
+                    state,
+                    int(verdict.get("dossier_id") or 0),
+                    str(verdict.get("decision") or ""),
+                    content=content,
+                    registry=registry,
                 )
 
     def interrupt_dossiers_for_character(
@@ -10527,6 +10605,7 @@ class GameDB:
                     excluded_names=excluded, excluded_offices=excluded_offices,
                     origin_minister_name=str(pa.get("minister_name") or "") or None,
                     origin_chat_message_id=origin_mid,
+                    pending_action_id=int(pa["id"]),
                 )
                 if registry is not None:
                     try:
@@ -10942,7 +11021,10 @@ class GameDB:
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
 
-    def grant_skill(self, state: GameState, character_name: str, skill_id: str, granted_by: str = "皇帝") -> bool:
+    def grant_skill(
+        self, state: GameState, character_name: str, skill_id: str,
+        granted_by: str = "皇帝", *, commit: bool = True,
+    ) -> bool:
         exists = self.conn.execute(
             """
             SELECT 1 FROM skill_grants
@@ -10960,7 +11042,8 @@ class GameDB:
             """,
             (character_name, skill_id, granted_by, state.turn),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return True
 
     def revoke_skill(self, character_name: str, skill_id: str) -> bool:
@@ -12541,6 +12624,7 @@ class GameDB:
         origin_minister_name: Optional[str] = None,
         origin_chat_message_id: Optional[int] = None,
         origin_chat_message_ids: Optional[Iterable[int]] = None,
+        pending_action_id: int = 0,
     ) -> int:
         # 宗藩/外藩 非朝堂命官，不可受密令——密令创建的唯一 DB 写口，集中守此一处即覆盖
         # API / 大臣工具 / CLI 自然语言 / upsert 回落 create 全路（cmr R6 cross-section）。
@@ -12588,6 +12672,24 @@ class GameDB:
         tags_json = json.dumps(tags, ensure_ascii=False)
         deadline = max(0, min(int(deadline_months or 0), 36))
         due_turn = int(state.turn) + deadline if deadline else 0
+        provenance_message_ids = self._coerce_positive_message_ids([
+            *([] if origin_chat_message_id is None else [origin_chat_message_id]),
+            *(origin_chat_message_ids or []),
+        ])
+        source_chat_turn_id = 0
+        if provenance_message_ids:
+            placeholders = ",".join("?" for _ in provenance_message_ids)
+            source_row = self.conn.execute(
+                f"""
+                SELECT id FROM chat_turns
+                WHERE user_message_id IN ({placeholders})
+                   OR minister_message_id IN ({placeholders})
+                ORDER BY id DESC LIMIT 1
+                """,
+                [*provenance_message_ids, *provenance_message_ids],
+            ).fetchone()
+            if source_row is not None:
+                source_chat_turn_id = int(source_row["id"])
         with atomic(self):
             cur = self.conn.execute(
                 """
@@ -12611,9 +12713,11 @@ class GameDB:
             self.create_decree_dossier(
                 state,
                 action_type="secret_order",
-                decree_text=title,
+                decree_text=content,
                 target_kind="character",
                 target_id=minister_name,
+                source_chat_turn_id=source_chat_turn_id,
+                pending_action_id=int(pending_action_id or 0),
                 secret_order_id=order_id,
                 payload={
                     "title": title,
