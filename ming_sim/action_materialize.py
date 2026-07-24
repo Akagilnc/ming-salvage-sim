@@ -282,7 +282,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     if (
         intent is not None
         and intent_kind == "draft"
-        and not has_existing_draft
         and ctx.candidate_kind_count > 1
     ):
         if "draft_texts" not in ctx.batch_state:
@@ -320,7 +319,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
-        if ctx.candidate_kind_count > 1 and not has_existing_draft:
+        if ctx.candidate_kind_count > 1:
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
                 payload={"text": draft_res["draft_text"], "actor": minister_name},
