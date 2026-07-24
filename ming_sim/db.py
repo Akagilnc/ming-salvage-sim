@@ -13336,15 +13336,16 @@ class GameDB:
         ).fetchone()["result"] or ""
         lines = [ln for ln in prev.split("\n") if ln.strip()]
         lines.append(f"{stamp}{note}")
-        self.conn.execute(
-            """
-            UPDATE secret_orders
-            SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            ("\n".join(lines), int(order_id)),
-        )
-        self.conn.commit()
+        with atomic(self):
+            self.conn.execute(
+                """
+                UPDATE secret_orders
+                SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                ("\n".join(lines), int(order_id)),
+            )
+            self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] submit_for_review id={order_id} claim={note[:60]!r}")
         return True
 
@@ -13415,15 +13416,7 @@ class GameDB:
                 commit=False,
             )
             if ok:
-                dossier = self.get_dossier_for_secret_order(order_id)
-                if dossier is None:
-                    raise ValueError("密令进展缺少对应案卷")
-                if dossier["status"] == "promulgated":
-                    self.transition_decree_dossier(
-                        int(dossier["id"]), "executing", commit=False,
-                    )
-                elif dossier["status"] != "executing":
-                    raise ValueError("在办密令的案卷不处于可执行状态")
+                self.mark_secret_order_in_progress(order_id, commit=False)
         tlog(f"[secret_order] progress id={order_id} ok={ok} note={progress_note[:40]!r}")
         return ok
 
@@ -13438,8 +13431,27 @@ class GameDB:
     ) -> None:
         """推演写密令副作用（泄漏/反弹等），按年月追加进 sim_note 历史时间线，
         不动 result/status。同月再写替换（推演每月一次）。与承办人进展分列。"""
-        self._append_secret_order_line(order_id, "sim_note", sim_note, year, period, commit=commit)
+        with atomic(self):
+            self._append_secret_order_line(
+                order_id, "sim_note", sim_note, year, period, commit=False,
+            )
+            self.mark_secret_order_in_progress(order_id, commit=False)
         tlog(f"[secret_order] sim_note id={order_id} note={sim_note[:40]!r}")
+
+    def mark_secret_order_in_progress(
+        self, order_id: int, *, commit: bool = True,
+    ) -> None:
+        """任何首次实际办理入口共用：密令轴在办时，案卷轴幂等进入 executing。"""
+        dossier = self.get_dossier_for_secret_order(order_id)
+        if dossier is None:
+            raise ValueError("密令进展缺少对应案卷")
+        if dossier["status"] == "promulgated":
+            self.transition_decree_dossier(
+                int(dossier["id"]), "executing", commit=False,
+            )
+        elif dossier["status"] != "executing":
+            raise ValueError("在办密令的案卷不处于可执行状态")
+        self._commit_dossier_write(commit)
 
     def rush_secret_order(
         self,
@@ -13467,31 +13479,32 @@ class GameDB:
         why = (reason or "").strip()[:120] or "奉旨加急"
         prev = row["result"] or ""
         lines = [ln for ln in prev.split("\n") if ln.strip()]
-        if months <= 0:
-            lines.append(f"{stamp}[奉旨即核] {why}；本月即移交密旨核议。")
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET status = 'pending_review', due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (int(state.turn), "\n".join(lines), int(order_id)),
-            )
-            status = "pending_review"
-            due_turn = int(state.turn)
-        else:
-            due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
-            lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (due_turn, "\n".join(lines), int(order_id)),
-            )
-            status = "active"
-        self.conn.commit()
+        with atomic(self):
+            if months <= 0:
+                lines.append(f"{stamp}[奉旨即核] {why}；本月即移交密旨核议。")
+                self.conn.execute(
+                    """
+                    UPDATE secret_orders
+                    SET status = 'pending_review', due_turn = ?, result = ?, updated_at=CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (int(state.turn), "\n".join(lines), int(order_id)),
+                )
+                status = "pending_review"
+                due_turn = int(state.turn)
+            else:
+                due_turn = target_turn if old_due <= 0 else min(old_due, target_turn)
+                lines.append(f"{stamp}[奉旨加急] {why}；御限改为 {months} 个月内核议。")
+                self.conn.execute(
+                    """
+                    UPDATE secret_orders
+                    SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (due_turn, "\n".join(lines), int(order_id)),
+                )
+                status = "active"
+            self.mark_secret_order_in_progress(int(order_id), commit=False)
         tlog(f"[secret_order] rush id={order_id} old_due={old_due} due={due_turn} status={status}")
         return {"id": int(order_id), "title": row["title"], "status": status, "due_turn": due_turn}
 
@@ -13523,24 +13536,25 @@ class GameDB:
             (int(state.turn),),
         ).fetchall()
         submitted: List[Dict[str, object]] = []
-        for row in rows:
-            stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
-            note = "御限已至，移交月末密旨核议；据既有查办、风声与盘面定成败。"
-            prev = row["result"] or ""
-            lines = [ln for ln in prev.split("\n") if ln.strip()]
-            if not any("[期限届满]" in ln for ln in lines):
-                lines.append(f"{stamp}{note}")
-            self.conn.execute(
-                """
-                UPDATE secret_orders
-                SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                ("\n".join(lines), int(row["id"])),
-            )
-            submitted.append({"id": int(row["id"]), "title": row["title"]})
+        with atomic(self):
+            for row in rows:
+                stamp = f"〔{period_label(state.year, state.period)}〕[期限届满] "
+                note = "御限已至，移交月末密旨核议；据既有查办、风声与盘面定成败。"
+                prev = row["result"] or ""
+                lines = [ln for ln in prev.split("\n") if ln.strip()]
+                if not any("[期限届满]" in ln for ln in lines):
+                    lines.append(f"{stamp}{note}")
+                self.conn.execute(
+                    """
+                    UPDATE secret_orders
+                    SET status = 'pending_review', result = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    ("\n".join(lines), int(row["id"])),
+                )
+                self.mark_secret_order_in_progress(int(row["id"]), commit=False)
+                submitted.append({"id": int(row["id"]), "title": row["title"]})
         if rows:
-            self.conn.commit()
             tlog(f"[secret_order] auto_submit_due count={len(submitted)} ids={[x['id'] for x in submitted]}")
         return submitted
 

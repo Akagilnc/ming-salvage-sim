@@ -141,6 +141,16 @@ def test_office_action_waits_for_verdict_then_materializes_from_same_payload(gam
     ).fetchone()["office"] == "兵部主事"
 
 
+@pytest.mark.parametrize("status", ("executing", "closed"))
+def test_dossier_cannot_start_in_execution_state(game, status):
+    db, state, _content = game
+    with pytest.raises(ValueError, match="只能从 proposed"):
+        db.create_decree_dossier(
+            state, action_type="appointment", decree_text="非法初态",
+            status=status,
+        )
+
+
 def test_secret_order_and_dossier_roll_back_as_one_unit(game, monkeypatch):
     db, state, _content = game
     minister = _active_minister(db)
@@ -332,6 +342,26 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
     ]
     assert seen["payload"]["decree_text"] == "不应作为真源"
     assert staged["status"] == "proposed"
+
+
+def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="持续办理",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    with pytest.raises(ValueError, match="非终态"):
+        db.record_dossier_execution(
+            dossier_id, "executing", "仍在办理", state.turn, close=True,
+        )
+    db.record_dossier_execution(
+        dossier_id, "executing", "仍在办理", state.turn, close=False,
+    )
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["closed_turn"] == 0
 
 
 def test_appointment_alias_uses_canonical_dossier_identity(game):
@@ -647,22 +677,12 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
     import ming_sim.cli_backend as cli_backend
 
     db, state, content = game
-    def _structured_capture(_prompt, _config, *, tag):
-        assert tag == "draft_intent"
-        return json.dumps({
-            "拟旨意图": "拟旨",
-            "动作类型": "assignment",
-            "目标类型": "region",
-            "目标ID": "河南",
-            "金额": None,
-            "账户": "",
-            "执行面": "",
-            "承办人": _active_minister(db),
-            "授权ID": "",
-            "期限月数": None,
-        }, ensure_ascii=False), {}
-
-    monkeypatch.setattr(cli_backend, "_run_backend_for_config", _structured_capture)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("add_directive 不得触发 backend")
+        ),
+    )
     session = GameSession(
         db.path,
         LLMConfig(
@@ -672,7 +692,15 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         verify_llm=False,
     )
     try:
-        directive = session.add_directive("着查河南河工")
+        directive = session.add_directive(
+            "着查河南河工",
+            dossier_payload={
+                "dossier_action_type": "assignment",
+                "target_kind": "region",
+                "target_id": "河南",
+                "assignee": _active_minister(session.db),
+            },
+        )
         assert session.db.get_dossier_for_directive(directive.id) is None
 
         session.db.ensure_dossiers_for_draft_directives(session.state)
