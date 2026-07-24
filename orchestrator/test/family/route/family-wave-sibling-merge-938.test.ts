@@ -18,9 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import { mergeChild } from "../../../src/family/merger.js";
 import { runFamily } from "../../../src/family/runner.js";
-import { parseTerminalChildrenCargo } from "../../../src/family/terminalFinalizer.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
-import type { StopSummary } from "../../../src/stopSummary.js";
 import type {
   Backend,
   IssueMeta,
@@ -387,45 +385,6 @@ describe("#938 public runFamily — ID-009 wave keeps siblings", () => {
   });
 });
 
-// ─── #1125 schema A: terminalChildren strict parse + trackedStatus isolation ─
-
-describe("#1125 schema A terminalChildren cargo", () => {
-  it("malformed / missing terminalChildren throws (ADR 0005 loud, no silent renorm)", () => {
-    expect(() =>
-      parseTerminalChildrenCargo(undefined, "test missing"),
-    ).toThrow(/terminalChildren missing/);
-    expect(() =>
-      parseTerminalChildrenCargo("not-array", "test type"),
-    ).toThrow(/must be an array/);
-    expect(() =>
-      parseTerminalChildrenCargo([{ issue: 1, status: "bogus" }], "test enum"),
-    ).toThrow(/status invalid/);
-    expect(() =>
-      parseTerminalChildrenCargo(
-        [{ issue: 1, status: "escalated" }],
-        "test esc shape",
-      ),
-    ).toThrow(/escalation required/);
-  });
-
-  it("trackedStatus on StopSummary remains git-status text only (not child cargo)", () => {
-    const stop: StopSummary = {
-      reason: "infra_failure",
-      summary: "example",
-      metadata: {
-        trackedStatus: [" M orchestrator/src/family/runner.ts"],
-      },
-    };
-    expect(stop.metadata?.trackedStatus).toEqual([
-      " M orchestrator/src/family/runner.ts",
-    ]);
-    // Cargo lives on terminalChildren, never steals trackedStatus slots.
-    expect(JSON.stringify(stop.metadata?.trackedStatus)).not.toMatch(
-      /"issue"\s*:/,
-    );
-  });
-});
-
 // ─── ID-010: trust merger worker; no host still-conflicted court / cap ───────
 
 describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
@@ -630,6 +589,48 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       }
       expect(second.stopSummary).toEqual(result.stopSummary);
       expect(second.children).toEqual(firstChildren);
+
+      const durableRows = readFileSync(ledgerPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const authority = [...durableRows]
+        .reverse()
+        .find((row: Record<string, unknown>) => row.status === "escalated")!;
+      const trackedStatus = [" M orchestrator/src/family/runner.ts"];
+      authority.terminalChildren = "malformed";
+      authority.stopSummary = {
+        ...(authority.stopSummary as Record<string, unknown>),
+        metadata: { trackedStatus },
+      };
+      writeFileSync(
+        ledgerPath,
+        durableRows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+      );
+      await expect(
+        runFamily({
+          verifyCmr: async () => ({ ok: true, ran: true }),
+          epic: {
+            issue: 938,
+            children: [
+              { issue: 10, blockedBy: [] },
+              { issue: 11, blockedBy: [] },
+            ],
+          },
+          familyBackend: new DiskLedgerBackend(),
+          singleSliceBackend: new NoDispatchBackend(),
+          familyBase: "family/938-base",
+        }),
+      ).rejects.toThrow(/terminalChildren must be an array/);
+      expect(
+        (
+          JSON.parse(
+            readFileSync(ledgerPath, "utf8").trim().split("\n").at(-1)!,
+          ) as {
+            stopSummary: { metadata: { trackedStatus: string[] } };
+          }
+        ).stopSummary.metadata.trackedStatus,
+      ).toEqual(trackedStatus);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -1145,6 +1145,7 @@ export function planFamilyTerminalReplay(
       ...admissionSkipped.map((s) => ({
         issue: s.issue,
         status: "skipped" as const,
+        reason: "admission_skipped" as const,
       })),
     ];
     const headsMeta =
@@ -1707,10 +1708,16 @@ export async function runFamilyDriver(
         message: baseline.escalation.diagnosis,
         familyHeadAfter: familyBaseStartHead,
       });
-      const children = epic.children.map((child) => ({
-        issue: child.issue,
-        status: "skipped" as const,
-      }));
+      const children = epic.children.map((child) => {
+        console.warn(
+          `family child #${child.issue} skipped: baseline_health_failed`,
+        );
+        return {
+          issue: child.issue,
+          status: "skipped" as const,
+          reason: "baseline_health_failed" as const,
+        };
+      });
       const stopSummary = infraFailureStopSummary({
         summary: baseline.escalation.diagnosis,
         // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.

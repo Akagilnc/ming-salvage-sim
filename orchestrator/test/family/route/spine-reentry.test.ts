@@ -219,7 +219,11 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
     expect(result.familyHead).toBe("head-after-cmr-pause");
     expect(result.children).toEqual([
       { issue: 10, status: "already_done" },
-      { issue: 11, status: "skipped" },
+      {
+        issue: 11,
+        status: "skipped",
+        reason: "not_scheduled_this_invocation",
+      },
     ]);
     expect(childBackend.ran).toEqual([]);
   });
@@ -277,7 +281,13 @@ describe("spine re-entry — refetch the dependency graph from live GitHub (deci
         reason: "family base diverged from ledger",
         escalationKind: "failure",
         // #1125 schema A — durable failure authority carries terminalChildren
-        terminalChildren: [{ issue: 10, status: "skipped" }],
+        terminalChildren: [
+          {
+            issue: 10,
+            status: "skipped",
+            reason: "not_scheduled_this_invocation",
+          },
+        ],
       },
       {
         status: "escalation_answered",
