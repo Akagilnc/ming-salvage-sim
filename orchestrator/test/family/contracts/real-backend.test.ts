@@ -18,7 +18,6 @@ import {
   vi,
   sc,
   discoverSubprojects,
-  MERGER_SOUL,
   cmrOutcomeFromResult,
   mergerOutcomeFromResult,
   MergerAuth,
@@ -29,7 +28,6 @@ import {
   familyEscalationState,
   MAX_DISPATCH_ATTEMPTS,
   SANDBOX_SKILLS_DIR,
-  SANDBOX_SOUL_ENV,
   soulsMount,
   ConflictResolveRequest,
   FamilyVerifyRequest,
@@ -580,8 +578,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
       new Set([
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
-        "cmr_panel_leg_completeness.md",
-        "cmr_panel_leg_correctness.md",
+        "cmr_panel_leg.md",
         "wave_verify_judge.md",
         "coder_fix.md",
         "family_ship.md",
@@ -605,25 +602,6 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
     );
   });
 
-});
-
-describe("family CMR prompt output contract", () => {
-  it("pins priorFindingDispositions to the parser's status field, not prose-only disposition", () => {
-    for (const file of [
-      "integrated_cmr_completeness.md",
-      "integrated_cmr_correctness.md",
-    ]) {
-      const prompt = readFileSync(join(realPromptsDir, file), "utf8");
-      expect(prompt).toContain('"status":"verified-closed"');
-      expect(prompt).toContain("Do not use a field named `disposition`");
-      expect(prompt).toContain(
-        "Any `priorFindingDispositions` entries in this not-converged shape must use the",
-      );
-      expect(prompt).toContain(
-        'same `{"identityKey":"<key>","status":"...","reason":"<short>"}` contract',
-      );
-    }
-  });
 });
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {

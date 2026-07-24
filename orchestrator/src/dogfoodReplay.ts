@@ -28,9 +28,9 @@ import {
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import {
-  isCmrPanelLegPromptFile,
+  isReviewPanelLegPromptFile,
   panelLegCompletedResult,
-} from "./family/cmrPanelLegs.js";
+} from "./family/reviewPanelLegs.js";
 import { runOrchestrator } from "./runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
@@ -638,7 +638,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     if (
       spec.kind === "reviewer" &&
       spec.role === "reviewer" &&
-      isCmrPanelLegPromptFile(spec.promptFile)
+      isReviewPanelLegPromptFile(spec.promptFile)
     ) {
       if (this.panelLegFailures.has(spec.model)) {
         return {
@@ -787,44 +787,6 @@ function noProgressDecisionLedger(
   ];
 }
 
-async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
-  const activeFinding = runnerFinding({
-    claimQuote: "continue fixing should reopen the active no-progress finding",
-  });
-  const activeKey = findingIdentityKey(activeFinding);
-  const backend = new DogfoodSingleSliceBackend({
-    worktree: REPLAY_WORKTREE,
-    stateDir: "/dogfood/.ledger-307",
-    ledger: [
-      // Explicit open-count: scenario has one active finding row matching count 1.
-      ...noProgressDecisionLedger([activeFinding], 1),
-      ledgerEntry("S4", {
-        event: "escalation_answered",
-        forStep: "S4",
-        answer: "继续修",
-        source: "human",
-        findingScope: { identityKeys: [activeKey] },
-      }),
-    ],
-  }, [
-    { kind: "judge", status: "converged" },
-  ]);
-  const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "completed") {
-    throw new Error(`dogfood runner answered-resume replay ended ${result.status}`);
-  }
-  return {
-    stopSummary: result.stopSummary,
-    sourceEvidence: {
-      seam: "runner",
-      mechanism: "scoped_escalation_answer",
-      status: result.status,
-      dispatched: backend.dispatched,
-      findingIdentityKey: activeKey,
-    },
-  };
-}
-
 async function runnerModuleNotFoundReplay(): Promise<SeamReplay> {
   const result = await runOrchestrator({
     issueNumber: 440,
@@ -896,63 +858,6 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
       dispatched: backend.dispatched,
       originalFindingIdentityKey: originalKey,
       changedFindingIdentityKey: changedKey,
-    },
-  };
-}
-
-async function runnerTargetedResetReplay(): Promise<SeamReplay> {
-  const targetFinding = runnerFinding({
-    claimQuote: "continue fixing should reset only this finding group",
-    location: "orchestrator/src/runner.ts:502",
-  });
-  const siblingFinding = runnerFinding({
-    claimQuote: "sibling finding must keep its no-progress state",
-    location: "orchestrator/src/runner.ts:503",
-  });
-  const targetKey = findingIdentityKey(targetFinding);
-  const siblingKey = findingIdentityKey(siblingFinding);
-  const backend = new DogfoodSingleSliceBackend({
-    worktree: REPLAY_WORKTREE,
-    stateDir: "/dogfood/.ledger-307-targeted-reset",
-    ledger: [
-      // Explicit open-count: scenario declares two still-active findings.
-      ...noProgressDecisionLedger([targetFinding, siblingFinding], 2),
-      ledgerEntry("S4", {
-        event: "runner_bookkeeping",
-        intent: "continue_fixing",
-        source: "resume_input",
-        findingIdentityKey: targetKey,
-        findingScope: { identityKeys: [targetKey] },
-      }),
-    ],
-  }, [
-    residualOpenReviewer([siblingFinding], 1, {
-      priorFindingDispositions: [
-        { identityKey: targetKey, status: "verified-closed" },
-        { identityKey: siblingKey, status: "still-active" },
-      ],
-    }),
-  ]);
-  const result = await runOrchestrator({ issueNumber: 307, backend });
-  // #877: no-progress court demolished; continue_fixing + findings-count ships
-  // when the scripted sibling re-review falls through to empty findings.
-  if (result.status !== "completed") {
-    throw new Error(
-      `dogfood runner targeted-reset replay ended ${result.status} after #877 court demolition`,
-    );
-  }
-  return {
-    stopSummary: result.stopSummary,
-    sourceEvidence: {
-      seam: "runner",
-      mechanism: "continue_fixing_bookkeeping",
-      resetScope: "single_identity_key",
-      preservedSibling: true,
-      courtDemolished: true,
-      status: result.status,
-      dispatched: backend.dispatched,
-      resetFindingIdentityKey: targetKey,
-      siblingFindingIdentityKey: siblingKey,
     },
   };
 }
@@ -2363,9 +2268,7 @@ function uniqueSortedStopReasons(
 }
 
 export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
-  const answeredResumeReplay = await runnerAnsweredResumeReplay();
   const changedShapeReplay = await runnerShapeChangedProgressReplay();
-  const targetedResetReplay = await runnerTargetedResetReplay();
   const textOnlyNoProgressFinding = runnerFinding({
     claimQuote: "reviewer wording changes cannot prove implementation progress",
     location: "orchestrator/src/runner.ts:919",
@@ -2613,16 +2516,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
   const invalidEscalationAnswerSource = await runnerInvalidEscalationAnswerReplay();
   const scenarios: DogfoodReplayScenario[] = [
     replayScenario({
-      id: "307-continue-fixing-after-human-answer",
-      issue: 307,
-      title: "owner says continue fixing and the resumed run stays in the fix loop",
-      classification: "success",
-      stopSummary: answeredResumeReplay.stopSummary,
-      source: "runner",
-      sourceStopSummary: answeredResumeReplay.stopSummary,
-      sourceEvidence: answeredResumeReplay.sourceEvidence,
-    }),
-    replayScenario({
       id: "307-local-progress-shape-changed",
       issue: 307,
       title: "finding shape changes with scoped implementation progress",
@@ -2653,17 +2546,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       source: "runner",
       sourceStopSummary: noObservableProgressReplay.stopSummary,
       sourceEvidence: noObservableProgressReplay.sourceEvidence,
-    }),
-    replayScenario({
-      id: "307-continue-fixing-targeted-reset",
-      issue: 307,
-      title:
-        "continue-fixing + sibling findings-count ships after #877 no-progress demolition",
-      classification: "success",
-      stopSummary: targetedResetReplay.stopSummary,
-      source: "runner",
-      sourceStopSummary: targetedResetReplay.stopSummary,
-      sourceEvidence: targetedResetReplay.sourceEvidence,
     }),
     replayScenario({
       id: "258-cmr-reviewer-self-fix-attempt",

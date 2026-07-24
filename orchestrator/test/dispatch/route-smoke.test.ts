@@ -147,7 +147,6 @@ class ProductionSmokeBackend extends RealBackend {
       file === "claude" ||
       file === "agy" ||
       file === "grok" ||
-      file === "cursor" ||
       file === "agent"
     ) {
       return "cli-test-version";

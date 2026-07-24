@@ -95,6 +95,7 @@ describe("#911 container home environment dual-mount", () => {
       model?: string;
     }): {
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+      env: Record<string, string>;
     } {
       return this.boxConfig(
         { authDir: "/tmp/auth-911", claudeToken: "tok", ghToken: "gho_test" },
@@ -174,7 +175,7 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     public cmrCfg() {
       return this.cmrSandboxConfig(
         { claudeToken: "tok", codexAuthDir: "/tmp/cmr-codex-911" },
-        { model: "gpt-5.6-sol", host: "codex" },
+        { model: "gpt-5.6-sol", soul: "verify", host: "codex" },
       );
     }
     public familyCoderCfg() {

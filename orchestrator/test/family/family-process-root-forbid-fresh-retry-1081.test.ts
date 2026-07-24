@@ -12,7 +12,7 @@ import {
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
 } from "../../src/family/dispatchFamilyWorker.js";
-import { cmrPanelLegWorkerSpec } from "../../src/family/cmrPanelLegs.js";
+import { reviewPanelLegWorkerSpec } from "../../src/family/reviewPanelLegs.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -220,9 +220,9 @@ describe("#1081 familyProcessRootDispatch forbidFreshRetry for resident judge", 
       },
     });
 
-    const legSpec = cmrPanelLegWorkerSpec(
+    const legSpec = reviewPanelLegWorkerSpec(
       { family: "codex", slug: "gpt-5.6-sol" },
-      "correctness",
+      { kind: "family", pass: "correctness" },
     );
     expect(legSpec.id).toBe("S3");
     expect(legSpec.kind).toBe("reviewer");

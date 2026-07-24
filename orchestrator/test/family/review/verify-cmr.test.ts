@@ -61,7 +61,7 @@ import {
 } from "../../helpers/judge-fixtures.js";
 import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 
 /**
@@ -166,7 +166,7 @@ class CapableFamilyBackend implements FamilyBackend {
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (this.script.worker !== undefined) {
       return this.script.worker(spec, ctx);
@@ -738,8 +738,6 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
   // fact that may be toolchain, and green re-verify is the hard precondition
   // before re-opening any CMR court.
   it("mid-court after correctness fixer: red → verify triage continue → fixer → green → re-open CMR & ship", async () => {
-    const correctnessKey =
-      "correctness|src/mid-court.ts:1|mid-court regression after cmr fix";
     const finding: Finding = {
       severity: "medium",
       category: "correctness",
@@ -750,6 +748,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     };
     let verifyCalls = 0;
     let verifyJudgeCalls = 0;
+    let correctnessCmrCalls = 0;
     let coderDispatchCount = 0;
     let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
@@ -784,11 +783,11 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           };
         }
-        if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
+        correctnessCmrCalls += 1;
+        if (correctnessCmrCalls > 1) {
           return {
             converged: true,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            claimedFixedFindingIdentityKeys: [correctnessKey],
           };
         }
         return {
@@ -1012,8 +1011,6 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
   // Completeness fixer then mechanical re-verify red must enter the shared
   // verify triage court (not hard-die), then fixer → green → resume CMR.
   it("mid-court after completeness fixer: red → verify triage continue → fixer → green → re-open CMR & ship", async () => {
-    const completenessKey =
-      "completeness|src/mid-court-completeness.ts:1|mid-court regression after completeness fix";
     const finding: Finding = {
       severity: "medium",
       category: "completeness",
@@ -1024,6 +1021,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     };
     let verifyCalls = 0;
     let verifyJudgeCalls = 0;
+    let completenessCmrCalls = 0;
     let coderDispatchCount = 0;
     let verifyFixHeadObserved = false;
     let backend!: CapableFamilyBackend;
@@ -1058,11 +1056,11 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       },
       cmr: (req) => {
         if (req.cmrPass === "completeness") {
-          if (req.priorCmrFindingIdentityKeys?.includes(completenessKey)) {
+          completenessCmrCalls += 1;
+          if (completenessCmrCalls > 1) {
             return {
               converged: true,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-              claimedFixedFindingIdentityKeys: [completenessKey],
             };
           }
           return {
@@ -2066,8 +2064,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 
   it("continues a correctness coder-fix loop at correctness without re-running completeness", async () => {
-    const correctnessKey =
-      "correctness|ming_sim/issues.py:7089|db.validate_fiscal_config_value(key, new_val)";
     const finding: Finding = {
       severity: "medium",
       category: "correctness",
@@ -2077,6 +2073,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         "Validate the final batch state before applying order-sensitive fiscal changes.",
       action: "fix_now",
     };
+    let correctnessCmrCalls = 0;
     let backend!: CapableFamilyBackend;
     backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
@@ -2087,18 +2084,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           };
         }
-        if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
+        correctnessCmrCalls += 1;
+        if (correctnessCmrCalls > 1) {
           return {
             converged: true,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            claimedFixedFindingIdentityKeys: [correctnessKey],
-            priorFindingDispositions: [
-              {
-                identityKey: correctnessKey,
-                status: "verified-closed",
-                evidence: "regression and same-class scan passed after coder-fix",
-              },
-            ],
           };
         }
         return {
@@ -2126,7 +2116,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           };
         }
         if (spec.kind === "coder") {
-          expect(ctx.blockingFindingIdentityKeys).toEqual([correctnessKey]);
           backend.currentFamilyHead = "head-after-correctness-fix";
           return {
             kind: "completed",
@@ -2229,7 +2218,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       }
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2440,7 +2429,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       }
 
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2517,7 +2506,7 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
         return { ok: true };
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2550,7 +2539,7 @@ describe("#296 verify-cmr hook body — required verify capability (#939)", () =
         return { ok: true };
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2683,7 +2672,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       this.aborted.push(event);
     }
     async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-      const panelLeg = completeCmrPanelLegWorker(spec);
+      const panelLeg = completeReviewPanelLegWorker(spec);
       if (panelLeg !== undefined) return panelLeg;
       if (spec.kind === this.throwOnKind) {
         if (spec.kind === "ship") {
@@ -2749,7 +2738,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === this.throwOnKind) {
           this.throwKindDispatches += 1;
@@ -2811,7 +2800,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           this.dispatches += 1;
@@ -2874,7 +2863,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         this.aborted.push(event);
       }
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "ship") {
           this.shipDispatches += 1;
@@ -2929,7 +2918,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         super("ship");
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {
@@ -2991,7 +2980,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         super("cmr");
       }
       override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") {
           return {

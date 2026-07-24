@@ -53,9 +53,9 @@ import type {
 } from "../../src/family/types.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
 import {
-  completeCmrPanelLegWorker,
-  isCmrPanelLegWorker,
-} from "../helpers/cmr-panel-leg-dispatch.js";
+  completeReviewPanelLegWorker,
+  isReviewPanelLegWorker,
+} from "../helpers/review-panel-leg-dispatch.js";
 import {
   completedJudge,
   judgeContinue,
@@ -284,10 +284,12 @@ class SliceHubBackend implements Backend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-    _landing?: WorkerLandingPayload,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
 
     const openCourt = openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION);
     if (openCourt !== undefined) return openCourt;
@@ -319,7 +321,13 @@ class SliceHubBackend implements Backend {
       const result =
         scripts[this.judgeRound] ??
         completedJudge(judgeConverged(), OPEN_COURT_SESSION);
-      this.judgeRound += 1;
+      const isContinue =
+        result.kind === "completed" &&
+        result.output?.kind === "judge" &&
+        result.output.status === "continue";
+      if (!isContinue || (landing?.panelLegTransports?.length ?? 0) > 0) {
+        this.judgeRound += 1;
+      }
       const sessionId =
         typeof ctx.resumeSessionId === "string"
           ? ctx.resumeSessionId
@@ -430,7 +438,7 @@ class FamilyHubBackend implements FamilyBackend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) {
       this.dispatches.push({ spec, ctx });
       return panelLeg;
@@ -703,38 +711,6 @@ describe("#1085 e2e ring3: wave-verify hub + resume", () => {
     }
   });
 
-  it("negative: empty continue does not spin wave coder-fix", async () => {
-    const backend = new FamilyHubBackend({
-      verify: () => ({
-        ok: false,
-        errorPackage: { reason: "red empty-continue" },
-      }),
-      worker: (spec) => {
-        if (spec.kind === "cmr") {
-          // continue with 0 live findings — contract drift.
-          return completedJudge({
-            kind: "judge",
-            status: "continue",
-            findingDispositions: [],
-            fixPacketBody: "empty — must not spin",
-          });
-        }
-        throw new Error(`coder-fix must not run: ${spec.kind}`);
-      },
-    });
-
-    const result = await runVerifyCmr({
-      phase: "wave",
-      familyBase: "family/1085-empty",
-      familyBackend: backend,
-      familyHeadAfter: "head-1085",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.failedStatus).toBe("verify_failed");
-    expect(backend.dispatches.every((d) => d.spec.kind !== "coder")).toBe(true);
-  });
-
   it("toolchain hub next never spins coder-fix (zero-spin)", async () => {
     const backend = new FamilyHubBackend({
       verify: () => ({
@@ -887,7 +863,7 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
     const panelsPerCorrectnessOpen: number[] = [];
     let pendingCorrectnessPanels = 0;
     for (const d of backend.dispatches) {
-      if (isCmrPanelLegWorker(d.spec) && d.ctx.cmrPass === "correctness") {
+      if (isReviewPanelLegWorker(d.spec) && d.ctx.cmrPass === "correctness") {
         pendingCorrectnessPanels += 1;
         continue;
       }

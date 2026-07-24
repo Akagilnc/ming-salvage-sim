@@ -34,7 +34,7 @@ import type {
 } from "../../src/types.js";
 import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 
 const CMR_EVIDENCE = {
@@ -106,7 +106,7 @@ class ScriptedCmrBackend implements FamilyBackend {
     spec: WorkerSpec,
     _ctx: DispatchContext,
   ): Promise<WorkerResult> {
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       return {

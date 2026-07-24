@@ -397,7 +397,7 @@ export interface FamilyLedgerEntry {
    * for routing. Queryable suppress is the schema row `action: "suppress"`
    * (evidence + XOR ground) on this table — family transports the T2 schema
    * for prior-verdict resume, not the single-slice store-status flip shape
-   * (`status: "suppressed"`). Both paths share `projectJudgeContinueBlocking`
+   * (`status: "suppressed"`).
    * for the live open set / terminal flip projection.
    */
   readonly findingDispositions?: ReadonlyArray<

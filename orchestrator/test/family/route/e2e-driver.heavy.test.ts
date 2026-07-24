@@ -61,7 +61,7 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { panelLegCompletedResult } from "../../../src/family/cmrPanelLegs.js";
+import { panelLegCompletedResult } from "../../../src/family/reviewPanelLegs.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 
 const here = dirname(fileURLToPath(import.meta.url));

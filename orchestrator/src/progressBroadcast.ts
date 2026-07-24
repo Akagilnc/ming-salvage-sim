@@ -26,11 +26,7 @@ import type {
   JudgeBeatStepId,
 } from "./builderJudgeBeat.js";
 import type { CoderBeatKind } from "./coderPlanPhase.js";
-import type {
-  Finding,
-  JudgeFindingDisposition,
-  JudgeVerdictStatus,
-} from "./types.js";
+import type { JudgeVerdictStatus } from "./types.js";
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -83,69 +79,6 @@ export function progressPath(ledgerDir: string): string {
   return join(ledgerDir, PROGRESS_FILENAME);
 }
 
-// ─── disposition / severity counters (pure; typed envelope only) ─────────────
-
-export interface ProgressDispositionCounts {
-  readonly fix_now: number;
-  readonly refuted: number;
-  readonly suppressed: number;
-}
-
-export interface ProgressSeverityCounts {
-  readonly critical: number;
-  readonly high: number;
-  readonly medium: number;
-  readonly low: number;
-  readonly clarity: number;
-}
-
-/**
- * Map judge disposition actions → operator counts.
- * live → fix_now; refute → refuted; suppress → suppressed.
- */
-export function countJudgeDispositions(
-  rows: ReadonlyArray<JudgeFindingDisposition> | undefined,
-): ProgressDispositionCounts {
-  let fix_now = 0;
-  let refuted = 0;
-  let suppressed = 0;
-  for (const row of rows ?? []) {
-    if (row.action === "live") fix_now += 1;
-    else if (row.action === "refute") refuted += 1;
-    else if (row.action === "suppress") suppressed += 1;
-  }
-  return { fix_now, refuted, suppressed };
-}
-
-/** Severity histogram from typed findings cargo; null when cargo absent. */
-export function countSeverityFromFindings(
-  findings: ReadonlyArray<Finding> | undefined,
-): ProgressSeverityCounts | null {
-  if (findings === undefined) return null;
-  const counts: {
-    -readonly [K in keyof ProgressSeverityCounts]: number;
-  } = {
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    clarity: 0,
-  };
-  for (const f of findings) {
-    const sev = f.severity;
-    if (
-      sev === "critical" ||
-      sev === "high" ||
-      sev === "medium" ||
-      sev === "low" ||
-      sev === "clarity"
-    ) {
-      counts[sev] += 1;
-    }
-  }
-  return counts;
-}
-
 // ─── event schema ────────────────────────────────────────────────────────────
 
 export type ProgressEventKind =
@@ -180,8 +113,6 @@ export interface ProgressJudgeEvent extends ProgressEventBase {
   readonly step: string;
   readonly round?: number | null;
   readonly verdict: JudgeVerdictStatus;
-  readonly dispositions: ProgressDispositionCounts;
-  readonly severity?: ProgressSeverityCounts | null;
   /** Path pointer only — never finding body prose. */
   readonly cargoPointer?: string | null;
 }
@@ -343,12 +274,6 @@ export function formatProgressLogLine(event: ProgressEvent): string {
       return `${base} stage=${event.stage}${issueTag(event.issue)}${epicTag(event.epic)}${step}${detail}`;
     }
     case "judge": {
-      const d = event.dispositions;
-      const sev = event.severity;
-      const sevPart =
-        sev !== undefined && sev !== null
-          ? ` severity={c:${sev.critical},h:${sev.high},m:${sev.medium},l:${sev.low},cl:${sev.clarity}}`
-          : "";
       const round =
         event.round !== undefined && event.round !== null
           ? ` round=${event.round}`
@@ -362,8 +287,7 @@ export function formatProgressLogLine(event: ProgressEvent): string {
       return (
         `${base} judge${issueTag(event.issue)}${epicTag(event.epic)}` +
         ` step=${event.step}${round} verdict=${event.verdict}` +
-        ` dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}` +
-        `${sevPart}${ptr}`
+        ptr
       );
     }
     case "beat": {
@@ -569,14 +493,11 @@ export function emitJudgeProgress(input: {
   readonly step: string;
   readonly round?: number | null;
   readonly verdict: JudgeVerdictStatus;
-  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  readonly findings?: ReadonlyArray<Finding>;
   readonly cargoPointer?: string | null;
   readonly log?: (line: string) => void;
   readonly notifySpawn?: NotifySpawn;
   readonly now?: () => string;
 }): void {
-  const severity = countSeverityFromFindings(input.findings);
   const event: ProgressJudgeEvent = {
     v: PROGRESS_SCHEMA_VERSION,
     ts: (input.now ?? (() => new Date().toISOString()))(),
@@ -586,8 +507,6 @@ export function emitJudgeProgress(input: {
     step: input.step,
     round: input.round ?? null,
     verdict: input.verdict,
-    dispositions: countJudgeDispositions(input.findingDispositions),
-    severity,
     cargoPointer: input.cargoPointer ?? null,
   };
   emitProgressEvent({
@@ -844,8 +763,6 @@ export interface IssueProgressSnapshot {
   readonly latestStage: string | null;
   readonly latestVerdict: JudgeVerdictStatus | null;
   readonly judgeRounds: number;
-  readonly dispositions: ProgressDispositionCounts | null;
-  readonly severity: ProgressSeverityCounts | null;
   readonly parked: boolean;
   readonly parkSummary: string | null;
   readonly merged: boolean;
@@ -916,8 +833,6 @@ export function renderFamilyStatus(input: {
       latestStage: string | null;
       latestVerdict: JudgeVerdictStatus | null;
       judgeRounds: number;
-      dispositions: ProgressDispositionCounts | null;
-      severity: ProgressSeverityCounts | null;
       parked: boolean;
       parkSummary: string | null;
       cargoPointer: string | null;
@@ -935,8 +850,6 @@ export function renderFamilyStatus(input: {
         latestStage: null,
         latestVerdict: null,
         judgeRounds: 0,
-        dispositions: null,
-        severity: null,
         parked: false,
         parkSummary: null,
         cargoPointer: null,
@@ -979,8 +892,6 @@ export function renderFamilyStatus(input: {
           row.latestStep = event.step;
           row.latestVerdict = event.verdict;
           row.judgeRounds += 1;
-          row.dispositions = event.dispositions;
-          row.severity = event.severity ?? null;
           row.cargoPointer = event.cargoPointer ?? null;
           // Rotation is sole beat-channel truth (#1086 L4) — do not dual-write
           // latestBeatRole / latestRotation from judge events.
@@ -1077,8 +988,6 @@ export function renderFamilyStatus(input: {
       latestStage: row.latestStage,
       latestVerdict: row.latestVerdict,
       judgeRounds: row.judgeRounds,
-      dispositions: row.dispositions,
-      severity: row.severity,
       parked: row.parked,
       parkSummary: row.parkSummary,
       merged: mergedFromLedger.has(issue),
@@ -1123,12 +1032,6 @@ export function renderFamilyStatusFromDir(ledgerDir: string): string {
     // AC 站位: surface latest stage token when the feed has one.
     if (issue.latestStage !== null && issue.latestStage.length > 0) {
       parts.push(`stage=${issue.latestStage}`);
-    }
-    if (issue.dispositions !== null) {
-      const d = issue.dispositions;
-      parts.push(
-        `dispositions={fix_now:${d.fix_now},refuted:${d.refuted},suppressed:${d.suppressed}}`,
-      );
     }
     if (issue.merged) parts.push("merged");
     if (issue.parked) {
@@ -1181,4 +1084,3 @@ export function formatDriverStageLine(
       : "";
   return `[orchestrator:stage] ${stage}${issuePart}${suffix}`;
 }
-

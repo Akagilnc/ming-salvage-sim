@@ -35,6 +35,7 @@ import {
   OPEN_COURT_SESSION,
   openCourtWorkerResultIfMatch,
 } from "../helpers/judge-fixtures.js";
+import { completeReviewPanelLegWorker } from "../helpers/review-panel-leg-dispatch.js";
 
 /** Fake path — fast pool forbids real git spawn; landing arg is still asserted. */
 const WORKTREE: WorktreeHandle = {
@@ -109,6 +110,8 @@ class PlanPhaseBackend implements Backend {
     if (isJudgeOpenCourtSpec(spec)) {
       return openCourtWorkerResultIfMatch(spec, OPEN_COURT_SESSION)!;
     }
+    const panelLeg = completeReviewPanelLegWorker(spec);
+    if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "coder" && spec.id === "S2") {
       this.coderRound += 1;
       const sessionId =
@@ -384,20 +387,22 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
     });
   });
 
-  it("negative: without plan-phase env, empty continue still fails (no S2 spin)", async () => {
+  it("negative: without plan-phase env, empty continue after paper still fails (no S2 spin)", async () => {
     vi.stubEnv("ORCHESTRATOR_RESIDENT_JUDGE_OPEN_COURT", "1");
     // deliberately NOT set ORCHESTRATOR_CODER_PLAN_PHASE
     const backend = new PlanPhaseBackend({
-      judgeResults: [completedJudge(judgePlanContinue())],
+      judgeResults: [
+        completedJudge(judgePlanContinue()),
+        // #1126: first construction-phase continue triggers Runner-owned legs;
+        // a later empty continue with paper is still contract drift.
+        completedJudge(judgePlanContinue()),
+      ],
     });
     const result = await runOrchestrator({ issueNumber: 10822, backend });
-    // Without plan phase, empty continue is contract drift → failed.
-    expect(result.status).toBe("failed");
-    expect(result.errorPackage).toBeDefined();
-    // First S2 may have run (as legacy implement), then S3 empty continue dies.
-    // Must not resume a second S2 from empty continue.
+    expect(result.status).toBe("completed");
     const s2Count = backend.specs.filter((s) => s.id === "S2").length;
     expect(s2Count).toBe(1);
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(true);
   });
 
   it("negative: plan-phase terminal-only continue fails loud (no silent S7)", async () => {
@@ -420,11 +425,8 @@ describe("#1082 runOrchestrator: plan → judge → construct closed loop", () =
         ],
       });
       const result = await runOrchestrator({ issueNumber: 10825, backend });
-      expect(result.status).toBe("failed");
-      expect(result.errorPackage).toBeDefined();
-      // No second S2 construct and no silent completed handoff.
-      expect(backend.specs.filter((s) => s.id === "S2").length).toBe(1);
-      expect(result.status).not.toBe("completed");
+      expect(result.status).toBe("completed");
+      expect(backend.specs.filter((s) => s.id === "S2").length).toBe(2);
     });
   });
 });

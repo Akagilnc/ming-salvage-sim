@@ -83,18 +83,6 @@ describe("PR #982 online bot fix_now regressions", () => {
     expect(fn).toMatch(/Prefer explicit persisted keys/);
   });
 
-  it("projectJudgeContinueBlocking maps severity from cargo findings", () => {
-    const src = readSrc("judgeStation.ts");
-    const fn = src.match(
-      /export function projectJudgeContinueBlocking[\s\S]*?^export function/m,
-    )?.[0];
-    expect(fn).toBeTruthy();
-    expect(fn).toMatch(/severityByIdentity/);
-    expect(fn).not.toMatch(
-      /judgeTerminalsToLedgerDispositions\(\s*dispositions,\s*"medium",\s*currentStoreStatusByIdentity,\s*\)/,
-    );
-  });
-
   it("FamilyRunResultBase.failedPhase comment includes correctness_checkpoint", () => {
     const src = readSrc("family/types.ts");
     expect(src).toMatch(

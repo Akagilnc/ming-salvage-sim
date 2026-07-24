@@ -17,9 +17,10 @@ partially-supersedes: ADR 0026 中“一条带记忆 worker 兼 reviewer/fixer�
 
 Coder、判官（verify 工位）与 coder-fix 必须是独立 worker / agent context。
 
-- **判官**（S3 建庭、S6 resume 同一 session）派 **fresh** 审卷 subagent 腿
-  （reviewer soul 全文拼腿 prompt 头）；按四理由毙单后仅活单送修；以判词三态
-  `converged | continue | escalate` 裁决收敛。
+- **判官**（S3 建庭、S6 resume 同一 session）以 typed `continue` 请求审卷；
+  Runner 作为唯一派发者派 **fresh** 审卷腿，reviewer soul 走 provider-native
+  instruction channel、与 task prompt 分离；腿只产 raw prose 交判官。判官按四理由
+  毙单后仅活单送修，以判词三态 `converged | continue | escalate` 裁决收敛。
 - **S4 机械分类站已溶解**：不再存在 runner 侧 open-count / 轮数阈值分类站；
   收敛判断权在判官判词。
 - **coder-fix** 验真、修复或证伪并完成自查；只有 fresh 审卷腿 + 判官终翻
