@@ -375,6 +375,9 @@ export function decodeReviewerOpenCountReceipt(
 const RECEIPT_RECOVERY_MESSAGE =
   /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i;
 
+const SESSION_CONTINUITY_LOST_MESSAGE =
+  /(?:resume(?:Session|\s+session)?|session).*?(?:not found|expired|missing|unavailable|dead)/i;
+
 /**
  * Walk Effect/Fiber wrappers that Sandcastle may put around a native error
  * (observed under concurrent vitest load as FiberFailure → ExecError / Die.defect).
@@ -409,6 +412,23 @@ export function* walkErrorChain(error: unknown): Generator<unknown> {
     }
     break;
   }
+}
+
+/**
+ * True only when the provider explicitly says the requested session no longer
+ * exists. Auth, network, protocol and generic worker failures are deliberately
+ * excluded: they must remain loud rather than minting a fresh judge.
+ */
+export function isSessionContinuityLostError(error: unknown): boolean {
+  for (const node of walkErrorChain(error)) {
+    if (
+      node instanceof Error &&
+      SESSION_CONTINUITY_LOST_MESSAGE.test(node.message)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** True when node is a StructuredOutputError by instanceof or Error.name. */

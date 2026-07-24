@@ -8,9 +8,7 @@
 
 import {
   isJudgeSeat,
-  projectJudgeContinueBlocking,
   projectResidualReviewerToJudge,
-  storeStatusByIdentityFromDispositions,
 } from "./judgeStation.js";
 import {
   isStepId,
@@ -136,43 +134,24 @@ export function rebuildBlockingFromLedger(
       continue;
     }
 
-    // #925 / #919 S1: judge continue rebuilds open set the same way as the live edge.
+    // ADR 0129/0131: live judge packets are opaque to Runner on both the
+    // in-process and crash-resume edges. The owning Judge Action already
+    // authored the packet; recovery only restores that verbatim transport.
     if (
       isJudgeSeat({ step: entry.step }) &&
       entry.output?.kind === "judge" &&
       entry.output.status === "continue"
     ) {
-      // #952 R6-C2: accumulated store rows from earlier continue rounds are
-      // the real `from` status (mirrors live runner path).
-      const projected = projectJudgeContinueBlocking(
-        entry.output,
-        storeStatusByIdentityFromDispositions(findingDispositions),
-      );
-      if (projected !== undefined) {
-        if (projected.terminalDispositions.length > 0) {
-          findingDispositions = [
-            ...findingDispositions,
-            ...projected.terminalDispositions,
-          ];
-        }
-        pendingBlockingFindings = projected.blocking;
-        pendingBlockingFindingIdentityKeys = projected.blockingIdentityKeys;
-        pendingBlockingFindingCount = projected.blockingFindingCount;
-        pendingFixPacketBody = projected.fixPacketBody;
-        pendingRawReviewerArtifacts =
-          projected.blockingFindingCount > 0
-            ? reviewerRawArtifactPointers(
-                entry.monitorHandle,
-                typeof entry.sessionId === "string" ? entry.sessionId : undefined,
-              )
-            : undefined;
-        lastJudgeContinueIndex = i;
-        // A later residual reviewer must not clobber this open set via the
-        // pre-S4 rebind below unless a newer S4 residual follows.
-        lastReviewerOutputForS4 = undefined;
-        lastReviewerSessionId = undefined;
-        lastReviewerMonitorHandle = undefined;
-      }
+      pendingBlockingFindings = [];
+      pendingBlockingFindingIdentityKeys = [];
+      pendingBlockingFindingCount = 0;
+      pendingFixPacketBody = entry.output.fixPacketBody;
+      findingDispositions = [];
+      pendingRawReviewerArtifacts = undefined;
+      lastJudgeContinueIndex = i;
+      lastReviewerOutputForS4 = undefined;
+      lastReviewerSessionId = undefined;
+      lastReviewerMonitorHandle = undefined;
       continue;
     }
 

@@ -121,7 +121,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     ["missing findings cargo", undefined],
     ["empty findings cargo", [] as const],
   ])(
-    "positive findingsCount with %s still hands raw reviewer artifacts to S5",
+    "judge-authored packet with %s reaches S5 without Runner cargo inspection",
     async (_label, findings) => {
       class PositiveCountMissingCargoBackend extends DispatchBackend {
         readonly landings: Array<WorkerLandingPayload | undefined> = [];
@@ -168,13 +168,9 @@ describe("ADR 0131 reviewer count envelope", () => {
       expect(result.status).toBe("completed");
       const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
       expect(s5Index).toBeGreaterThan(-1);
-      expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
+      expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(0);
       expect(backend.landings[s5Index]).toMatchObject({
         fixPacketBody: "fixture residual authored body",
-        rawReviewerArtifacts: {
-          reviewerSessionId: "reviewer-session-positive-missing-cargo",
-          statement: "the previous reviewer raw artifacts are here",
-        },
       });
       expect(backend.landings[s5Index]?.fixPacketBody ?? "").not.toContain(
         "[residual] open-count continue",

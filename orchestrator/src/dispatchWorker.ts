@@ -487,7 +487,8 @@ export async function legacyDispatchWorker(
     fixFindingsOptions !== undefined ||
     outcomeLanding !== undefined ||
     ctx.billingPool !== undefined ||
-    ctx.relayBrief !== undefined
+    ctx.relayBrief !== undefined ||
+    ctx.priorJudgeVerdicts !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
@@ -496,6 +497,9 @@ export async function legacyDispatchWorker(
             : {}),
           ...(ctx.relayBrief !== undefined
             ? { relayBrief: ctx.relayBrief }
+            : {}),
+          ...(ctx.priorJudgeVerdicts !== undefined
+            ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
             : {}),
         }
       : undefined;

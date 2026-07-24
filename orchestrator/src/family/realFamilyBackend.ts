@@ -2128,7 +2128,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // Sandcastle owns malformed-receipt recovery; sidecar stays cargo.
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
-              judgeStationReceiptSchema(),
+              judgeStationReceiptSchema(ctx.priorJudgeVerdicts),
               resumeCapable,
             ),
           });

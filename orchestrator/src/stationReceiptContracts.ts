@@ -37,6 +37,11 @@
  */
 
 import { z } from "zod";
+import {
+  OPEN_FINDING_STORE_STATUS,
+  validateFindingStoreTransition,
+  type FindingStoreStatus,
+} from "./findingsStateStore.js";
 
 /** Local JSON-safe structural clone (no third-party dep; encode only). */
 function cloneJson<T>(value: T): T {
@@ -591,13 +596,55 @@ export const JUDGE_RECEIPT_TAG = "judge";
  * field tables above. Cargo siblings (findings rows, essays) pass through —
  * only illegal traffic re-asks.
  */
-export function judgeStationReceiptSchema(): z.ZodType {
+export function judgeStationReceiptSchema(
+  priorJudgeVerdicts?: ReadonlyArray<{
+    readonly findingDispositions?: ReadonlyArray<{
+      readonly action: string;
+      readonly identityKey: string;
+    }>;
+  }>,
+): z.ZodType {
+  const priorStatuses: Partial<Record<string, FindingStoreStatus>> = {};
+  for (const verdict of priorJudgeVerdicts ?? []) {
+    for (const disposition of verdict.findingDispositions ?? []) {
+      if (disposition.action === "refute") {
+        priorStatuses[disposition.identityKey] = "refuted";
+      } else if (disposition.action === "suppress") {
+        priorStatuses[disposition.identityKey] = "suppressed";
+      }
+    }
+  }
   return z.union([
     judgeSoObject(judgeConvergedFields),
     judgeSoObject(judgeContinueFields),
     judgeSoObject(judgeEscalateFields),
     judgeSoObject(judgeToolchainFields),
-  ]);
+  ]).superRefine((value, ctx) => {
+    if (value.status !== "continue") return;
+    const statuses = { ...priorStatuses };
+    value.findingDispositions.forEach((disposition, index) => {
+      if (
+        disposition.action !== "refute" &&
+        disposition.action !== "suppress"
+      ) {
+        return;
+      }
+      const to = disposition.action === "refute" ? "refuted" : "suppressed";
+      const transition = validateFindingStoreTransition(
+        statuses[disposition.identityKey] ?? OPEN_FINDING_STORE_STATUS,
+        to,
+      );
+      if (!transition.ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["findingDispositions", index],
+          message: transition.reason,
+        });
+        return;
+      }
+      statuses[disposition.identityKey] = to;
+    });
+  });
 }
 
 // ─── Coder-family envelopes ──────────────────────────────────────────────────

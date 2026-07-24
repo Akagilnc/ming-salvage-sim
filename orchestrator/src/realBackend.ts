@@ -2987,7 +2987,7 @@ export class RealBackend implements Backend {
     if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
-        judgeStationReceiptSchema(),
+        judgeStationReceiptSchema(options?.priorJudgeVerdicts),
         resumeCapable,
       );
     }
@@ -3357,7 +3357,10 @@ export class RealBackend implements Backend {
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
-        return await this.runFreshAgentStep(spec, worktree, options);
+        // The Runner owns traffic recovery because it must durably record
+        // session_continuity_lost and preserve the fixed-position prior verdict
+        // transport before opening a fresh invocation.
+        throw err;
       }
       throw err;
     } finally {

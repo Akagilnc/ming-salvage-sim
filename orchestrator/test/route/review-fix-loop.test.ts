@@ -68,11 +68,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       "[residual] open-count continue",
     );
     expect(backend.landings[s5Index]?.blockingFindings).toBeUndefined();
-    // #925: live identity keys from the judge disposition table are the S5
-    // control envelope (schema-fixed fields — not prose parsing).
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([
-      "correctness|src/runner.ts:1|fix worker needs structured finding data",
-    ]);
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   // #604 slice 4 (ADR 0062): there is no cross-module deferral pass, so every
@@ -219,10 +215,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "[residual] open-count continue",
     );
     expect(backend.landings[s6Index]?.blockingFindings).toBeUndefined();
-    // #925: live keys from the continue disposition table are control envelope.
-    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([
-      blockingKey,
-    ]);
+    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   it("threads judge finding dispositions through live re-review and persists them", async () => {
