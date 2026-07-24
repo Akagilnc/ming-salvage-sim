@@ -132,6 +132,8 @@ def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
         action_type="appointment",
         target_kind="character",
         target_id=minister,
+        executor_kind="character",
+        executor_id=minister,
         decree_text=f"着{minister}承办清查。",
         payload={"name": minister},
     )
@@ -143,6 +145,28 @@ def test_terminal_character_state_closes_live_dossiers_without_ghost_work(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["status"] == "closed"
     assert dossier["execution_outcome"] == "interrupted"
+
+
+def test_terminal_target_does_not_interrupt_another_executor(game):
+    db, state, _content = game
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+        ).fetchall()
+    ]
+    assert len(people) == 2
+    target, executor = people
+    dossier_id = db.create_decree_dossier(
+        state, action_type="punishment", decree_text="命查其罪",
+        target_kind="character", target_id=target,
+        executor_kind="character", executor_id=executor,
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    db.set_character_status(state, target, "imprisoned", reason="下狱")
+
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 
 def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
@@ -294,8 +318,26 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     )
     dossier = db.get_decree_dossier(dossier_id)
     assert state.metrics["国库"] == before - 10
-    assert dossier["status"] == "closed"
+    assert dossier["status"] == "executing"
     assert dossier["promulgation_decision"] == "rejected"
+
+
+def test_payload_cannot_spoof_no_execution_surface(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="grant_allocation", decree_text="押送饷银",
+        payload={
+            "account": "国库", "delta": -1, "category": "军饷",
+            "immediate_terminal": True,
+        },
+    )
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] == ""
 
 
 def test_authorization_materializes_only_after_batch_verdict(game):
@@ -342,6 +384,17 @@ def test_real_resolve_entry_uses_dossiers_for_verdict_simulation_and_apply(
     seen = {}
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod,
+        "run_agent_text",
+        lambda _agent, prompt, tag: json.dumps({
+            "verdicts": [
+                {"dossier_id": row["id"], "decision": "promulgated"}
+                for row in json.loads(prompt)["dossiers"]
+            ]
+        }),
+    )
     monkeypatch.setattr(
         decree_mod,
         "simulate_season_with_payload",
@@ -364,10 +417,6 @@ def test_real_resolve_entry_uses_dossiers_for_verdict_simulation_and_apply(
     decree_mod.resolve_directives(
         state, db, None, None, [object()], "不应作为真源",
         content=content,
-        promulgation_judge=lambda dossiers: [
-            {"dossier_id": row["id"], "decision": "promulgated"}
-            for row in dossiers
-        ],
     )
 
     dossier = db.list_decree_dossiers()[-1]
@@ -381,4 +430,4 @@ def test_real_resolve_entry_uses_dossiers_for_verdict_simulation_and_apply(
         """
     ).fetchone()
     assert move is not None and move["delta"] == -10
-    assert dossier["status"] == "closed"
+    assert dossier["status"] == "executing"

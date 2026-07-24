@@ -9446,6 +9446,13 @@ class GameDB:
         "executing": frozenset({"closed"}),
         "closed": frozenset(),
     }
+    _DOSSIER_NO_EXECUTION_SURFACE = frozenset({
+        "authorization", "approve_reject",
+    })
+
+    @classmethod
+    def _dossier_has_execution_surface(cls, action_type: object) -> bool:
+        return str(action_type or "") not in cls._DOSSIER_NO_EXECUTION_SURFACE
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9594,7 +9601,7 @@ class GameDB:
         return [dict(row) for row in rows]
 
     def resolve_commitment_origin_ref(
-        self, state: GameState, supplied_ref: str,
+        self, state: GameState, supplied_ref: str, *, origin_kind: str = "",
     ) -> str:
         """承诺创建写端：有本回合已颁案卷时，origin 单向归一到案卷。"""
         supplied = str(supplied_ref or "").strip()
@@ -9606,14 +9613,15 @@ class GameDB:
             if self.get_decree_dossier(dossier_id) is None:
                 raise ValueError("commitment origin_ref 指向不存在案卷")
             return supplied
-        row = self.conn.execute(
-            "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?",
-            (int(state.turn),),
-        ).fetchone()
-        if row is not None and int(row["n"] or 0) > 0:
-            raise ValueError(
-                "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
-            )
+        if str(origin_kind or "") == "decree":
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?",
+                (int(state.turn),),
+            ).fetchone()
+            if row is not None and int(row["n"] or 0) > 0:
+                raise ValueError(
+                    "承诺 origin_ref 必须由产出它的明确案卷携带 dossier:<id>"
+                )
         return supplied
 
     def append_dossier_stigma(
@@ -9676,11 +9684,13 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            try:
-                payload = json.loads(row["payload_json"] or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict) or not payload.get("immediate_terminal"):
+            action_row = self.conn.execute(
+                "SELECT action_type FROM decree_dossiers WHERE id=?",
+                (int(dossier_id),),
+            ).fetchone()
+            if action_row is None or self._dossier_has_execution_surface(
+                action_row["action_type"]
+            ):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
                 raise ValueError("直达结案仍须填写执行格")
@@ -9756,9 +9766,9 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = json.loads(str(row.get("payload_json") or "{}"))
-        immediate = isinstance(payload, dict) and bool(payload.get("immediate_terminal"))
-        if row["status"] == "promulgated" and not immediate:
+        if row["status"] == "promulgated" and self._dossier_has_execution_surface(
+            row["action_type"]
+        ):
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
         if row["status"] == "executing" and not str(row.get("execution_outcome") or ""):
             raise ValueError("执行中案卷须先填写执行格再结案")
@@ -9777,10 +9787,10 @@ class GameDB:
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        immediate = False
-        if row["status"] == "promulgated":
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-            immediate = isinstance(payload, dict) and bool(payload.get("immediate_terminal"))
+        immediate = (
+            row["status"] == "promulgated"
+            and not self._dossier_has_execution_surface(row["action_type"])
+        )
         if row["status"] != "executing" and not immediate:
             raise ValueError("执行格只能写入 executing 或无判定面已颁案卷")
         outcome = str(outcome or "").strip()
@@ -9886,7 +9896,7 @@ class GameDB:
                     commit=False,
                 ):
                     raise ValueError("授权案卷载荷物化失败")
-            if bool(payload.get("immediate_terminal")):
+            if not self._dossier_has_execution_surface(row["action_type"]):
                 self.record_dossier_execution(
                     dossier_id, "completed", "颁布即终局", state.turn,
                     close=True, commit=False,
@@ -9920,14 +9930,11 @@ class GameDB:
         rows = self.conn.execute(
             """
             SELECT id,secret_order_id,status FROM decree_dossiers
-            WHERE (
-                    (target_kind='character' AND target_id=?)
-                 OR (executor_kind='character' AND executor_id=?)
-                  )
+            WHERE executor_kind='character' AND executor_id=?
               AND status IN ('promulgated','executing')
             ORDER BY id
             """,
-            (str(character_name), str(character_name)),
+            (str(character_name),),
         ).fetchall()
         materializing = int(getattr(self.conn, "_materializing_dossier_id", 0) or 0)
         rows = [row for row in rows if int(row["id"]) != materializing]
@@ -10599,6 +10606,8 @@ class GameDB:
                 ),
                 target_kind="character",
                 target_id=name,
+                executor_kind="character",
+                executor_id=name,
                 pending_action_id=int(pa["id"]),
                 payload=staged_payload,
                 status="proposed",
