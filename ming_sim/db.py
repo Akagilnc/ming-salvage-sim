@@ -1314,6 +1314,7 @@ class GameDB:
                 promulgation_blocked_layer TEXT NOT NULL DEFAULT '',
                 promulgation_reason TEXT NOT NULL DEFAULT '',
                 rescript_pending INTEGER NOT NULL DEFAULT 0,
+                held_turn INTEGER NOT NULL DEFAULT 0,
                 legal_reason_code TEXT NOT NULL DEFAULT '',
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
@@ -1763,6 +1764,8 @@ class GameDB:
             "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossiers", "held_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column(
             "decree_dossiers", "execution_note", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -9587,6 +9590,7 @@ class GameDB:
         for key in (
             "source_chat_turn_id", "pending_action_id", "directive_id",
             "due_turn", "created_turn", "created_year", "created_period",
+            "held_turn",
         ):
             out[key] = int(out.get(key) or 0)
         if out.get("secret_order_id") is not None:
@@ -9788,7 +9792,12 @@ class GameDB:
                     d.status='proposed'
                 AND (
                        (d.created_turn=? AND d.promulgation_decision='')
-                    OR (d.promulgation_decision='rejected' AND d.rescript_pending=0)
+                    OR (
+                           d.promulgation_decision='rejected'
+                       AND d.rescript_pending=0
+                       AND d.held_turn > 0
+                       AND ? > d.held_turn
+                    )
                 )
             ) OR (
                     d.status IN ('promulgated','executing')
@@ -9799,7 +9808,7 @@ class GameDB:
             )
             ORDER BY d.id
             """,
-            (int(turn), int(turn), int(turn)),
+            (int(turn), int(turn), int(turn), int(turn)),
         ).fetchall()
         return [self._dossier_row(row) for row in rows]
 
@@ -9852,6 +9861,16 @@ class GameDB:
                 blocked_layer = str(row.get("promulgation_blocked_layer") or "")
             slot_reason = str(row.get("promulgation_reason") or "")
             slot_legal_reason = str(row.get("legal_reason_code") or "")
+        turn_row = self.conn.execute(
+            "SELECT turn FROM game_state WHERE id=1"
+        ).fetchone()
+        current_turn = int(turn_row["turn"] if turn_row else 0)
+        if (
+            decision in {"promulgated", "rejected"}
+            and int(row.get("held_turn") or 0) > 0
+            and current_turn <= int(row["held_turn"])
+        ):
+            raise ValueError("留中案卷只可在下月重判")
         if row["status"] != "proposed":
             raise ValueError("只有 proposed 案卷可写颁布/批红判决")
         if decision == "promulgated":
@@ -9866,24 +9885,25 @@ class GameDB:
             if row["promulgation_decision"] != "rejected" or not row["rescript_pending"]:
                 raise ValueError("收回只可承接打回＋批红待抉择组合态")
             status, promulgation, pending = "closed", "rejected", 0
+        held_turn = (
+            current_turn
+            if decision == "hold" else int(row.get("held_turn") or 0)
+        )
         self.conn.execute(
             """
             UPDATE decree_dossiers
             SET status=?,promulgation_decision=?,rescript_pending=?,
                 promulgation_blocked_layer=?,promulgation_reason=?,
-                legal_reason_code=?,updated_at=CURRENT_TIMESTAMP,
+                legal_reason_code=?,held_turn=?,updated_at=CURRENT_TIMESTAMP,
                 closed_at=CASE WHEN ?='closed' THEN CURRENT_TIMESTAMP ELSE closed_at END
             WHERE id=?
             """,
             (
                 status, promulgation, pending, blocked_layer, slot_reason,
-                slot_legal_reason,
+                slot_legal_reason, held_turn,
                 status, int(dossier_id),
             ),
         )
-        turn_row = self.conn.execute(
-            "SELECT turn FROM game_state WHERE id=1"
-        ).fetchone()
         self.conn.execute(
             """
             INSERT INTO decree_dossier_decisions
@@ -9892,7 +9912,7 @@ class GameDB:
             VALUES (?,?,?,?,?,?,?)
             """,
             (
-                int(dossier_id), int(turn_row["turn"] if turn_row else 0),
+                int(dossier_id), current_turn,
                 promulgation if decision != "hold" else "rejected",
                 blocked_layer,
                 decision if decision in {"hold", "withdrawn"} else "",
@@ -9979,14 +9999,30 @@ class GameDB:
             if row is None:
                 raise KeyError(f"案卷不存在：{dossier_id}")
             if decision == "force_promulgated":
+                turn_row = self.conn.execute(
+                    "SELECT turn FROM game_state WHERE id=1"
+                ).fetchone()
+                current_turn = int(turn_row["turn"] if turn_row else 0)
                 if (
                     row["promulgation_decision"] != "rejected"
                     or row["status"] != "proposed"
                 ):
                     raise ValueError("强颁只可承接同一打回/留中案卷")
-                turn_row = self.conn.execute(
-                    "SELECT turn FROM game_state WHERE id=1"
+                if int(row.get("held_turn") or 0) <= 0:
+                    raise ValueError("强颁必须承接留中案卷")
+                if current_turn <= int(row["held_turn"]):
+                    raise ValueError("留中案卷只可在下月重判或强颁")
+                rejudged = self.conn.execute(
+                    """
+                    SELECT 1 FROM decree_dossier_decisions
+                    WHERE dossier_id=? AND turn=? AND decision='rejected'
+                      AND rescript_action=''
+                    LIMIT 1
+                    """,
+                    (int(dossier_id), current_turn),
                 ).fetchone()
+                if rejudged is None:
+                    raise ValueError("留中案卷须先完成下月重判方可强颁")
                 self.conn.execute(
                     """
                     UPDATE decree_dossiers
@@ -10003,7 +10039,7 @@ class GameDB:
                          legal_reason_code)
                     VALUES (?,?,'rejected','force_promulgated','批红强颁','')
                     """,
-                    (int(dossier_id), int(turn_row["turn"] if turn_row else 0)),
+                    (int(dossier_id), current_turn),
                 )
             else:
                 self.record_dossier_decision(
@@ -11344,14 +11380,16 @@ class GameDB:
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
-        structured = self._normalize_directive_dossier_payload(structured)
+        structured = self._normalize_directive_dossier_payload(
+            structured, content=self.content, current_turn=int(state.turn),
+        )
         action_type = self._directive_dossier_action_type(structured)
         return self.create_decree_dossier(
             state,
             action_type=action_type,
             decree_text=text,
             target_kind=str(structured.get("target_kind") or "policy"),
-            target_id=structured.get("target_id") or f"directive:{int(directive_id)}",
+            target_id=structured.get("target_id") or "",
             executor_kind="character" if action_type == "assignment" else "",
             executor_id=(
                 structured.get("assignee_id") or structured.get("assignee") or ""

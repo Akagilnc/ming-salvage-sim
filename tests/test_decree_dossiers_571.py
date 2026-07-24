@@ -267,6 +267,15 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert rejected["promulgation_reason"] == "科臣封驳"
     assert rejected["legal_reason_code"] == "statute-review"
 
+    db.record_dossier_decision(dossier_id, "hold")
+    state.next_period()
+    db.save_state(state)
+    db.apply_dossier_verdicts(
+        state, [{
+            "dossier_id": dossier_id, "decision": "rejected",
+            "blocked_layer": "six_offices", "reason": "下月重判仍驳",
+        }]
+    )
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
     )
@@ -649,23 +658,6 @@ def test_secret_order_progress_persists_executing_until_terminal(game):
     assert terminal["execution_outcome"] == "fulfilled"
 
 
-@pytest.mark.parametrize(
-    "action_type",
-    (
-        "extraordinary_summons", "summons", "inquiry",
-        "pressure_inquiry", "public_support",
-    ),
-)
-def test_dialogue_and_engine_commands_cannot_construct_dossiers(
-    game, action_type,
-):
-    db, state, _content = game
-    with pytest.raises(ValueError, match="action_type"):
-        db.create_decree_dossier(
-            state, action_type=action_type, decree_text="结构化命令",
-        )
-
-
 def test_secret_order_creation_fills_promulgation_slot_and_history(game):
     from ming_sim.db import GameDB
 
@@ -722,11 +714,33 @@ def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
         "statute-42", "statute-42",
     ]
     assert history[1]["rescript_action"] == "hold"
+    assert dossier_id not in {
+        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+    }
+    with pytest.raises(ValueError, match="下月"):
+        db.apply_dossier_verdicts(
+            state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
+        )
+    with pytest.raises(ValueError, match="下月"):
+        db.apply_dossier_verdicts(
+            state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        )
     state.next_period()
     db.save_state(state)
     assert dossier_id in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
+    with pytest.raises(ValueError, match="重判"):
+        db.apply_dossier_verdicts(
+            state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
+        )
+    db.apply_dossier_verdicts(
+        state, [{
+            "dossier_id": dossier_id, "decision": "rejected",
+            "blocked_layer": "six_offices", "reason": "下月重判仍驳",
+            "legal_reason_code": "statute-42",
+        }],
+    )
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}],
     )
@@ -734,6 +748,69 @@ def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
     assert db.conn.execute(
         "SELECT COUNT(*) FROM decree_dossiers WHERE id=?", (dossier_id,),
     ).fetchone()[0] == 1
+
+
+def test_session_manual_directive_keeps_structured_action_at_submission(
+    game, monkeypatch,
+):
+    from ming_sim.models import LLMConfig
+    from ming_sim.session import GameSession
+    import ming_sim.cli_backend as cli_backend
+
+    db, state, content = game
+    captured_target = {"id": "河南"}
+
+    def _structured_capture(_prompt, _config, *, tag):
+        assert tag == "draft_intent"
+        return json.dumps({
+            "拟旨意图": "拟旨",
+            "动作类型": "assignment",
+            "目标类型": "region",
+            "目标ID": captured_target["id"],
+            "金额": None,
+            "账户": "",
+            "执行面": "",
+            "承办人": _active_minister(db),
+            "授权ID": "",
+            "期限月数": None,
+        }, ensure_ascii=False), {}
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", _structured_capture)
+    session = GameSession(
+        db.path,
+        LLMConfig(
+            api_key="", base_url="http://unused", model="unused", channel="api",
+        ),
+        content=content,
+        verify_llm=False,
+    )
+    try:
+        minister, _temporary = session.summon_character(_active_minister(session.db))
+        session.apply_cli_conversation_actions(
+            minister, "河工为何迟滞，卿须从实奏来。", "臣正查访。",
+            False, None, preclassified_intent={"kind": "none"},
+        )
+        assert session.db.list_decree_dossiers() == []
+
+        directive = session.add_directive("着查河南河工")
+        assert session.db.get_dossier_for_directive(directive.id) is None
+
+        session.db.ensure_dossiers_for_draft_directives(session.state)
+
+        dossier = session.db.get_dossier_for_directive(directive.id)
+        assert dossier["action_type"] == "assignment"
+        assert dossier["target_kind"] == "region"
+        assert dossier["target_id"] == "河南"
+        payload = json.loads(dossier["payload_json"])
+        assert payload["assignee_id"] == _active_minister(session.db)
+
+        captured_target["id"] = ""
+        before = len(session.db.list_directives(session.state))
+        with pytest.raises(ValueError, match="澄清"):
+            session.add_directive("着再查河工")
+        assert len(session.db.list_directives(session.state)) == before
+    finally:
+        session.db.close()
 
 
 def test_allocation_candidate_edit_preserves_mechanical_payload(game):
