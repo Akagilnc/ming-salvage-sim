@@ -1899,7 +1899,11 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     state.turn_phase = TurnPhase.SUMMONING.value
 
     # 草案 A：先 stage + write_decree（生成稿只覆盖 A）
-    db.upsert_pending_directive(state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "草案A：清查粮饷", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "grain-audit",
+    })
 
     gen_calls = []
 
@@ -1918,8 +1922,11 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     assert "草案B" not in decree_v1  # 此刻还没 B
 
     # 玩家回到对话，新建草案 B（新 pending directive，未纳入已生成的 decree_v1）
-    db.upsert_pending_directive(state.turn, name + "·乙",
-                                payload={"text": "草案B：调将镇辽", "actor": name})
+    db.upsert_pending_directive(state.turn, name + "·乙", payload={
+        "text": "草案B：调将镇辽", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "liaodong-defense",
+    })
 
     # 颁诏：必须重生成，纳入 B，不能沿用只含 A 的陈旧稿
     captured = {}
@@ -1950,8 +1957,11 @@ def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generati
     sess = _decree_session(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
 
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "草案A：清查粮饷", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "grain-audit",
+    })
 
     def fake_write(llm_config, agno_db, st, directives, db=None):
         texts = "；".join(str(d["text"]) for d in directives)
@@ -1994,8 +2004,11 @@ def test_manual_saved_decree_survives_after_draft_text_change(game, monkeypatch)
     sess = _decree_session(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
 
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "草案A：清查粮饷", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "grain-audit",
+    })
 
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
@@ -2043,8 +2056,11 @@ def test_supplement_after_write_decree_updates_committed_draft_not_new_pending(g
     sess.llm_config = types.SimpleNamespace(channel="cli")
     state.turn_phase = TurnPhase.SUMMONING.value
 
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "草案A：清查粮饷", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "grain-audit",
+    })
 
     monkeypatch.setattr(
         session_mod, "write_decree_with_agno",
@@ -2168,8 +2184,11 @@ def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monk
     sess = _decree_session(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
 
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "口头草案：调辽饷三万。", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "口头草案：调辽饷三万。", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "liaodong-pay",
+    })
 
     def fake_write(llm_config, agno_db, st, directives, db=None):
         texts = "；".join(str(d["text"]) for d in directives)
