@@ -1235,8 +1235,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         (entry) => entry.status === "cmr_reviewed",
       );
       expect(reviewed).toBeDefined();
-      // The runner's only pending-key source is present…
-      expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
+      // The runner does not derive fixer identity cargo from judge content.
+      expect(reviewed!.blockingFindingIdentityKeys).toEqual([]);
       // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     });

@@ -12,14 +12,6 @@ describe("#451 dogfood replay fixture", () => {
     expect(replay.scenarios).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "307-continue-fixing-after-human-answer",
-          issue: 307,
-          classification: "success",
-          stopReason: "success",
-          source: "runner",
-          sourceStopSummary: expect.objectContaining({ reason: "success" }),
-        }),
-        expect.objectContaining({
           id: "307-no-observable-progress",
           issue: 307,
           // #877: no-progress court demolished — ships via findings-count.
@@ -218,10 +210,7 @@ describe("#451 dogfood replay fixture", () => {
     const replay = await issue451DogfoodReplay();
     const rowsById = new Map(replay.scenarios.map((scenario) => [scenario.id, scenario]));
 
-    for (const id of [
-      "307-continue-fixing-after-human-answer",
-      "307-local-progress-shape-changed",
-    ]) {
+    for (const id of ["307-local-progress-shape-changed"]) {
       const row = rowsById.get(id);
       expect(row, id).toBeDefined();
       expect(row?.source, id).toBe("runner");
@@ -232,17 +221,6 @@ describe("#451 dogfood replay fixture", () => {
         dispatched: expect.arrayContaining(["S5:coder", "S6:verify"]),
       });
     }
-    expect(rowsById.get("307-continue-fixing-targeted-reset")).toMatchObject({
-      source: "runner",
-      classification: "success",
-      stopReason: "success",
-      sourceStopSummary: expect.objectContaining({ reason: "success" }),
-      sourceEvidence: expect.objectContaining({
-        seam: "runner",
-        status: "completed",
-        courtDemolished: true,
-      }),
-    });
 
     for (const id of [
       "287-module-declaration-fenced-yaml",
@@ -301,11 +279,9 @@ describe("#451 dogfood replay fixture", () => {
 
   it("contains a replay row for each owner-specified #451 accident sample", async () => {
     expect((await issue451DogfoodReplay()).scenarios.map((scenario) => scenario.id)).toEqual([
-      "307-continue-fixing-after-human-answer",
       "307-local-progress-shape-changed",
       "307-reviewer-text-only-change",
       "307-no-observable-progress",
-      "307-continue-fixing-targeted-reset",
       "258-cmr-reviewer-self-fix-attempt",
       "287-same-module-cmr-gap",
       "287-declared-target-follow-up-blocking",
@@ -350,12 +326,6 @@ describe("#451 dogfood replay fixture", () => {
       findingShape: "changed_after_local_progress",
       implementationMovement: false,
       movementEvidence: "scripted coder receipts only; no real git worktree movement",
-    });
-    expect(rowsById.get("307-continue-fixing-targeted-reset")?.sourceEvidence).toMatchObject({
-      seam: "runner",
-      mechanism: "continue_fixing_bookkeeping",
-      resetScope: "single_identity_key",
-      preservedSibling: true,
     });
     expect(rowsById.get("307-reviewer-text-only-change")).toMatchObject({
       source: "runner",
