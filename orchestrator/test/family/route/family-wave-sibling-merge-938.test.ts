@@ -705,7 +705,13 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
+    expect(result.children.find((c) => c.issue === 10)).toMatchObject({
+      status: "escalated",
+      escalation: {
+        reason: "choose the canonical migration",
+        escalationKind: "decision",
+      },
+    });
     const peer = result.children.find((c) => c.issue === 11);
     expect(peer?.status).toBe("ran");
     expect(peer?.status).not.toBe("skipped");
@@ -716,10 +722,27 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
     // Durable + public share one stopSummary; children list on result holds cargo.
     expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
     expect(result.children.map((c) => ({ issue: c.issue, status: c.status }))).toEqual([
-      { issue: 10, status: "failed" },
+      { issue: 10, status: "escalated" },
       { issue: 11, status: "ran" },
       { issue: 12, status: "escalated" },
     ]);
+
+    const replay = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new OkChildBackend(),
+      familyBase: "family/938-base",
+    });
+    expect(replay.status).toBe("parked");
+    expect(replay.children).toEqual(result.children);
   });
 
   it("POSITIVE: merge-phase quota park mid-wave keeps successful wave peer as ran (not skipped)", async () => {
