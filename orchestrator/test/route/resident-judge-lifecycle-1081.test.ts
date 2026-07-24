@@ -239,8 +239,8 @@ describe("#1081 pure: resident judge lifecycle helpers", () => {
   });
 
   it("rebuild: coder-seat continuity_lost does NOT orphan open court (L1 negative)", () => {
-    // Post-#1081 only coder seats write session_continuity_lost; a coder row
-    // above court_opened must leave the resident judge open (no silent fresh).
+    // Coder-seat continuity loss must leave the judge court open; only a
+    // judge-seat continuity loss orphans that court.
     expect(
       rebuildResidentJudgeFromLedger([
         {
@@ -684,7 +684,21 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           new Error("continuity ledger unavailable"),
         );
         const failed = await runOrchestrator({ issueNumber: 1135, backend: writeFailureBackend });
-        expect([failed.status, writeFailureBackend.specs.length]).toEqual(["failed", 0]);
+        expect({
+          result: failed,
+          lost: failed.stepLedger.filter(
+            (entry) => entry.event === "session_continuity_lost",
+          ).length,
+          s6: failed.stepLedger.filter((entry) => entry.step === "S6").length,
+          s8: failed.stepLedger.filter((entry) => entry.step === "S8").length,
+          dispatches: writeFailureBackend.specs.length,
+        }).toMatchObject({
+          result: { status: "failed", cause: "record_persist_failed" },
+          lost: 0,
+          s6: 1,
+          s8: 1,
+          dispatches: 0,
+        });
       } finally {
         resetRoutePresetsCacheForTests();
         rmSync(routeDir, { recursive: true, force: true });
