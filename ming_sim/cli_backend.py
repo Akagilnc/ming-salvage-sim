@@ -1130,7 +1130,7 @@ def extract_draft_intent(
     target_kind = str(obj.get("目标类型") or "policy").strip()
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
         target_kind = "policy"
-    target_id_value = str(obj.get("目标ID") or "narrative").strip() or "narrative"
+    target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
         "amount": obj.get("金额"),
         "account": str(obj.get("账户") or "").strip(),

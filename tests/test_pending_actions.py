@@ -1897,7 +1897,7 @@ def test_commit_dismiss_clears_db_and_memory_office(game, monkeypatch):
             state,
             [{"dossier_id": d["id"], "decision": "promulgated"}
              for d in db.list_decree_dossiers(status="proposed")
-             if d["action_type"] == "appointment"],
+             if d["action_type"] == "dismiss_assignment"],
             content=content,
         )
         row = db.conn.execute(
@@ -2254,7 +2254,7 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
         state,
         [{"dossier_id": d["id"], "decision": "promulgated"}
          for d in db.list_decree_dossiers(status="proposed")
-         if d["action_type"] == "appointment"],
+         if d["action_type"] == "dismiss_assignment"],
         content=content,
         registry=reg,
     )

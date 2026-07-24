@@ -334,10 +334,6 @@ def resolve_directives(
         raise
 
     dossier_payload = db.list_decree_dossiers_for_simulation(state.turn)
-    if dossier_payload:
-        # #571 only supplies the durable list. S5/S14 own future verdicts and
-        # full input replacement; compatibility prose is derived, never truth.
-        decree_text = "\n".join(str(row["decree_text"]) for row in dossier_payload)
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []

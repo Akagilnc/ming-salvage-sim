@@ -385,6 +385,10 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         state, action_type="policy", decree_text="本月已颁之旨",
     )
     db.record_dossier_decision(published_id, "promulgated")
+    secret_order_id = db.create_secret_order(
+        state, actor, "密查军饷", "暗中核清关宁军饷", [],
+    )
+    secret_dossier_id = db.get_dossier_for_secret_order(secret_order_id)["id"]
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=actor,
         payload={
@@ -394,7 +398,6 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
             "account": "国库",
             "amount": 10,
             "category": "赈济",
-            "immediate_terminal": True,
         },
     )
     seen = {}
@@ -424,9 +427,14 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         content=content,
     )
 
-    assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [published_id]
-    assert seen["payload"]["decree_text"] == "本月已颁之旨"
-    staged = db.list_decree_dossiers()[-1]
+    staged = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] > 0
+    )
+    assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
+        published_id, secret_dossier_id, staged["id"],
+    ]
+    assert seen["payload"]["decree_text"] == "不应作为真源"
     assert staged["status"] == "proposed"
 
 
@@ -749,3 +757,61 @@ def test_verdict_history_retains_legal_code_when_current_slot_changes(game):
         "statute-42", "",
     ]
     assert history[1]["rescript_action"] == "hold"
+
+
+def test_distinct_structured_targets_survive_restore(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    actor = _active_minister(db)
+    pending_ids = [
+        db.stage_pending_action(
+            state.turn, kind="directive", action="拟旨", minister_name=actor,
+            payload={
+                "text": f"着查{target}", "actor": actor,
+                "dossier_action_type": "special_decree",
+                "target_kind": "issue", "target_id": target,
+            },
+        )
+        for target in ("river-works", "granary-audit")
+    ]
+    db.commit_pending_actions(
+        state, content=content, action_ids=pending_ids,
+    )
+    reopened = GameDB(db.path, content=content)
+    try:
+        restored = [
+            row for row in reopened.list_decree_dossiers()
+            if row["pending_action_id"] in pending_ids
+        ]
+        assert [row["target_id"] for row in restored] == [
+            "river-works", "granary-audit",
+        ]
+    finally:
+        reopened.close()
+
+
+def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="assignment",
+        decree_text="着查仓储",
+        executor_kind="character",
+        executor_id=_active_minister(db),
+        payload={"immediate_terminal": True},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    with pytest.raises(ValueError, match="executing"):
+        db.record_dossier_execution(
+            dossier_id, "fulfilled", "伪造直结", state.turn,
+        )
+    with pytest.raises(ValueError, match="不得从 promulgated"):
+        db.transition_decree_dossier(dossier_id, "closed")
+
+    db.transition_decree_dossier(dossier_id, "executing")
+    db.record_dossier_execution(
+        dossier_id, "fulfilled", "真实执行完毕", state.turn,
+    )
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
