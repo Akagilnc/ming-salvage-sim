@@ -1397,6 +1397,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const result = await backend.dispatchWorker(spec, { worktree });
 
     expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.agent.captureSessions).toBe(false);
+    expect(backend.lastAgentOptions?.resumeSession).toBeUndefined();
     expect(backend.capturedEnv?.[SANDBOX_REVIEW_FIXED_POINT_ENV]).toBe(
       worktree.base,
     );
