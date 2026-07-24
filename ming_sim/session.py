@@ -973,9 +973,11 @@ class GameSession:
         """
         from ming_sim.cli_backend import _DRAFT_PREFIXES, _SECRET_PREFIXES, extract_confirmation_intent
         from ming_sim.action_clusters import (
-            empty_none_candidate,
+            EFFECT_ANSWER_EXISTING,
+            cluster_effect,
             normalize_intent_candidates,
-            primary_intent,
+            normalize_one_candidate,
+            resolve_primary_intent,
         )
 
         if preclassified_intent is None:
@@ -985,13 +987,15 @@ class GameSession:
             if candidates is None:
                 candidates = []
 
-        intent = primary_intent(candidates)
+        intent = resolve_primary_intent(candidates)
         message_text = (player_message or "").strip()
         if message_text.startswith(_DRAFT_PREFIXES) or message_text.startswith(_SECRET_PREFIXES):
             return candidates
         if not confirm_target_ids:
             return candidates
-        if intent is not None and str(intent.get("kind") or "") == "confirmation":
+        if intent is not None and cluster_effect(
+            str(intent.get("kind") or "")
+        ) == EFFECT_ANSWER_EXISTING:
             return candidates if candidates is not None else []
         pend_for_minister = self.db.list_pending_actions(
             self.state.turn, minister_name=minister_name)
@@ -1004,9 +1008,10 @@ class GameSession:
         confirm = extract_confirmation_intent(
             player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
         if confirm in ("应允", "拒绝"):
-            cand = empty_none_candidate()
-            cand["kind"] = "confirmation"
-            cand["confirmation"] = confirm
+            cand = normalize_one_candidate(
+                {"kind": "confirmation", "confirmation": confirm},
+                soft=False,
+            )
             return [cand]
         return candidates
 
@@ -1265,21 +1270,14 @@ class GameSession:
         from ming_sim.action_clusters import (
             EFFECT_ANSWER_EXISTING,
             cluster_effect,
-            normalize_intent_candidates,
-            primary_intent,
+            resolve_primary_intent,
         )
         out: Dict[str, Any] = {
             "directive": None,
             "secret_order_id": secret_order_id,
             "pending_action_failures": [],
         }
-        if preclassified_intent is None:
-            intent_candidates: Optional[List[Dict[str, Any]]] = None
-        else:
-            intent_candidates = normalize_intent_candidates(preclassified_intent)
-            if intent_candidates is None:
-                intent_candidates = []
-        intent = primary_intent(intent_candidates)
+        intent = resolve_primary_intent(preclassified_intent)
         # intent is None only when classifier did not run; [] → primary {kind:none}.
         intent_kind = str((intent or {}).get("kind") or "none")
         minister_name = character.name

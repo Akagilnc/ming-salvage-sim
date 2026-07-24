@@ -257,7 +257,11 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
         payload={"name": "某人", "office": "某职", "appointer": minister.name},
     )
     _silence_serial(monkeypatch)
-    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "应允")
+    monkeypatch.setattr(
+        cb, "extract_confirmation_intent",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not call serial confirmation extractor")),
+    )
     sess = _bind_apply(db, state, content)
     before_ids = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))}
     out = sess.apply_cli_conversation_actions(
@@ -268,6 +272,9 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
     )
     new_ids = {int(r["id"]) for r in db.list_pending_actions(int(state.turn))} - before_ids
     assert not new_ids
+    assert int(pid) not in {
+        int(r["id"]) for r in db.list_pending_actions(int(state.turn))
+    }
     assert out.get("pending_action_id") in (None, 0, "")
 
 
