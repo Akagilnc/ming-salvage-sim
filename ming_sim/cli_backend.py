@@ -1068,6 +1068,7 @@ def extract_draft_intent(
         '  "目标ID": "",\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
         '  "账户": "",\n'
+        '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "授权ID": "",\n'
         '  "期限月数": null           // 军令必填正整数；非军令留 null\n'
@@ -1134,6 +1135,10 @@ def extract_draft_intent(
     mechanical = {
         "amount": obj.get("金额"),
         "account": str(obj.get("账户") or "").strip(),
+        "execution_surface": (
+            str(obj.get("执行面") or "in_transit").strip()
+            if dossier_action == "grant_allocation" else ""
+        ),
         "assignee": str(obj.get("承办人") or "").strip(),
         "authorization_id": str(obj.get("授权ID") or "").strip(),
         "deadline_months": obj.get("期限月数"),
@@ -1156,6 +1161,7 @@ def extract_draft_intent(
             mechanical["amount"] is not None
             and mechanical["amount"] > 0
             and bool(mechanical["account"])
+            and mechanical["execution_surface"] in {"immediate", "in_transit"}
         ),
         "assignment": bool(mechanical["assignee"]),
         "authorization": bool(

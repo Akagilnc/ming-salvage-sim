@@ -1432,22 +1432,21 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
-    # 不应抛异常（坏 JSON 被 except 吞掉）
-    GameSession.apply_cli_conversation_actions(
-        sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
-        has_directive=False, secret_order_id=None,
-    )
+    with pytest.raises(ValueError, match="载荷损坏"):
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
+            has_directive=False, secret_order_id=None,
+        )
 
     # draft_intent 仍被调用（兜底没有提前 return）
     assert "draft_prompt" in captured
     # 坏 JSON → existing_draft_text 为空 → prompt 不含【现有草案】注入段
     assert "【现有草案】" not in captured["draft_prompt"]
 
-    # 草案仍被 last-write-wins 更新为新回话（同一行）
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
-    assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
+    assert pend[0]["payload_json"] == "{这不是合法JSON"
 
 
 @pytest.mark.parametrize("payload_json", ["null", "[1, 2, 3]"])
@@ -1478,17 +1477,18 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
 
-    GameSession.apply_cli_conversation_actions(
-        sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
-        has_directive=False, secret_order_id=None,
-    )
+    with pytest.raises(ValueError, match="载荷必须为对象"):
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
+            has_directive=False, secret_order_id=None,
+        )
 
     assert "draft_prompt" in captured
     assert "【现有草案】" not in captured["draft_prompt"]
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
-    assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
+    assert pend[0]["payload_json"] == payload_json
 
 
 def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, monkeypatch):
