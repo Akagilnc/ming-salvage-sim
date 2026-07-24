@@ -1065,7 +1065,11 @@ def extract_draft_intent(
         '  "动作类型": "policy|assignment|grant_allocation|authorization|punishment|'
         'pacification|referral|revoke_decree|revoke_authority|dismiss_assignment",\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
-        '  "目标ID": ""\n'
+        '  "目标ID": "",\n'
+        '  "金额": null,\n'
+        '  "账户": "",\n'
+        '  "承办人": "",\n'
+        '  "授权ID": ""\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
@@ -1114,18 +1118,31 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
-    dossier_action = str(obj.get("动作类型") or "policy").strip()
+    dossier_action = str(obj.get("动作类型") or "special_decree").strip()
     allowed_actions = {
         "policy", "assignment", "grant_allocation", "authorization", "punishment",
         "pacification", "referral", "revoke_decree", "revoke_authority",
-        "dismiss_assignment",
+        "dismiss_assignment", "special_decree",
     }
     if dossier_action not in allowed_actions:
-        dossier_action = "policy"
+        dossier_action = "special_decree"
     target_kind = str(obj.get("目标类型") or "policy").strip()
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "narrative").strip() or "narrative"
+    mechanical = {
+        "amount": obj.get("金额"),
+        "account": str(obj.get("账户") or "").strip(),
+        "assignee": str(obj.get("承办人") or "").strip(),
+        "authorization_id": str(obj.get("授权ID") or "").strip(),
+    }
+    complete = {
+        "grant_allocation": mechanical["amount"] is not None and bool(mechanical["account"]),
+        "assignment": bool(mechanical["assignee"]),
+        "authorization": bool(mechanical["authorization_id"]),
+    }
+    if dossier_action in complete and not complete[dossier_action]:
+        dossier_action = "special_decree"
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
@@ -1137,7 +1154,7 @@ def extract_draft_intent(
             draft_text = (minister_reply or "").strip()
         return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
                 "dossier_action_type": dossier_action,
-                "target_kind": target_kind, "target_id": target_id_value}
+                "target_kind": target_kind, "target_id": target_id_value, **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1166,7 +1183,7 @@ def extract_draft_intent(
     return {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
-        "target_kind": target_kind, "target_id": target_id_value,
+        "target_kind": target_kind, "target_id": target_id_value, **mechanical,
     }
 
 

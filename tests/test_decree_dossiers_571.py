@@ -428,3 +428,70 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
     assert seen["payload"]["decree_text"] == "本月已颁之旨"
     staged = db.list_decree_dossiers()[-1]
     assert staged["status"] == "proposed"
+
+
+def test_legacy_directive_paths_create_one_addressable_dossier(game):
+    db, state, _content = game
+    draft_id = db.add_directive(state, None, "着核仓储", "手动新增")
+    pending_id = db.add_directive(
+        state, None, "着查河工", "大臣拟旨", status="pending",
+    )
+
+    assert db.get_dossier_for_directive(draft_id)["target_id"] == f"directive:{draft_id}"
+    assert db.get_dossier_for_directive(pending_id) is None
+    db.confirm_directive(pending_id)
+    first = db.get_dossier_for_directive(pending_id)
+    db.confirm_directive(pending_id)
+    assert db.get_dossier_for_directive(pending_id)["id"] == first["id"]
+
+
+def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="着持续勘河",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    with pytest.raises(ValueError, match="非终态"):
+        db.record_dossier_execution(
+            dossier_id, "executing", "正在勘验", state.turn, close=True,
+        )
+    db.record_dossier_execution(
+        dossier_id, "executing", "正在勘验", state.turn, close=False,
+    )
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == "executing"
+    assert row["closed_turn"] == 0
+
+
+def test_appointment_alias_uses_canonical_dossier_identity(game):
+    db, state, content = game
+    target = next(
+        character for character in content.characters.values()
+        if character.aliases and character.name != character.aliases[0]
+        and db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=? AND status='active'",
+            (character.name,),
+        ).fetchone()
+    )
+    alias = target.aliases[0]
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=_active_minister(db), target_id=None,
+        payload={"name": alias, "office": "兵部主事"},
+    )
+    db.commit_pending_actions(state, content=content, registry=None)
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    assert dossier["target_id"] == target.name
+    assert dossier["executor_id"] == target.name
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content, registry=None,
+    )
+    db.record_dossier_execution(
+        dossier["id"], "fulfilled", "任事已毕", state.turn,
+    )
+    assert db.get_decree_dossier(dossier["id"])["status"] == "closed"

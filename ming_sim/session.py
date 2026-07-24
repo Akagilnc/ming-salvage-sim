@@ -1635,10 +1635,7 @@ class GameSession:
                 _existing_draft_text = str(_dir_candidates[-1].get("text") or "")
             elif _committed_draft is not None and not _has_pending_draft:
                 _existing_draft_text = str(_committed_draft["text"] or "")
-            if intent is not None and intent_kind == "draft" and not _has_existing_draft:
-                # 全新草案：大臣回话即草案原文，零额外 LLM（#344）。
-                draft_res = {"draft_action": "拟旨", "draft_text": reply, "target_candidate": ""}
-            elif intent is not None and not _has_existing_draft and not draft_keyword_requested:
+            if intent is not None and not _has_existing_draft and not draft_keyword_requested:
                 # 无现存草案 + 分类器判非拟旨 → 零额外 LLM（#344 常见消息秒回）。
                 draft_res = {"draft_action": "无", "draft_text": "", "target_candidate": ""}
             else:
@@ -1646,7 +1643,7 @@ class GameSession:
                 # extract_draft_intent 合并新旧草案，绝不用 raw reply 覆盖已有草案——分类器看不到
                 # committed draft，无论它判 none 还是 draft，直接拿回话覆盖都会丢掉原草案内容
                 # （codex correctness：none 半与 draft 半是同一覆盖丢失的两面，统一收敛到 merge）。
-                # 额外 LLM 只在「已有草案」这一动作场景发生，普通无草案消息不受影响。
+                # 拟旨动作必须经结构化抽取保全 action/target/机械载荷；普通无草案消息不受影响。
                 draft_res = extract_draft_intent(
                     player_message, reply, llm_config=llm_config,
                     has_pending_draft=_has_existing_draft,
@@ -1663,10 +1660,13 @@ class GameSession:
                 semantic_payload = {
                     "text": draft_res["draft_text"],
                     "actor": minister_name,
-                    "dossier_action_type": draft_res.get("dossier_action_type") or "policy",
+                    "dossier_action_type": draft_res.get("dossier_action_type") or "special_decree",
                     "target_kind": draft_res.get("target_kind") or "policy",
                     "target_id": draft_res.get("target_id") or "narrative",
                 }
+                for _field in ("amount", "account", "assignee", "authorization_id"):
+                    if draft_res.get(_field) not in (None, ""):
+                        semantic_payload[_field] = draft_res[_field]
                 _target = str(draft_res.get("target_candidate") or "")
                 _target_id = int(_target) if _target.isdigit() else None
                 if _dir_candidates and _target == "新":

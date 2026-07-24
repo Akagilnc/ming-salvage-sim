@@ -9481,7 +9481,7 @@ class GameDB:
             return "grant_allocation"
         if payload.get("assignee_id") or payload.get("assignee"):
             return "assignment"
-        return "policy"
+        return "special_decree"
 
     def _commit_dossier_write(self, commit: bool) -> None:
         if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
@@ -9590,6 +9590,15 @@ class GameDB:
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
             "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        return None if row is None else self._dossier_row(row)
+
+    def get_dossier_for_directive(
+        self, directive_id: int,
+    ) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM decree_dossiers WHERE directive_id=?",
+            (int(directive_id),),
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
@@ -9825,6 +9834,8 @@ class GameDB:
         outcome = str(outcome or "").strip()
         if outcome not in self._DOSSIER_EXECUTION_OUTCOMES:
             raise ValueError(f"执行 outcome 非法：{outcome}")
+        if outcome == "executing" and close:
+            raise ValueError("executing 是非终态，必须以 close=False 记录")
         payload = json.loads(str(row.get("payload_json") or "{}"))
         immediate = row["status"] == "promulgated" and bool(
             isinstance(payload, dict) and payload.get("immediate_terminal")
@@ -9838,7 +9849,11 @@ class GameDB:
                 updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
-            (outcome, str(note or ""), int(turn), int(dossier_id)),
+            (
+                outcome, str(note or ""),
+                0 if outcome == "executing" else int(turn),
+                int(dossier_id),
+            ),
         )
         if close:
             self.close_decree_dossier(dossier_id, str(note or ""), commit=False)
@@ -10634,7 +10649,10 @@ class GameDB:
                     return False
             elif pa["action"] == "罢免":
                 return False
+            if canonical:
+                name = canonical
             staged_payload = dict(payload)
+            staged_payload["name"] = name
             staged_payload["_office_action"] = str(pa["action"])
             staged_payload["_minister_name"] = str(pa.get("minister_name") or "")
             if pa["action"] == "罢免":
@@ -10787,8 +10805,8 @@ class GameDB:
                 state,
                 action_type=self._directive_dossier_action_type(payload),
                 decree_text=text,
-                target_kind=str(payload.get("target_kind") or ""),
-                target_id=payload.get("target_id") or "",
+                target_kind=str(payload.get("target_kind") or "policy"),
+                target_id=payload.get("target_id") or f"directive:{did}",
                 executor_kind=(
                     "character"
                     if self._directive_dossier_action_type(payload) == "assignment"
@@ -11164,19 +11182,48 @@ class GameDB:
         skill_id: str = "",
         notes: str = "",
         status: str = "draft",
+        dossier_payload: Optional[Dict[str, object]] = None,
     ) -> int:
         # status: 'draft'=已确认颁诏候选；'pending'=大臣拟旨待皇帝核定。
-        cursor = self.conn.execute(
-            """
-            INSERT INTO turn_directives
-            (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (state.turn, state.year, state.period, event.id if event else None,
-             actor or None, skill_id, text, source, status, notes),
+        with atomic(self):
+            cursor = self.conn.execute(
+                """
+                INSERT INTO turn_directives
+                (turn, year, period, event_id, actor, skill_id, text, source, status, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (state.turn, state.year, state.period, event.id if event else None,
+                 actor or None, skill_id, text, source, status, notes),
+            )
+            directive_id = int(cursor.lastrowid)
+            if status == "draft":
+                self._ensure_directive_dossier(
+                    state, directive_id, text, dossier_payload, commit=False,
+                )
+        return directive_id
+
+    def _ensure_directive_dossier(
+        self, state: GameState, directive_id: int, text: str,
+        payload: Optional[Dict[str, object]] = None, *, commit: bool = True,
+    ) -> int:
+        """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
+        structured = dict(payload or {})
+        action_type = self._directive_dossier_action_type(structured)
+        return self.create_decree_dossier(
+            state,
+            action_type=action_type,
+            decree_text=text,
+            target_kind=str(structured.get("target_kind") or "policy"),
+            target_id=structured.get("target_id") or f"directive:{int(directive_id)}",
+            executor_kind="character" if action_type == "assignment" else "",
+            executor_id=(
+                structured.get("assignee_id") or structured.get("assignee") or ""
+                if action_type == "assignment" else ""
+            ),
+            directive_id=int(directive_id),
+            payload=structured,
+            commit=commit,
         )
-        self.conn.commit()
-        return int(cursor.lastrowid)
 
     def list_directives(
         self, state: GameState, statuses: Tuple[str, ...] = ("draft",)
@@ -11196,15 +11243,25 @@ class GameDB:
 
     def confirm_directive(self, directive_id: int) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
-        self.conn.execute(
-            """
-            UPDATE turn_directives
-            SET status = 'draft', updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND status = 'pending'
-            """,
-            (directive_id,),
-        )
-        self.conn.commit()
+        with atomic(self):
+            self.conn.execute(
+                """
+                UPDATE turn_directives
+                SET status = 'draft', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'pending'
+                """,
+                (directive_id,),
+            )
+            row = self.conn.execute(
+                "SELECT text,status FROM turn_directives WHERE id=?",
+                (int(directive_id),),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"旨稿不存在：{directive_id}")
+            if row["status"] == "draft":
+                self._ensure_directive_dossier(
+                    self.load_state(), directive_id, str(row["text"]), commit=False,
+                )
 
     def reject_directive(self, directive_id: int) -> None:
         """皇帝驳回大臣拟旨：pending → rejected。"""
