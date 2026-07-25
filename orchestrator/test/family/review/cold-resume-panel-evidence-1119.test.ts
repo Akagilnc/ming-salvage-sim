@@ -88,6 +88,7 @@ class FileLedgerBackend implements FamilyBackend {
   ledger: FamilyLedgerEntry[] = [];
   panelDispatches: string[] = [];
   judgeLandings: Array<{
+    pass?: IntegratedCmrPass;
     kind: "pure" | "panels";
     refuseKeys?: readonly string[];
     transports?: WorkerLandingPayload["panelLegTransports"];
@@ -224,6 +225,7 @@ class FileLedgerBackend implements FamilyBackend {
       const n = landing?.panelLegTransports?.length ?? 0;
       const kind = n > 0 ? ("panels" as const) : ("pure" as const);
       this.judgeLandings.push({
+        pass: ctx.cmrPass,
         kind,
         refuseKeys: ctx.refusedFindingIdentityKeys,
         transports: landing?.panelLegTransports,
@@ -467,6 +469,66 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(
       processAfterRestart.judgeLandings[0]?.skippedLegs,
     ).toBeUndefined();
+  });
+
+  it("cold restart keeps a current-HEAD completeness pass while correctness remains pending", async () => {
+    const dir = tmp("1119-correctness-pending-");
+    const processBeforeCrash = new FileLedgerBackend(dir, "none", undefined, {
+      forceFirstContinue: false,
+    });
+    await processBeforeCrash.appendFamilyLedger({
+      status: "cmr_reviewed",
+      event: "cmr_reviewed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: HEAD,
+    });
+    await processBeforeCrash.appendFamilyLedger({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadBefore: HEAD,
+      familyHeadAfter: HEAD,
+      expectedCourtGeneration: 1,
+    });
+    await processBeforeCrash.appendFamilyLedger({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: HEAD,
+      routeFingerprint: ROUTE_FP,
+    });
+
+    const processAfterRestart = new FileLedgerBackend(
+      dir,
+      "none",
+      undefined,
+      { forceFirstContinue: false },
+    );
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-correctness-pending",
+      familyBackend: processAfterRestart,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+
+    expect(
+      processAfterRestart.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ),
+    ).toHaveLength(0);
+    expect(
+      processAfterRestart.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("correctness:"),
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(processAfterRestart.judgeLandings[0]).toMatchObject({
+      pass: "correctness",
+      kind: "panels",
+    });
   });
 
   it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
