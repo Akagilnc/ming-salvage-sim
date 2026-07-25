@@ -377,7 +377,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(processB.judgeLandings).toEqual([]);
   });
 
-  it("cold decision-park resume fans out when both durable cargo arrays are empty", async () => {
+  it("cold decision-park resume replaces non-empty same-generation evidence before the judge", async () => {
     const dir = tmp("1119-cold-park-");
     const processA = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -395,20 +395,24 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       (await processA.readFamilyLedger()).some(
         (entry) =>
           entry.cmrPass === "completeness" &&
-          entry.judgeStatus === "escalate",
+          entry.judgeStatus === "escalate" &&
+          entry.freshPanelReviewRequired === true,
       ),
     ).toBe(true);
 
     const parkedEvidence =
       processA.readFamilyPanelLegEvidence("completeness");
     expect((parkedEvidence?.panelLegTransports?.length ?? 0) > 0).toBe(true);
+    const oldTransports = [
+      {
+        slug: "gpt-5.6-sol",
+        exitCode: 0,
+        stdout: "opaque same-generation evidence from the parked court",
+      },
+    ];
     processA.writeFamilyPanelLegEvidence("completeness", {
-      familyHeadAfter: HEAD,
-      ledgerPhase: "final",
-      routeFingerprint: ROUTE_FP,
-      courtGeneration: courtGenerationFromDurableEvidence(parkedEvidence),
-      panelLegTransports: [],
-      panelLegSkippedLegs: [],
+      ...parkedEvidence,
+      panelLegTransports: oldTransports,
     });
 
     const processB = new FileLedgerBackend(dir, "none", undefined, {
@@ -436,6 +440,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(processB.judgeLandings[0]?.transports).toEqual(
       resumedEvidence?.panelLegTransports,
     );
+    expect(processB.judgeLandings[0]?.transports).not.toEqual(oldTransports);
   });
 
   it("cold cmr_fix_committed opens fresh completeness panels before its judge", async () => {

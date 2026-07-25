@@ -194,6 +194,8 @@ export interface CmrReviewedRecord {
   readonly sessionId?: string;
   /** #930 — T2 judge status (continue / escalate / toolchain / unusable-re-furnace). */
   readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
+  /** Structured decision-park lifecycle signal; never inferred from prose. */
+  readonly freshPanelReviewRequired?: boolean;
   /**
    * #930 / #952 — disposition table for session-loss prior rows. Schema actions
    * (`refute` / `suppress` / `live`) — suppress is queryable here as
@@ -422,6 +424,7 @@ export async function recordCmrReviewed(
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       sessionId: record.sessionId,
       judgeStatus: record.judgeStatus,
+      freshPanelReviewRequired: record.freshPanelReviewRequired,
       findingDispositions: record.findingDispositions,
       advanceCoder: record.advanceCoder,
       stopSummary:
@@ -528,6 +531,7 @@ export function pendingBuilderReviewFromFamilyLedger(
   >;
   readonly familyHeadAfter?: string;
   readonly expectedCourtGeneration?: number;
+  readonly freshPanelReviewRequired?: boolean;
 } {
   const barrierPhase = cmrBarrierPhaseOf(phase);
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -569,6 +573,12 @@ export function pendingBuilderReviewFromFamilyLedger(
           ? { familyHeadAfter: entry.familyHeadAfter.trim() }
           : {}),
       };
+    }
+    if (
+      status === "cmr_reviewed" &&
+      entry.freshPanelReviewRequired === true
+    ) {
+      return { pending: true, freshPanelReviewRequired: true };
     }
     return { pending: false };
   }
