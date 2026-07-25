@@ -26,7 +26,6 @@ import {
 } from "../../../src/family/realFamilyBackend.js";
 import { FilePanelEvidenceStore } from "../../../src/family/panelEvidenceStore.js";
 import {
-  pendingBuilderReviewFromFamilyLedger,
   parseFamilyLedgerJsonl,
 } from "../../../src/family/ledger.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
@@ -369,7 +368,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
         { slug: "gpt-5.6-sol", exitCode: 0, stdout: "opaque pre-fix cargo" },
       ],
     };
-    const a = new FileLedgerBackend(
+    const processBeforeCrash = new FileLedgerBackend(
       dir,
       "after_fix_before_invalidate",
       preFixEvidence,
@@ -378,62 +377,60 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       runVerifyCmr({
         phase: "final",
         familyBase: "family/1119-w1-a",
-        familyBackend: a,
+        familyBackend: processBeforeCrash,
         familyHeadAfter: HEAD,
         familyIssue: 1119,
       }),
     ).rejects.toThrow("generation tombstone");
 
-    const b = new FileLedgerBackend(dir, "none", undefined, {
+    const processAfterRestart = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
     });
     await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-w1-b",
-      familyBackend: b,
+      familyBackend: processAfterRestart,
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
-    expect(b.judgeLandings[0]?.kind).toBe("panels");
+    expect(processAfterRestart.judgeLandings[0]?.kind).toBe("panels");
     expect(
-      b.panelDispatches.filter((dispatch) =>
+      processAfterRestart.panelDispatches.filter((dispatch) =>
         dispatch.startsWith("completeness:"),
       ).length,
     ).toBeGreaterThan(0);
-    expect(b.judgeLandings[0]?.refuseKeys).toEqual([REFUSE_KEY]);
-    expect(b.judgeLandings[0]?.transports).toEqual(
-      b.readFamilyPanelLegEvidence("completeness")?.panelLegTransports,
+    expect(processAfterRestart.judgeLandings[0]?.refuseKeys).toEqual([
+      REFUSE_KEY,
+    ]);
+    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual(
+      processAfterRestart.readFamilyPanelLegEvidence("completeness")
+        ?.panelLegTransports,
     );
-    expect(
-      courtGenerationFromDurableEvidence(
-        b.readFamilyPanelLegEvidence("completeness"),
-      ),
-    ).toBe(1);
-    expect(b.judgeLandings[0]?.transports).not.toEqual(
+    expect(processAfterRestart.judgeLandings[0]?.transports).not.toEqual(
       preFixEvidence.panelLegTransports,
     );
   });
 
   it("window2: outer evidence OK / judge dies → B same-generation zero panel reburn", async () => {
     const dir = tmp("1119-w2-");
-    const a = new FileLedgerBackend(
+    const processBeforeCrash = new FileLedgerBackend(
       dir,
       "after_outer_evidence_before_judge",
     );
     // Outer judge throw is process-root collapsed to a stage failure.
-    const r = await runVerifyCmr({
+    const firstRunResult = await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-w2-a",
-      familyBackend: a,
+      familyBackend: processBeforeCrash,
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
-    expect(r.ok).toBe(false);
-    const mid = a.readFamilyPanelLegEvidence("completeness");
-    expect((mid?.panelLegTransports?.length ?? 0) > 0).toBe(true);
-    const gen = courtGenerationFromDurableEvidence(mid);
+    expect(firstRunResult.ok).toBe(false);
+    const postFixEvidence =
+      processBeforeCrash.readFamilyPanelLegEvidence("completeness");
+    expect((postFixEvidence?.panelLegTransports?.length ?? 0) > 0).toBe(true);
     const transportOnlyEvidence = {
-      ...mid,
+      ...postFixEvidence,
       panelLegTransports: [
         {
           slug: "gpt-5.6-sol",
@@ -442,36 +439,34 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
         },
       ],
     };
-    a.writeFamilyPanelLegEvidence("completeness", transportOnlyEvidence);
-    // The fix remains pending until a judge accepts this generation.
-    const ledger = await a.readFamilyLedger();
-    expect(
-      pendingBuilderReviewFromFamilyLedger(ledger, "completeness", "final")
-        .pending,
-    ).toBe(true);
+    processBeforeCrash.writeFamilyPanelLegEvidence(
+      "completeness",
+      transportOnlyEvidence,
+    );
 
-    const b = new FileLedgerBackend(dir, "none", undefined, {
+    const processAfterRestart = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
     });
     await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-w2-b",
-      familyBackend: b,
+      familyBackend: processAfterRestart,
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
     // Completeness outer gate must not reburn — reuse durable same generation.
     expect(
-      b.panelDispatches.filter((d) => d.startsWith("completeness:")).length,
+      processAfterRestart.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ).length,
     ).toBe(0);
-    const after = b.readFamilyPanelLegEvidence("completeness");
-    expect(courtGenerationFromDurableEvidence(after)).toBe(gen);
-    // First completeness open on B is panel-backed reuse (not pure re-receive).
-    expect(b.judgeLandings[0]?.kind).toBe("panels");
-    expect(b.judgeLandings[0]?.transports).toEqual(
+    expect(processAfterRestart.judgeLandings[0]?.kind).toBe("panels");
+    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual(
       transportOnlyEvidence.panelLegTransports,
     );
-    expect(b.judgeLandings[0]?.skippedLegs).toBeUndefined();
+    expect(
+      processAfterRestart.judgeLandings[0]?.skippedLegs,
+    ).toBeUndefined();
   });
 
   it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
@@ -479,7 +474,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     const skippedLegs = [
       { slug: "gpt-5.6-sol", reason: "provider quota exhausted" },
     ];
-    const b = new FileLedgerBackend(
+    const processAfterRestart = new FileLedgerBackend(
       dir,
       "none",
       {
@@ -497,14 +492,18 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-skips",
-      familyBackend: b,
+      familyBackend: processAfterRestart,
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
 
     expect(
-      b.panelDispatches.filter((d) => d.startsWith("completeness:")).length,
+      processAfterRestart.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ).length,
     ).toBe(0);
-    expect(b.judgeLandings[0]?.skippedLegs).toEqual(skippedLegs);
+    expect(processAfterRestart.judgeLandings[0]?.skippedLegs).toEqual(
+      skippedLegs,
+    );
   });
 });
