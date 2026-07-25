@@ -23,12 +23,17 @@ import {
 } from "../modelRegistry.js";
 import type {
   CmrSkippedLeg,
+  PanelLegEvidenceCargo,
   ReviewerOutput,
   WorkerCmrReviewLeg,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
-import type { IntegratedCmrPass } from "./types.js";
+import type {
+  FamilyPanelLegEvidence,
+  IntegratedCmrPass,
+  PanelLegEvidenceIdentity,
+} from "./types.js";
 
 /** Completeness-pass panel-leg prompt (Clause–Wire–Exercise). */
 export const CMR_PANEL_LEG_COMPLETENESS_PROMPT_FILE =
@@ -207,6 +212,109 @@ export type PanelLegsRoundResult = {
   readonly transports: ReadonlyArray<LegTransport>;
   readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
 };
+
+/** Mechanical presence predicate for the two-field panel evidence cargo. */
+export function landedPanelLegEvidence(
+  evidence: PanelLegEvidenceCargo | undefined | null,
+): PanelLegEvidenceCargo | undefined {
+  if (
+    (evidence?.panelLegTransports?.length ?? 0) === 0 &&
+    (evidence?.panelLegSkippedLegs?.length ?? 0) === 0
+  ) {
+    return undefined;
+  }
+  return evidence ?? undefined;
+}
+
+/**
+ * #1119 — durable evidence belongs to this court only when the full identity
+ * matches and at least one official cargo class has landed. Cargo is opaque:
+ * the host neither normalizes nor judges leg paper before handing it to court.
+ */
+export function admissibleDurablePanelLegEvidence(
+  evidence: FamilyPanelLegEvidence | undefined | null,
+  scope: PanelLegEvidenceIdentity | undefined,
+): PanelLegEvidenceCargo | undefined {
+  if (evidence === undefined || evidence === null || scope === undefined) {
+    return undefined;
+  }
+  const durableHead =
+    typeof evidence.familyHeadAfter === "string"
+      ? evidence.familyHeadAfter.trim()
+      : "";
+  const currentHead = scope.familyHeadAfter.trim();
+  if (durableHead.length === 0 || currentHead.length === 0) return undefined;
+  if (durableHead !== currentHead) return undefined;
+  if (evidence.ledgerPhase !== scope.ledgerPhase) return undefined;
+  if (
+    typeof evidence.routeFingerprint !== "string" ||
+    evidence.routeFingerprint.length === 0 ||
+    evidence.routeFingerprint !== scope.routeFingerprint
+  ) {
+    return undefined;
+  }
+  const evidenceGeneration = normalizeCourtGeneration(
+    evidence.courtGeneration,
+  );
+  const expectedGeneration = normalizeCourtGeneration(scope.courtGeneration);
+  if (
+    evidenceGeneration === undefined ||
+    expectedGeneration === undefined ||
+    evidenceGeneration !== expectedGeneration
+  ) {
+    return undefined;
+  }
+  return landedPanelLegEvidence(evidence);
+}
+
+/**
+ * Active court generation from durable evidence (0 when absent).
+ * The fixer ledger boundary reserves this; the following court stamps it.
+ */
+export function courtGenerationFromDurableEvidence(
+  evidence: { readonly courtGeneration?: number } | undefined | null,
+): number {
+  return normalizeCourtGeneration(evidence?.courtGeneration) ?? 0;
+}
+
+/** Canonical parser for every durable court-generation traffic field. */
+export function normalizeCourtGeneration(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0
+    ? Math.floor(value)
+    : undefined;
+}
+
+/**
+ * #1117 / #1118 / #1119 — one panel-evidence gate for first open, in-process
+ * resume, and cold-start ledger re-entry.
+ *
+ * Mechanism is only {@link dispatchFamilyCmrPanelLegs} (scope is a parameter).
+ * When valid transports already land, do not reburn; when missing (resume after
+ * claimed-fixed re-review, human "rerun jury", empty landing after process exit),
+ * fan-out again and land transports or host skip reasons — never open a pure
+ * court on silent empty.
+ */
+export async function ensureFamilyCmrPanelEvidence(input: {
+  readonly legs: ReadonlyArray<WorkerCmrReviewLeg>;
+  readonly cmrPass?: IntegratedCmrPass;
+  readonly existingEvidence?: PanelLegEvidenceCargo;
+  readonly dispatch: (spec: WorkerSpec) => Promise<WorkerResult>;
+}): Promise<PanelLegEvidenceCargo> {
+  const legs = input.legs;
+  const existing = landedPanelLegEvidence(input.existingEvidence);
+  if (existing !== undefined) return existing;
+  const dispatched = await dispatchFamilyCmrPanelLegs({
+    legs,
+    ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
+    dispatch: input.dispatch,
+  });
+  return {
+    panelLegTransports: dispatched.transports,
+    panelLegSkippedLegs: dispatched.skippedLegs,
+  };
+}
 
 /**
  * Runner-owned panel-leg fan-out for one family CMR court round (#1094).

@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  PanelLegEvidenceCargo,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -340,6 +341,24 @@ export interface FamilyLedgerEntry {
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
   /**
+   * #1119 — legal refuse traffic keys on `cmr_fix_committed` when the coder-fix
+   * beat refused findings. Structured lifecycle cargo for cold-start pure
+   * receive (not free-prose parse). Same keys project onto DispatchContext.
+   */
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  /**
+   * #1119 — opaque refuseRecords cargo on `cmr_fix_committed` (judge re-ruling
+   * material). Durable crash-resume twin of process-local refuseRecordsByPass.
+   */
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
+  /**
+   * #1119 — generation reserved by the fix row before its evidence tombstone.
+   * Cold recovery trusts this ledger value, never the possibly stale evidence.
+   */
+  readonly expectedCourtGeneration?: number;
+  /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
    * merger from {@link MergeResult.conflictResolvedByLlm} onto the DURABLE ledger
@@ -552,6 +571,40 @@ export type FamilyCmrPanelRoundPrep =
     };
 
 /**
+ * #1119 — durable panel-leg evidence under the family ledgerDir (cold-start
+ * resume truth). Survives process exit; temp worktree fix-findings do not.
+ *
+ * Court-generation scoped (not HEAD-only): reuse requires matching
+ * familyHeadAfter + ledgerPhase + routeFingerprint + courtGeneration, and
+ * non-empty opaque transport/skip cargo. Generation advances at builder-beat completion
+ * (`cmr_fix_committed` boundary) so cold crash before pure receive cannot
+ * reuse pre-builder 卷面; soft-accept may advance again as belt-and-suspenders.
+ */
+export type PanelLegEvidenceIdentity = {
+  readonly familyHeadAfter: string;
+  /** Barrier phase — checkpoint evidence must not satisfy final outer gate. */
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
+  /** Route + declared-leg roster fingerprint (modelRouteFingerprint). */
+  readonly routeFingerprint: string;
+  /**
+   * Court evidence generation. Cold resume of the same generation may no-reburn;
+   * advanced when the builder beat lands (`cmr_fix_committed`) so outer gates
+   * after refuse/no-op reburn even if HEAD is unchanged.
+   */
+  readonly courtGeneration: number;
+};
+
+export type PanelLegEvidenceIdentitySeed = Omit<
+  PanelLegEvidenceIdentity,
+  "familyHeadAfter" | "courtGeneration"
+> &
+  Partial<Pick<PanelLegEvidenceIdentity, "familyHeadAfter">>;
+
+/** Old evidence files may predate one or more identity dimensions. */
+export type FamilyPanelLegEvidence = PanelLegEvidenceCargo &
+  Partial<PanelLegEvidenceIdentity>;
+
+/**
  * THE family seam (parallel to the single-slice {@link Backend}): the family
  * spine reaches the outside world (git merge into the family base, the verify
  * hook) only through this injected interface, so the whole spine is verifiable
@@ -638,6 +691,26 @@ export interface FamilyBackend {
   prepareFamilyCmrPanelRound?(
     ctx: DispatchContext,
   ): FamilyCmrPanelRoundPrep | Promise<FamilyCmrPanelRoundPrep>;
+  /**
+   * #1119 — read durable panel-leg evidence for one integrated CMR pass
+   * (ledgerDir sibling; cold-start resume truth). Only a missing file (ENOENT)
+   * returns undefined; unreadable files, invalid JSON, and non-object envelopes
+   * fail loud.
+   */
+  readFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+  ):
+    | FamilyPanelLegEvidence
+    | undefined
+    | Promise<FamilyPanelLegEvidence | undefined>;
+  /**
+   * #1119 — persist panel-leg transports and/or runtime skip reasons for one
+   * pass so cold re-entry can reuse valid 卷面 or observe host skip reasons.
+   */
+  writeFamilyPanelLegEvidence?(
+    pass: IntegratedCmrPass,
+    evidence: FamilyPanelLegEvidence,
+  ): void | Promise<void>;
   /**
    * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
    * worker: no prompt, soul, model route, or reviewer judgment is involved.
