@@ -222,7 +222,7 @@ export interface CmrFixCommittedRecord {
   readonly sessionId?: string;
   /**
    * #1119 — refused finding keys when this builder beat was a legal refuse.
-   * Cold-start pure receive reloads these from the fix row (not process memory).
+   * Cold-start review reloads these from the fix row (not process memory).
    */
   readonly refusedFindingIdentityKeys?: readonly string[];
   /**
@@ -231,6 +231,8 @@ export interface CmrFixCommittedRecord {
   readonly refuseRecords?: ReadonlyArray<
     import("../types.js").ReviewFixRefuseRecord
   >;
+  /** Generation reserved before the separate panel-evidence tombstone write. */
+  readonly expectedCourtGeneration?: number;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -470,11 +472,14 @@ export async function recordCmrFixCommitted(
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       // #979: durable fixer-chain session continuity (ledger sole truth).
       ...(sessionId !== undefined ? { sessionId } : {}),
-      // #1119: refuse traffic + opaque cargo for cold-start pure receive.
+      // #1119: refuse traffic + opaque cargo for cold-start review.
       ...(refusedKeys !== undefined
         ? { refusedFindingIdentityKeys: refusedKeys }
         : {}),
       ...(refuseRecords !== undefined ? { refuseRecords } : {}),
+      ...(record.expectedCourtGeneration !== undefined
+        ? { expectedCourtGeneration: record.expectedCourtGeneration }
+        : {}),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -521,6 +526,7 @@ export function pendingBuilderReviewFromFamilyLedger(
     import("../types.js").ReviewFixRefuseRecord
   >;
   readonly familyHeadAfter?: string;
+  readonly expectedCourtGeneration?: number;
 } {
   const barrierPhase = cmrBarrierPhaseOf(phase);
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -547,6 +553,15 @@ export function pendingBuilderReviewFromFamilyLedger(
           : undefined;
       return {
         pending: true,
+        ...(typeof entry.expectedCourtGeneration === "number" &&
+        Number.isFinite(entry.expectedCourtGeneration) &&
+        entry.expectedCourtGeneration >= 0
+          ? {
+              expectedCourtGeneration: Math.floor(
+                entry.expectedCourtGeneration,
+              ),
+            }
+          : {}),
         ...(refused !== undefined
           ? { refusedFindingIdentityKeys: refused }
           : {}),

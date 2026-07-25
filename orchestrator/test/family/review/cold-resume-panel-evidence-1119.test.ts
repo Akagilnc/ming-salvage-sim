@@ -82,6 +82,7 @@ const tmp = (p: string) => {
 
 type CrashMode =
   | "none"
+  | "after_fix_before_invalidate"
   | "after_outer_evidence_before_judge";
 
 class FileLedgerBackend implements FamilyBackend {
@@ -147,6 +148,14 @@ class FileLedgerBackend implements FamilyBackend {
     pass: IntegratedCmrPass,
     e: FamilyPanelLegEvidence,
   ) {
+    if (
+      this.crash === "after_fix_before_invalidate" &&
+      this.sawFix &&
+      pass === "completeness" &&
+      (e.panelLegTransports?.length ?? 0) === 0
+    ) {
+      throw new Error("INJECT: fix row durable before generation tombstone");
+    }
     this.panelEvidenceStore.write(pass, e);
     // Outer-gate paper is only written after the builder beat landed.
     if (
@@ -351,37 +360,29 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
 
   it("cold cmr_fix_committed opens fresh completeness panels before its judge", async () => {
     const dir = tmp("1119-w1-");
-    const a = new FileLedgerBackend(dir);
-    const refuseRecord = mintFourReasonRefuseRecord({
-      identityKey: REFUSE_KEY,
-      reason: "not_established",
-      evidence: "opaque refusal evidence",
-    });
-    await a.appendFamilyLedger({
-      status: "cmr_reviewed",
-      event: "cmr_reviewed",
-      phase: "final",
-      cmrPass: "completeness",
-      familyHeadAfter: HEAD,
-    });
-    await a.appendFamilyLedger({
-      status: "cmr_fix_committed",
-      event: "cmr_fix_committed",
-      phase: "final",
-      cmrPass: "completeness",
-      familyHeadBefore: HEAD,
-      familyHeadAfter: HEAD,
-      refusedFindingIdentityKeys: [REFUSE_KEY],
-      refuseRecords: [refuseRecord],
-    });
-    a.writeFamilyPanelLegEvidence("completeness", {
+    const preFixEvidence: FamilyPanelLegEvidence = {
       familyHeadAfter: HEAD,
       ledgerPhase: "final",
       routeFingerprint: ROUTE_FP,
-      courtGeneration: 1,
-      panelLegTransports: [],
-      panelLegSkippedLegs: [],
-    });
+      courtGeneration: 0,
+      panelLegTransports: [
+        { slug: "gpt-5.6-sol", exitCode: 0, stdout: "opaque pre-fix cargo" },
+      ],
+    };
+    const a = new FileLedgerBackend(
+      dir,
+      "after_fix_before_invalidate",
+      preFixEvidence,
+    );
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/1119-w1-a",
+        familyBackend: a,
+        familyHeadAfter: HEAD,
+        familyIssue: 1119,
+      }),
+    ).rejects.toThrow("generation tombstone");
 
     const b = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -402,6 +403,14 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(b.judgeLandings[0]?.refuseKeys).toEqual([REFUSE_KEY]);
     expect(b.judgeLandings[0]?.transports).toEqual(
       b.readFamilyPanelLegEvidence("completeness")?.panelLegTransports,
+    );
+    expect(
+      courtGenerationFromDurableEvidence(
+        b.readFamilyPanelLegEvidence("completeness"),
+      ),
+    ).toBe(1);
+    expect(b.judgeLandings[0]?.transports).not.toEqual(
+      preFixEvidence.panelLegTransports,
     );
   });
 
