@@ -248,12 +248,12 @@ export function panelLegsRosterFingerprint(
         : ([leg.family, leg.slug] as const),
     )
     .sort((a, b) => {
-      const af = a[0] ?? "";
-      const bf = b[0] ?? "";
-      if (af !== bf) return af < bf ? -1 : 1;
-      const as = a[1] ?? "";
-      const bs = b[1] ?? "";
-      if (as !== bs) return as < bs ? -1 : 1;
+      const aFamily = a[0] ?? "";
+      const bFamily = b[0] ?? "";
+      if (aFamily !== bFamily) return aFamily < bFamily ? -1 : 1;
+      const aSlug = a[1] ?? "";
+      const bSlug = b[1] ?? "";
+      if (aSlug !== bSlug) return aSlug < bSlug ? -1 : 1;
       return 0;
     });
   return JSON.stringify(rows);
@@ -339,13 +339,10 @@ export function parseFamilyPanelLegEvidence(
     rec.ledgerPhase === "final" || rec.ledgerPhase === "correctness_checkpoint"
       ? rec.ledgerPhase
       : undefined;
-  // Accept both the current key and a one-release legacy alias if present.
   const panelLegsFingerprintRaw =
     typeof rec.panelLegsFingerprint === "string"
       ? rec.panelLegsFingerprint
-      : typeof rec.routeFingerprint === "string"
-        ? rec.routeFingerprint
-        : undefined;
+      : undefined;
   const panelLegsFingerprint =
     typeof panelLegsFingerprintRaw === "string" &&
     panelLegsFingerprintRaw.length > 0
@@ -388,7 +385,12 @@ export function parseFamilyPanelLegEvidence(
  * legal paper. Missing identity fields fail closed (no silent reuse).
  * No self-authorizing generation counter.
  */
-export function admissibleDurablePanelLegTransports(
+export type AdmissiblePanelLegEvidence = {
+  readonly transports: ReadonlyArray<LegTransport>;
+  readonly skippedLegs: ReadonlyArray<CmrSkippedLeg>;
+};
+
+export function admissibleDurablePanelLegEvidence(
   evidence:
     | {
         readonly familyHeadAfter?: string;
@@ -399,11 +401,15 @@ export function admissibleDurablePanelLegTransports(
           readonly exitCode?: unknown;
           readonly stdout?: unknown;
         }>;
+        readonly panelLegSkippedLegs?: ReadonlyArray<{
+          readonly slug?: unknown;
+          readonly reason?: unknown;
+        }>;
       }
     | undefined
     | null,
   scope: PanelLegEvidenceScope,
-): ReadonlyArray<LegTransport> | undefined {
+): AdmissiblePanelLegEvidence | undefined {
   if (evidence === undefined || evidence === null) return undefined;
   const durableHead =
     typeof evidence.familyHeadAfter === "string"
@@ -426,8 +432,13 @@ export function admissibleDurablePanelLegTransports(
   const transports = normalizePanelLegTransportCargo(
     evidence.panelLegTransports,
   );
-  if (!hasValidPanelLegTransports(transports)) return undefined;
-  return transports;
+  const skippedLegs = normalizePanelLegSkippedCargo(
+    evidence.panelLegSkippedLegs,
+  );
+  if (!hasValidPanelLegTransports(transports) && skippedLegs.length === 0) {
+    return undefined;
+  }
+  return { transports, skippedLegs };
 }
 
 /**
@@ -449,14 +460,24 @@ export async function ensureFamilyCmrPanelEvidence(input: {
         readonly stdout?: unknown;
       }>
     | undefined;
+  readonly existingSkippedLegs?: ReadonlyArray<{
+    readonly slug?: unknown;
+    readonly reason?: unknown;
+  }>;
   readonly dispatch: (spec: WorkerSpec) => Promise<WorkerResult>;
 }): Promise<PanelLegsRoundResult> {
   const legs = input.legs;
   const existing = normalizePanelLegTransportCargo(input.existingTransports);
-  if (hasValidPanelLegTransports(existing)) {
+  const existingSkippedLegs = normalizePanelLegSkippedCargo(
+    input.existingSkippedLegs,
+  );
+  if (hasValidPanelLegTransports(existing) || existingSkippedLegs.length > 0) {
     return {
       transports: existing,
-      skippedLegs: skippedLegsFromTransports(legs, existing),
+      skippedLegs:
+        existingSkippedLegs.length > 0
+          ? existingSkippedLegs
+          : skippedLegsFromTransports(legs, existing),
     };
   }
   return dispatchFamilyCmrPanelLegs({

@@ -74,7 +74,7 @@ import {
   waveVerifyJudgeWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
-  admissibleDurablePanelLegTransports,
+  admissibleDurablePanelLegEvidence,
   ensureFamilyCmrPanelEvidence,
   hasValidPanelLegTransports,
   panelLegsRosterFingerprint,
@@ -2637,8 +2637,7 @@ async function runIntegratedCmrPass(input: {
     const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // Production cargo owner = FamilyBackend durable store (ledgerDir), plus any
     // in-process landing/ctx transports. Identity = head + ledgerPhase +
-    // declared panel-leg roster only (not full model route). escalationAnswer
-    // and missing legal transports force fan-out.
+    // declared panel-leg roster only (not full model route).
     const panelLegsFingerprint = panelLegsRosterFingerprint(frozenLegs);
     const durablePanelEvidence =
       typeof familyBackend.readFamilyPanelLegEvidence === "function"
@@ -2651,22 +2650,24 @@ async function runIntegratedCmrPass(input: {
       ledgerPhase,
       panelLegsFingerprint,
     };
-    const durableTransportsForCourt =
-      escalationAnswer !== undefined
-        ? undefined
-        : admissibleDurablePanelLegTransports(
-            durablePanelEvidence,
-            panelEvidenceScope,
-          );
+    const durableEvidenceForCourt = admissibleDurablePanelLegEvidence(
+      durablePanelEvidence,
+      panelEvidenceScope,
+    );
     const existingPanelTransports =
       refuseReopenLanding?.panelLegTransports ??
       dispatchCtx.panelLegTransports ??
-      durableTransportsForCourt;
+      durableEvidenceForCourt?.transports;
+    const existingPanelSkippedLegs =
+      refuseReopenLanding?.panelLegSkippedLegs ??
+      dispatchCtx.panelLegSkippedLegs ??
+      durableEvidenceForCourt?.skippedLegs;
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep when reusing valid transports (no reburn).
     const willFanOut =
       frozenLegs.length > 0 &&
-      !hasValidPanelLegTransports(existingPanelTransports);
+      !hasValidPanelLegTransports(existingPanelTransports) &&
+      (existingPanelSkippedLegs?.length ?? 0) === 0;
     if (
       willFanOut &&
       typeof familyBackend.prepareFamilyCmrPanelRound === "function"
@@ -2716,6 +2717,9 @@ async function runIntegratedCmrPass(input: {
       cmrPass: pass,
       ...(existingPanelTransports !== undefined
         ? { existingTransports: existingPanelTransports }
+        : {}),
+      ...(existingPanelSkippedLegs !== undefined
+        ? { existingSkippedLegs: existingPanelSkippedLegs }
         : {}),
       // #1094 R3 F2: legs must NOT inherit the judge's billingPool.
       // #1080 / #1117: legs always fresh — strip pure-court resumeSessionId.

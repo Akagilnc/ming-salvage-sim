@@ -115,7 +115,7 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
         rawStdout: "",
       },
     };
-    const greetingOnly: WorkerResult = {
+    const shortProse: WorkerResult = {
       kind: "completed",
       output: {
         kind: "reviewer",
@@ -129,7 +129,7 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
       legTransportFromPanelLegResult("gpt-5.6-sol", ok),
       legTransportFromPanelLegResult("opus", failed),
       legTransportFromPanelLegResult("agy", emptySuccess),
-      legTransportFromPanelLegResult("grok-4.5", greetingOnly),
+      legTransportFromPanelLegResult("grok-4.5", shortProse),
     ];
     const declared: WorkerCmrReviewLeg[] = [
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -138,10 +138,13 @@ describe("#1094 panel leg transport → judge evidence (ADR 0141)", () => {
       { family: "grok", slug: "grok-4.5" },
     ];
 
-    expect(successfulLegsFromTransports(transports)).toEqual(["gpt-5.6-sol"]);
+    expect(successfulLegsFromTransports(transports)).toEqual([
+      "gpt-5.6-sol",
+      "grok-4.5",
+    ]);
     const skipped = skippedLegsFromTransports(declared, transports);
     expect(skipped.map((s) => s.slug).sort()).toEqual(
-      ["agy", "grok-4.5", "opus"].sort(),
+      ["agy", "opus"].sort(),
     );
     expect(skipped.every((s) => s.reason.length > 0)).toBe(true);
   });

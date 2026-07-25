@@ -665,11 +665,16 @@ export class RealFamilyBackend implements FamilyBackend {
       );
     }
     try {
-      // Shape-safe parse — wrong-shape sidecar is "no reusable evidence",
-      // never a bare cast that later throws on .map (CLAUDE type-escape hatch).
-      return parseFamilyPanelLegEvidence(JSON.parse(raw) as unknown);
-    } catch {
-      return undefined;
+      const evidence = parseFamilyPanelLegEvidence(JSON.parse(raw) as unknown);
+      if (evidence === undefined) {
+        throw new Error("durable evidence has no recognized valid fields");
+      }
+      return evidence;
+    } catch (err) {
+      throw new Error(
+        `readFamilyPanelLegEvidence: invalid durable JSON at ${path} — ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
