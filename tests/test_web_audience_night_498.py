@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 
 import httpx
@@ -88,6 +89,19 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "run_agent_text",
+        lambda _agent, prompt, _label: json.dumps({
+            "verdicts": [
+                {"dossier_id": row["id"], "decision": "promulgated"}
+                for row in json.loads(prompt)["dossiers"]
+            ],
+        }),
+    )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
