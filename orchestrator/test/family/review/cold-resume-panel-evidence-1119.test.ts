@@ -14,6 +14,7 @@ import {
   rmSync,
   writeFileSync,
   mkdirSync,
+  readdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -301,6 +302,39 @@ class FileLedgerBackend implements FamilyBackend {
 }
 
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
+  it("an interrupted evidence replacement preserves the last valid court paper", () => {
+    const dir = tmp("1119-interrupted-evidence-write-");
+    const priorEvidence: FamilyPanelLegEvidence = {
+      familyHeadAfter: HEAD,
+      ledgerPhase: "final",
+      routeFingerprint: ROUTE_FP,
+      courtGeneration: 0,
+      panelLegTransports: [
+        { slug: "gpt-5.6-sol", exitCode: 0, stdout: "prior opaque prose" },
+      ],
+    };
+    const store = new FilePanelEvidenceStore(dir);
+    store.write("completeness", priorEvidence);
+    const interruptedStore = new FilePanelEvidenceStore(dir, {
+      rename: () => {
+        throw new Error("INJECT: interrupted before atomic replace");
+      },
+    });
+
+    expect(() =>
+      interruptedStore.write("completeness", {
+        ...priorEvidence,
+        panelLegTransports: [
+          { slug: "gpt-5.6-sol", exitCode: 0, stdout: "new opaque prose" },
+        ],
+      }),
+    ).toThrow("INJECT: interrupted before atomic replace");
+    expect(store.read("completeness")).toEqual(priorEvidence);
+    expect(
+      readdirSync(dir).filter((name) => name.includes(".tmp")),
+    ).toEqual([]);
+  });
+
   it("cold resume fails loud when durable panel cargo has malformed entries", async () => {
     const dir = tmp("1119-cold-malformed-cargo-");
     const processA = new FileLedgerBackend(dir, "none", undefined, {
