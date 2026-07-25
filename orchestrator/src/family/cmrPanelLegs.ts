@@ -310,19 +310,10 @@ export async function ensureFamilyCmrPanelEvidence(input: {
     ...(input.cmrPass !== undefined ? { cmrPass: input.cmrPass } : {}),
     dispatch: input.dispatch,
   });
-  // Fresh and reuse share one landed-presence semantic (#1118/#1119): dual-empty
-  // arrays are not evidence. Returning defined empty fields would fool verifyCmr's
-  // `!== undefined` landing/persist checks into silent-empty cargo.
-  return (
-    landedPanelLegEvidence({
-      ...(dispatched.transports.length > 0
-        ? { panelLegTransports: dispatched.transports }
-        : {}),
-      ...(dispatched.skippedLegs.length > 0
-        ? { panelLegSkippedLegs: dispatched.skippedLegs }
-        : {}),
-    }) ?? {}
-  );
+  return {
+    panelLegTransports: dispatched.transports,
+    panelLegSkippedLegs: dispatched.skippedLegs,
+  };
 }
 
 /**
