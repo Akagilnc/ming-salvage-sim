@@ -693,7 +693,9 @@ export interface FamilyBackend {
   ): FamilyCmrPanelRoundPrep | Promise<FamilyCmrPanelRoundPrep>;
   /**
    * #1119 — read durable panel-leg evidence for one integrated CMR pass
-   * (ledgerDir sibling; cold-start resume truth). Missing/unreadable → undefined.
+   * (ledgerDir sibling; cold-start resume truth). Only a missing file (ENOENT)
+   * returns undefined; unreadable files, invalid JSON, and non-object envelopes
+   * fail loud.
    */
   readFamilyPanelLegEvidence?(
     pass: IntegratedCmrPass,
