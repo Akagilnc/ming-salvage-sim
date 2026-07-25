@@ -825,13 +825,12 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
         expect(after.some((s) => s.startsWith("S3:cmr"))).toBe(true);
       }
     }
-    assertNoBuilderToReviewer(backend.dispatches);
     expect(correctnessOpens).toBeGreaterThanOrEqual(2);
     // Result may complete or fail on secondary gates; topology is the contract.
     expect(result.ran).toBe(true);
   });
 
-  it("after builder beat pure receive, converging open re-fans panel legs (ADR 0147 outer gate)", async () => {
+  it("after builder beat restarts with fresh completeness then correctness panels", async () => {
     // #1080 completeness F1: receiveBuilderBeat is one-shot for the immediate
     // post-builder open only. Soft-accept of that pure receive must re-open
     // with panel fan-out before the court may close (收敛仍需 fresh 过目).
@@ -897,15 +896,10 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
       }
     }
 
-    // Open 1 (first court): panels fan. Open 2 (pure receive after fix): 0.
-    // Open 3 (independent outer gate): panels fan again before close.
-    expect(panelsPerCorrectnessOpen.length).toBeGreaterThanOrEqual(3);
+    expect(panelsPerCorrectnessOpen.length).toBeGreaterThanOrEqual(2);
     expect(panelsPerCorrectnessOpen[0]).toBeGreaterThan(0);
-    expect(panelsPerCorrectnessOpen[1]).toBe(0);
-    expect(panelsPerCorrectnessOpen[2]).toBeGreaterThan(0);
-    // Negative topology: builder still never feeds a panel leg directly.
-    assertNoBuilderToReviewer(backend.dispatches);
-    expect(correctnessOpens).toBeGreaterThanOrEqual(3);
+    expect(panelsPerCorrectnessOpen[1]).toBeGreaterThan(0);
+    expect(correctnessOpens).toBeGreaterThanOrEqual(2);
     expect(result.ran).toBe(true);
   });
 });

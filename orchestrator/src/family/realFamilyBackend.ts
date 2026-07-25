@@ -254,6 +254,10 @@ import type {
   MergeResult,
   ReconcileGit,
 } from "./types.js";
+import {
+  FilePanelEvidenceStore,
+} from "./panelEvidenceStore.js";
+export { FAMILY_PANEL_LEG_EVIDENCE_PREFIX } from "./panelEvidenceStore.js";
 import type { VerifyCmrPhase } from "./verifyCmr.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -280,8 +284,6 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * family ledger). Cold-start resume truth; not cleaned with process-temp
  * worktree fix-findings.
  */
-export const FAMILY_PANEL_LEG_EVIDENCE_PREFIX = "panel-leg-evidence";
-
 /**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
  * family ship worker runs (cmr S336 r5): it pins the family base branch + the
@@ -442,9 +444,11 @@ export const MERGER_SOUL = "merger";
 export class RealFamilyBackend implements FamilyBackend {
   private verificationStampTail: Promise<void> = Promise.resolve();
   protected readonly opts: RealFamilyBackendOptions;
+  private readonly panelEvidenceStore: FilePanelEvidenceStore;
 
   constructor(opts: RealFamilyBackendOptions) {
     this.opts = opts;
+    this.panelEvidenceStore = new FilePanelEvidenceStore(opts.ledgerDir);
     this.validateFamilyPromptsDir();
     this.validateSoulsDir();
   }
@@ -639,58 +643,15 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
-  /**
-   * #1119 — durable panel evidence path under ledgerDir (per integrated pass).
-   */
-  protected panelLegEvidencePath(pass: IntegratedCmrPass): string {
-    return join(
-      this.opts.ledgerDir,
-      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
-    );
-  }
-
-  async readFamilyPanelLegEvidence(
-    pass: IntegratedCmrPass,
-  ): Promise<FamilyPanelLegEvidence | undefined> {
-    const path = this.panelLegEvidencePath(pass);
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf8");
-    } catch (err) {
-      if (isFileNotFound(err)) return undefined;
-      throw new Error(
-        `readFamilyPanelLegEvidence: failed to read ${path} — ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw) as unknown;
-    } catch (err) {
-      throw new Error(
-        `readFamilyPanelLegEvidence: invalid JSON at ${path} — ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    if (
-      parsed === null ||
-      typeof parsed !== "object" ||
-      Array.isArray(parsed)
-    ) {
-      throw new Error(
-        `readFamilyPanelLegEvidence: expected object at ${path}`,
-      );
-    }
-    return parsed as FamilyPanelLegEvidence;
+  async readFamilyPanelLegEvidence(pass: IntegratedCmrPass) {
+    return this.panelEvidenceStore.read(pass);
   }
 
   async writeFamilyPanelLegEvidence(
     pass: IntegratedCmrPass,
     evidence: FamilyPanelLegEvidence,
   ): Promise<void> {
-    mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const path = this.panelLegEvidencePath(pass);
-    writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+    this.panelEvidenceStore.write(pass, evidence);
   }
 
   private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {
@@ -2504,8 +2465,6 @@ export class RealFamilyBackend implements FamilyBackend {
           (landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs)!.length > 0
             ? {
                 skippedLegs:
-                  landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
-                runtimeSkipReasons:
                   landing?.panelLegSkippedLegs ?? ctx.panelLegSkippedLegs,
               }
             : {}),

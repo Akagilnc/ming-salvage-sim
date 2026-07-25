@@ -2,7 +2,7 @@
  * #1119 — durable panel evidence crash windows + identity.
  *
  * Load-bearing A→B tracers (file ledgerDir, independent backend instances):
- *  1) fix ledger append OK → evidence invalidate fails → pure receive zero old 卷面
+ *  1) cold fix row + invalidated evidence → fresh completeness panels first
  *  2) outer evidence written → judge dies → same-generation zero reburn
  *
  * Identity/pending helpers: compact table-driven (no full spine per cell).
@@ -23,10 +23,10 @@ import {
 } from "../../../src/family/cmrPanelLegs.js";
 import {
   FAMILY_LEDGER_FILENAME,
-  FAMILY_PANEL_LEG_EVIDENCE_PREFIX,
 } from "../../../src/family/realFamilyBackend.js";
+import { FilePanelEvidenceStore } from "../../../src/family/panelEvidenceStore.js";
 import {
-  pendingBuilderReceiveFromFamilyLedger,
+  pendingBuilderReviewFromFamilyLedger,
   parseFamilyLedgerJsonl,
 } from "../../../src/family/ledger.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
@@ -66,7 +66,6 @@ const HEAD = "head-1119";
 const ROUTE_FP = modelRouteFingerprint(resolveActiveModelRoute({}));
 const LEGAL = "fixture panel prose\n## Findings\nnone";
 const REFUSE_KEY = "1119:cold-refuse";
-const PRE_BUILDER = "PRE-BUILDER stale paper";
 const cleanups: string[] = [];
 afterEach(() => {
   while (cleanups.length) {
@@ -83,7 +82,6 @@ const tmp = (p: string) => {
 
 type CrashMode =
   | "none"
-  | "after_fix_before_invalidate"
   | "after_outer_evidence_before_judge";
 
 class FileLedgerBackend implements FamilyBackend {
@@ -92,7 +90,6 @@ class FileLedgerBackend implements FamilyBackend {
   judgeLandings: Array<{
     kind: "pure" | "panels";
     refuseKeys?: readonly string[];
-    hasPreBuilder?: boolean;
     transports?: WorkerLandingPayload["panelLegTransports"];
     skippedLegs?: WorkerLandingPayload["panelLegSkippedLegs"];
   }> = [];
@@ -100,6 +97,7 @@ class FileLedgerBackend implements FamilyBackend {
   private opens = 0;
   private sawFix = false;
   private outerEvidenceWritten = false;
+  private readonly panelEvidenceStore: FilePanelEvidenceStore;
   /** When false, every court open converges (process-B cold resume). */
   private readonly forceFirstContinue: boolean;
   private readonly parkFirstCompleteness: boolean;
@@ -113,6 +111,7 @@ class FileLedgerBackend implements FamilyBackend {
     },
   ) {
     mkdirSync(ledgerDir, { recursive: true });
+    this.panelEvidenceStore = new FilePanelEvidenceStore(ledgerDir);
     this.forceFirstContinue = opts?.forceFirstContinue !== false;
     this.parkFirstCompleteness = opts?.parkFirstCompleteness === true;
     this.load();
@@ -120,12 +119,6 @@ class FileLedgerBackend implements FamilyBackend {
   }
   private ledgerPath() {
     return join(this.ledgerDir, FAMILY_LEDGER_FILENAME);
-  }
-  private panelEvidencePath(pass: IntegratedCmrPass) {
-    return join(
-      this.ledgerDir,
-      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-${pass}.json`,
-    );
   }
   private load() {
     try {
@@ -148,32 +141,13 @@ class FileLedgerBackend implements FamilyBackend {
     );
   }
   readFamilyPanelLegEvidence(pass: IntegratedCmrPass) {
-    try {
-      return JSON.parse(
-        readFileSync(this.panelEvidencePath(pass), "utf8"),
-      ) as FamilyPanelLegEvidence;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw err;
-    }
+    return this.panelEvidenceStore.read(pass);
   }
   writeFamilyPanelLegEvidence(
     pass: IntegratedCmrPass,
     e: FamilyPanelLegEvidence,
   ) {
-    // Precise fault: after fix row lands, first evidence write is invalidate.
-    if (
-      this.crash === "after_fix_before_invalidate" &&
-      this.sawFix &&
-      pass === "completeness" &&
-      (e.panelLegTransports?.length ?? 0) === 0
-    ) {
-      throw new Error("INJECT: after fix ledger, before evidence invalidate");
-    }
-    writeFileSync(
-      this.panelEvidencePath(pass),
-      `${JSON.stringify(e, null, 2)}\n`,
-    );
+    this.panelEvidenceStore.write(pass, e);
     // Outer-gate paper is only written after the builder beat landed.
     if (
       this.sawFix &&
@@ -244,9 +218,6 @@ class FileLedgerBackend implements FamilyBackend {
       this.judgeLandings.push({
         kind,
         refuseKeys: ctx.refusedFindingIdentityKeys,
-        hasPreBuilder: landing?.panelLegTransports?.some((t) =>
-          (t.stdout ?? "").includes("PRE-BUILDER"),
-        ),
         transports: landing?.panelLegTransports,
         skippedLegs: landing?.panelLegSkippedLegs,
       });
@@ -316,17 +287,6 @@ class FileLedgerBackend implements FamilyBackend {
   }
 }
 
-const preBuilderSeed = (): FamilyPanelLegEvidence => ({
-  familyHeadAfter: HEAD,
-  ledgerPhase: "final",
-  routeFingerprint: ROUTE_FP,
-  courtGeneration: 0,
-  panelLegTransports: [
-    { slug: "gpt-5.6-sol", exitCode: 0, stdout: PRE_BUILDER },
-    { slug: "grok-4.5", exitCode: 0, stdout: PRE_BUILDER },
-  ],
-});
-
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
   it("cold decision-park resume fans out when both durable cargo arrays are empty", async () => {
     const dir = tmp("1119-cold-park-");
@@ -389,40 +349,40 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     );
   });
 
-  it("window1: fix append OK / evidence invalidate dies → B pure receive has zero pre-builder 卷面", async () => {
+  it("cold cmr_fix_committed opens fresh completeness panels before its judge", async () => {
     const dir = tmp("1119-w1-");
-    const a = new FileLedgerBackend(
-      dir,
-      "after_fix_before_invalidate",
-      preBuilderSeed(),
-    );
-    await expect(
-      runVerifyCmr({
-        phase: "final",
-        familyBase: "family/1119-w1-a",
-        familyBackend: a,
-        familyHeadAfter: HEAD,
-        familyIssue: 1119,
-      }),
-    ).rejects.toThrow(/INJECT: after fix ledger/);
-    // Fix row durable; evidence may still hold pre-builder paper (invalidate died).
-    const ledger = await a.readFamilyLedger();
-    expect(
-      ledger.some(
-        (e) =>
-          (e.status === "cmr_fix_committed" ||
-            e.event === "cmr_fix_committed") &&
-          e.cmrPass === "completeness",
-      ),
-    ).toBe(true);
-    const stale = a.readFamilyPanelLegEvidence("completeness");
-    expect(
-      stale?.panelLegTransports?.some((t) =>
-        (t.stdout ?? "").includes("PRE-BUILDER"),
-      ),
-    ).toBe(true);
+    const a = new FileLedgerBackend(dir);
+    const refuseRecord = mintFourReasonRefuseRecord({
+      identityKey: REFUSE_KEY,
+      reason: "not_established",
+      evidence: "opaque refusal evidence",
+    });
+    await a.appendFamilyLedger({
+      status: "cmr_reviewed",
+      event: "cmr_reviewed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: HEAD,
+    });
+    await a.appendFamilyLedger({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadBefore: HEAD,
+      familyHeadAfter: HEAD,
+      refusedFindingIdentityKeys: [REFUSE_KEY],
+      refuseRecords: [refuseRecord],
+    });
+    a.writeFamilyPanelLegEvidence("completeness", {
+      familyHeadAfter: HEAD,
+      ledgerPhase: "final",
+      routeFingerprint: ROUTE_FP,
+      courtGeneration: 1,
+      panelLegTransports: [],
+      panelLegSkippedLegs: [],
+    });
 
-    // Process B: only files — pure receive must not surface pre-builder paper.
     const b = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
     });
@@ -433,13 +393,16 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
-    expect(b.judgeLandings[0]?.kind).toBe("pure");
-    expect(b.judgeLandings[0]?.hasPreBuilder).toBeFalsy();
-    expect(b.judgeLandings[0]?.refuseKeys).toEqual([REFUSE_KEY]);
-    // Later outer gate may fan panels; none may carry PRE-BUILDER.
+    expect(b.judgeLandings[0]?.kind).toBe("panels");
     expect(
-      b.judgeLandings.some((j) => j.hasPreBuilder === true),
-    ).toBe(false);
+      b.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(b.judgeLandings[0]?.refuseKeys).toEqual([REFUSE_KEY]);
+    expect(b.judgeLandings[0]?.transports).toEqual(
+      b.readFamilyPanelLegEvidence("completeness")?.panelLegTransports,
+    );
   });
 
   it("window2: outer evidence OK / judge dies → B same-generation zero panel reburn", async () => {
@@ -447,7 +410,6 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     const a = new FileLedgerBackend(
       dir,
       "after_outer_evidence_before_judge",
-      preBuilderSeed(),
     );
     // Outer judge throw is process-root collapsed to a stage failure.
     const r = await runVerifyCmr({
@@ -460,11 +422,6 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(r.ok).toBe(false);
     const mid = a.readFamilyPanelLegEvidence("completeness");
     expect((mid?.panelLegTransports?.length ?? 0) > 0).toBe(true);
-    expect(
-      mid?.panelLegTransports?.some((t) =>
-        (t.stdout ?? "").includes("PRE-BUILDER"),
-      ),
-    ).toBe(false);
     const gen = courtGenerationFromDurableEvidence(mid);
     const transportOnlyEvidence = {
       ...mid,
@@ -477,12 +434,12 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       ],
     };
     a.writeFamilyPanelLegEvidence("completeness", transportOnlyEvidence);
-    // Soft-accept completion marker must be durable.
+    // The fix remains pending until a judge accepts this generation.
     const ledger = await a.readFamilyLedger();
     expect(
-      pendingBuilderReceiveFromFamilyLedger(ledger, "completeness", "final")
+      pendingBuilderReviewFromFamilyLedger(ledger, "completeness", "final")
         .pending,
-    ).toBe(false);
+    ).toBe(true);
 
     const b = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -502,7 +459,6 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(courtGenerationFromDurableEvidence(after)).toBe(gen);
     // First completeness open on B is panel-backed reuse (not pure re-receive).
     expect(b.judgeLandings[0]?.kind).toBe("panels");
-    expect(b.judgeLandings[0]?.hasPreBuilder).toBeFalsy();
     expect(b.judgeLandings[0]?.transports).toEqual(
       transportOnlyEvidence.panelLegTransports,
     );

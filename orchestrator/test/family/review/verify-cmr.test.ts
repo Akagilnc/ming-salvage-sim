@@ -876,14 +876,14 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
       "completeness",
       "correctness",
-      "correctness",
+      "completeness",
       "correctness",
     ]);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
         status: "cmr_passed",
         phase: "final",
-        familyHeadAfter: "head-after-verify-fix",
+        familyHeadAfter: "head-after-cmr-fix",
       }),
     );
     expect(backend.prCalls).toEqual([{ familyBase: "family/1110-mid-court" }]);
@@ -1157,7 +1157,6 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
-      "completeness",
       "completeness",
       "completeness",
       "correctness",
@@ -1817,11 +1816,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ]);
   });
 
-  // #881 (#434 live-semantic revision): align resume with the live final-barrier
-  // loop — after a later pass's coder-fix advances HEAD, completeness is NOT
-  // re-run live; resume must likewise skip when the advance is explained only by
-  // barrier-internal cmr_fix_committed rows.
-  it("#881: resume skips a prior pass when HEAD advanced only via barrier-internal fix commits", async () => {
+  it("#1119: a cold correctness fix restarts completeness at the fixed HEAD", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
@@ -1861,11 +1856,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    // Completeness already passed; only correctness re-runs at the advanced head.
-    // #1119: trailing cmr_fix_committed → pure receive then fresh outer gate
-    // (two correctness opens; ADR 0147 builder→resident receive order).
     expect(backend.cmrCalls).toEqual([
-      { familyBase: "family/291-base", cmrPass: "correctness" },
+      { familyBase: "family/291-base", cmrPass: "completeness" },
       { familyBase: "family/291-base", cmrPass: "correctness" },
     ]);
   });
@@ -2068,7 +2060,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ]);
   });
 
-  it("continues a correctness coder-fix loop at correctness without re-running completeness", async () => {
+  it("restarts completeness after a correctness coder-fix changes HEAD", async () => {
     const correctnessKey =
       "correctness|ming_sim/issues.py:7089|db.validate_fiscal_config_value(key, new_val)";
     const finding: Finding = {
@@ -2189,11 +2181,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    // #1080: correctness continue → fix → pure receive → panel outer gate.
     expect(backend.cmrCalls.map((call) => call.cmrPass)).toEqual([
       "completeness",
       "correctness",
-      "correctness",
+      "completeness",
       "correctness",
     ]);
     expect(backend.verifyCalls).toEqual([
