@@ -1276,6 +1276,16 @@ function familyVerifyFailureStopSummary(reason: string): StopSummary {
   });
 }
 
+type RefusalStateByPass = Partial<
+  Record<
+    IntegratedCmrPass,
+    {
+      readonly keys?: readonly string[];
+      readonly records?: readonly ReviewFixRefuseRecord[];
+    }
+  >
+>;
+
 interface IntegratedCmrPassOutcome {
   readonly result: VerifyCmrResult;
   readonly familyHeadAfter?: string;
@@ -1290,17 +1300,8 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
-    /** #930 / #919 R2 — refuse keys blind-routed back to the family judge. */
-    readonly refusedFindingIdentityKeysByPass?: Partial<
-      Record<IntegratedCmrPass, readonly string[]>
-    >;
-    /**
-     * #919 R2 / #927 isomorphic — opaque refuseRecords cargo for family judge
-     * re-open (landing only; never on thin DispatchContext).
-     */
-    readonly refuseRecordsByPass?: Partial<
-      Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-    >;
+    /** Refuse traffic + opaque cargo travel as one pass-partitioned state. */
+    readonly refusalStateByPass?: RefusalStateByPass;
   };
 }
 
@@ -1529,18 +1530,20 @@ async function runCmrCoderFix(input: {
       : resumeSessionId;
 
   if (fixResult.output.kind !== "coder") {
-    await recordCmrFixCommitted(familyBackend, {
-      cmrPass: pass,
-      phase: ledgerPhase,
+    return completeCmrFixHandoff({
+      familyBackend,
+      pass,
+      ledgerPhase,
+      resolvedRoute,
       familyHeadBefore: currentFamilyHeadBefore,
       familyHeadAfter,
       blockingFindingIdentityKeys,
       reason: `${reasonPrefix}: completed coder receipt carried another shape; family judge will re-open on the diff`,
+      priorCmrFindingIdentityKeysByPass,
       ...(openedFixerSessionId !== undefined
         ? { sessionId: openedFixerSessionId }
         : {}),
     });
-    return { result: { ok: true, ran: true }, familyHeadAfter };
   }
 
   if (fixResult.output.escalate !== undefined) {
@@ -1582,9 +1585,11 @@ async function runCmrCoderFix(input: {
   const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
   const refuseRecords = refuseLanding.refuseRecords;
 
-  await recordCmrFixCommitted(familyBackend, {
-    cmrPass: pass,
-    phase: ledgerPhase,
+  return completeCmrFixHandoff({
+    familyBackend,
+    pass,
+    ledgerPhase,
+    resolvedRoute,
     familyHeadBefore: currentFamilyHeadBefore,
     familyHeadAfter,
     blockingFindingIdentityKeys,
@@ -1597,47 +1602,90 @@ async function runCmrCoderFix(input: {
     ...(openedFixerSessionId !== undefined
       ? { sessionId: openedFixerSessionId }
       : {}),
-    // #1119: durable refuse cargo on the same fix row (cold pure-receive truth).
+    // #1119: durable refuse cargo on the same fix row (cold restart truth).
     ...(refusedFindingIdentityKeys.length > 0
       ? { refusedFindingIdentityKeys }
       : {}),
     ...(refuseRecords !== undefined && refuseRecords.length > 0
       ? { refuseRecords }
       : {}),
+    priorCmrFindingIdentityKeysByPass,
   });
-  // #1119: invalidate panel evidence at builder-beat completion — not later at
-  // soft-accept — so crash between fix and pure receive cannot reuse pre-builder
-  // 卷面 (refuse/no-op same HEAD) or skip the pure-receive order (HEAD moved).
+}
+
+/**
+ * Commit the structured fixer boundary, then write its evidence tombstone.
+ * The generation is reserved in the ledger first, making the two-write crash
+ * window fail-safe on cold recovery.
+ */
+async function completeCmrFixHandoff(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly pass: IntegratedCmrPass;
+  readonly ledgerPhase: "final" | "correctness_checkpoint";
+  readonly resolvedRoute: ResolvedModelRoute;
+  readonly familyHeadBefore?: string;
+  readonly familyHeadAfter?: string;
+  readonly blockingFindingIdentityKeys: readonly string[];
+  readonly reason: string;
+  readonly sessionId?: string;
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
+  readonly priorCmrFindingIdentityKeysByPass?: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
+}): Promise<IntegratedCmrPassOutcome> {
+  const priorEvidence =
+    typeof input.familyBackend.readFamilyPanelLegEvidence === "function"
+      ? await input.familyBackend.readFamilyPanelLegEvidence(input.pass)
+      : undefined;
+  const expectedCourtGeneration =
+    courtGenerationFromDurableEvidence(priorEvidence) + 1;
+  await recordCmrFixCommitted(input.familyBackend, {
+    cmrPass: input.pass,
+    phase: input.ledgerPhase,
+    familyHeadBefore: input.familyHeadBefore,
+    familyHeadAfter: input.familyHeadAfter,
+    blockingFindingIdentityKeys: input.blockingFindingIdentityKeys,
+    reason: input.reason,
+    expectedCourtGeneration,
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    ...(input.refusedFindingIdentityKeys !== undefined &&
+    input.refusedFindingIdentityKeys.length > 0
+      ? { refusedFindingIdentityKeys: input.refusedFindingIdentityKeys }
+      : {}),
+    ...(input.refuseRecords !== undefined && input.refuseRecords.length > 0
+      ? { refuseRecords: input.refuseRecords }
+      : {}),
+  });
   await invalidatePanelEvidenceAfterBuilderBeat({
-    familyBackend,
-    pass,
+    familyBackend: input.familyBackend,
+    pass: input.pass,
+    expectedCourtGeneration,
     identity: {
-      ledgerPhase,
-      routeFingerprint: modelRouteFingerprint(resolvedRoute),
-      familyHeadAfter,
+      ledgerPhase: input.ledgerPhase,
+      routeFingerprint: modelRouteFingerprint(input.resolvedRoute),
+      familyHeadAfter: input.familyHeadAfter,
     },
   });
   return {
     result: { ok: true, ran: true },
-    familyHeadAfter,
-    // Surface refuse cargo so the pass loop re-opens the court.
-    // #966: judge resume sessionId is derived from family ledger on re-open
-    // (no judgeSessionIdByPass memory relay — ledger is sole truth).
+    familyHeadAfter: input.familyHeadAfter,
     restartFinalBarrier: {
-      familyHeadAfter,
-      priorCmrFindingIdentityKeysByPass: priorCmrFindingIdentityKeysByPass ?? {},
-      ...(refusedFindingIdentityKeys.length > 0
+      familyHeadAfter: input.familyHeadAfter,
+      priorCmrFindingIdentityKeysByPass:
+        input.priorCmrFindingIdentityKeysByPass ?? {},
+      ...(input.refusedFindingIdentityKeys !== undefined ||
+      input.refuseRecords !== undefined
         ? {
-            refusedFindingIdentityKeysByPass: {
-              [pass]: refusedFindingIdentityKeys,
-            },
-          }
-        : {}),
-      // #919 R2 / #927: opaque refuseRecords cargo (landing-only on re-open).
-      ...(refuseRecords !== undefined && refuseRecords.length > 0
-        ? {
-            refuseRecordsByPass: {
-              [pass]: refuseRecords,
+            refusalStateByPass: {
+              [input.pass]: {
+                ...(input.refusedFindingIdentityKeys !== undefined
+                  ? { keys: input.refusedFindingIdentityKeys }
+                  : {}),
+                ...(input.refuseRecords !== undefined
+                  ? { records: input.refuseRecords }
+                  : {}),
+              },
             },
           }
         : {}),
@@ -1645,22 +1693,22 @@ async function runCmrCoderFix(input: {
   };
 }
 
-/**
- * #1119 — advance court generation + clear transports (idempotent tombstone).
- * Used at builder-beat completion and pure-receive soft-accept. Lifecycle-
- * structured; no prose parse. Re-applying after transports already cleared
- * still bumps generation so a partial prior write cannot revive old 卷面.
- */
+/** Write the exact generation already reserved by cmr_fix_committed. */
 async function invalidatePanelEvidenceAfterBuilderBeat(input: {
   readonly familyBackend: FamilyBackend;
   readonly pass: IntegratedCmrPass;
+  readonly expectedCourtGeneration: number;
   readonly identity: PanelLegEvidenceIdentitySeed;
 }): Promise<void> {
-  const { familyBackend, pass, identity } = input;
+  const {
+    familyBackend,
+    pass,
+    identity,
+    expectedCourtGeneration,
+  } = input;
   if (typeof familyBackend.readFamilyPanelLegEvidence !== "function") return;
   if (typeof familyBackend.writeFamilyPanelLegEvidence !== "function") return;
   const prior = await familyBackend.readFamilyPanelLegEvidence(pass);
-  const gen = courtGenerationFromDurableEvidence(prior);
   const familyHeadAfter =
     typeof identity.familyHeadAfter === "string" &&
     identity.familyHeadAfter.trim().length > 0
@@ -1675,7 +1723,7 @@ async function invalidatePanelEvidenceAfterBuilderBeat(input: {
     ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
     ledgerPhase: identity.ledgerPhase,
     routeFingerprint: identity.routeFingerprint,
-    courtGeneration: gen + 1,
+    courtGeneration: expectedCourtGeneration,
   });
 }
 
@@ -2533,6 +2581,10 @@ async function runIntegratedCmrPass(input: {
    * generation-bound and may be reused after a crash before the judge.
    */
   readonly forceCourtOpen?: boolean;
+  /** Ledger-reserved generation for a pending post-fix court. */
+  readonly expectedCourtGeneration?: number;
+  /** Legacy pending fix row without a reserved generation rejects all old cargo. */
+  readonly requireFreshPanelEvidence?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2554,6 +2606,8 @@ async function runIntegratedCmrPass(input: {
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
     forceCourtOpen = false,
+    expectedCourtGeneration,
+    requireFreshPanelEvidence = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -2688,6 +2742,7 @@ async function runIntegratedCmrPass(input: {
         ? await familyBackend.readFamilyPanelLegEvidence(pass)
         : undefined;
     const courtGeneration =
+      expectedCourtGeneration ??
       courtGenerationFromDurableEvidence(durablePanelEvidence);
     const panelEvidenceIdentity: PanelLegEvidenceIdentity | undefined =
       resolvedFamilyHeadAfter !== undefined &&
@@ -2699,10 +2754,12 @@ async function runIntegratedCmrPass(input: {
             courtGeneration,
           }
         : undefined;
-    const durableEvidenceForCourt = admissibleDurablePanelLegEvidence(
-      durablePanelEvidence,
-      panelEvidenceIdentity,
-    );
+    const durableEvidenceForCourt = requireFreshPanelEvidence
+      ? undefined
+      : admissibleDurablePanelLegEvidence(
+          durablePanelEvidence,
+          panelEvidenceIdentity,
+        );
     const existingPanelEvidence =
       landedPanelLegEvidence(refuseReopenLanding) ??
       landedPanelLegEvidence(dispatchCtx) ??
@@ -3396,14 +3453,8 @@ async function runIntegratedCmrPass(input: {
           ...(fromFix?.priorCmrFindingIdentityKeysByPass ?? {}),
           [pass]: updatedPriorKeys,
         },
-        ...(fromFix?.refusedFindingIdentityKeysByPass !== undefined
-          ? {
-              refusedFindingIdentityKeysByPass:
-                fromFix.refusedFindingIdentityKeysByPass,
-            }
-          : {}),
-        ...(fromFix?.refuseRecordsByPass !== undefined
-          ? { refuseRecordsByPass: fromFix.refuseRecordsByPass }
+        ...(fromFix?.refusalStateByPass !== undefined
+          ? { refusalStateByPass: fromFix.refusalStateByPass }
           : {}),
       },
     };
@@ -3439,13 +3490,10 @@ async function runIntegratedCmrPass(input: {
  */
 type PendingBuilderReceiveHydration = {
   readonly pendingReview: boolean;
+  readonly expectedCourtGeneration?: number;
+  readonly requireFreshPanelEvidence: boolean;
   readonly familyHeadAfter?: string;
-  readonly refusedFindingIdentityKeysByPass: Partial<
-    Record<IntegratedCmrPass, readonly string[]>
-  >;
-  readonly refuseRecordsByPass: Partial<
-    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-  >;
+  readonly refusalStateByPass: RefusalStateByPass;
 };
 
 async function hydratePendingBuilderReceive(input: {
@@ -3461,18 +3509,92 @@ async function hydratePendingBuilderReceive(input: {
   );
   return {
     pendingReview: pending.pending,
+    ...(pending.expectedCourtGeneration !== undefined
+      ? { expectedCourtGeneration: pending.expectedCourtGeneration }
+      : {}),
+    requireFreshPanelEvidence:
+      pending.pending && pending.expectedCourtGeneration === undefined,
     familyHeadAfter:
       pending.pending && pending.familyHeadAfter !== undefined
         ? pending.familyHeadAfter
         : input.familyHeadAfter,
-    refusedFindingIdentityKeysByPass:
-      pending.refusedFindingIdentityKeys !== undefined
-        ? { [input.pass]: pending.refusedFindingIdentityKeys }
-        : {},
-    refuseRecordsByPass:
+    refusalStateByPass:
+      pending.refusedFindingIdentityKeys !== undefined ||
       pending.refuseRecords !== undefined
-        ? { [input.pass]: pending.refuseRecords }
+        ? {
+            [input.pass]: {
+              ...(pending.refusedFindingIdentityKeys !== undefined
+                ? { keys: pending.refusedFindingIdentityKeys }
+                : {}),
+              ...(pending.refuseRecords !== undefined
+                ? { records: pending.refuseRecords }
+                : {}),
+            },
+          }
         : {},
+  };
+}
+
+type PostFixHandoff =
+  | {
+      readonly ok: true;
+      readonly familyHeadAfter?: string;
+      readonly priorKeysByPass: Partial<
+        Record<IntegratedCmrPass, readonly string[]>
+      >;
+      readonly refusalStateByPass: RefusalStateByPass;
+    }
+  | {
+      readonly ok: false;
+      readonly result: VerifyCmrResult;
+      readonly familyHeadAfter?: string;
+    };
+
+/** Shared verify + structured state reconstruction after either CMR fixer. */
+async function verifyPostFixHandoff(input: {
+  readonly phase: VerifyCmrPhase;
+  readonly familyBase: string;
+  readonly familyBackend: FamilyBackend;
+  readonly restart: NonNullable<
+    IntegratedCmrPassOutcome["restartFinalBarrier"]
+  >;
+  readonly runId?: string;
+  readonly familyIssue?: number;
+  readonly resolvedRoute: ResolvedModelRoute;
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  readonly escalationAnswer?: EscalationAnswerPayload;
+}): Promise<PostFixHandoff> {
+  const verified = await runFamilyVerifyThroughCourt({
+    phase: input.phase,
+    familyBase: input.familyBase,
+    familyBackend: input.familyBackend,
+    familyHeadAfter: input.restart.familyHeadAfter,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    ...(input.familyIssue !== undefined
+      ? { familyIssue: input.familyIssue }
+      : {}),
+    modelRoute: input.resolvedRoute,
+    ...(input.billingPool !== undefined
+      ? { billingPool: input.billingPool }
+      : {}),
+    ...(input.billingPoolSlots !== undefined
+      ? { billingPoolSlots: input.billingPoolSlots }
+      : {}),
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
+  });
+  const familyHeadAfter =
+    verified.familyHeadAfter ?? input.restart.familyHeadAfter;
+  if (!verified.ok) {
+    return { ok: false, result: verified, familyHeadAfter };
+  }
+  return {
+    ok: true,
+    familyHeadAfter,
+    priorKeysByPass: input.restart.priorCmrFindingIdentityKeysByPass,
+    refusalStateByPass: input.restart.refusalStateByPass ?? {},
   };
 }
 
@@ -3531,13 +3653,11 @@ async function runCorrectnessCourtLoop(input: {
   // Process-local refuse maps survive barrier restarts for the immediate
   // re-open after coder-fix refuse (#966 / #919 R2). Cold-start: recover from
   // durable cmr_fix_committed (#1119) — not process memory alone.
-  let refusedFindingIdentityKeysByPass: Partial<
-    Record<IntegratedCmrPass, readonly string[]>
-  > = pendingReceive.refusedFindingIdentityKeysByPass;
-  let refuseRecordsByPass: Partial<
-    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-  > = pendingReceive.refuseRecordsByPass;
+  let refusalStateByPass = pendingReceive.refusalStateByPass;
   let forceCourtOpen = pendingReceive.pendingReview;
+  let expectedCourtGeneration = pendingReceive.expectedCourtGeneration;
+  let requireFreshPanelEvidence =
+    pendingReceive.requireFreshPanelEvidence;
   while (true) {
     const correctness = await runIntegratedCmrPass({
       pass: "correctness",
@@ -3555,18 +3675,26 @@ async function runCorrectnessCourtLoop(input: {
       allowCoderFix: true,
       ledgerPhase,
       forceCourtOpen,
-      ...scopedPoolFields,
-      ...(refusedFindingIdentityKeysByPass.correctness !== undefined
+      ...(expectedCourtGeneration !== undefined
         ? {
-            refusedFindingIdentityKeys:
-              refusedFindingIdentityKeysByPass.correctness,
+            expectedCourtGeneration,
           }
         : {}),
-      ...(refuseRecordsByPass.correctness !== undefined
-        ? { refuseRecords: refuseRecordsByPass.correctness }
+      requireFreshPanelEvidence,
+      ...scopedPoolFields,
+      ...(refusalStateByPass.correctness?.keys !== undefined
+        ? {
+            refusedFindingIdentityKeys:
+              refusalStateByPass.correctness.keys,
+          }
+        : {}),
+      ...(refusalStateByPass.correctness?.records !== undefined
+        ? { refuseRecords: refusalStateByPass.correctness.records }
         : {}),
     });
     forceCourtOpen = false;
+    expectedCourtGeneration = undefined;
+    requireFreshPanelEvidence = false;
     if (!correctness.result.ok) {
       return {
         result: correctness.result,
@@ -3587,43 +3715,27 @@ async function runCorrectnessCourtLoop(input: {
     }
     // #1110 P1: mid-court re-verify after CMR fixer uses the same verify→court
     // mechanism (not a hard-die bypass).
-    const verifyAfterFix = await runFamilyVerifyThroughCourt({
+    const handoff = await verifyPostFixHandoff({
       phase,
       familyBase,
       familyBackend,
-      familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
-      runId,
-      familyIssue,
-      modelRoute: resolvedRoute,
+      restart: correctness.restartFinalBarrier,
+      resolvedRoute,
+      ...(runId !== undefined ? { runId } : {}),
+      ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...scopedPoolFields,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (!verifyAfterFix.ok) {
+    if (!handoff.ok) {
       return {
-        result: verifyAfterFix,
-        familyHeadAfter:
-          verifyAfterFix.familyHeadAfter ??
-          correctness.restartFinalBarrier.familyHeadAfter,
+        result: handoff.result,
+        familyHeadAfter: handoff.familyHeadAfter,
         resolvedRoute,
       };
     }
-    correctnessFamilyHeadAfter =
-      verifyAfterFix.familyHeadAfter ??
-      correctness.restartFinalBarrier.familyHeadAfter;
-    correctnessPriorKeysByPass =
-      correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    // Unified refuse-map style: replace cargo for this pass only (next re-open).
-    const nextRefuse =
-      correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
-        ?.correctness;
-    refusedFindingIdentityKeysByPass =
-      nextRefuse !== undefined ? { correctness: nextRefuse } : {};
-    const nextRefuseRecords =
-      correctness.restartFinalBarrier.refuseRecordsByPass?.correctness;
-    refuseRecordsByPass =
-      nextRefuseRecords !== undefined
-        ? { correctness: nextRefuseRecords }
-        : {};
+    correctnessFamilyHeadAfter = handoff.familyHeadAfter;
+    correctnessPriorKeysByPass = handoff.priorKeysByPass;
+    refusalStateByPass = handoff.refusalStateByPass;
     if (ledgerPhase === "final") {
       return {
         result: { ok: true, ran: true },
@@ -3632,11 +3744,8 @@ async function runCorrectnessCourtLoop(input: {
         restartFinalBarrier: {
           familyHeadAfter: correctnessFamilyHeadAfter,
           priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
-          ...(Object.keys(refusedFindingIdentityKeysByPass).length > 0
-            ? { refusedFindingIdentityKeysByPass }
-            : {}),
-          ...(Object.keys(refuseRecordsByPass).length > 0
-            ? { refuseRecordsByPass }
+          ...(Object.keys(refusalStateByPass).length > 0
+            ? { refusalStateByPass }
             : {}),
         },
       };
@@ -3881,13 +3990,7 @@ export async function runVerifyCmr(
   // open (cmr_reviewed / cmr_passed). Process-local refuse maps still survive
   // barrier restarts within this final-phase invocation for the immediate
   // re-open after coder-fix refuse.
-  let refusedFindingIdentityKeysByPass: Partial<
-    Record<IntegratedCmrPass, readonly string[]>
-  > = {};
-  // #919 R2: opaque refuseRecords cargo pairs with keys for the next re-open.
-  let refuseRecordsByPass: Partial<
-    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
-  > = {};
+  let refusalStateByPass: RefusalStateByPass = {};
   let currentFinalHead = familyHeadAfter;
   let cmrPassedFamilyHeadAfter: string | undefined;
 
@@ -3916,15 +4019,16 @@ export async function runVerifyCmr(
     });
     let forceCompletenessCourtOpen =
       pendingCorrectnessReview.pendingReview || pendingReceive.pendingReview;
+    let expectedCompletenessCourtGeneration =
+      pendingReceive.expectedCourtGeneration;
+    let requireFreshCompletenessPanelEvidence =
+      pendingCorrectnessReview.pendingReview ||
+      pendingReceive.requireFreshPanelEvidence;
     let completenessFamilyHeadAfter = pendingReceive.familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
-  refusedFindingIdentityKeysByPass = {
-    ...refusedFindingIdentityKeysByPass,
-    ...pendingReceive.refusedFindingIdentityKeysByPass,
-  };
-  refuseRecordsByPass = {
-    ...refuseRecordsByPass,
-    ...pendingReceive.refuseRecordsByPass,
+  refusalStateByPass = {
+    ...refusalStateByPass,
+    ...pendingReceive.refusalStateByPass,
   };
   for (;;) {
     const completeness = await runIntegratedCmrPass({
@@ -3944,18 +4048,28 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       forceCourtOpen: forceCompletenessCourtOpen,
-      ...scopedPoolFields,
-      ...(refusedFindingIdentityKeysByPass.completeness !== undefined
+      ...(expectedCompletenessCourtGeneration !== undefined
         ? {
-            refusedFindingIdentityKeys:
-              refusedFindingIdentityKeysByPass.completeness,
+            expectedCourtGeneration:
+              expectedCompletenessCourtGeneration,
           }
         : {}),
-      ...(refuseRecordsByPass.completeness !== undefined
-        ? { refuseRecords: refuseRecordsByPass.completeness }
+      requireFreshPanelEvidence:
+        requireFreshCompletenessPanelEvidence,
+      ...scopedPoolFields,
+      ...(refusalStateByPass.completeness?.keys !== undefined
+        ? {
+            refusedFindingIdentityKeys:
+              refusalStateByPass.completeness.keys,
+          }
+        : {}),
+      ...(refusalStateByPass.completeness?.records !== undefined
+        ? { refuseRecords: refusalStateByPass.completeness.records }
         : {}),
     });
     forceCompletenessCourtOpen = false;
+    expectedCompletenessCourtGeneration = undefined;
+    requireFreshCompletenessPanelEvidence = false;
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
     if (completeness.resolvedRoute !== undefined) {
@@ -3968,39 +4082,23 @@ export async function runVerifyCmr(
       break;
     }
     // #1110 P1: mid-court re-verify after completeness fixer — same court glue.
-    const verifyAfterCompletenessFix = await runFamilyVerifyThroughCourt({
+    const handoff = await verifyPostFixHandoff({
       phase,
       familyBase,
       familyBackend,
-      familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
-      runId,
-      familyIssue,
-      modelRoute: resolvedRoute,
+      restart: completeness.restartFinalBarrier,
+      resolvedRoute,
+      ...(runId !== undefined ? { runId } : {}),
+      ...(familyIssue !== undefined ? { familyIssue } : {}),
       ...scopedPoolFields,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     });
-    if (!verifyAfterCompletenessFix.ok) {
-      return verifyAfterCompletenessFix;
+    if (!handoff.ok) {
+      return handoff.result;
     }
-    completenessFamilyHeadAfter =
-      verifyAfterCompletenessFix.familyHeadAfter ??
-      completeness.restartFinalBarrier.familyHeadAfter;
-    completenessPriorKeysByPass =
-      completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    // Keep refuse keys + cargo only for the immediate next judge open.
-    const nextRefuse =
-      completeness.restartFinalBarrier.refusedFindingIdentityKeysByPass
-        ?.completeness;
-    refusedFindingIdentityKeysByPass =
-      nextRefuse !== undefined
-        ? { completeness: nextRefuse }
-        : {};
-    const nextRefuseRecords =
-      completeness.restartFinalBarrier.refuseRecordsByPass?.completeness;
-    refuseRecordsByPass =
-      nextRefuseRecords !== undefined
-        ? { completeness: nextRefuseRecords }
-        : {};
+    completenessFamilyHeadAfter = handoff.familyHeadAfter;
+    completenessPriorKeysByPass = handoff.priorKeysByPass;
+    refusalStateByPass = handoff.refusalStateByPass;
     forceCompletenessCourtOpen = true;
   }
   // Correctness court shares the same loop machine as #961 checkpoint
@@ -4028,11 +4126,8 @@ export async function runVerifyCmr(
       correctnessCourt.restartFinalBarrier.familyHeadAfter;
     activePriorKeysByPass =
       correctnessCourt.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    refusedFindingIdentityKeysByPass =
-      correctnessCourt.restartFinalBarrier.refusedFindingIdentityKeysByPass ??
-      {};
-    refuseRecordsByPass =
-      correctnessCourt.restartFinalBarrier.refuseRecordsByPass ?? {};
+    refusalStateByPass =
+      correctnessCourt.restartFinalBarrier.refusalStateByPass ?? {};
     continue finalCmrCycle;
   }
   cmrPassedFamilyHeadAfter = correctnessCourt.familyHeadAfter;

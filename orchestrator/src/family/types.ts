@@ -354,6 +354,11 @@ export interface FamilyLedgerEntry {
     import("../types.js").ReviewFixRefuseRecord
   >;
   /**
+   * #1119 — generation reserved by the fix row before its evidence tombstone.
+   * Cold recovery trusts this ledger value, never the possibly stale evidence.
+   */
+  readonly expectedCourtGeneration?: number;
+  /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
    * merger from {@link MergeResult.conflictResolvedByLlm} onto the DURABLE ledger
