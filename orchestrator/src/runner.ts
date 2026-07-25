@@ -4675,7 +4675,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 resumeFor = undefined;
                 judgeSessionId = undefined;
                 judgeSessionModel = undefined;
-                dispatchSingleSlicePanelsBeforeJudge = true;
+                dispatchSingleSlicePanelsBeforeJudge = step === "S6";
                 continue;
               }
               if (seatProtocol.kind === "stay_put_break") {

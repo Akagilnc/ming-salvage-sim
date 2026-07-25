@@ -633,6 +633,32 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
+  it("#1139 S3 session loss fresh-reopens without pre-dispatching panel legs", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend([
+        {
+          kind: "failed",
+          reason: `resumeSession ${OPEN_COURT_SESSION} not found`,
+        },
+        completedJudge(judgeConverged(), "fresh-s3-judge-session"),
+      ]);
+
+      const result = await runOrchestrator({ issueNumber: 1139, backend });
+
+      expect(result.status).toBe("completed");
+      expect(
+        backend.specs
+          .filter((spec) => spec.id === "S3")
+          .map((spec) => `${spec.session}:${spec.kind}`),
+      ).toEqual(["resume:verify", "fresh:verify"]);
+      expect(
+        backend.specs.filter(
+          (spec) => spec.id === "S3" && spec.kind === "reviewer",
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
   it("#1135 S6 judge model move records continuity loss and fresh-reopens with durable court cargo", async () => {
     await runReal(async () => {
       const routeDir = mkdtempSync(join(tmpdir(), "route-presets-1135-"));
