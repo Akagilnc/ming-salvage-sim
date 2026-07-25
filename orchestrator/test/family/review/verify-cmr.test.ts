@@ -883,7 +883,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       expect.objectContaining({
         status: "cmr_passed",
         phase: "final",
-        familyHeadAfter: "head-after-cmr-fix",
+        familyHeadAfter: "head-after-verify-fix",
       }),
     );
     expect(backend.prCalls).toEqual([{ familyBase: "family/1110-mid-court" }]);

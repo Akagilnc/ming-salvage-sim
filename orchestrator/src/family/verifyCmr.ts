@@ -3515,9 +3515,7 @@ async function hydratePendingBuilderReceive(input: {
     requireFreshPanelEvidence:
       pending.pending && pending.expectedCourtGeneration === undefined,
     familyHeadAfter:
-      pending.pending && pending.familyHeadAfter !== undefined
-        ? pending.familyHeadAfter
-        : input.familyHeadAfter,
+      input.familyHeadAfter ?? pending.familyHeadAfter,
     refusalStateByPass:
       pending.refusedFindingIdentityKeys !== undefined ||
       pending.refuseRecords !== undefined
@@ -3721,10 +3719,10 @@ async function runCmrCourtLoop(input: {
     familyBackend,
     pass,
     ledgerPhase,
-    ...(restartTrigger?.familyHeadAfter !== undefined
-      ? { familyHeadAfter: restartTrigger.familyHeadAfter }
-      : input.familyHeadAfter !== undefined
-        ? { familyHeadAfter: input.familyHeadAfter }
+    ...(input.familyHeadAfter !== undefined
+      ? { familyHeadAfter: input.familyHeadAfter }
+      : restartTrigger?.familyHeadAfter !== undefined
+        ? { familyHeadAfter: restartTrigger.familyHeadAfter }
       : {}),
   });
   const routeFingerprint = modelRouteFingerprint(input.resolvedRoute);

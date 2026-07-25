@@ -472,6 +472,8 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
   });
 
   it("cold restart keeps a current-HEAD completeness pass while correctness remains pending", async () => {
+    const correctnessFixHead = "head-1119-h1";
+    const currentHead = "head-1119-h2";
     const dir = tmp("1119-correctness-pending-");
     const processBeforeCrash = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -481,15 +483,24 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       event: "cmr_reviewed",
       phase: "final",
       cmrPass: "correctness",
-      familyHeadAfter: HEAD,
+      familyHeadAfter: correctnessFixHead,
     });
     await processBeforeCrash.appendFamilyLedger({
       status: "cmr_fix_committed",
       event: "cmr_fix_committed",
       phase: "final",
       cmrPass: "correctness",
-      familyHeadBefore: HEAD,
-      familyHeadAfter: HEAD,
+      familyHeadBefore: correctnessFixHead,
+      familyHeadAfter: correctnessFixHead,
+      expectedCourtGeneration: 1,
+    });
+    await processBeforeCrash.appendFamilyLedger({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadBefore: correctnessFixHead,
+      familyHeadAfter: currentHead,
       expectedCourtGeneration: 1,
     });
     await processBeforeCrash.appendFamilyLedger({
@@ -497,7 +508,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       event: "cmr_passed",
       phase: "final",
       cmrPass: "completeness",
-      familyHeadAfter: HEAD,
+      familyHeadAfter: currentHead,
       routeFingerprint: ROUTE_FP,
     });
 
@@ -507,11 +518,12 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       undefined,
       { forceFirstContinue: false },
     );
+    processAfterRestart.familyHead = currentHead;
     await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-correctness-pending",
       familyBackend: processAfterRestart,
-      familyHeadAfter: HEAD,
+      familyHeadAfter: currentHead,
       familyIssue: 1119,
     });
 
@@ -529,6 +541,42 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       pass: "correctness",
       kind: "panels",
     });
+    const correctnessEvidence =
+      processAfterRestart.readFamilyPanelLegEvidence("correctness");
+    expect(correctnessEvidence?.familyHeadAfter).toBe(currentHead);
+    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual(
+      correctnessEvidence?.panelLegTransports,
+    );
+
+    const missingPassDir = tmp("1119-correctness-pending-no-pass-");
+    const processWithoutPostTriggerPass = new FileLedgerBackend(
+      missingPassDir,
+      "none",
+      undefined,
+      { forceFirstContinue: false },
+    );
+    processWithoutPostTriggerPass.familyHead = currentHead;
+    await processWithoutPostTriggerPass.appendFamilyLedger({
+      status: "cmr_fix_committed",
+      event: "cmr_fix_committed",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadBefore: correctnessFixHead,
+      familyHeadAfter: correctnessFixHead,
+      expectedCourtGeneration: 1,
+    });
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-correctness-pending-no-pass",
+      familyBackend: processWithoutPostTriggerPass,
+      familyHeadAfter: currentHead,
+      familyIssue: 1119,
+    });
+    expect(
+      processWithoutPostTriggerPass.panelDispatches.filter((dispatch) =>
+        dispatch.startsWith("completeness:"),
+      ).length,
+    ).toBeGreaterThan(0);
   });
 
   it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
