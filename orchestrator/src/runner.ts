@@ -2813,6 +2813,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   type SeatDispatchProtocolOutcome =
     | { readonly kind: "dispatched"; readonly result: WorkerResult }
+    | { readonly kind: "judge_fresh_reopen" }
     | { readonly kind: "relay" }
     | { readonly kind: "terminal"; readonly result: RunResult }
     | { readonly kind: "stay_put_break" };
@@ -2970,46 +2971,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await terminalFromWriteErr(writeErr);
         }
 
-        const { resumeSessionId: _lost, ...freshCtx } = ctx;
-        const freshSpec: WorkerSpec = { ...spec, session: "fresh" };
-        try {
-          const result = await withMechanicalRetry(
-            freshSpec,
-            freshCtx,
-            async (s, c) => {
-              const outcome = await dispatchWorkerWithMonitor(
-                backend,
-                s,
-                c,
-                landingPayload,
-                {
-                  onMonitorHandleSpawned: async (handle) => {
-                    setMonitorHandle(handle);
-                    if (isValidStepId(s.id)) {
-                      await persistMonitorHandleAtSpawn(s.id, handle);
-                    }
-                  },
-                },
-              );
-              if (outcome.monitorHandle !== undefined) {
-                setMonitorHandle(outcome.monitorHandle);
-              }
-              await outcome.telemetryEnvironmentStamp;
-              return outcome.result;
-            },
-            { ...retryOpts, forbidFreshRetry: false },
-          );
-          if (result.kind === "completed") {
-            completeMechanicalRetryInvocation(step);
-            onDispatchCompleted?.();
-          }
-          return { kind: "dispatched", result };
-        } catch (freshErr) {
-          return {
-            kind: "terminal",
-            result: await errorTermination(step, freshErr),
-          };
-        }
+        // Let the caller re-enter the same topology boundary. S6 must dispatch
+        // current-HEAD panel legs before the fresh judge; redispatching here
+        // would reopen the judge with the stale/empty landing payload.
+        return { kind: "judge_fresh_reopen" };
       }
       // #683/#686: 429 → park within T / relay beyond T with live baton.
       if (isQuotaWaitForResetError(err)) {
@@ -3933,6 +3898,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (openProtocol.kind === "relay") {
               continue openCourtDispatch;
             }
+            if (openProtocol.kind === "judge_fresh_reopen") {
+              return await errorTermination(
+                "S1",
+                new Error(
+                  "open-court dispatch cannot fresh-reopen before court birth",
+                ),
+              );
+            }
             return await errorTermination(
               "S1",
               new Error("open-court dispatch: unexpected stay_put_break"),
@@ -4263,6 +4236,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let singleSlicePanelTransports:
             | ReadonlyArray<LegTransport>
             | undefined;
+          let dispatchSingleSlicePanelsBeforeJudge =
+            step === "S6" &&
+            resumeSessionId === undefined &&
+            priorJudgeVerdictRowsFromLedger(
+              freshJudgeHistoryLedger ?? ledger,
+            ).length > 0;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -4328,6 +4307,78 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {}),
               };
+              // #1126 / #1139: one panel dispatcher serves both the live loop
+              // (judge continue → panels → resume judge) and an S6 fresh reopen
+              // (panels → fresh judge). The recovery predicate reads only typed
+              // topology: no resident session + durable prior verdicts.
+              if (
+                dispatchSingleSlicePanelsBeforeJudge &&
+                singleSlicePanelTransports === undefined
+              ) {
+                const inPlanPhase =
+                  shouldRunCoderPlanPhase() &&
+                  scanCoderPlanPhase(ledger).planPhase;
+                if (!inPlanPhase) {
+                  const judgeStep = step === "S3" ? "S3" : "S6";
+                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+                  const reviewLegs = [
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "standards" as const,
+                    },
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "spec" as const,
+                    },
+                  ];
+                  const reviewRound = await dispatchReviewPanelLegs({
+                    legs: reviewLegs,
+                    scope: { kind: "single", judgeStep },
+                    dispatch: async (reviewSpec) => {
+                      const protocol = await dispatchSeatWithProtocol({
+                        step,
+                        wallStep: step,
+                        spec: reviewSpec,
+                        ctx: reviewLegCtx,
+                        retryOpts: durableMechanicalRetryOptions(step),
+                        capacityStateSummary:
+                          "fresh reviewer checkpoint at capacity; drift preserved",
+                        setMonitorHandle: (handle) => {
+                          stepMonitorHandle = handle;
+                        },
+                      });
+                      if (protocol.kind === "dispatched") {
+                        return {
+                          kind: "leg_result" as const,
+                          result: protocol.result,
+                        };
+                      }
+                      return {
+                        kind: "seat_control" as const,
+                        control: protocol,
+                      };
+                    },
+                  });
+                  if (reviewRound.kind === "seat_control") {
+                    if (reviewRound.control.kind === "terminal") {
+                      return reviewRound.control.result;
+                    }
+                    if (reviewRound.control.kind === "relay") {
+                      continue orchestratorStepLoop;
+                    }
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `fresh reviewer ${step} stopped without a dispatch result`,
+                      ),
+                    );
+                  }
+                  singleSlicePanelTransports = reviewRound.transports;
+                  dispatchSingleSlicePanelsBeforeJudge = false;
+                }
+              }
               // ADR 0138 / #978: when a judge continue established a live open
               // set, packet body is required and is the sole content path.
               // Unusable non-judge → S5 (raw artifacts only) may lack a body —
@@ -4615,6 +4666,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (seatProtocol.kind === "relay") {
                 continue orchestratorStepLoop;
               }
+              if (seatProtocol.kind === "judge_fresh_reopen") {
+                freshJudgeHistoryLedger = mergeResumeLedgerHistory(
+                  resumeHistoryLedger,
+                  ledger,
+                );
+                resumeSessionId = undefined;
+                resumeFor = undefined;
+                judgeSessionId = undefined;
+                judgeSessionModel = undefined;
+                dispatchSingleSlicePanelsBeforeJudge = true;
+                continue;
+              }
               if (seatProtocol.kind === "stay_put_break") {
                 break;
               }
@@ -4635,63 +4698,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   shouldRunCoderPlanPhase() &&
                   scanCoderPlanPhase(ledger).planPhase;
                 if (!inPlanPhase) {
-                  const judgeStep = step === "S3" ? "S3" : "S6";
-                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
-                  const reviewLegs = [
-                    {
-                      slug: workerSpec.model,
-                      family: modelFamilyForSlug(workerSpec.model),
-                      axis: "standards" as const,
-                    },
-                    {
-                      slug: workerSpec.model,
-                      family: modelFamilyForSlug(workerSpec.model),
-                      axis: "spec" as const,
-                    },
-                  ];
-                  const reviewRound = await dispatchReviewPanelLegs({
-                    legs: reviewLegs,
-                    scope: { kind: "single", judgeStep },
-                    dispatch: async (reviewSpec) => {
-                      const protocol = await dispatchSeatWithProtocol({
-                        step,
-                        wallStep: step,
-                        spec: reviewSpec,
-                        ctx: reviewLegCtx,
-                        retryOpts: durableMechanicalRetryOptions(step),
-                        capacityStateSummary:
-                          "fresh reviewer checkpoint at capacity; drift preserved",
-                        setMonitorHandle: (handle) => {
-                          stepMonitorHandle = handle;
-                        },
-                      });
-                      if (protocol.kind === "dispatched") {
-                        return {
-                          kind: "leg_result" as const,
-                          result: protocol.result,
-                        };
-                      }
-                      return {
-                        kind: "seat_control" as const,
-                        control: protocol,
-                      };
-                    },
-                  });
-                  if (reviewRound.kind === "seat_control") {
-                    if (reviewRound.control.kind === "terminal") {
-                      return reviewRound.control.result;
-                    }
-                    if (reviewRound.control.kind === "relay") {
-                      continue orchestratorStepLoop;
-                    }
-                    return await errorTermination(
-                      step,
-                      new Error(
-                        `fresh reviewer ${step} stopped without a dispatch result`,
-                      ),
-                    );
-                  }
-                  singleSlicePanelTransports = reviewRound.transports;
+                  dispatchSingleSlicePanelsBeforeJudge = true;
                   if (typeof result.sessionId === "string") {
                     resumeSessionId = result.sessionId;
                     judgeSessionId = result.sessionId;
