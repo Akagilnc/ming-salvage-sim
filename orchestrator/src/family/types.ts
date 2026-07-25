@@ -411,6 +411,11 @@ export interface FamilyLedgerEntry {
    */
   readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
   /**
+   * The next cold court open must dispatch a fresh panel before the judge.
+   * Set by a decision park; cleared structurally by a later reviewed/passed row.
+   */
+  readonly freshPanelReviewRequired?: boolean;
+  /**
    * #930 / #952 — judge finding disposition table on family court rows
    * (`refute` / `suppress` / `live`). Schema-fixed; runner never parses prose
    * for routing. Queryable suppress is the schema row `action: "suppress"`

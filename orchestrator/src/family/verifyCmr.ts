@@ -3155,6 +3155,7 @@ async function runIntegratedCmrPass(input: {
           ? { sessionId: openedJudgeSessionId }
           : {}),
         judgeStatus: "escalate",
+        freshPanelReviewRequired: true,
         ...(judgeDispositionsForLedger !== undefined
           ? { findingDispositions: judgeDispositionsForLedger }
           : {}),
@@ -3513,7 +3514,8 @@ async function hydratePendingBuilderReceive(input: {
       ? { expectedCourtGeneration: pending.expectedCourtGeneration }
       : {}),
     requireFreshPanelEvidence:
-      pending.pending && pending.expectedCourtGeneration === undefined,
+      pending.freshPanelReviewRequired === true ||
+      (pending.pending && pending.expectedCourtGeneration === undefined),
     familyHeadAfter:
       input.familyHeadAfter ?? pending.familyHeadAfter,
     refusalStateByPass:
