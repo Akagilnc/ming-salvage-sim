@@ -140,7 +140,7 @@ import {
   cmrBarrierPhaseOf,
   cmrPassAlreadyPassed,
   mechanicalRedispatchAttemptsFromFamilyLedger,
-  pendingBuilderReceiveFromFamilyLedger,
+  pendingBuilderReviewFromFamilyLedger,
   recordAborted as recordDurableAbort,
   familyCoderFixResumeSessionIdFromLedger,
   recordCmrFixCommitted,
@@ -1285,13 +1285,6 @@ interface IntegratedCmrPassOutcome {
    * see the advanced coderFix seat (advance must not last only one dispatch).
    */
   readonly resolvedRoute?: ResolvedModelRoute;
-  /**
-   * #1080 / ADR 0147 — pure-judge receive of a builder beat soft-accepted the
-   * work without writing `cmr_passed`. Caller must re-open this pass with
-   * panel fan-out (independent outer gate; 收敛仍需 fresh 过目) before the
-   * court may close.
-   */
-  readonly needsFreshOuterGate?: boolean;
   readonly restartFinalBarrier?: {
     readonly familyHeadAfter?: string;
     readonly priorCmrFindingIdentityKeysByPass: Partial<
@@ -2535,13 +2528,11 @@ async function runIntegratedCmrPass(input: {
   /** #961 — which barrier owns this court (default final). */
   readonly ledgerPhase?: VerifyCmrPhase;
   /**
-   * #1085 / ADR 0147 — post-builder receive: resume pure judge first without
-   * re-fanning panel legs for THIS open only. Fresh legs remain the independent
-   * outer gate when the pure receive would close (see needsFreshOuterGate);
-   * they are never the immediate next worker after a builder beat.
-   * First open of a pass keeps panels (flag false).
+   * A durable final-phase fixer row re-opens this court even when an older
+   * cmr_passed row can explain the current HEAD. Panel evidence is still
+   * generation-bound and may be reused after a crash before the judge.
    */
-  readonly receiveBuilderBeat?: boolean;
+  readonly forceCourtOpen?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2562,7 +2553,7 @@ async function runIntegratedCmrPass(input: {
     refusedFindingIdentityKeys,
     refuseRecords,
     ledgerPhase: ledgerPhaseInput = "final",
-    receiveBuilderBeat = false,
+    forceCourtOpen = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -2575,6 +2566,7 @@ async function runIntegratedCmrPass(input: {
   let activeRoute = resolvedRoute;
 
   if (
+    !forceCourtOpen &&
     cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
       cmrPass: pass,
       familyHeadAfter: resolvedFamilyHeadAfter,
@@ -2620,7 +2612,6 @@ async function runIntegratedCmrPass(input: {
     pass,
     resolvedRoute,
   );
-  const receivingBuilderBeat = receiveBuilderBeat;
   const dispatchCtx: DispatchContext = {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
@@ -2685,11 +2676,7 @@ async function runIntegratedCmrPass(input: {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
     // #1094 / #1117 / #1119: one panel-evidence gate for first open, in-process
     // resume, and cold-start ledger re-entry. Pure judge never spawns nested CLIs.
-    // #1085 / #1080 / ADR 0147: after a builder beat, this open skips panel
-    // fan-out so pure judge receives first. Soft-accept of that receive
-    // returns needsFreshOuterGate so the caller re-opens WITH panels before
-    // the court may close (never a permanent latch that starves outer gate).
-    const frozenLegs = receivingBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
+    const frozenLegs = spec.cmrReviewLegs ?? [];
     // Existing landing/ctx transports (valid → no reburn). Cold resume after
     // park with empty landing forces fan-out again (AC #1118 / #1119).
     // Durable ledgerDir evidence is cold-start recoverable (process temps are not).
@@ -2716,14 +2703,10 @@ async function runIntegratedCmrPass(input: {
       durablePanelEvidence,
       panelEvidenceIdentity,
     );
-    // #1119: pure builder-receive never carries panel transports — even when
-    // durable invalidation lagged the cmr_fix_committed write (two-write
-    // crash window). Builder cargo = refuse keys/records only (ADR 0147).
-    const existingPanelEvidence = receivingBuilderBeat
-      ? undefined
-      : (landedPanelLegEvidence(refuseReopenLanding) ??
-        landedPanelLegEvidence(dispatchCtx) ??
-        durableEvidenceForCourt);
+    const existingPanelEvidence =
+      landedPanelLegEvidence(refuseReopenLanding) ??
+      landedPanelLegEvidence(dispatchCtx) ??
+      durableEvidenceForCourt;
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep whenever either official cargo class already landed (no reburn).
     const willFanOut =
@@ -2832,10 +2815,7 @@ async function runIntegratedCmrPass(input: {
     // #1119: persist durable evidence under ledgerDir BEFORE any terminal so
     // cold re-entry can reuse valid 卷面 or observe runtime skip reasons.
     // Stamp full court identity so reuse cannot cross phase/roster/generation.
-    // Pure-receive opens (frozenLegs empty) do not refresh durable — builder
-    // soft-accept advances generation; the outer-gate open rewrites transports.
     if (
-      !receivingBuilderBeat &&
       panelEvidenceIdentity !== undefined &&
       typeof familyBackend.writeFamilyPanelLegEvidence === "function" &&
       (panelLanding.panelLegTransports !== undefined ||
@@ -3060,48 +3040,6 @@ async function runIntegratedCmrPass(input: {
 
   // pass → exit_loop / accepted.
   if (hubNext === "exit_loop") {
-    // #1080 / ADR 0147 / US#10: pure-judge receive of a builder beat must not
-    // close the court without the independent fresh-panel outer gate. Soft-
-    // accept here (no cmr_passed row) and force the caller to re-open with
-    // panels. Permanent latch + zero outer-gate was the family/1080 defect.
-    if (receivingBuilderBeat) {
-      finalReviewRoundDisposition = "accepted";
-      // 1) Generation tombstone (idempotent if fix-boundary already advanced).
-      // 2) Structured pure-receive completion on existing worker_dispatched
-      //    vocabulary with cmrPass+phase (pendingBuilderReceiveFromFamilyLedger
-      //    recognizes it; no reason-prose parse, no new status enum).
-      // Crash after (1) before (2): cold resume redoes pure receive (no panels).
-      // Crash after (2) with outer evidence already written: no-reburn same gen.
-      await invalidatePanelEvidenceAfterBuilderBeat({
-        familyBackend,
-        pass,
-        identity: {
-          ledgerPhase,
-          routeFingerprint,
-          familyHeadAfter:
-            postWorkerFamilyHead ?? resolvedFamilyHeadAfter,
-        },
-      });
-      await familyBackend.appendFamilyLedger({
-        status: "worker_dispatched",
-        event: "worker_dispatched",
-        workerStep: `cmr:${pass}`,
-        reason:
-          `integrated cmr ${pass} resident judge received builder beat; ` +
-          "fresh outer panel gate still required",
-        phase: ledgerPhase,
-        cmrPass: pass,
-        ...(openedJudgeSessionId !== undefined
-          ? { judgeSessionId: openedJudgeSessionId }
-          : {}),
-      });
-      return {
-        result: { ok: true, ran: true },
-        familyHeadAfter: postWorkerFamilyHead,
-        resolvedRoute: activeRoute,
-        needsFreshOuterGate: true,
-      };
-    }
     await persistFinalReviewRound("accepted", () =>
       recordCmrPassed(familyBackend, {
         phase: ledgerPhase,
@@ -3500,8 +3438,8 @@ async function runIntegratedCmrPass(input: {
  * (checkpoint: early `ok`; final: ship / online-review / landing).
  */
 type PendingBuilderReceiveHydration = {
+  readonly pendingReview: boolean;
   readonly familyHeadAfter?: string;
-  readonly receiveBuilderBeat: boolean;
   readonly refusedFindingIdentityKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   >;
@@ -3516,17 +3454,17 @@ async function hydratePendingBuilderReceive(input: {
   readonly ledgerPhase: "final" | "correctness_checkpoint";
   readonly familyHeadAfter?: string;
 }): Promise<PendingBuilderReceiveHydration> {
-  const pending = pendingBuilderReceiveFromFamilyLedger(
+  const pending = pendingBuilderReviewFromFamilyLedger(
     await input.familyBackend.readFamilyLedger(),
     input.pass,
     input.ledgerPhase,
   );
   return {
+    pendingReview: pending.pending,
     familyHeadAfter:
       pending.pending && pending.familyHeadAfter !== undefined
         ? pending.familyHeadAfter
         : input.familyHeadAfter,
-    receiveBuilderBeat: pending.pending,
     refusedFindingIdentityKeysByPass:
       pending.refusedFindingIdentityKeys !== undefined
         ? { [input.pass]: pending.refusedFindingIdentityKeys }
@@ -3559,6 +3497,7 @@ async function runCorrectnessCourtLoop(input: {
   readonly result: VerifyCmrResult;
   readonly familyHeadAfter?: string;
   readonly resolvedRoute: ResolvedModelRoute;
+  readonly restartFinalBarrier?: IntegratedCmrPassOutcome["restartFinalBarrier"];
 }> {
   const {
     phase,
@@ -3598,13 +3537,7 @@ async function runCorrectnessCourtLoop(input: {
   let refuseRecordsByPass: Partial<
     Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
   > = pendingReceive.refuseRecordsByPass;
-  // #1085 / #1080: post-builder open is pure-judge receive (skip panels).
-  // That flag is a one-shot for the immediate receive step only — when pure
-  // receive soft-accepts (needsFreshOuterGate), clear it so the next open
-  // re-fans panels (ADR 0147 independent outer gate; 收敛仍需 fresh 过目).
-  // #1119: cold-start restores this from trailing cmr_fix_committed.
-  let receiveBuilderBeat = pendingReceive.receiveBuilderBeat;
-
+  let forceCourtOpen = pendingReceive.pendingReview;
   while (true) {
     const correctness = await runIntegratedCmrPass({
       pass: "correctness",
@@ -3621,7 +3554,7 @@ async function runCorrectnessCourtLoop(input: {
       resolvedRoute,
       allowCoderFix: true,
       ledgerPhase,
-      receiveBuilderBeat,
+      forceCourtOpen,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.correctness !== undefined
         ? {
@@ -3633,8 +3566,7 @@ async function runCorrectnessCourtLoop(input: {
         ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
     });
-    // Consume one-shot: only the immediate post-builder open skips panels.
-    receiveBuilderBeat = false;
+    forceCourtOpen = false;
     if (!correctness.result.ok) {
       return {
         result: correctness.result,
@@ -3647,13 +3579,6 @@ async function runCorrectnessCourtLoop(input: {
       resolvedRoute = correctness.resolvedRoute;
     }
     if (correctness.restartFinalBarrier === undefined) {
-      // Pure receive soft-accepted → re-open with panels (outer gate), do not exit.
-      if (correctness.needsFreshOuterGate === true) {
-        if (correctness.familyHeadAfter !== undefined) {
-          correctnessFamilyHeadAfter = correctness.familyHeadAfter;
-        }
-        continue;
-      }
       return {
         result: { ok: true, ran: true },
         familyHeadAfter: correctness.familyHeadAfter,
@@ -3699,8 +3624,24 @@ async function runCorrectnessCourtLoop(input: {
       nextRefuseRecords !== undefined
         ? { correctness: nextRefuseRecords }
         : {};
-    // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
-    receiveBuilderBeat = true;
+    if (ledgerPhase === "final") {
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: correctnessFamilyHeadAfter,
+        resolvedRoute,
+        restartFinalBarrier: {
+          familyHeadAfter: correctnessFamilyHeadAfter,
+          priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
+          ...(Object.keys(refusedFindingIdentityKeysByPass).length > 0
+            ? { refusedFindingIdentityKeysByPass }
+            : {}),
+          ...(Object.keys(refuseRecordsByPass).length > 0
+            ? { refuseRecordsByPass }
+            : {}),
+        },
+      };
+    }
+    forceCourtOpen = true;
   }
 }
 
@@ -3921,7 +3862,7 @@ export async function runVerifyCmr(
   // #419 / #930: Step5 completeness and Step6 correctness are two ordered
   // family courts of the SAME judge machine. Correctness is unreachable until
   // completeness returns judge-converged.
-  const activePriorKeysByPass: Partial<
+  let activePriorKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   > = {
     ...(priorCmrFindingIdentityKeys !== undefined
@@ -3947,16 +3888,35 @@ export async function runVerifyCmr(
   let refuseRecordsByPass: Partial<
     Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
   > = {};
+  let currentFinalHead = familyHeadAfter;
+  let cmrPassedFamilyHeadAfter: string | undefined;
 
-  // Completeness court: loop continue → fix → resume judge until pass.
-  // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
-  const pendingReceive = await hydratePendingBuilderReceive({
-    familyBackend,
-    pass: "completeness",
-    ledgerPhase: "final",
-    ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-  });
-  let completenessFamilyHeadAfter = pendingReceive.familyHeadAfter;
+  finalCmrCycle: for (;;) {
+    // A cold correctness fix invalidates the whole final family barrier: the
+    // next legal court is completeness, not a direct correctness receive.
+    const pendingCorrectnessReview = await hydratePendingBuilderReceive({
+      familyBackend,
+      pass: "correctness",
+      ledgerPhase: "final",
+      ...(currentFinalHead !== undefined
+        ? { familyHeadAfter: currentFinalHead }
+        : {}),
+    });
+    // Completeness court: loop continue → fix → resume judge until pass.
+    // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
+    const pendingReceive = await hydratePendingBuilderReceive({
+      familyBackend,
+      pass: "completeness",
+      ledgerPhase: "final",
+      ...(pendingCorrectnessReview.familyHeadAfter !== undefined
+        ? { familyHeadAfter: pendingCorrectnessReview.familyHeadAfter }
+        : currentFinalHead !== undefined
+          ? { familyHeadAfter: currentFinalHead }
+          : {}),
+    });
+    let forceCompletenessCourtOpen =
+      pendingCorrectnessReview.pendingReview || pendingReceive.pendingReview;
+    let completenessFamilyHeadAfter = pendingReceive.familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
   refusedFindingIdentityKeysByPass = {
     ...refusedFindingIdentityKeysByPass,
@@ -3966,9 +3926,6 @@ export async function runVerifyCmr(
     ...refuseRecordsByPass,
     ...pendingReceive.refuseRecordsByPass,
   };
-  // #1085 / #1080: post-builder open is pure-judge receive (one-shot); soft-
-  // accept forces a panel outer-gate re-open (see needsFreshOuterGate).
-  let completenessReceiveBuilderBeat = pendingReceive.receiveBuilderBeat;
   for (;;) {
     const completeness = await runIntegratedCmrPass({
       pass: "completeness",
@@ -3986,7 +3943,7 @@ export async function runVerifyCmr(
       priorCmrFindingIdentityKeysByPass: completenessPriorKeysByPass,
       resolvedRoute,
       allowCoderFix: true,
-      receiveBuilderBeat: completenessReceiveBuilderBeat,
+      forceCourtOpen: forceCompletenessCourtOpen,
       ...scopedPoolFields,
       ...(refusedFindingIdentityKeysByPass.completeness !== undefined
         ? {
@@ -3998,8 +3955,7 @@ export async function runVerifyCmr(
         ? { refuseRecords: refuseRecordsByPass.completeness }
         : {}),
     });
-    // Consume one-shot: only the immediate post-builder open skips panels.
-    completenessReceiveBuilderBeat = false;
+    forceCompletenessCourtOpen = false;
     if (!completeness.result.ok) return completeness.result;
     // #919: sticky advanced coderFix across courts / fix rounds.
     if (completeness.resolvedRoute !== undefined) {
@@ -4008,10 +3964,6 @@ export async function runVerifyCmr(
     if (completeness.restartFinalBarrier === undefined) {
       if (completeness.familyHeadAfter !== undefined) {
         completenessFamilyHeadAfter = completeness.familyHeadAfter;
-      }
-      // Pure receive soft-accepted → re-open with panels (outer gate).
-      if (completeness.needsFreshOuterGate === true) {
-        continue;
       }
       break;
     }
@@ -4049,8 +4001,7 @@ export async function runVerifyCmr(
       nextRefuseRecords !== undefined
         ? { completeness: nextRefuseRecords }
         : {};
-    // #1085 / ADR 0147: next open is pure-judge receive of the builder beat.
-    completenessReceiveBuilderBeat = true;
+    forceCompletenessCourtOpen = true;
   }
   // Correctness court shares the same loop machine as #961 checkpoint
   // (ledgerPhase final; ship / online-review / landing continue below).
@@ -4071,7 +4022,22 @@ export async function runVerifyCmr(
   });
   if (!correctnessCourt.result.ok) return correctnessCourt.result;
   resolvedRoute = correctnessCourt.resolvedRoute;
-  const cmrPassedFamilyHeadAfter = correctnessCourt.familyHeadAfter;
+  if (correctnessCourt.restartFinalBarrier !== undefined) {
+    currentFinalHead =
+      correctnessCourt.familyHeadAfter ??
+      correctnessCourt.restartFinalBarrier.familyHeadAfter;
+    activePriorKeysByPass =
+      correctnessCourt.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
+    refusedFindingIdentityKeysByPass =
+      correctnessCourt.restartFinalBarrier.refusedFindingIdentityKeysByPass ??
+      {};
+    refuseRecordsByPass =
+      correctnessCourt.restartFinalBarrier.refuseRecordsByPass ?? {};
+    continue finalCmrCycle;
+  }
+  cmrPassedFamilyHeadAfter = correctnessCourt.familyHeadAfter;
+  break;
+  }
   // Both CMR passes converged. Continue through ship, online review, then
   // landing (docs / merge / MERGED / close / cleanup) below.
 
