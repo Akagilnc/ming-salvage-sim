@@ -2924,6 +2924,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         retryOpts,
       );
+      if (
+        result.kind === "failed" &&
+        usesJudgeReceiptChannel(spec) &&
+        typeof ctx.resumeSessionId === "string" &&
+        isSessionContinuityLostError(new Error(result.reason))
+      ) {
+        // Some hosts return session-loss as a failed receipt instead of
+        // throwing. Normalize only this judge-resume shape into the existing
+        // continuity-loss catch; retry semantics remain unchanged elsewhere.
+        throw new Error(result.reason);
+      }
       if (result.kind === "completed") {
         completeMechanicalRetryInvocation(step);
         onDispatchCompleted?.();
