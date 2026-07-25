@@ -35,6 +35,7 @@ import {
   getProgressBroadcastConfig,
 } from "../progressBroadcast.js";
 import { isCanonicalGithubPrUrl } from "../botPolling.js";
+import { normalizeCourtGeneration } from "./cmrPanelLegs.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -542,6 +543,9 @@ export function pendingBuilderReviewFromFamilyLedger(
     if (entry.cmrPass !== pass) continue;
     if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
     if (status === "cmr_fix_committed") {
+      const expectedCourtGeneration = normalizeCourtGeneration(
+        entry.expectedCourtGeneration,
+      );
       const refused =
         Array.isArray(entry.refusedFindingIdentityKeys) &&
         entry.refusedFindingIdentityKeys.length > 0
@@ -553,14 +557,8 @@ export function pendingBuilderReviewFromFamilyLedger(
           : undefined;
       return {
         pending: true,
-        ...(typeof entry.expectedCourtGeneration === "number" &&
-        Number.isFinite(entry.expectedCourtGeneration) &&
-        entry.expectedCourtGeneration >= 0
-          ? {
-              expectedCourtGeneration: Math.floor(
-                entry.expectedCourtGeneration,
-              ),
-            }
+        ...(expectedCourtGeneration !== undefined
+          ? { expectedCourtGeneration }
           : {}),
         ...(refused !== undefined
           ? { refusedFindingIdentityKeys: refused }

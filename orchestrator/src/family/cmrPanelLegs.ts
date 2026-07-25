@@ -254,10 +254,14 @@ export function admissibleDurablePanelLegEvidence(
   ) {
     return undefined;
   }
+  const evidenceGeneration = normalizeCourtGeneration(
+    evidence.courtGeneration,
+  );
+  const expectedGeneration = normalizeCourtGeneration(scope.courtGeneration);
   if (
-    typeof evidence.courtGeneration !== "number" ||
-    !Number.isFinite(evidence.courtGeneration) ||
-    evidence.courtGeneration !== scope.courtGeneration
+    evidenceGeneration === undefined ||
+    expectedGeneration === undefined ||
+    evidenceGeneration !== expectedGeneration
   ) {
     return undefined;
   }
@@ -266,21 +270,21 @@ export function admissibleDurablePanelLegEvidence(
 
 /**
  * Active court generation from durable evidence (0 when absent).
- * Builder soft-accept advances this; outer-gate writes stamp the same gen.
+ * The fixer ledger boundary reserves this; the following court stamps it.
  */
 export function courtGenerationFromDurableEvidence(
   evidence: { readonly courtGeneration?: number } | undefined | null,
 ): number {
-  if (
-    evidence !== undefined &&
-    evidence !== null &&
-    typeof evidence.courtGeneration === "number" &&
-    Number.isFinite(evidence.courtGeneration) &&
-    evidence.courtGeneration >= 0
-  ) {
-    return Math.floor(evidence.courtGeneration);
-  }
-  return 0;
+  return normalizeCourtGeneration(evidence?.courtGeneration) ?? 0;
+}
+
+/** Canonical parser for every durable court-generation traffic field. */
+export function normalizeCourtGeneration(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0
+    ? Math.floor(value)
+    : undefined;
 }
 
 /**
