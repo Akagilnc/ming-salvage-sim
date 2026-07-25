@@ -280,11 +280,6 @@ export const CMR_ROUTE_FILENAME = ".cmr-route.json";
 /** Runner-owned family coder-fix findings file, written transiently in the family base. */
 export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
 /**
- * #1119 — durable panel-leg evidence filename under ledgerDir (sibling of the
- * family ledger). Cold-start resume truth; not cleaned with process-temp
- * worktree fix-findings.
- */
-/**
  * The git-ignored SHIP FOCUS file written into the family-base worktree before the
  * family ship worker runs (cmr S336 r5): it pins the family base branch + the
  * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container

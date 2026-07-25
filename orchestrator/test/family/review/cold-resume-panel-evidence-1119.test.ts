@@ -21,6 +21,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   courtGenerationFromDurableEvidence,
+  ensureFamilyCmrPanelEvidence,
+  landedPanelLegEvidence,
 } from "../../../src/family/cmrPanelLegs.js";
 import {
   FAMILY_LEDGER_FILENAME,
@@ -656,6 +658,41 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
         dispatch.startsWith("completeness:"),
       ).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("#1117 OCR R1: fresh dual-empty panel result must not masquerade as landed evidence", async () => {
+    // verifyCmr treats field presence (undefined vs defined) as landed cargo.
+    // landedPanelLegEvidence already rejects dual-empty; fresh dispatch must share
+    // that presence semantic — empty arrays must not be returned as "landed".
+    const emptyExisting = landedPanelLegEvidence({
+      panelLegTransports: [],
+      panelLegSkippedLegs: [],
+    });
+    expect(emptyExisting).toBeUndefined();
+
+    const freshEmpty = await ensureFamilyCmrPanelEvidence({
+      legs: [],
+      dispatch: async () => {
+        throw new Error("empty legs must not dispatch workers");
+      },
+    });
+    expect(landedPanelLegEvidence(freshEmpty)).toBeUndefined();
+    expect(freshEmpty.panelLegTransports).toBeUndefined();
+    expect(freshEmpty.panelLegSkippedLegs).toBeUndefined();
+
+    // Dual-empty existing is not landed → same fresh path, same non-presence.
+    const afterEmptyReuseAttempt = await ensureFamilyCmrPanelEvidence({
+      legs: [],
+      existingEvidence: {
+        panelLegTransports: [],
+        panelLegSkippedLegs: [],
+      },
+      dispatch: async () => {
+        throw new Error("empty legs must not dispatch workers");
+      },
+    });
+    expect(afterEmptyReuseAttempt.panelLegTransports).toBeUndefined();
+    expect(afterEmptyReuseAttempt.panelLegSkippedLegs).toBeUndefined();
   });
 
   it("matching skip-only evidence reaches the judge unchanged without reburn", async () => {
