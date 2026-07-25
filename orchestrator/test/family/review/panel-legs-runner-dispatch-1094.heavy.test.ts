@@ -41,6 +41,7 @@ import type {
 } from "../../../src/family/types.js";
 import type {
   DispatchContext,
+  WorkerLandingPayload,
   WorkerCmrReviewLeg,
   WorkerResult,
   WorkerSpec,
@@ -948,7 +949,7 @@ describe("#1080 R3 — panel legs do not inherit the pure-court resumeSessionId"
 });
 
 describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)", () => {
-  it("declared legs with zero legal transports decision-park instead of cmr_passed", async () => {
+  it("declared legs with zero legal transports reach the judge, whose typed verdict parks", async () => {
     const { runVerifyCmr } = await import("../../../src/family/verifyCmr.js");
     const { buildExplicitLandingLiveHooks } = await import(
       "../../../src/family/landing.js"
@@ -956,11 +957,13 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     const { isCmrPanelLegWorker } = await import(
       "../../helpers/cmr-panel-leg-dispatch.js"
     );
-    const { legacyCmrScriptToWorkerOutput } = await import(
+    const { completedJudge, judgeEscalate } = await import(
       "../../helpers/judge-fixtures.js"
     );
 
     let judgeDispatched = 0;
+    let judgeSkippedLegs: WorkerLandingPayload["panelLegSkippedLegs"];
+    const runtimeSkippedLegs: Array<{ slug: string; reason: string }> = [];
     const backend = {
       ledger: [] as FamilyLedgerEntry[],
       escalations: [] as FamilyEscalation[],
@@ -996,25 +999,30 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
       async dispatchWorker(
         spec: WorkerSpec,
         ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
         if (isCmrPanelLegWorker(spec)) {
+          const runtimeFailure = {
+            slug: spec.model,
+            reason: `provider unavailable for ${spec.model}`,
+          };
+          runtimeSkippedLegs.push(runtimeFailure);
           return {
             kind: "failed",
-            reason: `docker flake on ${spec.model}`,
+            reason: runtimeFailure.reason,
           };
         }
         if (spec.kind === "cmr") {
           judgeDispatched += 1;
-          // Would have converged on empty evidence — host must not reach here.
-          return {
-            kind: "completed",
-            output: legacyCmrScriptToWorkerOutput({
-              converged: true,
-              successfulLegs: [],
-              evidencePaths: ["cmr/review-summary.json"],
-              findings: [],
-            }),
-          };
+          judgeSkippedLegs = landing?.panelLegSkippedLegs;
+          return completedJudge(
+            judgeEscalate(
+              "zero successful panel legs",
+              judgeSkippedLegs?.map((leg) => leg.reason).join("; ") ??
+                "missing runtime skips",
+            ),
+            "judge-zero-panel",
+          );
         }
         void ctx;
         return { kind: "failed", reason: `unexpected ${spec.kind}` };
@@ -1032,14 +1040,18 @@ describe("#1094 R3 F3 — zero successful panel legs escalate (never converge)",
     });
 
     expect(result.ok).toBe(false);
-    expect(judgeDispatched).toBe(0);
+    expect(judgeDispatched).toBe(1);
+    expect(judgeSkippedLegs?.map((leg) => leg.slug)).toEqual(
+      [...new Set(runtimeSkippedLegs.map((leg) => leg.slug))],
+    );
+    expect(
+      judgeSkippedLegs?.every((leg) => leg.reason.length > 0),
+    ).toBe(true);
     expect(
       backend.ledger.some((e) => e.status === "cmr_passed"),
     ).toBe(false);
     expect(backend.escalations.length).toBeGreaterThan(0);
     expect(backend.escalations[0]?.escalationKind).toBe("decision");
-    expect(backend.escalations[0]?.reason).toMatch(/zero successful panel legs/i);
-    expect(backend.escalations[0]?.diagnosis).toMatch(/docker flake/i);
   });
 });
 

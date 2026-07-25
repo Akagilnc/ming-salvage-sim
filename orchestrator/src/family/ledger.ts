@@ -35,6 +35,7 @@ import {
   getProgressBroadcastConfig,
 } from "../progressBroadcast.js";
 import { isCanonicalGithubPrUrl } from "../botPolling.js";
+import { normalizeCourtGeneration } from "./cmrPanelLegs.js";
 import {
   FAMILY_LEDGER_STATUS_VALUES,
   type FamilyBackend,
@@ -220,6 +221,19 @@ export interface CmrFixCommittedRecord {
    * Absent when the provider surfaced no id.
    */
   readonly sessionId?: string;
+  /**
+   * #1119 — refused finding keys when this builder beat was a legal refuse.
+   * Cold-start review reloads these from the fix row (not process memory).
+   */
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  /**
+   * #1119 — opaque refuseRecords cargo for judge re-ruling after cold resume.
+   */
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
+  /** Generation reserved before the separate panel-evidence tombstone write. */
+  readonly expectedCourtGeneration?: number;
 }
 
 /** A PHASE-LEVEL family escalation marker (#439). */
@@ -438,6 +452,15 @@ export async function recordCmrFixCommitted(
     typeof record.sessionId === "string" && record.sessionId.trim().length > 0
       ? record.sessionId.trim()
       : undefined;
+  const refusedKeys =
+    record.refusedFindingIdentityKeys !== undefined &&
+    record.refusedFindingIdentityKeys.length > 0
+      ? record.refusedFindingIdentityKeys
+      : undefined;
+  const refuseRecords =
+    record.refuseRecords !== undefined && record.refuseRecords.length > 0
+      ? record.refuseRecords
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "cmr_fix_committed",
@@ -450,6 +473,14 @@ export async function recordCmrFixCommitted(
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
       // #979: durable fixer-chain session continuity (ledger sole truth).
       ...(sessionId !== undefined ? { sessionId } : {}),
+      // #1119: refuse traffic + opaque cargo for cold-start review.
+      ...(refusedKeys !== undefined
+        ? { refusedFindingIdentityKeys: refusedKeys }
+        : {}),
+      ...(refuseRecords !== undefined ? { refuseRecords } : {}),
+      ...(record.expectedCourtGeneration !== undefined
+        ? { expectedCourtGeneration: record.expectedCourtGeneration }
+        : {}),
       stopSummary:
         record.stopSummary ??
         successStopSummary({
@@ -473,6 +504,75 @@ export async function recordCmrFixCommitted(
         }),
     }) as FamilyLedgerEntry,
   );
+}
+
+/**
+ * #1119 — cold-start recovery of pending fresh review after a builder beat.
+ *
+ * Structured lifecycle only (no reason/answer prose parse). Newest same-pass
+ * same-barrier row among:
+ *   - `cmr_fix_committed` → pending fresh review
+ *   - `cmr_reviewed` / `cmr_passed` → not pending
+ *
+ * Not the #1111 WHO-debt layer.
+ */
+export function pendingBuilderReviewFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  pass: IntegratedCmrPass,
+  phase: "final" | "correctness_checkpoint" = "final",
+): {
+  readonly pending: boolean;
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  readonly refuseRecords?: ReadonlyArray<
+    import("../types.js").ReviewFixRefuseRecord
+  >;
+  readonly familyHeadAfter?: string;
+  readonly expectedCourtGeneration?: number;
+} {
+  const barrierPhase = cmrBarrierPhaseOf(phase);
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const status = entry.status ?? entry.event;
+    if (
+      status !== "cmr_fix_committed" &&
+      status !== "cmr_reviewed" &&
+      status !== "cmr_passed"
+    ) {
+      continue;
+    }
+    if (entry.cmrPass !== pass) continue;
+    if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
+    if (status === "cmr_fix_committed") {
+      const expectedCourtGeneration = normalizeCourtGeneration(
+        entry.expectedCourtGeneration,
+      );
+      const refused =
+        Array.isArray(entry.refusedFindingIdentityKeys) &&
+        entry.refusedFindingIdentityKeys.length > 0
+          ? entry.refusedFindingIdentityKeys
+          : undefined;
+      const records =
+        Array.isArray(entry.refuseRecords) && entry.refuseRecords.length > 0
+          ? entry.refuseRecords
+          : undefined;
+      return {
+        pending: true,
+        ...(expectedCourtGeneration !== undefined
+          ? { expectedCourtGeneration }
+          : {}),
+        ...(refused !== undefined
+          ? { refusedFindingIdentityKeys: refused }
+          : {}),
+        ...(records !== undefined ? { refuseRecords: records } : {}),
+        ...(typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim().length > 0
+          ? { familyHeadAfter: entry.familyHeadAfter.trim() }
+          : {}),
+      };
+    }
+    return { pending: false };
+  }
+  return { pending: false };
 }
 
 /**

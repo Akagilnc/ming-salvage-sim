@@ -54,6 +54,7 @@ import {
   FakeSeamsBackend,
 } from "./real-backend.shared.js";
 import { ensureGitInfoExclude } from "../../../src/gitInfoExclude.js";
+import { FAMILY_PANEL_LEG_EVIDENCE_PREFIX } from "../../../src/family/realFamilyBackend.js";
 
 afterEach(() => {
   for (const r of tempState.repos) rmSync(r, { recursive: true, force: true });
@@ -200,6 +201,37 @@ describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling 
     mkdirSync(join(o.ledgerDir, "family-ledger.jsonl"), { recursive: true });
     const b = new RealFamilyBackend(o);
     await expect(b.readEscalations()).rejects.toThrow(/failed to read the family ledger/);
+  });
+});
+
+describe("RealFamilyBackend durable panel evidence (#1119 / ADR 0005)", () => {
+  it("returns absent only for ENOENT and fails loudly for corrupt or unreadable files", async () => {
+    const o = opts(trackRepo());
+    const evidencePath = join(
+      o.ledgerDir,
+      `${FAMILY_PANEL_LEG_EVIDENCE_PREFIX}-completeness.json`,
+    );
+    const backend = new RealFamilyBackend(o);
+
+    await expect(
+      backend.readFamilyPanelLegEvidence("completeness"),
+    ).resolves.toBeUndefined();
+
+    writeFileSync(evidencePath, "{broken", "utf8");
+    await expect(
+      backend.readFamilyPanelLegEvidence("completeness"),
+    ).rejects.toThrow(evidencePath);
+
+    writeFileSync(evidencePath, "[]", "utf8");
+    await expect(
+      backend.readFamilyPanelLegEvidence("completeness"),
+    ).rejects.toThrow(evidencePath);
+
+    rmSync(evidencePath);
+    mkdirSync(evidencePath);
+    await expect(
+      backend.readFamilyPanelLegEvidence("completeness"),
+    ).rejects.toThrow(evidencePath);
   });
 });
 
