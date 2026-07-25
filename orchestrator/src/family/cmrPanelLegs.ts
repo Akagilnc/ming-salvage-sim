@@ -15,7 +15,6 @@
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
   isLegalLegPaper,
-  successfulLegsFromTransports,
   type LegTransport,
 } from "../legPaper.js";
 import {

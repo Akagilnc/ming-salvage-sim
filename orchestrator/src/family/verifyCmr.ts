@@ -4089,7 +4089,6 @@ export async function runVerifyCmr(
   // open (cmr_reviewed / cmr_passed). Process-local refuse maps still survive
   // barrier restarts within this final-phase invocation for the immediate
   // re-open after coder-fix refuse.
-  let refusalStateByPass: RefusalStateByPass = {};
   let currentFinalHead = familyHeadAfter;
   let cmrPassedFamilyHeadAfter: string | undefined;
 
@@ -4120,7 +4119,6 @@ export async function runVerifyCmr(
       completenessCourt.familyHeadAfter;
     const completenessPriorKeysByPass =
       completenessCourt.priorKeysByPass;
-    refusalStateByPass = completenessCourt.refusalStateByPass;
   // Correctness court shares the same loop machine as #961 checkpoint
   // (ledgerPhase final; ship / online-review / landing continue below).
   const correctnessCourt = await runCmrCourtLoop({
@@ -4148,8 +4146,6 @@ export async function runVerifyCmr(
       correctnessCourt.restartFinalBarrier.familyHeadAfter;
     activePriorKeysByPass =
       correctnessCourt.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
-    refusalStateByPass =
-      correctnessCourt.restartFinalBarrier.refusalStateByPass ?? {};
     continue finalCmrCycle;
   }
   cmrPassedFamilyHeadAfter = correctnessCourt.familyHeadAfter;
