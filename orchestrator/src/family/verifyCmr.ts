@@ -3598,6 +3598,62 @@ async function verifyPostFixHandoff(input: {
   };
 }
 
+type CourtOpenDirective = {
+  readonly forceOpen: boolean;
+  readonly expectedGeneration?: number;
+  readonly requireFreshEvidence: boolean;
+};
+
+function courtOpenDirective(input: {
+  readonly pending: PendingBuilderReceiveHydration;
+  readonly restartTriggerPending: boolean;
+}): CourtOpenDirective {
+  return {
+    forceOpen: input.pending.pendingReview || input.restartTriggerPending,
+    ...(input.pending.expectedCourtGeneration !== undefined
+      ? { expectedGeneration: input.pending.expectedCourtGeneration }
+      : {}),
+    requireFreshEvidence:
+      input.pending.requireFreshPanelEvidence ||
+      input.restartTriggerPending,
+  };
+}
+
+function passAcceptedAfterTrigger(input: {
+  readonly ledger: ReadonlyArray<FamilyLedgerEntry>;
+  readonly pass: IntegratedCmrPass;
+  readonly triggerPass: IntegratedCmrPass;
+  readonly phase: "final" | "correctness_checkpoint";
+  readonly familyHeadAfter?: string;
+  readonly routeFingerprint: string;
+}): boolean {
+  const head = input.familyHeadAfter?.trim();
+  if (head === undefined || head.length === 0) return false;
+  let triggerIndex = -1;
+  for (let index = input.ledger.length - 1; index >= 0; index -= 1) {
+    const entry = input.ledger[index]!;
+    if (
+      (entry.status === "cmr_fix_committed" ||
+        entry.event === "cmr_fix_committed") &&
+      entry.cmrPass === input.triggerPass &&
+      cmrBarrierPhaseOf(entry.phase) === input.phase
+    ) {
+      triggerIndex = index;
+      break;
+    }
+  }
+  if (triggerIndex < 0) return false;
+  return input.ledger.slice(triggerIndex + 1).some(
+    (entry) =>
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.cmrPass === input.pass &&
+      cmrBarrierPhaseOf(entry.phase) === input.phase &&
+      entry.familyHeadAfter?.trim() === head &&
+      entry.routeFingerprint === input.routeFingerprint,
+  );
+}
+
 async function runCmrCourtLoop(input: {
   readonly pass: IntegratedCmrPass;
   /** A pending later-pass fix also invalidates this earlier final court. */
@@ -3671,6 +3727,17 @@ async function runCmrCourtLoop(input: {
         ? { familyHeadAfter: input.familyHeadAfter }
       : {}),
   });
+  const routeFingerprint = modelRouteFingerprint(input.resolvedRoute);
+  const triggerRequiresRestart =
+    restartTrigger?.pendingReview === true &&
+    !passAcceptedAfterTrigger({
+      ledger: await familyBackend.readFamilyLedger(),
+      pass,
+      triggerPass: input.restartTriggerPass!,
+      phase: ledgerPhase,
+      familyHeadAfter: pendingReceive.familyHeadAfter,
+      routeFingerprint,
+    });
   let courtFamilyHeadAfter = pendingReceive.familyHeadAfter;
   let courtPriorKeysByPass = input.priorKeysByPass;
   let resolvedRoute = input.resolvedRoute;
@@ -3678,13 +3745,10 @@ async function runCmrCourtLoop(input: {
   // re-open after coder-fix refuse (#966 / #919 R2). Cold-start: recover from
   // durable cmr_fix_committed (#1119) — not process memory alone.
   let refusalStateByPass = pendingReceive.refusalStateByPass;
-  let forceCourtOpen =
-    pendingReceive.pendingReview ||
-    restartTrigger?.pendingReview === true;
-  let expectedCourtGeneration = pendingReceive.expectedCourtGeneration;
-  let requireFreshPanelEvidence =
-    pendingReceive.requireFreshPanelEvidence ||
-    restartTrigger?.pendingReview === true;
+  let openDirective = courtOpenDirective({
+    pending: pendingReceive,
+    restartTriggerPending: triggerRequiresRestart,
+  });
   while (true) {
     const court = await runIntegratedCmrPass({
       pass,
@@ -3701,13 +3765,13 @@ async function runCmrCourtLoop(input: {
       resolvedRoute,
       allowCoderFix: true,
       ledgerPhase,
-      forceCourtOpen,
-      ...(expectedCourtGeneration !== undefined
+      forceCourtOpen: openDirective.forceOpen,
+      ...(openDirective.expectedGeneration !== undefined
         ? {
-            expectedCourtGeneration,
+            expectedCourtGeneration: openDirective.expectedGeneration,
           }
         : {}),
-      requireFreshPanelEvidence,
+      requireFreshPanelEvidence: openDirective.requireFreshEvidence,
       ...scopedPoolFields,
       ...(refusalStateByPass[pass]?.keys !== undefined
         ? {
@@ -3719,9 +3783,10 @@ async function runCmrCourtLoop(input: {
         ? { refuseRecords: refusalStateByPass[pass]?.records }
         : {}),
     });
-    forceCourtOpen = false;
-    expectedCourtGeneration = undefined;
-    requireFreshPanelEvidence = false;
+    openDirective = {
+      forceOpen: false,
+      requireFreshEvidence: false,
+    };
     if (!court.result.ok) {
       return {
         result: court.result,
@@ -3785,7 +3850,10 @@ async function runCmrCourtLoop(input: {
         },
       };
     }
-    forceCourtOpen = true;
+    openDirective = {
+      forceOpen: true,
+      requireFreshEvidence: false,
+    };
   }
 }
 
