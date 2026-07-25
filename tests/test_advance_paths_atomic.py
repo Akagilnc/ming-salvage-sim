@@ -15,6 +15,7 @@ TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 en
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -249,6 +250,23 @@ def _recovery_session(db, state, content, monkeypatch):
 
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    original_run_agent_text = decree_mod.run_agent_text
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+    )
+
+    def _run_agent_text(agent, prompt, label):
+        if label == "promulgation-judge":
+            dossiers = json.loads(prompt)["dossiers"]
+            return json.dumps({
+                "verdicts": [
+                    {"dossier_id": row["id"], "decision": "promulgated"}
+                    for row in dossiers
+                ],
+            })
+        return original_run_agent_text(agent, prompt, label)
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", _run_agent_text)
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state

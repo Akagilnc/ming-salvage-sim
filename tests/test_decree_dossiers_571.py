@@ -346,7 +346,7 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 
-def test_real_resolve_entry_feeds_dossiers_without_future_judge(
+def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     game, monkeypatch,
 ):
     import ming_sim.decree as decree_mod
@@ -375,9 +375,41 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
             "category": "赈济",
         },
     )
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=actor,
+        payload={
+            "text": "拟拨国库二十两修堤",
+            "actor": actor,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue",
+            "target_id": "dyke-repair",
+            "account": "国库",
+            "amount": 20,
+            "category": "河工",
+        },
+    )
     seen = {}
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "run_agent_text",
+        lambda *a, **k: json.dumps({
+            "verdicts": [
+                {
+                    "dossier_id": row["id"],
+                    "decision": (
+                        "promulgated" if row["target_id"] == "relief" else "rejected"
+                    ),
+                }
+                for row in db.list_decree_dossiers()
+                if row["pending_action_id"] > 0
+            ],
+        }),
+    )
     monkeypatch.setattr(
         decree_mod,
         "simulate_season_with_payload",
@@ -402,19 +434,52 @@ def test_real_resolve_entry_feeds_dossiers_without_future_judge(
         content=content,
     )
 
-    staged = next(
+    staged, rejected = [
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] > 0
-    )
+    ]
     assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
-        published_id, staged["id"],
+        published_id, staged["id"], rejected["id"],
     ]
     db.update_secret_order_progress(
         secret_order_id, "密查仍在推进", state.year, state.period,
     )
     assert db.get_decree_dossier(secret_dossier_id)["status"] == "executing"
     assert seen["payload"]["decree_text"] == "不应作为真源"
-    assert staged["status"] == "proposed"
+    assert [
+        row["settlement_verdict"]
+        for row in seen["payload"]["decree_dossiers"][-2:]
+    ] == ["promulgated", "rejected"]
+    assert db.get_decree_dossier(staged["id"])["status"] == "executing"
+    assert db.conn.execute(
+        "SELECT delta FROM economy_ledger WHERE dossier_id=?",
+        (staged["id"],),
+    ).fetchone()["delta"] == -10
+    assert db.get_decree_dossier(rejected["id"])["status"] == "proposed"
+    assert db.conn.execute(
+        "SELECT 1 FROM economy_ledger WHERE dossier_id=?",
+        (rejected["id"],),
+    ).fetchone() is None
+
+
+def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    monkeypatch.setattr(
+        decree_mod,
+        "create_promulgation_judge_agent",
+        lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判官"),
+    )
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+
+    assert result.awaiting is False
+    assert state.turn == 2
 
 
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
