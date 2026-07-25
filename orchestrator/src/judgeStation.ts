@@ -628,7 +628,7 @@ type ResidentJudgeLedgerRow = {
  * Scan newest→oldest:
  * - `court_dismissed` → dismissed (no residual resumeable session)
  * - `court_opened` with sessionId → open (birth at dispatch)
- * - judge-seat step with sessionId (S3/S6) → open (continuity refresh)
+ * - judge-seat verdict with sessionId (S3/S6) → open (continuity refresh)
  * - else → absent
  *
  * Heal (pre-atomic two-write crash window): when `court_opened` is present, a
@@ -703,10 +703,14 @@ export function rebuildResidentJudgeFromLedger(
     }
     // Agent steps may fold court_dismissed onto the same durable row as
     // topology output (event set + output present). Those are handled above.
-    // Pure agent rows (event undefined) still refresh open continuity.
+    // Pure agent rows (event undefined) refresh open continuity only when they
+    // carry an actual judge verdict. Failed dispatch residues can carry the
+    // runner/monitor session id without any judge output; they are not session
+    // authority.
     if (
       entry.event === undefined &&
       isJudgeSeat({ step: entry.step }) &&
+      entry.output?.kind === "judge" &&
       typeof entry.sessionId === "string" &&
       entry.sessionId.length > 0 &&
       entry.sessionId !== entry.runId
