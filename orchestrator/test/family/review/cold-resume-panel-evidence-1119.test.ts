@@ -144,6 +144,9 @@ class FileLedgerBackend implements FamilyBackend {
   readFamilyPanelLegEvidence(pass: IntegratedCmrPass) {
     return this.panelEvidenceStore.read(pass);
   }
+  panelEvidenceStorePath(pass: IntegratedCmrPass) {
+    return this.panelEvidenceStore.path(pass);
+  }
   writeFamilyPanelLegEvidence(
     pass: IntegratedCmrPass,
     e: FamilyPanelLegEvidence,
@@ -298,6 +301,48 @@ class FileLedgerBackend implements FamilyBackend {
 }
 
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
+  it("cold resume fails loud when durable panel cargo has malformed entries", async () => {
+    const dir = tmp("1119-cold-malformed-cargo-");
+    const processA = new FileLedgerBackend(dir, "none", undefined, {
+      forceFirstContinue: false,
+      parkFirstCompleteness: true,
+    });
+    const parked = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-malformed-a",
+      familyBackend: processA,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+    expect(parked.ok).toBe(false);
+
+    writeFileSync(
+      processA.panelEvidenceStorePath("completeness"),
+      `${JSON.stringify({
+        familyHeadAfter: HEAD,
+        ledgerPhase: "final",
+        routeFingerprint: ROUTE_FP,
+        courtGeneration: 0,
+        panelLegTransports: [{ slug: "gpt-5.6-sol", stdout: LEGAL }],
+        panelLegSkippedLegs: [{ slug: "agy" }],
+      })}\n`,
+    );
+
+    const processB = new FileLedgerBackend(dir, "none", undefined, {
+      forceFirstContinue: false,
+    });
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/1119-malformed-b",
+        familyBackend: processB,
+        familyHeadAfter: HEAD,
+        familyIssue: 1119,
+      }),
+    ).rejects.toThrow("invalid panel evidence cargo");
+    expect(processB.judgeLandings).toEqual([]);
+  });
+
   it("cold decision-park resume fans out when both durable cargo arrays are empty", async () => {
     const dir = tmp("1119-cold-park-");
     const processA = new FileLedgerBackend(dir, "none", undefined, {
