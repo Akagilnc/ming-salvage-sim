@@ -540,36 +540,54 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
-  it("explicit judge session-not-found records continuity loss and fresh-reopens with prior verdicts", async () => {
+  it("#1137 ignores a failed S6 residue and fresh-reopens a host-shaped missing judge session", async () => {
     await runReal(async () => {
       const live = sampleFinding("live-after-reopen", "resume.ts:1");
+      expect(
+        rebuildResidentJudgeFromLedger([
+          {
+            step: "S3",
+            sessionId: OPEN_COURT_SESSION,
+            modelSlug: "gpt-5.6-sol",
+            output: judgeContinue([live]),
+          },
+          {
+            step: "S6",
+            sessionId: "run-uuid",
+            modelSlug: "gpt-5.6-sol",
+          },
+        ]),
+      ).toEqual({
+        status: "open",
+        sessionId: OPEN_COURT_SESSION,
+        modelSlug: "gpt-5.6-sol",
+      });
       const backend = new LifecycleBackend(
         [
-          completedJudge(judgeContinue([live]), "fresh-judge-session"),
+          completedJudge(judgeContinue([live]), OPEN_COURT_SESSION),
+          {
+            kind: "failed",
+            reason: `resumeSession ${OPEN_COURT_SESSION} not found`,
+            sessionId: "run-uuid",
+          },
           completedJudge(judgeConverged(), "fresh-judge-session"),
         ],
-        undefined,
-        {
-          judgeResumeFirstThrow: new Error(
-            `Session resume failed: session ${OPEN_COURT_SESSION} not found`,
-          ),
-          judgeResumeThrowStep: "S6",
-        },
       );
 
-      const result = await runOrchestrator({ issueNumber: 11281, backend });
+      const result = await runOrchestrator({ issueNumber: 1137, backend });
       expect(result.status).toBe("completed");
 
-      const lost = backend.ledgerWrites.find(
+      const losses = backend.ledgerWrites.filter(
         (entry) =>
           entry.event === "session_continuity_lost" && entry.step === "S6",
       );
-      expect(lost).toMatchObject({
+      expect(losses).toHaveLength(1);
+      expect(losses[0]).toMatchObject({
         event: "session_continuity_lost",
         step: "S6",
-        sessionId: "fresh-judge-session",
+        sessionId: OPEN_COURT_SESSION,
       });
-      expect(lost?.reason).toContain("not found");
+      expect(losses[0]?.reason).toContain("not found");
 
       const freshReopenIndex = backend.specs.findIndex(
         (spec, index) =>
@@ -579,6 +597,9 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
       );
       expect(freshReopenIndex).toBeGreaterThanOrEqual(0);
       expect(backend.ctxs[freshReopenIndex]?.resumeSessionId).toBeUndefined();
+      expect(backend.ctxs[freshReopenIndex]?.priorJudgeVerdicts).toMatchObject([
+        { step: "S3", status: "continue", sessionId: OPEN_COURT_SESSION },
+      ]);
     });
   });
 
