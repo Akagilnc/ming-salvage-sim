@@ -54,6 +54,7 @@ const WORKTREE: WorktreeHandle = {
 class LifecycleBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   readonly ctxs: DispatchContext[] = [];
+  readonly landings: Array<WorkerLandingPayload | undefined> = [];
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   private judgeRound = 0;
   private openCourtFirstThrowDone = false;
@@ -72,6 +73,7 @@ class LifecycleBackend implements Backend {
       readonly judgeResumeFirstThrow?: Error;
       readonly judgeResumeThrowStep?: "S3" | "S6";
       readonly issueBody?: string;
+      readonly requireFreshPanelsBeforeJudge?: boolean;
     },
   ) {}
 
@@ -112,6 +114,7 @@ class LifecycleBackend implements Backend {
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     this.ctxs.push(ctx);
+    this.landings.push(landing);
     const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
 
@@ -140,6 +143,22 @@ class LifecycleBackend implements Backend {
       };
     }
     if (spec.id === "S3" || spec.id === "S6" || spec.kind === "verify") {
+      if (
+        this.opts?.requireFreshPanelsBeforeJudge === true &&
+        spec.id === "S6" &&
+        ctx.resumeSessionId === undefined &&
+        (landing?.panelLegTransports?.length ?? 0) === 0
+      ) {
+        return completedJudge(
+          judgeEscalate(
+            "fresh panel evidence missing",
+            "prior verdicts arrived without current-HEAD panel transports",
+          ),
+          typeof ctx.resumeSessionId === "string"
+            ? ctx.resumeSessionId
+            : OPEN_COURT_SESSION,
+        );
+      }
       if (
         this.opts?.judgeResumeFirstThrow !== undefined &&
         typeof ctx.resumeSessionId === "string" &&
@@ -540,7 +559,7 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
     });
   });
 
-  it("#1137 ignores a failed S6 residue and fresh-reopens a host-shaped missing judge session", async () => {
+  it("#1137/#1139 host-shaped S6 session loss reopens only after fresh panel legs", async () => {
     await runReal(async () => {
       const live = sampleFinding("live-after-reopen", "resume.ts:1");
       expect(
@@ -572,6 +591,8 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
           },
           completedJudge(judgeConverged(), "fresh-judge-session"),
         ],
+        undefined,
+        { requireFreshPanelsBeforeJudge: true },
       );
 
       const result = await runOrchestrator({ issueNumber: 1137, backend });
@@ -592,14 +613,49 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
       const freshReopenIndex = backend.specs.findIndex(
         (spec, index) =>
           spec.id === "S6" &&
+          spec.kind === "verify" &&
           spec.session === "fresh" &&
           (backend.ctxs[index]?.priorJudgeVerdicts?.length ?? 0) > 0,
       );
       expect(freshReopenIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        backend.specs
+          .slice(freshReopenIndex - 2, freshReopenIndex)
+          .map((spec) => `${spec.id}:${spec.kind}`),
+      ).toEqual(["S6:reviewer", "S6:reviewer"]);
+      expect(
+        backend.landings[freshReopenIndex]?.panelLegTransports,
+      ).toHaveLength(2);
       expect(backend.ctxs[freshReopenIndex]?.resumeSessionId).toBeUndefined();
       expect(backend.ctxs[freshReopenIndex]?.priorJudgeVerdicts).toMatchObject([
         { step: "S3", status: "continue", sessionId: OPEN_COURT_SESSION },
       ]);
+    });
+  });
+
+  it("#1139 S3 session loss fresh-reopens without pre-dispatching panel legs", async () => {
+    await runReal(async () => {
+      const backend = new LifecycleBackend([
+        {
+          kind: "failed",
+          reason: `resumeSession ${OPEN_COURT_SESSION} not found`,
+        },
+        completedJudge(judgeConverged(), "fresh-s3-judge-session"),
+      ]);
+
+      const result = await runOrchestrator({ issueNumber: 1139, backend });
+
+      expect(result.status).toBe("completed");
+      expect(
+        backend.specs
+          .filter((spec) => spec.id === "S3")
+          .map((spec) => `${spec.session}:${spec.kind}`),
+      ).toEqual(["resume:verify", "fresh:verify"]);
+      expect(
+        backend.specs.filter(
+          (spec) => spec.id === "S3" && spec.kind === "reviewer",
+        ),
+      ).toHaveLength(0);
     });
   });
 
@@ -670,13 +726,16 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
         });
 
         const result = await runOrchestrator({ issueNumber: 1135, backend });
+        const judgeIndex = backend.specs.findIndex(
+          (spec) => spec.id === "S6" && spec.kind === "verify",
+        );
         expect({
           status: result.status,
           lost: backend.ledgerWrites.filter(
             (entry) => entry.event === "session_continuity_lost",
           ),
           specs: backend.specs,
-          ctx: backend.ctxs[0],
+          ctx: backend.ctxs[judgeIndex],
         }).toMatchObject({
           status: "completed",
           lost: [
@@ -687,7 +746,16 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
               toModelId: "gpt-5.6-sol-high",
             },
           ],
-          specs: [{ id: "S6", model: "gpt-5.6-sol-high", session: "fresh" }],
+          specs: [
+            { id: "S6", kind: "reviewer", session: "fresh" },
+            { id: "S6", kind: "reviewer", session: "fresh" },
+            {
+              id: "S6",
+              kind: "verify",
+              model: "gpt-5.6-sol-high",
+              session: "fresh",
+            },
+          ],
           ctx: {
             worktree: WORKTREE,
             escalationAnswer: { forStep: "S6", answer: ownerAnswer },
@@ -705,7 +773,7 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
             ],
           },
         });
-        expect(backend.ctxs[0]?.resumeSessionId).toBeUndefined();
+        expect(backend.ctxs[judgeIndex]?.resumeSessionId).toBeUndefined();
 
         const matchingLoss = persisted({
           event: "session_continuity_lost",
@@ -742,7 +810,10 @@ describe("#1081 runOrchestrator: birth → resume → dismiss", () => {
             (entry) => entry.event === "session_continuity_lost",
           ),
           freshS6Dispatches: crashResumeBackend.specs.filter(
-            (spec) => spec.id === "S6" && spec.session === "fresh",
+            (spec) =>
+              spec.id === "S6" &&
+              spec.kind === "verify" &&
+              spec.session === "fresh",
           ),
         }).toMatchObject({
           status: "completed",
