@@ -498,6 +498,22 @@ def resolve_directives(
             f"已颁诏书：\n{decree_text}\n"
             f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
         )
+        rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
+        if rescript_decisions:
+            with atomic_and_reload(db, state, content=content, registry=registry):
+                db.save_resolve_context(
+                    state.turn, decree_text, narrative, simulator_payload,
+                    secret_orders=secret_orders_for_sim,
+                    relevant_memories=relevant_memories,
+                    source=Provenance(source).value,
+                )
+                db.save_pending_decisions(state.turn, rescript_decisions)
+                state.turn_phase = TurnPhase.AWAITING_DECISION.value
+                db.save_state(state)
+            return ResolveResult(
+                awaiting=True,
+                decisions=db.list_pending_decisions(state.turn),
+            )
         # ADR 0008 S7（决定 2）：fallback 是降级正常路径，其推进写序列同样整体包 atomic
         # ——崩在其中(只可能是代码异常，simulator 失败已被本 except 接住)则全回滚、内存从 DB
         # 重载、回合不前进，与正常路/advance 同语义。此路无 LLM 产出、无 resolve_context 入真源

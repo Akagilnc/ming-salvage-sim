@@ -593,6 +593,88 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
         ) == -10
 
 
+def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    actor = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(
+        state.turn, actor, {
+            "text": "拨国库十两赈济", "actor": actor,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "failed-simulator-relief",
+            "account": "国库", "amount": 10, "execution_surface": "immediate",
+        },
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[candidate_id])
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == candidate_id
+    )
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({
+            "verdicts": [{
+                "dossier_id": dossier["id"],
+                "decision": "rejected",
+            }],
+        }),
+    )
+
+    def _fail_simulator(*args, **kwargs):
+        raise RuntimeError("simulator unavailable")
+
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload", _fail_simulator,
+    )
+
+    turn = state.turn
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], "拨帑赈济", content=content,
+    )
+
+    assert result.awaiting is True
+    assert state.turn == turn
+    assert state.turn_phase == "awaiting_decision"
+    assert db.get_resolve_context(turn) is not None
+    assert [option["label"] for option in result.decisions[0]["options"]] == [
+        "强颁", "收回", "留中",
+    ]
+
+    withdraw = result.decisions[0]["options"][1]
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?,status='decided' "
+        "WHERE turn=? AND idx=?",
+        (json.dumps(withdraw, ensure_ascii=False), turn, result.decisions[0]["idx"]),
+    )
+    db.conn.commit()
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "", ""),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+
+    decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
+    )
+
+    resolved = db.get_decree_dossier(dossier["id"])
+    assert state.turn == turn + 1
+    assert resolved["status"] == "closed"
+    assert resolved["promulgation_decision"] == "rejected"
+    assert db.list_economy_moves_for_dossier(dossier["id"]) == []
+
+
 def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(game):
     db, state, content = game
     before = state.metrics["国库"]
