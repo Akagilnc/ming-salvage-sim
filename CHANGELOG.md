@@ -16,6 +16,11 @@
 ### Fixed
 - decision park、coder-fix commit、判官 session 恢复与进程冷重启均保留当前庭、既判史、owner answer 和最新 family HEAD，不再因缺失 transports、陈旧卷面或错误 session baton 反复 park。
 
+## [0.43.2.1] - 2026-07-26
+
+### Fixed
+- **#1141 coder-fix cargo ABI**：恢复 `coder_fix.md` 的 fixer 席运行时输入与 hand-in 契约（`fixPacketBody` / `escalationAnswer` / relay baton、`committed`+`commitsAdded` 按本 worker run 如实上报，以及 completed/refused/escalate 三例），避免修完却报 no-op。
+
 ## [0.43.2.0] - 2026-07-25
 
 ### Fixed

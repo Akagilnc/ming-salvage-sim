@@ -445,6 +445,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       escalationAnswer,
       panelDispatchCountAtOpen: 0,
     });
+    expect(processB.judgeLandings[0]).not.toHaveProperty("builderBeat");
     expect(
       processB.panelDispatches.filter((dispatch) =>
         dispatch.startsWith("completeness:"),

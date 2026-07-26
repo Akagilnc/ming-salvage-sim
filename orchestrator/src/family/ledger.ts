@@ -540,6 +540,7 @@ export function pendingBuilderReviewFromFamilyLedger(
   readonly familyHeadAfter?: string;
   readonly expectedCourtGeneration?: number;
   readonly freshPanelReviewRequired?: boolean;
+  readonly pendingDecisionAnswer?: boolean;
 } {
   const barrierPhase = cmrBarrierPhaseOf(phase);
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -592,7 +593,7 @@ export function pendingBuilderReviewFromFamilyLedger(
       // ADR 0147: a decision answer returns to the same resident judge first.
       // Older ledgers may carry the now-obsolete freshPanelReviewRequired flag
       // on this row; the typed escalate status takes precedence over it.
-      return { pending: true };
+      return { pending: true, pendingDecisionAnswer: true };
     }
     if (status === "cmr_reviewed" && entry.freshPanelReviewRequired === true) {
       return { pending: true, freshPanelReviewRequired: true };
