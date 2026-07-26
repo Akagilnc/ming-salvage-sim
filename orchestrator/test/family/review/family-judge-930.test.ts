@@ -462,6 +462,32 @@ describe("#930 runVerifyCmr family judge courts", () => {
     ).toBe(true);
   });
 
+  it("continue transports opaque fixer cargo without deriving controls from dispositions", async () => {
+    const continueVerdict: JudgeResult = {
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [],
+      fixPacketBody: "Fix the judge-authored packet exactly as delivered.",
+    };
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) =>
+        round === 0
+          ? completedJudge(continueVerdict, "judge-sess-cargo")
+          : completedJudge(judgeConverged(), "judge-sess-cargo"),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1144-opaque-cargo",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const coder = backend.dispatches.find((dispatch) => dispatch.kind === "coder");
+    expect(coder?.landing?.fixPacketBody).toBe(continueVerdict.fixPacketBody);
+    expect(coder?.blockingFindingIdentityKeys).toEqual([]);
+  });
+
   it("judge escalate parks via escalateFamily (not silent terminal)", async () => {
     const backend = new FamilyJudgeBackend({
       completeness: () =>
