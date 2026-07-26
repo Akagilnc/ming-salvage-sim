@@ -488,6 +488,39 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(coder?.blockingFindingIdentityKeys).toEqual([]);
   });
 
+  it("does not forward terminal judge disposition identities into fixer scope", async () => {
+    const continueVerdict: JudgeResult = {
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [
+        {
+          identityKey: "closed-by-judge",
+          action: "refute",
+          reason: "not_established",
+          evidence: "the claimed path is absent",
+        },
+        { identityKey: "live-in-packet-only", action: "live" },
+      ],
+      fixPacketBody: "Fix only the live item described in this packet.",
+    };
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) =>
+        round === 0
+          ? completedJudge(continueVerdict, "judge-sess-terminals")
+          : completedJudge(judgeConverged(), "judge-sess-terminals"),
+    });
+
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1144-terminal-cargo",
+      familyBackend: backend,
+    });
+
+    const coder = backend.dispatches.find((dispatch) => dispatch.kind === "coder");
+    expect(coder?.landing?.fixPacketBody).toBe(continueVerdict.fixPacketBody);
+    expect(coder?.blockingFindingIdentityKeys).toEqual([]);
+  });
+
   it("judge escalate parks via escalateFamily (not silent terminal)", async () => {
     const backend = new FamilyJudgeBackend({
       completeness: () =>

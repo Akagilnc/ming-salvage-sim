@@ -1236,8 +1236,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         (entry) => entry.status === "cmr_reviewed",
       );
       expect(reviewed).toBeDefined();
-      // The typed judge disposition table is the canonical fixer control cargo.
-      expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
+      // The packet body is the canonical fixer control cargo; runner does not
+      // project the judge disposition table into a second scope.
+      expect(reviewed!.blockingFindingIdentityKeys).toEqual([]);
       // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     });

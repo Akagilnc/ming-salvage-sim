@@ -190,30 +190,6 @@ export type VerifyCmrPhase = "wave" | "correctness_checkpoint" | "final";
 export type { FamilyStageFailureStatus };
 
 /**
- * Blindly transport the identity-key column from an already decoded judge
- * envelope. The runner neither filters by disposition action nor rejects an
- * empty table; status alone chooses the topology edge (ADR 0131).
- */
-function judgeAuthoredFindingIdentityKeys(
-  output: unknown,
-): readonly string[] {
-  if (
-    output === null ||
-    typeof output !== "object" ||
-    (output as { readonly kind?: unknown }).kind !== "judge"
-  ) {
-    return [];
-  }
-  return (
-    (output as {
-      readonly findingDispositions?: ReadonlyArray<{
-        readonly identityKey: string;
-      }>;
-    }).findingDispositions ?? []
-  ).map((row) => row.identityKey);
-}
-
-/**
  * The context the verify-cmr hook needs to do its (eventual #296) work.
  *
  * #293 passes it but ignores it (no-op). #296 reads `familyBase` to run verify in
@@ -878,8 +854,10 @@ async function runWaveVerifyJudgeCourt(input: {
           }),
         });
       }
-      const blockingIdentityKeys =
-        judgeAuthoredFindingIdentityKeys(judgeResult.output);
+      // ADR 0138: the judge-authored packet is the complete fixer control
+      // cargo. Runner must not inspect disposition actions or manufacture a
+      // second fixer scope from that table (ADR 0062 / 0131).
+      const blockingIdentityKeys: readonly string[] = [];
       const fixOutcome = await runWaveVerifyFixerRound({
         phase,
         familyBase,
@@ -2790,9 +2768,11 @@ async function runIntegratedCmrPass(input: {
           durablePanelEvidence,
           panelEvidenceIdentity,
         );
-    const existingPanelEvidence = receiveResidentJudgeOnly
+    const existingPanelEvidence = receiveBuilderBeat
       ? undefined
-      : (landedPanelLegEvidence(courtLanding) ??
+      : receiveDecisionAnswer
+        ? durableEvidenceForCourt
+        : (landedPanelLegEvidence(courtLanding) ??
         landedPanelLegEvidence(dispatchCtx) ??
         durableEvidenceForCourt);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
@@ -3278,8 +3258,10 @@ async function runIntegratedCmrPass(input: {
       `integrated cmr ${pass}: hub resume_builder without continue action (${closure.action})`,
     );
   }
-  const blockingFindingIdentityKeys =
-    judgeAuthoredFindingIdentityKeys(judgeTraffic);
+  // The opaque fixPacketBody is the judge-authored fixer scope. Disposition
+  // rows remain judge/findings-store cargo and are never projected into fixer
+  // controls by the runner (ADR 0062 / 0131 / 0138).
+  const blockingFindingIdentityKeys: readonly string[] = [];
   const blockingFindingCount = blockingFindingIdentityKeys.length;
 
   // ADR 0138 / #978: packet body required before family coder-fix — never pack
@@ -3319,11 +3301,13 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
+  const reason =
+    `integrated cmr ${pass} judge continue with opaque fixer packet`;
   const stopSummary: StopSummary = stageFailureStopSummary({
-      status: "cmr_failed",
+    status: "cmr_failed",
     summary: reason,
-    repairHint: "send live findings to coder-fix, then resume the family judge",
+    repairHint:
+      "transport the judge-authored packet to coder-fix, then resume the family judge",
   });
 
   // Soul law: missing sessionId / not resume-capable → still coder-fix;
@@ -3500,14 +3484,18 @@ async function hydratePendingBuilderReceive(input: {
   return {
     pendingReview: pending.pending,
     pendingBuilderBeat:
-      pending.pending && pending.freshPanelReviewRequired !== true,
+      pending.pending &&
+      pending.pendingDecisionAnswer !== true &&
+      pending.freshPanelReviewRequired !== true,
     pendingDecisionAnswer: pending.pendingDecisionAnswer === true,
     ...(pending.expectedCourtGeneration !== undefined
       ? { expectedCourtGeneration: pending.expectedCourtGeneration }
       : {}),
     requireFreshPanelEvidence:
       pending.freshPanelReviewRequired === true ||
-      (pending.pending && pending.expectedCourtGeneration === undefined),
+      (pending.pending &&
+        pending.pendingDecisionAnswer !== true &&
+        pending.expectedCourtGeneration === undefined),
     familyHeadAfter:
       input.familyHeadAfter ?? pending.familyHeadAfter,
     refusalStateByPass:
@@ -3809,7 +3797,7 @@ async function runCmrCourtLoop(input: {
         courtFamilyHeadAfter = court.familyHeadAfter;
         openDirective = {
           forceOpen: true,
-          requireFreshEvidence: false,
+          requireFreshEvidence: true,
           receiveBuilderBeat: false,
           receiveDecisionAnswer: false,
         };
