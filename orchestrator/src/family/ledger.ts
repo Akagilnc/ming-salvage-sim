@@ -542,9 +542,40 @@ export function pendingBuilderReviewFromFamilyLedger(
   readonly expectedCourtGeneration?: number;
   readonly freshPanelReviewRequired?: boolean;
   readonly pendingDecisionAnswer?: boolean;
+  readonly pendingBuilderDecisionAnswer?: boolean;
   readonly pendingPanelReturn?: boolean;
 } {
   const barrierPhase = cmrBarrierPhaseOf(phase);
+  const refusalStateAtOrBefore = (
+    index: number,
+  ): {
+    readonly refusedFindingIdentityKeys?: readonly string[];
+    readonly refuseRecords?: ReadonlyArray<
+      import("../types.js").ReviewFixRefuseRecord
+    >;
+  } => {
+    for (let priorIndex = index; priorIndex >= 0; priorIndex--) {
+      const prior = ledger[priorIndex]!;
+      if (prior.cmrPass !== pass) continue;
+      if (cmrBarrierPhaseOf(prior.phase) !== barrierPhase) continue;
+      const keys =
+        Array.isArray(prior.refusedFindingIdentityKeys) &&
+        prior.refusedFindingIdentityKeys.length > 0
+          ? prior.refusedFindingIdentityKeys
+          : undefined;
+      const records =
+        Array.isArray(prior.refuseRecords) && prior.refuseRecords.length > 0
+          ? prior.refuseRecords
+          : undefined;
+      if (keys !== undefined || records !== undefined) {
+        return {
+          ...(keys !== undefined ? { refusedFindingIdentityKeys: keys } : {}),
+          ...(records !== undefined ? { refuseRecords: records } : {}),
+        };
+      }
+    }
+    return {};
+  };
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     const status = entry.status ?? entry.event;
@@ -562,12 +593,14 @@ export function pendingBuilderReviewFromFamilyLedger(
       const expectedCourtGeneration = normalizeCourtGeneration(
         entry.expectedCourtGeneration,
       );
+      const refusalState = refusalStateAtOrBefore(i);
       return {
         pending: true,
         pendingPanelReturn: true,
         ...(expectedCourtGeneration !== undefined
           ? { expectedCourtGeneration }
           : {}),
+        ...refusalState,
       };
     }
     if (entry.cmrPass !== pass) continue;
@@ -604,7 +637,15 @@ export function pendingBuilderReviewFromFamilyLedger(
       // ADR 0147: a decision answer returns to the same resident judge first.
       // Older ledgers may carry the now-obsolete freshPanelReviewRequired flag
       // on this row; the typed escalate status takes precedence over it.
-      return { pending: true, pendingDecisionAnswer: true };
+      const refusalState = refusalStateAtOrBefore(i);
+      return {
+        pending: true,
+        pendingDecisionAnswer: true,
+        ...(entry.builderBeat === "construct"
+          ? { pendingBuilderDecisionAnswer: true }
+          : {}),
+        ...refusalState,
+      };
     }
     if (status === "cmr_reviewed" && entry.freshPanelReviewRequired === true) {
       return { pending: true, freshPanelReviewRequired: true };

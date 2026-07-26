@@ -358,6 +358,8 @@ export interface FamilyLedgerEntry {
    * Cold recovery trusts this ledger value, never the possibly stale evidence.
    */
   readonly expectedCourtGeneration?: number;
+  /** ADR 0147 — a parked decision originated on the builder-receipt beat. */
+  readonly builderBeat?: "construct";
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the

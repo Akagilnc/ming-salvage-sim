@@ -313,6 +313,11 @@ class FileLedgerBackend implements FamilyBackend {
 
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
   it("keeps the fresh outer panel pending after the builder receipt", () => {
+    const refuseRecord = mintFourReasonRefuseRecord({
+      identityKey: REFUSE_KEY,
+      reason: "not_established",
+      evidence: "durable rebuttal",
+    });
     expect(
       pendingBuilderReviewFromFamilyLedger(
         [
@@ -322,6 +327,8 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
             phase: "final",
             cmrPass: "completeness",
             expectedCourtGeneration: 2,
+            refusedFindingIdentityKeys: [REFUSE_KEY],
+            refuseRecords: [refuseRecord],
           } as FamilyLedgerEntry,
         ],
         "completeness",
@@ -330,6 +337,45 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       pending: true,
       pendingPanelReturn: true,
       expectedCourtGeneration: 2,
+      refusedFindingIdentityKeys: [REFUSE_KEY],
+      refuseRecords: [refuseRecord],
+    });
+  });
+
+  it("keeps refusal cargo and builder-round identity across a decision park", () => {
+    const refuseRecord = mintFourReasonRefuseRecord({
+      identityKey: REFUSE_KEY,
+      reason: "not_established",
+      evidence: "durable rebuttal",
+    });
+    expect(
+      pendingBuilderReviewFromFamilyLedger(
+        [
+          {
+            status: "cmr_fix_committed",
+            event: "cmr_fix_committed",
+            phase: "final",
+            cmrPass: "correctness",
+            refusedFindingIdentityKeys: [REFUSE_KEY],
+            refuseRecords: [refuseRecord],
+          } as FamilyLedgerEntry,
+          {
+            status: "cmr_reviewed",
+            event: "cmr_reviewed",
+            phase: "final",
+            cmrPass: "correctness",
+            judgeStatus: "escalate",
+            builderBeat: "construct",
+          } as FamilyLedgerEntry,
+        ],
+        "correctness",
+      ),
+    ).toEqual({
+      pending: true,
+      pendingDecisionAnswer: true,
+      pendingBuilderDecisionAnswer: true,
+      refusedFindingIdentityKeys: [REFUSE_KEY],
+      refuseRecords: [refuseRecord],
     });
   });
 

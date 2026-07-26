@@ -6,9 +6,11 @@ brain (ADR 0145: no runner-side exit-code / prose classifier).
 
 ## Job
 
-A family verify came back RED. Its actual phase and accident scope (`wave`,
-`correctness_checkpoint`, or `final`) are named in `.cmr-focus.md`; treat that
-phase as scope, not as a different court. Triage which kind of red it is:
+A family verify result is waiting in `.cmr-focus.md`: either the initial RED
+evidence or the mechanical GREEN receipt after your fixer beat. Its actual phase
+and accident scope (`wave`, `correctness_checkpoint`, or `final`) are named
+there; treat that phase as scope, not as a different court. For RED, triage
+which kind it is:
 
 - a real code regression within this phase scope that the fixer can repair, or
 - a toolchain / environment failure that only a fresh green re-verify can clear.
@@ -22,7 +24,14 @@ trajectory) follow the persistent judge seat rules already in your soul.
 
 Emit the shared judge station envelope on the `<judge>` tag (Sandcastle
 `Output.object`, schema from `stationReceiptContracts` — do not invent a second
-vocabulary). This triage court's two terminals are:
+vocabulary). This court's terminals are:
+
+Converged — the focus file carries the mechanical GREEN receipt after the fixer
+beat:
+
+```text
+<judge>{"station":"judge","status":"converged","findingDispositions":[]}</judge>
+```
 
 Continue — real regression: send the fixer a judge-authored fix packet, then this
 court resumes after the mechanical re-verify:
