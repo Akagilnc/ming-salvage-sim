@@ -967,10 +967,11 @@ export interface WorkerLandingPayload extends PanelLegEvidenceCargo {
    */
   readonly builderPlanBody?: string;
   /**
-   * #1082 — structural beat hint for the next S2 dispatch (`plan` first beat;
-   * `after_plan_verdict` after judge continue while still in plan phase).
+   * #1082 / #1143 — typed builder beat on the shared landing protocol:
+   * `plan` / `after_plan_verdict` are S2 plan-phase hints; `construct` marks a
+   * completed family builder/fixer beat returning to its resident judge.
    */
-  readonly builderBeat?: "plan" | "after_plan_verdict";
+  readonly builderBeat?: "plan" | "after_plan_verdict" | "construct";
   /**
    * @deprecated ADR 0138 — bare finding packing path deleted. Residual
    * fixtures may still set this; production coder-fix landing does not
