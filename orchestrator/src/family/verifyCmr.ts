@@ -3486,6 +3486,7 @@ async function hydratePendingBuilderReceive(input: {
     pendingBuilderBeat:
       pending.pending &&
       pending.pendingDecisionAnswer !== true &&
+      pending.pendingPanelReturn !== true &&
       pending.freshPanelReviewRequired !== true,
     pendingDecisionAnswer: pending.pendingDecisionAnswer === true,
     ...(pending.expectedCourtGeneration !== undefined
@@ -3495,6 +3496,7 @@ async function hydratePendingBuilderReceive(input: {
       pending.freshPanelReviewRequired === true ||
       (pending.pending &&
         pending.pendingDecisionAnswer !== true &&
+        pending.pendingPanelReturn !== true &&
         pending.expectedCourtGeneration === undefined),
     familyHeadAfter:
       input.familyHeadAfter ?? pending.familyHeadAfter,

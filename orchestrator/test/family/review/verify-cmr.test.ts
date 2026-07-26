@@ -2103,6 +2103,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       action: "fix_now",
     };
     let backend!: CapableFamilyBackend;
+    let correctnessRounds = 0;
     backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: (req) => {
@@ -2112,7 +2113,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           };
         }
-        if (req.priorCmrFindingIdentityKeys?.includes(correctnessKey)) {
+        correctnessRounds += 1;
+        if (correctnessRounds > 1) {
           return {
             converged: true,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -2144,14 +2146,25 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
               : {}),
           });
+          const output = cmrScriptToWorkerOutput(cmr);
+          if (
+            ctx.cmrPass === "correctness" &&
+            correctnessRounds === 1
+          ) {
+            expect(output).toMatchObject({
+              kind: "judge",
+              status: "continue",
+              fixPacketBody: expect.any(String),
+            });
+          }
           return {
             kind: "completed",
-            output: cmrScriptToWorkerOutput(cmr),
+            output,
             sessionId: `${ctx.cmrPass ?? "cmr"}-291-judge-session`,
           };
         }
         if (spec.kind === "coder") {
-          expect(ctx.blockingFindingIdentityKeys).toEqual([correctnessKey]);
+          expect(ctx.blockingFindingIdentityKeys).toEqual([]);
           backend.currentFamilyHead = "head-after-correctness-fix";
           return {
             kind: "completed",

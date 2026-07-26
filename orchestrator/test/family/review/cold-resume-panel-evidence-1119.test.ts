@@ -27,6 +27,7 @@ import {
 } from "../../../src/family/realFamilyBackend.js";
 import { FilePanelEvidenceStore } from "../../../src/family/panelEvidenceStore.js";
 import {
+  pendingBuilderReviewFromFamilyLedger,
   parseFamilyLedgerJsonl,
 } from "../../../src/family/ledger.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
@@ -311,6 +312,25 @@ class FileLedgerBackend implements FamilyBackend {
 }
 
 describe("#1119 A→B crash windows (file ledgerDir)", () => {
+  it("keeps the fresh outer panel pending after the builder receipt", () => {
+    expect(
+      pendingBuilderReviewFromFamilyLedger(
+        [
+          {
+            status: "worker_dispatched",
+            event: "worker_dispatched",
+            phase: "final",
+            cmrPass: "completeness",
+          } as FamilyLedgerEntry,
+        ],
+        "completeness",
+      ),
+    ).toEqual({
+      pending: true,
+      pendingPanelReturn: true,
+    });
+  });
+
   it("an interrupted evidence replacement preserves the last valid court paper", () => {
     const dir = tmp("1119-interrupted-evidence-write-");
     const priorEvidence: FamilyPanelLegEvidence = {

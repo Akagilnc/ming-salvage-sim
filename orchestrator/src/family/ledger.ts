@@ -521,7 +521,8 @@ export async function recordCmrFixCommitted(
  * Structured lifecycle only (no reason/answer prose parse). Newest same-pass
  * same-barrier row among:
  *   - `cmr_fix_committed` → pending resident-judge receive
- *   - scoped `worker_dispatched` → resident judge received the builder beat
+ *   - scoped `worker_dispatched` → resident judge received the builder beat;
+ *     the requested outer panel is still pending
  *   - `cmr_reviewed` escalate → pending resident-judge answer receive
  *   - other `cmr_reviewed` / `cmr_passed` → not pending
  *
@@ -541,6 +542,7 @@ export function pendingBuilderReviewFromFamilyLedger(
   readonly expectedCourtGeneration?: number;
   readonly freshPanelReviewRequired?: boolean;
   readonly pendingDecisionAnswer?: boolean;
+  readonly pendingPanelReturn?: boolean;
 } {
   const barrierPhase = cmrBarrierPhaseOf(phase);
   for (let i = ledger.length - 1; i >= 0; i--) {
@@ -557,7 +559,7 @@ export function pendingBuilderReviewFromFamilyLedger(
     if (status === "worker_dispatched") {
       if (entry.cmrPass !== pass) continue;
       if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
-      return { pending: false };
+      return { pending: true, pendingPanelReturn: true };
     }
     if (entry.cmrPass !== pass) continue;
     if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
