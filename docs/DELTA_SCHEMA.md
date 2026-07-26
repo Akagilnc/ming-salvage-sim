@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 21 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 22 字段，别指望守门人帮忙兜。
 
-## 顶层 21 字段（容器类型固定）
+## 顶层 22 字段（容器类型固定）
 
 ```jsonc
 {
@@ -31,6 +31,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "事件结局":          {},  // dict[event_id -> 闭合结局标签]
   "cancels":          [],  // 撤销 issue
   "close_issues":     [],  // 结案 issue
+  "dossier_executions": [], // 执行中案卷的明确结局
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
@@ -249,7 +250,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---

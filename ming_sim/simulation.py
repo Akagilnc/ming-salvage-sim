@@ -59,6 +59,7 @@ TOP_LEVEL_ALIASES = {
     "event_outcomes": "事件结局",
     "撤销局势": "cancels",
     "结案局势": "close_issues",
+    "案卷执行": "dossier_executions",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
@@ -139,6 +140,9 @@ ITEM_FIELD_ALIASES = {
     "sim_note": "sim_note", "推演备注": "sim_note",
     "disclosed": "disclosed", "泄漏结论": "disclosed",
     "result": "result", "结果": "result",
+    "dossier_id": "dossier_id", "案卷编号": "dossier_id",
+    "outcome": "outcome", "执行结果": "outcome",
+    "note": "note", "执行说明": "note",
     "stance": "stance", "立场": "stance",
     "action": "action", "行动": "action",
     "impact": "impact", "影响": "impact",
@@ -636,13 +640,17 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "人物变更": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
+    "dossier_executions": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
-    "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
+    "issues": {
+        "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
+        "dossier_executions",
+    },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
@@ -864,6 +872,8 @@ def build_extractor_shared_context(
             "origin_ref": f"dossier:{int(row['id'])}",
             "action_type": str(row["action_type"]),
             "decree_text": str(row["decree_text"]),
+            "status": str(row["status"]),
+            "due_turn": int(row.get("due_turn") or 0),
         }
         for row in authorized_dossiers
         if row["action_type"] != "secret_order"

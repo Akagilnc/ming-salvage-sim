@@ -828,22 +828,6 @@ export function App() {
     }
   };
 
-  const saveDecree = async (text: string) => {
-    setBusy("存改诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree", {
-        method: "PATCH",
-        body: JSON.stringify({ decree: text }),
-      });
-      setDecree(data.decree);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const resetDecree = () => {
     // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
     setDecree("");
@@ -1262,7 +1246,6 @@ export function App() {
             onDeleteDirective={deleteDirective}
             onWriteDecree={writeDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onSaveDecree={saveDecree}
             onResetDecree={resetDecree}
             onIssueDecree={issueDecree}
             onConfirmDirective={confirmDirective}

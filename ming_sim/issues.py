@@ -6443,6 +6443,35 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    dossier_execution_results: List[Dict[str, object]] = []
+    for item in extracted.get("dossier_executions") or []:
+        if not isinstance(item, dict):
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+            })
+            continue
+        try:
+            dossier_id = int(item.get("dossier_id") or 0)
+            dossier = db.get_decree_dossier(dossier_id)
+            if dossier is None or dossier["status"] != "executing":
+                raise ValueError("案卷不存在或不在 executing")
+            outcome = str(item.get("outcome") or "").strip()
+            if outcome not in {"fulfilled", "degraded", "failed"}:
+                raise ValueError("执行结果必须为 fulfilled/degraded/failed")
+            note = str(item.get("note") or "").strip()
+            if not note:
+                raise ValueError("执行说明不能为空")
+            db.record_dossier_execution(
+                dossier_id, outcome, note, state.turn, close=True, commit=False,
+            )
+            dossier_execution_results.append({
+                "dossier_id": dossier_id, "outcome": outcome,
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_transition",
+                "reason": str(exc), "item": item,
+            })
     # ADR 0051/0055 authorization backstop: the extractor receives only
     # executable dossiers, but a model can still invent a syntactically valid
     # dossier:<id>.  Reject every list-carried effect whose dossier has not
@@ -7597,6 +7626,7 @@ def apply_score_extraction(
         "created_armies": created_armies,
         "power_changes": power_changes,
         "issue_summary": issue_summary,
+        "dossier_executions": dossier_execution_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,

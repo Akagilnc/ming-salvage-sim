@@ -284,22 +284,18 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
-        if "draft_texts" not in ctx.batch_state:
+        if "drafts" not in ctx.batch_state:
             batch_res = extract_draft_intent(
                 ctx.player_message,
                 ctx.reply,
                 llm_config=ctx.llm_config,
                 draft_count=ctx.candidate_kind_count,
             )
-            ctx.batch_state["draft_texts"] = list(batch_res.get("draft_texts") or [])
-        draft_texts = ctx.batch_state["draft_texts"]
-        if ctx.candidate_kind_index >= len(draft_texts):
+            ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
+        drafts = ctx.batch_state["drafts"]
+        if ctx.candidate_kind_index >= len(drafts):
             return
-        draft_res = {
-            "draft_action": "拟旨",
-            "draft_text": draft_texts[ctx.candidate_kind_index],
-            "target_candidate": "",
-        }
+        draft_res = dict(drafts[ctx.candidate_kind_index])
     else:
         draft_res = extract_draft_intent(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,

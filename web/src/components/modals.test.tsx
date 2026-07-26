@@ -189,7 +189,6 @@ function renderEdictModal(props: {
         onDeleteDirective={() => {}}
         onWriteDecree={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
-        onSaveDecree={() => {}}
         onResetDecree={() => {}}
         onIssueDecree={() => {}}
         onConfirmDirective={() => {}}

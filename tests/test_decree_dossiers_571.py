@@ -1592,6 +1592,105 @@ def test_incomplete_mechanical_directive_is_rejected_instead_of_retyped(
     assert db.get_dossier_for_directive(directive_id) is None
 
 
+def test_mechanical_directive_missing_target_fails_loudly_at_real_entry(game):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "拨银十两但未指明去处", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue",
+            "account": "国库",
+            "amount": 10,
+            "execution_surface": "immediate",
+        },
+    )
+    with pytest.raises(ValueError, match="canonical target"):
+        db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
+
+
+def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
+    db, state, _content = game
+    order_id = db.create_secret_order(
+        state, _active_minister(db), "安抚诸将", "每月拨银安抚诸将", [],
+        deadline_months=3,
+    )
+    dossier = db.get_dossier_for_secret_order(order_id)
+    assert db.resolve_commitment_origin_ref(
+        state, f"secret_order:{order_id}", origin_kind="decree",
+    ) == f"dossier:{dossier['id']}"
+
+
+def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    raw = json.dumps({
+        "成品旨稿": [
+            {
+                "正文": "拨国库银一万两赈陕",
+                "动作类型": "grant_allocation",
+                "目标类型": "region",
+                "目标ID": "shaanxi",
+                "金额": 10000,
+                "账户": "国库",
+                "执行面": "in_transit",
+            },
+            {
+                "正文": "命洪承畴三月出师",
+                "动作类型": "military_order",
+                "目标类型": "region",
+                "目标ID": "shaanxi",
+                "承办人": "洪承畴",
+                "期限月数": 3,
+            },
+        ],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_args, **_kwargs: (raw, {}),
+    )
+    result = cli_backend.extract_draft_intent(
+        "分别拟旨拨款、出师", "臣已拟妥", draft_count=2,
+    )
+    assert result["drafts"][0]["amount"] == 10000
+    assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
+    assert result["drafts"][1]["deadline_months"] == 3
+    assert result["drafts"][1]["dossier_action_type"] == "military_order"
+
+
+def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
+    from ming_sim.issues import apply_score_extraction
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="military_order", decree_text="三月后出师",
+        target_kind="region", target_id="shaanxi",
+        executor_kind="character", executor_id=_active_minister(db),
+        due_turn=state.turn + 3,
+    )
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    state.turn += 1
+    assert dossier_id in {
+        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+    }
+    result = apply_score_extraction(
+        db, state, {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "fulfilled",
+                "note": "奉旨出师，军令已毕",
+            }],
+        },
+        content=content,
+    )
+    assert result["dossier_executions"] == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+    }]
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+
+
 def test_withdrawn_rescript_records_closed_turn(game):
     from ming_sim.db import GameDB
 
