@@ -620,6 +620,12 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     let verifyCalls = 0;
     const coderDispatches: WorkerSpec[] = [];
     const verifyJudgePhases: Array<DispatchContext["phase"]> = [];
+    const verifyJudgeReceipts: Array<DispatchContext["waveVerifyReceipt"]> = [];
+    const verifyJudgeFailures: Array<DispatchContext["waveVerifyFailure"]> = [];
+    const verifyJudgeSessions: Array<{
+      readonly mode: WorkerSpec["session"];
+      readonly resumeSessionId: string | undefined;
+    }> = [];
     const backend: CapableFamilyBackend = new CapableFamilyBackend({
       verify: () => {
         verifyCalls += 1;
@@ -631,11 +637,20 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
         if (spec.kind === "cmr") {
           if (spec.promptFile === "wave_verify_judge.md") {
             verifyJudgePhases.push(ctx.phase);
-            return completedJudge(
-              verifyJudgePhases.length === 1
-                ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
-                : judgeConverged(),
-            );
+            verifyJudgeReceipts.push(ctx.waveVerifyReceipt);
+            verifyJudgeFailures.push(ctx.waveVerifyFailure);
+            verifyJudgeSessions.push({
+              mode: spec.session,
+              resumeSessionId: ctx.resumeSessionId,
+            });
+            return {
+              ...completedJudge(
+                verifyJudgePhases.length === 1
+                  ? judgeContinue([sampleFinding("final verify finding", "src/b.ts:5")])
+                  : judgeConverged(),
+              ),
+              sessionId: "verify-judge-session",
+            };
           }
           return completedJudge(judgeConverged());
         }
@@ -672,6 +687,18 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(backend.verifyCalls[0]?.phase).toBe("final");
     expect(backend.verifyCalls[1]?.phase).toBe("final");
     expect(verifyJudgePhases).toEqual(["final", "final"]);
+    expect(verifyJudgeReceipts).toEqual([
+      undefined,
+      { status: "green", phase: "final" },
+    ]);
+    expect(verifyJudgeFailures).toEqual([
+      "final verify red: test failure",
+      undefined,
+    ]);
+    expect(verifyJudgeSessions).toEqual([
+      { mode: "fresh", resumeSessionId: undefined },
+      { mode: "resume", resumeSessionId: "verify-judge-session" },
+    ]);
     expect(coderDispatches).toHaveLength(1);
     expect(
       backend.ledger.filter((entry) => entry.status === "cmr_passed"),

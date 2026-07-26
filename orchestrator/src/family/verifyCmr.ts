@@ -698,6 +698,7 @@ async function runWaveVerifyJudgeCourt(input: {
   });
 
   let failureReason = input.initialFailure;
+  let greenReceipt: DispatchContext["waveVerifyReceipt"];
   let familyHeadBefore = input.familyHeadAfter;
   /** Process-local court session across builder beats in this court open. */
   let judgeSessionId: string | undefined;
@@ -725,7 +726,9 @@ async function runWaveVerifyJudgeCourt(input: {
       ...(runId !== undefined ? { runId } : {}),
       modelRoute: resolvedRoute,
       ...(judgePool !== undefined ? { billingPool: judgePool } : {}),
-      waveVerifyFailure: failureReason,
+      ...(greenReceipt !== undefined
+        ? { waveVerifyReceipt: greenReceipt }
+        : { waveVerifyFailure: failureReason }),
       phase,
       ...(judgeSessionId !== undefined ? { resumeSessionId: judgeSessionId } : {}),
       ...(familyIssue !== undefined ? { familyIssue } : {}),
@@ -946,12 +949,11 @@ async function runWaveVerifyJudgeCourt(input: {
       lastObserve = reVerifyAfterFix;
       lastObserveFamilyHead = familyHeadBefore;
       if (reVerifyAfterFix.ok) {
-        // In-process handoff to the resident judge receive step (ADR 0147).
-        // Crash mid-loop worst case = white-run one verify/court cycle; soul
-        // recovery is fresh judge reading ledger verdicts — no durable debt.
-        failureReason =
-          "wave verify green after fixer beat — resident judge must receive before exit";
+        // Explicit typed receipt to the same resident judge (ADR 0145/0147).
+        // Green is never rewritten into the red-failure channel.
+        greenReceipt = { status: "green", phase };
       } else {
+        greenReceipt = undefined;
         failureReason =
           reVerifyAfterFix.errorPackage?.reason ?? "family verify failed";
       }
@@ -998,6 +1000,7 @@ async function runWaveVerifyJudgeCourt(input: {
             : {}),
         };
       }
+      greenReceipt = undefined;
       failureReason = reVerify.errorPackage?.reason ?? "family verify failed";
       continue;
     }
