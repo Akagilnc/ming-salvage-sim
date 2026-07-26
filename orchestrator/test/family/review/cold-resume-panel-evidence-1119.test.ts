@@ -344,7 +344,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     ).toEqual([]);
   });
 
-  it("cold resume fails loud when durable panel cargo has malformed entries", async () => {
+  it("cold resume transports durable panel cargo without runner-side schema judgment", async () => {
     const dir = tmp("1119-cold-malformed-cargo-");
     const processA = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -374,16 +374,17 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     const processB = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
     });
-    await expect(
-      runVerifyCmr({
-        phase: "final",
-        familyBase: "family/1119-malformed-b",
-        familyBackend: processB,
-        familyHeadAfter: HEAD,
-        familyIssue: 1119,
-      }),
-    ).rejects.toThrow("invalid panel evidence cargo");
-    expect(processB.judgeLandings).toEqual([]);
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/1119-malformed-b",
+      familyBackend: processB,
+      familyHeadAfter: HEAD,
+      familyIssue: 1119,
+    });
+    expect(processB.judgeLandings[0]?.transports).toEqual([
+      { slug: "gpt-5.6-sol", stdout: LEGAL },
+    ]);
+    expect(processB.judgeLandings[0]?.skippedLegs).toEqual([{ slug: "agy" }]);
   });
 
   it("cold decision-park resume delivers the owner answer before any fresh panel dispatch", async () => {
@@ -441,9 +442,10 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     });
 
     expect(processB.judgeLandings[0]).toMatchObject({
-      kind: "pure",
+      kind: "panels",
       escalationAnswer,
       panelDispatchCountAtOpen: 0,
+      transports: oldTransports,
     });
     expect(processB.judgeLandings[0]).not.toHaveProperty("builderBeat");
     expect(

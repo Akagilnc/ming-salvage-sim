@@ -8,77 +8,15 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isFileNotFound } from "../fsErrors.js";
-import type {
-  FamilyPanelLegEvidence,
-  IntegratedCmrPass,
-} from "./types.js";
+import type { FamilyPanelLegEvidence, IntegratedCmrPass } from "./types.js";
 
 export const FAMILY_PANEL_LEG_EVIDENCE_PREFIX = "panel-leg-evidence";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function assertPanelEvidenceCargo(
-  parsed: Record<string, unknown>,
-  path: string,
-): void {
-  const transports = parsed.panelLegTransports;
-  if (transports !== undefined) {
-    if (!Array.isArray(transports)) {
-      throw new Error(
-        `readFamilyPanelLegEvidence: invalid panel evidence cargo at ${path} — ` +
-          "panelLegTransports must be an array",
-      );
-    }
-    for (const [index, transport] of transports.entries()) {
-      if (
-        !isRecord(transport) ||
-        !isNonEmptyString(transport.slug) ||
-        typeof transport.exitCode !== "number" ||
-        !Number.isFinite(transport.exitCode) ||
-        !("stdout" in transport) ||
-        (typeof transport.stdout !== "string" && transport.stdout !== null)
-      ) {
-        throw new Error(
-          `readFamilyPanelLegEvidence: invalid panel evidence cargo at ${path} — ` +
-            `panelLegTransports.${index} requires non-empty slug, finite ` +
-            "exitCode, and verbatim string|null stdout",
-        );
-      }
-    }
-  }
-
-  const skippedLegs = parsed.panelLegSkippedLegs;
-  if (skippedLegs !== undefined) {
-    if (!Array.isArray(skippedLegs)) {
-      throw new Error(
-        `readFamilyPanelLegEvidence: invalid panel evidence cargo at ${path} — ` +
-          "panelLegSkippedLegs must be an array",
-      );
-    }
-    for (const [index, skippedLeg] of skippedLegs.entries()) {
-      if (
-        !isRecord(skippedLeg) ||
-        !isNonEmptyString(skippedLeg.slug) ||
-        !isNonEmptyString(skippedLeg.reason)
-      ) {
-        throw new Error(
-          `readFamilyPanelLegEvidence: invalid panel evidence cargo at ${path} — ` +
-            `panelLegSkippedLegs.${index} requires non-empty slug and reason`,
-        );
-      }
-    }
-  }
-}
-
 /**
  * Complete durable panel-evidence store shared by production and cold-resume
- * tracers. Missing is empty; every other read/parse failure is fail-loud.
+ * tracers. Missing is empty; filesystem/JSON failures are fail-loud. The
+ * evidence body is professional-seat cargo, so this transport store does not
+ * interpret or validate its fields (ADR 0062 / 0131).
  */
 export class FilePanelEvidenceStore {
   private readonly rename: typeof renameSync;
@@ -121,7 +59,6 @@ export class FilePanelEvidenceStore {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error(`readFamilyPanelLegEvidence: expected object at ${path}`);
     }
-    assertPanelEvidenceCargo(parsed as Record<string, unknown>, path);
     return parsed as FamilyPanelLegEvidence;
   }
 
