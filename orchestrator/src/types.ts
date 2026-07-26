@@ -1327,23 +1327,22 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review verify worker output (#600 / #940).
+ * Online review verify worker output (#600 / #940 / #1145).
  *
- * The worker owns per-finding judgment and should execute GitHub side effects
- * (reply / resolve / deferred) before self-reporting. The host still applies
- * cargo plan fields as a fail-safe applicator ({@link threadReplies} /
- * {@link threadsToResolve} / {@link deferredIssueUrls}) before accepting a
- * disposition as mergeable — effects must land even when the worker only emits
- * the plan. Host routes on three-state disposition + CI, never on findings
- * counts (#934 ID-012).
+ * The Online Review worker owns per-finding judgment **and** GitHub side
+ * effects (reply / resolve / deferred) before self-reporting. Runner never
+ * replays residual plan cargo after the Action returns. Runner routes on
+ * three-state disposition + CI facts from Action-returned evidence, never on
+ * findings counts (#934 ID-012).
  */
 export interface VerifyResult {
   readonly kind: "verify";
   /**
-   * Judge green (converged). Combined with host CI check-runs for mergeability;
-   * `false` is the continue disposition unless {@link terminalState} escalates.
-   * Worker must not set this until reply/resolve/deferred side effects succeed
-   * (or the host fail-safe applicator will apply remaining plan cargo).
+   * Judge green (converged). Combined with Action-returned CI check-runs for
+   * mergeability; `false` is the continue disposition unless
+   * {@link terminalState} escalates. Worker must not set this until
+   * reply/resolve/deferred side effects succeed — unfinished effects without
+   * completion require escalate, not host replay (#1145).
    */
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker (opaque cargo). */
@@ -1357,7 +1356,7 @@ export interface VerifyResult {
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
   /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
   readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (runner-populated). */
+  /** Tracked issue URLs created for deferred findings (worker-populated). */
   readonly deferredIssueUrls?: ReadonlyArray<string>;
   /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;

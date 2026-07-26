@@ -1,5 +1,5 @@
 /**
- * Correctness K1 — host fail-safe online-review side-effect applicator.
+ * Online-review side-effect helper library (worker-owned executor; #1145).
  *
  * Restored from #600 / BASE `onlineReviewSideEffects` after #940 deletion left
  * no working worker replacement: host must apply reply/resolve/deferred cargo
@@ -23,7 +23,7 @@ const GITHUB_REPLY_SHAPE = [
   },
 ];
 
-describe("#600 / K1 GitHub side effects (host fail-safe applicator)", () => {
+describe("#600 / GitHub side effects helper (worker-owned; not Runner replay)", () => {
   it("createDeferredTrackingIssue uses gh api repos/{repo}/issues", () => {
     const calls: string[] = [];
     let created = false;

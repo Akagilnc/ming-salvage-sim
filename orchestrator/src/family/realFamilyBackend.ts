@@ -4603,7 +4603,7 @@ function reviewLoopCargoResult(
 /**
  * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
  * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
- * Host fail-safe applicator (correctness K1) needs threadReplies /
+ * Worker-owned side-effect cargo (#1145) needs threadReplies /
  * threadsToResolve / deferredIssueUrls decoded when well-typed.
  */
 export function parseVerifyOutcome(
