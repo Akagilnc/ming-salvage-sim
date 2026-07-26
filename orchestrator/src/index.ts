@@ -38,8 +38,6 @@ export {
   PROGRESS_SCHEMA_VERSION,
   clearProgressBroadcastConfig,
   configureProgressBroadcast,
-  countJudgeDispositions,
-  countSeverityFromFindings,
   emitBeatProgress,
   emitExitProgress,
   emitJudgeProgress,
@@ -63,10 +61,8 @@ export {
 export type {
   FamilyStatusSnapshot,
   IssueProgressSnapshot,
-  ProgressDispositionCounts,
   ProgressEvent,
   ProgressEventKind,
-  ProgressSeverityCounts,
   NotifySpawn,
 } from "./progressBroadcast.js";
 // ── #1086 / ADR 0147 S6 — builder↔judge beat ledger + progress ──────────────

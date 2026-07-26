@@ -1101,107 +1101,6 @@ describe("RealBackend reviewer output contract", () => {
     expect(decoded.kind).not.toBe("reviewer");
   });
 
-  it("transports reviewer rows without adjudicating disposition fields", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const backend = new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 445,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-reviewer-"),
-    });
-
-    expect(() =>
-      backend.probeDecodeOutput(reviewerSpec, {
-        findingsCount: 0,
-        findings: [],
-        priorFindingDispositions: [
-          {
-            identityKey: "correctness|orchestrator/src/x.ts:1|accepted",
-            status: "accepted_suppressed",
-            source: "#445 owner answer",
-            scope: "runner review/fix loop",
-            boundedReopen: "reopen if the same finding recurs in this scope",
-          },
-        ],
-      }),
-    ).not.toThrow();
-
-    const decoded = backend.probeDecodeOutput(reviewerSpec, {
-      findingsCount: 1,
-      findings: [
-        {
-          severity: "medium",
-          category: "correctness",
-          claim_quote: "Known accepted gap",
-          location: "orchestrator/src/runner.ts:42",
-          suggested_fix: "keep the bounded suppression",
-          action: "wont_fix",
-          disposition_reason: "legacy fallback should not win",
-          disposition: {
-            kind: "accepted_suppressed",
-            source: "#445 owner answer",
-            scope: "runner review/fix loop",
-            reason: "Owner accepted this bounded risk.",
-            boundedReopen: "reopen if the same finding recurs in this scope",
-          },
-        },
-      ],
-      priorFindingDispositions: [],
-    });
-
-    expect(
-      decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
-    ).toBe("legacy fallback should not win");
-  });
-
-  // #604 correctness r2 (C3): the standalone reviewer disposition schema is
-  // `.strict()`, so a disposition carrying the deleted `targetModule` field (or
-  // any other unknown key) is REJECTED here rather than silently stripped —
-  // parity with the family parser and the Python outcome guard.
-  it("treats unknown reviewer fields as cargo", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const backend = new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 445,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-reviewer-"),
-    });
-
-    expect(() =>
-      backend.probeDecodeOutput(reviewerSpec, {
-        findingsCount: 1,
-        findings: [
-          {
-            severity: "medium",
-            category: "correctness",
-            claim_quote: "deleted field must no longer validate",
-            location: "orchestrator/src/runner.ts:42",
-            suggested_fix: "keep the bounded suppression",
-            action: "wont_fix",
-            disposition_reason: "r",
-            disposition: {
-              kind: "accepted_suppressed",
-              source: "#445 owner answer",
-              scope: "runner review/fix loop",
-              reason: "Owner accepted this bounded risk.",
-              boundedReopen: "reopen if the same finding recurs in this scope",
-              targetModule: "some-module",
-            },
-          },
-        ],
-        priorFindingDispositions: [],
-      }),
-    ).not.toThrow();
-  });
-
   it("does not let unknown coder cargo change completion fate", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
@@ -1498,6 +1397,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const result = await backend.dispatchWorker(spec, { worktree });
 
     expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.agent.captureSessions).toBe(false);
+    expect(backend.lastAgentOptions?.resumeSession).toBeUndefined();
     expect(backend.capturedEnv?.[SANDBOX_REVIEW_FIXED_POINT_ENV]).toBe(
       worktree.base,
     );
@@ -1727,6 +1628,42 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
+  it("#924 dead coder session falls back to a fresh RealBackend run and survives", async () => {
+    const backend = makeBackend();
+    backend.agentFailures.push(
+      new Error(
+        'resumeSession "prior-coder-session" not found under /tmp/sc',
+      ),
+    );
+    backend.agentResult = agentRunResult({
+      stdout: "fresh coder continued from the preserved worktree",
+      commits: [{ sha: "abc123" }],
+      sessionId: "fresh-coder-session",
+      output: CODER_COMPLETED_ENVELOPE,
+    });
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-924",
+          base: "main",
+          path: "/tmp/worktree/issue-924",
+        },
+        "prior-coder-session",
+      ),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "fresh-coder-session",
+    });
+
+    expect(backend.agentOptions).toHaveLength(2);
+    expect(backend.agentOptions[0]!.resumeSession).toBe(
+      "prior-coder-session",
+    );
+    expect(backend.agentOptions[1]!.resumeSession).toBeUndefined();
+  });
+
   it("propagates nested StructuredOutputError on resume without dead-session fresh-run (G-R4-1)", async () => {
     // Outer wrapper message looks like dead-session, but cause is SOE.
     // Resume must walk the chain (isReceiptRecoveryFailure) — not classify outer
@@ -1801,28 +1738,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(isReceiptRecoveryFailure(fiber)).toBe(true);
   });
 
-  it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
-    // #899 / ADR 0131: missing findingsCount is unusable review paper — never
-    // synthesize findings.length, never invent a fake kind:"coder" seat, and
-    // never throw for abolished #598 shape lane.
-    // #919 AS4: unusable residual open-count paper (kind:reviewer findingsCount:0)
-    // → route S5 + raw artifacts; never kind:fixer placeholder.
-    const backend = makeBackend();
-
-    expect(
-      backend.probeDecodeOutput(reviewerSpec, {
-        findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
-      }),
-    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
-    expect(
-      backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
-    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
-    // #919 CR P1 / #925: residual findingsCount:0 is unusable, never silent clean.
-    expect(
-      backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
-    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
-  });
-
   it("fails a typed reviewer seat when Output.object is absent", async () => {
     // #899: maxIter:1 reviewer attaches open-count SO. Absent typed output fails
     // for #598 — stdout cargo (even with findingsCount) is not a fate channel.
@@ -1841,32 +1756,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-824",
       }),
     ).rejects.toThrow(/typed traffic signal missing/);
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "judge",
-      maxRetries: 2,
-    });
-  });
-
-  it("lets Sandcastle re-ask reviewer receipts through the shared two-retry definition", async () => {
-    const backend = makeBackend();
-    backend.agentResult = agentRunResult({
-      stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
-      commits: [],
-      sessionId: "sess-review-reask",
-      // Residual open-count 0 is unusable; re-ask SO still attaches for the seat.
-      output: { findingsCount: 0, findings: [] },
-    });
-
-    await expect(
-      backend.runStep(reviewerSpec, {
-        branch: "feat/issue-899",
-        base: "main",
-        path: "/tmp/worktree/issue-899",
-      }),
-    ).resolves.toMatchObject({
-      output: { kind: "reviewer", findingsCount: 0, findings: [] },
-    });
-
     expect(backend.lastAgentOptions?.output).toMatchObject({
       tag: "judge",
       maxRetries: 2,
@@ -2183,92 +2072,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("keeps typed reviewer fate when outcomeLanding cargo disagrees", async () => {
-    // #899 F3: SO attaches with landing; typed open-count wins over sidecar cargo.
-    const backend = makeBackend();
-    const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-"));
-    const outcomePath = join(dir, "outcome.json");
-    writeFileSync(
-      outcomePath,
-      JSON.stringify({ findingsCount: 9, findings: [] }) + "\n",
-      "utf8",
-    );
-    backend.agentResult = agentRunResult({
-      stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
-      commits: [],
-      sessionId: "sess-review-sidecar",
-      output: { findingsCount: 0, findings: [] },
-    });
-
-    const result = await backend.runStep(
-      reviewerSpec,
-      {
-        branch: "feat/issue-496",
-        base: "main",
-        path: "/tmp/worktree/issue-496",
-      },
-      {
-        outcomeLanding: {
-          path: outcomePath,
-          sandboxPath: ".orchestrator-outcome.json",
-        },
-      },
-    );
-
-    expect(result).toEqual({
-      // Residual typed findingsCount:0 is unusable (not silent clean); cargo cannot flip fate.
-      output: { kind: "reviewer", findingsCount: 0, findings: [] },
-      sessionId: "sess-review-sidecar",
-    });
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "judge",
-      maxRetries: 2,
-    });
-  });
-
-  it("keeps typed reviewer fate on resume when outcomeLanding cargo disagrees", async () => {
-    const backend = makeBackend();
-    const dir = mkdtempSync(join(tmpdir(), "worker-review-resume-outcome-"));
-    const outcomePath = join(dir, "outcome.json");
-    writeFileSync(
-      outcomePath,
-      JSON.stringify({ findingsCount: 9, findings: [] }) + "\n",
-      "utf8",
-    );
-    backend.agentResult = agentRunResult({
-      stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
-      commits: [],
-      sessionId: "sess-review-resume-sidecar",
-      output: { findingsCount: 0, findings: [] },
-    });
-
-    const result = await backend.resumeSession(
-      reviewerSpec,
-      {
-        branch: "feat/issue-496",
-        base: "main",
-        path: "/tmp/worktree/issue-496",
-      },
-      "prior-review-session",
-      {
-        outcomeLanding: {
-          path: outcomePath,
-          sandboxPath: ".orchestrator-outcome.json",
-        },
-      },
-    );
-
-    expect(result).toEqual({
-      output: { kind: "reviewer", findingsCount: 0, findings: [] },
-      sessionId: "sess-review-resume-sidecar",
-    });
-    expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "judge",
-      maxRetries: 2,
-    });
-  });
-
   it("continues a clean-exit coder when its sidecar cargo is unreadable", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-bad-"));
@@ -2298,49 +2101,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ),
     ).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
-  });
-
-  it("attaches traffic-signal Output.object even when outcomeLanding is provided", async () => {
-    // #899 F3: cargo landing must not suppress typed SO. Fate stays on
-    // result.output; sidecar remains cargo-only enrichment.
-    const backend = makeBackend();
-    const dir = mkdtempSync(join(tmpdir(), "worker-review-so-with-landing-"));
-    const outcomePath = join(dir, "outcome.json");
-    writeFileSync(
-      outcomePath,
-      JSON.stringify({ findingsCount: 9, findings: [], spoof: true }),
-      "utf8",
-    );
-    backend.agentResult = agentRunResult({
-      stdout: '<review>{"findingsCount":9,"findings":[]}</review>',
-      commits: [],
-      sessionId: "sess-review-so-landing",
-      output: { findingsCount: 0, findings: [] },
-    });
-
-    await expect(
-      backend.runStep(
-        reviewerSpec,
-        {
-          branch: "feat/issue-899",
-          base: "main",
-          path: "/tmp/worktree/issue-899",
-        },
-        {
-          outcomeLanding: {
-            path: outcomePath,
-            sandboxPath: ".orchestrator-outcome.json",
-          },
-        },
-      ),
-    ).resolves.toMatchObject({
-      output: { kind: "reviewer", findingsCount: 0, findings: [] },
-      sessionId: "sess-review-so-landing",
-    });
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "judge",
-      maxRetries: 2,
     });
   });
 

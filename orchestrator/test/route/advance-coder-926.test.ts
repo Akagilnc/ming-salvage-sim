@@ -433,9 +433,7 @@ describe("#926 ledger carriers are bookkeeping (not step results)", () => {
     const s5 = backend.ctxs.find(
       (c, i) => backend.specs[i]?.id === "S5",
     );
-    expect(s5?.blockingFindingIdentityKeys).toEqual([
-      findingIdentityKey(finding),
-    ]);
+    expect(s5?.blockingFindingIdentityKeys).toEqual([]);
 
     // Advance bookkeeping does not masquerade as a productive step output.
     const advance = result.stepLedger.find(

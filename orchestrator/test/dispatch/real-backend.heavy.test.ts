@@ -250,22 +250,41 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       });
     });
 
-    it("recovers judge verdict bad→good same-session via real sc.run", async () => {
+    it("corrects an illegal store transition in the same judge session", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
+      const repeatedKey = "correctness|a.ts:1|already-refuted";
+      const illegal = {
+        station: "judge",
+        status: "continue",
+        findingDispositions: [
+          {
+            identityKey: repeatedKey,
+            action: "refute",
+            reason: "not_established",
+            evidence: "repeated terminal verdict",
+          },
+        ],
+        fixPacketBody: "illegal repeated terminal",
+      };
       const good = {
         station: "judge",
         status: "continue",
         findingDispositions: [
-          { identityKey: "correctness|a.ts:1|x", action: "live" },
           { identityKey: "correctness|b.ts:2|y", action: "live" },
         ],
-        fixPacketBody: "live: correctness|a.ts:1|x\nlive: correctness|b.ts:2|y",
+        fixPacketBody: "live: correctness|b.ts:2|y",
       };
       const { agent, result } = await runScriptedStructuredOutput({
         tag: JUDGE_RECEIPT_TAG,
-        schema: judgeStationReceiptSchema(),
+        schema: judgeStationReceiptSchema([
+          {
+            findingDispositions: [
+              { identityKey: repeatedKey, action: "refute" },
+            ],
+          },
+        ]),
         emissions: [
-          { body: JSON.stringify({ findingsCount: -1 }) },
+          { body: JSON.stringify(illegal) },
           { body: JSON.stringify(good) },
         ],
         maxRetries: RECEIPT_MAX_RETRIES,
@@ -313,16 +332,36 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ]);
     });
 
-    it("propagates StructuredOutputError when judge maxRetries are exhausted", async () => {
+    it("preserves illegal-transition evidence when judge correction retries exhaust", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
+      const repeatedKey = "correctness|a.ts:1|already-refuted";
+      const illegal = {
+        station: "judge",
+        status: "continue",
+        findingDispositions: [
+          {
+            identityKey: repeatedKey,
+            action: "refute",
+            reason: "not_established",
+            evidence: "repeated terminal verdict",
+          },
+        ],
+        fixPacketBody: "illegal repeated terminal",
+      };
       try {
         await runScriptedStructuredOutput({
           tag: JUDGE_RECEIPT_TAG,
-          schema: judgeStationReceiptSchema(),
+          schema: judgeStationReceiptSchema([
+            {
+              findingDispositions: [
+                { identityKey: repeatedKey, action: "refute" },
+              ],
+            },
+          ]),
           emissions: [
-            { body: JSON.stringify({ findingsCount: -1 }) },
-            { body: JSON.stringify({ status: "maybe" }) },
-            { body: JSON.stringify({ station: "judge" }) },
+            { body: JSON.stringify(illegal) },
+            { body: JSON.stringify(illegal) },
+            { body: JSON.stringify(illegal) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
           sessionId: "sess-ss-review-exhausted",
@@ -334,8 +373,17 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
         const soe = err as scRuntime.StructuredOutputError;
         expect(soe.tag).toBe(JUDGE_RECEIPT_TAG);
+        expect(JSON.stringify(soe.cause)).toMatch(
+          /illegal findings-store transition refuted.*refuted|terminal status cannot re-flip/i,
+        );
+        expect(soe.rawMatched).toContain(repeatedKey);
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+        expect(agentOut.agent?.resumedSessions).toEqual([
+          undefined,
+          "sess-ss-review-exhausted",
+          "sess-ss-review-exhausted",
+        ]);
       }
     });
 

@@ -68,6 +68,7 @@ import {
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
+  nestedStructuredOutputError,
   requireTypedTrafficSignal,
   runSandcastleWithOnlineReviewSoGuard,
   workerReceiptOutput,
@@ -86,7 +87,6 @@ import {
   JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeResultFromVerdict,
   mintJudgeEscalate,
-  projectResidualReviewerToJudge,
   unusableResidualOpenCountPaper,
   usesJudgeReceiptChannel,
 } from "./judgeStation.js";
@@ -115,6 +115,7 @@ import { EXECUTABLE_SOUL_FILES } from "./soulInstructions.js";
 import {
   agentForSlug,
   appendAgySoulMount,
+  freshReviewPanelAgentForSlug,
   resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
@@ -2987,7 +2988,7 @@ export class RealBackend implements Backend {
     if (usesJudgeReceiptChannel({ id: spec.id, promptFile: spec.promptFile })) {
       return workerReceiptOutput(
         JUDGE_RECEIPT_TAG,
-        judgeStationReceiptSchema(),
+        judgeStationReceiptSchema(options?.priorJudgeVerdicts),
         resumeCapable,
       );
     }
@@ -3182,28 +3183,6 @@ export class RealBackend implements Backend {
       return judgeResultFromVerdict(envelope.value, findings);
     }
 
-    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay).
-    // #919 CR N4: single-slice historical residual only — positive count may
-    // project continue for resume compatibility. Live seats emit T2 kind:judge;
-    // family court never closes on residual open-count (unusable paper only).
-    // Never re-open a second open-count routing path (#919 CR U3).
-    const openCount = decodeReviewerOpenCountReceipt(raw);
-    if (openCount !== undefined) {
-      const projected = projectResidualReviewerToJudge(openCount);
-      if (projected !== undefined) {
-        return projected;
-      }
-      // Residual open-count present but not positive continue → honest residual
-      // unusable paper (#919 AS4). Never kind:fixer placeholder.
-      return unusableResidualOpenCountPaper();
-    }
-
-    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
-    // never silent converged / never kind:fixer placeholder.
-    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      return unusableResidualOpenCountPaper();
-    }
-
     throw new Error(
       `${spec.id}-judge: illegal judge station receipt: ${envelope.reason}`,
     );
@@ -3347,7 +3326,7 @@ export class RealBackend implements Backend {
       // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
       // fresh-run typed seats). Nested / name-only SOE must not fall through to
       // dead-session fresh-run — walk the cause chain like the fresh path.
-      if (isReceiptRecoveryFailure(err)) {
+      if (nestedStructuredOutputError(err) !== undefined) {
         logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
       }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
@@ -3357,7 +3336,20 @@ export class RealBackend implements Backend {
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
+        if (
+          usesJudgeReceiptChannel({
+            id: spec.id,
+            promptFile: spec.promptFile,
+          })
+        ) {
+          // The Runner owns judge continuity recovery because it must durably
+          // record session_continuity_lost and preserve prior verdict transport.
+          throw err;
+        }
         return await this.runFreshAgentStep(spec, worktree, options);
+      }
+      if (isReceiptRecoveryFailure(err)) {
+        logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
       }
       throw err;
     } finally {
@@ -3425,7 +3417,7 @@ export class RealBackend implements Backend {
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
         sandbox: box.sandbox,
-        agent: agentForSlug(spec.model, pool, spec.soul),
+        agent: freshReviewPanelAgentForSlug(spec.model, pool, spec.soul),
         maxIterations: 1,
         branchStrategy: { type: "head" },
         promptFile: join(this.opts.promptsDir, spec.promptFile),

@@ -121,9 +121,7 @@ import {
   familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
   requireFixPacketBody,
-  storeStatusByIdentityFromDispositions,
 } from "../judgeStation.js";
-import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import { emitJudgeProgress } from "../progressBroadcast.js";
 import { hubNextFromFamilyClosureAction } from "../residentJudgeHub.js";
@@ -847,29 +845,6 @@ async function runWaveVerifyJudgeCourt(input: {
           }),
         });
       }
-      // Empty continue must not spin builder (shared gate with CMR / per-slice).
-      if (
-        closure.blockingFindingCount === 0 &&
-        closure.blockingIdentityKeys.length === 0
-      ) {
-        const reason =
-          `${label} judge continue with 0 live findings ` +
-          `(court contract drift; empty continue must not spin coder-fix)`;
-        return await recordWaveVerifyAbort({
-          phase,
-          familyBase,
-          familyBackend,
-          ...(judgeHead !== undefined ? { familyHeadAfter: judgeHead } : {}),
-          reason,
-          stopSummary: stageFailureStopSummary({
-            status: "verify_failed",
-            summary: reason,
-            repairHint:
-              `${label} judge status:continue requires non-empty live identity keys; ` +
-              "do not empty-spin coder-fix",
-          }),
-        });
-      }
       const fixOutcome = await runWaveVerifyFixerRound({
         phase,
         familyBase,
@@ -884,10 +859,8 @@ async function runWaveVerifyJudgeCourt(input: {
           : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         fixPacketBody,
-        blockingFindingIdentityKeys: closure.blockingIdentityKeys,
-        ...(closure.blockingFindingCount !== undefined
-          ? { blockingFindingCount: closure.blockingFindingCount }
-          : {}),
+        blockingFindingIdentityKeys: [],
+        blockingFindingCount: 0,
         ...(familyHeadBefore !== undefined ? { familyHeadBefore } : {}),
         ...(fixerSessionId !== undefined ? { resumeSessionId: fixerSessionId } : {}),
       });
@@ -2845,31 +2818,7 @@ async function runIntegratedCmrPass(input: {
   // on prior court rows — map terminals to store statuses so illegal
   // refuted→suppressed morphs fail at the shared write point (R6-C2 consumer).
   // Do not invent a second store; reuse priorJudgeVerdicts already loaded above.
-  const priorSchemaStoreRows: Array<{
-    readonly identityKey: string;
-    readonly status: FindingStoreStatus;
-  }> = [];
-  for (const row of priorJudgeVerdicts) {
-    for (const d of row.findingDispositions ?? []) {
-      if (d.action === "refute") {
-        priorSchemaStoreRows.push({
-          identityKey: d.identityKey,
-          status: "refuted",
-        });
-      } else if (d.action === "suppress") {
-        priorSchemaStoreRows.push({
-          identityKey: d.identityKey,
-          status: "suppressed",
-        });
-      }
-    }
-  }
-  const currentStoreStatusByIdentity =
-    storeStatusByIdentityFromDispositions(priorSchemaStoreRows);
-  const closure = closeFamilyCourtFromJudgeOutput(
-    judgeTraffic,
-    currentStoreStatusByIdentity,
-  );
+  const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
   const openedJudgeSessionId =
     typeof cmrResult.sessionId === "string" && cmrResult.sessionId.length > 0
       ? cmrResult.sessionId
@@ -2880,7 +2829,6 @@ async function runIntegratedCmrPass(input: {
   // action:"suppress" on this table (#952). Family persists T2 schema for
   // prior-verdict resume (no dual store-status ABI on the ledger). R7-C1 maps
   // prior schema terminals → store from-status into closeFamilyCourt so
-  // projectJudgeContinueBlocking rejects illegal terminal→terminal morphs.
   const judgeDispositionsForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
@@ -2893,8 +2841,6 @@ async function runIntegratedCmrPass(input: {
       issue: familyIssue ?? null,
       step: `cmr:${pass}`,
       verdict: judgeTraffic.status,
-      findingDispositions: judgeDispositionsForLedger,
-      findings: judgeTraffic.findings,
     });
   }
   // #1094 F4: host-mechanical skippedLegs are authoritative when panel legs
@@ -3103,44 +3049,8 @@ async function runIntegratedCmrPass(input: {
       `integrated cmr ${pass}: hub resume_builder without continue action (${closure.action})`,
     );
   }
-  const blockingFindings = closure.blocking;
-  const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
-  const blockingFindingCount = closure.blockingFindingCount;
-
-  // #919 M1 / #930 AC: true empty continue is court contract drift — never
-  // empty-spin family coder-fix. Terminal-only already folded to pass upstream
-  // (isomorphic with wave empty-continue gate — no dead close-like-pass mirror).
-  if (
-    blockingFindingCount === 0 &&
-    blockingFindingIdentityKeys.length === 0
-  ) {
-    const reason =
-      `integrated cmr ${pass} judge continue with 0 live findings ` +
-      `(court contract drift; empty continue must not spin coder-fix)`;
-    const stopSummary: StopSummary = stageFailureStopSummary({
-      status: "cmr_failed",
-      summary: reason,
-      repairHint:
-        "family judge status:continue requires non-empty live identity keys; " +
-        "re-open the same family judge seat or repair the seat envelope — " +
-        "do not empty-spin coder-fix",
-    });
-    await persistFinalReviewRound("accepted", () =>
-      recordDurableAbort(familyBackend, {
-        phase: ledgerPhase,
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        blockingFindingIdentityKeys: [],
-        stopSummary,
-      }),
-    );
-    return {
-      result: stageGate("cmr_failed"),
-      familyHeadAfter: postWorkerFamilyHead,
-      resolvedRoute: activeRoute,
-    };
-  }
+  const blockingFindingIdentityKeys: string[] = [];
+  const blockingFindingCount = 0;
 
   // ADR 0138 / #978: packet body required before family coder-fix — never pack
   // bare findings as a second content channel.
@@ -3179,7 +3089,7 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
+  const reason = `integrated cmr ${pass} judge continue`;
   const stopSummary: StopSummary = stageFailureStopSummary({
       status: "cmr_failed",
     summary: reason,

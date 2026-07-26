@@ -1128,7 +1128,7 @@ describe("#1094 R3 F4 — focus-copy failure degrades the leg (never present)", 
 });
 
 describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
-  it("keeps the completeness Soul when ctx.cmrPass is correctness", async () => {
+  it("keeps the completeness Soul and disables capture for the fresh family leg", async () => {
     const { execFileSync } = await import("node:child_process");
     const { RealFamilyBackend, CMR_FOCUS_FILENAME } = await import(
       "../../../src/family/realFamilyBackend.js"
@@ -1149,6 +1149,7 @@ describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
         "# focus\n`git diff aaa...bbb`\n",
       );
 
+      let captureSessionsAtRun: boolean | undefined;
       class LensBackend extends RealFamilyBackend {
         public async runLeg(
           spec: ReturnType<typeof reviewPanelLegWorkerSpec>,
@@ -1170,18 +1171,23 @@ describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
           return undefined;
         }
         protected override async runAgentSandbox(
-          options: { promptFile?: string },
+          options: { promptFile?: string; agent: { captureSessions?: boolean } },
         ): Promise<{
           stdout: string;
           iterations: never[];
           commits: never[];
           branch: string;
+          sessionId: string;
         }> {
+          captureSessionsAtRun = options.agent.captureSessions;
           return {
             stdout: "P1: lens authority must follow spec.promptFile.\n",
             iterations: [],
             commits: [],
             branch: "HEAD",
+            // A fresh panel may still report a session id. With capture disabled,
+            // its missing rollout JSONL is not a post-run failure (#1132).
+            sessionId: "family-panel-session-with-no-rollout-1132",
           };
         }
       }
@@ -1208,6 +1214,7 @@ describe("#1094 R3 F5 — lens follows spec.soul (not ctx.cmrPass)", () => {
         cmrPass: "correctness",
       });
       expect(result.kind).toBe("completed");
+      expect(captureSessionsAtRun).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(ledger, { recursive: true, force: true });

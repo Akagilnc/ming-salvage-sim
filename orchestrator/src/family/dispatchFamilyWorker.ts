@@ -62,7 +62,6 @@ import type {
 // #919 CR N2: residualIntegratedCmrToJudgeOutput DELETED — it always returned
 // undefined (family residual never mints continue). Production residual maps
 // to unusableResidualOpenCountPaper at cmrOutcomeToWorkerResult; single-slice
-// historical resume alone uses projectResidualReviewerToJudge.
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "python",

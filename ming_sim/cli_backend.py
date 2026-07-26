@@ -943,34 +943,30 @@ def classify_cli_action_intent(
     has_pending_draft: bool = False,
     pending_summaries: Optional[List[str]] = None,
     llm_config: Any = None,
-) -> Dict[str, Any]:
+) -> List[Dict[str, Any]]:
     """召对动作 typed 判断：只读皇帝本条消息，不读大臣回话。
 
-    这条调用可与大臣回话并发；后续落地只从大臣回话取文本，不再串行跑多个
-    post-reply extractor。失败时保守返回无动作，避免阻断召对。"""
+    输出契约（#515）：动作候选**列表**（单动作 = 长度 1；认不出/失败 = []）。
+    枚举与 kind map 唯一真源 = ming_sim.action_clusters 登记表。
+    这条调用可与大臣回话并发；后续落地只从大臣回话取文本。LLM 软判坏 shape → []。
+    """
+    from ming_sim.action_clusters import (
+        candidates_from_classifier_payload,
+        classifier_json_fields_prompt,
+    )
+
     orders_brief = "；".join(
         f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
         for o in (active_orders or [])
     ) or "（无）"
     pending_brief = "；".join(pending_summaries or []) or "（无）"
+    # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
+    schema_obj = classifier_json_fields_prompt()
     prompt = (
         "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
-        "判断本轮是否属于一个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
-        "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-        "{\n"
-        '  "动作类型": "无|确认|密令动作|调教|任免|拟旨",\n'
-        '  "确认": "应允|拒绝|无",\n'
-        '  "密令动作": "无|更新|提交核议|催办|记进展",\n'
-        '  "目标密令编号": 0,\n'
-        '  "新标题": "",\n'
-        '  "新内容": "",\n'
-        '  "期限月数": 0,\n'
-        '  "调教技能": "",\n'
-        '  "调教性格": "",\n'
-        '  "任免动作": "无|任命|罢免",\n'
-        '  "姓名": "",\n'
-        '  "官职": ""\n'
-        "}\n"
+        "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
+        "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
+        + schema_obj + "\n"
         "规则：确认优先于新动作；拟旨优先于任免；问询、查账、问军情、泛泛商议填无。\n"
         "没有现有密令时不要硬判密令动作；非妃嫔不要硬判调教。\n\n"
         f"【待确认动作】{pending_brief}\n"
@@ -984,45 +980,12 @@ def classify_cli_action_intent(
         raw, _ = _run_backend_for_config(prompt, llm_config, tag="action_intent")
     except Exception as exc:
         _log(f"召对动作意图判断失败：{exc}")
-    obj = _loads_lenient(raw) or {}
-    if not isinstance(obj, dict):
+        return []
+    obj = _loads_lenient(raw, accepted_types=(dict, list))
+    if obj is None:
         obj = {}
-
-    def _enum(value: object, allowed: set[str], default: str) -> str:
-        v = str(value or default).strip()
-        return v if v in allowed else default
-
-    def _int(value: object) -> int:
-        try:
-            return int(value or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    action_type = _enum(
-        obj.get("动作类型"), {"无", "确认", "密令动作", "调教", "任免", "拟旨"}, "无")
-    return {
-        "kind": {
-            "无": "none",
-            "确认": "confirmation",
-            "密令动作": "secret",
-            "调教": "cultivate",
-            "任免": "appointment",
-            "拟旨": "draft",
-        }[action_type],
-        "confirmation": _enum(obj.get("确认"), {"应允", "拒绝", "无"}, "无"),
-        "secret_action": _enum(
-            obj.get("密令动作"), {"无", "更新", "提交核议", "催办", "记进展"}, "无"),
-        "order_id": _int(obj.get("目标密令编号")),
-        # Align with extract_minister_actions: no formal title hard-cap.
-        "new_title": str(obj.get("新标题") or "").strip(),
-        "new_content": str(obj.get("新内容") or "").strip()[:500],
-        "deadline_months": max(0, min(_int(obj.get("期限月数")), 36)),
-        "cultivate_skill": str(obj.get("调教技能") or "").strip()[:30],
-        "cultivate_trait": str(obj.get("调教性格") or "").strip()[:30],
-        "appoint_action": _enum(obj.get("任免动作"), {"无", "任命", "罢免"}, "无"),
-        "name": str(obj.get("姓名") or "").strip()[:20],
-        "office": str(obj.get("官职") or "").strip()[:40],
-    }
+    # 列表契约：对象或 list 均走登记表 soft 归一；坏 shape / 无 → []。
+    return candidates_from_classifier_payload(obj, soft=True)
 
 
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
@@ -1035,6 +998,7 @@ def extract_draft_intent(
     has_pending_draft: bool = False,
     existing_draft_text: str = "",
     existing_candidates: Optional[List[Dict[str, Any]]] = None,
+    draft_count: int = 1,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -1047,6 +1011,37 @@ def extract_draft_intent(
     （target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
     多条→target_candidate="含糊"（交 session 追问哪一道，不静默新建第三道；#502 L7）。
     无候选时 target_candidate 恒空。"""
+    if draft_count > 1:
+        prompt = (
+            "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
+            f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
+            "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
+            f'{{\"成品旨稿\": [\"第一道完整旨稿\", \"……共 {draft_count} 道\"]}}\n'
+            "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
+            "【皇帝】" + (player_message or "（无）") + "\n"
+            "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
+        )
+        raw = ""
+        try:
+            raw, _ = _run_backend_for_config(prompt, llm_config, tag="draft_intent")
+        except Exception as exc:
+            _log(f"多旨稿抽取失败：{exc}")
+        obj = _loads_lenient(raw) or {}
+        values = obj.get("成品旨稿") if isinstance(obj, dict) else None
+        draft_texts = [
+            str(value).strip()
+            for value in (values if isinstance(values, list) else [])
+            if str(value).strip()
+        ]
+        if len(draft_texts) != draft_count or len(set(draft_texts)) != draft_count:
+            draft_texts = []
+        return {
+            "draft_action": "拟旨" if draft_texts else "无",
+            "draft_text": "",
+            "draft_texts": draft_texts,
+            "target_candidate": "",
+        }
+
     _candidates = [c for c in (existing_candidates or []) if c]
     _by_id = {int(c["id"]): c for c in _candidates}
     supplement_hint = (
@@ -1469,14 +1464,25 @@ def _strip_jsonc(body: str) -> str:
     return _scan_outside_strings(_scan_outside_strings(body, _strip_comment), _strip_trailing_comma)
 
 
-def _loads_lenient(raw: str) -> Optional[dict]:
-    """容错解析 JSON：剥代码围栏、截首 { 到末 }。失败返回 None。"""
+def _loads_lenient(
+    raw: str, *, accepted_types: tuple[type, ...] = (dict,),
+) -> Optional[Any]:
+    """容错解析 JSON：剥代码围栏并截取首个受理容器。失败返回 None。"""
     t = (raw or "").strip()
     if t.startswith("```"):
         t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
         t = re.sub(r"\s*```$", "", t).strip()
-    i, j = t.find("{"), t.rfind("}")
-    if i == -1 or j == -1 or j <= i:
+    starts = []
+    if dict in accepted_types:
+        starts.append((t.find("{"), "}"))
+    if list in accepted_types:
+        starts.append((t.find("["), "]"))
+    starts = [(index, closer) for index, closer in starts if index >= 0]
+    if not starts:
+        return None
+    i, closer = min(starts, key=lambda item: item[0])
+    j = t.rfind(closer)
+    if j <= i:
         return None
     body = t[i:j + 1]
     try:
@@ -1489,7 +1495,7 @@ def _loads_lenient(raw: str) -> Optional[dict]:
             obj = json.loads(_strip_jsonc(body))
         except (ValueError, TypeError):
             return None
-    return obj if isinstance(obj, dict) else None
+    return obj if isinstance(obj, accepted_types) else None
 
 
 def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:

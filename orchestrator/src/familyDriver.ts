@@ -96,6 +96,11 @@ import {
 } from "./family/ledger.js";
 import { runFamily } from "./family/runner.js";
 import {
+  finalizeFamilyTerminal,
+  isLegacyEscalationWithoutTerminalCargo,
+  replayPriorFamilyEscalation,
+} from "./family/terminalFinalizer.js";
+import {
   parseModuleDeclaration,
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
@@ -1121,124 +1126,105 @@ export function admissionSkippedFromLedger(
 }
 
 /** Current-schema terminal replay (ID-005); undefined when non-terminal. */
-export function planFamilyTerminalReplay(
+function replayCompletedCleanup(
   ledger: ReadonlyArray<FamilyLedgerEntry>,
   familyBase: string,
-): FamilyRunResult | undefined {
-  if (shouldReclaimFamilyHost(ledger)) {
-    let familyHead: string | undefined;
-    for (let i = ledger.length - 1; i >= 0; i--) {
-      const entry = ledger[i]!;
-      if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
-        familyHead = entry.familyHeadAfter;
-        break;
-      }
+): FamilyRunResult {
+  let familyHead: string | undefined;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isValidPostMergeCleanup(entry) && entry.cleanupOutput.terminal && entry.cleanupOutput.ok) {
+      familyHead = entry.familyHeadAfter;
+      break;
     }
-    const admissionSkipped = admissionSkippedFromLedger(ledger);
-    const children = [
-      ...[...mergedSet(ledger)].map((issue) => ({
-        issue,
-        status: "already_done" as const,
-      })),
-      // Codex C1: skipped children are not in mergedSet — surface them as
-      // `"skipped"` so the replay accounts for every epic child.
-      ...admissionSkipped.map((s) => ({
-        issue: s.issue,
-        status: "skipped" as const,
-      })),
-    ];
-    const headsMeta =
-      familyHead !== undefined
-        ? {
-            heads: {
-              actualFamilyHead: familyHead,
-              sources: {
-                actualFamilyHead: "post_merge_cleanup ledger row",
-              },
-            },
-          }
-        : {};
-    const metadata = {
-      ...headsMeta,
-      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
-    };
-    return {
-      status: "completed",
-      familyBase,
-      ...(familyHead !== undefined ? { familyHead } : {}),
-      stopSummary: {
-        reason: "already_done",
-        summary:
-          "family durable terminal replay: post_merge_cleanup already completed",
-        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-      },
-      children,
-      ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
-    };
   }
-
-  const prior = familyEscalationState(ledger);
-  if (prior === undefined) return undefined;
-  const { escalation, answer } = prior;
-  // Incomplete escalated rows are durable damage — never terminal-replay as park.
-  if (!isCompleteFamilyEscalation(escalation)) return undefined;
-  if (escalation.escalationKind === "decision" && answer !== undefined) {
-    // Answered decision → spine must resume productive work (not terminal).
-    return undefined;
+  const admissionSkipped = admissionSkippedFromLedger(ledger);
+  for (const skipped of admissionSkipped) {
+    console.warn(
+      `family child #${skipped.issue} skipped: admission_skipped`,
+    );
   }
-  const reason =
-    typeof escalation.reason === "string" && escalation.reason.trim().length > 0
-      ? escalation.reason
-      : "family escalation is not answered";
-  const diagnosis =
-    escalation.escalationKind === "failure"
-      ? "Prior family escalation was classified as failure; append-only answers do not reopen it."
-      : "Prior family decision escalation has no later valid escalation_answered ledger event.";
-  const familyHead =
-    typeof escalation.familyHeadAfter === "string" &&
-    escalation.familyHeadAfter.trim().length > 0
-      ? escalation.familyHeadAfter
-      : undefined;
-  const children = [...mergedSet(ledger)].map((issue) => ({
-    issue,
-    status: "already_done" as const,
-  }));
-  const decisionGatePark = escalation.escalationKind === "decision";
-  const heads =
+  const children = [
+    ...[...mergedSet(ledger)].map((issue) => ({
+      issue,
+      status: "already_done" as const,
+    })),
+    ...admissionSkipped.map((s) => ({
+      issue: s.issue,
+      status: "skipped" as const,
+      reason: "admission_skipped" as const,
+    })),
+  ];
+  const headsMeta =
     familyHead !== undefined
       ? {
-          actualFamilyHead: familyHead,
-          sources: { actualFamilyHead: "family escalated ledger row" },
+          heads: {
+            actualFamilyHead: familyHead,
+            sources: {
+              actualFamilyHead: "post_merge_cleanup ledger row",
+            },
+          },
         }
-      : undefined;
-  const common = {
+      : {};
+  const metadata = {
+    ...headsMeta,
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
+  return {
+    status: "completed",
     familyBase,
     ...(familyHead !== undefined ? { familyHead } : {}),
-    escalation: { reason, diagnosis },
+    stopSummary: {
+      reason: "already_done",
+      summary:
+        "family durable terminal replay: post_merge_cleanup already completed",
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+    },
     children,
-  } as const;
-  if (decisionGatePark) {
-    return {
-      status: "parked" as const,
-      ...common,
-      stopSummary: decisionGateParkStopSummary({
-        summary: reason,
-        repairHint:
-          "append an escalation_answered ledger row carrying the parked decision, then rerun the family to resume in place",
-        ...(heads !== undefined ? { heads } : {}),
-      }),
-    };
-  }
-  return failedFamilyResult({
-    cause: "runner_internal_error",
-    ...common,
-    stopSummary: infraFailureStopSummary({
-      summary: reason,
-      repairHint:
-        "inspect the family ledger escalation entry and repair before rerun",
-      ...(heads !== undefined ? { heads } : {}),
-    }),
-  });
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
+}
+
+function replayLegacyDecisionEscalation(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  familyBase: string,
+  escalation: FamilyLedgerEntry,
+): FamilyRunResult {
+  const admissionSkipped = admissionSkippedFromLedger(ledger);
+  const children = [
+    ...[...mergedSet(ledger)].map((issue) => ({
+      issue,
+      status: "already_done" as const,
+    })),
+    ...admissionSkipped.map((child) => ({
+      issue: child.issue,
+      status: "skipped" as const,
+      reason: "admission_skipped" as const,
+    })),
+  ];
+  const stopSummary =
+    escalation.stopSummary ??
+    decisionGateParkStopSummary({
+      summary: escalation.reason ?? "family decision is not answered",
+      repairHint: "answer the durable family decision before rerunning",
+    });
+  return {
+    status: "parked",
+    familyBase,
+    ...(typeof escalation.familyHeadAfter === "string" &&
+    escalation.familyHeadAfter.trim().length > 0
+      ? { familyHead: escalation.familyHeadAfter }
+      : {}),
+    escalation: {
+      reason: escalation.reason ?? "family decision is not answered",
+      diagnosis:
+        escalation.diagnosis ??
+        "Prior family decision escalation has no later valid escalation_answered ledger event.",
+    },
+    stopSummary,
+    children,
+    ...(admissionSkipped.length > 0 ? { admissionSkipped } : {}),
+  };
 }
 
 /** Resolve the run-level Codex fast switch once, honoring an explicit option. */
@@ -1323,12 +1309,12 @@ export async function runFamilyDriver(
     });
   }
   if (familyScene.kind === "resident") {
-    const terminal = planFamilyTerminalReplay(
-      familyScene.ledger,
-      options.familyBase,
-    );
-    if (terminal !== undefined) {
-      // #1007: durable terminal replay must self-describe this invocation's feed.
+    const prior = familyEscalationState(familyScene.ledger);
+    if (shouldReclaimFamilyHost(familyScene.ledger)) {
+      const terminal = replayCompletedCleanup(
+        familyScene.ledger,
+        options.familyBase,
+      );
       emitExitProgress({
         epic: options.epicIssue,
         status: terminal.status,
@@ -1336,6 +1322,41 @@ export async function runFamilyDriver(
         gateSummary: terminal.stopSummary?.summary,
       });
       return terminal;
+    }
+    if (
+      prior !== undefined &&
+      isCompleteFamilyEscalation(prior.escalation) &&
+      (prior.escalation.escalationKind !== "decision" ||
+        prior.answer === undefined)
+    ) {
+      if (
+        prior.escalation.escalationKind === "decision" &&
+        isLegacyEscalationWithoutTerminalCargo(prior.escalation)
+      ) {
+        const terminal = replayLegacyDecisionEscalation(
+          familyScene.ledger,
+          options.familyBase,
+          prior.escalation,
+        );
+        emitExitProgress({
+          epic: options.epicIssue,
+          status: terminal.status,
+          stopReason: terminal.stopSummary?.reason,
+          gateSummary: terminal.stopSummary?.summary,
+        });
+        return terminal;
+      }
+      if (isLegacyEscalationWithoutTerminalCargo(prior.escalation)) {
+        // Cargo-less failure rows remain on the compatibility path where the
+        // family flow can normalize them with the refreshed epic inventory.
+      } else {
+        return await replayPriorFamilyEscalation({
+          epicIssue: options.epicIssue,
+          familyBase: options.familyBase,
+          escalation: prior.escalation,
+          admissionSkipped: admissionSkippedFromLedger(familyScene.ledger),
+        });
+      }
     }
   }
 
@@ -1524,48 +1545,19 @@ export async function runFamilyDriver(
       summary: diagnosis,
       repairHint: "repair every listed owner-authored Coder-Rec before rerun",
     });
-    // #1007: Coder-Rec admission fail — dual-write terminal.
-    emitExitProgress({
-      epic: options.epicIssue,
-      status: "failed",
-      stopReason: stopSummary.reason,
-      gateSummary: stopSummary.summary,
-    });
-    return failedFamilyResult({
+    return await finalizeKnownEpicFailure({
+      options,
+      epic,
+      ledger: familyScene.kind === "resident" ? familyScene.ledger : [],
       cause: "coder_rec_invalid",
-      familyBase: options.familyBase,
       escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary,
-      children: [],
-      ...(epic.admissionSkipped !== undefined
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
     });
   }
-  // All planned issues admitted — parent is ready (errors would have returned).
-  if (parentCoderRec.kind !== "ready") {
-    // Unreachable: empty errors + parent stop is contradictory, but keep the
-    // exhaustiveness net for the type checker.
-    const diagnosis = parentCoderRec.escalation.diagnosis;
-    const stopSummary = infraFailureStopSummary({
-      summary: `${parentCoderRec.escalation.reason}: ${diagnosis}`,
-      repairHint: "repair the owner-authored Coder-Rec before rerun",
-    });
-    emitExitProgress({
-      epic: options.epicIssue,
-      status: "failed",
-      stopReason: stopSummary.reason,
-      gateSummary: stopSummary.summary,
-    });
-    return failedFamilyResult({
-      cause: "coder_rec_invalid",
-      familyBase: options.familyBase,
-      escalation: { reason: parentCoderRec.escalation.reason, diagnosis },
-      stopSummary,
-      children: [],
-    });
-  }
-  const coderRec = parentCoderRec;
+  const coderRec = parentCoderRec as Extract<
+    typeof parentCoderRec,
+    { readonly kind: "ready" }
+  >;
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
@@ -1592,7 +1584,14 @@ export async function runFamilyDriver(
     | undefined;
   if (options.singleSliceBackendFactory === undefined) {
     const result = await admitPlannedRouteSmoke(realSingleSlice, plannedRoutes);
-    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    if (result.kind === "stop") {
+      return await routeSmokeFailureResult(
+        options,
+        epic,
+        familyScene.kind === "resident" ? familyScene.ledger : [],
+        result.escalation,
+      );
+    }
     smoke = result;
   }
   const workingRepo = realSingleSlice.workingRepoPath();
@@ -1621,7 +1620,14 @@ export async function runFamilyDriver(
   if (smoke === undefined) {
     logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
     const result = await admitPlannedRouteSmoke(singleSliceBackend, plannedRoutes);
-    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    if (result.kind === "stop") {
+      return await routeSmokeFailureResult(
+        options,
+        epic,
+        familyScene.kind === "resident" ? familyScene.ledger : [],
+        result.escalation,
+      );
+    }
     smoke = result;
   }
 
@@ -1707,10 +1713,16 @@ export async function runFamilyDriver(
         message: baseline.escalation.diagnosis,
         familyHeadAfter: familyBaseStartHead,
       });
-      const children = epic.children.map((child) => ({
-        issue: child.issue,
-        status: "skipped" as const,
-      }));
+      const children = epic.children.map((child) => {
+        console.warn(
+          `family child #${child.issue} skipped: baseline_health_failed`,
+        );
+        return {
+          issue: child.issue,
+          status: "skipped" as const,
+          reason: "baseline_health_failed" as const,
+        };
+      });
       const stopSummary = infraFailureStopSummary({
         summary: baseline.escalation.diagnosis,
         // Suite red → one pre-fix ticket; infra red → tooling/deps repair only.
@@ -1807,29 +1819,53 @@ function resolveBaselineVerifyCwd(workingRepo: string): string {
   return workingRepo;
 }
 
-function routeSmokeFailureResult(
+async function finalizeKnownEpicFailure(input: {
+  readonly options: Pick<FamilyDriverOptions, "familyBase" | "epicIssue">;
+  readonly epic: FamilyEpic;
+  readonly ledger: ReadonlyArray<FamilyLedgerEntry>;
+  readonly cause: "coder_rec_invalid" | "route_smoke_failed";
+  readonly escalation: { readonly reason: string; readonly diagnosis: string };
+  readonly stopSummary: ReturnType<typeof infraFailureStopSummary>;
+}): Promise<FamilyRunResult> {
+  const readOnlyBackend = {
+    async readFamilyLedger() {
+      return input.ledger;
+    },
+  } as FamilyBackend;
+  return await finalizeFamilyTerminal({
+    familyBackend: readOnlyBackend,
+    epic: input.epic,
+    epicIssue: input.options.epicIssue,
+    familyBase: input.options.familyBase,
+    recordedResults: [],
+    familyStopSummary: () => input.stopSummary,
+    intent: {
+      kind: "failed",
+      cause: input.cause,
+      escalation: input.escalation,
+      residualSkipReason: "startup_preflight_failed",
+      stopSummaryOverride: input.stopSummary,
+    },
+  });
+}
+
+async function routeSmokeFailureResult(
   options: Pick<FamilyDriverOptions, "familyBase" | "epicIssue">,
+  epic: FamilyEpic,
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
   escalation: { readonly reason: string; readonly diagnosis: string },
-): FamilyRunResult {
+): Promise<FamilyRunResult> {
   const stopSummary = infraFailureStopSummary({
     summary: escalation.diagnosis,
     repairHint: "repair the selected model×pipe smoke before rerun",
   });
-  // #1007: shared driver smoke-fail helper dual-writes terminal.
-  emitExitProgress({
-    epic: options.epicIssue,
-    status: "failed",
-    stopReason: stopSummary.reason,
-    gateSummary: stopSummary.summary,
-  });
-  return failedFamilyResult({
-    // #942 public cause: same smoke-stop as family/single-slice runners
-    // (not worktree_prepare_failed — PR #982 C2).
+  return await finalizeKnownEpicFailure({
+    options,
+    epic,
+    ledger,
     cause: "route_smoke_failed",
-    familyBase: options.familyBase,
     escalation,
     stopSummary,
-    children: [],
   });
 }
 
