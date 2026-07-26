@@ -1,19 +1,19 @@
 /**
  * Family PR review-loop orchestration helpers (#600 / #940 / #1145).
  *
- * Runner-side glue only dispatches the Online Review Action and routes on
- * three-state disposition (`converged | continue | escalate`). GitHub query,
- * bot wait, evidence assembly, and side effects are owned exclusively by the
- * Online Review worker/Action — never re-polled or re-applied by the Runner
- * after the Action returns (#1145). No mechanical round cap, no empty-success
- * from counts (#934 ID-012).
+ * Runner-side glue dispatches **Collector then Verify** as independent Actions
+ * and routes only on Verify's three-state disposition
+ * (`converged | continue | escalate`). GitHub query, wait, retrigger, and
+ * evidence assembly are owned exclusively by the Collector worker; judgment +
+ * side effects by Verify. Runner never host-polls GH or interprets bot/CI/
+ * finding semantics (#1145). No mechanical round cap, no empty-success from
+ * counts (#934 ID-012).
  */
 
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
   BOT_RETRIGGER_COMMENT,
-  checkRunsConverged,
   classifyCheckRuns,
   droppedBotIds,
   findAdmissibleRetriggerComment,
@@ -515,15 +515,20 @@ export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary 
   });
 }
 
-type OnlineReviewDispatchPhase = "verify" | "fixer";
+type OnlineReviewDispatchPhase = "collector" | "verify" | "fixer";
 
-/** Stop summary when verify/fixer dispatch throws (#600 r20 / #1145). */
+/** Stop summary when collector/verify/fixer dispatch throws (#600 r20 / #1145). */
 export function onlineReviewDispatchFailureStopSummary(
   phase: OnlineReviewDispatchPhase,
   err: unknown,
 ): StopSummary {
   const detail = err instanceof Error ? err.message : String(err);
-  const label = phase === "verify" ? "verify dispatch" : "fixer dispatch";
+  const label =
+    phase === "collector"
+      ? "collector dispatch"
+      : phase === "verify"
+        ? "verify dispatch"
+        : "fixer dispatch";
   return stageFailureStopSummary({
       status: "online_review_failed",
     summary: `online review ${label} failed: ${detail}`,
@@ -790,12 +795,21 @@ export function retriggerBotsAndPoll(
 }
 
 /**
- * Online Review Action seat result (#1145).
- * The Action owns GH query/wait/evidence assembly and side effects; the stage
- * only routes on the returned snapshot + typed verify disposition.
+ * Online Review Collector Action result (#1145).
+ * Opaque evidence only — never judge enum. Runner transports as-is to Verify.
+ */
+export interface OnlineReviewCollectorDispatchResult {
+  readonly evidence: OnlineReviewLandingSnapshot;
+  readonly artifacts?: NonNullable<
+    WorkerLandingPayload["rawReviewerArtifacts"]
+  >;
+}
+
+/**
+ * Online Review Verify Action result (#1145).
+ * Judgment seat only — never owns GH wait/retrigger. Runner routes on verify.
  */
 export interface OnlineReviewVerifyDispatchResult {
-  readonly snapshot: PrReviewSnapshot;
   readonly verify?: VerifyResult;
   readonly artifacts?: NonNullable<
     WorkerLandingPayload["rawReviewerArtifacts"]
@@ -805,10 +819,17 @@ export interface OnlineReviewVerifyDispatchResult {
 /** Thrown when a read-only verify worker dirties the tracked worktree (#600 r32). */
 export interface OnlineReviewLoopDispatch {
   /**
-   * Online Review Action seat (#1145): owns GitHub query, necessary wait,
-   * evidence assembly, judgment dispatch, and side effects. Runner transports
-   * only the returned snapshot + typed disposition — never re-queries GH or
-   * replays residual side-effect plans after this returns.
+   * Online Review Collector seat (#1145): owns GitHub query, necessary wait,
+   * post-fix retrigger, and evidence assembly. Runner only counts exit and
+   * transports opaque evidence — never interprets bot/CI/finding semantics.
+   */
+  readonly dispatchCollector: (
+    landing: WorkerLandingPayload,
+    round: number,
+  ) => Promise<OnlineReviewCollectorDispatchResult>;
+  /**
+   * Online Review Verify seat (#1145): owns judgment + side effects only.
+   * Receives Collector evidence via landing; returns typed disposition.
    */
   readonly dispatchVerify: (
     landing: WorkerLandingPayload,
@@ -817,11 +838,11 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  readonly retriggerAfterFix: () => void | Promise<void>;
   /**
    * Record/persist the fixing commit SHA after fixer success.
    * Receives the envelope {@link fixCommitSha} only — never re-read live git
-   * (ADR 0030 envelope-only).
+   * (ADR 0030 envelope-only). Post-fix retrigger/wait is Collector's job on
+   * the next loop iteration — no host retriggerAfterFix seam.
    */
   readonly resolveFixCommitSha?: (
     envelopeFixSha: string,
@@ -880,7 +901,7 @@ export async function runOnlineReviewLoopStage(
   // #940 / ID-012: no mechanical round cap — persistent verify judge owns
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
-    // Base landing only — Online Review Action owns GH evidence (#1145).
+    // Base landing only — Collector owns GH evidence (#1145).
     let landing = buildOnlineReviewBaseLanding(ship, round);
     if (priorRoundFindingsAccum.length > 0) {
       landing = {
@@ -900,30 +921,54 @@ export async function runOnlineReviewLoopStage(
       landing = await opts.enrichVerifyLanding(landing, round);
     }
 
+    // ── 1. Collector: query/wait/retrigger/evidence (no judge enum) ──
+    let collectorArtifacts: NonNullable<
+      WorkerLandingPayload["rawReviewerArtifacts"]
+    > | undefined;
+    try {
+      const collected = await dispatch.dispatchCollector(landing, round);
+      // Opaque evidence transport — Runner does not interpret bot/CI fields.
+      landing = {
+        ...landing,
+        onlineReviewSnapshot: collected.evidence,
+        shipDelivery: {
+          branch: ship.branch,
+          pr: ship.pr,
+          ...(collected.evidence.headOid.length > 0
+            ? { prHead: collected.evidence.headOid }
+            : ship.prHead !== undefined && ship.prHead.length > 0
+              ? { prHead: ship.prHead }
+              : {}),
+          ...(ship.status !== undefined ? { status: ship.status } : {}),
+        },
+        ...(collected.artifacts !== undefined
+          ? { rawReviewerArtifacts: collected.artifacts }
+          : {}),
+      };
+      collectorArtifacts = collected.artifacts;
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "collector", err);
+    }
+
+    // ── 2. Verify: judgment only on Collector evidence ──
     let verify: VerifyResult | undefined;
     try {
       const dispatchedVerify = await dispatch.dispatchVerify(landing, round);
-      // Action-returned evidence becomes the landing snapshot; Runner never
-      // re-queries GH or replays residual side-effect plans (#1145).
-      landing = {
-        ...buildOnlineReviewLanding(dispatchedVerify.snapshot, ship, round),
-        ...(landing.fixMarkedFindingIdentityKeys !== undefined
-          ? {
-              fixMarkedFindingIdentityKeys:
-                landing.fixMarkedFindingIdentityKeys,
-            }
-          : {}),
-        ...(landing.fixMarkedFindingThreads !== undefined
-          ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
-          : {}),
-        ...(landing.priorRoundFindings !== undefined
-          ? { priorRoundFindings: landing.priorRoundFindings }
-          : {}),
-        ...(dispatchedVerify.artifacts !== undefined
-          ? { rawReviewerArtifacts: dispatchedVerify.artifacts }
-          : {}),
-      };
       verify = dispatchedVerify.verify;
+      if (dispatchedVerify.artifacts !== undefined) {
+        landing = {
+          ...landing,
+          rawReviewerArtifacts: dispatchedVerify.artifacts,
+        };
+      } else if (collectorArtifacts !== undefined) {
+        landing = {
+          ...landing,
+          rawReviewerArtifacts: collectorArtifacts,
+        };
+      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
@@ -948,19 +993,6 @@ export async function runOnlineReviewLoopStage(
         };
       }
 
-      // Pending CI only: re-seat the Online Review Action (#934 ID-004 / #1145).
-      // Bot overdue window lives inside the Action; Runner just sleeps then
-      // redispatches — never host-applies residual side-effect cargo.
-      if (
-        verifyBlockedOnlyOnPendingCheckRuns(
-          verify,
-          landing.onlineReviewSnapshot,
-        )
-      ) {
-        await sleepPendingCiPollInterval();
-        continue;
-      }
-
       fixKeys = fixMarkedKeysFromVerify(verify);
       fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
       landing = {
@@ -969,36 +1001,12 @@ export async function runOnlineReviewLoopStage(
         fixMarkedFindingThreads,
       };
 
-      const reviewSnap = landing.onlineReviewSnapshot;
-      const checkRuns = reviewSnap?.checkRuns ?? [];
-      const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
-
-      if (
-        disposition === "converged" &&
-        checkRunsConverged(checkRuns, emptyMeans)
-      ) {
-        // #941 / ID-013: online-review Action ends at mergeable. Landing Action
-        // owns docs release, merge, MERGED confirm, close, and cleanup.
+      // #1145: Verify owns CI+bot completeness judgment. Runner trusts the
+      // typed disposition only — no host check-run reread / pending sleep.
+      if (disposition === "converged") {
+        // #941 / ID-013: online-review ends at mergeable. Landing Action owns
+        // docs release, merge, MERGED confirm, close, and cleanup.
         return { ok: true, terminalState: "mergeable", round };
-      }
-
-      // Converged disposition + CI red: park on CI (host-deterministic).
-      if (
-        disposition === "converged" &&
-        classifyCheckRuns(checkRuns, emptyMeans) === "failed"
-      ) {
-        return {
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-      status: "online_review_failed",
-            summary:
-              "online review bots are clean but CI check-runs failed on the PR head",
-            repairHint:
-              "fix the CI failures on the PR head and re-run the online review loop",
-          }),
-        };
       }
     }
     // Sparse / unusable verify cargo (no typed disposition) continues to fixer
@@ -1025,8 +1033,8 @@ export async function runOnlineReviewLoopStage(
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
       if (envelopeFixSha !== undefined) {
         try {
-          // Persist envelope SHA for ledger / recheck landing (worker-owned
-          // side effects consume fix SHA inside the next Online Review seat).
+          // Persist envelope SHA for ledger / recheck landing. Next iteration's
+          // Collector owns post-fix retrigger/query/wait (#1145).
           lastFixCommitSha = dispatch.resolveFixCommitSha
             ? await dispatch.resolveFixCommitSha(envelopeFixSha)
             : envelopeFixSha;
@@ -1035,19 +1043,6 @@ export async function runOnlineReviewLoopStage(
             throw err;
           }
           return decisionGateFromDispatchInfra(round, "fixer", err);
-        }
-        try {
-          await dispatch.retriggerAfterFix();
-        } catch (err) {
-          if (err instanceof OnlineReviewLoopTerminal) {
-            throw err;
-          }
-          return {
-            ok: false,
-            terminalState: "decision_gate_raised",
-            round,
-            stopSummary: onlineReviewHostOpFailureStopSummary(err),
-          };
         }
       }
     }

@@ -169,6 +169,7 @@ describe("review-round persistence immunity", () => {
 
 /** #600/#603: successful pr_opened ship → verify → landing → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
+  expect.objectContaining({ kind: "collector", promptFile: "collector.md" }),
   expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
   expect.objectContaining({ kind: "landing", promptFile: "landing.md" }),
 ] as const;
@@ -2848,6 +2849,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       "cmr",
       "cmr",
       "ship",
+      "collector",
       "verify",
       "landing",
     ]);

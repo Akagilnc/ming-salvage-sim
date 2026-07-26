@@ -512,6 +512,25 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
     Object.assign(familyBackend, {
       dispatchWorker: async (spec: { kind: string }) => {
+        if (spec.kind === "collector") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "collector",
+              evidence: {
+                prUrl: "pr://offline",
+                headOid: "offline-head",
+                totalFindingCount: 0,
+                quiescent: true,
+                bots: {},
+                droppedBots: [],
+                threads: [],
+                checkRuns: [],
+                checkRunsEmptyMeans: "converged",
+              },
+            },
+          };
+        }
         if (spec.kind === "verify") {
           return {
             kind: "completed",

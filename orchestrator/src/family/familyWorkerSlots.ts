@@ -30,6 +30,10 @@ export function familyWorkerSlotForDispatch(
       return "coderFix";
     case "verify":
       return "verify";
+    case "collector":
+      // #1145: Collector shares the configurable online-review verify slot
+      // (model/thinking stay route-configurable; not a second hardcoded model).
+      return "verify";
     case "fixer":
       return "fixer";
     case "landing":

@@ -276,7 +276,7 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
       dispatchFixer: async () => {
         throw new Error("fixer must not run on green converge");
       },
-      retriggerAfterFix: () => {},
+
     }));
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("mergeable");

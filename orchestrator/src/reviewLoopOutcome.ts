@@ -8,8 +8,10 @@
 
 import type {
   CleanupResult,
+  CollectorResult,
   LandingResult,
   FixerResult,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   VerifyResult,
   WorkerKind,
@@ -45,6 +47,30 @@ export function isValidCleanupResult(
     return false;
   }
   return !(obj.terminal === false && obj.ok === true);
+}
+
+/** Deterministic collector evidence for explicit offline/test injection only. */
+export function stubCollectorEvidence(
+  overrides?: Partial<OnlineReviewLandingSnapshot>,
+): OnlineReviewLandingSnapshot {
+  return {
+    prUrl: overrides?.prUrl ?? "pr://offline",
+    headOid: overrides?.headOid ?? "offline-head",
+    totalFindingCount: overrides?.totalFindingCount ?? 0,
+    quiescent: overrides?.quiescent ?? true,
+    bots: overrides?.bots ?? {},
+    droppedBots: overrides?.droppedBots ?? [],
+    threads: overrides?.threads ?? [],
+    checkRuns: overrides?.checkRuns ?? [],
+    checkRunsEmptyMeans: overrides?.checkRunsEmptyMeans ?? "converged",
+  };
+}
+
+/** Deterministic collector verdict for explicit offline/test injection only. */
+export function stubCollectorResult(
+  evidence?: OnlineReviewLandingSnapshot,
+): CollectorResult {
+  return { kind: "collector", evidence: evidence ?? stubCollectorEvidence() };
 }
 
 /** Deterministic verify verdict for explicit offline/test injection only. */
@@ -83,6 +109,8 @@ export function skeletonReviewLoopWorkerResult(
   kind: WorkerKind,
 ): WorkerResult | undefined {
   switch (kind) {
+    case "collector":
+      return { kind: "completed", output: stubCollectorResult() };
     case "verify":
       return { kind: "completed", output: stubVerifyResult() };
     case "fixer":

@@ -306,7 +306,7 @@ describe("#825 Group A family roles", () => {
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        retriggerAfterFix: () => {},
+
       }),
     );
     expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 2 });
@@ -332,7 +332,7 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        retriggerAfterFix: () => {},
+
       }),
     );
     expect({ verifyCalls, ok: result.ok, terminalState: result.terminalState }).toEqual({

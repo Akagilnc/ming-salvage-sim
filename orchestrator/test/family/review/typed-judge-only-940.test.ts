@@ -76,9 +76,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchFixer: async () => {
         throw new Error("fixer must not run on converged");
       },
-      retriggerAfterFix: () => {
-        throw new Error("retrigger must not run on converged");
-      },
+
     }));
     expect(result).toEqual({
       ok: true,
@@ -120,7 +118,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
           fixCommitSha: `fix-${fixerCalls}`,
         };
       },
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async (sha) => sha,
     }));
     expect(result).toEqual({
@@ -144,7 +142,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
       },
-      retriggerAfterFix: () => {},
+
     }));
     expect(result.ok).toBe(false);
     expect(result.terminalState).toBe("decision_gate_raised");
@@ -173,7 +171,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         committed: true,
         fixCommitSha: "fix-sha",
       }),
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async () => "fix-sha",
     }));
     expect(result.terminalState).not.toBe("round_budget_exhausted");

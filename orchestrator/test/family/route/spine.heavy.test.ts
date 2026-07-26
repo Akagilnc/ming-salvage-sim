@@ -245,6 +245,25 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
     let verifyDispatches = 0;
     familyBackend.dispatchWorker = async (spec: WorkerSpec) => {
+            if (spec.kind === "collector") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: {
+              prUrl: "pr://offline",
+              headOid: "offline-head",
+              totalFindingCount: 0,
+              quiescent: true,
+              bots: {},
+              droppedBots: [],
+              threads: [],
+              checkRuns: [],
+              checkRunsEmptyMeans: "converged",
+            },
+          },
+        };
+      }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
         return { kind: "completed", output: { kind: "verify", converged: true } };
@@ -286,6 +305,25 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
     let verifyDispatches = 0;
     familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "collector") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: {
+              prUrl: "pr://offline",
+              headOid: "offline-head",
+              totalFindingCount: 0,
+              quiescent: true,
+              bots: {},
+              droppedBots: [],
+              threads: [],
+              checkRuns: [],
+              checkRunsEmptyMeans: "converged",
+            },
+          },
+        };
+      }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
         return {
@@ -562,12 +600,27 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           },
         };
       }
-      const skeletonKinds = new Set(["verify", "fixer", "landing"]);
+      const skeletonKinds = new Set(["collector", "verify", "fixer", "landing"]);
       if (skeletonKinds.has(spec.kind)) {
         return {
           kind: "completed",
           output:
-            spec.kind === "verify"
+            spec.kind === "collector"
+              ? {
+                  kind: "collector",
+                  evidence: {
+                    prUrl: "pr://offline",
+                    headOid: "offline-head",
+                    totalFindingCount: 0,
+                    quiescent: true,
+                    bots: {},
+                    droppedBots: [],
+                    threads: [],
+                    checkRuns: [],
+                    checkRunsEmptyMeans: "converged",
+                  },
+                }
+              : spec.kind === "verify"
               ? {
                   kind: "verify",
                   converged: true,

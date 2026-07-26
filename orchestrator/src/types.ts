@@ -60,7 +60,9 @@ export type FamilyEndgameWorkerId =
   | "S9"
   | "S10"
   | "S11"
-  | "S12";
+  | "S12"
+  /** Online Review Collector — evidence only (#1145). */
+  | "S13";
 
 /** Any durable worker/ledger label across the child and family machines. */
 export type StepId = SliceStepId | FamilyEndgameWorkerId;
@@ -97,7 +99,8 @@ export function isAnyStepId(step: unknown): step is StepId {
     step === "S9" ||
     step === "S10" ||
     step === "S11" ||
-    step === "S12"
+    step === "S12" ||
+    step === "S13"
   );
 }
 
@@ -108,7 +111,8 @@ export type StepRole =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "landing";
+  | "landing"
+  | "collector";
 
 /** Public handoff: completed | parked | failed (#942 / ID-001). */
 export type HandoffStatus = "completed" | "parked" | "failed";
@@ -137,7 +141,8 @@ export type WorkerSoul =
   | "verify"
   | "fixer"
   | "landing"
-  | "merger";
+  | "merger"
+  | "collector";
 export type StepSoul = WorkerSoul;
 
 /**
@@ -756,7 +761,8 @@ export type WorkerKind =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "landing";
+  | "landing"
+  | "collector";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
 export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
@@ -1327,13 +1333,26 @@ export interface MergeWorkerResult {
 }
 
 /**
+ * Online Review Collector worker output (#1145).
+ *
+ * Collector owns GitHub query / wait / retrigger / evidence assembly only.
+ * Cargo is opaque evidence for Verify — Collector never emits judge enum.
+ * Runner transports evidence without interpreting bot/CI/finding semantics.
+ */
+export interface CollectorResult {
+  readonly kind: "collector";
+  /** Opaque evidence blob; structural landing contract for the Verify seat. */
+  readonly evidence?: OnlineReviewLandingSnapshot;
+}
+
+/**
  * Online review verify worker output (#600 / #940 / #1145).
  *
- * The Online Review worker owns per-finding judgment **and** GitHub side
- * effects (reply / resolve / deferred) before self-reporting. Runner never
- * replays residual plan cargo after the Action returns. Runner routes on
- * three-state disposition + CI facts from Action-returned evidence, never on
- * findings counts (#934 ID-012).
+ * Verify owns per-finding judgment **and** GitHub side effects (reply /
+ * resolve / deferred) before self-reporting. Collector owns query/wait.
+ * Runner never replays residual plan cargo after the Action returns. Runner
+ * routes on three-state disposition only — never on findings counts
+ * (#934 ID-012 / #1145).
  */
 export interface VerifyResult {
   readonly kind: "verify";
@@ -1440,6 +1459,7 @@ export type WorkerOutput =
   | CmrResult
   | ShipResult
   | MergeWorkerResult
+  | CollectorResult
   | VerifyResult
   | FixerResult
   | CleanupResult

@@ -363,7 +363,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           });
           return sha;
         },
-        retriggerAfterFix: () => {},
+
       }),
       {
         enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
@@ -472,7 +472,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           });
           return sha;
         },
-        retriggerAfterFix: () => {},
+
       }),
       {
         initialRound: 2,
@@ -532,7 +532,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           fixCommitSha: "fix-once",
         };
       },
-      retriggerAfterFix: () => {},
+
     }));
 
     expect(result.ok).toBe(true);
