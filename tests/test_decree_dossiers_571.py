@@ -1103,6 +1103,44 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
         session.db.close()
 
 
+def test_probe_directive_shared_entry_creates_and_settles_structured_dossier(game):
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.session import GameSession
+    from scripts.probe_directive_contract import add_narrative_probe_directive
+
+    db, state, content = game
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+
+    directive = add_narrative_probe_directive(
+        session,
+        "着有司整饬河工",
+        probe_id="contract-smoke",
+        notes="probe smoke",
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive.id)
+    assert dossier["action_type"] == "policy"
+    assert dossier["target_kind"] == "issue"
+    assert dossier["target_id"] == "probe:contract-smoke:1"
+
+    settle_with_delta(
+        state,
+        db,
+        {},
+        before_turn=state.turn,
+        content=content,
+        dossier_verdicts=[{
+            "dossier_id": dossier["id"],
+            "decision": "promulgated",
+        }],
+    )
+
+    assert state.turn == 2
+    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+
+
 def test_directive_freezes_at_dossier_birth(game):
     db, state, _content = game
     payload = {

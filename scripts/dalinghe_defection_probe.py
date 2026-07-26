@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from ming_sim.content import GameContent
 from ming_sim.llm_config import load_llm_config
 from ming_sim.session import GameSession
+from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
 DECREES = [
@@ -154,9 +155,12 @@ def main() -> int:
     sess = GameSession(str(db_path), llm, content=content, verify_llm=True, start_ym=args.start_ym)
     results: list[dict[str, object]] = []
     try:
-        for label, decree in DECREES:
+        for sequence, (label, decree) in enumerate(DECREES, start=1):
             sess.begin_turn()
-            sess.add_directive(decree, notes=label)
+            add_narrative_probe_directive(
+                sess, decree, notes=label,
+                probe_id="dalinghe-defection", sequence=sequence,
+            )
             print(f"[probe] resolving {label} at {sess.state.year}.{sess.state.period} turn={sess.state.turn}", flush=True)
             report = sess.resolve_turn(decree=decree)
             results.append({
