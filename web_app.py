@@ -3473,7 +3473,7 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
     game = get_game()
     try:
         with _serialized_web_write(game):
-            pass
+            capture_turn = int(game.state.turn)
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
@@ -3483,6 +3483,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
         with _serialized_web_write(game):
+            if int(game.state.turn) != capture_turn:
+                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             dv = game.session.add_directive(
                 request.text.strip(), notes=request.notes,
                 dossier_payload=dossier_payload,
@@ -3507,7 +3509,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
     game = get_game()
     try:
         with _serialized_web_write(game):
-            pass
+            capture_turn = int(game.state.turn)
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
@@ -3515,6 +3517,8 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             game.session.llm_config,
         )
         with _serialized_web_write(game):
+            if int(game.state.turn) != capture_turn:
+                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
             game.session.update_directive(
                 directive_id, text.strip(), dossier_payload=dossier_payload,
             )
@@ -3595,7 +3599,11 @@ def api_advance_without_edict() -> Dict[str, Any]:
                 action for action in game.db.list_pending_actions(turn_before)
                 if action["kind"] == "directive"
             ]
-            if game.directive_rows() or pending_directive_actions:
+            if (
+                game.directive_rows()
+                or pending_directive_actions
+                or game.db.list_decree_dossiers(status="proposed")
+            ):
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
                 advance_without_edict(
@@ -3638,11 +3646,11 @@ class EditDecreeRequest(BaseModel):
 
 @app.patch("/api/decree")
 async def api_edit_decree(body: EditDecreeRequest) -> Dict[str, Any]:
-    """皇帝手动改定诏书正文（拟诏后、颁诏前）。"""
+    """兼容入口；存在逐道草案时拒绝以合并正文绕过可执行案卷。"""
     game = get_game()
     try:
-        # set_decree 改 in-memory last_decree（结算读它）；与会话写同走串行门，避免在结算冻结
-        # 窗口里改诏书正文（cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
+        # 与会话写同走串行门，避免在结算冻结窗口里改诏书正文
+        # （cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
         with _serialized_web_write(game):
             decree = game.session.set_decree(body.decree)
     except ValueError as e:

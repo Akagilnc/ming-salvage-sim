@@ -1069,11 +1069,15 @@ def extract_draft_intent(
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "授权ID": "",\n'
-        '  "期限月数": null           // 军令必填正整数；非军令留 null\n'
+        '  "期限月数": null' + (
+            "," if (_candidates or _supplement_mode) else ""
+        ) + '           // 军令必填正整数；非军令留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
-        '  "目标草案": "新",       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
+        '  "目标草案": "新"' + (
+            "," if _supplement_mode else ""
+        ) + '       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
         '想改/补但没指明是哪道=「含糊」\n'
         if _candidates else ""
     )

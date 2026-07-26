@@ -154,6 +154,43 @@ def test_directive_capture_runs_outside_write_gate(
     assert game.db.writes == ["unrelated-write"]
 
 
+@pytest.mark.parametrize("operation", ("create", "update"))
+def test_directive_capture_result_is_rejected_after_turn_changes(
+    monkeypatch, operation,
+):
+    import ming_sim.cli_backend as cli_backend
+
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    calls = []
+    payload = {
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "land-survey",
+    }
+
+    def capture(_text, _llm_config):
+        game.state.turn += 1
+        return payload
+
+    game.session.llm_config = SimpleNamespace()
+    game.session.add_directive = lambda *a, **k: calls.append(("create", a, k))
+    game.session.update_directive = lambda *a, **k: calls.append(("update", a, k))
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    call = (
+        web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))
+        if operation == "create"
+        else web_app.api_update_directive(
+            7, web_app.DirectivePatch(text="重定清丈田亩"),
+        )
+    )
+    with pytest.raises(HTTPException) as exc:
+        _invoke(call)
+
+    assert exc.value.status_code == 409
+    assert calls == []
+
+
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
