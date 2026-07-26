@@ -766,7 +766,16 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
-                session.advance_without_decree()
+                result = session.advance_without_decree()
+                if result is not None and result.awaiting:
+                    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+                    choices = []
+                    for decision in result.decisions:
+                        options = decision.get("options") or []
+                        first = options[0] if options else {}
+                        print(f"  · {decision.get('title')} → {first.get('label', '（无）')}")
+                        choices.append(dict(first))
+                    session.submit_decisions(choices)
             except ValueError as error:
                 # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
                 print(f"\n{error}")

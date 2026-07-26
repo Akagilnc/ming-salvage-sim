@@ -4937,6 +4937,9 @@ def apply_issue_tracker_output(
                     stop_condition = ""
                 else:
                     stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
+                origin_ref = db.resolve_commitment_origin_ref(
+                    state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
+                )
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
@@ -4944,9 +4947,6 @@ def apply_issue_tracker_output(
                     "item": ni, "title": title,
                 })
                 continue
-            origin_ref = db.resolve_commitment_origin_ref(
-                state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
-            )
         # 校验：国策必须有「办成回报」。CLI 后端(agy)一贯不填效果字段（实测 0/4），
         # 空则聚焦补全，保证「国策跑完有实质后果」(A 方案)；floor 兜底，绝不入空壳。
         if kind == "initiative" and not resolve_eff and not is_commitment:
@@ -6448,6 +6448,7 @@ def apply_score_extraction(
     # dossier:<id>.  Reject every list-carried effect whose dossier has not
     # actually crossed the promulgation boundary.  Raw decree records remain
     # durable; they do not authorize effects.
+    dossier_origin_rejections: List[Tuple[str, Dict[str, object], str]] = []
     for section, value in list(extracted.items()):
         if not isinstance(value, list):
             continue
@@ -6467,6 +6468,9 @@ def apply_score_extraction(
                 continue
             dossier = db.get_decree_dossier(dossier_id)
             if dossier is None:
+                dossier_origin_rejections.append(
+                    (section, item, f"origin_ref 指向不存在案卷：{origin_ref}")
+                )
                 continue
             if (
                 str(dossier.get("status") or "") in {"promulgated", "executing"}
@@ -6476,6 +6480,10 @@ def apply_score_extraction(
                 )
             ):
                 authorized.append(item)
+            else:
+                dossier_origin_rejections.append(
+                    (section, item, f"origin_ref 案卷尚未颁布：{origin_ref}")
+                )
         extracted[section] = authorized
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
@@ -7556,6 +7564,16 @@ def apply_score_extraction(
         }
         for _section, item, reason in validate_rejections
     ]
+    validate_rejection_items.extend(
+        {
+            "rejected": True,
+            "item": item,
+            "reason": reason,
+            "category": "missing_ref",
+            "section": section,
+        }
+        for section, item, reason in dossier_origin_rejections
+    )
     raw_module_rejections = extracted.get("_module_rejections")
     module_rejections = [
         item for item in raw_module_rejections if isinstance(item, dict)

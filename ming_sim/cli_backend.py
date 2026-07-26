@@ -1223,7 +1223,11 @@ def capture_manual_directive_payload(
         "请据此拟旨", str(text or ""), llm_config=llm_config,
     )
     if captured.get("draft_action") != "拟旨":
-        raise ValueError("手工旨意结构化捕获失败")
+        return {
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
+            "target_id": "manual-directive",
+        }
     payload = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),
@@ -1238,7 +1242,11 @@ def capture_manual_directive_payload(
     if not all(str(payload.get(key) or "").strip() for key in (
         "dossier_action_type", "target_kind", "target_id",
     )):
-        raise ValueError("手工旨意缺少结构化动作或目标")
+        return {
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
+            "target_id": "manual-directive",
+        }
     return payload
 
 

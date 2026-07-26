@@ -1796,6 +1796,8 @@ class GameDB:
             "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -1894,8 +1896,6 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
-        self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor "
             "ON decree_dossiers(executor_kind, executor_id, status)"
@@ -9607,7 +9607,7 @@ class GameDB:
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
-        """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
+        """机械旨意的唯一结构边界；无法寻址的叙事旨退回稳定案卷目标。"""
         normalized = dict(payload)
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
@@ -9674,8 +9674,16 @@ class GameDB:
         if target_id:
             normalized["target_id"] = target_id
         else:
-            normalized.pop("target_id", None)
-            raise ValueError("旨意缺少 canonical target")
+            normalized["dossier_action_type"] = "special_decree"
+            normalized["target_kind"] = "policy"
+            normalized["target_id"] = str(
+                normalized.get("_narrative_target_id") or "manual-directive"
+            )
+            for field in (
+                "amount", "account", "execution_surface", "assignee_id",
+                "authorization_id", "due_turn",
+            ):
+                normalized.pop(field, None)
         return normalized
 
     def _commit_dossier_write(self, commit: bool) -> None:
@@ -9887,11 +9895,15 @@ class GameDB:
                 AND (
                        d.created_turn=?
                     OR (h.turn=? AND h.decision='promulgated')
+                    OR (
+                           h.rescript_action='force_promulgated'
+                       AND h.turn=? - 1
+                    )
                 )
             )
             ORDER BY d.id
             """,
-            (int(turn), int(turn), int(turn), int(turn)),
+            (int(turn), int(turn), int(turn), int(turn), int(turn)),
         ).fetchall()
         return [
             self._dossier_row(row) for row in rows
@@ -10185,7 +10197,11 @@ class GameDB:
                     dossier_id=int(dossier_id),
                     commit=False,
                 ):
-                    raise ValueError("授权案卷载荷物化失败")
+                    self.record_dossier_execution(
+                        dossier_id, "fulfilled", "授权此前已生效，幂等结案",
+                        state.turn, close=True, commit=False,
+                    )
+                    return
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
@@ -11517,6 +11533,8 @@ class GameDB:
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
+        if not structured.get("target_id"):
+            structured["_narrative_target_id"] = f"legacy-directive:{directive_id}"
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )

@@ -2286,7 +2286,7 @@ class GameSession:
         self.db.save_state(self.state)
         return report
 
-    def advance_without_decree(self) -> None:
+    def advance_without_decree(self):
         """CLI 退朝无草案：仅财政 tick + 推进。"""
         has_default_approved_work = bool(
             self.db.list_directives(self.state, statuses=("pending", "draft"))
@@ -2295,15 +2295,14 @@ class GameSession:
             for row in self.db.list_pending_actions(self.state.turn)
         ) or bool(self.db.list_decree_dossiers(status="proposed"))
         if has_default_approved_work:
-            self.resolve_turn()
-            return
+            return self.resolve_turn()
         advanced = advance_without_edict(
             self.state, self.db, content=self.content, registry=self.registry)
         if not advanced:
-            self.resolve_turn()
-            return
+            return self.resolve_turn()
         self.state.turn_phase = TurnPhase.SUMMONING.value
         self.db.save_state(self.state)
+        return None
 
     def victory(self) -> Dict[str, object]:
         return victory_status(self.db, self.state)
