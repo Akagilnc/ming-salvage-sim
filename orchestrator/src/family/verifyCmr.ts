@@ -2751,7 +2751,7 @@ async function runIntegratedCmrPass(input: {
   const courtLanding: WorkerLandingPayload | undefined = receiveBuilderBeat
     ? {
         ...(refuseReopenLanding ?? {}),
-        builderBeat: "after_plan_verdict",
+        builderBeat: "construct",
       }
     : refuseReopenLanding;
   const stampReviewRound = (
