@@ -281,8 +281,29 @@ describe("spine reconcile — branch ③ inconsistent (fail-closed escalate)", (
         status: "escalated",
         event: "escalated",
         escalationKind: "failure",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
+        terminalChildren: expect.any(Array),
       }),
     );
+    expect(result.status === "failed" ? result.cause : undefined).toBe(
+      "runner_internal_error",
+    );
+
+    const second = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic,
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/291-base",
+    });
+    expect(second.status).toBe("failed");
+    if (result.status === "failed" && second.status === "failed") {
+      expect(second.cause).toBe(result.cause);
+    }
+    expect(second.stopSummary).toEqual(result.stopSummary);
+    expect(second.children).toEqual(result.children);
+    expect(childBackend.ran).toEqual([]);
   });
 });
 

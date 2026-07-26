@@ -335,6 +335,23 @@ export function resumeCapableForSlug(
   return RESUME_CAPABLE_PROVIDERS.has(resolveModelSlugForPool(slug, pool).provider);
 }
 
+function agentForResolvedEntry(
+  entry: ModelSlugRegistryEntry,
+  soul: WorkerSoul | undefined,
+  options: ModelProviderOptions | undefined = entry.options,
+): sc.AgentProvider {
+  const agent =
+    entry.provider === "grok" && soul !== undefined
+      ? grokAgent(entry.model, {
+          ...(options as GrokAgentOptions | undefined),
+          rulesFile: sandboxSoulPath(soul),
+        })
+      : MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
+  return soul === undefined
+    ? agent
+    : withSoulInstructions(agent, entry.provider, soul);
+}
+
 export function agentForSlug(
   slug: string,
   pool?: BillingPoolDispatchId,
@@ -343,16 +360,27 @@ export function agentForSlug(
   // Effort comes from the registry row for `slug` only — no call-site overlay
   // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  const agent =
-    entry.provider === "grok" && soul !== undefined
-      ? grokAgent(entry.model, {
-          ...(entry.options as GrokAgentOptions | undefined),
-          rulesFile: sandboxSoulPath(soul),
-        })
-      : MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
-  return soul === undefined
-    ? agent
-    : withSoulInstructions(agent, entry.provider, soul);
+  return agentForResolvedEntry(entry, soul);
+}
+
+/**
+ * Provider for a Runner-owned fresh raw review leg.
+ *
+ * These invocations have no session consumer: their sole product is stdout
+ * prose handed to the resident judge. Keep the global provider defaults
+ * resumable and opt out only at this narrow call boundary.
+ */
+export function freshReviewPanelAgentForSlug(
+  slug: string,
+  pool?: BillingPoolDispatchId,
+  soul?: WorkerSoul,
+): sc.AgentProvider {
+  const entry = resolveModelSlugForPool(slug, pool);
+  const options = {
+    ...(entry.options ?? {}),
+    captureSessions: false,
+  } as ModelProviderOptions;
+  return agentForResolvedEntry(entry, soul, options);
 }
 
 export function appendAgySoulMount(

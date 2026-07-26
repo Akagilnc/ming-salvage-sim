@@ -151,18 +151,16 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-  isTerminalOnlyContinueDispositions,
   JUDGE_OPEN_COURT_PROMPT_FILE,
   judgeStatusFromOutput,
   mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
-  projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
   rebuildResidentJudgeFromLedger,
   requireFixPacketBody,
   requireOpenCourtSession,
   requireResidentJudgeResume,
-  storeStatusByIdentityFromDispositions,
+  usesJudgeReceiptChannel,
 } from "./judgeStation.js";
 import {
   latestPlanBodyFromLedger,
@@ -170,7 +168,6 @@ import {
   shouldRunCoderPlanPhase,
 } from "./coderPlanPhase.js";
 import {
-  rebuildBlockingFromLedger,
   reviewerRawArtifactPointers,
 } from "./residualLedger.js";
 import {
@@ -186,6 +183,7 @@ import {
   dispatchReviewPanelLegs,
   omitJudgeBoundDispatchFields,
 } from "./family/reviewPanelLegs.js";
+import { isSessionContinuityLostError } from "./receiptRecovery.js";
 import type { LegTransport } from "./legPaper.js";
 import {
   isStepId,
@@ -1066,7 +1064,6 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1076,14 +1073,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              rebuiltBlocking.blockingFindingCount,
+              0,
             ) ??
-            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
+            continueRepairFromAnswer(answer, 0)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -2816,6 +2813,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   type SeatDispatchProtocolOutcome =
     | { readonly kind: "dispatched"; readonly result: WorkerResult }
+    | { readonly kind: "judge_fresh_reopen" }
     | { readonly kind: "relay" }
     | { readonly kind: "terminal"; readonly result: RunResult }
     | { readonly kind: "stay_put_break" };
@@ -2927,12 +2925,57 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         retryOpts,
       );
+      if (
+        result.kind === "failed" &&
+        usesJudgeReceiptChannel(spec) &&
+        typeof ctx.resumeSessionId === "string" &&
+        isSessionContinuityLostError(new Error(result.reason))
+      ) {
+        // Some hosts return session-loss as a failed receipt instead of
+        // throwing. Normalize only this judge-resume shape into the existing
+        // continuity-loss catch; retry semantics remain unchanged elsewhere.
+        throw new Error(result.reason);
+      }
       if (result.kind === "completed") {
         completeMechanicalRetryInvocation(step);
         onDispatchCompleted?.();
       }
       return { kind: "dispatched", result };
     } catch (err) {
+      if (
+        usesJudgeReceiptChannel(spec) &&
+        typeof ctx.resumeSessionId === "string" &&
+        isSessionContinuityLostError(err)
+      ) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const ts = new Date().toISOString();
+        const lostEntry: PersistentLedgerEntry = {
+          step,
+          event: "session_continuity_lost",
+          reason,
+          sessionId: ctx.resumeSessionId,
+          modelSlug: spec.model,
+          runId,
+          prompt_hash: await hashPromptForPark(spec.promptFile, step),
+          branchHEAD: await resolveBranchHEAD(),
+          ts,
+        };
+        ledger.push(lostEntry);
+        try {
+          if (stateDir !== undefined) {
+            await backend.writeLedger(lostEntry, stateDir);
+          } else {
+            pendingEntries.push(lostEntry);
+          }
+        } catch (writeErr) {
+          return await terminalFromWriteErr(writeErr);
+        }
+
+        // Let the caller re-enter the same topology boundary. S6 must dispatch
+        // current-HEAD panel legs before the fresh judge; redispatching here
+        // would reopen the judge with the stale/empty landing payload.
+        return { kind: "judge_fresh_reopen" };
+      }
       // #683/#686: 429 → park within T / relay beyond T with live baton.
       if (isQuotaWaitForResetError(err)) {
         const currentPool =
@@ -3277,20 +3320,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #925/#877/#952: rebuild pending open-set / terminal store flips from the
-    // prior ledger (judge continue + residual historical S4/reviewer open-count).
-    // Each projection replaces the pending blocker set; prose dispositions do
-    // not reopen findings. Terminal flips include refute→refuted and
-    // suppress→suppressed. #899: also rebuild raw reviewer artifact pointers so
-    // a crash/resume after S4 still hands the fixer host paths (materialised at
-    // landing).
-    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
-    pendingBlockingFindings = [...rebuiltBlocking.blocking];
-    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
-    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
-    pendingFixPacketBody = rebuiltBlocking.fixPacketBody;
-    findingDispositions = [...rebuiltBlocking.findingDispositions];
-    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
+    pendingFixPacketBody =
+      plan.lastOutput?.kind === "judge" &&
+      plan.lastOutput.status === "continue"
+        ? plan.lastOutput.fixPacketBody
+        : undefined;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
@@ -3864,6 +3898,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (openProtocol.kind === "relay") {
               continue openCourtDispatch;
             }
+            if (openProtocol.kind === "judge_fresh_reopen") {
+              return await errorTermination(
+                "S1",
+                new Error(
+                  "open-court dispatch cannot fresh-reopen before court birth",
+                ),
+              );
+            }
             return await errorTermination(
               "S1",
               new Error("open-court dispatch: unexpected stay_put_break"),
@@ -4038,11 +4080,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const seatModel = stepSpecs[step].model;
           const seatResumeCapable = resumeCapableForSlug(seatModel, billingPool);
           let resumeSessionId: string | undefined;
+          let freshJudgeHistoryLedger: ReadonlyArray<LedgerEntry> | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             // #955: crash/escalate resumeFor — identity match AND capability.
             // Stored session id may only re-enter the model binding that created
-            // it. Mismatch / incapable → coder: fresh (answer still delivered);
-            // #1081 judge: fail loud (silent fresh resident judge is illegal).
+            // it. A coder model move, or an answered S6 resident-judge model
+            // move, drops the stale id and fresh-dispatches at the same durable
+            // boundary (answer still delivered). Other judge discontinuities
+            // still fail loud.
             const sessionModel = resumeFor.sessionModel;
             const identityOk =
               sessionModel === undefined || sessionModel === seatModel;
@@ -4052,7 +4097,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const lostReason = !seatResumeCapable
                 ? `provider_incapable (seat=${seatModel})`
                 : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
-              if (isJudgeSeat({ step })) {
+              const mayFreshReopenJudge =
+                step === "S6" && !identityOk && seatResumeCapable;
+              if (isJudgeSeat({ step }) && !mayFreshReopenJudge) {
                 return await errorTermination(
                   step,
                   new Error(
@@ -4073,6 +4120,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
                   `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
               );
+              freshJudgeHistoryLedger = mayFreshReopenJudge
+                ? mergeResumeLedgerHistory(resumeHistoryLedger, ledger)
+                : undefined;
               const lostEntry: PersistentLedgerEntry = {
                 step,
                 event: "session_continuity_lost",
@@ -4088,29 +4138,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 branchHEAD: await resolveBranchHEAD(),
                 ts: new Date().toISOString(),
               };
-              ledger.push({
-                step,
-                event: "session_continuity_lost",
-                reason: lostReason,
-                ...(typeof sessionModel === "string"
-                  ? { fromModelId: sessionModel }
-                  : {}),
-                toModelId: seatModel,
-                sessionId: resumeFor.sessionId,
-                ts: lostEntry.ts,
-              });
-              try {
-                if (stateDir !== undefined) {
-                  await backend.writeLedger(lostEntry, stateDir);
-                } else {
-                  pendingEntries.push(lostEntry);
+              const lossAlreadyPersisted =
+                freshJudgeHistoryLedger?.some(
+                  (entry) =>
+                    entry.event === "session_continuity_lost" &&
+                    entry.step === step &&
+                    entry.sessionId === resumeFor?.sessionId &&
+                    entry.fromModelId === sessionModel &&
+                    entry.toModelId === seatModel,
+                ) === true;
+              if (!lossAlreadyPersisted) {
+                try {
+                  if (stateDir !== undefined) {
+                    await backend.writeLedger(lostEntry, stateDir);
+                  } else {
+                    pendingEntries.push(lostEntry);
+                  }
+                } catch (err) {
+                  const detail = err instanceof Error ? err.message : String(err);
+                  return await errorTermination(
+                    step,
+                    new Error(
+                      `record_persist_failed: session_continuity_lost: ${detail}`,
+                    ),
+                    { cause: "record_persist_failed" },
+                  );
                 }
-              } catch (err) {
-                console.warn(
-                  `[orchestrator] session_continuity_lost ledger write failed (fail-open): ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-                );
+                ledger.push(lostEntry);
               }
             }
             resumeFor = undefined;
@@ -4182,6 +4236,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let singleSlicePanelTransports:
             | ReadonlyArray<LegTransport>
             | undefined;
+          let dispatchSingleSlicePanelsBeforeJudge =
+            step === "S6" &&
+            resumeSessionId === undefined &&
+            priorJudgeVerdictRowsFromLedger(
+              freshJudgeHistoryLedger ?? ledger,
+            ).length > 0;
           for (;;) {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
@@ -4200,7 +4260,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               const relayBrief = relayBriefForDispatch(step);
               const priorJudgeVerdicts = isJudgeSeat({ step }) || step === "S5"
-                ? priorJudgeVerdictRowsFromLedger(ledger)
+                ? priorJudgeVerdictRowsFromLedger(
+                    freshJudgeHistoryLedger ?? ledger,
+                  )
                 : undefined;
               const dispatchCtx = {
                 runId,
@@ -4245,6 +4307,78 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : {}),
               };
+              // #1126 / #1139: one panel dispatcher serves both the live loop
+              // (judge continue → panels → resume judge) and an S6 fresh reopen
+              // (panels → fresh judge). The recovery predicate reads only typed
+              // topology: no resident session + durable prior verdicts.
+              if (
+                dispatchSingleSlicePanelsBeforeJudge &&
+                singleSlicePanelTransports === undefined
+              ) {
+                const inPlanPhase =
+                  shouldRunCoderPlanPhase() &&
+                  scanCoderPlanPhase(ledger).planPhase;
+                if (!inPlanPhase) {
+                  const judgeStep = step === "S3" ? "S3" : "S6";
+                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
+                  const reviewLegs = [
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "standards" as const,
+                    },
+                    {
+                      slug: workerSpec.model,
+                      family: modelFamilyForSlug(workerSpec.model),
+                      axis: "spec" as const,
+                    },
+                  ];
+                  const reviewRound = await dispatchReviewPanelLegs({
+                    legs: reviewLegs,
+                    scope: { kind: "single", judgeStep },
+                    dispatch: async (reviewSpec) => {
+                      const protocol = await dispatchSeatWithProtocol({
+                        step,
+                        wallStep: step,
+                        spec: reviewSpec,
+                        ctx: reviewLegCtx,
+                        retryOpts: durableMechanicalRetryOptions(step),
+                        capacityStateSummary:
+                          "fresh reviewer checkpoint at capacity; drift preserved",
+                        setMonitorHandle: (handle) => {
+                          stepMonitorHandle = handle;
+                        },
+                      });
+                      if (protocol.kind === "dispatched") {
+                        return {
+                          kind: "leg_result" as const,
+                          result: protocol.result,
+                        };
+                      }
+                      return {
+                        kind: "seat_control" as const,
+                        control: protocol,
+                      };
+                    },
+                  });
+                  if (reviewRound.kind === "seat_control") {
+                    if (reviewRound.control.kind === "terminal") {
+                      return reviewRound.control.result;
+                    }
+                    if (reviewRound.control.kind === "relay") {
+                      continue orchestratorStepLoop;
+                    }
+                    return await errorTermination(
+                      step,
+                      new Error(
+                        `fresh reviewer ${step} stopped without a dispatch result`,
+                      ),
+                    );
+                  }
+                  singleSlicePanelTransports = reviewRound.transports;
+                  dispatchSingleSlicePanelsBeforeJudge = false;
+                }
+              }
               // ADR 0138 / #978: when a judge continue established a live open
               // set, packet body is required and is the sole content path.
               // Unusable non-judge → S5 (raw artifacts only) may lack a body —
@@ -4532,6 +4666,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (seatProtocol.kind === "relay") {
                 continue orchestratorStepLoop;
               }
+              if (seatProtocol.kind === "judge_fresh_reopen") {
+                freshJudgeHistoryLedger = mergeResumeLedgerHistory(
+                  resumeHistoryLedger,
+                  ledger,
+                );
+                resumeSessionId = undefined;
+                resumeFor = undefined;
+                judgeSessionId = undefined;
+                judgeSessionModel = undefined;
+                dispatchSingleSlicePanelsBeforeJudge = step === "S6";
+                continue;
+              }
               if (seatProtocol.kind === "stay_put_break") {
                 break;
               }
@@ -4552,63 +4698,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   shouldRunCoderPlanPhase() &&
                   scanCoderPlanPhase(ledger).planPhase;
                 if (!inPlanPhase) {
-                  const judgeStep = step === "S3" ? "S3" : "S6";
-                  const reviewLegCtx = omitJudgeBoundDispatchFields(dispatchCtx);
-                  const reviewLegs = [
-                    {
-                      slug: workerSpec.model,
-                      family: modelFamilyForSlug(workerSpec.model),
-                      axis: "standards" as const,
-                    },
-                    {
-                      slug: workerSpec.model,
-                      family: modelFamilyForSlug(workerSpec.model),
-                      axis: "spec" as const,
-                    },
-                  ];
-                  const reviewRound = await dispatchReviewPanelLegs({
-                    legs: reviewLegs,
-                    scope: { kind: "single", judgeStep },
-                    dispatch: async (reviewSpec) => {
-                      const protocol = await dispatchSeatWithProtocol({
-                        step,
-                        wallStep: step,
-                        spec: reviewSpec,
-                        ctx: reviewLegCtx,
-                        retryOpts: durableMechanicalRetryOptions(step),
-                        capacityStateSummary:
-                          "fresh reviewer checkpoint at capacity; drift preserved",
-                        setMonitorHandle: (handle) => {
-                          stepMonitorHandle = handle;
-                        },
-                      });
-                      if (protocol.kind === "dispatched") {
-                        return {
-                          kind: "leg_result" as const,
-                          result: protocol.result,
-                        };
-                      }
-                      return {
-                        kind: "seat_control" as const,
-                        control: protocol,
-                      };
-                    },
-                  });
-                  if (reviewRound.kind === "seat_control") {
-                    if (reviewRound.control.kind === "terminal") {
-                      return reviewRound.control.result;
-                    }
-                    if (reviewRound.control.kind === "relay") {
-                      continue orchestratorStepLoop;
-                    }
-                    return await errorTermination(
-                      step,
-                      new Error(
-                        `fresh reviewer ${step} stopped without a dispatch result`,
-                      ),
-                    );
-                  }
-                  singleSlicePanelTransports = reviewRound.transports;
+                  dispatchSingleSlicePanelsBeforeJudge = true;
                   if (typeof result.sessionId === "string") {
                     resumeSessionId = result.sessionId;
                     judgeSessionId = result.sessionId;
@@ -4725,8 +4815,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             step,
             round: judgeRound,
             verdict: output.status,
-            findingDispositions: output.findingDispositions,
-            findings: output.findings,
             cargoPointer:
               typeof output.fixPacketBody === "string" &&
               output.fixPacketBody.length > 0
@@ -4735,143 +4823,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           });
         }
         if (!carriesEscalate) {
-          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
-          // Production role is always "verify" on those seats; expectedKind OR
-          // was redundant. Residual role:"reviewer" is not live here.
           if (isJudgeSeat({ step })) {
-            // #925: judge typed verdict is the sole routing signal. Unusable
-            // envelope → fixer path with raw artifact pointers (never silent clean).
-            if (output?.kind !== "judge") {
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingBlockingFindingCount = 0;
-              pendingFixPacketBody = undefined;
+            // ADR 0129/0131: the resident Judge Action owns findings-store
+            // writes, transitions and correction. Runner transports only the
+            // authored packet and routes on the typed verdict.
+            pendingBlockingFindings = [];
+            pendingBlockingFindingIdentityKeys = [];
+            pendingBlockingFindingCount = 0;
+            pendingFixPacketBody =
+              output.kind === "judge" && output.status === "continue"
+                ? output.fixPacketBody
+                : undefined;
+            if (output.kind !== "judge") {
               pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                 stepMonitorHandle,
                 stepSessionId,
               );
-              // Seed findingDispositions empty; route() will send unusable → S5.
-              lastOutput = output;
-              break;
-            }
-            // Apply continue dispositions via the shared projection helper
-            // (same helper resume rebuild uses — F2 single open-set seam).
-            if (output.status === "continue") {
-              // ADR 0138: missing/empty fixPacketBody is contract drift — fail
-              // loud here so S5 never falls back to bare-findings packing.
-              let authoredBody: string;
-              try {
-                authoredBody = requireFixPacketBody(output);
-              } catch (err) {
-                const reason =
-                  err instanceof Error
-                    ? err.message
-                    : "judge continue missing fixPacketBody (ADR 0138)";
-                return await errorTermination(step, new Error(reason), {
-                  output,
-                  findingDispositions,
-                  stopSummary: contractDriftStopSummary({
-                    summary: reason,
-                    repairHint:
-                      "judge status:continue must author non-empty fixPacketBody; " +
-                      "runner transports it verbatim and will not pack bare findings",
-                  }),
-                });
-              }
-              // #952 R6-C2: pass accumulated store statuses so terminal→terminal
-              // morphs fail at the write point (no open hardcode laundering).
-              const projected = projectJudgeContinueBlocking(
-                output,
-                storeStatusByIdentityFromDispositions(findingDispositions),
-              );
-              if (projected !== undefined) {
-                // Apply terminal store flips first, then gate empty live set (#919 M6).
-                if (projected.terminalDispositions.length > 0) {
-                  findingDispositions = [
-                    ...findingDispositions,
-                    ...projected.terminalDispositions,
-                  ];
-                }
-                pendingBlockingFindings = projected.blocking;
-                pendingBlockingFindingIdentityKeys =
-                  projected.blockingIdentityKeys;
-                pendingBlockingFindingCount = projected.blockingFindingCount;
-                pendingFixPacketBody = authoredBody;
-                if (pendingBlockingFindingCount > 0) {
-                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                    stepMonitorHandle,
-                    stepSessionId,
-                  );
-                } else if (projected.blockingIdentityKeys.length === 0) {
-                  // #952: 0 live + non-empty terminal flips (suppress/refute) =
-                  // terminal court closure — apply flips (above), do not S5,
-                  // route like converged via judgeStatusFromOutput. True empty
-                  // (0 live AND 0 terminals) remains M6 contract drift —
-                  // **except** #1082 plan-phase pre-review continue (准/退/索证
-                  // live in fixPacketBody prose; resume same S2 builder).
-                  const inPlanPhase =
-                    shouldRunCoderPlanPhase() &&
-                    scanCoderPlanPhase(ledger).planPhase;
-                  if (projected.terminalDispositions.length === 0) {
-                    if (!inPlanPhase) {
-                      // #919 M6 / family M1 isomorphic: true empty continue is
-                      // court contract drift — never empty-spin S5. Unusable
-                      // (non-judge) still routes to S5 above; route() continue→S5
-                      // stays for non-empty live sets only.
-                      const reason =
-                        `judge ${step} continue with 0 live findings ` +
-                        `(court contract drift; empty continue must not spin coder-fix)`;
-                      return await errorTermination(step, new Error(reason), {
-                        output,
-                        findingDispositions,
-                        stopSummary: contractDriftStopSummary({
-                          summary: reason,
-                          repairHint:
-                            "judge status:continue requires non-empty live identity keys " +
-                            "or terminal-only dispositions (suppress/refute); " +
-                            "re-open the same judge seat or repair the seat envelope — " +
-                            "do not empty-spin S5 coder-fix",
-                        }),
-                      });
-                    }
-                    // #1082 plan phase: keep authoredBody for S2 resume transport.
-                    pendingBlockingFindings = [];
-                    pendingBlockingFindingIdentityKeys = [];
-                    pendingBlockingFindingCount = 0;
-                    pendingFixPacketBody = authoredBody;
-                  } else if (
-                    inPlanPhase &&
-                    isTerminalOnlyContinueDispositions(output.findingDispositions)
-                  ) {
-                    // #1082 G1: plan pre-review is zero-finding; terminal-only
-                    // continue would collapse to converged→S7 with no construct
-                    // (silent early completion). Fail loud — do not swallow.
-                    const reason =
-                      `judge ${step} plan-phase continue with terminal-only ` +
-                      `dispositions (0 live, ≥1 refute/suppress) — plan pre-review ` +
-                      `must not silent-converge without a construct beat`;
-                    return await errorTermination(step, new Error(reason), {
-                      output,
-                      findingDispositions,
-                      stopSummary: contractDriftStopSummary({
-                        summary: reason,
-                        repairHint:
-                          "plan pre-review continue carries boundaries in " +
-                          "fixPacketBody only (0 findingDispositions); do not " +
-                          "emit refute/suppress rows before construction",
-                      }),
-                    });
-                  }
-                  // Post-construction terminal-only: fall through so ledger
-                  // records flips + continue envelope, then route → S7.
-                }
-              }
             } else {
-              // converged / escalate: no open findings for S5.
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingBlockingFindingCount = 0;
-              pendingFixPacketBody = undefined;
+              pendingRawReviewerArtifacts = undefined;
             }
           }
         }
@@ -4942,7 +4911,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // land on judge seats (S4 residual). Residual S4 still accepts dispositions
     // if a legacy path writes them.
     const stepFindingDispositions =
-      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
+      step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).

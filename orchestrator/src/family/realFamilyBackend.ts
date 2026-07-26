@@ -124,6 +124,7 @@ import {
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
+  freshReviewPanelAgentForSlug,
   modelFamilyForCmrReviewLeg,
   resolveModelSlugForPool,
   unavailableProviderAuth,
@@ -1809,7 +1810,13 @@ export class RealFamilyBackend implements FamilyBackend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: legClone,
           sandbox: this.panelLegSandbox(auth, spec, ctx),
-          agent: this.agentForSpec(spec, ctx),
+          agent: freshReviewPanelAgentForSlug(
+            spec.model,
+            isBillingPoolDispatchId(ctx.billingPool)
+              ? ctx.billingPool
+              : undefined,
+            spec.soul,
+          ),
           maxIterations: 1,
           branchStrategy: { type: "head" },
           promptFile: promptPath,
@@ -2128,7 +2135,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // Sandcastle owns malformed-receipt recovery; sidecar stays cargo.
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
-              judgeStationReceiptSchema(),
+              judgeStationReceiptSchema(ctx.priorJudgeVerdicts),
               resumeCapable,
             ),
           });
@@ -3480,6 +3487,9 @@ export class RealFamilyBackend implements FamilyBackend {
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
       stopSummary: escalation.stopSummary,
+      terminalChildren: escalation.terminalChildren,
+      terminalStatus: escalation.terminalStatus,
+      terminalCause: escalation.terminalCause,
     });
   }
 

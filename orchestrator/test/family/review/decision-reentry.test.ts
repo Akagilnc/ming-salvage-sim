@@ -106,6 +106,13 @@ class SeededFamilyBackend implements FamilyBackend {
 const epic: FamilyEpic = {
   issue: 604,
   children: [{ issue: 11, blockedBy: [] }],
+  admissionSkipped: [
+    {
+      issue: 12,
+      reason: "closed",
+      message: "child #12 was closed before admission",
+    },
+  ],
 };
 
 describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry is a decision_gate_park", () => {
@@ -120,6 +127,14 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
         escalationKind: "decision",
         reason: "family-level product decision needed before the epic can proceed",
         familyHeadAfter: "family-head-1",
+        terminalStatus: "parked",
+        terminalChildren: [
+          { issue: 11, status: "skipped", reason: "not_scheduled_this_invocation" },
+        ],
+        stopSummary: {
+          reason: "decision_gate_park",
+          summary: "family-level product decision needed before the epic can proceed",
+        },
       } as FamilyLedgerEntry,
     ]);
 
@@ -136,6 +151,12 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     // not an A-class repair failure.
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
     expect(result.stopSummary?.reason).not.toBe("infra_failure");
+    expect(result.admissionSkipped).toEqual(epic.admissionSkipped);
+    expect(result.children).toContainEqual({
+      issue: 12,
+      status: "skipped",
+      reason: "admission_skipped",
+    });
   });
 
   it("unanswered family FAILURE escalation stays infra_failure (A-class, not a park)", async () => {
@@ -147,6 +168,19 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
         escalationKind: "failure",
         reason: "family repair failed after exhausting retries",
         familyHeadAfter: "family-head-1",
+        terminalStatus: "failed",
+        terminalCause: "runner_internal_error",
+        terminalChildren: [
+          {
+            issue: 11,
+            status: "skipped",
+            reason: "not_scheduled_this_invocation",
+          },
+        ],
+        stopSummary: {
+          reason: "infra_failure",
+          summary: "family repair failed after exhausting retries",
+        },
       } as FamilyLedgerEntry,
     ]);
 
@@ -162,5 +196,36 @@ describe("PR#643 R2 (Codex P2) — a family-level DECISION escalation re-entry i
     // A failure-kind escalation is A-class — it must NOT be reclassified as a park.
     expect(result.stopSummary?.reason).toBe("infra_failure");
     expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
+  });
+
+  it("legacy unanswered decision without terminal cargo uses the resumable park fallback", async () => {
+    const familyBackend = new SeededFamilyBackend([
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "decision",
+        reason: "legacy family decision still needs an answer",
+        familyHeadAfter: "family-head-legacy",
+      } as FamilyLedgerEntry,
+    ]);
+
+    const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: "family/604-base",
+    });
+
+    expect(result.status).toBe("parked");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.children).toEqual([
+      {
+        issue: 11,
+        status: "skipped",
+        reason: "not_scheduled_this_invocation",
+      },
+    ]);
   });
 });

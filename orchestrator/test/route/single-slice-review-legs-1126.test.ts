@@ -230,6 +230,11 @@ describe("#1126 single-slice review legs via Runner (#1094 reuse)", () => {
       (l) => (l?.panelLegTransports?.length ?? 0) > 0,
     );
     expect(judgeAfterLegs?.panelLegTransports).toHaveLength(2);
+    expect(
+      backend.landings.filter(
+        (landing) => (landing?.panelLegTransports?.length ?? 0) > 0,
+      ),
+    ).toHaveLength(1);
     const transportIds = (judgeAfterLegs?.panelLegTransports ?? []).map(
       (t) => t.slug,
     );

@@ -80,6 +80,7 @@ def _draft_turn(sess, ch, monkeypatch, *, player_message, reply, draft_result):
     return GameSession.apply_cli_conversation_actions(
         sess, ch, player_message=player_message, answer=reply,
         has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
     )
 
 

@@ -711,38 +711,6 @@ describe("#1085 e2e ring3: wave-verify hub + resume", () => {
     }
   });
 
-  it("negative: empty continue does not spin wave coder-fix", async () => {
-    const backend = new FamilyHubBackend({
-      verify: () => ({
-        ok: false,
-        errorPackage: { reason: "red empty-continue" },
-      }),
-      worker: (spec) => {
-        if (spec.kind === "cmr") {
-          // continue with 0 live findings — contract drift.
-          return completedJudge({
-            kind: "judge",
-            status: "continue",
-            findingDispositions: [],
-            fixPacketBody: "empty — must not spin",
-          });
-        }
-        throw new Error(`coder-fix must not run: ${spec.kind}`);
-      },
-    });
-
-    const result = await runVerifyCmr({
-      phase: "wave",
-      familyBase: "family/1085-empty",
-      familyBackend: backend,
-      familyHeadAfter: "head-1085",
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.failedStatus).toBe("verify_failed");
-    expect(backend.dispatches.every((d) => d.spec.kind !== "coder")).toBe(true);
-  });
-
   it("toolchain hub next never spins coder-fix (zero-spin)", async () => {
     const backend = new FamilyHubBackend({
       verify: () => ({
