@@ -698,7 +698,14 @@ def review_directives(session: GameSession) -> str:
                         continue
                     new_text = input("新的指令内容：").strip()
                     if new_text:
-                        session.update_directive(target_id, new_text)
+                        from ming_sim.cli_backend import capture_manual_directive_payload
+                        session.update_directive(
+                            target_id,
+                            new_text,
+                            dossier_payload=capture_manual_directive_payload(
+                                new_text, session.llm_config,
+                            ),
+                        )
                         print("已修改。")
                     continue
                 if verb in {"del", "delete", "删", "删除"}:

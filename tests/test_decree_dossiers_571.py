@@ -972,6 +972,62 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
 
 
+def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
+    import ming_sim.cli.terminal as terminal
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    directive = session.add_directive(
+        "拨十两赈济",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue",
+            "target_id": "relief",
+            "amount": 10,
+            "account": "国库",
+            "execution_surface": "immediate",
+        },
+    )
+    revised_text = "改拨二十五两赈济"
+    revised_payload = {
+        "dossier_action_type": "grant_allocation",
+        "target_kind": "issue",
+        "target_id": "relief",
+        "amount": 25,
+        "account": "国库",
+        "execution_surface": "immediate",
+    }
+    captured = []
+
+    def capture(text, llm_config):
+        captured.append((text, llm_config))
+        return revised_payload
+
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(session, "write_decree", lambda: revised_text)
+    answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    before = state.metrics["国库"]
+
+    assert terminal.review_directives(session) == "issue"
+    assert captured == [(revised_text, None)]
+
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive.id)
+    assert dossier["decree_text"] == revised_text
+    assert json.loads(dossier["payload_json"])["amount"] == 25
+    db.apply_dossier_promulgation(
+        state, dossier["id"], "promulgated", content=content,
+    )
+    assert state.metrics["国库"] == before - 25
+    assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -25
+
+
 def test_extractor_context_origin_ref_round_trips_to_commitment(game):
     from ming_sim.simulation import build_extractor_shared_context
 
