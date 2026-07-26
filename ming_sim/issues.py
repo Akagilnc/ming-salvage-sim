@@ -6601,10 +6601,32 @@ def apply_score_extraction(
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+    economy_moves = []
+    for move in extracted.get("economy_moves") or []:
+        if not isinstance(move, dict):
+            economy_moves.append(move)
+            continue
+        origin_ref = str(move.get("origin_ref") or "").strip()
+        if not origin_ref.startswith("dossier:"):
+            economy_moves.append(move)
+            continue
+        try:
+            dossier_id = int(origin_ref.split(":", 1)[1])
+        except (TypeError, ValueError):
+            economy_moves.append(move)
+            continue
+        dossier = db.get_decree_dossier(dossier_id)
+        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
+            economy_moves.append(move)
+            continue
+        # ADR 0055: structured allocation effects are materialized from the
+        # dossier payload.  The extractor may repeat the same non-empty delta,
+        # but origin-bound apply must not debit it twice.  Narrative dossiers
+        # remain on the extractor rail.
     _eco_out = _apply_economy_list(
         db,
         state,
-        extracted.get("economy_moves") or [],
+        economy_moves,
         commit=commit_now,
     )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]

@@ -429,9 +429,22 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
-    decree_mod.resolve_directives(
+    result = decree_mod.resolve_directives(
         state, db, None, None, [object()], "不应作为真源",
         content=content,
+    )
+    assert result.awaiting is True
+    decision = result.decisions[0]
+    withdraw = next(
+        option for option in decision["options"] if option["label"] == "收回"
+    )
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?,status='decided' WHERE turn=? AND idx=?",
+        (json.dumps(withdraw, ensure_ascii=False), state.turn, decision["idx"]),
+    )
+    db.conn.commit()
+    decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
     )
 
     staged, rejected = [
@@ -455,7 +468,8 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         "SELECT delta FROM economy_ledger WHERE dossier_id=?",
         (staged["id"],),
     ).fetchone()["delta"] == -10
-    assert db.get_decree_dossier(rejected["id"])["status"] == "proposed"
+    assert db.get_decree_dossier(rejected["id"])["status"] == "closed"
+    assert db.get_decree_dossier(rejected["id"])["promulgation_decision"] == "rejected"
     assert db.conn.execute(
         "SELECT 1 FROM economy_ledger WHERE dossier_id=?",
         (rejected["id"],),
@@ -480,6 +494,150 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
 
     assert result.awaiting is False
     assert state.turn == 2
+
+
+@pytest.mark.parametrize(
+    ("choice_label", "expected_status", "expected_delta"),
+    (
+        ("强颁", "closed", -10),
+        ("收回", "closed", 0),
+        ("留中", "proposed", 0),
+    ),
+)
+def test_rejected_dossier_uses_player_rescript_choice_and_resume(
+    game, monkeypatch, choice_label, expected_status, expected_delta,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    actor = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(
+        state.turn, actor, {
+            "text": "拨国库十两赈济", "actor": actor,
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "rescript-relief",
+            "account": "国库", "amount": 10, "execution_surface": "immediate",
+        },
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[candidate_id],
+    )
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == candidate_id
+    )
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "run_agent_text",
+        lambda *a, **k: json.dumps({
+            "verdicts": [{
+                "dossier_id": dossier["id"],
+                "decision": "rejected" if state.turn == 1 else "promulgated",
+            }],
+        }),
+    )
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("本月邸报。", k["simulator_payload"]),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "", ""),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], "拨帑赈济", content=content,
+    )
+    assert result.awaiting is True
+    decision = result.decisions[0]
+    choice = next(
+        option for option in decision["options"]
+        if option["label"] == choice_label
+    )
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?,status='decided' WHERE turn=? AND idx=?",
+        (json.dumps(choice, ensure_ascii=False), state.turn, decision["idx"]),
+    )
+    db.conn.commit()
+
+    decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
+    )
+
+    restored = db.get_decree_dossier(dossier["id"])
+    assert restored["status"] == expected_status
+    moves = db.list_economy_moves_for_dossier(dossier["id"])
+    assert sum(int(move["delta"]) for move in moves) == expected_delta
+    if choice_label == "留中":
+        assert restored["held_turn"] == 1
+        assert restored["rescript_pending"] is False
+        assert dossier["id"] in {
+            row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+        }
+        rejudged = decree_mod.resolve_directives(
+            state, db, None, None, [object()], "留中重判", content=content,
+        )
+        assert rejudged.awaiting is False
+        assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
+        assert sum(
+            int(move["delta"])
+            for move in db.list_economy_moves_for_dossier(dossier["id"])
+        ) == -10
+
+
+def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(game):
+    db, state, content = game
+    before = state.metrics["国库"]
+    structured_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨十两赈济",
+        target_kind="issue",
+        target_id="structured-relief",
+        payload={
+            "account": "国库", "amount": 10,
+            "execution_surface": "immediate",
+        },
+    )
+    narrative_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="兴修水利",
+        target_kind="issue",
+        target_id="narrative-irrigation",
+    )
+    db.apply_dossier_promulgation(
+        state, structured_id, "promulgated", content=content,
+    )
+    db.apply_dossier_promulgation(
+        state, narrative_id, "promulgated", content=content,
+    )
+
+    issue_engine.apply_score_extraction(
+        db, state, {
+            "economy_moves": [
+                {
+                    "account": "国库", "delta": -10, "category": "重复拨帑",
+                    "origin_ref": f"dossier:{structured_id}",
+                },
+                {
+                    "account": "国库", "delta": -5, "category": "水利涌现",
+                    "origin_ref": f"dossier:{narrative_id}",
+                },
+            ],
+        }, content=content,
+    )
+
+    assert state.metrics["国库"] == before - 15
+    assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
 
 
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):

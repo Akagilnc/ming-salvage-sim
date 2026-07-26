@@ -1046,6 +1046,9 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         target_id = str(item.get("target_id") or "").strip()
         if target_id:
             entry["target_id"] = target_id
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if origin_ref:
+            entry["origin_ref"] = origin_ref
         cleaned.append(entry)
     return cleaned
 
