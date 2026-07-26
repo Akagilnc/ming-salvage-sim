@@ -896,10 +896,11 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
       }
     }
 
-    expect(panelsPerCorrectnessOpen.length).toBeGreaterThanOrEqual(2);
+    expect(panelsPerCorrectnessOpen.length).toBeGreaterThanOrEqual(3);
     expect(panelsPerCorrectnessOpen[0]).toBeGreaterThan(0);
-    expect(panelsPerCorrectnessOpen[1]).toBeGreaterThan(0);
-    expect(correctnessOpens).toBeGreaterThanOrEqual(2);
+    expect(panelsPerCorrectnessOpen[1]).toBe(0);
+    expect(panelsPerCorrectnessOpen[2]).toBeGreaterThan(0);
+    expect(correctnessOpens).toBeGreaterThanOrEqual(3);
     expect(result.ran).toBe(true);
   });
 });

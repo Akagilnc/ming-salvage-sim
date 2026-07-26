@@ -878,6 +878,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
       "correctness",
       "completeness",
       "correctness",
+      "correctness",
     ]);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
@@ -1157,6 +1158,7 @@ describe("#1027 S2 / ADR 0145 — wave-verify triage judge court", () => {
     expect(steps).toContain("wave-verify-judge");
     expect(steps).toContain("wave-verify-fix");
     expect(backend.cmrCalls.map((c) => c.cmrPass)).toEqual([
+      "completeness",
       "completeness",
       "completeness",
       "correctness",
@@ -1859,6 +1861,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.cmrCalls).toEqual([
       { familyBase: "family/291-base", cmrPass: "completeness" },
       { familyBase: "family/291-base", cmrPass: "correctness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
     ]);
   });
 
@@ -2185,6 +2188,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       "completeness",
       "correctness",
       "completeness",
+      "correctness",
       "correctness",
     ]);
     expect(backend.verifyCalls).toEqual([

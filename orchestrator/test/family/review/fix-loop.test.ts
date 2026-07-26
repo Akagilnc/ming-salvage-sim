@@ -1853,6 +1853,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({
         kind: "cmr",
         role: "verify",
+        session: "resume",
+        cmrPass: "completeness",
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_correctness.md",
@@ -1936,6 +1942,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           SECOND_BLOCKING_FAMILY_CMR_KEY,
         ],
       }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -2073,6 +2080,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "completeness",
       }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
@@ -2142,6 +2150,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "completeness",
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -2225,6 +2234,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "completeness",
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -2266,6 +2276,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "completeness",
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -2301,6 +2312,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         cmrPass: "completeness",
         priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
@@ -3182,7 +3194,7 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
 
     expect(result).toEqual({ ok: true, ran: true });
     // completeness continue + pure receive + outer gate + correctness = 4
-    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(3);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(4);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({ status: "cmr_fix_committed", cmrPass: "completeness" }),
     );

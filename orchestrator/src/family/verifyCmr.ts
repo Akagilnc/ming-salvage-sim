@@ -1289,6 +1289,8 @@ type RefusalStateByPass = Partial<
 interface IntegratedCmrPassOutcome {
   readonly result: VerifyCmrResult;
   readonly familyHeadAfter?: string;
+  /** Resident judge accepted a builder beat; open the independent fresh gate. */
+  readonly needsFreshOuterGate?: boolean;
   /**
    * #919 — sticky route after optional advanceCoder execution on continue.
    * Outer completeness/correctness loops assign this so the next court + fix
@@ -2585,6 +2587,8 @@ async function runIntegratedCmrPass(input: {
   readonly expectedCourtGeneration?: number;
   /** Legacy pending fix row without a reserved generation rejects all old cargo. */
   readonly requireFreshPanelEvidence?: boolean;
+  /** This open only delivers the builder beat to the resident judge. */
+  readonly receiveBuilderBeat?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2608,6 +2612,7 @@ async function runIntegratedCmrPass(input: {
     forceCourtOpen = false,
     expectedCourtGeneration,
     requireFreshPanelEvidence = false,
+    receiveBuilderBeat = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -2728,9 +2733,10 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
-    // #1094 / #1117 / #1119: one panel-evidence gate for first open, in-process
-    // resume, and cold-start ledger re-entry. Pure judge never spawns nested CLIs.
-    const frozenLegs = spec.cmrReviewLegs ?? [];
+    // Panel evidence belongs to the independent outer gate. A builder beat first
+    // reaches the resident judge with zero fan-out; only its typed verdict may
+    // open this gate. Pure judge never spawns nested CLIs.
+    const frozenLegs = receiveBuilderBeat ? [] : (spec.cmrReviewLegs ?? []);
     // Existing landing/ctx transports (valid → no reburn). Cold resume after
     // park with empty landing forces fan-out again (AC #1118 / #1119).
     // Durable ledgerDir evidence is cold-start recoverable (process temps are not).
@@ -2760,10 +2766,11 @@ async function runIntegratedCmrPass(input: {
           durablePanelEvidence,
           panelEvidenceIdentity,
         );
-    const existingPanelEvidence =
-      landedPanelLegEvidence(refuseReopenLanding) ??
-      landedPanelLegEvidence(dispatchCtx) ??
-      durableEvidenceForCourt;
+    const existingPanelEvidence = receiveBuilderBeat
+      ? undefined
+      : (landedPanelLegEvidence(refuseReopenLanding) ??
+        landedPanelLegEvidence(dispatchCtx) ??
+        durableEvidenceForCourt);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
     // Skip prep whenever either official cargo class already landed (no reburn).
     const willFanOut =
@@ -3097,6 +3104,28 @@ async function runIntegratedCmrPass(input: {
 
   // pass → exit_loop / accepted.
   if (hubNext === "exit_loop") {
+    if (receiveBuilderBeat) {
+      finalReviewRoundDisposition = "accepted";
+      await familyBackend.appendFamilyLedger({
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: `cmr:${pass}`,
+        reason:
+          `integrated cmr ${pass} resident judge received builder beat; ` +
+          "fresh outer panel gate requested by typed converged verdict",
+        phase: ledgerPhase,
+        cmrPass: pass,
+        ...(openedJudgeSessionId !== undefined
+          ? { judgeSessionId: openedJudgeSessionId }
+          : {}),
+      });
+      return {
+        result: { ok: true, ran: true },
+        familyHeadAfter: postWorkerFamilyHead,
+        resolvedRoute: activeRoute,
+        needsFreshOuterGate: true,
+      };
+    }
     await persistFinalReviewRound("accepted", () =>
       recordCmrPassed(familyBackend, {
         phase: ledgerPhase,
@@ -3491,6 +3520,7 @@ async function runIntegratedCmrPass(input: {
  */
 type PendingBuilderReceiveHydration = {
   readonly pendingReview: boolean;
+  readonly pendingBuilderBeat: boolean;
   readonly expectedCourtGeneration?: number;
   readonly requireFreshPanelEvidence: boolean;
   readonly familyHeadAfter?: string;
@@ -3510,6 +3540,8 @@ async function hydratePendingBuilderReceive(input: {
   );
   return {
     pendingReview: pending.pending,
+    pendingBuilderBeat:
+      pending.pending && pending.freshPanelReviewRequired !== true,
     ...(pending.expectedCourtGeneration !== undefined
       ? { expectedCourtGeneration: pending.expectedCourtGeneration }
       : {}),
@@ -3602,6 +3634,7 @@ type CourtOpenDirective = {
   readonly forceOpen: boolean;
   readonly expectedGeneration?: number;
   readonly requireFreshEvidence: boolean;
+  readonly receiveBuilderBeat: boolean;
 };
 
 function courtOpenDirective(input: {
@@ -3616,6 +3649,8 @@ function courtOpenDirective(input: {
     requireFreshEvidence:
       input.pending.requireFreshPanelEvidence ||
       input.restartTriggerPending,
+    receiveBuilderBeat:
+      input.pending.pendingBuilderBeat && !input.restartTriggerPending,
   };
 }
 
@@ -3772,6 +3807,7 @@ async function runCmrCourtLoop(input: {
           }
         : {}),
       requireFreshPanelEvidence: openDirective.requireFreshEvidence,
+      receiveBuilderBeat: openDirective.receiveBuilderBeat,
       ...scopedPoolFields,
       ...(refusalStateByPass[pass]?.keys !== undefined
         ? {
@@ -3786,6 +3822,7 @@ async function runCmrCourtLoop(input: {
     openDirective = {
       forceOpen: false,
       requireFreshEvidence: false,
+      receiveBuilderBeat: false,
     };
     if (!court.result.ok) {
       return {
@@ -3801,6 +3838,15 @@ async function runCmrCourtLoop(input: {
       resolvedRoute = court.resolvedRoute;
     }
     if (court.restartFinalBarrier === undefined) {
+      if (court.needsFreshOuterGate === true) {
+        courtFamilyHeadAfter = court.familyHeadAfter;
+        openDirective = {
+          forceOpen: true,
+          requireFreshEvidence: false,
+          receiveBuilderBeat: false,
+        };
+        continue;
+      }
       return {
         result: { ok: true, ran: true },
         familyHeadAfter: court.familyHeadAfter,
@@ -3853,6 +3899,7 @@ async function runCmrCourtLoop(input: {
     openDirective = {
       forceOpen: true,
       requireFreshEvidence: false,
+      receiveBuilderBeat: true,
     };
   }
 }
