@@ -516,7 +516,8 @@ export async function recordCmrFixCommitted(
  * same-barrier row among:
  *   - `cmr_fix_committed` → pending resident-judge receive
  *   - scoped `worker_dispatched` → resident judge received the builder beat
- *   - `cmr_reviewed` / `cmr_passed` → not pending
+ *   - `cmr_reviewed` escalate → pending resident-judge answer receive
+ *   - other `cmr_reviewed` / `cmr_passed` → not pending
  *
  * Not the #1111 WHO-debt layer.
  */
@@ -581,10 +582,13 @@ export function pendingBuilderReviewFromFamilyLedger(
           : {}),
       };
     }
-    if (
-      status === "cmr_reviewed" &&
-      entry.freshPanelReviewRequired === true
-    ) {
+    if (status === "cmr_reviewed" && entry.judgeStatus === "escalate") {
+      // ADR 0147: a decision answer returns to the same resident judge first.
+      // Older ledgers may carry the now-obsolete freshPanelReviewRequired flag
+      // on this row; the typed escalate status takes precedence over it.
+      return { pending: true };
+    }
+    if (status === "cmr_reviewed" && entry.freshPanelReviewRequired === true) {
       return { pending: true, freshPanelReviewRequired: true };
     }
     return { pending: false };

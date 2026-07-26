@@ -94,6 +94,8 @@ class FileLedgerBackend implements FamilyBackend {
     refuseKeys?: readonly string[];
     transports?: WorkerLandingPayload["panelLegTransports"];
     skippedLegs?: WorkerLandingPayload["panelLegSkippedLegs"];
+    escalationAnswer?: DispatchContext["escalationAnswer"];
+    panelDispatchCountAtOpen: number;
   }> = [];
   familyHead = HEAD;
   private opens = 0;
@@ -234,6 +236,8 @@ class FileLedgerBackend implements FamilyBackend {
         refuseKeys: ctx.refusedFindingIdentityKeys,
         transports: landing?.panelLegTransports,
         skippedLegs: landing?.panelLegSkippedLegs,
+        escalationAnswer: ctx.escalationAnswer,
+        panelDispatchCountAtOpen: this.panelDispatches.length,
       });
       if (ctx.cmrPass === "completeness") {
         this.opens += 1;
@@ -377,7 +381,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(processB.judgeLandings).toEqual([]);
   });
 
-  it("cold decision-park resume replaces non-empty same-generation evidence before the judge", async () => {
+  it("cold decision-park resume delivers the owner answer before any fresh panel dispatch", async () => {
     const dir = tmp("1119-cold-park-");
     const processA = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
@@ -391,14 +395,13 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       familyIssue: 1119,
     });
     expect(parked.ok).toBe(false);
-    expect(
-      (await processA.readFamilyLedger()).some(
-        (entry) =>
-          entry.cmrPass === "completeness" &&
-          entry.judgeStatus === "escalate" &&
-          entry.freshPanelReviewRequired === true,
-      ),
-    ).toBe(true);
+    const parkedRow = (await processA.readFamilyLedger()).find(
+      (entry) =>
+        entry.cmrPass === "completeness" &&
+        entry.judgeStatus === "escalate",
+    );
+    expect(parkedRow).toBeDefined();
+    expect(parkedRow).not.toHaveProperty("freshPanelReviewRequired");
 
     const parkedEvidence =
       processA.readFamilyPanelLegEvidence("completeness");
@@ -418,14 +421,25 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     const processB = new FileLedgerBackend(dir, "none", undefined, {
       forceFirstContinue: false,
     });
+    const escalationAnswer = {
+      event: "escalation_answered" as const,
+      answer: "owner answer for the resident judge",
+      source: "human" as const,
+    };
     await runVerifyCmr({
       phase: "final",
       familyBase: "family/1119-park-b",
       familyBackend: processB,
       familyHeadAfter: HEAD,
       familyIssue: 1119,
+      escalationAnswer,
     });
 
+    expect(processB.judgeLandings[0]).toMatchObject({
+      kind: "pure",
+      escalationAnswer,
+      panelDispatchCountAtOpen: 0,
+    });
     expect(
       processB.panelDispatches.filter((dispatch) =>
         dispatch.startsWith("completeness:"),
@@ -437,10 +451,10 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       (resumedEvidence?.panelLegTransports?.length ?? 0) +
         (resumedEvidence?.panelLegSkippedLegs?.length ?? 0),
     ).toBeGreaterThan(0);
-    expect(processB.judgeLandings[0]?.transports).toEqual(
+    expect(processB.judgeLandings[1]?.transports).toEqual(
       resumedEvidence?.panelLegTransports,
     );
-    expect(processB.judgeLandings[0]?.transports).not.toEqual(oldTransports);
+    expect(processB.judgeLandings[1]?.transports).not.toEqual(oldTransports);
   });
 
   it("cold cmr_fix_committed resumes its resident judge before the fresh outer gate", async () => {
