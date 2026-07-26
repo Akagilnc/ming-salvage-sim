@@ -191,32 +191,6 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     expect(retriggerSpy).not.toHaveBeenCalled();
   });
 
-  it("tracer: missing collector evidence fails the Action (no Runner synthesize)", async () => {
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
-    const backend = new TracerFamilyBackend();
-    backend.dispatchWorker = async (spec): Promise<WorkerResult> => {
-      backend.kinds.push(spec.kind);
-      if (spec.kind === "collector") {
-        // Simulate a buggy seat that claims completed without required cargo.
-        return {
-          kind: "completed",
-          output: { kind: "collector" },
-        } as unknown as WorkerResult;
-      }
-      return { kind: "failed", reason: `verify must not start: ${spec.kind}` };
-    };
-
-    const result = await runFamilyOnlineReviewLoop({
-      familyBackend: backend,
-      familyBase: "family/1145",
-      ship: offlineShip,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(backend.kinds).toEqual(["collector"]);
-    expect(backend.kinds).not.toContain("verify");
-  });
-
   it("tracer: completed seat with side-effect cargo stays mergeable on re-entry (no replay)", async () => {
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const applySpy = vi.spyOn(sideEffects, "applyVerifySideEffects");

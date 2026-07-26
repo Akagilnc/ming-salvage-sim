@@ -50,9 +50,6 @@ business fields are your judgment and must not be invented by the host):
 }
 ```
 
-You may also write the same evidence body to `$ORCHESTRATOR_OUTCOME_PATH` when
-set, and/or emit opaque `<collector>` cargo JSON with an `evidence` object.
-
 Escalate:
 
 ```text
