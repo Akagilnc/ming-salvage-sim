@@ -831,6 +831,7 @@ def build_extractor_shared_context(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
+    decree_dossiers: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -852,6 +853,11 @@ def build_extractor_shared_context(
     )
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    authorized_dossiers = (
+        decree_dossiers
+        if decree_dossiers is not None
+        else db.list_decree_dossiers_for_simulation(state.turn)
+    )
     slim["decree_dossiers"] = [
         {
             "id": int(row["id"]),
@@ -859,7 +865,7 @@ def build_extractor_shared_context(
             "action_type": str(row["action_type"]),
             "decree_text": str(row["decree_text"]),
         }
-        for row in db.list_decree_dossiers_for_simulation(state.turn)
+        for row in authorized_dossiers
         if row["action_type"] != "secret_order"
     ]
     if module == "personnel_secret":

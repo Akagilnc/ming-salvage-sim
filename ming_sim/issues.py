@@ -6443,6 +6443,40 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    # ADR 0051/0055 authorization backstop: the extractor receives only
+    # executable dossiers, but a model can still invent a syntactically valid
+    # dossier:<id>.  Reject every list-carried effect whose dossier has not
+    # actually crossed the promulgation boundary.  Raw decree records remain
+    # durable; they do not authorize effects.
+    for section, value in list(extracted.items()):
+        if not isinstance(value, list):
+            continue
+        authorized: List[object] = []
+        for item in value:
+            if not isinstance(item, dict):
+                authorized.append(item)
+                continue
+            origin_ref = str(item.get("origin_ref") or "").strip()
+            if not origin_ref.startswith("dossier:"):
+                authorized.append(item)
+                continue
+            try:
+                dossier_id = int(origin_ref.split(":", 1)[1])
+            except (TypeError, ValueError):
+                authorized.append(item)
+                continue
+            dossier = db.get_decree_dossier(dossier_id)
+            if dossier is None:
+                continue
+            if (
+                str(dossier.get("status") or "") in {"promulgated", "executing"}
+                or (
+                    str(dossier.get("status") or "") == "closed"
+                    and str(dossier.get("promulgation_decision") or "") == "promulgated"
+                )
+            ):
+                authorized.append(item)
+        extracted[section] = authorized
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
     if candidate_event_ids_at_input is None:
