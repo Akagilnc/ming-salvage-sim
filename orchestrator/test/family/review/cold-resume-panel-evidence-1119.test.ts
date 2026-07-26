@@ -443,7 +443,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(processB.judgeLandings[0]?.transports).not.toEqual(oldTransports);
   });
 
-  it("cold cmr_fix_committed opens fresh completeness panels before its judge", async () => {
+  it("cold cmr_fix_committed resumes its resident judge before the fresh outer gate", async () => {
     const dir = tmp("1119-w1-");
     const preFixEvidence: FamilyPanelLegEvidence = {
       familyHeadAfter: HEAD,
@@ -479,7 +479,11 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       familyHeadAfter: HEAD,
       familyIssue: 1119,
     });
-    expect(processAfterRestart.judgeLandings[0]?.kind).toBe("panels");
+    expect(
+      processAfterRestart.judgeLandings
+        .map((landing) => landing.kind)
+        .slice(0, 2),
+    ).toEqual(["pure", "panels"]);
     expect(
       processAfterRestart.panelDispatches.filter((dispatch) =>
         dispatch.startsWith("completeness:"),
@@ -488,11 +492,12 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     expect(processAfterRestart.judgeLandings[0]?.refuseKeys).toEqual([
       REFUSE_KEY,
     ]);
-    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual(
+    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual([]);
+    expect(processAfterRestart.judgeLandings[1]?.transports).toEqual(
       processAfterRestart.readFamilyPanelLegEvidence("completeness")
         ?.panelLegTransports,
     );
-    expect(processAfterRestart.judgeLandings[0]?.transports).not.toEqual(
+    expect(processAfterRestart.judgeLandings[1]?.transports).not.toEqual(
       preFixEvidence.panelLegTransports,
     );
   });
@@ -621,14 +626,24 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
         dispatch.startsWith("correctness:"),
       ).length,
     ).toBeGreaterThan(0);
-    expect(processAfterRestart.judgeLandings[0]).toMatchObject({
+    expect(processAfterRestart.judgeLandings.slice(0, 2)).toMatchObject([
+      {
+        pass: "correctness",
+        kind: "pure",
+      },
+      {
+        pass: "correctness",
+        kind: "panels",
+      },
+    ]);
+    expect(processAfterRestart.judgeLandings[1]).toMatchObject({
       pass: "correctness",
       kind: "panels",
     });
     const correctnessEvidence =
       processAfterRestart.readFamilyPanelLegEvidence("correctness");
     expect(correctnessEvidence?.familyHeadAfter).toBe(currentHead);
-    expect(processAfterRestart.judgeLandings[0]?.transports).toEqual(
+    expect(processAfterRestart.judgeLandings[1]?.transports).toEqual(
       correctnessEvidence?.panelLegTransports,
     );
 

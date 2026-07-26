@@ -510,11 +510,12 @@ export async function recordCmrFixCommitted(
 }
 
 /**
- * #1119 — cold-start recovery of pending fresh review after a builder beat.
+ * Cold-start recovery of a pending resident-judge receive after a builder beat.
  *
  * Structured lifecycle only (no reason/answer prose parse). Newest same-pass
  * same-barrier row among:
- *   - `cmr_fix_committed` → pending fresh review
+ *   - `cmr_fix_committed` → pending resident-judge receive
+ *   - scoped `worker_dispatched` → resident judge received the builder beat
  *   - `cmr_reviewed` / `cmr_passed` → not pending
  *
  * Not the #1111 WHO-debt layer.
@@ -540,9 +541,15 @@ export function pendingBuilderReviewFromFamilyLedger(
     if (
       status !== "cmr_fix_committed" &&
       status !== "cmr_reviewed" &&
-      status !== "cmr_passed"
+      status !== "cmr_passed" &&
+      status !== "worker_dispatched"
     ) {
       continue;
+    }
+    if (status === "worker_dispatched") {
+      if (entry.cmrPass !== pass) continue;
+      if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
+      return { pending: false };
     }
     if (entry.cmrPass !== pass) continue;
     if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
