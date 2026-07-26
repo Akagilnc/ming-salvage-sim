@@ -1177,6 +1177,15 @@ export interface DispatchContext extends PanelLegEvidenceCargo {
    * no text/exit-code classification of the failure itself.
    */
   readonly waveVerifyFailure?: string;
+  /**
+   * ADR 0145 / 0147 — typed mechanical green receipt delivered after a
+   * family-verify fixer beat to the same resident judge. This is receipt cargo,
+   * not a new judge status or runner-authored classification.
+   */
+  readonly waveVerifyReceipt?: {
+    readonly status: "green";
+    readonly phase: "wave" | "correctness_checkpoint" | "final";
+  };
   /** The actual family-verify scope whose red the shared judge is triaging. */
   readonly phase?: "wave" | "correctness_checkpoint" | "final";
   /**

@@ -1704,7 +1704,8 @@ export class RealFamilyBackend implements FamilyBackend {
     ensureGitInfoExclude(this.opts.workingRepo, WORKER_OUTCOME_REPO_FILE);
     if (
       this.opts.familyBaseStartHead === undefined &&
-      ctx.waveVerifyFailure === undefined
+      ctx.waveVerifyFailure === undefined &&
+      ctx.waveVerifyReceipt === undefined
     ) {
       const reason =
         "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope";
@@ -1721,7 +1722,10 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     this.checkoutSharedRepo(ctx.familyBase);
-    if (ctx.waveVerifyFailure === undefined) {
+    if (
+      ctx.waveVerifyFailure === undefined &&
+      ctx.waveVerifyReceipt === undefined
+    ) {
       this.writeCmrFocusFile(ctx);
     }
     const headSha = this.sh(
@@ -1982,7 +1986,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // verify FAILURE, not a diff — there is no cut-SHA scope to pin.
     if (
       this.opts.familyBaseStartHead === undefined &&
-      ctx.waveVerifyFailure === undefined
+      ctx.waveVerifyFailure === undefined &&
+      ctx.waveVerifyReceipt === undefined
     ) {
       return {
         kind: "escalate",
@@ -2078,7 +2083,10 @@ export class RealFamilyBackend implements FamilyBackend {
       // ADR 0145: the family-verify triage judge focuses on the phase-scoped
       // verify FAILURE, not a diff scope. Same judge decode + review-leg
       // machinery; only the focus content differs.
-      if (ctx.waveVerifyFailure !== undefined) {
+      if (
+        ctx.waveVerifyFailure !== undefined ||
+        ctx.waveVerifyReceipt !== undefined
+      ) {
         this.writeWaveVerifyFocusFile(ctx);
       } else {
         this.writeCmrFocusFile(ctx);
@@ -2903,7 +2911,6 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** ADR 0145 — write the phase-scoped family-verify judge focus file. */
   protected writeWaveVerifyFocusFile(ctx: DispatchContext): void {
-    const failure = ctx.waveVerifyFailure ?? "";
     const phase = ctx.phase ?? "wave";
     const accidentScope =
       phase === "wave"
@@ -2919,15 +2926,21 @@ export class RealFamilyBackend implements FamilyBackend {
             2,
           )}\n\`\`\`\n\nRetry the previously paused family-verify triage with this answer in force.`
         : "";
+    const receiptBody =
+      ctx.waveVerifyReceipt?.status === "green"
+        ? `The mechanical family re-verify after the fixer beat is GREEN.\n` +
+          `Receive this builder-beat result and return the shared typed judge verdict;\n` +
+          `this receipt satisfies ADR 0145's green hard precondition.\n`
+        : `The family base verify (typecheck + tests) went RED ${accidentScope}.\n` +
+          `Classify this phase-scoped red and return the shared typed judge verdict:\n` +
+          `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
+          `code regression within this phase scope) or \`toolchain\` (an environment/\n` +
+          `toolchain red the runner falls back to verify_failed on). Convergence is the\n` +
+          `deterministic green re-verify receipt — never your word alone.\n\n` +
+          `## Verify failure output\n\n\`\`\`\n${ctx.waveVerifyFailure ?? ""}\n\`\`\``;
     const body =
       `# Family-verify triage — ${phase} (machine-generated; ADR 0145)\n\n` +
-      `The family base verify (typecheck + tests) went RED ${accidentScope}.\n` +
-      `Classify this phase-scoped red and return the shared typed judge verdict:\n` +
-      `\`continue\` (author the repair packet for the family coder-fix seat — a real\n` +
-      `code regression within this phase scope) or \`toolchain\` (an environment/\n` +
-      `toolchain red the runner falls back to verify_failed on). Convergence is the\n` +
-      `deterministic green re-verify receipt — never your word alone.\n\n` +
-      `## Verify failure output\n\n\`\`\`\n${failure}\n\`\`\`${answerBlock}\n`;
+      `${receiptBody}${answerBlock}\n`;
     const target = join(this.opts.workingRepo, CMR_FOCUS_FILENAME);
     this.excludeFromGit(CMR_FOCUS_FILENAME);
     writeFileSync(target, body, "utf8");
