@@ -43,9 +43,15 @@ Canonical refuse vocabulary is **`refused*` only** — never `refuted*` envelope
 - `committed` (boolean) + `commitsAdded` (integer ≥ 0) — real git state for
   **this worker run**. Every `completed` / `refused` / `escalate` hand-in
   reports them truthfully.
-- On refuse: 四理由 live in cargo / `cargoPointer` body (tokens from the same
-  T2 module), **not** as invent-envelope fields. Optional `refuseRecords` may
-  ride as cargo siblings.
+- On refuse: place **complete** four-reason/evidence `refuseRecords` in the
+  **consumed** cargo channel — `$ORCHESTRATOR_OUTCOME_PATH` when set, and/or
+  same-object siblings on the `<coder>` payload (what
+  `cargoRawFor` / `familyCoderCargoRaw` → `projectCoderStationReceipt` read).
+  Tokens/shape: `stationReceiptContracts.ts` (`LEGAL_REFUSE_REASONS` / refuse
+  cargo) — **do not** invent envelope fields or hand-copy a second schema.
+  Envelope `refusedFindingIdentityKeys` remains sole traffic authority (cargo
+  never invents keys). Do **not** rely on `cargoPointer` alone: production
+  projection does not dereference it for refuse evidence.
 - Cargo siblings on the same `<coder>` object are allowed; only illegal
   **traffic** re-asks.
 
@@ -57,10 +63,11 @@ Completed:
 <coder>{"station":"coderFix","status":"completed","committed":true,"commitsAdded":1}</coder>
 ```
 
-Refused (keys on envelope; reasons+evidence in cargo for the judge):
+Refused (envelope keys = traffic; complete `refuseRecords` on consumed cargo —
+write the same object to `$ORCHESTRATOR_OUTCOME_PATH` when set):
 
 ```text
-<coder>{"station":"coderFix","status":"refused","refusedFindingIdentityKeys":["correctness|src/x.ts:1|claim"],"cargoPointer":"artifacts/refuse-cargo.json","committed":true,"commitsAdded":1}</coder>
+<coder>{"station":"coderFix","status":"refused","refusedFindingIdentityKeys":["correctness|src/x.ts:1|claim"],"committed":true,"commitsAdded":1,"refuseRecords":[{"identityKey":"correctness|src/x.ts:1|claim","finding":"<claim>","acceptanceCriterion":"<AC under dispute>","conflictReason":"<why refuse>","reason":"not_established","evidence":"<clause-anchored evidence>"}]}</coder>
 ```
 
 Escalation:
