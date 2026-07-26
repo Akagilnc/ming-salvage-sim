@@ -139,6 +139,7 @@ import {
   cmrPassAlreadyPassed,
   mechanicalRedispatchAttemptsFromFamilyLedger,
   pendingBuilderReviewFromFamilyLedger,
+  residentJudgePanelReturnSessionIdFromFamilyLedger,
   recordAborted as recordDurableAbort,
   familyCoderFixResumeSessionIdFromLedger,
   recordCmrFixCommitted,
@@ -2690,13 +2691,21 @@ async function runIntegratedCmrPass(input: {
   });
   const ledgerResumeJudgeSessionId =
     familyJudgeResumeSessionIdFromPriorRows(priorJudgeVerdicts);
+  const panelReturnJudgeSession =
+    residentJudgePanelReturnSessionIdFromFamilyLedger(
+      familyLedger,
+      pass,
+      ledgerPhase,
+    );
   const provisionalSpec = cmrWorkerSpec("fresh", pass, resolvedRoute);
   const cmrJudgeSeatResumeCapable = resumeCapableForSlug(provisionalSpec.model, cmrPool);
   // Soul law: session lost / seat not resume-capable → fresh judge;
   // priorJudgeVerdicts still land above for trajectory / session-loss recovery
   // (same shape as single-slice #925). No fail-loud terminal.
   const resumeJudgeSessionId = cmrJudgeSeatResumeCapable
-    ? ledgerResumeJudgeSessionId
+    ? panelReturnJudgeSession.pendingPanelReturn
+      ? panelReturnJudgeSession.sessionId
+      : ledgerResumeJudgeSessionId
     : undefined;
   const spec = cmrWorkerSpec(
     resumeJudgeSessionId !== undefined ? "resume" : "fresh",

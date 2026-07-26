@@ -95,6 +95,7 @@ class FileLedgerBackend implements FamilyBackend {
     transports?: WorkerLandingPayload["panelLegTransports"];
     skippedLegs?: WorkerLandingPayload["panelLegSkippedLegs"];
     escalationAnswer?: DispatchContext["escalationAnswer"];
+    resumeSessionId?: string;
     panelDispatchCountAtOpen: number;
   }> = [];
   familyHead = HEAD;
@@ -237,6 +238,7 @@ class FileLedgerBackend implements FamilyBackend {
         transports: landing?.panelLegTransports,
         skippedLegs: landing?.panelLegSkippedLegs,
         escalationAnswer: ctx.escalationAnswer,
+        resumeSessionId: ctx.resumeSessionId,
         panelDispatchCountAtOpen: this.panelDispatches.length,
       });
       if (ctx.cmrPass === "completeness") {
@@ -261,7 +263,10 @@ class FileLedgerBackend implements FamilyBackend {
             "j1",
           );
         }
-        return completedJudge(judgeConverged(), "jn");
+        return completedJudge(
+          judgeConverged(),
+          ctx.resumeSessionId ?? "jn",
+        );
       }
       return completedJudge(judgeConverged(), "jc");
     }
@@ -507,6 +512,9 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
       REFUSE_KEY,
     ]);
     expect(processAfterRestart.judgeLandings[0]?.transports).toEqual([]);
+    expect(
+      processAfterRestart.judgeLandings.slice(0, 2).map((open) => open.resumeSessionId),
+    ).toEqual(["j1", "j1"]);
     expect(processAfterRestart.judgeLandings[1]?.transports).toEqual(
       processAfterRestart.readFamilyPanelLegEvidence("completeness")
         ?.panelLegTransports,
