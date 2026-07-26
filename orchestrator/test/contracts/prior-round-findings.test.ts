@@ -15,6 +15,7 @@ import type {
   WorkerLandingPayload,
 } from "../../src/types.js";
 import type { PrReviewSnapshot } from "../../src/botPolling.js";
+import { onlineReviewDispatch } from "../helpers/online-review-dispatch.js";
 
 /**
  * ADR 0137 residual ban — live tree must not reintroduce the deleted pattern
@@ -313,8 +314,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
 
     const result = await runOnlineReviewLoopStage(
       stageShip,
-      {
-        poll: async () => baseSnapshot,
+      onlineReviewDispatch({
+      snapshot: baseSnapshot,
         dispatchVerify: async (landing, round) => {
           verifyLandings.push(landing);
           if (round >= 4) {
@@ -362,9 +363,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           });
           return sha;
         },
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
-      },
+      }),
       {
         enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
       },
@@ -424,8 +424,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
 
     const result = await runOnlineReviewLoopStage(
       stageShip,
-      {
-        poll: async () => baseSnapshot,
+      onlineReviewDispatch({
+      snapshot: baseSnapshot,
         dispatchVerify: async (landing, round) => {
           verifyLandings.push(landing);
           if (round >= 4) {
@@ -472,9 +472,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           });
           return sha;
         },
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
-      },
+      }),
       {
         initialRound: 2,
         enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
@@ -499,8 +498,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     const fixerLandings: WorkerLandingPayload[] = [];
     let verifyCalls = 0;
 
-    const result = await runOnlineReviewLoopStage(stageShip, {
-      poll: async () => baseSnapshot,
+    const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
+      snapshot: baseSnapshot,
       dispatchVerify: async (landing, round) => {
         verifyCalls += 1;
         if (round >= 2) {
@@ -533,9 +532,8 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           fixCommitSha: "fix-once",
         };
       },
-      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
-    });
+    }));
 
     expect(result.ok).toBe(true);
     expect(verifyCalls).toBeGreaterThanOrEqual(2);

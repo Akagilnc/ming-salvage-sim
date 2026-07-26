@@ -1071,7 +1071,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("decodes well-typed host side-effect plan fields; drops malformed optional cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    // Correctness K1: host fail-safe applicator needs plan cargo decoded when
+    // #1145: worker-owned side-effect cargo needs plan fields decoded when
     // well-typed; malformed values stay dropped (not crash).
     expect(
       mod.parseVerifyOutcome(

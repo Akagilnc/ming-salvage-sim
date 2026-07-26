@@ -36,6 +36,7 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 import { buildExplicitLandingLiveHooks } from "../../src/family/landing.js";
+import { onlineReviewDispatch } from "../helpers/online-review-dispatch.js";
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/825-behavior",
@@ -299,15 +300,14 @@ describe("#825 Group A family roles", () => {
     };
     const result = await runOnlineReviewLoopStage(
       { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "https://github.com/test/repo/pull/825" },
-      {
-        poll: async () => snapshot,
+      onlineReviewDispatch({
+      snapshot: snapshot,
         dispatchVerify: async () => (++verifyCalls === 1
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
-      },
+      }),
     );
     expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 2 });
     expect({ verifyCalls, fixerCalls }).toEqual({ verifyCalls: 2, fixerCalls: 1 });
@@ -320,21 +320,20 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
     let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage(
       { kind: "ship", branch: WORKTREE.branch, status: "pr_opened", pr: "https://github.com/test/repo/pull/825" },
-      {
-        poll: async () => ({
+      onlineReviewDispatch({
+      snapshot: {
           repo: "o/r", prNumber: 825, prUrl: "https://github.com/test/repo/pull/825", headOid: "head", pollCount: 1,
           totalFindingCount: 1, quiescent: true,
           bots: { coderabbit: { state: "complete", findingCount: 1 }, sourcery: { state: "complete", findingCount: 0 }, codex: { state: "complete", findingCount: 0 }, gemini: { state: "complete", findingCount: 0 } },
           threads: [], checkRuns: [], roundTriggerUsed: buildRoundTrigger("head"),
           checkRunsEmptyMeans: "converged" as const,
-        }),
+        },
         dispatchVerify: async () => (++verifyCalls === 1
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
-      },
+      }),
     );
     expect({ verifyCalls, ok: result.ok, terminalState: result.terminalState }).toEqual({
       verifyCalls: 2,

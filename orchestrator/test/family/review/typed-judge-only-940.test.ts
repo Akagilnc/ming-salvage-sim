@@ -36,6 +36,7 @@ import {
   completedShip,
   DispatchCapableBackend,
 } from "./typed-judge-only-940.shared.js";
+import { onlineReviewDispatch } from "../../helpers/online-review-dispatch.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -44,26 +45,28 @@ afterEach(() => {
 });
 
 describe("#940 public driver — ID-012 online review typed judge only", () => {
-  it("POSITIVE: host loop has applySideEffects seam and no mechanical round cap export", async () => {
-    // Correctness K1: host fail-safe applicator restored; mechanical cap stays gone.
+  it("POSITIVE: host loop has no applySideEffects/poll seams and no mechanical round cap", async () => {
+    // #1145: Runner stage only routes; Online Review Action owns GH + effects.
     const loopMod = await import("../../../src/family/onlineReviewLoop.js");
     expect("MAX_ONLINE_REVIEW_ROUNDS" in loopMod).toBe(false);
-    const srcDir = join(
-      dirname(fileURLToPath(import.meta.url)),
-      "../../../src",
+    const stageSrc = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../../../src/family/onlineReviewLoop.ts",
+      ),
+      "utf8",
     );
-    expect(existsSync(join(srcDir, "onlineReviewSideEffects.ts"))).toBe(true);
-    const sideFx = await import("../../../src/onlineReviewSideEffects.js");
-    expect(typeof sideFx.applyVerifySideEffects).toBe("function");
+    expect(stageSrc).not.toMatch(/readonly poll\s*:/);
+    expect(stageSrc).not.toMatch(/readonly applySideEffects\s*:/);
+    expect(stageSrc).not.toMatch(/dispatch\.applySideEffects/);
+    expect(stageSrc).not.toMatch(/dispatch\.poll/);
   });
 
-  it("POSITIVE: host invokes applySideEffects before accepting mergeable (K1 fail-safe)", async () => {
-    // Worker may report bare converged; host must still call applySideEffects
-    // before mergeable — never green solely on disposition without the seam.
-    let applyCalls = 0;
-    let applySawCargo = false;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async () => BASE_SNAPSHOT,
+  it("POSITIVE: mergeable accepts worker-owned side-effect cargo without host replay (#1145)", async () => {
+    // Worker reports converged with residual plan cargo; stage must NOT require
+    // a host applySideEffects seam — sole owner is the Online Review Action.
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
         ({
           kind: "verify",
@@ -73,29 +76,22 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchFixer: async () => {
         throw new Error("fixer must not run on converged");
       },
-      applySideEffects: (_landing, verify) => {
-        applyCalls += 1;
-        applySawCargo = (verify.threadReplies?.length ?? 0) > 0;
-        return verify;
-      },
       retriggerAfterFix: () => {
         throw new Error("retrigger must not run on converged");
       },
-    });
+    }));
     expect(result).toEqual({
       ok: true,
       terminalState: "mergeable",
       round: 1,
     });
-    expect(applyCalls).toBe(1);
-    expect(applySawCargo).toBe(true);
   });
 
   it("POSITIVE: continue disposition past former 3-round cap still routes until worker converges", async () => {
     let verifyCalls = 0;
     let fixerCalls = 0;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async (round) => ({ ...BASE_SNAPSHOT, pollCount: round }),
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: async (round) => ({ ...BASE_SNAPSHOT, pollCount: round }),
       dispatchVerify: async (_landing, round) => {
         verifyCalls += 1;
         // Former host cap was 3 fixer rounds / 4th verify-only. Round 5 still
@@ -124,10 +120,9 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
           fixCommitSha: `fix-${fixerCalls}`,
         };
       },
-      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async (sha) => sha,
-    });
+    }));
     expect(result).toEqual({
       ok: true,
       terminalState: "mergeable",
@@ -138,8 +133,8 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
   });
 
   it("POSITIVE: worker escalate (decision_gate) ends the loop without host empty-success", async () => {
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async () => BASE_SNAPSHOT,
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
         ({
           kind: "verify",
@@ -149,17 +144,16 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
       },
-      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
-    });
+    }));
     expect(result.ok).toBe(false);
     expect(result.terminalState).toBe("decision_gate_raised");
   });
 
   it("NEGATIVE: host never mints round_budget_exhausted (deleted mechanical cap)", async () => {
     let rounds = 0;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async (round) => {
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: async (round) => {
         rounds = round;
         return { ...BASE_SNAPSHOT, pollCount: round };
       },
@@ -179,10 +173,9 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         committed: true,
         fixCommitSha: "fix-sha",
       }),
-      applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
       resolveFixCommitSha: async () => "fix-sha",
-    });
+    }));
     expect(result.terminalState).not.toBe("round_budget_exhausted");
     expect(result.terminalState).toBe("decision_gate_raised");
     expect(rounds).toBeGreaterThanOrEqual(6);

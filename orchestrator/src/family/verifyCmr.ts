@@ -46,6 +46,7 @@ import {
   OnlineReviewLoopTerminal,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
+  buildOnlineReviewLanding,
   offlinePrReviewSnapshot,
   onlineReviewRoundFromFamilyLedger,
   onlineReviewRoundTriggerFromFamilyLedger,
@@ -64,7 +65,6 @@ import {
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
 } from "../priorRoundFindings.js";
-import { applyVerifySideEffects } from "../onlineReviewSideEffects.js";
 
 import {
   familyCoderFixWorkerSpec,
@@ -2033,32 +2033,48 @@ export async function runFamilyOnlineReviewLoop(input: {
     return await runOnlineReviewLoopStage(
       input.ship,
       {
-    poll: async (round) => {
-      if (!livePoll) {
-        return offlinePrReviewSnapshot({
-          repo,
-          prUrl,
-          headOid:
-            familyLastFixCommitSha ??
-            input.ship.prHead ??
-            "offline-review-head",
-          pollCount: round,
-        });
-      }
-      const snapshot = await waitForBotQuiescence(ghSh, {
-        repo,
-        prUrl,
-        roundTrigger: lastRoundTrigger,
-        clock:
-          process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
-            ? immediateBotPollClock
-            : realBotPollClock,
-      });
-      // Chain re-anchored trigger (online R5 Codex P1) — do not keep old triggeredAt.
-      lastRoundTrigger = snapshot.roundTriggerUsed;
-      return snapshot;
-    },
+    // #1145: Online Review Action owns GH query/wait/evidence + judgment seat.
+    // Runner never pre-polls or post-applies residual side-effect plans.
     dispatchVerify: async (landing, round) => {
+      const snapshot = !livePoll
+        ? offlinePrReviewSnapshot({
+            repo,
+            prUrl,
+            headOid:
+              familyLastFixCommitSha ??
+              input.ship.prHead ??
+              "offline-review-head",
+            pollCount: round,
+          })
+        : await waitForBotQuiescence(ghSh, {
+            repo,
+            prUrl,
+            roundTrigger: lastRoundTrigger,
+            clock:
+              process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
+                ? immediateBotPollClock
+                : realBotPollClock,
+          });
+      if (livePoll) {
+        // Chain re-anchored trigger (online R5 Codex P1).
+        lastRoundTrigger = snapshot.roundTriggerUsed;
+      }
+      const seatLanding = {
+        ...buildOnlineReviewLanding(snapshot, input.ship, round),
+        ...(landing.fixMarkedFindingIdentityKeys !== undefined
+          ? {
+              fixMarkedFindingIdentityKeys:
+                landing.fixMarkedFindingIdentityKeys,
+            }
+          : {}),
+        ...(landing.fixMarkedFindingThreads !== undefined
+          ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
+          : {}),
+        ...(landing.priorRoundFindings !== undefined
+          ? { priorRoundFindings: landing.priorRoundFindings }
+          : {}),
+      };
+
       let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
       const verifyPool = poolForKind("verify");
       const result = await dispatchOrAbort(
@@ -2070,7 +2086,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           onlineReviewRound: round,
           ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
         },
-        landing,
+        seatLanding,
         {
           onMonitorHandle: (handle) => {
             reviewerMonitorHandle = handle;
@@ -2114,14 +2130,12 @@ export async function runFamilyOnlineReviewLoop(input: {
           }),
         });
       }
+      const artifacts = reviewerArtifactPointers(
+        reviewerMonitorHandle,
+        result.sessionId,
+      );
       if (result.output.kind !== "verify") {
-        return {
-          kind: "rawReviewerArtifacts",
-          artifacts: reviewerArtifactPointers(
-            reviewerMonitorHandle,
-            result.sessionId,
-          ),
-        };
+        return { snapshot, artifacts };
       }
       // #1002: continue disposition + advanceCoder rewrites fixer before fix
       // dispatch (same never-terminal contract as CMR/single-slice courts).
@@ -2134,14 +2148,9 @@ export async function runFamilyOnlineReviewLoop(input: {
       ) {
         await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
       }
-      return {
-        kind: "rawReviewerArtifacts",
-        artifacts: reviewerArtifactPointers(
-          reviewerMonitorHandle,
-          result.sessionId,
-        ),
-        verify: verifyOut,
-      };
+      // Worker owns side effects (#1145). Residual plan cargo is never
+      // host-replayed after the Action returns.
+      return { snapshot, artifacts, verify: verifyOut };
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
@@ -2200,34 +2209,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       return result.output.kind === "fixer" ? result.output : undefined;
     },
     // #941: landing Action owns docs/merge/close/cleanup after this loop
-    // (no host dispatchDocRelease here).
-    // Host fail-safe applicator (correctness K1): live poll path still applies
-    // reply/resolve/deferred from verify cargo until workers truly own gh.
-    // Offline synthetic poll has no live PR — pass cargo through unchanged.
-    applySideEffects: (
-      landing: WorkerLandingPayload,
-      verify: VerifyResult,
-      fixingCommitSha?: string,
-    ) => {
-      if (!livePoll) {
-        return verify;
-      }
-      const applied = applyVerifySideEffects({
-        sh: ghSh,
-        repo,
-        prUrl,
-        verify,
-        fixingCommitSha,
-        landingThreads: landing.onlineReviewSnapshot?.threads,
-        approvedFixMarkedFindingThreads: landing.fixMarkedFindingThreads,
-      });
-      return {
-        ...verify,
-        ...(applied.deferredIssueUrls.length > 0
-          ? { deferredIssueUrls: applied.deferredIssueUrls }
-          : {}),
-      };
-    },
+    // (no host dispatchDocRelease here). #1145: no host side-effect replay.
     retriggerAfterFix: async () => {
       if (livePoll) {
         const retriggered = retriggerBotsAndPoll(

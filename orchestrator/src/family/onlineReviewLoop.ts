@@ -1,13 +1,12 @@
 /**
- * Family PR review-loop orchestration helpers (#600 / #940).
+ * Family PR review-loop orchestration helpers (#600 / #940 / #1145).
  *
- * Host-side deterministic glue between bot polling, verify/fixer worker dispatch,
- * GitHub side-effect application, and ledger markers. The verify worker owns
- * finding judgment and should execute reply/resolve/deferred before self-report;
- * the host still applies cargo plan fields as a fail-safe before accepting a
- * disposition as mergeable. Host routes on three-state disposition
- * (`converged | continue | escalate`) — no mechanical round cap, no
- * empty-success from counts (#934 ID-012).
+ * Runner-side glue only dispatches the Online Review Action and routes on
+ * three-state disposition (`converged | continue | escalate`). GitHub query,
+ * bot wait, evidence assembly, and side effects are owned exclusively by the
+ * Online Review worker/Action — never re-polled or re-applied by the Runner
+ * after the Action returns (#1145). No mechanical round cap, no empty-success
+ * from counts (#934 ID-012).
  */
 
 import {
@@ -85,7 +84,7 @@ export type { OnlineReviewTerminalState } from "../types.js";
  * Build the rich landing payload for verify/fixer workers (信封宪法 ADR 0062:
  * finding content in landing file, not DispatchContext).
  */
-function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnapshot {
+export function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnapshot {
   return {
     prUrl: snapshot.prUrl,
     headOid: snapshot.headOid,
@@ -500,9 +499,9 @@ export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
 }
 
 /**
- * Stop summary when a host-owned online-review operation fails closed
- * (e.g. post-fix retrigger). Side-effect failures use
- * {@link verifySideEffectFailureStopSummary}.
+ * Stop summary when an Online Review Action host-op fails closed
+ * (e.g. post-fix bot retrigger). Side effects are worker-owned (#1145);
+ * residual plan is never host-replayed.
  */
 export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary {
   const detail = err instanceof Error ? err.message : String(err);
@@ -512,24 +511,19 @@ export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary 
       status: "online_review_failed",
     summary: `online review host operation failed: ${detail}`,
     repairHint:
-      "repair the online review host operation (bot retrigger / poll) and rerun the online review loop",
+      "repair the online review Action operation (bot retrigger) and rerun the online review loop",
   });
 }
 
-type OnlineReviewDispatchPhase = "poll" | "verify" | "fixer";
+type OnlineReviewDispatchPhase = "verify" | "fixer";
 
-/** Stop summary when poll/verify/fixer dispatch throws (#600 r20). */
+/** Stop summary when verify/fixer dispatch throws (#600 r20 / #1145). */
 export function onlineReviewDispatchFailureStopSummary(
   phase: OnlineReviewDispatchPhase,
   err: unknown,
 ): StopSummary {
   const detail = err instanceof Error ? err.message : String(err);
-  const label =
-    phase === "poll"
-      ? "bot poll"
-      : phase === "verify"
-        ? "verify dispatch"
-        : "fixer dispatch";
+  const label = phase === "verify" ? "verify dispatch" : "fixer dispatch";
   return stageFailureStopSummary({
       status: "online_review_failed",
     summary: `online review ${label} failed: ${detail}`,
@@ -608,6 +602,25 @@ function convergenceHeadForLanding(input: {
     postFixHead: input.postFixCommitSha,
     branchHeadAfter: input.branchHeadAfter,
   });
+}
+
+/** Base landing before the Online Review Action assembles evidence (#1145). */
+export function buildOnlineReviewBaseLanding(
+  ship: ShipResult,
+  round: number,
+): WorkerLandingPayload {
+  const prHead = convergenceHeadForLanding({
+    shipPrHead: ship.prHead,
+  });
+  return {
+    shipDelivery: {
+      branch: ship.branch,
+      pr: ship.pr,
+      ...(prHead !== undefined && prHead.length > 0 ? { prHead } : {}),
+      ...(ship.status !== undefined ? { status: ship.status } : {}),
+    },
+    onlineReviewRound: round,
+  };
 }
 
 export function buildOnlineReviewLanding(
@@ -776,33 +789,34 @@ export function retriggerBotsAndPoll(
   return { snapshot, roundTrigger: snapshot.roundTriggerUsed };
 }
 
+/**
+ * Online Review Action seat result (#1145).
+ * The Action owns GH query/wait/evidence assembly and side effects; the stage
+ * only routes on the returned snapshot + typed verify disposition.
+ */
+export interface OnlineReviewVerifyDispatchResult {
+  readonly snapshot: PrReviewSnapshot;
+  readonly verify?: VerifyResult;
+  readonly artifacts?: NonNullable<
+    WorkerLandingPayload["rawReviewerArtifacts"]
+  >;
+}
+
 /** Thrown when a read-only verify worker dirties the tracked worktree (#600 r32). */
 export interface OnlineReviewLoopDispatch {
-  readonly poll: (round: number) => Promise<PrReviewSnapshot>;
+  /**
+   * Online Review Action seat (#1145): owns GitHub query, necessary wait,
+   * evidence assembly, judgment dispatch, and side effects. Runner transports
+   * only the returned snapshot + typed disposition — never re-queries GH or
+   * replays residual side-effect plans after this returns.
+   */
   readonly dispatchVerify: (
     landing: WorkerLandingPayload,
     round: number,
-  ) => Promise<
-    | VerifyResult
-    | {
-        readonly kind: "rawReviewerArtifacts";
-        readonly artifacts: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
-        readonly verify?: VerifyResult;
-      }
-  >;
+  ) => Promise<OnlineReviewVerifyDispatchResult>;
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  /**
-   * Host fail-safe GitHub side-effect applicator (#600 / correctness K1).
-   * Must run after a usable verify disposition and before mergeable acceptance.
-   * Live production wires {@link applyVerifySideEffects}; tests may pass identity.
-   */
-  readonly applySideEffects: (
-    landing: WorkerLandingPayload,
-    verify: VerifyResult,
-    fixingCommitSha?: string,
-  ) => VerifyResult;
   readonly retriggerAfterFix: () => void | Promise<void>;
   /**
    * Record/persist the fixing commit SHA after fixer success.
@@ -864,18 +878,10 @@ export async function runOnlineReviewLoopStage(
   const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
 
   // #940 / ID-012: no mechanical round cap — persistent verify judge owns
-  // continue vs escalate. Host only routes the three-state disposition.
+  // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
-    let snapshot: PrReviewSnapshot;
-    try {
-      snapshot = await dispatch.poll(round);
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
-      }
-      return decisionGateFromDispatchInfra(round, "poll", err);
-    }
-    let landing = buildOnlineReviewLanding(snapshot, ship, round);
+    // Base landing only — Online Review Action owns GH evidence (#1145).
+    let landing = buildOnlineReviewBaseLanding(ship, round);
     if (priorRoundFindingsAccum.length > 0) {
       landing = {
         ...landing,
@@ -897,15 +903,27 @@ export async function runOnlineReviewLoopStage(
     let verify: VerifyResult | undefined;
     try {
       const dispatchedVerify = await dispatch.dispatchVerify(landing, round);
-      if (dispatchedVerify.kind === "rawReviewerArtifacts") {
-        landing = {
-          ...landing,
-          rawReviewerArtifacts: dispatchedVerify.artifacts,
-        };
-        verify = dispatchedVerify.verify;
-      } else {
-        verify = dispatchedVerify;
-      }
+      // Action-returned evidence becomes the landing snapshot; Runner never
+      // re-queries GH or replays residual side-effect plans (#1145).
+      landing = {
+        ...buildOnlineReviewLanding(dispatchedVerify.snapshot, ship, round),
+        ...(landing.fixMarkedFindingIdentityKeys !== undefined
+          ? {
+              fixMarkedFindingIdentityKeys:
+                landing.fixMarkedFindingIdentityKeys,
+            }
+          : {}),
+        ...(landing.fixMarkedFindingThreads !== undefined
+          ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
+          : {}),
+        ...(landing.priorRoundFindings !== undefined
+          ? { priorRoundFindings: landing.priorRoundFindings }
+          : {}),
+        ...(dispatchedVerify.artifacts !== undefined
+          ? { rawReviewerArtifacts: dispatchedVerify.artifacts }
+          : {}),
+      };
+      verify = dispatchedVerify.verify;
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
@@ -930,10 +948,9 @@ export async function runOnlineReviewLoopStage(
         };
       }
 
-      // Pending CI only: re-poll without finite host fail (#934 ID-004).
-      // Bot overdue window is for bots only — CI pending keeps sleeping until
-      // check-runs go terminal (or the worker escalates on a later poll).
-      // Do not apply side effects while CI is still pending.
+      // Pending CI only: re-seat the Online Review Action (#934 ID-004 / #1145).
+      // Bot overdue window lives inside the Action; Runner just sleeps then
+      // redispatches — never host-applies residual side-effect cargo.
       if (
         verifyBlockedOnlyOnPendingCheckRuns(
           verify,
@@ -943,29 +960,6 @@ export async function runOnlineReviewLoopStage(
         await sleepPendingCiPollInterval();
         continue;
       }
-
-      // Host fail-safe applicator: reply/resolve/deferred land before mergeable
-      // (or fixer continue). Worker should have executed already; cargo plan is
-      // still applied deterministically so effects cannot be skipped.
-      try {
-        verify = dispatch.applySideEffects(
-          landing,
-          verify,
-          round > 1 ? lastFixCommitSha : undefined,
-        );
-      } catch (err) {
-        if (err instanceof OnlineReviewLoopTerminal) {
-          throw err;
-        }
-        return {
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: verifySideEffectFailureStopSummary(err),
-        };
-      }
-      // Re-derive disposition after applicator (e.g. deferredIssueUrls filled).
-      disposition = onlineReviewJudgeDisposition(verify);
 
       fixKeys = fixMarkedKeysFromVerify(verify);
       fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
@@ -1031,8 +1025,8 @@ export async function runOnlineReviewLoopStage(
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
       if (envelopeFixSha !== undefined) {
         try {
-          // Persist envelope SHA for ledger / recheck landing AND thread it into
-          // the next round's host side-effect resolve (threadsToResolve).
+          // Persist envelope SHA for ledger / recheck landing (worker-owned
+          // side effects consume fix SHA inside the next Online Review seat).
           lastFixCommitSha = dispatch.resolveFixCommitSha
             ? await dispatch.resolveFixCommitSha(envelopeFixSha)
             : envelopeFixSha;
