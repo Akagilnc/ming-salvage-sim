@@ -85,6 +85,26 @@ class SiblingFailBackend extends OkChildBackend {
   }
 }
 
+/** Explicit S2 throw for named issues (A-class sibling failure with merger park). */
+class SiblingCrashBackend extends OkChildBackend {
+  constructor(private readonly failIssues: ReadonlySet<number>) {
+    super();
+  }
+  override async runStep(
+    spec: StepSpec,
+    worktree?: WorktreeHandle,
+  ): Promise<StepOutput> {
+    const issue =
+      worktree !== undefined
+        ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
+        : -1;
+    if (spec.id === "S2" && this.failIssues.has(issue)) {
+      throw new Error(`coder process crashed on #${issue}`);
+    }
+    return super.runStep(spec);
+  }
+}
+
 class RecordingFamilyBackend implements FamilyBackend {
   resolveLandingLiveHooks(input: {
     prUrl: string;
@@ -122,6 +142,29 @@ class RecordingFamilyBackend implements FamilyBackend {
   }
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
     this.escalationCalls.push(escalation);
+    // Durable ledger authority (same shape as production recordFamilyEscalated).
+    this.ledger.push({
+      status: "escalated",
+      event: "escalated",
+      phase: escalation.phase ?? "wave",
+      escalationKind: escalation.escalationKind,
+      reason: escalation.reason,
+      ...(escalation.familyHeadAfter !== undefined
+        ? { familyHeadAfter: escalation.familyHeadAfter }
+        : {}),
+      ...(escalation.stopSummary !== undefined
+        ? { stopSummary: escalation.stopSummary }
+        : {}),
+      ...(escalation.terminalChildren !== undefined
+        ? { terminalChildren: escalation.terminalChildren }
+        : {}),
+      ...(escalation.terminalStatus !== undefined
+        ? { terminalStatus: escalation.terminalStatus }
+        : {}),
+      ...(escalation.terminalCause !== undefined
+        ? { terminalCause: escalation.terminalCause }
+        : {}),
+    } as FamilyLedgerEntry);
   }
 }
 
@@ -424,9 +467,9 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
   });
 
   it("POSITIVE: merger decision escalate attaches wave diagnostics for failed siblings", async () => {
-    // #10 decision-escalates on merge; #11 fails single-slice. Wave diagnostics
-    // for #11 are settled before the merge early-return and must ride the
-    // public escalated result (attachDiagnostics on that terminal).
+    // #10 decision-escalates on merge; #11 fails single-slice. Owner A: real
+    // sibling failure beats decision park → family failed (not decision_gate_park).
+    // Durable merger decision still written; diagnostics ride the failed terminal.
     const familyBackend = new ConflictOnceFamilyBackend(
       new Set([10]),
       false,
@@ -447,12 +490,20 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         ],
       },
       familyBackend,
-      singleSliceBackend: new SiblingFailBackend(new Set([11])),
+      singleSliceBackend: new SiblingCrashBackend(new Set([11])),
       familyBase: "family/938-base",
     });
 
-    expect(result.status).toBe("parked");
+    expect(result.status).toBe("failed");
+    expect(result.stopSummary?.reason).not.toBe("decision_gate_park");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
+    expect(familyBackend.escalationCalls[0]?.escalationKind).toBe("decision");
+    // Failure authority supersedes decision for replay (latest escalated row).
+    expect(
+      familyBackend.escalationCalls.some((c) => c.escalationKind === "failure"),
+    ).toBe(true);
+    // Durable + public share one stopSummary object shape (reason/summary/…).
+    expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
     expect(result.diagnostics ?? []).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -461,6 +512,87 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         }),
       ]),
     );
+    expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
+
+    // Second run across a real persistence boundary (JSONL file, not shared mem).
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import(
+      "node:fs"
+    );
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "1125-durable-replay-"));
+    const ledgerPath = join(dir, "family-ledger.jsonl");
+    try {
+      writeFileSync(
+        ledgerPath,
+        familyBackend.ledger.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      );
+      class DiskLedgerBackend implements FamilyBackend {
+        resolveLandingLiveHooks(input: {
+          prUrl: string;
+          convergedHeadOid: string;
+          familyBase: string;
+        }) {
+          return buildExplicitLandingLiveHooks({
+            prUrl: input.prUrl,
+            headOid: input.convergedHeadOid,
+            remoteBranchName: input.familyBase,
+          });
+        }
+        async mergeChildIntoFamilyBase(): Promise<MergeResult> {
+          throw new Error("no merge on replay");
+        }
+        async resolveMergeConflict(): Promise<MergeResult> {
+          throw new Error("no resolve on replay");
+        }
+        async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+          writeFileSync(ledgerPath, JSON.stringify(entry) + "\n", { flag: "a" });
+        }
+        async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+          const raw = readFileSync(ledgerPath, "utf8");
+          return raw
+            .split("\n")
+            .filter((l) => l.trim().length > 0)
+            .map((l) => JSON.parse(l) as FamilyLedgerEntry);
+        }
+        async runFamilyVerify(): Promise<{ ok: boolean }> {
+          return { ok: true };
+        }
+      }
+      class NoDispatchBackend extends OkChildBackend {
+        override async runStep(): Promise<StepOutput> {
+          throw new Error("dispatch forbidden on failure-authority replay");
+        }
+        override async prepareWorktree(): Promise<WorktreeHandle> {
+          throw new Error("dispatch forbidden on failure-authority replay");
+        }
+      }
+      const firstChildren = result.children;
+      const second = await runFamily({
+        verifyCmr: async () => ({ ok: true, ran: true }),
+        epic: {
+          issue: 938,
+          children: [
+            { issue: 10, blockedBy: [] },
+            { issue: 11, blockedBy: [] },
+          ],
+        },
+        familyBackend: new DiskLedgerBackend(),
+        singleSliceBackend: new NoDispatchBackend(),
+        familyBase: "family/938-base",
+      });
+      expect(second.status).toBe("failed");
+      expect(result.status).toBe("failed");
+      expect(second.stopSummary?.reason).not.toBe("decision_gate_park");
+      if (second.status === "failed" && result.status === "failed") {
+        expect(second.cause).toBe(result.cause);
+      }
+      expect(second.stopSummary).toEqual(result.stopSummary);
+      expect(second.children).toEqual(firstChildren);
+
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("POSITIVE: still-conflicted merger result fails the child without host mechanical-cap escalation", async () => {
@@ -533,6 +665,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
   it("POSITIVE: merger decision-escalate mid-wave exit keeps successful wave peer as ran (not skipped)", async () => {
     // #10 decision-escalates during merge; #11 already allSettled as ran in the
     // same wave. Early exit must drain #11 before mapping residual children.
+    // Durable stopSummary === public stopSummary (single normalize).
     const familyBackend = new ConflictOnceFamilyBackend(
       new Set([10]),
       false,
@@ -543,6 +676,17 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         phase: "wave",
       },
     );
+    // Preexisting unanswered park outside this wave's merge — must stay escalated.
+    familyBackend.ledger.push({
+      status: "child_decision_parked",
+      event: "child_decision_parked",
+      escalationKind: "decision",
+      childIssue: 12,
+      reason: "old park",
+      diagnosis: "old diagnosis",
+      sessionId: "old-sess-12",
+    } as FamilyLedgerEntry);
+
     const result = await runFamily({
       verifyCmr: async () => ({ ok: true, ran: true }),
       epic: {
@@ -550,6 +694,7 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
         children: [
           { issue: 10, blockedBy: [] },
           { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [] },
         ],
       },
       familyBackend,
@@ -559,11 +704,45 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
 
     expect(result.status).toBe("parked");
     expect(result.escalation?.reason).toBe("choose the canonical migration");
-    expect(result.children.find((c) => c.issue === 10)?.status).toBe("failed");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.children.find((c) => c.issue === 10)).toMatchObject({
+      status: "escalated",
+      escalation: {
+        reason: "choose the canonical migration",
+        escalationKind: "decision",
+      },
+    });
     const peer = result.children.find((c) => c.issue === 11);
     expect(peer?.status).toBe("ran");
     expect(peer?.status).not.toBe("skipped");
     expect(peer?.branch).toEqual(expect.stringMatching(/11/));
+    const oldPark = result.children.find((c) => c.issue === 12);
+    expect(oldPark?.status).toBe("escalated");
+    expect(oldPark?.escalation?.sessionId).toBe("old-sess-12");
+    // Durable + public share one stopSummary; children list on result holds cargo.
+    expect(familyBackend.escalationCalls[0]?.stopSummary).toEqual(result.stopSummary);
+    expect(result.children.map((c) => ({ issue: c.issue, status: c.status }))).toEqual([
+      { issue: 10, status: "escalated" },
+      { issue: 11, status: "ran" },
+      { issue: 12, status: "escalated" },
+    ]);
+
+    const replay = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
+      epic: {
+        issue: 938,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+          { issue: 12, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new OkChildBackend(),
+      familyBase: "family/938-base",
+    });
+    expect(replay.status).toBe("parked");
+    expect(replay.children).toEqual(result.children);
   });
 
   it("POSITIVE: merge-phase quota park mid-wave keeps successful wave peer as ran (not skipped)", async () => {
@@ -680,8 +859,8 @@ describe("#938 mergeChild + runFamily — ID-010 trust merger worker", () => {
       now: () => now,
     });
 
-    expect(result.status).toBe("parked");
-    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.status).toBe("failed");
+    expect(result.stopSummary.reason).not.toBe("provider_degraded");
     expect(result.children.find((c) => c.issue === 10)?.status).toBe("ran");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
     expect(result.diagnostics ?? []).toEqual(

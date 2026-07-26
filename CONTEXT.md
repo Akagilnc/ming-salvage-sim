@@ -593,15 +593,15 @@ _Avoid_: caller、上游、parent(太泛)
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **runner**(纯调度器):
-驱动交付主流程的交通警察。它只数 exit code、读取 reviewer 按所属 versioned review authority 自报的 blocking open-count（0 / 大于 0）、转运 worker 自己按下的决策门。Runner 不解释 severity 或 findings 状态，不读任何报告文字，不核对 count，不读取 commit、HEAD、diff、PR 或其他完成证据，也不判断专业工作是否合格。
+驱动交付主流程的交通警察。它只处理 ADR 0131 的进程 exit code、judge typed tri-state 与 worker 主动 decision gate。Runner 不解释 severity 或 findings 状态，不读任何报告文字，不读取 commit、HEAD、diff、PR 或其他完成证据，也不判断专业工作是否合格。
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
-执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill、工具和同角色模型腿；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
+执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill 和工具；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审的 worker。它可以读 scope/issue/ADR、运行评审所需测试、按所属动作调用模型腿并汇总证据，但不承担持久修复；即使复用一个支持自治修复循环的评审 engine，编排器内也只调用它的单次 reviewer pass，完成后按所属 versioned review authority 自报 blocking open-count 或提交需要人类决定，finding 内容留给 fixer 与 fresh reviewer，不交给 runner 裁判。
+被 runner 派出、只负责评审的 owning review / judge worker。它可以读 scope/issue/ADR、运行评审所需测试，并汇总、裁决 Runner 派回的 fresh-leg raw prose；需要腿时向 Runner 交 typed `continue`，自己不派腿，也不承担持久修复。它按 ADR 0131 交 judge typed tri-state 或主动 decision gate；finding 内容留给 fixer 与 fresh reviewer，不交给 Runner 裁判。
 _Avoid_: 自评自修、顺手修一下、在 reviewer worker 内启动 engine 自带的 fix loop、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
@@ -628,7 +628,7 @@ _Avoid_: 口头说已修、有代码变化却不留下 diff/test/self-check 材�
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
 
 **评审调度信号**:
-reviewer 完成专业判断后留给 runner 的最小交通灯：按所属 versioned review authority 自报 blocking open-count 为 0、自报 blocking open-count 大于 0，或主动提交需要人类决定。说几条就是几条；runner 不解释 severity 或 findings 状态，不从卷面派生或对账 count，也不读取 finding 内容、格式、测试或证据。
+判官完成专业判断后留给 Runner 的最小交通灯：ADR 0131 的 typed `converged | continue | escalate`，或主动提交需要人类决定；进程成败另由 exit code 表达。Runner 不读取 finding 内容、格式、测试或证据。
 _Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runner 管理或评价 worker。
 
 **step ledger**:

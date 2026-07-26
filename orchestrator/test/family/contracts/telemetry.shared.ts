@@ -23,7 +23,7 @@ import { resolveRouteModels, routeSmokeEntries } from "../../../src/modelRoutes.
 
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 import {
   clearTelemetryRunEnvironment,
@@ -179,7 +179,7 @@ class FamilyTelemetryBackend implements FamilyBackend {
     // Record every dispatch (including panel-leg short-circuits) so runId
     // telemetry assertions cover the full fan-out, not only non-leg workers.
     this.ctxs.push(ctx);
-    const panelLeg = completeCmrPanelLegWorker(spec);
+    const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       const cmrPass = ctx.cmrPass ?? "correctness";

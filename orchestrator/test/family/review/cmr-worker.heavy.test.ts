@@ -43,7 +43,6 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
@@ -73,7 +72,6 @@ import {
   realRepo335,
   legacyClaudeCmrSpec,
 } from "./cmr-worker.shared.js";
-
 afterEach(() => {
   vi.unstubAllEnvs();
   while (cleanups.length > 0) {
@@ -1326,6 +1324,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     };
+    runOptions?: Parameters<typeof sc.run>[0];
     outcomePath?: string;
 
     constructor(private readonly auth: CmrAuth, workingRepo: string) {
@@ -1348,7 +1347,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
 
     protected override cmrSandbox(
       auth: CmrAuth,
-      spec: Pick<WorkerSpec, "model" | "host">,
+      spec: Pick<WorkerSpec, "model" | "soul" | "host">,
       outcomeLanding?: { path: string; sandboxPath: string },
       ctx?: Pick<DispatchContext, "billingPool">,
     ): sc.SandboxProvider {
@@ -1365,8 +1364,9 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     }
 
     protected override async runAgentSandbox(
-      _options: Parameters<typeof sc.run>[0],
+      options: Parameters<typeof sc.run>[0],
     ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      this.runOptions = options;
       if (this.outcomePath === undefined) throw new Error("missing outcome path");
       writeFileSync(this.outcomePath, JSON.stringify({
         converged: true,
@@ -1382,27 +1382,26 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     }
   }
 
-  async function dispatch(pool: DispatchContext["billingPool"]) {
+  async function dispatch(
+    pool: DispatchContext["billingPool"],
+    spec: WorkerSpec = cmrWorkerSpec(),
+    auth: CmrAuth = { claudeToken: "test-claude-panel-tok" },
+  ) {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    const backend = new AuthDispatchBackend(
-      { claudeToken: "test-claude-panel-tok" },
-      repo,
-    );
-    await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
+    const backend = new AuthDispatchBackend(auth, repo);
+    await backend.dispatchWorker(spec, { familyBase: "fb", billingPool: pool });
     return { backend };
   }
 
-  it("#905: production CMR dispatch does not inject GLM_KEY or mount opencode auth", async () => {
+  it("#905: explicit unbound zai dispatch fails loudly", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend } = await dispatch("zai");
-    expect(backend.config?.env.GLM_KEY).toBeUndefined();
-    expect(
-      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
-    ).toBe(false);
+    await expect(dispatch("zai")).rejects.toThrow(
+      /no executable provider binding/,
+    );
   });
 
   it("#905: non-zai production dispatch also has no opencode transport", async () => {
@@ -1421,6 +1420,31 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     expect(
       backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
     ).toBe(false);
+  });
+
+  it("threads one real CMR spec into both the Agy command and its soul overlay", async () => {
+    const spec: WorkerSpec = {
+      ...cmrWorkerSpec(),
+      model: "agy",
+      host: "agy",
+      soul: "verify",
+    };
+    const { backend } = await dispatch(
+      undefined,
+      spec,
+      { agyDir: mkDir("agy-auth-r2-") },
+    );
+    const command = backend.runOptions?.agent.buildPrintCommand({
+      prompt: "TASK_SENTINEL",
+      dangerouslySkipPermissions: false,
+    });
+    expect(command?.command).toContain("agy");
+    expect(command?.command).toContain("TASK_SENTINEL");
+    expect(backend.config?.mounts).toContainEqual({
+      hostPath: join(realSoulsDir, "verify.md"),
+      sandboxPath: "/home/agent/.gemini/GEMINI.md",
+      readonly: true,
+    });
   });
 });
 

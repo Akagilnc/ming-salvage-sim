@@ -44,7 +44,7 @@ import type {
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
@@ -1124,13 +1124,14 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("failed");
+    // #1125: finalize remounts in epic order (not run-order residual append).
     expect(result.children).toEqual([
+      { issue: 10, status: "already_done" },
       {
         issue: 11,
         status: "failed",
         failureCause: "dispatch threw: coder process crashed (after 6 dispatch attempts)",
       },
-      { issue: 10, status: "already_done" },
     ]);
     expect(result.stopSummary.summary).toContain("#11:failed");
     expect(result.stopSummary.summary).not.toContain("#10:already_done");
@@ -1186,7 +1187,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         spec: WorkerSpec,
         _ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        const panelLeg = completeCmrPanelLegWorker(spec);
+        const panelLeg = completeReviewPanelLegWorker(spec);
         if (panelLeg !== undefined) return panelLeg;
         if (spec.kind === "cmr") return this.cmrOutput;
         // No coder-fix worker: the coder-fix dispatch fails → the family aborts,
@@ -1217,7 +1218,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       }),
     };
 
-    it("persists only finding identity keys, never content-derived dispositions or the fat classification", async () => {
+    it("persists live identity keys from the typed judge envelope, never prose-derived classification", async () => {
       const backend = new ScriptedCmrBackend(blockingCmrOutput);
       const result = await runVerifyCmr({
         phase: "final",
@@ -1235,7 +1236,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         (entry) => entry.status === "cmr_reviewed",
       );
       expect(reviewed).toBeDefined();
-      // The runner's only pending-key source is present…
+      // The typed judge disposition table is the canonical fixer control cargo.
       expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
       // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");

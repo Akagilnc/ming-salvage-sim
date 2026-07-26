@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   courtGenerationFromDurableEvidence,
-} from "../../../src/family/cmrPanelLegs.js";
+} from "../../../src/family/reviewPanelLegs.js";
 import {
   FAMILY_LEDGER_FILENAME,
 } from "../../../src/family/realFamilyBackend.js";
@@ -49,9 +49,9 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import {
-  completeCmrPanelLegWorker,
-  isCmrPanelLegWorker,
-} from "../../helpers/cmr-panel-leg-dispatch.js";
+  completeReviewPanelLegWorker as completeCmrPanelLegWorker,
+  isReviewPanelLegWorker as isCmrPanelLegWorker,
+} from "../../helpers/review-panel-leg-dispatch.js";
 import {
   completedJudge,
   judgeContinue,

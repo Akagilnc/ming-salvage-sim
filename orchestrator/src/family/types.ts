@@ -421,7 +421,7 @@ export interface FamilyLedgerEntry {
    * for routing. Queryable suppress is the schema row `action: "suppress"`
    * (evidence + XOR ground) on this table — family transports the T2 schema
    * for prior-verdict resume, not the single-slice store-status flip shape
-   * (`status: "suppressed"`). Both paths share `projectJudgeContinueBlocking`
+   * (`status: "suppressed"`).
    * for the live open set / terminal flip projection.
    */
   readonly findingDispositions?: ReadonlyArray<
@@ -453,6 +453,16 @@ export interface FamilyLedgerEntry {
   readonly note?: string;
   /** Unified run-level/family-level stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /**
+   * #1125 schema A — strong-typed terminal children cargo on family
+   * escalated/failure authority rows. Not a generic metadata bag; exclusive
+   * durable carrier for cross-restart public children identity.
+   */
+  readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
+  /** #1125 schema A — public terminal status preserved byte-for-byte on replay. */
+  readonly terminalStatus?: FamilyRunStatus;
+  /** #1125 schema A — mandatory public cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
   readonly ts?: string;
   /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
@@ -937,6 +947,15 @@ export interface FamilyEscalation {
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
+  /**
+   * #1125 schema A — terminal children cargo for durable authority + replay.
+   * Same shape as public FamilyRunResult.children.
+   */
+  readonly terminalChildren?: ReadonlyArray<FamilyChildResult>;
+  /** Public terminal ABI persisted with terminalChildren for exact replay. */
+  readonly terminalStatus?: FamilyRunStatus;
+  /** Mandatory public failure cause when terminalStatus is failed. */
+  readonly terminalCause?: PublicFailedCause;
   /** Durable escalation semantic; every caller must declare the factual source. */
   readonly escalationKind: "decision" | "failure";
   /** Durable escalation phase; defaults to the final family gate. */
@@ -1156,24 +1175,28 @@ export interface FamilyRunInput {
  *   stayed blocked when the wave loop terminated). Recorded so the family result
  *   accounts for every child (#294's richer wave/cycle logic refines this).
  */
-export type FamilyChildStatus =
-  | "ran"
-  | "merged"
-  | "already_done"
-  | "resumed"
-  | "skipped"
-  | "failed"
-  /**
-   * `"escalated"` — (#604 slice 5) the child's single-slice run hit a
-   * product/design DECISION题 (`escalationKind:"decision"`) and PARKED. Distinct
-   * from `"failed"` (an infra `escalationKind:"failure"` / retries-exhausted child,
-   * which is terminal until manual repair): a decision escalation is answerable —
-   * a later `escalation_answered` ledger row bound to this childIssue re-opens it
-   * and the family runner resumes the child IN PLACE (原 sessionId, 退出-重入 per
-   * ADR 0062). runChild returns this ONLY for the decision bucket; the failure
-   * bucket keeps the current `"failed"` behaviour (A/B分家).
-   */
-  | "escalated";
+export const FAMILY_CHILD_STATUSES = [
+  "ran",
+  "merged",
+  "already_done",
+  "resumed",
+  "skipped",
+  "failed",
+  "escalated",
+] as const;
+export type FamilyChildStatus = (typeof FAMILY_CHILD_STATUSES)[number];
+
+export const FAMILY_SKIP_REASONS = [
+  "not_scheduled_this_invocation",
+  "unanswered_sibling_park_residual",
+  "startup_preflight_failed",
+  "refetch_failed",
+  "reconcile_inconsistent",
+  "dependency_cycle_residual",
+  "admission_skipped",
+  "baseline_health_failed",
+] as const;
+export type FamilySkipReason = (typeof FAMILY_SKIP_REASONS)[number];
 
 /**
  * The decision escalation a child slice PARKED on (#604 slice 5).
@@ -1203,9 +1226,8 @@ export interface FamilyChildDiagnostic {
 }
 
 /** Per-child outcome record in the family result. */
-export interface FamilyChildResult {
+interface FamilyChildResultBase {
   readonly issue: number;
-  readonly status: FamilyChildStatus;
   /** The child's reviewed branch (set when the single-slice run succeeded). */
   readonly branch?: string;
   /**
@@ -1218,6 +1240,17 @@ export interface FamilyChildResult {
   /** Root cause when `status==="failed"` (#938); see also result.diagnostics. */
   readonly failureCause?: string;
 }
+
+export type FamilyChildResult =
+  | (FamilyChildResultBase & {
+      readonly status: "skipped";
+      /** Same stable machine token emitted in the skip warning. */
+      readonly reason: FamilySkipReason;
+    })
+  | (FamilyChildResultBase & {
+      readonly status: Exclude<FamilyChildStatus, "skipped">;
+      readonly reason?: never;
+    });
 
 /** Public family-run outcome: completed | parked | failed (#942 / ID-001). */
 export type FamilyRunStatus = PublicRunResult;

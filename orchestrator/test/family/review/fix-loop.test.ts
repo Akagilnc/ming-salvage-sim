@@ -36,7 +36,7 @@ import type {
   WorkerSpec,
 } from "../../../src/types.js";
 import { completedJudge, judgeContinue, judgeToolchain, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker as completeCmrPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
 
 

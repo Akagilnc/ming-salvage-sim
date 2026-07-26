@@ -15,6 +15,12 @@ same judge session (S3/S6 resume; `forbidFreshRetry`). Plan-phase `continue`
 resumes S2 until a construct beat lands; `converged` dismisses the court;
 `escalate` parks for a human answer then resumes in place. Fresh outer-gate
 panel legs still run after pure-judge receive when the topology requires them.
+If the backend explicitly reports that the judge session is unrecoverable, the
+seat reopens fresh at S6 with its durable prior verdicts. After an answered S6
+park, moving the verify seat to a different resume-capable model follows the
+same boundary: persist `session_continuity_lost`, then fresh-reopen with the
+durable prior verdicts and owner answer. Unknown network, authentication, and
+protocol failures still fail loudly.
 Operator truth for the child loop lives in the per-issue step ledger
 (`court_opened` / `court_dismissed`, plan|construct beat tags, progress
 `beat` events).
@@ -572,7 +578,7 @@ replacement Actions and Sandcastle controls land.
 
 ## 领航员运维手册(2026-07-23,交接版)
 
-> 本章给接棒的 runner(人或 AI)。上文是机器的设计文;本章是**开机器的人**的操作规程。判卷法理真源=`image/souls/verify.md`(判前必重读,含裁 park/立票);宪法=容器全局 CLAUDE.md 三句话+一套机制(scope 是参数,无庭际分层);基本架构=**runner 按信封起容器、递信息;worker 永不起 worker;判官经 typed 判词向 runner 要腿**(法-码残差见 #1126:切片庭腿派发迁 runner 前,prompt 跟机器不跟法)。
+> 本章给接棒的 runner(人或 AI)。上文是机器的设计文;本章是**开机器的人**的操作规程。判卷法理真源=`image/souls/verify.md`(判前必重读,含裁 park/立票);宪法=容器全局 CLAUDE.md 三句话+一套机制(scope 是参数,无庭际分层);基本架构=**runner 按信封起容器、递信息;worker 永不起 worker;判官经 typed 判词向 runner 要腿**(切片庭与纯庭同源,#1126/#1094)。
 
 ### 点火
 
@@ -616,4 +622,4 @@ PR/bot 冒 code finding → **立子票挂对应 epic(native sub-issue + ready-f
 
 - 在飞:1117-r3(#1118/#1119,整合庭陪审 resume 修复)、1124-r2(#1125,决策门双接缝,owner 已批)。**跑完即全面暂停**(owner 令,额度不足)。
 - 压队:两舰落 main → 513 复飞(#516/#523/#525 已有 C 裁决应答在台账+#1123 丢旨修复)→ PR #1120 收环 → 1115 复燃(凭证根治)→ PR #1121 CI 终绿即 merge。
-- 挂账:#1102 #1104 #1108 #1113 #1126 #526;依赖族 6 片(#517/518/520/521/524/528)等 #474 的 #571→#560。
+- 挂账:#1102 #1104 #1108 #1113 #526;依赖族 6 片(#517/518/520/521/524/528)等 #474 的 #571→#560。

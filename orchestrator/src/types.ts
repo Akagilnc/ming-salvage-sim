@@ -119,25 +119,27 @@ export type HandoffStatus = "completed" | "parked" | "failed";
 /**
  * Soul identifier injected into the sandbox for a step.
  *
- * - `"coder"`: implementation/fix soul (TDD for S2, finding fix contract for S5).
- * - `"READ-ONLY"`: reviewer soul with READ-ONLY soft constraint baked in
- *   (prompt-level, not an OS-level mount — same image, separate `run()`).
- * - `"cmr"`: family integrated-cmr pass worker soul (ADR 0030) — review/outcome
- *   discipline for the selected CMR gate. Blocking findings return to the runner;
- *   a separate `"coder"` worker creates any persistent repair commits.
+ * - `"coder"`: implementation soul for S2.
+ * - `"fixer"`: finding-fix soul for S5.
+ * - `"READ-ONLY"`: reviewer soul with a provider-level READ-ONLY instruction
+ *   constraint (not an OS-level mount — same image, separate `run()`).
+ * - `"cmr-completeness"` / `"cmr-correctness"`: single-leg family panel
+ *   reviewers routed to one canonical baked CMR lens.
  * - `"ship"`: the delivery soul the family ship worker runs under — a WRITE soul
  *   distinct from `"coder"`: it invokes `gstack-ship`, stops at PR creation, and
  *   records deferred findings in a tracker (issue / TODOS.md), never the PR body.
  */
-export type StepSoul =
+export type WorkerSoul =
   | "coder"
   | "READ-ONLY"
-  | "cmr"
+  | "cmr-completeness"
+  | "cmr-correctness"
   | "ship"
   | "verify"
   | "fixer"
-  | "cleanup"
-  | "landing";
+  | "landing"
+  | "merger";
+export type StepSoul = WorkerSoul;
 
 /**
  * Project tool-chain entry. Each entry is a short, lower-case technology slug
@@ -148,8 +150,8 @@ export type ToolchainEntry = string;
 
 /**
  * A single agent step (ADR 0018): one `sandbox.run()` driven entirely by the
- * runner. `role` selects which soul to inject (v0.1 one image, two roles);
- * `promptFile` is a versioned file — prompts are never assembled inline.
+ * runner. `soul` is the worker instruction selector; `promptFile` is a
+ * versioned task file — prompts are never assembled inline.
  *
  * #247 wired `id`, `role`, `promptFile`. #253 filled `model` / `maxIter` /
  * `soul` / `toolchain`. #928 retired `completionSignal` — completion is clean
@@ -158,7 +160,7 @@ export type ToolchainEntry = string;
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
   readonly id: StepId;
-  /** Selects the soul to inject. */
+  /** Coarse scheduling role; soul selection is explicit in {@link StepSpec.soul}. */
   readonly role: StepRole;
   /** Versioned prompt file; prompts are never assembled ad-hoc (ADR 0018 决定#4). */
   readonly promptFile: string;
@@ -188,16 +190,11 @@ export interface StepSpec {
   /**
    * Which soul to inject into the sandbox for this step (#253).
    * `"coder"` = full dev-discipline soul;
-   * `"READ-ONLY"` = reviewer soul, soft-constraint READ-ONLY baked into soul
-   * (not an OS-level readonly mount — same image, separate `run()` context).
+   * `"READ-ONLY"` = reviewer soul with a provider-level READ-ONLY instruction
+   * constraint (not an OS-level readonly mount).
    *
-   * CONSUMED by the real Backend (ship-pre 256 r1): `RealBackend.box()` selects
-   * the role's baked soul via `soulForStep(spec)` and injects it into the
-   * container (`ORCHESTRATOR_SOUL`) so the v0.1 one-image-two-roles profile
-   * activates the right one (#244 "role 决定注哪份 soul"; ADR 0017 §4). v0.1
-   * derives the soul from `role`; this field is the explicit declaration and is
-   * asserted to agree with the role (a contradiction is a misconfigured spec →
-   * S8(error)), so it is a validated contract field, not a dangling one.
+   * The worker invocation consumes this field directly and activates the
+   * selected live-mounted soul through the provider's native instruction layer.
    */
   readonly soul: StepSoul;
   /**
@@ -744,7 +741,8 @@ export interface StepResult {
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
  * discriminant and the skill invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
- *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
+ *   - `reviewer` → runner-owned review-panel leg (#1094 / #1126); soul + thin
+ *     promptFile carry the axis/lens. No `/code-review` skill; fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
  *   - `ship`     → invoke `gstack-ship` for the family PR. Child S7 is a local handoff.
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
@@ -816,7 +814,7 @@ export interface WorkerSpec {
   readonly id: StepId;
   /** The work kind (drives result payload + skill routing). */
   readonly kind: WorkerKind;
-  /** Which soul to inject (v0.1 one image, two roles). */
+  /** Coarse scheduling role; {@link WorkerSpec.soul} is the instruction selector. */
   readonly role: StepRole;
   /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
   readonly host: WorkerHost;
@@ -1942,6 +1940,12 @@ export interface AgentStepRunOptions {
    * Rendered from ledger memory at dispatch — never a worktree focus file.
    */
   readonly relayBrief?: string;
+  /**
+   * Durable judge history used by the owning Judge Action's typed receipt
+   * validator. Illegal findings-store transitions are returned to the same
+   * resident session through Sandcastle structured-output correction.
+   */
+  readonly priorJudgeVerdicts?: DispatchContext["priorJudgeVerdicts"];
 }
 
 // ──────────────────────────── run result ────────────────────────────

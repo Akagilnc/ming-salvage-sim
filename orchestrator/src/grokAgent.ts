@@ -36,6 +36,8 @@ export interface GrokAgentOptions {
   readonly captureSessions?: boolean;
   /** Override grok session directories for tests or non-standard installs. */
   readonly sessionStorage?: GrokSessionStorageOptions;
+  /** Live-mounted role soul appended through Grok's native system rules flag. */
+  readonly rulesFile?: string;
 }
 
 /**
@@ -157,6 +159,9 @@ export function grokAgent(
         ? ` --resume ${shellEscape(resumeSession)}`
         : "";
       const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
+      const rulesFlag = options?.rulesFile
+        ? ` --rules "$(cat ${shellEscape(options.rulesFile)})"`
+        : "";
       // Sandcastle supplies prompts through a Node child-process pipe. Grok
       // reopens --prompt-file itself, and reopening /dev/stdin fails with ENXIO
       // for that pipe shape. Materialize stdin into a private mode-600 temporary
@@ -182,7 +187,7 @@ export function grokAgent(
           `cat > "$prompt_file" || exit $?; ` +
           `(exec perl -e 'for (qw(HUP INT TERM)) { $SIG{$_} = "DEFAULT" } exec @ARGV' grok --prompt-file "$prompt_file" --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
-          `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}) & ` +
+          `${modelFlag}${effortFlag}${rulesFlag}${resumeFlag}${forkFlag}) & ` +
           `grok_pid=$!; wait "$grok_pid"`,
         stdin: prompt,
       };

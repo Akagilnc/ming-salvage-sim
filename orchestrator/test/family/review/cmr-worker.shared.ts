@@ -64,7 +64,6 @@ import {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
 } from "../../../src/realBackend.js";
 
@@ -229,7 +228,6 @@ export {
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
-  SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
   cmrWorkerSpec,
   familyCoderFixWorkerSpec,
