@@ -2048,13 +2048,15 @@ class GameSession:
         return decree
 
     def set_decree(self, text: str) -> str:
-        """皇帝手动改定诏书正文（拟诏后、颁诏前）。颁诏时 resolve_turn 用此 last_decree。"""
+        """兼容入口：仅无逐道草案时可设正文；有草案必须逐道修改以保持案卷同源。"""
         self._refuse_if_settling()
         text = (text or "").strip()
         if not text:
             raise ValueError("诏书正文不能为空。")
-        self.last_decree = text
         directives = self.db.list_directives(self.state, statuses=("draft",))
+        if directives:
+            raise ValueError("请逐道旨稿修改；最终诏书正文不能覆盖将要成案的可执行旨意。")
+        self.last_decree = text
         self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return self.last_decree
 
@@ -2291,7 +2293,7 @@ class GameSession:
         ) or any(
             row.get("kind") == "directive"
             for row in self.db.list_pending_actions(self.state.turn)
-        )
+        ) or bool(self.db.list_decree_dossiers(status="proposed"))
         if has_default_approved_work:
             self.resolve_turn()
             return

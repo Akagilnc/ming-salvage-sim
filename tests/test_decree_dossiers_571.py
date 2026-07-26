@@ -44,6 +44,26 @@ def test_committing_each_directive_creates_independent_restoreable_dossier(game)
     assert all(row["pending_action_id"] in ids for row in dossiers[-2:])
 
 
+def test_explicit_directive_without_extractor_payload_becomes_narrative_dossier(game):
+    db, state, content = game
+    minister = _active_minister(db)
+
+    candidate_id = db.stage_explicit_directive(
+        state.turn, minister, "着有司清核河工。",
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[candidate_id],
+    )
+
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == candidate_id
+    )
+    assert dossier["action_type"] == "special_decree"
+    assert dossier["target_kind"] == "policy"
+    assert dossier["target_id"] == f"pending-directive:{candidate_id}"
+
+
 def test_pending_directive_only_enters_settlement_after_final_approval(game):
     db, state, content = game
     minister = _active_minister(db)
@@ -972,6 +992,70 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
 
 
+def test_draft_intent_schema_keeps_commas_before_optional_fields(monkeypatch):
+    import ming_sim.cli_backend as cli_backend
+
+    prompts = []
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda prompt, *_a, **_k: (
+            prompts.append(prompt) or '{"拟旨意图":"无"}', 1
+        ),
+    )
+    cli_backend.extract_draft_intent(
+        "补上河工细节", "臣已补拟。",
+        None,
+        existing_draft_text="旧稿",
+        existing_candidates=[{"id": 7, "text": "旧稿"}],
+    )
+
+    schema = prompts[0].split("只输出一个 JSON 对象", 1)[1].split("判定要点", 1)[0]
+    assert '"期限月数": null,' in schema
+    assert '"目标草案": "新",' in schema
+
+
+def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "拨十两赈济", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief",
+            "amount": 10, "account": "国库",
+            "execution_surface": "immediate",
+        },
+    )
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+
+    with pytest.raises(ValueError, match="逐道旨稿"):
+        session.set_decree("不再拨款")
+    assert db.get_dossier_for_directive(directive_id) is None
+    assert db.list_directives(state)[0]["text"] == "拨十两赈济"
+
+
+def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    called = []
+    session.resolve_turn = lambda: called.append("resolve")
+
+    session.advance_without_decree()
+
+    assert called == ["resolve"]
+
+
 def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypatch):
     import ming_sim.cli.terminal as terminal
     import ming_sim.cli_backend as cli_backend
@@ -1441,6 +1525,46 @@ def test_directive_edit_replaces_mechanical_payload_before_submission(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
     )
     assert state.metrics["国库"] == before - 100
+
+
+def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "发太仓银十两赈济", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "relief",
+            "account": "太仓", "amount": 10, "execution_surface": "immediate",
+        },
+    )
+
+    with pytest.raises(ValueError, match="account"):
+        db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
+
+
+def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
+    db, state, _content = game
+    state.metrics["国库"] = 5
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银十两赈济",
+        target_kind="issue",
+        target_id="relief",
+        payload={
+            "account": "国库", "amount": 10,
+            "execution_surface": "immediate",
+        },
+    )
+
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert state.metrics["国库"] == 0
+    assert dossier["status"] == "closed"
+    assert dossier["execution_outcome"] == "failed"
+    assert "不足额" in dossier["execution_note"]
 
 
 @pytest.mark.parametrize(

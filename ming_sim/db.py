@@ -9618,6 +9618,8 @@ class GameDB:
             account = str(normalized.get("account") or "").strip()
             if amount <= 0 or not account:
                 raise ValueError("拨帑旨意缺少正数 amount 或 account")
+            if account not in {"国库", "内库"}:
+                raise ValueError("拨帑旨意 account 仅可为国库或内库")
             else:
                 normalized["amount"] = amount
                 normalized["account"] = account
@@ -10155,7 +10157,7 @@ class GameDB:
                 amount = int(payload.get("amount") or 0)
                 if amount <= 0:
                     raise ValueError("拨帑案卷 amount 必须为正数")
-                self.record_issue_economy_move(
+                actual = self.record_issue_economy_move(
                     state,
                     str(payload.get("account") or payload.get("target_account") or ""),
                     -amount,
@@ -10167,6 +10169,13 @@ class GameDB:
                     dossier_id=int(dossier_id),
                     commit=False,
                 )
+                if actual != -amount:
+                    self.record_dossier_execution(
+                        dossier_id, "failed",
+                        f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                        state.turn, close=True, commit=False,
+                    )
+                    return
             elif row["action_type"] == "authorization":
                 if not self.grant_skill(
                     state,
@@ -10421,8 +10430,22 @@ class GameDB:
             if p["kind"] == "directive"
         ]
         if existing:
-            return self.stage_directive_candidate(int(turn), minister_name, payload)
-        return self.upsert_pending_directive(int(turn), minister_name, payload)
+            candidate_id = self.stage_directive_candidate(
+                int(turn), minister_name, payload,
+            )
+        else:
+            candidate_id = self.upsert_pending_directive(
+                int(turn), minister_name, payload,
+            )
+        # 显式 tool/前缀入口没有另跑语义抽取；以该候选自身作为叙事案卷的
+        # canonical target，避免旧载荷在成案规范化时被拒绝。
+        self.update_directive_candidate(candidate_id, {
+            **payload,
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
+            "target_id": f"pending-directive:{candidate_id}",
+        })
+        return candidate_id
 
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
