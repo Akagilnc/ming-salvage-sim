@@ -413,6 +413,12 @@ def resolve_directives(
         generated = parsed.get("verdicts")
         if not isinstance(generated, list):
             raise LLMContractError("颁布判官 verdicts 必须为列表")
+        if any(
+            not isinstance(row, dict)
+            or str(row.get("decision") or "") not in {"promulgated", "rejected"}
+            for row in generated
+        ):
+            raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
         verdict_rows = generated
         verdict_ids = {
             int(row.get("dossier_id") or 0)

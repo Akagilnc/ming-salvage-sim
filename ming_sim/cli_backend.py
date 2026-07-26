@@ -1016,7 +1016,10 @@ def extract_draft_intent(
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-            f'{{\"成品旨稿\": [\"第一道完整旨稿\", \"……共 {draft_count} 道\"]}}\n'
+            '{"成品旨稿": ['
+            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"..."},'
+            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
+            '"目标ID":"...","承办人":"...","期限月数":3}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             "【皇帝】" + (player_message or "（无）") + "\n"
             "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
@@ -1028,17 +1031,38 @@ def extract_draft_intent(
             _log(f"多旨稿抽取失败：{exc}")
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
-        draft_texts = [
-            str(value).strip()
-            for value in (values if isinstance(values, list) else [])
-            if str(value).strip()
-        ]
-        if len(draft_texts) != draft_count or len(set(draft_texts)) != draft_count:
-            draft_texts = []
+        drafts = []
+        for value in values if isinstance(values, list) else []:
+            if not isinstance(value, dict):
+                continue
+            text = str(value.get("正文") or "").strip()
+            action = str(value.get("动作类型") or "").strip()
+            target_kind = str(value.get("目标类型") or "").strip()
+            target_id = str(value.get("目标ID") or "").strip()
+            if not text or action not in DIRECTIVE_ACTION_TYPES or not target_kind or not target_id:
+                continue
+            item = {
+                "draft_action": "拟旨",
+                "draft_text": text,
+                "dossier_action_type": action,
+                "target_kind": target_kind,
+                "target_id": target_id,
+                "target_candidate": "",
+            }
+            for source, target in (
+                ("金额", "amount"), ("账户", "account"), ("执行面", "execution_surface"),
+                ("承办人", "assignee"), ("授权ID", "authorization_id"),
+                ("期限月数", "deadline_months"),
+            ):
+                if value.get(source) not in (None, ""):
+                    item[target] = value[source]
+            drafts.append(item)
+        if len(drafts) != draft_count or len({d["draft_text"] for d in drafts}) != draft_count:
+            drafts = []
         return {
-            "draft_action": "拟旨" if draft_texts else "无",
+            "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
-            "draft_texts": draft_texts,
+            "drafts": drafts,
             "target_candidate": "",
         }
 

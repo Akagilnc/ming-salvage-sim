@@ -9607,7 +9607,7 @@ class GameDB:
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
-        """机械旨意的唯一结构边界；无法寻址的叙事旨退回稳定案卷目标。"""
+        """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
         normalized = dict(payload)
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
@@ -9674,16 +9674,8 @@ class GameDB:
         if target_id:
             normalized["target_id"] = target_id
         else:
-            normalized["dossier_action_type"] = "special_decree"
-            normalized["target_kind"] = "policy"
-            normalized["target_id"] = str(
-                normalized.get("_narrative_target_id") or "manual-directive"
-            )
-            for field in (
-                "amount", "account", "execution_surface", "assignee_id",
-                "authorization_id", "due_turn",
-            ):
-                normalized.pop(field, None)
+            normalized.pop("target_id", None)
+            raise ValueError("旨意缺少 canonical target")
         return normalized
 
     def _commit_dossier_write(self, commit: bool) -> None:
@@ -9838,6 +9830,15 @@ class GameDB:
             if self.get_decree_dossier(dossier_id) is None:
                 raise ValueError("commitment origin_ref 指向不存在案卷")
             return supplied
+        if supplied.startswith("secret_order:"):
+            try:
+                secret_order_id = int(supplied.split(":", 1)[1])
+            except (TypeError, ValueError):
+                raise ValueError("commitment origin_ref 密令 id 非法")
+            dossier = self.get_dossier_for_secret_order(secret_order_id)
+            if dossier is None:
+                raise ValueError("commitment origin_ref 指向无案卷密令")
+            return f"dossier:{int(dossier['id'])}"
         if str(origin_kind or "") == "decree":
             row = self.conn.execute(
                 "SELECT COUNT(*) AS n FROM decree_dossiers WHERE created_turn=?",
@@ -9873,7 +9874,7 @@ class GameDB:
         return [self._dossier_row(row) for row in rows]
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """Only dossiers promulgated/effective this turn; never replay history."""
+        """本月新生/重判案卷及所有未结案执行中案卷。"""
         rows = self.conn.execute(
             """
             SELECT DISTINCT d.*
@@ -9891,7 +9892,9 @@ class GameDB:
                     )
                 )
             ) OR (
-                    d.status IN ('promulgated','executing')
+                    d.status='executing'
+            ) OR (
+                    d.status='promulgated'
                 AND (
                        d.created_turn=?
                     OR (h.turn=? AND h.decision='promulgated')
@@ -11533,8 +11536,12 @@ class GameDB:
     ) -> int:
         """旧式/新式旨稿共用的幂等成案口；未知语义明确落叙事旨。"""
         structured = dict(payload or {})
-        if not structured.get("target_id"):
-            structured["_narrative_target_id"] = f"legacy-directive:{directive_id}"
+        if not structured:
+            structured = {
+                "dossier_action_type": "special_decree",
+                "target_kind": "policy",
+                "target_id": f"legacy-directive:{directive_id}",
+            }
         structured = self._normalize_directive_dossier_payload(
             structured, content=self.content, current_turn=int(state.turn),
         )
