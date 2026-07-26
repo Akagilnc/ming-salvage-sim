@@ -426,7 +426,7 @@ def resolve_directives(
         int(row["dossier_id"]): str(row.get("decision") or "")
         for row in verdict_rows
     }
-    dossier_payload = [
+    simulation_visible_dossiers = [
         {
             **row,
             **(
@@ -436,6 +436,18 @@ def resolve_directives(
         }
         for row in db.list_decree_dossiers_for_simulation(state.turn)
     ]
+    dossier_payload = [
+        row for row in simulation_visible_dossiers
+        if (
+            str(row.get("status") or "") != "proposed"
+            or str(row.get("settlement_verdict") or "") == "promulgated"
+        )
+    ]
+    executable_decree_text = "\n".join(
+        str(row.get("decree_text") or "").strip()
+        for row in dossier_payload
+        if str(row.get("decree_text") or "").strip()
+    )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
@@ -469,7 +481,7 @@ def resolve_directives(
     _emit("stage", "推演月末邸报")
     previous_narrative = db.previous_turn_summary(state) or ""
     simulator_payload = build_simulator_payload(
-        state, db, decree_text, previous_narrative,
+        state, db, executable_decree_text, previous_narrative,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
@@ -482,7 +494,7 @@ def resolve_directives(
     )
     try:
         narrative, simulator_payload = simulate_season_with_payload(
-            simulator, state, db, decree_text, previous_narrative,
+            simulator, state, db, executable_decree_text, previous_narrative,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
             relevant_memories=relevant_memories,
@@ -495,7 +507,7 @@ def resolve_directives(
         print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，跳过 LLM 结算。")
         narrative = (
             f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
-            f"已颁诏书：\n{decree_text}\n"
+            f"已颁诏书：\n{executable_decree_text}\n"
             f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
         )
         rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
@@ -868,6 +880,11 @@ def _settle_after_narrative(
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             module=module,
+            decree_dossiers=(
+                simulator_payload.get("decree_dossiers")
+                if isinstance(simulator_payload.get("decree_dossiers"), list)
+                else []
+            ),
         )
         for module in EXTRACTION_MODULES
     }

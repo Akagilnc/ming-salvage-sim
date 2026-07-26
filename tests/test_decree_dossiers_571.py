@@ -452,17 +452,18 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         if row["pending_action_id"] > 0
     ]
     assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
-        published_id, staged["id"], rejected["id"],
+        published_id, staged["id"],
     ]
     db.update_secret_order_progress(
         secret_order_id, "密查仍在推进", state.year, state.period,
     )
     assert db.get_decree_dossier(secret_dossier_id)["status"] == "executing"
-    assert seen["payload"]["decree_text"] == "不应作为真源"
+    assert seen["payload"]["decree_text"] == "本月已颁之旨\n拨国库十两赈济"
     assert [
         row["settlement_verdict"]
-        for row in seen["payload"]["decree_dossiers"][-2:]
-    ] == ["promulgated", "rejected"]
+        for row in seen["payload"]["decree_dossiers"]
+        if "settlement_verdict" in row
+    ] == ["promulgated"]
     assert db.get_decree_dossier(staged["id"])["status"] == "executing"
     assert db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE dossier_id=?",
@@ -673,6 +674,120 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     assert resolved["status"] == "closed"
     assert resolved["promulgation_decision"] == "rejected"
     assert db.list_economy_moves_for_dossier(dossier["id"]) == []
+
+
+def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    actor = _active_minister(db)
+    ids = [
+        db.stage_directive_candidate(
+            state.turn, actor, {
+                "text": text,
+                "actor": actor,
+                "dossier_action_type": "policy",
+                "target_kind": "issue",
+                "target_id": target,
+            },
+        )
+        for text, target in (
+            ("此道改革已被打回", "rejected-reform"),
+            ("此道新政准予施行", "promulgated-policy"),
+        )
+    ]
+    db.commit_pending_actions(state, content=content, action_ids=ids)
+    rejected, promulgated = [
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] in ids
+    ]
+    raw_decree = "此道改革已被打回\n此道新政准予施行"
+    seen = {}
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod,
+        "run_agent_text",
+        lambda *a, **k: json.dumps({
+            "verdicts": [
+                {"dossier_id": rejected["id"], "decision": "rejected"},
+                {"dossier_id": promulgated["id"], "decision": "promulgated"},
+            ],
+        }),
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "simulate_season_with_payload",
+        lambda *a, **k: (
+            seen.setdefault("payload", k["simulator_payload"]) and "本月邸报。",
+            k["simulator_payload"],
+        ),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({
+            "economy_moves": [
+                {
+                    "account": "国库", "delta": -13,
+                    "category": "被打回改革不得生效",
+                    "origin_ref": f"dossier:{rejected['id']}",
+                },
+                {
+                    "account": "国库", "delta": -7,
+                    "category": "已颁新政合法生效",
+                    "origin_ref": f"dossier:{promulgated['id']}",
+                },
+            ],
+        }, "", ""),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], raw_decree, content=content,
+    )
+
+    assert result.awaiting is True
+    assert seen["payload"]["decree_text"] == "此道新政准予施行"
+    assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
+        promulgated["id"],
+    ]
+    assert db.get_resolve_context(state.turn)["decree_text"] == raw_decree
+    withdraw = next(
+        option for option in result.decisions[0]["options"]
+        if option["label"] == "收回"
+    )
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?,status='decided' "
+        "WHERE turn=? AND idx=?",
+        (
+            json.dumps(withdraw, ensure_ascii=False),
+            state.turn,
+            result.decisions[0]["idx"],
+        ),
+    )
+    db.conn.commit()
+
+    decree_mod.resolve_decisions_phase2(
+        state, db, None, None, content=content,
+    )
+
+    applied = {
+        str(row["category"]): int(row["delta"])
+        for row in db.conn.execute(
+            "SELECT category,delta FROM economy_ledger WHERE category IN (?,?)",
+            ("被打回改革不得生效", "已颁新政合法生效"),
+        ).fetchall()
+    }
+    assert applied == {"已颁新政合法生效": -7}
 
 
 def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(game):
