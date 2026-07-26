@@ -4,6 +4,11 @@
 
 ## [未发布]
 
+## [0.43.2.1] - 2026-07-26
+
+### Fixed
+- **#1141 coder-fix cargo ABI**：恢复 `coder_fix.md` 的 fixer 席运行时输入与 hand-in 契约（`fixPacketBody` / `escalationAnswer` / relay baton、`committed`+`commitsAdded` 按本 worker run 如实上报，以及 completed/refused/escalate 三例），避免修完却报 no-op。
+
 ## [0.43.2.0] - 2026-07-25
 
 ### Fixed
