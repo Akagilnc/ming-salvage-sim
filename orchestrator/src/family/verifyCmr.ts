@@ -3184,7 +3184,6 @@ async function runIntegratedCmrPass(input: {
           ? { sessionId: openedJudgeSessionId }
           : {}),
         judgeStatus: "escalate",
-        freshPanelReviewRequired: true,
         ...(judgeDispositionsForLedger !== undefined
           ? { findingDispositions: judgeDispositionsForLedger }
           : {}),
