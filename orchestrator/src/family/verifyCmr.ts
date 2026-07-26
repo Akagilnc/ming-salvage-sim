@@ -2572,6 +2572,8 @@ async function runIntegratedCmrPass(input: {
   readonly receiveBuilderBeat?: boolean;
   /** This open only delivers a human decision answer to the resident judge. */
   readonly receiveDecisionAnswer?: boolean;
+  /** The decision answer belongs to a parked builder-receipt beat. */
+  readonly receiveBuilderDecisionAnswer?: boolean;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -2597,6 +2599,7 @@ async function runIntegratedCmrPass(input: {
     requireFreshPanelEvidence = false,
     receiveBuilderBeat = false,
     receiveDecisionAnswer = false,
+    receiveBuilderDecisionAnswer = false,
   } = input;
   const ledgerPhase = cmrBarrierPhaseOf(ledgerPhaseInput);
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -2699,7 +2702,8 @@ async function runIntegratedCmrPass(input: {
       : undefined;
   // #1143 / ADR 0147: round identity is explicit typed cargo. Panel emptiness
   // (including a generation tombstone) must never masquerade as that identity.
-  const courtLanding: WorkerLandingPayload | undefined = receiveBuilderBeat
+  const courtLanding: WorkerLandingPayload | undefined =
+    receiveBuilderBeat || receiveBuilderDecisionAnswer
     ? {
         ...(refuseReopenLanding ?? {}),
         builderBeat: "construct",
@@ -3092,8 +3096,18 @@ async function runIntegratedCmrPass(input: {
         ...(openedJudgeSessionId !== undefined
           ? { judgeSessionId: openedJudgeSessionId }
           : {}),
-        ...(expectedCourtGeneration !== undefined
-          ? { expectedCourtGeneration }
+        ...(expectedCourtGeneration !== undefined || receiveDecisionAnswer
+          ? {
+              expectedCourtGeneration:
+                expectedCourtGeneration ?? courtGeneration + 1,
+            }
+          : {}),
+        ...(refusedFindingIdentityKeys !== undefined &&
+        refusedFindingIdentityKeys.length > 0
+          ? { refusedFindingIdentityKeys }
+          : {}),
+        ...(refuseRecords !== undefined && refuseRecords.length > 0
+          ? { refuseRecords }
           : {}),
       });
       return {
@@ -3161,6 +3175,16 @@ async function runIntegratedCmrPass(input: {
           ? { sessionId: openedJudgeSessionId }
           : {}),
         judgeStatus: "escalate",
+        ...(receiveBuilderBeat || receiveBuilderDecisionAnswer
+          ? { builderBeat: "construct" as const }
+          : {}),
+        ...(refusedFindingIdentityKeys !== undefined &&
+        refusedFindingIdentityKeys.length > 0
+          ? { refusedFindingIdentityKeys }
+          : {}),
+        ...(refuseRecords !== undefined && refuseRecords.length > 0
+          ? { refuseRecords }
+          : {}),
         ...(judgeDispositionsForLedger !== undefined
           ? { findingDispositions: judgeDispositionsForLedger }
           : {}),
@@ -3467,6 +3491,7 @@ type PendingBuilderReceiveHydration = {
   readonly pendingReview: boolean;
   readonly pendingBuilderBeat: boolean;
   readonly pendingDecisionAnswer: boolean;
+  readonly pendingBuilderDecisionAnswer: boolean;
   readonly expectedCourtGeneration?: number;
   readonly requireFreshPanelEvidence: boolean;
   readonly familyHeadAfter?: string;
@@ -3492,6 +3517,8 @@ async function hydratePendingBuilderReceive(input: {
       pending.pendingPanelReturn !== true &&
       pending.freshPanelReviewRequired !== true,
     pendingDecisionAnswer: pending.pendingDecisionAnswer === true,
+    pendingBuilderDecisionAnswer:
+      pending.pendingBuilderDecisionAnswer === true,
     ...(pending.expectedCourtGeneration !== undefined
       ? { expectedCourtGeneration: pending.expectedCourtGeneration }
       : {}),
@@ -3589,6 +3616,7 @@ type CourtOpenDirective = {
   readonly requireFreshEvidence: boolean;
   readonly receiveBuilderBeat: boolean;
   readonly receiveDecisionAnswer: boolean;
+  readonly receiveBuilderDecisionAnswer?: boolean;
 };
 
 function courtOpenDirective(input: {
@@ -3609,6 +3637,9 @@ function courtOpenDirective(input: {
       !input.restartTriggerPending,
     receiveDecisionAnswer:
       input.pending.pendingDecisionAnswer && !input.restartTriggerPending,
+    receiveBuilderDecisionAnswer:
+      input.pending.pendingBuilderDecisionAnswer &&
+      !input.restartTriggerPending,
   };
 }
 
@@ -3768,6 +3799,8 @@ async function runCmrCourtLoop(input: {
       requireFreshPanelEvidence: openDirective.requireFreshEvidence,
       receiveBuilderBeat: openDirective.receiveBuilderBeat,
       receiveDecisionAnswer: openDirective.receiveDecisionAnswer,
+      receiveBuilderDecisionAnswer:
+        openDirective.receiveBuilderDecisionAnswer,
       ...scopedPoolFields,
       ...(refusalStateByPass[pass]?.keys !== undefined
         ? {
@@ -3784,6 +3817,7 @@ async function runCmrCourtLoop(input: {
       requireFreshEvidence: false,
       receiveBuilderBeat: false,
       receiveDecisionAnswer: false,
+      receiveBuilderDecisionAnswer: false,
     };
     if (!court.result.ok) {
       return {
