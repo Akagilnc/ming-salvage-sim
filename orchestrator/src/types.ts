@@ -915,15 +915,20 @@ export type OnlineReviewBotLegLanding =
   | { readonly state: "dropped"; readonly reason: string };
 
 export interface OnlineReviewLandingSnapshot {
+  /** Envelope keys required by collector evidence transport (#1145). */
   readonly prUrl: string;
   readonly headOid: string;
-  readonly totalFindingCount: number;
-  readonly quiescent: boolean;
+  /**
+   * Business fields are Collector LLM cargo — schema only pins the envelope.
+   * Absent fields must not be invented by Runner defaults.
+   */
+  readonly totalFindingCount?: number;
+  readonly quiescent?: boolean;
   /** Per-bot terminal/pending legs — dropped bots are not clean-silence evidence (#600). */
-  readonly bots: Readonly<Record<string, OnlineReviewBotLegLanding>>;
+  readonly bots?: Readonly<Record<string, OnlineReviewBotLegLanding>>;
   /** Convenience list of bot ids dropped after the overdue window. */
-  readonly droppedBots: ReadonlyArray<string>;
-  readonly threads: ReadonlyArray<{
+  readonly droppedBots?: ReadonlyArray<string>;
+  readonly threads?: ReadonlyArray<{
     /** Top-level review-comment databaseId — REST reply parent. */
     readonly id: string;
     /** GraphQL reviewThread node id — resolution target. */
@@ -937,7 +942,7 @@ export interface OnlineReviewLandingSnapshot {
     readonly authorLogin?: string;
   }>;
   /** Head-correlated CI check-runs for verify default-deny (#600 / ADR 0061). */
-  readonly checkRuns: ReadonlyArray<{
+  readonly checkRuns?: ReadonlyArray<{
     readonly id: number;
     readonly name: string;
     readonly headSha: string;
@@ -1341,8 +1346,12 @@ export interface MergeWorkerResult {
  */
 export interface CollectorResult {
   readonly kind: "collector";
-  /** Opaque evidence blob; structural landing contract for the Verify seat. */
-  readonly evidence?: OnlineReviewLandingSnapshot;
+  /**
+   * Required opaque evidence for a completed Collector Action (#1145).
+   * Missing/malformed evidence fails the Action (channel ①) — Runner never
+   * synthesizes a substitute snapshot.
+   */
+  readonly evidence: OnlineReviewLandingSnapshot;
 }
 
 /**

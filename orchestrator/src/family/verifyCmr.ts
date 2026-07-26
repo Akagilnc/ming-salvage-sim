@@ -42,10 +42,8 @@ import {
   OnlineReviewLoopTerminal,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
-  offlinePrReviewSnapshot,
   onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
-  toLandingSnapshot,
   type OnlineReviewLoopStageResult,
 } from "./onlineReviewLoop.js";
 import {
@@ -2025,40 +2023,28 @@ export async function runFamilyOnlineReviewLoop(input: {
         collectorMonitorHandle,
         result.sessionId,
       );
-      // Offline/test hatch: skeleton or sparse cargo may omit evidence — fill
-      // synthetic quiescent snapshot only when offline poll is admissible.
-      let evidence =
-        result.output.kind === "collector"
-          ? result.output.evidence
-          : undefined;
-      if (evidence === undefined) {
-        try {
-          evidence = toLandingSnapshot(
-            offlinePrReviewSnapshot({
-              repo,
-              prUrl,
-              headOid:
-                familyLastFixCommitSha ??
-                input.ship.prHead ??
-                "offline-review-head",
-              pollCount: round,
-            }),
-          );
-        } catch {
-          throw new OnlineReviewLoopTerminal({
-            ok: false,
-            terminalState: "decision_gate_raised",
-            round,
-            stopSummary: stageFailureStopSummary({
-              status: "online_review_failed",
-              summary:
-                "family collector worker returned no evidence and offline synthetic poll is not admissible",
-              repairHint:
-                "collector must hand opaque evidence to Verify; repair the collector seat or offline hatch",
-            }),
-          });
-        }
+      // #1145: evidence is required typed cargo on a completed Collector Action.
+      // Runner transports only — never synthesizes offline/default evidence.
+      if (
+        result.output.kind !== "collector" ||
+        result.output.evidence === undefined
+      ) {
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
+            summary:
+              result.output.kind !== "collector"
+                ? `family collector worker returned unexpected output kind ${result.output.kind}`
+                : "family collector worker completed without required evidence cargo",
+            repairHint:
+              "collector must hand opaque evidence to Verify; repair the collector seat",
+          }),
+        });
       }
+      const evidence = result.output.evidence;
       // Dumb ledger transport fact for resume anchors — not bot-state judgment.
       if (round > 1 || familyLastFixCommitSha !== undefined) {
         await recordOnlineReviewRoundRetrigger(input.familyBackend, {

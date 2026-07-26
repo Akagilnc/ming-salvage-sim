@@ -274,6 +274,7 @@ describe("correctness N3 — merger agy mount + fail-closed", () => {
             merger: "agy",
             cmrCompleteness: "gpt-5.6-sol",
             cmrCorrectness: "gpt-5.6-sol",
+            collector: "grok-4.5",
             verify: "gpt-5.6-sol",
             fixer: "sonnet",
             cleanup: "sonnet",

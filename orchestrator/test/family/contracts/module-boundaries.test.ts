@@ -174,6 +174,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
           "merger=sonnet",
           "cmrCompleteness=gpt-5.6-sol",
           "cmrCorrectness=gpt-5.6-sol",
+          "collector=grok-4.5",
           "verify=gpt-5.6-sol",
           "fixer=sonnet",
           "cleanup=sonnet",

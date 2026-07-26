@@ -11,37 +11,31 @@ If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before collecting.
 
-## Ownership (Collector only — #1145)
-
-You own **GitHub query, necessary wait, post-fix retrigger, and evidence
-assembly**. You do **not** judge findings and you do **not** emit judge enum
-(`converged` / fix dispositions). Verify is a separate seat.
-
-1. Read landing ship metadata (PR URL, round, fix-marked keys when recheck).
-2. When round ≥ 2 or a fresh fix head is present, post the bot re-trigger
-   comment yourself if one is not already admissible for this head.
-3. Query PR comments / reviews / reactions / check-runs / threads via single
-   `gh` / `gh api` fetches. Between fetches you may sleep once; **you** decide
-   when to fetch again and when this round's evidence is complete. Do not rely
-   on a host loop to judge pending / valid / unavailable / missing / terminal.
-4. When evidence is complete, write opaque evidence cargo and exit cleanly.
-5. If you cannot continue (auth, rate limit, missing PR), escalate via the
-   typed `<onlineReview>` envelope — never invent a green judgment.
-
-Shared GitHub retry helpers (if present in the image) are single-call transport
-only. Completeness is your call.
-
 ## Required output
 
-Emit **one** typed `<onlineReview>` station-receipt envelope
-(`station:"onlineReview"`, `status:"completed"|"escalate"`) — same T2 contract
-as other online-review seats. Role cargo is opaque evidence only:
+Emit **one** typed `<onlineReview>` station-receipt envelope. Sandcastle
+validates via `Output.object` against
+`collectorOnlineReviewStationReceiptSchema` in
+`orchestrator/src/stationReceiptContracts.ts` (tag `onlineReview` /
+`ONLINE_REVIEW_RECEIPT_TAG`). **JSON only** inside the tag — never YAML or prose.
 
-Write collector cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set, and/or emit
-opaque `<collector>` cargo JSON:
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"onlineReview"` |
+| `status` | `"completed"` \| `"escalate"` |
+| `evidence` | **required** on `completed` — transport envelope below |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+Completed evidence envelope (schema pins only `prUrl` + `headOid`; other
+business fields are your judgment and must not be invented by the host):
 
 ```json
 {
+  "station": "onlineReview",
+  "status": "completed",
   "evidence": {
     "prUrl": "…",
     "headOid": "…",
@@ -56,6 +50,15 @@ opaque `<collector>` cargo JSON:
 }
 ```
 
+You may also write the same evidence body to `$ORCHESTRATOR_OUTCOME_PATH` when
+set, and/or emit opaque `<collector>` cargo JSON with an `evidence` object.
+
+Escalate:
+
+```text
+<onlineReview>{"station":"onlineReview","status":"escalate","reason":"<short>","diagnosis":"<what blocks collection>"}</onlineReview>
+```
+
 Rules:
 
 - Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
@@ -63,4 +66,4 @@ Rules:
   judgment is Verify's job.
 - Do not set `converged`, `findingDispositions`, or fixer plan fields.
 - This seat is single-iteration. Completion is clean exit + legal typed
-  envelope / sidecar — no STEP_COMPLETE password.
+  envelope with evidence — no STEP_COMPLETE password.

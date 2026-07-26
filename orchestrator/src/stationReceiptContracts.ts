@@ -1115,6 +1115,60 @@ export function onlineReviewStationReceiptSchema(): z.ZodType {
   return z.union([completed, escalate]);
 }
 
+/**
+ * #1145 Collector evidence envelope — structural shape only.
+ * Business fields (bots/threads/checkRuns/counts) stay opaque LLM cargo;
+ * schema requires the transport envelope keys so Sandcastle can recover
+ * missing/malformed evidence inside the worker before Action completion.
+ */
+export const collectorEvidenceEnvelopeSchema = z
+  .object({
+    prUrl: nonEmptyString,
+    headOid: nonEmptyString,
+  })
+  .passthrough();
+
+export type CollectorEvidenceEnvelope = z.infer<
+  typeof collectorEvidenceEnvelopeSchema
+>;
+
+/** Decode collector evidence envelope. Never throws on bad shape. */
+export function decodeCollectorEvidence(
+  raw: unknown,
+): ContractResult<CollectorEvidenceEnvelope> {
+  const parsed = collectorEvidenceEnvelopeSchema.safeParse(raw);
+  if (!parsed.success) {
+    return zodFail("collector evidence envelope", parsed.error);
+  }
+  return ok(parsed.data);
+}
+
+/**
+ * #1145 Collector seat SO: thin onlineReview fate + required evidence envelope
+ * on completed. Missing/malformed evidence fails native SO validation so the
+ * worker recovers in-process; exhaust → Action non-zero (channel ①).
+ */
+export function collectorOnlineReviewStationReceiptSchema(): z.ZodType {
+  const completed = z
+    .object({
+      station: z.literal("onlineReview"),
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+      evidence: collectorEvidenceEnvelopeSchema,
+    })
+    .passthrough();
+  const escalate = z
+    .object({
+      station: z.literal("onlineReview"),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  return z.union([completed, escalate]);
+}
+
 /** Encode a validated merger envelope into its canonical JSON shape. */
 export function encodeMergerEnvelope(
   envelope: MergerStationEnvelope,

@@ -519,7 +519,7 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       },
       1,
     );
-    expect(landing.onlineReviewSnapshot?.threads[0]).toEqual(
+    expect(landing.onlineReviewSnapshot?.threads?.[0]).toEqual(
       expect.objectContaining({
         id: "4242",
         threadNodeId: "PRRT_kwDOExampleThread",

@@ -84,6 +84,8 @@ import {
   ONLINE_REVIEW_RECEIPT_TAG,
   SHIP_RECEIPT_TAG,
   coderStationReceiptSchema,
+  collectorOnlineReviewStationReceiptSchema,
+  decodeCollectorEvidence,
   decodeJudgeVerdict,
   decodeMergerEnvelope,
   decodeOnlineReviewEnvelope,
@@ -2605,8 +2607,8 @@ export class RealFamilyBackend implements FamilyBackend {
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
-        // (completed|escalate). Role cargo (verify/fixer/cleanup/landing)
-        // rides opaque sidecar only — never dual decision-gate tag.
+        // (completed|escalate). Collector completed requires evidence envelope
+        // in SO (#1145); other seats keep role cargo on opaque sidecar only.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2623,7 +2625,9 @@ export class RealFamilyBackend implements FamilyBackend {
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
           output: onlineReviewReceiptOutput(
-            onlineReviewStationReceiptSchema(),
+            spec.kind === "collector"
+              ? collectorOnlineReviewStationReceiptSchema()
+              : onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
             this.resumeCapableForSpec(spec, ctx),
           ),
@@ -2792,8 +2796,13 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // completed: sidecar/stdout enrich role cargo only — never escalate.
-    // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
-    // cargo shape is never a #598 process failure (#899 / ADR 0131).
+    // #1145: Collector evidence is required typed cargo for Action completion.
+    // Missing/malformed fails the Action (channel ①); Runner never synthesizes.
+    if (spec.kind === "collector") {
+      return collectorCompletedResult(typed, result.stdout, sessionId, outcomePath);
+    }
+    // Other seats: sparse / unusable cargo completes as role-native opaque miss
+    // (ship-aligned); cargo shape is never a #598 process failure (#899 / ADR 0131).
     return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
   }
 
@@ -4553,32 +4562,120 @@ const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
  * Role-native opaque-miss cargo after a clean process + typed no-gate decision
  * (ship-aligned; #899 / ADR 0131). Cargo shape never fails the Action for #598
  * and never mints a fake `kind:"coder"` seat report.
+ *
+ * Collector is excluded: evidence is required typed cargo (#1145).
  */
 function sparseReviewLoopCompleted(
   kind: string,
   sessionId: string | undefined,
 ): WorkerResult {
   const output: WorkerOutput =
-    kind === "collector"
-      ? // Evidence miss → production dispatchCollector offline hatch or gate.
-        { kind: "collector" }
-      : kind === "verify"
-        ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
-          { kind: "verify", converged: false }
-        : kind === "fixer"
-          ? { kind: "fixer", committed: false }
-          : kind === "cleanup"
-            ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
-              { kind: "cleanup", terminal: true, ok: true }
-            : // Empty-run success is legal for 文档发布 (process success, cargo miss).
-              { kind: "landing", released: true };
+    kind === "verify"
+      ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
+        { kind: "verify", converged: false }
+      : kind === "fixer"
+        ? { kind: "fixer", committed: false }
+        : kind === "cleanup"
+          ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
+            { kind: "cleanup", terminal: true, ok: true }
+          : // Empty-run success is legal for 文档发布 (process success, cargo miss).
+            { kind: "landing", released: true };
   return { kind: "completed", output, sessionId };
+}
+
+/**
+ * #1145: completed Collector must carry a legal evidence envelope.
+ * Prefer SO `evidence` (native schema-validated); sidecar/tag may transport the
+ * same envelope. Missing/malformed throws so the Action fails channel ① —
+ * Runner never fills defaults or synthesizes offline snapshots.
+ */
+function collectorCompletedResult(
+  typed: unknown,
+  stdout: string,
+  sessionId: string | undefined,
+  outcomePath?: string,
+): WorkerResult {
+  const fromTyped =
+    isJsonRecord(typed) && typed.evidence !== undefined
+      ? decodeCollectorEvidence(typed.evidence)
+      : undefined;
+  if (fromTyped?.ok) {
+    return {
+      kind: "completed",
+      output: {
+        kind: "collector",
+        evidence: collectorEvidenceToLanding(fromTyped.value),
+      },
+      sessionId,
+    };
+  }
+  const parsed = parseCollectorOutcome(stdout, outcomePath);
+  if (parsed.kind === "collector") {
+    return { kind: "completed", output: parsed, sessionId };
+  }
+  const detail =
+    fromTyped && !fromTyped.ok
+      ? fromTyped.reason
+      : "completed onlineReview receipt missing collector evidence envelope";
+  throw new Error(`family-collector: ${detail}`);
+}
+
+/** Map envelope (+ optional opaque business fields) without inventing empties. */
+function collectorEvidenceToLanding(
+  envelope: {
+    readonly prUrl: string;
+    readonly headOid: string;
+    readonly [key: string]: unknown;
+  },
+): OnlineReviewLandingSnapshot {
+  const extra = envelope as Record<string, unknown>;
+  return {
+    prUrl: envelope.prUrl,
+    headOid: envelope.headOid,
+    ...(typeof extra.totalFindingCount === "number"
+      ? { totalFindingCount: extra.totalFindingCount }
+      : {}),
+    ...(typeof extra.quiescent === "boolean"
+      ? { quiescent: extra.quiescent }
+      : {}),
+    ...(extra.bots !== null &&
+    typeof extra.bots === "object" &&
+    !Array.isArray(extra.bots)
+      ? { bots: extra.bots as NonNullable<OnlineReviewLandingSnapshot["bots"]> }
+      : {}),
+    ...(Array.isArray(extra.droppedBots)
+      ? {
+          droppedBots: extra.droppedBots.filter(
+            (x): x is string => typeof x === "string",
+          ),
+        }
+      : {}),
+    ...(Array.isArray(extra.threads)
+      ? {
+          threads:
+            extra.threads as NonNullable<OnlineReviewLandingSnapshot["threads"]>,
+        }
+      : {}),
+    ...(Array.isArray(extra.checkRuns)
+      ? {
+          checkRuns:
+            extra.checkRuns as NonNullable<
+              OnlineReviewLandingSnapshot["checkRuns"]
+            >,
+        }
+      : {}),
+    ...(extra.checkRunsEmptyMeans === "converged" ||
+    extra.checkRunsEmptyMeans === "pending"
+      ? { checkRunsEmptyMeans: extra.checkRunsEmptyMeans }
+      : {}),
+  };
 }
 
 /**
  * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
  * — those transports enrich delivery cargo only (#899). Fate comes solely from
  * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
+ * Collector is handled by {@link collectorCompletedResult} (required evidence).
  */
 function reviewLoopCargoResult(
   stdout: string,
@@ -4587,7 +4684,6 @@ function reviewLoopCargoResult(
   outcomePath?: string,
 ): WorkerResult {
   const tag =
-    kind === "collector" ||
     kind === "verify" ||
     kind === "fixer" ||
     kind === "cleanup" ||
@@ -4605,15 +4701,13 @@ function reviewLoopCargoResult(
   delete cargo.escalate;
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
   const parsed =
-    kind === "collector"
-      ? parseCollectorOutcome(cargoStdout)
-      : kind === "verify"
-        ? parseVerifyOutcome(cargoStdout)
-        : kind === "fixer"
-          ? parseFixerOutcome(cargoStdout)
-          : kind === "cleanup"
-            ? parseCleanupOutcome(cargoStdout)
-            : parseLandingOutcome(cargoStdout);
+    kind === "verify"
+      ? parseVerifyOutcome(cargoStdout)
+      : kind === "fixer"
+        ? parseFixerOutcome(cargoStdout)
+        : kind === "cleanup"
+          ? parseCleanupOutcome(cargoStdout)
+          : parseLandingOutcome(cargoStdout);
   if (parsed.kind === "cargo") {
     // Off-shape paper is opaque miss cargo — complete the Action; do not
     // re-open cargo shape as a #598 channel.
@@ -4623,7 +4717,8 @@ function reviewLoopCargoResult(
 }
 
 /**
- * #1145: Collector cargo decode — structural evidence transport only.
+ * #1145: Collector cargo decode — structural evidence envelope only.
+ * Does not invent default 0/[]/{} for missing business fields.
  * Runner does not interpret bot/CI/finding semantics from this blob.
  */
 export function parseCollectorOutcome(
@@ -4638,46 +4733,12 @@ export function parseCollectorOutcome(
     : isJsonRecord(parsed.onlineReviewSnapshot)
       ? parsed.onlineReviewSnapshot
       : parsed;
-  if (!isJsonRecord(evidenceRaw)) return RECEIPT_CARGO;
-  if (
-    typeof evidenceRaw.prUrl !== "string" ||
-    typeof evidenceRaw.headOid !== "string"
-  ) {
-    // Sparse collector cargo (no evidence fields) — completed miss.
-    if (parsed.kind === "collector" || parsed.evidence === undefined) {
-      return { kind: "collector" };
-    }
-    return RECEIPT_CARGO;
-  }
-  const evidence: OnlineReviewLandingSnapshot = {
-    prUrl: evidenceRaw.prUrl,
-    headOid: evidenceRaw.headOid,
-    totalFindingCount:
-      typeof evidenceRaw.totalFindingCount === "number"
-        ? evidenceRaw.totalFindingCount
-        : 0,
-    quiescent: evidenceRaw.quiescent === true,
-    bots:
-      evidenceRaw.bots !== null &&
-      typeof evidenceRaw.bots === "object" &&
-      !Array.isArray(evidenceRaw.bots)
-        ? (evidenceRaw.bots as OnlineReviewLandingSnapshot["bots"])
-        : {},
-    droppedBots: Array.isArray(evidenceRaw.droppedBots)
-      ? evidenceRaw.droppedBots.filter((x): x is string => typeof x === "string")
-      : [],
-    threads: Array.isArray(evidenceRaw.threads)
-      ? (evidenceRaw.threads as OnlineReviewLandingSnapshot["threads"])
-      : [],
-    checkRuns: Array.isArray(evidenceRaw.checkRuns)
-      ? (evidenceRaw.checkRuns as OnlineReviewLandingSnapshot["checkRuns"])
-      : [],
-    ...(evidenceRaw.checkRunsEmptyMeans === "converged" ||
-    evidenceRaw.checkRunsEmptyMeans === "pending"
-      ? { checkRunsEmptyMeans: evidenceRaw.checkRunsEmptyMeans }
-      : {}),
+  const decoded = decodeCollectorEvidence(evidenceRaw);
+  if (!decoded.ok) return RECEIPT_CARGO;
+  return {
+    kind: "collector",
+    evidence: collectorEvidenceToLanding(decoded.value),
   };
-  return { kind: "collector", evidence };
 }
 
 /**

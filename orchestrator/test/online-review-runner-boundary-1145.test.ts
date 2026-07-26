@@ -7,18 +7,21 @@
  * 3. Verify does not start until Collector returns.
  * 4. Runner does not host-call waitForBotQuiescence / retriggerBotsAndPoll /
  *    applyVerifySideEffects, and does not directly query/interpret GitHub.
+ * 5. Collector model comes from the independent `collector` route slot.
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as botPolling from "../src/botPolling.js";
+import * as onlineReviewLoop from "../src/family/onlineReviewLoop.js";
 import * as sideEffects from "../src/onlineReviewSideEffects.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import {
   skeletonReviewLoopWorkerResult,
   stubCollectorEvidence,
 } from "../src/reviewLoopOutcome.js";
+import { resolveRouteModels } from "../src/modelRoutes.js";
+import { collectorWorkerSpec, verifyWorkerSpec } from "../src/dispatchWorker.js";
+import { familyWorkerSlotForDispatch } from "../src/family/familyWorkerSlots.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 import type {
   DispatchContext,
@@ -26,9 +29,6 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../src/types.js";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = join(HERE, "../src");
 
 const offlineShip = {
   kind: "ship" as const,
@@ -42,6 +42,7 @@ class TracerFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly landings: WorkerLandingPayload[] = [];
   readonly kinds: string[] = [];
+  readonly models: string[] = [];
   /** Timestamps: collector return before first verify start. */
   collectorReturnedAt: number | undefined;
   verifyStartedAt: number | undefined;
@@ -76,6 +77,7 @@ class TracerFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.kinds.push(spec.kind);
+    this.models.push(spec.model);
     if (landing !== undefined) this.landings.push(landing);
 
     if (spec.kind === "collector") {
@@ -121,42 +123,28 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     }
   });
 
-  it("static: production path drops host poll/retrigger/applySideEffects seams", () => {
-    const loopSrc = readFileSync(
-      join(SRC, "family/onlineReviewLoop.ts"),
-      "utf8",
+  it("collector route slot is independent of verify", () => {
+    const route = resolveRouteModels("normal", {});
+    expect(route.slots.collector).toBe("grok-4.5");
+    expect(route.slots.verify).toBe("gpt-5.6-sol");
+    expect(route.slots.collector).not.toBe(route.slots.verify);
+
+    expect(familyWorkerSlotForDispatch("collector")).toBe("collector");
+    expect(familyWorkerSlotForDispatch("verify")).toBe("verify");
+
+    expect(collectorWorkerSpec(route).model).toBe(route.slots.collector);
+    expect(verifyWorkerSpec(route).model).toBe(route.slots.verify);
+    expect(collectorWorkerSpec(route).model).not.toBe(
+      verifyWorkerSpec(route).model,
     );
-    const verifyCmrSrc = readFileSync(join(SRC, "family/verifyCmr.ts"), "utf8");
-    const runnerSrc = readFileSync(join(SRC, "family/runner.ts"), "utf8");
-
-    // Stage: independent Collector + Verify; no host retrigger seam.
-    expect(loopSrc).toMatch(/readonly dispatchCollector\s*:/);
-    expect(loopSrc).toMatch(/readonly dispatchVerify\s*:/);
-    expect(loopSrc).not.toMatch(/readonly retriggerAfterFix\s*:/);
-    expect(loopSrc).not.toMatch(/readonly poll\s*:/);
-    expect(loopSrc).not.toMatch(/readonly applySideEffects\s*:/);
-    expect(loopSrc).not.toMatch(/dispatch\.poll\b/);
-    expect(loopSrc).not.toMatch(/dispatch\.applySideEffects\b/);
-    expect(loopSrc).not.toMatch(/applyVerifySideEffects/);
-
-    // Production shared-tail: no host bot wait / retrigger / side-effect replay.
-    expect(verifyCmrSrc).not.toMatch(/waitForBotQuiescence/);
-    expect(verifyCmrSrc).not.toMatch(/retriggerBotsAndPoll/);
-    expect(verifyCmrSrc).not.toMatch(/applyVerifySideEffects/);
-    expect(verifyCmrSrc).not.toMatch(/applySideEffects\s*:/);
-    expect(verifyCmrSrc).toMatch(/collectorWorkerSpec/);
-    expect(verifyCmrSrc).toMatch(/dispatchCollector/);
-
-    // Family runner only dispatches the Action — no direct botPolling import.
-    expect(runnerSrc).not.toMatch(/from ["'].*botPolling/);
-    expect(runnerSrc).not.toMatch(/waitForBotQuiescence/);
-    expect(runnerSrc).not.toMatch(/applyVerifySideEffects/);
-    expect(runnerSrc).toMatch(/runFamilyOnlineReviewLoop/);
   });
 
-  it("tracer: collector then verify; evidence passthrough; verify after collector", async () => {
+  it("tracer: collector then verify; evidence passthrough; verify after collector; no host GH", async () => {
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const applySpy = vi.spyOn(sideEffects, "applyVerifySideEffects");
+    const waitSpy = vi.spyOn(onlineReviewLoop, "waitForBotQuiescence");
+    const pollSpy = vi.spyOn(botPolling, "pollPrReviewState");
+    const retriggerSpy = vi.spyOn(botPolling, "postBotRetriggerComment");
 
     const backend = new TracerFamilyBackend();
     const result = await runFamilyOnlineReviewLoop({
@@ -196,8 +184,37 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       backend.collectorEvidence,
     );
 
-    // Residual plan cargo must not host-execute.
+    // Residual plan cargo must not host-execute; host GH poll seams stay dark.
     expect(applySpy).not.toHaveBeenCalled();
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(pollSpy).not.toHaveBeenCalled();
+    expect(retriggerSpy).not.toHaveBeenCalled();
+  });
+
+  it("tracer: missing collector evidence fails the Action (no Runner synthesize)", async () => {
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    const backend = new TracerFamilyBackend();
+    backend.dispatchWorker = async (spec): Promise<WorkerResult> => {
+      backend.kinds.push(spec.kind);
+      if (spec.kind === "collector") {
+        // Simulate a buggy seat that claims completed without required cargo.
+        return {
+          kind: "completed",
+          output: { kind: "collector" },
+        } as unknown as WorkerResult;
+      }
+      return { kind: "failed", reason: `verify must not start: ${spec.kind}` };
+    };
+
+    const result = await runFamilyOnlineReviewLoop({
+      familyBackend: backend,
+      familyBase: "family/1145",
+      ship: offlineShip,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(backend.kinds).toEqual(["collector"]);
+    expect(backend.kinds).not.toContain("verify");
   });
 
   it("tracer: completed seat with side-effect cargo stays mergeable on re-entry (no replay)", async () => {

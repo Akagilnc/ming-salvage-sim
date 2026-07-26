@@ -270,6 +270,7 @@ function stubGrokCmrPreset(): void {
           merger: "sonnet",
           cmrCompleteness: "grok-4.5",
           cmrCorrectness: "grok-4.5",
+          collector: "grok-4.5",
           verify: "gpt-5.6-sol",
           fixer: "sonnet",
           cleanup: "sonnet",

@@ -12,6 +12,7 @@ describe("#441 test route isolation", () => {
         merger: "sonnet",
         cmrCompleteness: "gpt-5.6-sol",
         cmrCorrectness: "gpt-5.6-sol",
+        collector: "grok-4.5",
         verify: "gpt-5.6-sol",
       },
       legCollections: {

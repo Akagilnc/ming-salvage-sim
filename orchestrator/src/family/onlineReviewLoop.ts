@@ -119,7 +119,7 @@ export function verifyBlockedOnlyOnPendingCheckRuns(
     return false;
   }
   const emptyMeans = landing.checkRunsEmptyMeans ?? "converged";
-  return classifyCheckRuns(landing.checkRuns, emptyMeans) === "pending";
+  return classifyCheckRuns(landing.checkRuns ?? [], emptyMeans) === "pending";
 }
 
 type OnlineReviewRetriggerRecoveryEntry = {

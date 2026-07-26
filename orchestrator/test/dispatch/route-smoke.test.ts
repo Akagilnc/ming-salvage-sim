@@ -197,8 +197,11 @@ function productionSmokeBackend(
     join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
     "agy-test-token\n",
   );
-  // Grok auth is optional fixture material — tests that need SuperGrok
-  // bare-ping success write `~/.grok/auth.json` themselves (#905).
+  // #1145: normal route collector seat is grok-4.5 — provision SuperGrok auth
+  // so full-route smoke includes the collector slug. Negative no-auth cases
+  // still build their own empty home (#905).
+  mkdirSync(join(home, ".grok"), { recursive: true });
+  writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
   return new ProductionSmokeBackend(home, pingImpl);
 }
 
@@ -487,6 +490,9 @@ describe("#685 route tool smoke", () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-no-auth-"));
     try {
       const backend = productionSmokeBackend(home);
+      // productionSmokeBackend provisions grok for the normal collector seat;
+      // strip it so this negative path stays auth-unavailable.
+      rmSync(join(home, ".grok"), { recursive: true, force: true });
       const smoked = await backend.smokeModelRoute(
         resolveRouteModels("normal", { coder: "grok-4.5" }),
         {},
