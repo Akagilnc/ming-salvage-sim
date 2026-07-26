@@ -364,14 +364,13 @@ export const COLLECTOR_PROMPT_FILE = "collector.md";
 /**
  * Family S13 Online Review Collector (#1145).
  * Query / wait / retrigger / evidence only — never judge enum. Model comes from
- * the configurable `verify` route slot (same online-review staffing surface;
- * not hardcoded).
+ * the independent `collector` route slot (not hardcoded; not shared with verify).
  */
 export function collectorWorkerSpec(
   route?: ResolvedModelRoute,
   billingPool?: BillingPoolId,
 ): WorkerSpec {
-  const model = route?.slots.verify ?? modelForSlot("verify");
+  const model = route?.slots.collector ?? modelForSlot("collector");
   return {
     id: "S13",
     kind: "collector",

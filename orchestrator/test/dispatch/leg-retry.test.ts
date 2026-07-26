@@ -237,6 +237,7 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
         merger: "opus",
         cmrCompleteness: "opus",
         cmrCorrectness: "opus",
+        collector: "opus",
         verify: "opus",
         fixer: "opus",
         cleanup: "opus",

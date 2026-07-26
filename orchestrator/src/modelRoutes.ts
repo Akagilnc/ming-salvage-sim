@@ -64,6 +64,7 @@ export const MODEL_ROUTE_SLOTS = [
   "merger",
   "cmrCompleteness",
   "cmrCorrectness",
+  "collector",
   "verify",
   "fixer",
   "cleanup",
@@ -616,7 +617,7 @@ export function familyRelaySlotsForWall(opts: {
   }
   if (step === "S10") return ["fixer"];
   if (step === "S12") return ["landing"];
-  if (step === "S13") return ["verify"]; // #1145 collector shares verify slot
+  if (step === "S13") return ["collector"]; // #1145 Collector has its own route slot
   // Explicit wall roles above. Phase fallbacks never rewrite ship for
   // online-review / wave verify barriers (C1: online-review must not touch ship).
   if (opts.phase === "online_review") return ["verify"];

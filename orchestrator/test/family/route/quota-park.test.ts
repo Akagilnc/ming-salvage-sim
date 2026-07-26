@@ -101,6 +101,9 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(
       familyRelaySlotsForWall({ phase: "online_review", wallStep: "S12" }),
     ).toEqual(["landing"]);
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep: "S13" }),
+    ).toEqual(["collector"]);
     expect(familyRelaySlotsForWall({ phase: "merge", wallStep: "S1" })).toEqual(
       ["merger"],
     );
