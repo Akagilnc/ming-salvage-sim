@@ -221,7 +221,6 @@ import {
 import type {
   CleanupResult,
   CliMonitorSpawnSpec,
-  CollectorResult,
   DispatchContext,
   LandingResult,
   Escalation,
@@ -2796,10 +2795,10 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // completed: sidecar/stdout enrich role cargo only — never escalate.
-    // #1145: Collector evidence is required typed cargo for Action completion.
+    // #1145: Collector evidence is required typed cargo on the native SO envelope.
     // Missing/malformed fails the Action (channel ①); Runner never synthesizes.
     if (spec.kind === "collector") {
-      return collectorCompletedResult(typed, result.stdout, sessionId, outcomePath);
+      return collectorCompletedResult(typed, sessionId);
     }
     // Other seats: sparse / unusable cargo completes as role-native opaque miss
     // (ship-aligned); cargo shape is never a #598 process failure (#899 / ADR 0131).
@@ -4584,16 +4583,14 @@ function sparseReviewLoopCompleted(
 }
 
 /**
- * #1145: completed Collector must carry a legal evidence envelope.
- * Prefer SO `evidence` (native schema-validated); sidecar/tag may transport the
- * same envelope. Missing/malformed throws so the Action fails channel ① —
- * Runner never fills defaults or synthesizes offline snapshots.
+ * #1145: completed Collector must carry a legal evidence envelope on the native
+ * typed `<onlineReview>` SO receipt. No sidecar / `<collector>` fallback —
+ * missing/malformed throws so the Action fails channel ①. Runner never fills
+ * defaults or synthesizes offline snapshots.
  */
 function collectorCompletedResult(
   typed: unknown,
-  stdout: string,
   sessionId: string | undefined,
-  outcomePath?: string,
 ): WorkerResult {
   const fromTyped =
     isJsonRecord(typed) && typed.evidence !== undefined
@@ -4608,10 +4605,6 @@ function collectorCompletedResult(
       },
       sessionId,
     };
-  }
-  const parsed = parseCollectorOutcome(stdout, outcomePath);
-  if (parsed.kind === "collector") {
-    return { kind: "completed", output: parsed, sessionId };
   }
   const detail =
     fromTyped && !fromTyped.ok
@@ -4675,7 +4668,7 @@ function collectorEvidenceToLanding(
  * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
  * — those transports enrich delivery cargo only (#899). Fate comes solely from
  * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
- * Collector is handled by {@link collectorCompletedResult} (required evidence).
+ * Collector is handled by {@link collectorCompletedResult} (native SO evidence).
  */
 function reviewLoopCargoResult(
   stdout: string,
@@ -4714,31 +4707,6 @@ function reviewLoopCargoResult(
     return sparseReviewLoopCompleted(kind, sessionId);
   }
   return { kind: "completed", output: parsed, sessionId };
-}
-
-/**
- * #1145: Collector cargo decode — structural evidence envelope only.
- * Does not invent default 0/[]/{} for missing business fields.
- * Runner does not interpret bot/CI/finding semantics from this blob.
- */
-export function parseCollectorOutcome(
-  stdout: string,
-  outcomePath?: string,
-): CollectorResult | ReceiptCargo {
-  const payload = parseOutcomePayload(stdout, "collector", outcomePath);
-  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
-  const parsed = payload.parsed;
-  const evidenceRaw = isJsonRecord(parsed.evidence)
-    ? parsed.evidence
-    : isJsonRecord(parsed.onlineReviewSnapshot)
-      ? parsed.onlineReviewSnapshot
-      : parsed;
-  const decoded = decodeCollectorEvidence(evidenceRaw);
-  if (!decoded.ok) return RECEIPT_CARGO;
-  return {
-    kind: "collector",
-    evidence: collectorEvidenceToLanding(decoded.value),
-  };
 }
 
 /**

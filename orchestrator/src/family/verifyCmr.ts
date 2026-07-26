@@ -2023,24 +2023,18 @@ export async function runFamilyOnlineReviewLoop(input: {
         collectorMonitorHandle,
         result.sessionId,
       );
-      // #1145: evidence is required typed cargo on a completed Collector Action.
-      // Runner transports only — never synthesizes offline/default evidence.
-      if (
-        result.output.kind !== "collector" ||
-        result.output.evidence === undefined
-      ) {
+      // #1145: evidence is required on CollectorResult (native SO schema). Stage
+      // only transports — never synthesizes or re-validates the envelope.
+      if (result.output.kind !== "collector") {
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
           stopSummary: stageFailureStopSummary({
             status: "online_review_failed",
-            summary:
-              result.output.kind !== "collector"
-                ? `family collector worker returned unexpected output kind ${result.output.kind}`
-                : "family collector worker completed without required evidence cargo",
+            summary: `family collector worker returned unexpected output kind ${result.output.kind}`,
             repairHint:
-              "collector must hand opaque evidence to Verify; repair the collector seat",
+              "inspect the collector worker envelope and re-feed the family online review loop",
           }),
         });
       }

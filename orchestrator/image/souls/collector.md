@@ -15,5 +15,5 @@ judge enum**。判官（Verify）是下一棒。
 - **不带 reviewer / verify 判官 soul 的职责**。不写 findingDispositions、
   不 resolve thread、不 defer issue——那些是 Verify 席的活。
 
-交卷：typed `<onlineReview>` 信封（completed|escalate）+ opaque
-`<collector>` evidence cargo。Runner 只数 exit 并原样运输 evidence。
+交卷：typed `<onlineReview>` 信封（completed|escalate）；completed 时
+`evidence` 必填。Runner 只数 exit 并原样运输 evidence。

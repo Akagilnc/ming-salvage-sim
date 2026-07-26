@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   LEGAL_REFUSE_REASONS,
+  collectorOnlineReviewStationReceiptSchema,
   decodeCoderEnvelope,
+  decodeCollectorEvidence,
   decodeJudgeVerdict,
   decodeMergerEnvelope,
   decodeOnlineReviewEnvelope,
@@ -1004,5 +1006,56 @@ describe("#921 full-wave station thin envelopes", () => {
         ["refusedFindingIdentityKeys", "station", "status"].sort(),
       );
     }
+  });
+});
+
+// ─── #1145 Collector native SO: completed requires evidence envelope ─────────
+
+describe("#1145 collector onlineReview station receipt schema", () => {
+  const schema = collectorOnlineReviewStationReceiptSchema();
+
+  it("accepts completed with evidence envelope (positive)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+      evidence: {
+        prUrl: "https://example.test/pr/1",
+        headOid: "abc123",
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects completed missing evidence (negative)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects completed with malformed evidence (negative)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+      evidence: { prUrl: "https://example.test/pr/1" },
+    });
+    expect(parsed.success).toBe(false);
+
+    const envelope = decodeCollectorEvidence({ prUrl: "https://example.test/pr/1" });
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) {
+      expect(envelope.reason).toMatch(/headOid|collector evidence/i);
+    }
+  });
+
+  it("accepts escalate without evidence (positive)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "escalate",
+      reason: "auth",
+      diagnosis: "gh token expired",
+    });
+    expect(parsed.success).toBe(true);
   });
 });
