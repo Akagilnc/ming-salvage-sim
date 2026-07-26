@@ -4,6 +4,20 @@
 
 ## [未发布]
 
+## [0.44.0.0] - 2026-07-26
+
+### Added
+- **#1117 / #1118 / #1119 family 整合庭复飞闭环**：claimed-fixed finding 回庭后会按当前 HEAD、庭次、路线指纹与 generation 复用或重派 completeness/correctness 陪审腿；卷面先原子持久化，冷启动可无损续审，坏卷与静默空卷响亮终止。
+- **#513 / #515 皇帝动作物化**：旨意与密令统一经过结构化动作聚类、字段目录校验和主意图选择，再由共享入口暂存、确认、物化或撤回。
+
+### Changed
+- **#1143 typed builder beat**：builder/fixer 回庭以 typed construct beat 区分收货轮与 panel 审卷轮；判官收货后才对当前 HEAD 派 fresh panel，并回到同一 resident judge session。
+- family 与单切片代码评审共用 runner-dispatched review panel 机制、typed station receipt 和统一终局收口；旧 CMR 专用分派、runner 代判与重复 prompt/test seam 已删除。
+
+### Fixed
+- decision park、coder-fix commit、判官 session 恢复与进程冷重启均保留当前庭、既判史、owner answer 和最新 family HEAD，不再因缺失 transports、陈旧卷面或错误 session baton 反复 park。
+- Web/CLI 自由文本动作不再被已有密令误路由，召对快捷入口只保留「拟旨」「下密令」，且继续遵守 P5 并行结算与真实入口校验。
+
 ## [0.43.2.0] - 2026-07-25
 
 ### Fixed
