@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,7 @@ import type {
 } from "../../../src/family/types.js";
 import type {
   DispatchContext,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
@@ -245,6 +246,12 @@ function productionOutcomeFromProseTransports(input: {
  */
 class ProductionSandboxProseLegBackend extends RealFamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
+  readonly courtInputs: Array<{
+    readonly promptFile?: string;
+    readonly resumeSession?: string;
+    readonly landing: Record<string, unknown>;
+    readonly focusPresent: boolean;
+  }> = [];
   currentFamilyHead: string;
   private readonly sandboxPlace: "top-level" | "output-soft-cargo";
   private readonly continueBody?: string;
@@ -299,8 +306,27 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
   }
 
   protected override async runAgentSandbox(
-    _options: Parameters<RealFamilyBackend["runAgentSandbox"]>[0],
+    options: Parameters<RealFamilyBackend["runAgentSandbox"]>[0],
   ): Promise<Awaited<ReturnType<RealFamilyBackend["runAgentSandbox"]>>> {
+    const landingPath = join(
+      this.opts.workingRepo,
+      ".orchestrator-fix-findings.json",
+    );
+    this.courtInputs.push({
+      promptFile:
+        typeof options.promptFile === "string" ? options.promptFile : undefined,
+      resumeSession:
+        typeof options.resumeSession === "string"
+          ? options.resumeSession
+          : undefined,
+      landing: existsSync(landingPath)
+        ? (JSON.parse(readFileSync(landingPath, "utf8")) as Record<
+            string,
+            unknown
+          >)
+        : {},
+      focusPresent: existsSync(join(this.opts.workingRepo, ".cmr-focus.md")),
+    });
     // Converged green for happy court; continue when a fix packet is requested.
     if (this.continueBody !== undefined) {
       return sandboxResultWithProseLegTransports({
@@ -350,12 +376,13 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
   override async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) return panelLeg;
     if (spec.kind === "cmr") {
       // Production consumer: runCmrWorker extracts transports + overlays.
-      const result = await super.dispatchWorker(spec, ctx);
+      const result = await super.dispatchWorker(spec, ctx, landing);
       if (
         result.kind === "completed" &&
         result.sessionId === undefined &&
@@ -363,7 +390,8 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
       ) {
         return {
           ...result,
-          sessionId: `fixture-1005-${ctx.cmrPass ?? "cmr"}`,
+          sessionId:
+            ctx.resumeSessionId ?? `fixture-1005-${ctx.cmrPass ?? "cmr"}`,
         };
       }
       return result;
@@ -383,6 +411,13 @@ class ProductionSandboxProseLegBackend extends RealFamilyBackend {
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) return skeleton;
     return { kind: "failed", reason: `unexpected kind ${spec.kind}` };
+  }
+
+  protected override async resolveSandcastleResumeSessionId(
+    _spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<string | undefined> {
+    return ctx.resumeSessionId;
   }
 
   /** Expose production runCmrWorker for direct consumer assertions. */
@@ -623,6 +658,71 @@ describe("#1005 ADR 0141 runCmrWorker — production consumer extracts sandbox l
 });
 
 describe("#1005 ADR 0141 family court — prose transports open the court", () => {
+  it("#1143 production entry distinguishes builder receipt from fresh panel review", async () => {
+    const { repo, head } = realRepo1005();
+    const backend = new ProductionSandboxProseLegBackend({
+      workingRepo: repo,
+      ledgerDir: mkDir("1143-production-tracer-ledger-"),
+      familyHead: head,
+      sandboxPlace: "output-soft-cargo",
+    });
+    backend.ledger.push(
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: head,
+        judgeStatus: "continue",
+        sessionId: "resident-judge-1143",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadBefore: head,
+        familyHeadAfter: head,
+        expectedCourtGeneration: 1,
+      },
+    );
+    await backend.writeFamilyPanelLegEvidence("completeness", {
+      familyHeadAfter: head,
+      ledgerPhase: "final",
+      routeFingerprint: "superseded-generation",
+      courtGeneration: 1,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "fb",
+      familyBackend: backend,
+      familyHeadAfter: head,
+      familyIssue: 1143,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const completeness = backend.courtInputs.filter((input) =>
+      input.promptFile?.endsWith("integrated_cmr_completeness.md"),
+    );
+    expect(completeness).toHaveLength(2);
+    expect(completeness[0]).toMatchObject({
+      resumeSession: "resident-judge-1143",
+      focusPresent: true,
+      landing: { builderBeat: "construct" },
+    });
+    expect(
+      (completeness[0]?.landing.panelLegTransports as unknown[] | undefined)
+        ?.length ?? 0,
+    ).toBe(0);
+    expect(completeness[1]?.landing.builderBeat).toBeUndefined();
+    expect(
+      (completeness[1]?.landing.panelLegTransports as unknown[] | undefined)
+        ?.length,
+    ).toBeGreaterThan(0);
+    expect(completeness[1]?.resumeSession).toBe("resident-judge-1143");
+  });
+
   it("live judge converged via production runCmrWorker sandbox path ships (no liveCmrJudge pre-mint)", async () => {
     // Court proof uses production consumer only: sandbox result carries
     // legTransports + empty successfulLegs cargo; runCmrWorker overlays presence.

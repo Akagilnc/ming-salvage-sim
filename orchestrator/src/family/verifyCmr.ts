@@ -2746,6 +2746,14 @@ async function runIntegratedCmrPass(input: {
     refuseRecords !== undefined && refuseRecords.length > 0
       ? { refuseRecords }
       : undefined;
+  // #1143 / ADR 0147: round identity is explicit typed cargo. Panel emptiness
+  // (including a generation tombstone) must never masquerade as that identity.
+  const courtLanding: WorkerLandingPayload | undefined = receiveBuilderBeat
+    ? {
+        ...(refuseReopenLanding ?? {}),
+        builderBeat: "construct",
+      }
+    : refuseReopenLanding;
   const stampReviewRound = (
     result: WorkerResult,
     finalDisposition: "accepted" | "rejected" | "unknown",
@@ -2809,7 +2817,7 @@ async function runIntegratedCmrPass(input: {
         );
     const existingPanelEvidence = receiveBuilderBeat
       ? undefined
-      : (landedPanelLegEvidence(refuseReopenLanding) ??
+      : (landedPanelLegEvidence(courtLanding) ??
         landedPanelLegEvidence(dispatchCtx) ??
         durableEvidenceForCourt);
     // #1094 F2: checkout + focus + shared exclude ONCE before fan-out; legs only clone.
@@ -2904,7 +2912,7 @@ async function runIntegratedCmrPass(input: {
     const hostSkippedLegs = panelRound.panelLegSkippedLegs;
     // Canonical landing cargo for transports + explicit producer skip reasons.
     const panelLanding: WorkerLandingPayload = {
-      ...(refuseReopenLanding ?? {}),
+      ...(courtLanding ?? {}),
       ...(panelRound.panelLegTransports !== undefined
         ? { panelLegTransports: panelRound.panelLegTransports }
         : {}),

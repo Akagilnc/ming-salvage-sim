@@ -3,10 +3,14 @@
 ## Task and inputs
 
 Judge the landed correctness review papers for this family after completeness
-has passed. The runner has already dispatched the panel legs and written
-`.cmr-focus.md`, `.cmr-route.json`, and the fix-findings landing referenced by
-`$ORCHESTRATOR_FIX_FINDINGS_PATH` when set. Panel papers are available through
-that landing's `panelLegTransports`.
+has passed. Read the fix-findings landing referenced by
+`$ORCHESTRATOR_FIX_FINDINGS_PATH` when set. A typed
+`builderBeat: "construct"` means this is the builder-receipt round: no panel
+paper is expected, and an empty generation tombstone is not paper. Otherwise
+this is a panel round; the runner has
+dispatched the panel legs (or recorded producer-authored runtime skip reasons),
+with papers in `panelLegTransports`. The runner also writes `.cmr-focus.md` and
+`.cmr-route.json`.
 
 ## Pass scope
 
