@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from ming_sim.session import GameSession
 from ming_sim.llm_config import load_llm_config
+from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,8 +118,11 @@ def main() -> int:
             print(f"[sql] FAIL: {sql[:120]} → {e}", file=sys.stderr)
             return 2
 
-    for text in args.directive:
-        view = session.add_directive(text, notes="direct-probe")
+    for sequence, text in enumerate(args.directive, start=1):
+        view = add_narrative_probe_directive(
+            session, text, notes="direct-probe",
+            probe_id="direct-decree", sequence=sequence,
+        )
         print(f"[directive] id={view.id} text={text[:60]}")
 
     session.enter_review()

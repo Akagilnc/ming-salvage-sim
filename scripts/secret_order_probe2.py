@@ -29,6 +29,7 @@ for src, dst in (("CLI_API_KEY", "OPENAI_API_KEY"),
 from ming_sim.content import GameContent
 from ming_sim.llm_config import load_llm_config
 from ming_sim.session import GameSession
+from scripts.probe_directive_contract import add_narrative_probe_directive
 
 DB = "data/secret_test.db"
 # 把密令 #1 的进展改成「已得底册37人含近侍，但扣报」——这是 bug 复现态
@@ -49,7 +50,10 @@ def main() -> None:
     # 强制把 #1 推到瞒报态
     sess.db.update_secret_order_progress(1, WITHHELD)
     print(f"[probe2] 已把密令 #1 进展置为瞒报态")
-    sess.add_directive(DECREE, notes="催曹化淳呈册")
+    add_narrative_probe_directive(
+        sess, DECREE, notes="催曹化淳呈册",
+        probe_id="secret-order-followup",
+    )
     report = sess.resolve_turn(decree=DECREE)
     # 只打密旨动向章 + 状态，邸报全文太长
     print("\n========== 密旨动向章（截取） ==========\n")
