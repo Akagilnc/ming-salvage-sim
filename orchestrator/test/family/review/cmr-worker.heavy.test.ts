@@ -1268,10 +1268,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
       const landing = be.writeFixFindings(
         { familyBase: "fb", blockingFindingIdentityKeys: [] },
-        { blockingFindings: [], rawReviewerArtifacts },
+        {
+          blockingFindings: [],
+          rawReviewerArtifacts,
+          builderBeat: "after_plan_verdict",
+        },
       );
 
       const written = JSON.parse(readFileSync(landing.path, "utf8")) as {
+        builderBeat?: string;
         rawReviewerArtifacts: {
           reviewerSessionId?: string;
           stdoutPath?: string;
@@ -1279,6 +1284,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           statement: string;
         };
       };
+      expect(written.builderBeat).toBe("after_plan_verdict");
       expect(written.rawReviewerArtifacts.reviewerSessionId).toBe(reviewerSessionId);
       expect(written.rawReviewerArtifacts.statement).toBe(
         "the previous reviewer raw artifacts are here",

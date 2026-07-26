@@ -2099,6 +2099,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // are present so the pure court never opens on a silent empty file while
       // .cmr-route.json still declares legs (cold-start resume deadlock).
       const needsFixFindingsLanding =
+        landing?.builderBeat !== undefined ||
         (landing?.refuseRecords !== undefined &&
           landing.refuseRecords.length > 0) ||
         (landing?.panelLegTransports !== undefined &&
@@ -2404,6 +2405,10 @@ export class RealFamilyBackend implements FamilyBackend {
             : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
+          // #1143 / ADR 0147: explicit typed builder-receipt round identity.
+          ...(landing?.builderBeat !== undefined
+            ? { builderBeat: landing.builderBeat }
             : {}),
           // #925 F1 / #919: structured prior judge rows for session-loss reopen.
           ...(ctx.priorJudgeVerdicts !== undefined &&

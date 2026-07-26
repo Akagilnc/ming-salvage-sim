@@ -390,6 +390,7 @@ class FamilyHubBackend implements FamilyBackend {
   readonly dispatches: Array<{
     readonly spec: WorkerSpec;
     readonly ctx: DispatchContext;
+    readonly landing?: WorkerLandingPayload;
   }> = [];
   currentFamilyHead = "head-1085";
 
@@ -437,13 +438,14 @@ class FamilyHubBackend implements FamilyBackend {
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     const panelLeg = completeReviewPanelLegWorker(spec);
     if (panelLeg !== undefined) {
-      this.dispatches.push({ spec, ctx });
+      this.dispatches.push({ spec, ctx, landing });
       return panelLeg;
     }
-    this.dispatches.push({ spec, ctx });
+    this.dispatches.push({ spec, ctx, landing });
     if (this.script.worker !== undefined) {
       return this.script.worker(spec, ctx);
     }
@@ -876,6 +878,22 @@ describe("#1085 e2e ring2: integrated CMR fixer → resident judge hub", () => {
     expect(panelsPerCorrectnessOpen[0]).toBeGreaterThan(0);
     expect(panelsPerCorrectnessOpen[1]).toBe(0);
     expect(panelsPerCorrectnessOpen[2]).toBeGreaterThan(0);
+    const correctnessCourts = backend.dispatches.filter(
+      (d) => d.spec.kind === "cmr" && d.ctx.cmrPass === "correctness",
+    );
+    expect(correctnessCourts[1]?.landing).toMatchObject({
+      builderBeat: "after_plan_verdict",
+    });
+    expect(
+      correctnessCourts[1]?.landing?.panelLegTransports?.length ?? 0,
+    ).toBe(0);
+    expect(
+      correctnessCourts[2]?.landing?.panelLegTransports?.length,
+    ).toBeGreaterThan(0);
+    expect(correctnessCourts[2]?.landing?.builderBeat).toBeUndefined();
+    expect(correctnessCourts[2]?.ctx.resumeSessionId).toBe(
+      correctnessCourts[1]?.ctx.resumeSessionId,
+    );
     expect(correctnessOpens).toBeGreaterThanOrEqual(3);
     expect(result.ran).toBe(true);
   });
