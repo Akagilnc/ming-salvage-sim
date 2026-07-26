@@ -140,8 +140,12 @@ describe("#966 family judge session from ledger", () => {
           // No sessionId on WorkerResult: next open is fresh + priors, not fail-loud.
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
-        expect(ctx.resumeSessionId).toBeUndefined();
         expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        if (round === 1) {
+          expect(ctx.resumeSessionId).toBeUndefined();
+        } else {
+          expect(ctx.resumeSessionId).toBe("fresh-after-loss-966");
+        }
         return completedJudge(judgeConverged(), "fresh-after-loss-966");
       },
     });
@@ -161,6 +165,8 @@ describe("#966 family judge session from ledger", () => {
     expect(opens[0]?.resumeSessionId).toBeUndefined();
     expect(opens[1]?.session).toBe("fresh");
     expect(opens[1]?.resumeSessionId).toBeUndefined();
+    expect(opens[2]?.session).toBe("resume");
+    expect(opens[2]?.resumeSessionId).toBe("fresh-after-loss-966");
     expect((opens[1]?.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
     expect(

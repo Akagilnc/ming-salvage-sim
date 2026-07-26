@@ -539,8 +539,12 @@ describe("#930 runVerifyCmr family judge courts", () => {
           // No sessionId: next open is fresh + priors (not same-session-or-die).
           return { kind: "completed", output: judgeContinue([FINDING]) };
         }
-        expect(ctx.resumeSessionId).toBeUndefined();
         expect((ctx.priorJudgeVerdicts?.length ?? 0) > 0).toBe(true);
+        if (round === 1) {
+          expect(ctx.resumeSessionId).toBeUndefined();
+        } else {
+          expect(ctx.resumeSessionId).toBe("judge-sess-fresh-after-loss");
+        }
         return completedJudge(judgeConverged(), "judge-sess-fresh-after-loss");
       },
     });
@@ -558,6 +562,10 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(completenessDispatches[0]?.resumeSessionId).toBeUndefined();
     expect(completenessDispatches[1]?.session).toBe("fresh");
     expect(completenessDispatches[1]?.resumeSessionId).toBeUndefined();
+    expect(completenessDispatches[2]?.session).toBe("resume");
+    expect(completenessDispatches[2]?.resumeSessionId).toBe(
+      "judge-sess-fresh-after-loss",
+    );
     expect(
       (completenessDispatches[1]?.priorJudgeVerdicts?.length ?? 0) > 0,
     ).toBe(true);

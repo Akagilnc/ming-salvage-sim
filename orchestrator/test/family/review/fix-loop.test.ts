@@ -186,6 +186,7 @@ function onlineReviewLoopWorkerOrThrow(spec: WorkerSpec): WorkerResult {
 interface DispatchRecord {
   readonly kind: WorkerSpec["kind"];
   readonly session: WorkerSpec["session"];
+  readonly resumeSessionId?: DispatchContext["resumeSessionId"];
   readonly cmrPass?: DispatchContext["cmrPass"];
   readonly priorCmrFindingIdentityKeys?: readonly string[];
   readonly role?: WorkerSpec["role"];
@@ -261,6 +262,7 @@ class SchedulerFamilyBackend implements FamilyBackend {
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
+      resumeSessionId: ctx.resumeSessionId,
       cmrPass: ctx.cmrPass,
       priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
     });
@@ -425,6 +427,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
+      resumeSessionId: ctx.resumeSessionId,
       role: spec.role,
       promptFile: spec.promptFile,
       contextRetention: spec.contextRetention,
@@ -1867,6 +1870,12 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "ship", promptFile: "family_ship.md" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
+    const completenessJudgeOpens = backend.dispatches.filter(
+      (dispatch) =>
+        dispatch.kind === "cmr" && dispatch.cmrPass === "completeness",
+    );
+    expect(completenessJudgeOpens.slice(1, 3).map((open) => open.resumeSessionId))
+      .toEqual(["fixture-cmr-fix-loop", "fixture-cmr-fix-loop"]);
     expect(backend.ledger).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

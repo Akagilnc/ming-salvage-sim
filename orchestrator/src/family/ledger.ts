@@ -603,6 +603,52 @@ export function pendingBuilderReviewFromFamilyLedger(
 }
 
 /**
+ * Recover the resident judge session for the immediate outer-panel return.
+ *
+ * The pure builder-receive beat is durably recorded as a scoped
+ * `worker_dispatched` row rather than a court verdict row. The next panel open
+ * must therefore recover that row's judge session before a later
+ * `cmr_reviewed` / `cmr_passed` row exists. Newest scoped lifecycle row wins;
+ * a missing id never resurrects an older session.
+ */
+export function residentJudgePanelReturnSessionIdFromFamilyLedger(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+  pass: IntegratedCmrPass,
+  phase: "final" | "correctness_checkpoint" = "final",
+): {
+  readonly pendingPanelReturn: boolean;
+  readonly sessionId?: string;
+} {
+  const barrierPhase = cmrBarrierPhaseOf(phase);
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    const status = entry.status ?? entry.event;
+    if (
+      status !== "worker_dispatched" &&
+      status !== "cmr_reviewed" &&
+      status !== "cmr_passed"
+    ) {
+      continue;
+    }
+    if (entry.cmrPass !== pass) continue;
+    if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
+    if (status !== "worker_dispatched") {
+      return { pendingPanelReturn: false };
+    }
+    const sessionId =
+      typeof entry.judgeSessionId === "string" &&
+      entry.judgeSessionId.trim().length > 0
+        ? entry.judgeSessionId
+        : undefined;
+    return {
+      pendingPanelReturn: true,
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    };
+  }
+  return { pendingPanelReturn: false };
+}
+
+/**
  * #979 — latest family coder-fix session id from `cmr_fix_committed` ledger rows.
  *
  * Same-pass only (completeness vs correctness are separate findings chains).
