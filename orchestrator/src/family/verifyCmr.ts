@@ -25,39 +25,27 @@ import { shWithClock } from "../externalCall.js";
 
 import {
   isCanonicalGithubPrUrl,
-  isLiveGithubReviewPollEnabled,
-  pollPrReviewState,
 } from "../botPolling.js";
 import {
   recordLandingActionFailure,
   runLandingAction,
 } from "./landing.js";
 import {
-  buildRoundTrigger,
   convergenceHeadToRecord,
-  type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import {
+  collectorWorkerSpec,
   fixerWorkerSpec,
   verifyWorkerSpec,
 } from "../dispatchWorker.js";
 import {
-  immediateBotPollClock,
   OnlineReviewLoopTerminal,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
-  buildOnlineReviewLanding,
   offlinePrReviewSnapshot,
   onlineReviewRoundFromFamilyLedger,
-  onlineReviewRoundTriggerFromFamilyLedger,
-  realBotPollClock,
-  ensureOnlineReviewRetriggerAfterFixGap,
-  retriggerBotsAndPoll,
-  familyPendingRoundTriggerFromFixGap,
-  resolveOnlineReviewRoundTrigger,
   runOnlineReviewLoopStage,
-  shipLedgerTriggeredAtFromFamilyLedger,
-  waitForBotQuiescence,
+  toLandingSnapshot,
   type OnlineReviewLoopStageResult,
 } from "./onlineReviewLoop.js";
 import {
@@ -1858,8 +1846,6 @@ export async function runFamilyOnlineReviewLoop(input: {
   if (prUrl === undefined || prUrl.trim().length === 0) {
     return { ok: false, terminalState: "decision_gate_raised", round: 1 };
   }
-  const ghSh = (file: string, args: string[]) =>
-    shWithClock(file, args, { stage: `dispatch:${file}` });
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute =
@@ -1936,7 +1922,6 @@ export async function runFamilyOnlineReviewLoop(input: {
     }
   };
 
-  const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
   const familyLedger = await input.familyBackend.readFamilyLedger();
   // #1002 / #1017 — rebuild sticky **fixer** from latest family ledger
   // coder_advance scoped to advanceSeat:"fixer" (not stay_put, not CMR
@@ -1960,66 +1945,12 @@ export async function runFamilyOnlineReviewLoop(input: {
       );
     }
   }
-  const shipTriggeredAt = shipLedgerTriggeredAtFromFamilyLedger(
-    familyLedger,
-    prUrl,
-  );
   const loopState = {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
   const resumedFixAuthorization =
     lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
-  const pendingGapRetrigger = familyPendingRoundTriggerFromFixGap(familyLedger);
-  let lastRoundTrigger: RoundTrigger;
-  try {
-    lastRoundTrigger = livePoll
-      ? resolveOnlineReviewRoundTrigger({
-          onlineReviewRound: loopState.round,
-          persistedRoundTrigger:
-            onlineReviewRoundTriggerFromFamilyLedger(familyLedger),
-          pendingRetriggerFromFixGap: pendingGapRetrigger,
-          fixCommitSha: loopState.lastFixSha,
-          shipPrHead: input.ship.prHead,
-          shipLedgerTriggeredAt: shipTriggeredAt,
-        })
-      : buildRoundTrigger(
-          loopState.lastFixSha ??
-            input.ship.prHead ??
-            "offline-review-head",
-          shipTriggeredAt,
-        );
-    if (livePoll && pendingGapRetrigger !== undefined) {
-      const ensured = ensureOnlineReviewRetriggerAfterFixGap({
-        sh: ghSh,
-        repo,
-        prUrl,
-        gapTrigger: pendingGapRetrigger,
-      });
-      lastRoundTrigger = ensured.roundTrigger;
-      await recordOnlineReviewRoundRetrigger(input.familyBackend, {
-        roundTriggerHeadOid: ensured.roundTrigger.headOid,
-        roundTriggerAt: ensured.roundTrigger.triggeredAt,
-        onlineReviewRound: loopState.round,
-        pr: prUrl,
-      });
-    }
-  } catch (err) {
-    // resolveOnlineReviewRoundTrigger / ensure may throw (round≥2 missing anchor).
-    // In-band decision_gate — do not abort the whole family runner (Cursor medium,
-    // verified: call was outside try previously).
-    return {
-      ok: false,
-      terminalState: "decision_gate_raised",
-      round: loopState.round,
-      stopSummary: stageFailureStopSummary({
-      status: "online_review_failed",
-        summary: `family online review round-trigger setup failed: ${err instanceof Error ? err.message : String(err)}`,
-        repairHint:
-          "repair ledger round-trigger / fix-gap anchors and re-feed the family run",
-      }),
-    };
-  }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
   let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
@@ -2033,48 +1964,115 @@ export async function runFamilyOnlineReviewLoop(input: {
     return await runOnlineReviewLoopStage(
       input.ship,
       {
-    // #1145: Online Review Action owns GH query/wait/evidence + judgment seat.
-    // Runner never pre-polls or post-applies residual side-effect plans.
-    dispatchVerify: async (landing, round) => {
-      const snapshot = !livePoll
-        ? offlinePrReviewSnapshot({
-            repo,
-            prUrl,
-            headOid:
-              familyLastFixCommitSha ??
-              input.ship.prHead ??
-              "offline-review-head",
-            pollCount: round,
-          })
-        : await waitForBotQuiescence(ghSh, {
-            repo,
-            prUrl,
-            roundTrigger: lastRoundTrigger,
-            clock:
-              process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1"
-                ? immediateBotPollClock
-                : realBotPollClock,
-          });
-      if (livePoll) {
-        // Chain re-anchored trigger (online R5 Codex P1).
-        lastRoundTrigger = snapshot.roundTriggerUsed;
+    // #1145: Collector (evidence) and Verify (judgment) are independent Actions.
+    // Runner never host-polls GH, never pre-assembles bot evidence, never
+    // post-applies residual side-effect plans.
+    dispatchCollector: async (landing, round) => {
+      let collectorMonitorHandle: WorkerMonitorHandle | undefined;
+      const collectorPool = poolForKind("collector");
+      const result = await dispatchOrAbort(
+        input.familyBackend,
+        collectorWorkerSpec(modelRoute),
+        {
+          ...baseCtx,
+          modelRoute,
+          onlineReviewRound: round,
+          ...(collectorPool !== undefined ? { billingPool: collectorPool } : {}),
+        },
+        landing,
+        {
+          onMonitorHandle: (handle) => {
+            collectorMonitorHandle = handle;
+          },
+        },
+      );
+      if (result.kind === "escalated") {
+        const escalationSummary = `family collector worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+        const stopSummary = isRunnerSynthesizedFailureEscalation(result.escalation)
+          ? stageFailureStopSummary({
+              status: "online_review_failed",
+              summary: escalationSummary,
+              repairHint:
+                "repair the family collector worker startup/authentication failure, then re-feed the family online review loop",
+            })
+          : decisionGateParkStopSummary({
+              summary: escalationSummary,
+              repairHint:
+                "answer the decision gate / unstick the collector worker, then re-feed the family online review loop",
+            });
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary,
+        });
       }
-      const seatLanding = {
-        ...buildOnlineReviewLanding(snapshot, input.ship, round),
-        ...(landing.fixMarkedFindingIdentityKeys !== undefined
-          ? {
-              fixMarkedFindingIdentityKeys:
-                landing.fixMarkedFindingIdentityKeys,
-            }
-          : {}),
-        ...(landing.fixMarkedFindingThreads !== undefined
-          ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
-          : {}),
-        ...(landing.priorRoundFindings !== undefined
-          ? { priorRoundFindings: landing.priorRoundFindings }
-          : {}),
-      };
-
+      if (result.kind !== "completed") {
+        const detail = result.kind === "failed" ? `: ${result.reason}` : "";
+        throw new OnlineReviewLoopTerminal({
+          ok: false,
+          terminalState: "decision_gate_raised",
+          round,
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
+            summary: `family collector worker returned ${result.kind}${detail}`,
+            repairHint:
+              "inspect the collector worker envelope and re-feed the family online review loop",
+          }),
+        });
+      }
+      const artifacts = reviewerArtifactPointers(
+        collectorMonitorHandle,
+        result.sessionId,
+      );
+      // Offline/test hatch: skeleton or sparse cargo may omit evidence — fill
+      // synthetic quiescent snapshot only when offline poll is admissible.
+      let evidence =
+        result.output.kind === "collector"
+          ? result.output.evidence
+          : undefined;
+      if (evidence === undefined) {
+        try {
+          evidence = toLandingSnapshot(
+            offlinePrReviewSnapshot({
+              repo,
+              prUrl,
+              headOid:
+                familyLastFixCommitSha ??
+                input.ship.prHead ??
+                "offline-review-head",
+              pollCount: round,
+            }),
+          );
+        } catch {
+          throw new OnlineReviewLoopTerminal({
+            ok: false,
+            terminalState: "decision_gate_raised",
+            round,
+            stopSummary: stageFailureStopSummary({
+              status: "online_review_failed",
+              summary:
+                "family collector worker returned no evidence and offline synthetic poll is not admissible",
+              repairHint:
+                "collector must hand opaque evidence to Verify; repair the collector seat or offline hatch",
+            }),
+          });
+        }
+      }
+      // Dumb ledger transport fact for resume anchors — not bot-state judgment.
+      if (round > 1 || familyLastFixCommitSha !== undefined) {
+        await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+          roundTriggerHeadOid: evidence.headOid,
+          roundTriggerAt: new Date().toISOString(),
+          onlineReviewRound: round,
+          pr: prUrl,
+        });
+        loopState.round = Math.max(loopState.round, round);
+      }
+      return { evidence, artifacts };
+    },
+    dispatchVerify: async (landing, round) => {
+      // Landing already carries Collector evidence — Verify judges only.
       let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
       const verifyPool = poolForKind("verify");
       const result = await dispatchOrAbort(
@@ -2086,7 +2084,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           onlineReviewRound: round,
           ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
         },
-        seatLanding,
+        landing,
         {
           onMonitorHandle: (handle) => {
             reviewerMonitorHandle = handle;
@@ -2135,7 +2133,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         result.sessionId,
       );
       if (result.output.kind !== "verify") {
-        return { snapshot, artifacts };
+        return { artifacts };
       }
       // #1002: continue disposition + advanceCoder rewrites fixer before fix
       // dispatch (same never-terminal contract as CMR/single-slice courts).
@@ -2150,7 +2148,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       // Worker owns side effects (#1145). Residual plan cargo is never
       // host-replayed after the Action returns.
-      return { snapshot, artifacts, verify: verifyOut };
+      return { artifacts, verify: verifyOut };
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
@@ -2208,31 +2206,9 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output.kind === "fixer" ? result.output : undefined;
     },
-    // #941: landing Action owns docs/merge/close/cleanup after this loop
-    // (no host dispatchDocRelease here). #1145: no host side-effect replay.
-    retriggerAfterFix: async () => {
-      if (livePoll) {
-        const retriggered = retriggerBotsAndPoll(
-          ghSh,
-          repo,
-          prUrl,
-          1,
-          familyLastFixCommitSha ??
-            lastRoundTrigger.headOid ??
-            input.ship.prHead ??
-            "offline-review-head",
-        );
-        lastRoundTrigger = retriggered.roundTrigger;
-        const nextRound = loopState.round + 1;
-        await recordOnlineReviewRoundRetrigger(input.familyBackend, {
-          roundTriggerHeadOid: retriggered.roundTrigger.headOid,
-          roundTriggerAt: retriggered.roundTrigger.triggeredAt,
-          onlineReviewRound: nextRound,
-          pr: prUrl,
-        });
-        loopState.round = nextRound;
-      }
-    },
+    // #941: landing Action owns docs/merge/close/cleanup after this loop.
+    // #1145: post-fix retrigger/wait is the next Collector seat — no host
+    // post-fix poll/retrigger seam.
     resolveFixCommitSha: async (envelopeFixSha: string) => {
       const sha = envelopeFixSha;
       familyLastFixCommitSha = sha;

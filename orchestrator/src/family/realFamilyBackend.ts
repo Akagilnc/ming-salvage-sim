@@ -219,6 +219,7 @@ import {
 import type {
   CleanupResult,
   CliMonitorSpawnSpec,
+  CollectorResult,
   DispatchContext,
   LandingResult,
   Escalation,
@@ -226,6 +227,7 @@ import type {
   Finding,
   FixerResult,
   OnlineReviewFindingDisposition,
+  OnlineReviewLandingSnapshot,
   OnlineReviewThreadReply,
   PriorFindingDisposition,
   VerifyResult,
@@ -1474,7 +1476,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
-    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "landing") {
+    if (
+      spec.kind === "collector" ||
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "landing"
+    ) {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -2587,12 +2594,14 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.checkoutSharedRepo(ctx.familyBase);
-      // verify/fixer need the bot-evidence landing; landing only invokes
-      // /gstack-document-release and does not read the online-review snapshot.
+      // Collector may start without evidence (assembles it); verify/fixer need
+      // the bot-evidence landing; landing only invokes /gstack-document-release.
       const onlineReviewLanding =
         spec.kind === "landing"
           ? undefined
-          : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
+          : this.writeFamilyOnlineReviewLandingFile(ctx, landing, {
+              allowMissingSnapshot: spec.kind === "collector",
+            });
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
@@ -2634,8 +2643,12 @@ export class RealFamilyBackend implements FamilyBackend {
   protected writeFamilyOnlineReviewLandingFile(
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
+    opts?: { readonly allowMissingSnapshot?: boolean },
   ): { path: string; sandboxPath: string } {
-    if (landing?.onlineReviewSnapshot === undefined) {
+    if (
+      landing?.onlineReviewSnapshot === undefined &&
+      opts?.allowMissingSnapshot !== true
+    ) {
       throw new Error(
         "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
       );
@@ -2646,14 +2659,17 @@ export class RealFamilyBackend implements FamilyBackend {
       path,
       `${JSON.stringify(
         {
-          onlineReviewSnapshot: landing.onlineReviewSnapshot,
-          shipDelivery: landing.shipDelivery,
-          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
-          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(landing?.onlineReviewSnapshot !== undefined
+            ? { onlineReviewSnapshot: landing.onlineReviewSnapshot }
+            : {}),
+          shipDelivery: landing?.shipDelivery,
+          onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,
+          fixMarkedFindingIdentityKeys:
+            landing?.fixMarkedFindingIdentityKeys ?? [],
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
             : {}),
-          ...(landing.priorRoundFindings !== undefined &&
+          ...(landing?.priorRoundFindings !== undefined &&
           landing.priorRoundFindings.length > 0
             ? { priorRoundFindings: landing.priorRoundFindings }
             : {}),
@@ -4543,16 +4559,19 @@ function sparseReviewLoopCompleted(
   sessionId: string | undefined,
 ): WorkerResult {
   const output: WorkerOutput =
-    kind === "verify"
-      ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
-        { kind: "verify", converged: false }
-      : kind === "fixer"
-        ? { kind: "fixer", committed: false }
-        : kind === "cleanup"
-          ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
-            { kind: "cleanup", terminal: true, ok: true }
-          : // Empty-run success is legal for 文档发布 (process success, cargo miss).
-            { kind: "landing", released: true };
+    kind === "collector"
+      ? // Evidence miss → production dispatchCollector offline hatch or gate.
+        { kind: "collector" }
+      : kind === "verify"
+        ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
+          { kind: "verify", converged: false }
+        : kind === "fixer"
+          ? { kind: "fixer", committed: false }
+          : kind === "cleanup"
+            ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
+              { kind: "cleanup", terminal: true, ok: true }
+            : // Empty-run success is legal for 文档发布 (process success, cargo miss).
+              { kind: "landing", released: true };
   return { kind: "completed", output, sessionId };
 }
 
@@ -4568,6 +4587,7 @@ function reviewLoopCargoResult(
   outcomePath?: string,
 ): WorkerResult {
   const tag =
+    kind === "collector" ||
     kind === "verify" ||
     kind === "fixer" ||
     kind === "cleanup" ||
@@ -4585,19 +4605,79 @@ function reviewLoopCargoResult(
   delete cargo.escalate;
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
   const parsed =
-    kind === "verify"
-      ? parseVerifyOutcome(cargoStdout)
-      : kind === "fixer"
-        ? parseFixerOutcome(cargoStdout)
-        : kind === "cleanup"
-          ? parseCleanupOutcome(cargoStdout)
-          : parseLandingOutcome(cargoStdout);
+    kind === "collector"
+      ? parseCollectorOutcome(cargoStdout)
+      : kind === "verify"
+        ? parseVerifyOutcome(cargoStdout)
+        : kind === "fixer"
+          ? parseFixerOutcome(cargoStdout)
+          : kind === "cleanup"
+            ? parseCleanupOutcome(cargoStdout)
+            : parseLandingOutcome(cargoStdout);
   if (parsed.kind === "cargo") {
     // Off-shape paper is opaque miss cargo — complete the Action; do not
     // re-open cargo shape as a #598 channel.
     return sparseReviewLoopCompleted(kind, sessionId);
   }
   return { kind: "completed", output: parsed, sessionId };
+}
+
+/**
+ * #1145: Collector cargo decode — structural evidence transport only.
+ * Runner does not interpret bot/CI/finding semantics from this blob.
+ */
+export function parseCollectorOutcome(
+  stdout: string,
+  outcomePath?: string,
+): CollectorResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "collector", outcomePath);
+  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  const evidenceRaw = isJsonRecord(parsed.evidence)
+    ? parsed.evidence
+    : isJsonRecord(parsed.onlineReviewSnapshot)
+      ? parsed.onlineReviewSnapshot
+      : parsed;
+  if (!isJsonRecord(evidenceRaw)) return RECEIPT_CARGO;
+  if (
+    typeof evidenceRaw.prUrl !== "string" ||
+    typeof evidenceRaw.headOid !== "string"
+  ) {
+    // Sparse collector cargo (no evidence fields) — completed miss.
+    if (parsed.kind === "collector" || parsed.evidence === undefined) {
+      return { kind: "collector" };
+    }
+    return RECEIPT_CARGO;
+  }
+  const evidence: OnlineReviewLandingSnapshot = {
+    prUrl: evidenceRaw.prUrl,
+    headOid: evidenceRaw.headOid,
+    totalFindingCount:
+      typeof evidenceRaw.totalFindingCount === "number"
+        ? evidenceRaw.totalFindingCount
+        : 0,
+    quiescent: evidenceRaw.quiescent === true,
+    bots:
+      evidenceRaw.bots !== null &&
+      typeof evidenceRaw.bots === "object" &&
+      !Array.isArray(evidenceRaw.bots)
+        ? (evidenceRaw.bots as OnlineReviewLandingSnapshot["bots"])
+        : {},
+    droppedBots: Array.isArray(evidenceRaw.droppedBots)
+      ? evidenceRaw.droppedBots.filter((x): x is string => typeof x === "string")
+      : [],
+    threads: Array.isArray(evidenceRaw.threads)
+      ? (evidenceRaw.threads as OnlineReviewLandingSnapshot["threads"])
+      : [],
+    checkRuns: Array.isArray(evidenceRaw.checkRuns)
+      ? (evidenceRaw.checkRuns as OnlineReviewLandingSnapshot["checkRuns"])
+      : [],
+    ...(evidenceRaw.checkRunsEmptyMeans === "converged" ||
+    evidenceRaw.checkRunsEmptyMeans === "pending"
+      ? { checkRunsEmptyMeans: evidenceRaw.checkRunsEmptyMeans }
+      : {}),
+  };
+  return { kind: "collector", evidence };
 }
 
 /**

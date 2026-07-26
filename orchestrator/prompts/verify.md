@@ -2,20 +2,28 @@
 
 ## Params
 
-- `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` — bot snapshot + ship metadata landing file mounted for this seat.
+- `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` —
+  **Collector-assembled** bot snapshot + ship metadata landing file mounted for
+  this seat. Collector already completed query/wait/evidence.
 
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before reviewing.
 
-## Ownership (Online Review worker is the sole owner — #1145)
+## Ownership (Verify = judgment only — #1145)
 
-You own **finding judgment**, **GitHub query/wait/evidence assembly as needed**,
-and **all side effects** on this seat. The Runner never re-queries PR state and
-never replays residual side-effect plans after you return:
+You own **finding judgment** and **side effects** on this seat. Collector owns
+GitHub query/wait/retrigger/evidence assembly as a **separate prior Action**.
+The Runner never re-queries PR state and never replays residual side-effect
+plans after you return:
 
-1. Read live review state from the landing snapshot / `gh` as needed.
-2. Judge each finding (`fix` / `reject` / `defer`).
+1. Read review state from the Collector landing snapshot (and `gh` only as
+   needed to act on threads you are about to reply/resolve — not to re-run
+   the wait loop).
+2. Judge each finding (`fix` / `reject` / `defer`). Include CI check-runs from
+   the evidence: only report `converged:true` when bots are clean **and** CI is
+   green (or offline-empty-means-converged). If CI is still pending or red,
+   do **not** converge — continue or escalate as appropriate.
 3. **Execute** the side effects yourself **before** self-reporting disposition:
    - evidence-bearing thread **replies** (`gh api` comment on the review thread)
    - thread **resolve** after a fresh re-check confirms the fix
@@ -25,9 +33,6 @@ never replays residual side-effect plans after you return:
    complete, raise via the typed envelope (`status:"escalate"`) — do **not**
    report `converged:true` with unfinished effects. There is no host fail-safe
    second executor.
-
-Shared GitHub retry helpers (if present in the image) are for mechanical calls
-inside this Action only.
 
 ## Required output
 

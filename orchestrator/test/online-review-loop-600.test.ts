@@ -98,6 +98,7 @@ import {
 } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
+  toLandingSnapshot,
   verifyBlockedOnlyOnPendingCheckRuns,
   onlineReviewFixerNothingToFixStopSummary,
 } from "../src/family/onlineReviewLoop.js";
@@ -2550,7 +2551,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
           };
         },
         dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
+
         resolveFixCommitSha: async (envelopeFixSha) => {
           // #940 / K1: envelope SHA is host-owned via resolveFixCommitSha only
           // (not via applySideEffects). Online Review worker owns GH side effects solely (#1145).
@@ -2612,7 +2613,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
           return { kind: "verify", converged: true };
         },
         dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
+
       }),
     );
 
@@ -2667,7 +2668,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
+
     }));
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
     expect(verifyCalls).toBe(1);
@@ -2701,38 +2702,28 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      retriggerAfterFix: () => {},
+
     }));
     expect(fixerCalls).toBe(0);
     expect(accountedVerify).toEqual(
       expect.objectContaining({ kind: "verify", converged: true }),
     );
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate_raised");
-    expect(result.stopSummary?.summary).toMatch(/CI check-runs failed/i);
+    // #1145: host no longer dual-checks CI. Verify owns CI judgment; when the
+    // worker reports converged the stage trusts the disposition.
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
   });
 
-  it("pin online R2 Codex P2: pending CI re-polls — does not dispatch fixer", async () => {
-    let pollCalls = 0;
+  it("pin online R2 Codex P2 / #1145: Collector hands complete evidence once — no host CI re-poll", async () => {
+    // Pending-CI wait lives inside Collector. Stage does one Collector→Verify
+    // when evidence is already complete; host never sleep-loops on check-runs.
+    let collectorCalls = 0;
     let verifyCalls = 0;
     let fixerCalls = 0;
     const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
-      snapshot: async () => {
-        pollCalls += 1;
-        if (pollCalls === 1) {
-          return {
-            ...baseSnapshot,
-            checkRuns: [
-              {
-                id: 1,
-                name: "ci",
-                headSha: "head-1",
-                status: "in_progress",
-              },
-            ],
-          };
-        }
-        return baseSnapshot;
+      snapshot: baseSnapshot,
+      dispatchCollector: async () => {
+        collectorCalls += 1;
+        return { evidence: toLandingSnapshot(baseSnapshot) };
       },
       dispatchVerify: async () => {
         verifyCalls += 1;
@@ -2742,38 +2733,24 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      retriggerAfterFix: () => {},
     }));
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
-    expect(pollCalls).toBe(2);
-    expect(verifyCalls).toBe(2);
+    expect(collectorCalls).toBe(1);
+    expect(verifyCalls).toBe(1);
     expect(fixerCalls).toBe(0);
   });
 
-  it("#934 ID-004: pending CI keeps re-polling past bot overdue window — no host fail", async () => {
-    // Bot overdue window is for bots only. Pending-CI-only must sleep+continue
-    // with no finite BOT_OVERDUE terminal, then proceed when CI goes terminal.
-    let pollCalls = 0;
+  it("#934 ID-004 / #1145: host has no pending-CI overdue budget — Collector owns wait", async () => {
+    // Former host pending-CI sleep loop deleted. Collector returns only when
+    // evidence is complete; stage never terminals on BOT_OVERDUE for CI.
+    let collectorCalls = 0;
     let verifyCalls = 0;
     let fixerCalls = 0;
-    const pendingPolls = BOT_OVERDUE_POLL_COUNT + 2;
     const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
-      snapshot: async () => {
-        pollCalls += 1;
-        if (pollCalls <= pendingPolls) {
-          return {
-            ...baseSnapshot,
-            checkRuns: [
-              {
-                id: 1,
-                name: "ci",
-                headSha: "head-1",
-                status: "in_progress",
-              },
-            ],
-          };
-        }
-        return baseSnapshot;
+      snapshot: baseSnapshot,
+      dispatchCollector: async () => {
+        collectorCalls += 1;
+        return { evidence: toLandingSnapshot(baseSnapshot) };
       },
       dispatchVerify: async () => {
         verifyCalls += 1;
@@ -2783,16 +2760,14 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      retriggerAfterFix: () => {},
     }));
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("mergeable");
     expect(result.stopSummary?.summary ?? "").not.toMatch(
       /stayed non-terminal past the overdue poll window/i,
     );
-    // N pending-CI polls + 1 clear poll after CI terminal.
-    expect(pollCalls).toBe(pendingPolls + 1);
-    expect(verifyCalls).toBe(pendingPolls + 1);
+    expect(collectorCalls).toBe(1);
+    expect(verifyCalls).toBe(1);
     expect(fixerCalls).toBe(0);
   });
 
@@ -2805,7 +2780,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return { kind: "verify", converged: true } satisfies VerifyResult;
       },
       dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
+
     }));
     expect(landingBranch).toBe("family/epic-600");
   });
@@ -2837,7 +2812,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async () => "fix-sha",
     }));
     expect(result.ok).toBe(false);
@@ -2879,7 +2854,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerCommitted();
       },
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async () => "fix-sha",
     }));
     expect(result).toEqual({
@@ -2914,7 +2889,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
             };
       },
       dispatchFixer: async () => fixerNotFixed(),
-      retriggerAfterFix: () => {},
+
     }));
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
     expect(verifyCalls).toBe(2);
@@ -2929,7 +2904,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         terminalState: "decision_gate_raised",
       }),
       dispatchFixer: async () => fixerNotFixed(),
-      retriggerAfterFix: () => {},
+
     }));
     expect(stageResult.stopSummary).toEqual(
       onlineReviewFixerNothingToFixStopSummary(),
@@ -2944,40 +2919,45 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(familySummary.reason).not.toBe("infra_failure");
   });
 
-  it("pin r19: retriggerAfterFix throw → decision_gate_raised in-band with stopSummary", async () => {
+  it("pin r19: collector throw on post-fix re-entry → decision_gate_raised (#1145)", async () => {
+    // Post-fix retrigger/wait is Collector's job; host retriggerAfterFix is gone.
+    let roundSeen = 0;
     const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
       snapshot: baseSnapshot,
+      dispatchCollector: async (_landing, round) => {
+        roundSeen = round;
+        if (round > 1) {
+          throw new Error("collector: gh api failed during post-fix recollect");
+        }
+        return { evidence: toLandingSnapshot(baseSnapshot) };
+      },
       dispatchVerify: async () => ({ kind: "verify", converged: false }),
       dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {
-        throw new Error("retriggerBotsAndPoll: gh api failed");
-      },
       resolveFixCommitSha: async () => "fix-sha",
     }));
+    expect(roundSeen).toBe(2);
     expect(result).toEqual({
       ok: false,
       terminalState: "decision_gate_raised",
-      round: 1,
+      round: 2,
       stopSummary: expect.objectContaining({
         reason: "online_review_failed",
         summary: expect.stringMatching(
-          /host operation failed.*retriggerBotsAndPoll/s,
+          /collector dispatch failed.*post-fix recollect/s,
         ),
       }),
     });
   });
 
-
-  it("pin r20: Online Review seat evidence throw → decision_gate_raised in-band (#1145)", async () => {
-    // Evidence assembly lives inside the Online Review Action seat; failures
-    // surface as verify-dispatch infra, not a separate Runner poll phase.
+  it("pin r20: Collector seat evidence throw → decision_gate_raised in-band (#1145)", async () => {
+    // Evidence assembly lives inside the Collector Action; failures surface as
+    // collector-dispatch infra, not a Runner poll phase.
     const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
       snapshot: async () => {
-        throw new Error("waitForBotQuiescence: gh api rate limited");
+        throw new Error("collector: gh api rate limited");
       },
       dispatchVerify: async () => ({ kind: "verify", converged: true }),
       dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
     }));
     expect(result).toEqual({
       ok: false,
@@ -2985,7 +2965,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       round: 1,
       stopSummary: expect.objectContaining({
         reason: "online_review_failed",
-        summary: expect.stringMatching(/verify dispatch failed.*rate limited/s),
+        summary: expect.stringMatching(/collector dispatch failed.*rate limited/s),
       }),
     });
   });
@@ -2997,7 +2977,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("dispatchFamilyReviewWorker: container start failed");
       },
       dispatchFixer: async () => fixerCommitted(),
-      retriggerAfterFix: () => {},
+
     }));
     expect(result).toEqual({
       ok: false,
@@ -3017,7 +2997,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       dispatchFixer: async () => {
         throw new Error("dispatchFamilyReviewWorker: fixer residue unsafe");
       },
-      retriggerAfterFix: () => {},
+
     }));
     expect(result).toEqual({
       ok: false,
@@ -3032,11 +3012,15 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
 
   it("pin r33: fixer alreadySatisfied proceeds to re-verify (envelope fix SHA, no git re-read)", async () => {
     let resolveFixCalls = 0;
-    let retriggerCalls = 0;
+    let collectorCalls = 0;
     let fixingSha: string | undefined;
     const pinKey = "pin:r33";
     const result = await runOnlineReviewLoopStage(stageShip, onlineReviewDispatch({
       snapshot: baseSnapshot,
+      dispatchCollector: async () => {
+        collectorCalls += 1;
+        return { evidence: toLandingSnapshot(baseSnapshot) };
+      },
       dispatchVerify: async (_landing, round) => {
         if (round === 1) {
           return {
@@ -3055,9 +3039,6 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("crash-landed-sha"),
-      retriggerAfterFix: () => {
-        retriggerCalls += 1;
-      },
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
         expect(envelopeFixSha).toBe("crash-landed-sha");
@@ -3069,7 +3050,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     }));
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
     expect(resolveFixCalls).toBe(1);
-    expect(retriggerCalls).toBe(1);
+    // #1145: post-fix recollect is the next Collector seat (no host retrigger).
+    expect(collectorCalls).toBe(2);
     expect(fixingSha).toBe("crash-landed-sha");
   });
 
@@ -3099,7 +3081,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerCommitted(envelopeSha),
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async (envelopeFixSha) => {
         resolveFixCalls += 1;
         expect(envelopeFixSha).toBe(envelopeSha);
@@ -3140,9 +3122,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return malformed;
       },
-      retriggerAfterFix: () => {
-        throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
-      },
+
     }));
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
     expect(fixerCalls).toBe(1);
@@ -3218,7 +3198,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         };
       },
       dispatchFixer: async () => fixerAlreadySatisfied("family-landed-sha"),
-      retriggerAfterFix: () => {},
+
       resolveFixCommitSha: async (envelopeFixSha) => {
         expect(envelopeFixSha).toBe("family-landed-sha");
         recordedSha = envelopeFixSha;
@@ -3229,7 +3209,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(recordedSha).toBe("family-landed-sha");
   });
 
-  it("pin r17: worker converged:true + red CI parks with CI failure (no fixer)", async () => {
+  it("pin r17 / #1145: worker converged:true is trusted — host does not re-judge CI", async () => {
     let fixerCalls = 0;
     const snapshotWithRedCi: PrReviewSnapshot = {
       ...baseSnapshot,
@@ -3250,14 +3230,11 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         fixerCalls += 1;
         return fixerNotFixed();
       },
-      retriggerAfterFix: () => {},
     }));
-    // Deep self-check R8: do not dispatch fixer with empty fix marks on CI red
-    // (misleading "nothing to fix while findings remain").
+    // Verify owns CI completeness. Host no longer parks on red check-runs when
+    // the worker already reported converged (prompt forbids false green).
     expect(fixerCalls).toBe(0);
-    expect(result.ok).toBe(false);
-    expect(result.terminalState).toBe("decision_gate_raised");
-    expect(result.stopSummary?.summary).toMatch(/CI check-runs failed/i);
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
   });
 });
 
@@ -3568,6 +3545,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     try {
       const backend = new ReviewLoopFamilyBackend();
       backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "collector") {
+          const skeleton = skeletonReviewLoopWorkerResult("collector");
+          return skeleton ?? { kind: "failed", reason: "no collector skeleton" };
+        }
         if (spec.kind === "verify") {
           return {
             kind: "completed",
@@ -4215,9 +4196,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       });
       expect(result.ok).toBe(true);
       // #735: landing is a real agent worker, same path as verify (not forever-stub).
-      // #941: online-review dispatches verify only; landing Action owns S12 after.
-      expect(backend.reviewLoopKinds).toEqual(["verify"]);
-      expect(backend.landings[0]?.onlineReviewSnapshot).toBeDefined();
+      // #1145: Collector then Verify; landing Action owns S12 after online-review.
+      expect(backend.reviewLoopKinds).toEqual(["collector", "verify"]);
+      const verifyLanding = backend.landings.find((_, i) => backend.reviewLoopKinds[i] === "verify");
+      expect(verifyLanding?.onlineReviewSnapshot).toBeDefined();
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

@@ -1,14 +1,17 @@
 /**
- * #1145 test helper — build OnlineReviewLoopDispatch without host poll /
- * applySideEffects dual-owner seams.
+ * #1145 test helper — build OnlineReviewLoopDispatch with independent
+ * Collector + Verify seats (no host poll / retriggerAfterFix dual-owner seams).
  */
 import type { PrReviewSnapshot } from "../../src/botPolling.js";
+import { toLandingSnapshot } from "../../src/family/onlineReviewLoop.js";
 import type {
+  OnlineReviewCollectorDispatchResult,
   OnlineReviewLoopDispatch,
   OnlineReviewVerifyDispatchResult,
 } from "../../src/family/onlineReviewLoop.js";
 import type {
   FixerResult,
+  OnlineReviewLandingSnapshot,
   VerifyResult,
   WorkerLandingPayload,
 } from "../../src/types.js";
@@ -21,14 +24,29 @@ export type LegacyVerifyReturn =
         WorkerLandingPayload["rawReviewerArtifacts"]
       >;
       readonly verify?: VerifyResult;
-    };
+    }
+  | OnlineReviewVerifyDispatchResult
+  | (OnlineReviewVerifyDispatchResult & {
+      readonly snapshot?: PrReviewSnapshot;
+    });
 
-function normalize(
-  raw: LegacyVerifyReturn | OnlineReviewVerifyDispatchResult | undefined,
+function snapshotToEvidence(
   snapshot: PrReviewSnapshot,
+): OnlineReviewLandingSnapshot {
+  return toLandingSnapshot(snapshot);
+}
+
+function normalizeVerify(
+  raw: LegacyVerifyReturn | undefined,
 ): OnlineReviewVerifyDispatchResult {
-  if (raw && typeof raw === "object" && "snapshot" in raw) {
-    return raw as OnlineReviewVerifyDispatchResult;
+  if (raw && typeof raw === "object" && "verify" in raw && !("converged" in raw)) {
+    const r = raw as OnlineReviewVerifyDispatchResult & {
+      artifacts?: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
+    };
+    return {
+      ...(r.verify !== undefined ? { verify: r.verify } : {}),
+      ...(r.artifacts !== undefined ? { artifacts: r.artifacts } : {}),
+    };
   }
   if (
     raw &&
@@ -40,21 +58,30 @@ function normalize(
       verify?: VerifyResult;
     };
     return {
-      snapshot,
       ...(r.artifacts !== undefined ? { artifacts: r.artifacts } : {}),
       ...(r.verify !== undefined ? { verify: r.verify } : {}),
     };
   }
   if (raw && typeof raw === "object" && "converged" in raw) {
-    return { snapshot, verify: raw as VerifyResult };
+    return { verify: raw as VerifyResult };
   }
-  return { snapshot };
+  return {};
 }
 
+/**
+ * Build stage dispatch for unit tests.
+ * - `snapshot` feeds the default Collector evidence (host does not poll).
+ * - `dispatchVerify` is judgment only (may still return legacy shapes).
+ * - optional `dispatchCollector` overrides the default snapshot→evidence seat.
+ */
 export function onlineReviewDispatch(input: {
   readonly snapshot:
     | PrReviewSnapshot
     | ((round: number) => PrReviewSnapshot | Promise<PrReviewSnapshot>);
+  readonly dispatchCollector?: (
+    landing: WorkerLandingPayload,
+    round: number,
+  ) => Promise<OnlineReviewCollectorDispatchResult>;
   readonly dispatchVerify: (
     landing: WorkerLandingPayload,
     round: number,
@@ -62,22 +89,25 @@ export function onlineReviewDispatch(input: {
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  readonly retriggerAfterFix?: () => void | Promise<void>;
   readonly resolveFixCommitSha?: (
     envelopeFixSha: string,
   ) => string | Promise<string>;
 }): OnlineReviewLoopDispatch {
   return {
+    dispatchCollector:
+      input.dispatchCollector ??
+      (async (_landing, round) => {
+        const snapshot =
+          typeof input.snapshot === "function"
+            ? await input.snapshot(round)
+            : input.snapshot;
+        return { evidence: snapshotToEvidence(snapshot) };
+      }),
     dispatchVerify: async (landing, round) => {
-      const snapshot =
-        typeof input.snapshot === "function"
-          ? await input.snapshot(round)
-          : input.snapshot;
       const raw = await input.dispatchVerify(landing, round);
-      return normalize(raw, snapshot);
+      return normalizeVerify(raw);
     },
     dispatchFixer: input.dispatchFixer,
-    retriggerAfterFix: input.retriggerAfterFix ?? (() => {}),
     ...(input.resolveFixCommitSha !== undefined
       ? { resolveFixCommitSha: input.resolveFixCommitSha }
       : {}),
