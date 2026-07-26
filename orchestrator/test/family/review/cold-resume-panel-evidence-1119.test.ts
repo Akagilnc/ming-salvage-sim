@@ -321,6 +321,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
             event: "worker_dispatched",
             phase: "final",
             cmrPass: "completeness",
+            expectedCourtGeneration: 2,
           } as FamilyLedgerEntry,
         ],
         "completeness",
@@ -328,6 +329,7 @@ describe("#1119 A→B crash windows (file ledgerDir)", () => {
     ).toEqual({
       pending: true,
       pendingPanelReturn: true,
+      expectedCourtGeneration: 2,
     });
   });
 

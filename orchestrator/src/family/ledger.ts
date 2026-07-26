@@ -559,7 +559,16 @@ export function pendingBuilderReviewFromFamilyLedger(
     if (status === "worker_dispatched") {
       if (entry.cmrPass !== pass) continue;
       if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;
-      return { pending: true, pendingPanelReturn: true };
+      const expectedCourtGeneration = normalizeCourtGeneration(
+        entry.expectedCourtGeneration,
+      );
+      return {
+        pending: true,
+        pendingPanelReturn: true,
+        ...(expectedCourtGeneration !== undefined
+          ? { expectedCourtGeneration }
+          : {}),
+      };
     }
     if (entry.cmrPass !== pass) continue;
     if (cmrBarrierPhaseOf(entry.phase) !== barrierPhase) continue;

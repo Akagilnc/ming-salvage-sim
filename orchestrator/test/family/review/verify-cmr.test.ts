@@ -1892,6 +1892,53 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ]);
   });
 
+  it("resumes a parked correctness decision before reopening completeness", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      }),
+    });
+    backend.currentFamilyHead = "current-head";
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "current-head",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "current-head",
+        judgeStatus: "escalate",
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "current-head",
+      escalationAnswer: {
+        event: "escalation_answered",
+        answer: "owner answer for correctness",
+        source: "human",
+      },
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
   it("#881: resume re-verifies a prior pass when HEAD advanced outside the barrier (no fix chain)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
