@@ -3092,6 +3092,9 @@ async function runIntegratedCmrPass(input: {
         ...(openedJudgeSessionId !== undefined
           ? { judgeSessionId: openedJudgeSessionId }
           : {}),
+        ...(expectedCourtGeneration !== undefined
+          ? { expectedCourtGeneration }
+          : {}),
       });
       return {
         result: { ok: true, ran: true },
@@ -3720,6 +3723,7 @@ async function runCmrCourtLoop(input: {
   const routeFingerprint = modelRouteFingerprint(input.resolvedRoute);
   const triggerRequiresRestart =
     restartTrigger?.pendingReview === true &&
+    restartTrigger.pendingDecisionAnswer !== true &&
     !passAcceptedAfterTrigger({
       ledger: await familyBackend.readFamilyLedger(),
       pass,
