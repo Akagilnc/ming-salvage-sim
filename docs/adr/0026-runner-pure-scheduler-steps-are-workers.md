@@ -17,7 +17,7 @@ partially-superseded-by: ADR 0030; ADR 0131; issue #869
 ## Decision
 
 1. 写码、验证、评审、修复、合并、ship、线上评审、文档发布与清理，分别由拥有该专业能力和外部副作用的 worker / Action 完成。
-2. Runner 只在 #869 的固定位置调用这些 Action，并且只处理 ADR 0131 的三种交通信号：进程 exit code、reviewer 自报 open-count、worker 主动提交的 decision gate。
+2. Runner 只在 #869 的固定位置调用这些 Action，并且只处理 ADR 0131 的三种交通信号：进程 exit code、judge typed tri-state、worker 主动提交的 decision gate。
 3. Runner 不读取 worker 的终态报告、输出格式、findings、测试、commit、HEAD、diff、PR 或其他完成证据，也不内联任何 Action 的专业方法。
 4. issue、worktree、image / soul / skill、Lineage 与外部服务各自由其专业所有者读取或维护；Runner 不把这些材料重新解释成第四种交通信号。
 5. worker 只完成当前角色，不自行跨到下一角色；准确接力只读 #869。

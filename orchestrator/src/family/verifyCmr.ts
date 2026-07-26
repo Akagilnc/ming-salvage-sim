@@ -78,7 +78,7 @@ import {
   courtGenerationFromDurableEvidence,
   ensureFamilyCmrPanelEvidence,
   landedPanelLegEvidence,
-} from "./cmrPanelLegs.js";
+} from "./reviewPanelLegs.js";
 import { dispatchFamilyWorkerOrAbort as dispatchOrAbort } from "./familyProcessRootDispatch.js";
 import {
   executeAdvanceCoderSuggestion,
@@ -123,9 +123,7 @@ import {
   familyJudgeResumeSessionIdFromPriorRows,
   priorFamilyJudgeVerdictRowsFromLedger,
   requireFixPacketBody,
-  storeStatusByIdentityFromDispositions,
 } from "../judgeStation.js";
-import type { FindingStoreStatus } from "../findingsStateStore.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import { emitJudgeProgress } from "../progressBroadcast.js";
 import { hubNextFromFamilyClosureAction } from "../residentJudgeHub.js";
@@ -189,6 +187,40 @@ export { billingPoolForFamilyWorker, familyWorkerSlotForDispatch };
 export type VerifyCmrPhase = "wave" | "correctness_checkpoint" | "final";
 
 export type { FamilyStageFailureStatus };
+
+/**
+ * Project the builder control set from the canonical typed judge disposition
+ * envelope. The closure chooses only the route edge; live identities remain
+ * typed judge cargo and are never reconstructed from reviewer prose.
+ */
+function liveIdentityKeysFromJudgeOutput(output: unknown): string[] {
+  if (
+    output === null ||
+    typeof output !== "object" ||
+    !("kind" in output) ||
+    !("status" in output) ||
+    (output as { readonly kind?: unknown }).kind !== "judge" ||
+    (output as { readonly status?: unknown }).status !== "continue"
+  ) {
+    return [];
+  }
+  const dispositions = (
+    output as {
+      readonly findingDispositions?: ReadonlyArray<{
+        readonly action?: unknown;
+        readonly identityKey?: unknown;
+      }>;
+    }
+  ).findingDispositions;
+  if (!Array.isArray(dispositions)) return [];
+  return dispositions.flatMap((row) =>
+    row.action === "live" &&
+    typeof row.identityKey === "string" &&
+    row.identityKey.length > 0
+      ? [row.identityKey]
+      : [],
+  );
+}
 
 /**
  * The context the verify-cmr hook needs to do its (eventual #296) work.
@@ -852,11 +884,10 @@ async function runWaveVerifyJudgeCourt(input: {
           }),
         });
       }
+      const blockingIdentityKeys =
+        liveIdentityKeysFromJudgeOutput(judgeResult.output);
       // Empty continue must not spin builder (shared gate with CMR / per-slice).
-      if (
-        closure.blockingFindingCount === 0 &&
-        closure.blockingIdentityKeys.length === 0
-      ) {
+      if (blockingIdentityKeys.length === 0) {
         const reason =
           `${label} judge continue with 0 live findings ` +
           `(court contract drift; empty continue must not spin coder-fix)`;
@@ -889,10 +920,8 @@ async function runWaveVerifyJudgeCourt(input: {
           : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         fixPacketBody,
-        blockingFindingIdentityKeys: closure.blockingIdentityKeys,
-        ...(closure.blockingFindingCount !== undefined
-          ? { blockingFindingCount: closure.blockingFindingCount }
-          : {}),
+        blockingFindingIdentityKeys: blockingIdentityKeys,
+        blockingFindingCount: blockingIdentityKeys.length,
         ...(familyHeadBefore !== undefined ? { familyHeadBefore } : {}),
         ...(fixerSessionId !== undefined ? { resumeSessionId: fixerSessionId } : {}),
       });
@@ -3026,35 +3055,7 @@ async function runIntegratedCmrPass(input: {
   // open-count second closer). Live kind:"judge" is direct.
   const rawOutput = cmrResult.output;
   const judgeTraffic = rawOutput;
-  // #952 R7-C1: family ledger stores T2 schema dispositions (refute/suppress/live)
-  // on prior court rows — map terminals to store statuses so illegal
-  // refuted→suppressed morphs fail at the shared write point (R6-C2 consumer).
-  // Do not invent a second store; reuse priorJudgeVerdicts already loaded above.
-  const priorSchemaStoreRows: Array<{
-    readonly identityKey: string;
-    readonly status: FindingStoreStatus;
-  }> = [];
-  for (const row of priorJudgeVerdicts) {
-    for (const d of row.findingDispositions ?? []) {
-      if (d.action === "refute") {
-        priorSchemaStoreRows.push({
-          identityKey: d.identityKey,
-          status: "refuted",
-        });
-      } else if (d.action === "suppress") {
-        priorSchemaStoreRows.push({
-          identityKey: d.identityKey,
-          status: "suppressed",
-        });
-      }
-    }
-  }
-  const currentStoreStatusByIdentity =
-    storeStatusByIdentityFromDispositions(priorSchemaStoreRows);
-  const closure = closeFamilyCourtFromJudgeOutput(
-    judgeTraffic,
-    currentStoreStatusByIdentity,
-  );
+  const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
   const openedJudgeSessionId =
     typeof cmrResult.sessionId === "string" && cmrResult.sessionId.length > 0
       ? cmrResult.sessionId
@@ -3078,8 +3079,6 @@ async function runIntegratedCmrPass(input: {
       issue: familyIssue ?? null,
       step: `cmr:${pass}`,
       verdict: judgeTraffic.status,
-      findingDispositions: judgeDispositionsForLedger,
-      findings: judgeTraffic.findings,
     });
   }
   // #1094 F4: producer-authored skippedLegs are authoritative when panel legs
@@ -3284,9 +3283,9 @@ async function runIntegratedCmrPass(input: {
       `integrated cmr ${pass}: hub resume_builder without continue action (${closure.action})`,
     );
   }
-  const blockingFindings = closure.blocking;
-  const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
-  const blockingFindingCount = closure.blockingFindingCount;
+  const blockingFindingIdentityKeys =
+    liveIdentityKeysFromJudgeOutput(judgeTraffic);
+  const blockingFindingCount = blockingFindingIdentityKeys.length;
 
   // #919 M1 / #930 AC: true empty continue is court contract drift — never
   // empty-spin family coder-fix. Terminal-only already folded to pass upstream

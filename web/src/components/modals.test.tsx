@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatModal, EdictModal, ReportModal } from "./modals";
-import type { BudgetAccount, GameState, Minister, PendingActionFailure } from "../types";
+import type { BudgetAccount, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,31 +49,37 @@ function renderModal(props: {
   onRetryReply?: () => void;
   extractionPendingCount?: number;
   onRetryExtraction?: () => void;
+  suggestions?: Suggestion[];
+  onSend?: (text?: string) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() =>
-    root.render(
+
+  // Controlled input lives in the harness so prefix-chip clicks update textarea.value
+  // (ChatModal is a controlled component; frozen input="" would hide real fill).
+  function Harness() {
+    const [input, setInput] = React.useState("");
+    return (
       <ChatModal
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         busy={props.busy ?? ""}
         chat={props.chat ?? []}
-        suggestions={[]}
+        suggestions={props.suggestions ?? []}
         pendingUserMessage=""
         streamingMinisterMessage=""
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
         canUndoLastChat={false}
         composerHint=""
-        input=""
+        input={input}
         error=""
         secretOrders={[]}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
-        onInput={() => {}}
-        onSend={() => {}}
+        onInput={(value) => setInput(value)}
+        onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
         onRetryExtraction={props.onRetryExtraction}
@@ -84,11 +90,16 @@ function renderModal(props: {
         onClose={() => {}}
         onCancel={props.onCancel}
       />
-    )
-  );
+    );
+  }
+
+  act(() => {
+    root.render(<Harness />);
+  });
   // Register for centralised teardown (afterEach) — no inline cleanup, so a failing
   // assertion can never skip unmount and leak a root into the next test.
   mountedRoots.push({ root, host });
+  return host;
 }
 
 function renderReportModal(props: { report: string }) {
@@ -270,6 +281,45 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).toContain("密令落库失败");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(button).toBeTruthy();
+  });
+});
+
+describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
+  /** Production suggestions_for payload after ADR 0042 / #527 cut. */
+  const PREFIX_SUGGESTIONS: Suggestion[] = [
+    { label: "拟旨", text: "拟旨如下：", prefix: true },
+    { label: "下密令", text: "密令如下：", prefix: true },
+  ];
+
+  it("renders both prefix buttons; click fills textarea; never auto-sends", () => {
+    const onSend = vi.fn();
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      suggestions: PREFIX_SUGGESTIONS,
+      onSend,
+    });
+
+    const hitlButtons = Array.from(host.querySelectorAll(".hitl-bar button"));
+    const labels = hitlButtons.map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["拟旨", "下密令"]);
+
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+
+    const draftBtn = hitlButtons.find((b) => b.textContent?.trim() === "拟旨") as HTMLButtonElement;
+    act(() => {
+      draftBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(textarea.value).toBe("拟旨如下：");
+    expect(onSend).not.toHaveBeenCalled();
+
+    const secretBtn = hitlButtons.find((b) => b.textContent?.trim() === "下密令") as HTMLButtonElement;
+    act(() => {
+      secretBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(textarea.value).toBe("密令如下：");
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
 

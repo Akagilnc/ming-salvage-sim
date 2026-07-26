@@ -61,7 +61,7 @@ import {
 } from "../../helpers/judge-fixtures.js";
 import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
 import { buildExplicitLandingLiveHooks } from "../../../src/family/landing.js";
-import { completeCmrPanelLegWorker } from "../../helpers/cmr-panel-leg-dispatch.js";
+import { completeReviewPanelLegWorker as completeCmrPanelLegWorker } from "../../helpers/review-panel-leg-dispatch.js";
 
 
 /**

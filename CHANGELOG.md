@@ -4,6 +4,42 @@
 
 ## [未发布]
 
+## [0.43.2.0] - 2026-07-25
+
+### Fixed
+- **#1137 判官 session 恢复**：S6 判官续跑收到宿主返回的 session-not-found 失败回执时，按既有连续性丢失路径携既判史 fresh 重开；失败派发残留的 runner session id 不再覆盖最后一个真实判官 session。
+
+## [0.43.1.0] - 2026-07-25
+
+### Fixed
+- **#1135 S6 判官模型迁移续跑**：旧判官 session 与当前 verify 席模型不兼容时，先持久化 `session_continuity_lost`，再携既判史与 owner answer 从同一 S6 边界 fresh 重开；原 scene、worktree 与已完成步骤保持不变。
+- continuity-loss 台账写入失败时改为 `record_persist_failed` 响亮终止，且不会先派出新的 S6 判官；写入后若进程中断，复飞也不会重复追加同一条 loss 记录。
+
+## [0.43.0.0] - 2026-07-25
+
+### Added
+- **#513 / #515 皇帝动作语法首批落地**：自由文本旨意改走统一动作聚类判词与列表形传输契约，由共享主意图选择后经既有确认闸门暂存、物化与撤回；自然语言新建密令在无旧令和已有旧令两种场景都按结构化判词正确落案。
+
+### Changed
+- **#527 召对快捷入口收敛**：移除替皇帝说话的五个询问 chips，只保留「拟旨」「下密令」两个意图前缀；Web 与 CLI 共用同一分类、字段校验和主意图选择规则。
+- 动作字段统一由只读 `FieldSpec` 目录校验与归一，空白枚举按缺席处理，非空非法枚举继续响亮拒收。
+
+### Fixed
+- 分类器判为新建密令时不再被已有 active 密令的抽取结果误路由成更新，也不再依赖自由散文关键词或正则触发机械后果。
+- 清除旧 registry 索引、重复草稿扫描、测试注入 helper 与前端 modal 测试夹具中的死路径，保留真实入口的 P5 并行、撤回与 chips 行为回归。
+
+## [0.42.1.0] - 2026-07-25
+
+### Changed
+- 判官 Action 统一拥有 finding 状态写入、合法翻态与同 session 自纠；Runner 只运输 typed verdict 与判官原写的 fix packet。
+
+### Fixed
+- **#1128 resident judge 续跑**：明确 session 丢失时记录 `session_continuity_lost`，携既判史从原 S6 边界 fresh 重开；网络、鉴权与协议错误仍响亮失败。
+- **#924 coder 续跑回归**：coder session 明确失效时继续保留 worktree 进度并 fresh-run，不因判官恢复改造误杀切片。
+
+### Removed
+- 删除 Runner 内 findings-store 投影、disposition/open-count 判路与 residual 法庭，以及依赖这些旧职责的陈旧测试。
+
 ## [0.42.0.0] - 2026-07-22
 
 ### Added
