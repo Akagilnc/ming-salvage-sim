@@ -51,7 +51,8 @@ for the same body. Shape of the cargo body (when evidence is ready):
 }
 ```
 
-Completed thin envelope (evidence lives on sidecar / cargoPointer only):
+Completed thin envelope (evidence is optional opaque cargo on sidecar /
+cargoPointer / `<collector>` — never a typed traffic field):
 
 ```text
 <onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>
@@ -69,5 +70,11 @@ Rules:
 - Role cargo never carries escalate or judge enum — fate is the typed envelope;
   judgment is Verify's job.
 - Do not set `converged`, `findingDispositions`, or fixer plan fields.
+- Evidence cargo is **optional** on completed (ADR 0131 cargo ≠ fate). Sparse
+  or missing evidence does not fail the process; escalate yourself when you
+  cannot continue collection.
+- Post-fix retrigger / limited wait / overdue exit are **your** methods (see
+  collector soul + `collectorPostFixRetriggerPlan` /
+  `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`). Host does not poll or re-trigger.
 - This seat is single-iteration. Completion is clean exit + legal typed
   envelope — no STEP_COMPLETE password.

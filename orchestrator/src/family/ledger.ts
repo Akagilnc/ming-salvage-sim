@@ -1205,13 +1205,30 @@ export function familyOnlineReviewLoopInProgressForHead(
 ): boolean {
   const head = familyHeadAfter.trim();
   if (head.length === 0) return false;
-  return entries.some(
-    (e) =>
-      (e.event === "online_review_fix_committed" &&
-        e.familyHeadAfter === head) ||
-      (e.event === "online_review_round_retrigger" &&
-        e.roundTriggerHeadOid === head),
-  );
+  return entries.some((e) => {
+    if (
+      e.event === "online_review_fix_committed" &&
+      e.familyHeadAfter === head
+    ) {
+      return true;
+    }
+    // Live truth (#1145): Action-owned Collector checkpoint evidence head.
+    if (
+      e.event === "online_review_collector_completed" &&
+      e.collectorEvidenceCargo?.headOid === head
+    ) {
+      return true;
+    }
+    // Legacy ledger rows only — writer deleted in #1145; keep read width so
+    // historical jsonl still resumes. Not a parallel live write path.
+    if (
+      e.event === "online_review_round_retrigger" &&
+      e.roundTriggerHeadOid === head
+    ) {
+      return true;
+    }
+    return false;
+  });
 }
 
 /**
@@ -1241,10 +1258,14 @@ export function familyShippedRecordForReviewLoopResume(
       entry.event === "online_review_fix_committed" &&
       typeof entry.familyHeadAfter === "string"
         ? entry.familyHeadAfter.trim()
-        : entry.event === "online_review_round_retrigger" &&
-            typeof entry.roundTriggerHeadOid === "string"
-          ? entry.roundTriggerHeadOid.trim()
-          : undefined;
+        : entry.event === "online_review_collector_completed" &&
+            typeof entry.collectorEvidenceCargo?.headOid === "string"
+          ? entry.collectorEvidenceCargo.headOid.trim()
+          : // Legacy read-only width (#1145 — no live writer).
+            entry.event === "online_review_round_retrigger" &&
+              typeof entry.roundTriggerHeadOid === "string"
+            ? entry.roundTriggerHeadOid.trim()
+            : undefined;
     if (markerHead === undefined || markerHead !== currentHead) {
       continue;
     }

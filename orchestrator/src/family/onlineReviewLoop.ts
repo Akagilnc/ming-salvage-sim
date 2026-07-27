@@ -28,10 +28,7 @@ import type {
   VerifyResult,
   WorkerLandingPayload,
 } from "../types.js";
-import {
-  fixerEnvelopeFixCommitSha,
-  fixerHasFixCommit,
-} from "../reviewLoopOutcome.js";
+import { fixerEnvelopeFixCommitSha } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
@@ -65,8 +62,6 @@ export function onlineReviewRoundFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly onlineReviewRound?: number;
-    readonly roundTriggerHeadOid?: string;
-    readonly branchHEAD?: string;
   }>,
 ): number {
   // Single truth: completed fixer rounds. Collector checkpoint is per-round
@@ -308,9 +303,11 @@ function convergenceHeadForLanding(input: {
 export function buildOnlineReviewBaseLanding(
   ship: ShipResult,
   round: number,
+  postFixCommitSha?: string,
 ): WorkerLandingPayload {
   const prHead = convergenceHeadForLanding({
     shipPrHead: ship.prHead,
+    postFixCommitSha,
   });
   return {
     shipDelivery: {
@@ -323,7 +320,6 @@ export function buildOnlineReviewBaseLanding(
   };
 }
 
-/** Write the bot snapshot JSON the verify worker reads (state dir, outside git). */
 export interface BotPollClock {
   sleep(ms: number): void | Promise<void>;
 }
@@ -442,14 +438,26 @@ function fixerPacketFromVerify(verify: VerifyResult | undefined): {
   };
 }
 
-/** Legal fixer no-op: no new commit and not alreadySatisfied-with-SHA. */
-function isFixerLegalNoOp(output: FixerResult | undefined): boolean {
-  if (output === undefined) return false;
-  if (output.committed) return false;
-  if (output.alreadySatisfied === true && fixerHasFixCommit(output)) {
-    return false;
+function applyVerifyDisposition(
+  verify: VerifyResult | undefined,
+  round: number,
+): OnlineReviewLoopStageResult | "continue" {
+  if (verify === undefined) return "continue";
+  const disposition = onlineReviewJudgeDisposition(verify);
+  if (disposition === "escalate") {
+    return {
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round,
+      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+    };
   }
-  return !fixerHasFixCommit(output);
+  if (disposition === "converged") {
+    // #941 / ID-013: online-review ends at mergeable. Landing Action owns
+    // docs release, merge, MERGED confirm, close, and cleanup.
+    return { ok: true, terminalState: "mergeable", round };
+  }
+  return "continue";
 }
 
 /**
@@ -462,7 +470,7 @@ export async function runOnlineReviewLoopStage(
   dispatch: OnlineReviewLoopDispatch,
   opts?: {
     readonly initialRound?: number;
-    /** Prior fixing commit SHA for recheck side-effect resolve (#600). */
+    /** Prior fixing commit SHA — surfaces post-fix head to Collector landing. */
     readonly initialFixCommitSha?: string;
     /** Durable fixer authorization reconstructed for a post-crash recheck. */
     readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
@@ -479,6 +487,8 @@ export async function runOnlineReviewLoopStage(
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
+  /** Last known fix head for Collector post-fix landing (opaque transport). */
+  let lastFixCommitSha = opts?.initialFixCommitSha;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -490,7 +500,7 @@ export async function runOnlineReviewLoopStage(
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
     // Base landing only — Collector owns GH evidence (#1145).
-    let landing = buildOnlineReviewBaseLanding(ship, round);
+    let landing = buildOnlineReviewBaseLanding(ship, round, lastFixCommitSha);
     if (round > 1) {
       landing = {
         ...landing,
@@ -512,6 +522,10 @@ export async function runOnlineReviewLoopStage(
       const collected = await dispatch.dispatchCollector(landing, round);
       // Opaque evidence transport — Runner does not interpret bot/CI fields.
       // Sparse cargo does not change fate (ADR 0131).
+      const baseHead =
+        lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
+          ? lastFixCommitSha
+          : ship.prHead;
       landing = {
         ...landing,
         ...(collected.evidence !== undefined
@@ -523,8 +537,8 @@ export async function runOnlineReviewLoopStage(
           ...(collected.evidence !== undefined &&
           collected.evidence.headOid.length > 0
             ? { prHead: collected.evidence.headOid }
-            : ship.prHead !== undefined && ship.prHead.length > 0
-              ? { prHead: ship.prHead }
+            : baseHead !== undefined && baseHead.length > 0
+              ? { prHead: baseHead }
               : {}),
           ...(ship.status !== undefined ? { status: ship.status } : {}),
         },
@@ -562,28 +576,10 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
-    let disposition: OnlineReviewJudgeDisposition = "continue";
 
-    if (verify !== undefined) {
-      // #1145: isRecheck is Verify-owned cargo — Runner never overwrites it.
-      disposition = onlineReviewJudgeDisposition(verify);
-
-      if (disposition === "escalate") {
-        return {
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: onlineReviewFixerNothingToFixStopSummary(),
-        };
-      }
-
-      // #1145: Verify owns CI+bot completeness judgment. Runner trusts the
-      // typed disposition only — no host check-run reread / pending sleep.
-      if (disposition === "converged") {
-        // #941 / ID-013: online-review ends at mergeable. Landing Action owns
-        // docs release, merge, MERGED confirm, close, and cleanup.
-        return { ok: true, terminalState: "mergeable", round };
-      }
+    {
+      const terminal = applyVerifyDisposition(verify, round);
+      if (terminal !== "continue") return terminal;
     }
     // Sparse / unusable verify cargo (no typed disposition) continues to fixer
     // with raw artifacts — never host empty-success (#940 / ID-012).
@@ -613,33 +609,64 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
 
-    // #1145: legal no-op returns to the SAME judge (same round). Do not round++
-    // and do not open a new Collector — next loop hits collector checkpoint and
-    // re-enters Verify. alreadySatisfied-with-SHA is not a no-op.
-    if (isFixerLegalNoOp(fixerOutput)) {
-      continue;
-    }
+    // #1145: EVERY fixer result is opaque cargo back to the SAME Verify judge.
+    // Do not branch topology on committed / alreadySatisfied / fixCommitSha
+    // (no fourth state, no isFixerLegalNoOp control-flow fork).
+    landing = {
+      ...landing,
+      ...(fixerOutput !== undefined ? { fixerResult: fixerOutput } : {}),
+    };
 
-    if (fixerOutput !== undefined && fixerHasFixCommit(fixerOutput)) {
-      const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
-      if (envelopeFixSha !== undefined) {
-        try {
-          // Persist envelope SHA for ledger / recheck landing. Next iteration's
-          // Collector owns post-fix retrigger/query/wait (#1145).
-          if (dispatch.resolveFixCommitSha) {
-            await dispatch.resolveFixCommitSha(envelopeFixSha);
-          }
-        } catch (err) {
-          if (err instanceof OnlineReviewLoopTerminal) {
-            throw err;
-          }
-          return decisionGateFromDispatchInfra(round, "fixer", err);
+    // Envelope SHA bookkeeping only — presence does not fork the next seat.
+    const envelopeFixSha =
+      fixerOutput !== undefined
+        ? fixerEnvelopeFixCommitSha(fixerOutput)
+        : undefined;
+    if (envelopeFixSha !== undefined && dispatch.resolveFixCommitSha) {
+      try {
+        const resolved = await dispatch.resolveFixCommitSha(envelopeFixSha);
+        if (typeof resolved === "string" && resolved.length > 0) {
+          lastFixCommitSha = resolved;
+        } else {
+          lastFixCommitSha = envelopeFixSha;
         }
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) {
+          throw err;
+        }
+        return decisionGateFromDispatchInfra(round, "fixer", err);
       }
     }
-    // #1145: do not accumulate findingDispositions as a parallel history true
-    // source. Next-round recheck keys come from this round's opaque packet and
-    // durable fix_committed markers only.
+
+    // Same-round Verify re-entry with fixer cargo — skip Collector so frozen
+    // checkpoint evidence is not the only thing the judge sees.
+    try {
+      const recheck = await dispatch.dispatchVerify(landing, round);
+      verify = recheck.verify;
+      if (recheck.artifacts !== undefined) {
+        landing = {
+          ...landing,
+          rawReviewerArtifacts: recheck.artifacts,
+        };
+      }
+    } catch (err) {
+      if (err instanceof OnlineReviewLoopTerminal) {
+        throw err;
+      }
+      return decisionGateFromDispatchInfra(round, "verify", err);
+    }
+
+    {
+      const terminal = applyVerifyDisposition(verify, round);
+      if (terminal !== "continue") return terminal;
+    }
+
+    // Judge said continue after seeing fixer cargo → next Collector cycle
+    // (post-fix retrigger/wait owned by Collector). Round advances only on
+    // three-state continue, never on fixer envelope fields.
+    const nextPacket = fixerPacketFromVerify(verify);
+    recheckFixMarkedFindingIdentityKeys = nextPacket.fixMarkedFindingIdentityKeys;
+    recheckFixMarkedFindingThreads = nextPacket.fixMarkedFindingThreads;
     round += 1;
   }
 }

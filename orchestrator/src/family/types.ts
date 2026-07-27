@@ -122,6 +122,11 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "escalation_answered",
   "admission_skipped",
   "online_review_fix_committed",
+  /**
+   * Legacy ledger status only (#1145) — writer deleted; keep enum member for
+   * historical jsonl decode. Live resume truth is fix_committed +
+   * collector_completed (+ mergeable completion).
+   */
   "online_review_round_retrigger",
   /** #1145 — Collector completed wait/evidence checkpoint for durable resume. */
   "online_review_collector_completed",

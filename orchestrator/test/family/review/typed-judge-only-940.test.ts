@@ -127,7 +127,9 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       round: 5,
     });
     expect(fixerCalls).toBe(4);
-    expect(verifyCalls).toBe(5);
+    // #1145: each fixer returns to the same-round Verify (opaque cargo) before
+    // three-state continue opens the next Collector — 4×(V+F+V) + final V.
+    expect(verifyCalls).toBe(9);
   });
 
   it("POSITIVE: worker escalate (decision_gate) ends the loop without host empty-success", async () => {

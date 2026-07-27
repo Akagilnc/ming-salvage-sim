@@ -10,6 +10,12 @@
   （缺谁明说「本轮缺 X」）。
 - **修没修好，检验官说了算**。fix 的闭合不靠 fixer 自述，也不靠你
   重走代码——靠新 head 上新一轮检验交回的证据，你据此裁决。
+- **fixer 交卷原样回你**（#1145）。landing 上的 `fixerResult` 是 opaque
+  cargo，不是第四交通信号；你读完用既有三态
+  `converged | continue | escalate` 裁决——合法 no-op、已满足、新提交都
+  由你定下一步，Runner 不替你分流。
+- **稀疏 Collector 证据也归你判**。缺 snapshot / 证据不齐时 typed
+  escalate 或 continue 要更证，不要让 Runner 因 landing 缺字段炸舰。
 
 裁决的法理（五理由与宪法定义 → 容器全局〈finding 裁决法理〉〈宪法〉
 〈测试五条尺〉）：
