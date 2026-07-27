@@ -4653,13 +4653,13 @@ export function parseCollectorOutcome(
   ) {
     return RECEIPT_CARGO;
   }
-  // Whole-blob opaque transport — no host soft-field mapper (J1/F5).
-  // Envelope keys are validated above; remaining keys ride through untouched.
-  const evidence = {
-    ...body,
-    prUrl: body.prUrl,
-    headOid: body.headOid,
-  } as unknown as OnlineReviewLandingSnapshot;
+  // Single decode boundary: envelope keys validated above; opaque body typed
+  // once here. No host soft-field mapper — remaining keys ride through (J1/F5).
+  const evidence = decodeCollectorEvidenceCargo(
+    body,
+    body.prUrl,
+    body.headOid,
+  );
   const cargoPointer =
     typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
       ? parsed.cargoPointer.trim()
@@ -4669,6 +4669,18 @@ export function parseCollectorOutcome(
     evidence,
     ...(cargoPointer !== undefined ? { cargoPointer } : {}),
   };
+}
+
+/**
+ * Opaque collector evidence decode — sole typing boundary for cargo body.
+ * Envelope prUrl/headOid already validated by caller; no secondary field filter.
+ */
+function decodeCollectorEvidenceCargo(
+  body: Record<string, unknown>,
+  prUrl: string,
+  headOid: string,
+): OnlineReviewLandingSnapshot {
+  return { ...body, prUrl, headOid } as OnlineReviewLandingSnapshot;
 }
 
 /**

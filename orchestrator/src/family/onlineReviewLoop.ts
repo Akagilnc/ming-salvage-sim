@@ -31,7 +31,6 @@ import type {
 import {
   fixerEnvelopeFixCommitSha,
   fixerHasFixCommit,
-  fixerProceedsToVerify,
 } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
@@ -60,31 +59,6 @@ export function onlineReviewJudgeDisposition(
 
 export type { OnlineReviewTerminalState } from "../types.js";
 
-type OnlineReviewRetriggerRecoveryEntry = {
-  readonly event?: string;
-  readonly onlineReviewRound?: number;
-};
-
-/** Latest post-fix recovery from a persisted retrigger marker (#600 r29). */
-function latestOnlineReviewRetriggerRecovery(
-  entries: ReadonlyArray<OnlineReviewRetriggerRecoveryEntry>,
-): { readonly round?: number } | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.event !== "online_review_round_retrigger") {
-      continue;
-    }
-    const round =
-      typeof entry.onlineReviewRound === "number" && entry.onlineReviewRound > 0
-        ? entry.onlineReviewRound
-        : undefined;
-    if (round !== undefined) {
-      return { round };
-    }
-  }
-  return undefined;
-}
-
 /** 1-based online review round from the family ledger (#600 r26 resume). */
 export function onlineReviewRoundFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -95,19 +69,14 @@ export function onlineReviewRoundFromFamilyLedger(
     readonly branchHEAD?: string;
   }>,
 ): number {
+  // Single truth: completed fixer rounds. Collector checkpoint is per-round
+  // resume cargo — not a parallel round counter (#1145: drop retrigger dual-source).
   const completedFixerRounds = entries.filter(
     (e) =>
       e.status === "online_review_fix_committed" &&
       e.event === "online_review_fix_committed",
   ).length;
-  const retriggerRecovery = latestOnlineReviewRetriggerRecovery(entries);
-  if (completedFixerRounds > 0) {
-    return Math.max(completedFixerRounds + 1, retriggerRecovery?.round ?? 0);
-  }
-  if (retriggerRecovery?.round !== undefined) {
-    return retriggerRecovery.round;
-  }
-  return 1;
+  return completedFixerRounds > 0 ? completedFixerRounds + 1 : 1;
 }
 
 /** Last family online-review fix HEAD — fixing commit for recheck side effects (#600 r26). */
@@ -229,6 +198,37 @@ export function lastCollectorCheckpointFromFamilyLedger(
         : {}),
       evidence,
     };
+  }
+  return undefined;
+}
+
+/**
+ * Action-owned mergeable completion checkpoint (#1145 re-entry).
+ * When Verify has already converged (side effects done), re-entry must not
+ * re-dispatch Verify and replay reply/resolve/defer external effects.
+ */
+export function lastOnlineReviewMergeableFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly onlineReviewRound?: number;
+  }>,
+): { readonly round: number } | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status !== "online_review_mergeable" ||
+      entry.event !== "online_review_mergeable"
+    ) {
+      continue;
+    }
+    const round =
+      typeof entry.onlineReviewRound === "number" &&
+      Number.isSafeInteger(entry.onlineReviewRound) &&
+      entry.onlineReviewRound >= 1
+        ? entry.onlineReviewRound
+        : 1;
+    return { round };
   }
   return undefined;
 }
@@ -426,30 +426,30 @@ export interface OnlineReviewLoopStageResult {
 
 /**
  * Passthrough Verify → Fixer opaque packet (#1145).
- * Copies self-reported keys/threads only — never filters dispositions.
+ * Single transport of this-round self-reported keys/threads only — no secondary
+ * filtering, no disposition derivation, no history backfill when sparse/missing.
  */
-function fixerPacketFromVerify(verify: VerifyResult): {
+function fixerPacketFromVerify(verify: VerifyResult | undefined): {
   readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
   readonly fixMarkedFindingThreads: ReadonlyArray<{
     readonly identityKey: string;
     readonly threadId: string;
   }>;
 } {
-  const keys = (verify.fixMarkedFindingIdentityKeys ?? []).filter(
-    (key) => typeof key === "string" && key.trim().length > 0,
-  );
-  const threads = (verify.fixMarkedFindingThreads ?? []).flatMap((binding) =>
-    typeof binding.identityKey === "string" &&
-    binding.identityKey.trim().length > 0 &&
-    typeof binding.threadId === "string" &&
-    binding.threadId.trim().length > 0
-      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-      : [],
-  );
   return {
-    fixMarkedFindingIdentityKeys: keys,
-    fixMarkedFindingThreads: threads,
+    fixMarkedFindingIdentityKeys: verify?.fixMarkedFindingIdentityKeys ?? [],
+    fixMarkedFindingThreads: verify?.fixMarkedFindingThreads ?? [],
   };
+}
+
+/** Legal fixer no-op: no new commit and not alreadySatisfied-with-SHA. */
+function isFixerLegalNoOp(output: FixerResult | undefined): boolean {
+  if (output === undefined) return false;
+  if (output.committed) return false;
+  if (output.alreadySatisfied === true && fixerHasFixCommit(output)) {
+    return false;
+  }
+  return !fixerHasFixCommit(output);
 }
 
 /**
@@ -563,11 +563,6 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
     let disposition: OnlineReviewJudgeDisposition = "continue";
-    let fixKeys: ReadonlyArray<string> = [];
-    let fixMarkedFindingThreads: ReadonlyArray<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }> = [];
 
     if (verify !== undefined) {
       // #1145: isRecheck is Verify-owned cargo — Runner never overwrites it.
@@ -582,16 +577,6 @@ export async function runOnlineReviewLoopStage(
         };
       }
 
-      // Opaque fixer packet passthrough — no disposition filtering.
-      const packet = fixerPacketFromVerify(verify);
-      fixKeys = packet.fixMarkedFindingIdentityKeys;
-      fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
-      landing = {
-        ...landing,
-        fixMarkedFindingIdentityKeys: fixKeys,
-        fixMarkedFindingThreads,
-      };
-
       // #1145: Verify owns CI+bot completeness judgment. Runner trusts the
       // typed disposition only — no host check-run reread / pending sleep.
       if (disposition === "converged") {
@@ -602,6 +587,17 @@ export async function runOnlineReviewLoopStage(
     }
     // Sparse / unusable verify cargo (no typed disposition) continues to fixer
     // with raw artifacts — never host empty-success (#940 / ID-012).
+
+    // Opaque fixer packet = THIS round's Verify cargo only. Missing/sparse must
+    // not fall back to prior-round recheck keys seeded on the Verify landing.
+    const packet = fixerPacketFromVerify(verify);
+    const fixKeys = packet.fixMarkedFindingIdentityKeys;
+    const fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
+    landing = {
+      ...landing,
+      fixMarkedFindingIdentityKeys: fixKeys,
+      fixMarkedFindingThreads,
+    };
 
     // continue disposition: fixer path (no mechanical round cap).
     recheckFixMarkedFindingIdentityKeys = fixKeys;
@@ -616,11 +612,15 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
-    if (
-      fixerOutput !== undefined &&
-      fixerProceedsToVerify(fixerOutput) &&
-      fixerHasFixCommit(fixerOutput)
-    ) {
+
+    // #1145: legal no-op returns to the SAME judge (same round). Do not round++
+    // and do not open a new Collector — next loop hits collector checkpoint and
+    // re-enters Verify. alreadySatisfied-with-SHA is not a no-op.
+    if (isFixerLegalNoOp(fixerOutput)) {
+      continue;
+    }
+
+    if (fixerOutput !== undefined && fixerHasFixCommit(fixerOutput)) {
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
       if (envelopeFixSha !== undefined) {
         try {
