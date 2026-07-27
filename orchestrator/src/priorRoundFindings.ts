@@ -48,9 +48,10 @@ type FamilyOnlineReviewLedgerEntry = {
 /**
  * Prior online-review rounds from the family ledger.
  *
- * Family loop persists fix/retrigger markers rather than verify output rows.
+ * Family loop persists fix_committed markers rather than verify output rows.
  * Prefer `online_review_fix_committed` rows that carry
  * `fixMarkedFindingIdentityKeys` + `onlineReviewRound`.
+ * (`online_review_round_retrigger` is legacy ledger read-only — no live writer.)
  */
 export function priorOnlineReviewFindingsFromFamilyLedger(
   ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,

@@ -1014,6 +1014,12 @@ export interface WorkerLandingPayload {
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
+  /**
+   * Opaque fixer envelope cargo returned to the same Verify judge (#1145).
+   * Runner transports as-is; does not branch topology on committed /
+   * alreadySatisfied / fixCommitSha. Three-state disposition decides next.
+   */
+  readonly fixerResult?: FixerResult;
   /** Family PR delivery metadata threaded into the review loop. */
   readonly shipDelivery?: {
     readonly branch: string;

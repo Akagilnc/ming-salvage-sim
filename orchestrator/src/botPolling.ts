@@ -56,9 +56,15 @@ export function botOverdueWallClockMs(pollCount: number): number {
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
  * Wiki contract (ADR 0061): three @mentions. Also post `/gemini review` — current
  * Gemini Code Assist docs accept the slash form; @-only can miss the leg (Codex R12 P2).
+ *
+ * #1145: exported as Collector-owned capability (worker/soul executes via `gh`);
+ * host no longer posts this. Recognition during poll still uses the same body.
  */
-const BOT_RETRIGGER_COMMENT =
+export const ONLINE_REVIEW_BOT_RETRIGGER_COMMENT =
   "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review";
+
+/** @deprecated Use {@link ONLINE_REVIEW_BOT_RETRIGGER_COMMENT}. */
+const BOT_RETRIGGER_COMMENT = ONLINE_REVIEW_BOT_RETRIGGER_COMMENT;
 
 /** Core wiki lines that identify a re-trigger (old 3-line + new 4-line bodies). */
 const BOT_RETRIGGER_REQUIRED_LINES = [
@@ -66,6 +72,35 @@ const BOT_RETRIGGER_REQUIRED_LINES = [
   "@codex review",
   "@gemini-code-assist please review",
 ] as const;
+
+/**
+ * Collector post-fix retrigger plan (#1145 executable capability).
+ * Host does not run this loop — Collector soul/worker applies it via `gh` + sleep.
+ */
+export function collectorPostFixRetriggerPlan(input: {
+  readonly onlineReviewRound: number;
+  readonly headOid?: string;
+}): {
+  readonly shouldRetrigger: boolean;
+  readonly commentBody: string;
+  readonly maxPolls: number;
+  readonly intervalMs: number;
+  readonly overdueWallMs: number;
+} {
+  const round = input.onlineReviewRound;
+  const shouldRetrigger =
+    Number.isSafeInteger(round) &&
+    round > 1 &&
+    typeof input.headOid === "string" &&
+    input.headOid.length > 0;
+  return {
+    shouldRetrigger,
+    commentBody: ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
+    maxPolls: BOT_OVERDUE_POLL_COUNT,
+    intervalMs: BOT_POLL_INTERVAL_MS,
+    overdueWallMs: BOT_OVERDUE_MIN_WALL_MS,
+  };
+}
 
 /**
  * Pure ACK reactions — bot is alive/queued, NOT a completed review (wiki +

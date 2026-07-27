@@ -2595,13 +2595,14 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.checkoutSharedRepo(ctx.familyBase);
-      // Collector may start without evidence (assembles it); verify/fixer need
-      // the bot-evidence landing; landing only invokes /gstack-document-release.
+      // Sparse / missing snapshot is legal cargo (ADR 0131). Collector assembles
+      // it; Verify may receive sparse cargo and typed-escalate. Never throw
+      // infra failure for missing snapshot on the next seat (#1145).
       const onlineReviewLanding =
         spec.kind === "landing"
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing, {
-              allowMissingSnapshot: spec.kind === "collector",
+              allowMissingSnapshot: true,
             });
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
@@ -2672,6 +2673,10 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(landing?.fixMarkedFindingThreads !== undefined &&
           landing.fixMarkedFindingThreads.length > 0
             ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
+            : {}),
+          // Opaque fixer cargo back to the same Verify judge (#1145).
+          ...(landing?.fixerResult !== undefined
+            ? { fixerResult: landing.fixerResult }
             : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
@@ -4672,6 +4677,22 @@ export function parseCollectorOutcome(
 }
 
 /**
+ * Narrow envelope predicate for collector evidence (#1145).
+ * Only prUrl + headOid are host-typed; remaining keys ride as opaque cargo
+ * without bare `as` laundering.
+ */
+function isCollectorEvidenceEnvelope(
+  value: Record<string, unknown>,
+): value is OnlineReviewLandingSnapshot & Record<string, unknown> {
+  return (
+    typeof value.prUrl === "string" &&
+    value.prUrl.length > 0 &&
+    typeof value.headOid === "string" &&
+    value.headOid.length > 0
+  );
+}
+
+/**
  * Opaque collector evidence decode — sole typing boundary for cargo body.
  * Envelope prUrl/headOid already validated by caller; no secondary field filter.
  */
@@ -4680,7 +4701,12 @@ function decodeCollectorEvidenceCargo(
   prUrl: string,
   headOid: string,
 ): OnlineReviewLandingSnapshot {
-  return { ...body, prUrl, headOid } as OnlineReviewLandingSnapshot;
+  const candidate: Record<string, unknown> = { ...body, prUrl, headOid };
+  if (isCollectorEvidenceEnvelope(candidate)) {
+    return candidate;
+  }
+  // Caller already validated envelope strings — unreachable fallback.
+  return { prUrl, headOid };
 }
 
 /**

@@ -243,10 +243,30 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         postFixHead,
       ),
     ).toEqual({ pr, familyHeadAfter: shipHead });
-    // legacy r29 / old ordering: retrigger-only without fix_committed → still resume
+    // LEGACY ledger read-only (#1145): online_review_round_retrigger has no
+    // live writer; keep resume width for historical jsonl only — not dual truth.
     expect(
       familyShippedRecordForReviewLoopResume(
         [...mergedOnly, shipped, retrigger],
+        postFixHead,
+      ),
+    ).toEqual({ pr, familyHeadAfter: shipHead });
+    // Live truth: collector_completed evidence head also proves in-progress.
+    const collectorCompleted = {
+      status: "online_review_collector_completed" as const,
+      event: "online_review_collector_completed" as const,
+      phase: "final" as const,
+      onlineReviewRound: 1,
+      cargoPointer: "ledger:test",
+      collectorEvidenceCargo: {
+        prUrl: pr,
+        headOid: postFixHead,
+      },
+      pr,
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [...mergedOnly, shipped, collectorCompleted],
         postFixHead,
       ),
     ).toEqual({ pr, familyHeadAfter: shipHead });

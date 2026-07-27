@@ -375,14 +375,23 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
       terminalState: "mergeable",
       round: 4,
     });
-    expect(verifyLandings).toHaveLength(4);
+    // #1145: primary Verify seats (no fixer cargo) + same-round return-to-judge
+    // seats (with fixerResult). Prior-round history is asserted on primary only.
+    const primaryVerify = verifyLandings.filter(
+      (landing) => landing.fixerResult === undefined,
+    );
+    const returnToJudge = verifyLandings.filter(
+      (landing) => landing.fixerResult !== undefined,
+    );
+    expect(primaryVerify).toHaveLength(4);
+    expect(returnToJudge).toHaveLength(3);
     expect(fixerLandings).toHaveLength(3);
 
-    expect(verifyLandings[0]!.priorRoundFindings ?? []).toEqual([]);
-    expect(verifyLandings[1]!.priorRoundFindings).toMatchObject([
+    expect(primaryVerify[0]!.priorRoundFindings ?? []).toEqual([]);
+    expect(primaryVerify[1]!.priorRoundFindings).toMatchObject([
       { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
     ]);
-    expect(verifyLandings[2]!.priorRoundFindings).toMatchObject([
+    expect(primaryVerify[2]!.priorRoundFindings).toMatchObject([
       { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
       { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
     ]);

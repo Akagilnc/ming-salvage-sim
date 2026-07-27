@@ -11,13 +11,25 @@
  *    round's opaque packet, verbatim (including isRecheck:false passthrough).
  * 7. Three shortest repros on the crash/no-op/re-entry seam:
  *    - Collector writes checkpoint → fail before Verify → re-entry
- *    - fixer legal no-op returns to same judge (no new Collector, no round++)
+ *    - fixer result returns as opaque cargo to same judge (no new Collector)
  *    - mergeable re-entry does not re-dispatch Verify (side effects once)
+ * 8. Sparse collector cargo → Verify receives it and typed-escalates (no infra throw)
+ * 9. post-fix retrigger plan is a real Collector capability export
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as botPolling from "../src/botPolling.js";
+import {
+  BOT_OVERDUE_MIN_WALL_MS,
+  BOT_OVERDUE_POLL_COUNT,
+  BOT_POLL_INTERVAL_MS,
+  collectorPostFixRetriggerPlan,
+  ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
+} from "../src/botPolling.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
+import {
+  runOnlineReviewLoopStage,
+} from "../src/family/onlineReviewLoop.js";
 import {
   skeletonReviewLoopWorkerResult,
   stubCollectorEvidence,
@@ -25,6 +37,7 @@ import {
 import { resolveRouteModels } from "../src/modelRoutes.js";
 import { collectorWorkerSpec, verifyWorkerSpec } from "../src/dispatchWorker.js";
 import { familyWorkerSlotForDispatch } from "../src/family/familyWorkerSlots.js";
+import { onlineReviewDispatch } from "./helpers/online-review-dispatch.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 import type {
   DispatchContext,
@@ -470,17 +483,21 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(verifyLanding?.onlineReviewSnapshot).toEqual(evidence);
     });
 
-    it("no-op: legal fixer no-op returns to same judge without new Collector / round++", async () => {
+    it("no-op: fixer result returns as opaque cargo to same judge (no new Collector / round++)", async () => {
       const backend = new TracerFamilyBackend();
       let verifyCalls = 0;
       let fixerCalls = 0;
       const fixerRounds: number[] = [];
       const verifyRounds: number[] = [];
+      const verifyFixerCargo: Array<WorkerLandingPayload["fixerResult"]> = [];
 
       backend.verifyImpl = async (_spec, _ctx, landing) => {
         verifyCalls += 1;
         verifyRounds.push(landing?.onlineReviewRound ?? -1);
+        verifyFixerCargo.push(landing?.fixerResult);
         if (verifyCalls === 1) {
+          // First seat: no fixer cargo yet.
+          expect(landing?.fixerResult).toBeUndefined();
           return {
             kind: "completed",
             output: {
@@ -494,6 +511,11 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             },
           };
         }
+        // Same-round re-entry MUST carry the fixer envelope as opaque cargo.
+        expect(landing?.fixerResult).toEqual({
+          kind: "fixer",
+          committed: false,
+        });
         return {
           kind: "completed",
           output: { kind: "verify", converged: true, isRecheck: false },
@@ -525,9 +547,153 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       // Same round both times — no unconditional round++ after no-op.
       expect(verifyRounds).toEqual([1, 1]);
       expect(fixerRounds).toEqual([1]);
-      // Collector only once — no-op does not open a new Collector seat.
+      expect(verifyFixerCargo).toEqual([
+        undefined,
+        { kind: "fixer", committed: false },
+      ]);
+      // Collector only once — return-to-judge skips Collector.
       expect(backend.collectorDispatchCount).toBe(1);
       expect(backend.kinds.filter((k) => k === "collector")).toHaveLength(1);
+    });
+
+    it("sparse collector cargo: Verify receives missing snapshot and typed-escalates (no infra throw)", async () => {
+      const verifyLandings: Array<WorkerLandingPayload | undefined> = [];
+      const result = await runOnlineReviewLoopStage(
+        offlineShip,
+        onlineReviewDispatch({
+          dispatchCollector: async () => ({}),
+          dispatchVerify: async (landing) => {
+            verifyLandings.push(landing);
+            // Professional seat owns inability-to-continue — typed escalate.
+            return {
+              verify: {
+                kind: "verify",
+                converged: false,
+                terminalState: "decision_gate_raised",
+              },
+            };
+          },
+          dispatchFixer: async () => {
+            throw new Error("fixer must not run after verify escalate");
+          },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.terminalState).toBe("decision_gate_raised");
+      expect(verifyLandings).toHaveLength(1);
+      expect(verifyLandings[0]?.onlineReviewSnapshot).toBeUndefined();
+      // Not an infra collector/verify dispatch failure summary.
+      expect(result.stopSummary?.summary).not.toMatch(/dispatch failed/i);
+    });
+
+    it("post-fix continue: next Collector sees fix head; prior Verify saw fixer cargo", async () => {
+      const collectorHeads: Array<string | undefined> = [];
+      const verifyFixerShas: Array<string | undefined> = [];
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+
+      const result = await runOnlineReviewLoopStage(
+        offlineShip,
+        onlineReviewDispatch({
+          dispatchCollector: async (landing, round) => {
+            collectorHeads.push(landing.shipDelivery?.prHead);
+            return {
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: landing.shipDelivery?.prHead ?? offlineShip.prHead!,
+                totalFindingCount: round === 1 ? 1 : 0,
+              }),
+            };
+          },
+          dispatchVerify: async (landing) => {
+            verifyCalls += 1;
+            verifyFixerShas.push(landing.fixerResult?.fixCommitSha);
+            if (verifyCalls === 1) {
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: ["k1"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "k1", threadId: "t1" },
+                  ],
+                },
+              };
+            }
+            if (verifyCalls === 2) {
+              // Same-round return-to-judge with fixer opaque cargo.
+              expect(landing.fixerResult).toEqual({
+                kind: "fixer",
+                committed: true,
+                fixCommitSha: "post-fix-sha-1145",
+              });
+              // Judge continues → next Collector owns post-fix evidence.
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  isRecheck: true,
+                  fixMarkedFindingIdentityKeys: ["k1"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "k1", threadId: "t1" },
+                  ],
+                },
+              };
+            }
+            return { verify: { kind: "verify", converged: true, isRecheck: true } };
+          },
+          dispatchFixer: async () => {
+            fixerCalls += 1;
+            if (fixerCalls === 1) {
+              return {
+                kind: "fixer",
+                committed: true,
+                fixCommitSha: "post-fix-sha-1145",
+              };
+            }
+            return { kind: "fixer", committed: false };
+          },
+          resolveFixCommitSha: async (sha) => sha,
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      // Collector round1 at ship head; round2 at post-fix head (real retrigger seat).
+      expect(collectorHeads).toEqual([offlineShip.prHead, "post-fix-sha-1145"]);
+      expect(verifyFixerShas[1]).toBe("post-fix-sha-1145");
+      expect(fixerCalls).toBeGreaterThanOrEqual(1);
+    });
+
+    it("post-fix: Collector capability plan is real (not host dual-owner)", () => {
+      expect(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT).toContain("@sourcery-ai review");
+      expect(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT).toContain("@codex review");
+      expect(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT).toContain("/gemini review");
+
+      const idle = collectorPostFixRetriggerPlan({
+        onlineReviewRound: 1,
+        headOid: "head-1",
+      });
+      expect(idle.shouldRetrigger).toBe(false);
+
+      const postFix = collectorPostFixRetriggerPlan({
+        onlineReviewRound: 2,
+        headOid: "fix-sha",
+      });
+      expect(postFix.shouldRetrigger).toBe(true);
+      expect(postFix.commentBody).toBe(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT);
+      expect(postFix.intervalMs).toBe(BOT_POLL_INTERVAL_MS);
+      expect(postFix.maxPolls).toBe(BOT_OVERDUE_POLL_COUNT);
+      expect(postFix.overdueWallMs).toBe(BOT_OVERDUE_MIN_WALL_MS);
+
+      // Host dual-owner post path stays deleted.
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          botPolling,
+          "postBotRetriggerComment",
+        ),
+      ).toBe(false);
     });
 
     it("re-entry: mergeable side effects dispatch only once", async () => {
