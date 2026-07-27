@@ -77,9 +77,7 @@ or, when findings remain:
   "converged": false,
   "findingDispositions": [],
   "fixMarkedFindingIdentityKeys": [],
-  "fixMarkedFindingThreads": [{"identityKey": "…", "threadId": "…"}],
-  "threadReplies": [{"threadId": "…", "body": "…"}],
-  "threadsToResolve": ["…"]
+  "fixMarkedFindingThreads": [{"identityKey": "…", "threadId": "…"}]
 }
 ```
 

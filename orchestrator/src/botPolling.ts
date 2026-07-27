@@ -205,21 +205,6 @@ export function isPollableGithubPrUrl(prUrl: string, defaultRepo: string): boole
   );
 }
 
-/**
- * True when the host may issue live `gh` calls for online review (poll, side
- * effects, re-trigger). Unit tests set `ORCHESTRATOR_OFFLINE_REVIEW_POLL=1` so
- * synthetic `pr://` handles and fake GitHub URLs stay deterministic.
- */
-export function isLiveGithubReviewPollEnabled(
-  prUrl: string,
-  defaultRepo: string,
-): boolean {
-  return (
-    isPollableGithubPrUrl(prUrl, defaultRepo) &&
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1"
-  );
-}
-
 export function parsePrRef(
   prUrl: string,
   defaultRepo: string,

@@ -181,9 +181,6 @@ class TracerFamilyBackend implements FamilyBackend {
         output: {
           kind: "verify",
           converged: true,
-          // Residual plan cargo — must NOT trigger host replay (#1145).
-          threadReplies: [{ threadId: "discussion_r1", body: "acked" }],
-          threadsToResolve: ["discussion_r1"],
         },
       };
     }

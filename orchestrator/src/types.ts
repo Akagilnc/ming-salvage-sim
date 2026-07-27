@@ -889,12 +889,6 @@ export interface OnlineReviewFindingDisposition {
   readonly reason?: string;
 }
 
-/** Evidence-bearing thread reply authored by the verify worker (#600 AC6). */
-export interface OnlineReviewThreadReply {
-  readonly threadId: string;
-  readonly body: string;
-}
-
 /**
  * Terminal states a verify worker may self-declare (#600 wire schema / #940).
  * Mechanical `round_budget_exhausted` deleted — continue vs escalate is the
@@ -1397,12 +1391,6 @@ export interface VerifyResult {
     readonly identityKey: string;
     readonly threadId: string;
   }>;
-  /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
-  readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
-  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
-  readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (worker-populated). */
-  readonly deferredIssueUrls?: ReadonlyArray<string>;
   /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
