@@ -47,6 +47,182 @@ function toEvidence(raw: EvidenceFixture): OnlineReviewLandingSnapshot {
   return { ...raw, prUrl: raw.prUrl, headOid: raw.headOid };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+/** Collector seat result vs bare evidence fixture — structural, no cast fork. */
+function asCollectorDispatchResult(
+  raw: unknown,
+): OnlineReviewCollectorDispatchResult | undefined {
+  if (!isRecord(raw)) return undefined;
+  // Bare evidence fixtures carry prUrl at the top level.
+  if (typeof raw.prUrl === "string") return undefined;
+  if (!("evidence" in raw) && !("cargoPointer" in raw) && !("artifacts" in raw)) {
+    return undefined;
+  }
+  const result: {
+    evidence?: OnlineReviewLandingSnapshot;
+    cargoPointer?: string;
+    artifacts?: OnlineReviewCollectorDispatchResult["artifacts"];
+  } = {};
+  if (raw.evidence !== undefined) {
+    if (!isRecord(raw.evidence)) return undefined;
+    if (
+      typeof raw.evidence.prUrl !== "string" ||
+      typeof raw.evidence.headOid !== "string"
+    ) {
+      return undefined;
+    }
+    result.evidence = toEvidence({
+      prUrl: raw.evidence.prUrl,
+      headOid: raw.evidence.headOid,
+      ...(typeof raw.evidence.repo === "string" ? { repo: raw.evidence.repo } : {}),
+      ...(typeof raw.evidence.prNumber === "number"
+        ? { prNumber: raw.evidence.prNumber }
+        : {}),
+      ...(typeof raw.evidence.pollCount === "number"
+        ? { pollCount: raw.evidence.pollCount }
+        : {}),
+      ...(typeof raw.evidence.totalFindingCount === "number"
+        ? { totalFindingCount: raw.evidence.totalFindingCount }
+        : {}),
+      ...(typeof raw.evidence.quiescent === "boolean"
+        ? { quiescent: raw.evidence.quiescent }
+        : {}),
+      ...(raw.evidence.bots !== undefined ? { bots: raw.evidence.bots } : {}),
+      ...(raw.evidence.droppedBots !== undefined
+        ? { droppedBots: raw.evidence.droppedBots }
+        : {}),
+      ...(raw.evidence.threads !== undefined
+        ? { threads: raw.evidence.threads }
+        : {}),
+      ...(raw.evidence.checkRuns !== undefined
+        ? { checkRuns: raw.evidence.checkRuns }
+        : {}),
+      ...(raw.evidence.checkRunsEmptyMeans !== undefined
+        ? { checkRunsEmptyMeans: raw.evidence.checkRunsEmptyMeans }
+        : {}),
+      ...(raw.evidence.roundTriggerUsed !== undefined
+        ? { roundTriggerUsed: raw.evidence.roundTriggerUsed }
+        : {}),
+    });
+  }
+  if (typeof raw.cargoPointer === "string") {
+    result.cargoPointer = raw.cargoPointer;
+  }
+  if (raw.artifacts !== undefined) {
+    result.artifacts =
+      raw.artifacts as OnlineReviewCollectorDispatchResult["artifacts"];
+  }
+  return result;
+}
+
+function asEvidenceFixture(raw: unknown): EvidenceFixture | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (typeof raw.prUrl !== "string" || typeof raw.headOid !== "string") {
+    return undefined;
+  }
+  return {
+    prUrl: raw.prUrl,
+    headOid: raw.headOid,
+    ...(typeof raw.repo === "string" ? { repo: raw.repo } : {}),
+    ...(typeof raw.prNumber === "number" ? { prNumber: raw.prNumber } : {}),
+    ...(typeof raw.pollCount === "number" ? { pollCount: raw.pollCount } : {}),
+    ...(typeof raw.totalFindingCount === "number"
+      ? { totalFindingCount: raw.totalFindingCount }
+      : {}),
+    ...(typeof raw.quiescent === "boolean" ? { quiescent: raw.quiescent } : {}),
+    ...(raw.bots !== undefined ? { bots: raw.bots } : {}),
+    ...(raw.droppedBots !== undefined ? { droppedBots: raw.droppedBots } : {}),
+    ...(raw.threads !== undefined ? { threads: raw.threads } : {}),
+    ...(raw.checkRuns !== undefined ? { checkRuns: raw.checkRuns } : {}),
+    ...(raw.checkRunsEmptyMeans !== undefined
+      ? { checkRunsEmptyMeans: raw.checkRunsEmptyMeans }
+      : {}),
+    ...(raw.roundTriggerUsed !== undefined
+      ? { roundTriggerUsed: raw.roundTriggerUsed }
+      : {}),
+  };
+}
+
+/** Bare VerifyResult vs seat wrapper — structural, no cast fork. */
+function asBareVerifyResult(raw: unknown): VerifyResult | undefined {
+  if (!isRecord(raw)) return undefined;
+  if ("verify" in raw) return undefined;
+  if (typeof raw.converged !== "boolean") return undefined;
+  // Prefer explicit kind when present; allow sparse fixtures with only converged.
+  if (raw.kind !== undefined && raw.kind !== "verify") return undefined;
+  return {
+    kind: "verify",
+    converged: raw.converged,
+    ...(raw.findingDispositions !== undefined
+      ? {
+          findingDispositions:
+            raw.findingDispositions as VerifyResult["findingDispositions"],
+        }
+      : {}),
+    ...(Array.isArray(raw.fixMarkedFindingIdentityKeys)
+      ? {
+          fixMarkedFindingIdentityKeys:
+            raw.fixMarkedFindingIdentityKeys.filter(
+              (k): k is string => typeof k === "string",
+            ),
+        }
+      : {}),
+    ...(Array.isArray(raw.fixMarkedFindingThreads)
+      ? {
+          fixMarkedFindingThreads: raw.fixMarkedFindingThreads.flatMap(
+            (binding) => {
+              if (!isRecord(binding)) return [];
+              if (
+                typeof binding.identityKey !== "string" ||
+                typeof binding.threadId !== "string"
+              ) {
+                return [];
+              }
+              return [
+                {
+                  identityKey: binding.identityKey,
+                  threadId: binding.threadId,
+                },
+              ];
+            },
+          ),
+        }
+      : {}),
+    ...(typeof raw.terminalState === "string"
+      ? {
+          terminalState:
+            raw.terminalState as NonNullable<VerifyResult["terminalState"]>,
+        }
+      : {}),
+    ...(typeof raw.isRecheck === "boolean" ? { isRecheck: raw.isRecheck } : {}),
+    ...(typeof raw.advanceCoder === "string"
+      ? { advanceCoder: raw.advanceCoder }
+      : {}),
+  };
+}
+
+function asVerifyDispatchResult(
+  raw: unknown,
+): OnlineReviewVerifyDispatchResult | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (!("verify" in raw) && !("artifacts" in raw)) return undefined;
+  const bare =
+    raw.verify === undefined ? undefined : asBareVerifyResult(raw.verify);
+  if (raw.verify !== undefined && bare === undefined) return undefined;
+  return {
+    ...(bare !== undefined ? { verify: bare } : {}),
+    ...(raw.artifacts !== undefined
+      ? {
+          artifacts:
+            raw.artifacts as OnlineReviewVerifyDispatchResult["artifacts"],
+        }
+      : {}),
+  };
+}
+
 export function onlineReviewDispatch(input: {
   readonly evidence?:
     | EvidenceFixture
@@ -94,15 +270,11 @@ export function onlineReviewDispatch(input: {
       }
       const src = input.evidence ?? input.snapshot ?? defaultEvidence;
       const raw = typeof src === "function" ? await src(round) : src;
-      if (
-        raw &&
-        typeof raw === "object" &&
-        "evidence" in raw &&
-        !("prUrl" in raw)
-      ) {
-        return raw as OnlineReviewCollectorDispatchResult;
-      }
-      return { evidence: toEvidence(raw as EvidenceFixture) };
+      const asResult = asCollectorDispatchResult(raw);
+      if (asResult !== undefined) return asResult;
+      const fixture = asEvidenceFixture(raw);
+      if (fixture !== undefined) return { evidence: toEvidence(fixture) };
+      return { evidence: defaultEvidence() };
     },
     dispatchVerify: async (landing, round) => {
       if (input.dispatchVerify === undefined) {
@@ -110,14 +282,11 @@ export function onlineReviewDispatch(input: {
       }
       const raw = await input.dispatchVerify(landing, round);
       if (raw === undefined) return {};
-      if (
-        typeof raw === "object" &&
-        "converged" in raw &&
-        !("verify" in raw)
-      ) {
-        return { verify: raw as VerifyResult };
-      }
-      return raw as OnlineReviewVerifyDispatchResult;
+      const bare = asBareVerifyResult(raw);
+      if (bare !== undefined) return { verify: bare };
+      const wrapped = asVerifyDispatchResult(raw);
+      if (wrapped !== undefined) return wrapped;
+      return {};
     },
     dispatchFixer: async (landing) => {
       if (input.dispatchFixer === undefined) return undefined;

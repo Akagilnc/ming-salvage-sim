@@ -22,6 +22,7 @@ import type {
   CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
+  FixerResult,
   OnlineReviewLandingSnapshot,
 } from "../types.js";
 import { isValidCleanupResult } from "../reviewLoopOutcome.js";
@@ -1476,6 +1477,133 @@ export async function recordOnlineReviewCollectorCompleted(
         ? { pr: record.pr.trim() }
         : {}),
       ts,
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Append Fixer-completed durable cargo (#1145 post-fixer crash seam).
+ * Opaque envelope (commit OR legal no-op without SHA) so re-entry returns the
+ * same packet to same-round Verify — never re-dispatch Fixer, never host-gate
+ * on committed/alreadySatisfied.
+ */
+export async function recordOnlineReviewFixerCompleted(
+  backend: FamilyBackend,
+  record: {
+    readonly onlineReviewRound: number;
+    readonly fixerResult: FixerResult;
+    readonly pr?: string;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }>;
+  },
+): Promise<void> {
+  const onlineReviewRound = record.onlineReviewRound;
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 1) {
+    throw new Error(
+      "family online_review_fixer_completed marker must include onlineReviewRound >= 1",
+    );
+  }
+  if (
+    record.fixerResult === undefined ||
+    typeof record.fixerResult !== "object" ||
+    record.fixerResult.kind !== "fixer"
+  ) {
+    throw new Error(
+      "family online_review_fixer_completed marker must include opaque fixerResult cargo",
+    );
+  }
+  const fixKeys =
+    record.fixMarkedFindingIdentityKeys !== undefined
+      ? record.fixMarkedFindingIdentityKeys.filter(
+          (k) => typeof k === "string" && k.trim().length > 0,
+        )
+      : [];
+  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
+    typeof binding.identityKey === "string" &&
+    binding.identityKey.trim().length > 0 &&
+    typeof binding.threadId === "string" &&
+    binding.threadId.trim().length > 0
+      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+      : [],
+  );
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_fixer_completed",
+      event: "online_review_fixer_completed",
+      phase: "final",
+      onlineReviewRound,
+      fixerResultCargo: record.fixerResult,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ...(fixKeys.length > 0
+        ? { fixMarkedFindingIdentityKeys: fixKeys }
+        : {}),
+      ...(fixThreads.length > 0
+        ? { fixMarkedFindingThreads: fixThreads }
+        : {}),
+      ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Append post-fixer Verify-continue durable completion (#1145 re-entry).
+ * Action-owned proof that same-round Verify consumed fixer cargo and chose
+ * continue — re-entry starts the next Collector cycle without replaying Verify
+ * side effects.
+ */
+export async function recordOnlineReviewVerifyContinued(
+  backend: FamilyBackend,
+  record: {
+    readonly onlineReviewRound: number;
+    readonly pr?: string;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }>;
+  },
+): Promise<void> {
+  const onlineReviewRound = record.onlineReviewRound;
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 1) {
+    throw new Error(
+      "family online_review_verify_continued marker must include onlineReviewRound >= 1",
+    );
+  }
+  const fixKeys =
+    record.fixMarkedFindingIdentityKeys !== undefined
+      ? record.fixMarkedFindingIdentityKeys.filter(
+          (k) => typeof k === "string" && k.trim().length > 0,
+        )
+      : [];
+  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
+    typeof binding.identityKey === "string" &&
+    binding.identityKey.trim().length > 0 &&
+    typeof binding.threadId === "string" &&
+    binding.threadId.trim().length > 0
+      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+      : [],
+  );
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_verify_continued",
+      event: "online_review_verify_continued",
+      phase: "final",
+      onlineReviewRound,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ...(fixKeys.length > 0
+        ? { fixMarkedFindingIdentityKeys: fixKeys }
+        : {}),
+      ...(fixThreads.length > 0
+        ? { fixMarkedFindingThreads: fixThreads }
+        : {}),
+      ts: new Date().toISOString(),
     }) as FamilyLedgerEntry,
   );
 }
