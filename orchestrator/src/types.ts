@@ -903,52 +903,17 @@ export type OnlineReviewTerminalState =
   | VerifyWorkerTerminalState
   | "contract_drift";
 
-export type OnlineReviewBotLegLanding =
-  | { readonly state: "pending" }
-  | { readonly state: "complete"; readonly findingCount: number }
-  | { readonly state: "dropped"; readonly reason: string };
-
-export interface OnlineReviewLandingSnapshot {
-  /** Envelope keys required by collector evidence transport (#1145). */
+/**
+ * Collector opaque evidence envelope (#1145).
+ *
+ * Host types only the transport keys `prUrl` + `headOid`. Every other field is
+ * unknown business cargo transported as-is — Runner never expands a second
+ * schema, never invents defaults, never filters keys.
+ */
+export type OnlineReviewLandingSnapshot = {
   readonly prUrl: string;
   readonly headOid: string;
-  /**
-   * Business fields are Collector LLM cargo — schema only pins the envelope.
-   * Absent fields must not be invented by Runner defaults.
-   */
-  readonly totalFindingCount?: number;
-  readonly quiescent?: boolean;
-  /** Per-bot terminal/pending legs — dropped bots are not clean-silence evidence (#600). */
-  readonly bots?: Readonly<Record<string, OnlineReviewBotLegLanding>>;
-  /** Convenience list of bot ids dropped after the overdue window. */
-  readonly droppedBots?: ReadonlyArray<string>;
-  readonly threads?: ReadonlyArray<{
-    /** Top-level review-comment databaseId — REST reply parent. */
-    readonly id: string;
-    /** GraphQL reviewThread node id — resolution target. */
-    readonly threadNodeId?: string;
-    readonly path?: string;
-    readonly line?: number;
-    readonly body: string;
-    readonly isResolved: boolean;
-    /** Native commit_id when GitHub exposes it; undefined for artifact bots. */
-    readonly headOid?: string;
-    readonly authorLogin?: string;
-  }>;
-  /** Head-correlated CI check-runs for verify default-deny (#600 / ADR 0061). */
-  readonly checkRuns?: ReadonlyArray<{
-    readonly id: number;
-    readonly name: string;
-    readonly headSha: string;
-    readonly status: string;
-    readonly conclusion?: string;
-  }>;
-  /**
-   * How empty checkRuns is classified: offline="converged", live="pending"
-   * (post-push race before checks appear — Cursor medium, verified).
-   */
-  readonly checkRunsEmptyMeans?: "converged" | "pending";
-}
+} & { readonly [key: string]: unknown };
 
 export interface WorkerLandingPayload {
   /**
@@ -1405,22 +1370,22 @@ export interface VerifyResult {
 }
 
 /**
- * Family post-review fixer worker output (#596).
+ * Family post-review fixer worker output (#596 / #1145).
+ *
+ * Entire envelope is opaque cargo back to the same Verify judge. Runner never
+ * branches topology on `committed` / `alreadySatisfied` / `fixCommitSha` —
+ * only the judge three-state disposition decides next. `fixCommitSha` may be
+ * bookkept for Collector post-fix landing head, without forking control flow.
  */
 export interface FixerResult {
   readonly kind: "fixer";
-  /** Whether the fixer produced commits for the requested repairs. */
+  /** Opaque cargo: whether this turn produced commits. Not a runner fate signal. */
   readonly committed: boolean;
-  /**
-   * When `committed` is false: assigned fix-marked findings are already resolved
-   * on the current branch (e.g. a prior crashed attempt landed the fix).
-   * The stage proceeds to verify using {@link fixCommitSha}, not decision_gate.
-   */
+  /** Opaque cargo: assigned work already satisfied on branch. Not a runner fate signal. */
   readonly alreadySatisfied?: boolean;
   /**
-   * Fixing commit SHA from the fixer envelope. Required when {@link committed} is
-   * true (new fix this turn) or when {@link alreadySatisfied} is true. Runner/stage
-   * never re-read live git for this value (ADR 0030).
+   * Opaque cargo: fixing commit SHA when the worker reports one. Bookkeeping
+   * only (ADR 0030 envelope-only); never a fourth traffic signal (#1145).
    */
   readonly fixCommitSha?: string;
 }

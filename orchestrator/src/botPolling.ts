@@ -1,11 +1,16 @@
 /**
- * Host-side deterministic PR bot polling (#600).
+ * Shared GitHub PR review polling primitives (#600 / #1145).
  *
- * Polls GitHub for the four online review bots (CodeRabbit auto-updates on push;
- * Sourcery / Codex / Gemini need a manual R2/R3 re-trigger comment after a fix
- * push). No LLM calls — runner scheduling only. Every `gh api` list is paginated
- * with `per_page=100` (wiki pr-review-loop cadence); GraphQL `reviewThreads`
- * uses cursor pagination via `pageInfo { endCursor hasNextPage }`.
+ * Two consumers, one file:
+ * - **Landing / autoMerge / evidence admissibility** — host-deterministic
+ *   `pollPrReviewState`, bot reaction/login matching, CI classification.
+ * - **Online Review Collector** — constants + `collectorPostFixRetriggerPlan`
+ *   / comment body for the worker-owned wait/retrigger path. Runner never
+ *   host-polls Online Review bots (#1145); `waitForBotQuiescence` is deleted.
+ *
+ * Every `gh api` list is paginated with `per_page=100` (wiki pr-review-loop
+ * cadence); GraphQL `reviewThreads` uses cursor pagination via
+ * `pageInfo { endCursor hasNextPage }`.
  */
 
 import type { Sh } from "./familyDriver.js";
@@ -62,9 +67,6 @@ export function botOverdueWallClockMs(pollCount: number): number {
  */
 export const ONLINE_REVIEW_BOT_RETRIGGER_COMMENT =
   "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review";
-
-/** @deprecated Use {@link ONLINE_REVIEW_BOT_RETRIGGER_COMMENT}. */
-const BOT_RETRIGGER_COMMENT = ONLINE_REVIEW_BOT_RETRIGGER_COMMENT;
 
 /** Core wiki lines that identify a re-trigger (old 3-line + new 4-line bodies). */
 const BOT_RETRIGGER_REQUIRED_LINES = [
@@ -962,7 +964,7 @@ export function pollPrReviewState(
 /** True when an issue-comment body matches the manual R2/R3 re-trigger contract. */
 function isBotRetriggerCommentBody(body: string): boolean {
   const trimmed = body.trim();
-  if (trimmed === BOT_RETRIGGER_COMMENT.trim()) return true;
+  if (trimmed === ONLINE_REVIEW_BOT_RETRIGGER_COMMENT.trim()) return true;
   // Accept wiki 3-line bodies and 4-line bodies that add `/gemini review`.
   return BOT_RETRIGGER_REQUIRED_LINES.every((line) => trimmed.includes(line));
 }

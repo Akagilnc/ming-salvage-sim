@@ -40,18 +40,23 @@ export function isValidCleanupResult(
 
 /** Deterministic collector evidence for explicit offline/test injection only. */
 export function stubCollectorEvidence(
-  overrides?: Partial<OnlineReviewLandingSnapshot>,
+  overrides?: {
+    readonly prUrl?: string;
+    readonly headOid?: string;
+    readonly [key: string]: unknown;
+  },
 ): OnlineReviewLandingSnapshot {
   return {
+    totalFindingCount: 0,
+    quiescent: true,
+    bots: {},
+    droppedBots: [],
+    threads: [],
+    checkRuns: [],
+    checkRunsEmptyMeans: "converged",
+    ...overrides,
     prUrl: overrides?.prUrl ?? "pr://offline",
     headOid: overrides?.headOid ?? "offline-head",
-    totalFindingCount: overrides?.totalFindingCount ?? 0,
-    quiescent: overrides?.quiescent ?? true,
-    bots: overrides?.bots ?? {},
-    droppedBots: overrides?.droppedBots ?? [],
-    threads: overrides?.threads ?? [],
-    checkRuns: overrides?.checkRuns ?? [],
-    checkRunsEmptyMeans: overrides?.checkRunsEmptyMeans ?? "converged",
   };
 }
 

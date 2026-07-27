@@ -1459,17 +1459,18 @@ export async function recordOnlineReviewCollectorCompleted(
     );
   }
   const ts = new Date().toISOString();
+  // cargoPointer is worker cargo only — never host-synthesized (#1145 / ADR 0131).
   const cargoPointer =
     typeof record.cargoPointer === "string" && record.cargoPointer.trim().length > 0
       ? record.cargoPointer.trim()
-      : `ledger:online_review_collector_completed:round=${onlineReviewRound}:ts=${ts}`;
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_collector_completed",
       event: "online_review_collector_completed",
       phase: "final",
       onlineReviewRound,
-      cargoPointer,
+      ...(cargoPointer !== undefined ? { cargoPointer } : {}),
       collectorEvidenceCargo: evidence,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }

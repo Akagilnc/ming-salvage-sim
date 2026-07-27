@@ -417,7 +417,8 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       roundTrigger: TEST_ROUND_TRIGGER,
     });
     const evidence = evidenceFromSnapshot(snap);
-    expect(evidence.threads?.[0]).toEqual(
+    const threads = evidence.threads as ReadonlyArray<Record<string, unknown>> | undefined;
+    expect(threads?.[0]).toEqual(
       expect.objectContaining({
         id: "4242",
         threadNodeId: "PRRT_kwDOExampleThread",

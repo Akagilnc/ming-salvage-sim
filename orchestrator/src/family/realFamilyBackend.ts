@@ -4646,13 +4646,13 @@ export function parseCollectorOutcome(
   ) {
     return RECEIPT_CARGO;
   }
-  // Single decode boundary: envelope keys validated above; opaque body typed
-  // once here. No host soft-field mapper — remaining keys ride through (J1/F5).
-  const evidence = decodeCollectorEvidenceCargo(
-    body,
-    body.prUrl,
-    body.headOid,
-  );
+  // Sole typing boundary: only prUrl/headOid are host-typed; remaining keys
+  // ride through unknown as-is (no secondary schema, no predicate laundering).
+  const evidence: OnlineReviewLandingSnapshot = {
+    ...body,
+    prUrl: body.prUrl.trim(),
+    headOid: body.headOid.trim(),
+  };
   const cargoPointer =
     typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
       ? parsed.cargoPointer.trim()
@@ -4662,39 +4662,6 @@ export function parseCollectorOutcome(
     evidence,
     ...(cargoPointer !== undefined ? { cargoPointer } : {}),
   };
-}
-
-/**
- * Narrow envelope predicate for collector evidence (#1145).
- * Only prUrl + headOid are host-typed; remaining keys ride as opaque cargo
- * without bare `as` laundering.
- */
-function isCollectorEvidenceEnvelope(
-  value: Record<string, unknown>,
-): value is OnlineReviewLandingSnapshot & Record<string, unknown> {
-  return (
-    typeof value.prUrl === "string" &&
-    value.prUrl.length > 0 &&
-    typeof value.headOid === "string" &&
-    value.headOid.length > 0
-  );
-}
-
-/**
- * Opaque collector evidence decode — sole typing boundary for cargo body.
- * Envelope prUrl/headOid already validated by caller; no secondary field filter.
- */
-function decodeCollectorEvidenceCargo(
-  body: Record<string, unknown>,
-  prUrl: string,
-  headOid: string,
-): OnlineReviewLandingSnapshot {
-  const candidate: Record<string, unknown> = { ...body, prUrl, headOid };
-  if (isCollectorEvidenceEnvelope(candidate)) {
-    return candidate;
-  }
-  // Caller already validated envelope strings — unreachable fallback.
-  return { prUrl, headOid };
 }
 
 /**
