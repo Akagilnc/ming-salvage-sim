@@ -58,9 +58,11 @@ export type { OnlineReviewTerminalState } from "../types.js";
 
 /**
  * 1-based online review round from the family ledger (#600 r26 / #1145 resume).
- * Single truth = max `onlineReviewRound` on live Collector / fix / mergeable
- * markers. Do not count fix commits — legal no-op continues advance the loop
- * without a new commit and still write later Collector checkpoints.
+ * Single truth = max live phase marker, not fix-commit count:
+ *   - collector / fixer_completed / fix_committed / mergeable → that round
+ *   - verify_continued(N) → N+1 (next Collector cycle; side effects already done)
+ * Legal no-op continues advance without a new commit and still write later
+ * Collector checkpoints.
  */
 export function onlineReviewRoundFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -71,20 +73,33 @@ export function onlineReviewRoundFromFamilyLedger(
 ): number {
   let maxRound = 0;
   for (const entry of entries) {
-    const live =
+    if (
+      typeof entry.onlineReviewRound !== "number" ||
+      !Number.isSafeInteger(entry.onlineReviewRound) ||
+      entry.onlineReviewRound < 1
+    ) {
+      continue;
+    }
+    const round = entry.onlineReviewRound;
+    const liveSameRound =
       (entry.status === "online_review_collector_completed" &&
         entry.event === "online_review_collector_completed") ||
+      (entry.status === "online_review_fixer_completed" &&
+        entry.event === "online_review_fixer_completed") ||
       (entry.status === "online_review_fix_committed" &&
         entry.event === "online_review_fix_committed") ||
       (entry.status === "online_review_mergeable" &&
         entry.event === "online_review_mergeable");
-    if (!live) continue;
+    if (liveSameRound) {
+      maxRound = Math.max(maxRound, round);
+      continue;
+    }
+    // Post-fixer Verify continue is durable proof round N is done → start N+1.
     if (
-      typeof entry.onlineReviewRound === "number" &&
-      Number.isSafeInteger(entry.onlineReviewRound) &&
-      entry.onlineReviewRound >= 1
+      entry.status === "online_review_verify_continued" &&
+      entry.event === "online_review_verify_continued"
     ) {
-      maxRound = Math.max(maxRound, entry.onlineReviewRound);
+      maxRound = Math.max(maxRound, round + 1);
     }
   }
   return maxRound > 0 ? maxRound : 1;
@@ -112,9 +127,39 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
   return undefined;
 }
 
+function authorizationFromLedgerEntry(entry: {
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey?: string;
+    readonly threadId?: string;
+  }>;
+}): {
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
+} {
+  return {
+    fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
+      (key) => typeof key === "string" && key.trim().length > 0,
+    ),
+    fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
+      (binding) =>
+        typeof binding.identityKey === "string" &&
+        binding.identityKey.trim().length > 0 &&
+        typeof binding.threadId === "string" &&
+        binding.threadId.trim().length > 0
+          ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+          : [],
+    ),
+  };
+}
+
 /**
- * Rebuild the last fixer authorization from the family ledger's durable
- * `online_review_fix_committed` marker.
+ * Rebuild the last fixer authorization from durable phase markers (#1145).
+ * Prefer latest verify_continued / fixer_completed / fix_committed — no-op
+ * continues have no fix_committed row.
  */
 export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -135,26 +180,15 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
 } {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (
-      entry.status !== "online_review_fix_committed" ||
-      entry.event !== "online_review_fix_committed"
-    ) {
-      continue;
-    }
-    return {
-      fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
-        (key) => typeof key === "string" && key.trim().length > 0,
-      ),
-      fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
-        (binding) =>
-          typeof binding.identityKey === "string" &&
-          binding.identityKey.trim().length > 0 &&
-          typeof binding.threadId === "string" &&
-          binding.threadId.trim().length > 0
-            ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-            : [],
-      ),
-    };
+    const live =
+      (entry.status === "online_review_verify_continued" &&
+        entry.event === "online_review_verify_continued") ||
+      (entry.status === "online_review_fixer_completed" &&
+        entry.event === "online_review_fixer_completed") ||
+      (entry.status === "online_review_fix_committed" &&
+        entry.event === "online_review_fix_committed");
+    if (!live) continue;
+    return authorizationFromLedgerEntry(entry);
   }
   return {
     fixMarkedFindingIdentityKeys: [],
@@ -242,6 +276,82 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
     return { round };
   }
   return undefined;
+}
+
+/**
+ * Pending Fixer cargo for same-round Verify resume (#1145 post-fixer seam).
+ * Returns opaque fixerResult when fixer_completed(round) exists and has not
+ * been consumed by a later mergeable(round) or verify_continued(round).
+ * Legal no-op (no SHA) is first-class cargo — never gated on committed.
+ */
+export function lastPendingFixerCargoFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly onlineReviewRound?: number;
+    readonly fixerResultCargo?: FixerResult;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<{
+      readonly identityKey?: string;
+      readonly threadId?: string;
+    }>;
+  }>,
+  round: number,
+):
+  | {
+      readonly fixerResult: FixerResult;
+      readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+      readonly fixMarkedFindingThreads: ReadonlyArray<{
+        readonly identityKey: string;
+        readonly threadId: string;
+      }>;
+    }
+  | undefined {
+  if (!Number.isSafeInteger(round) || round < 1) return undefined;
+  let pendingIdx = -1;
+  let pending: FixerResult | undefined;
+  let pendingAuth:
+    | {
+        readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+        readonly fixMarkedFindingThreads: ReadonlyArray<{
+          readonly identityKey: string;
+          readonly threadId: string;
+        }>;
+      }
+    | undefined;
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!;
+    if (entry.onlineReviewRound !== round) continue;
+    if (
+      entry.status === "online_review_fixer_completed" &&
+      entry.event === "online_review_fixer_completed" &&
+      entry.fixerResultCargo !== undefined &&
+      entry.fixerResultCargo.kind === "fixer"
+    ) {
+      pendingIdx = i;
+      pending = entry.fixerResultCargo;
+      pendingAuth = authorizationFromLedgerEntry(entry);
+      continue;
+    }
+    if (pendingIdx < 0) continue;
+    // Later same-round consumption of the fixer cargo.
+    if (
+      (entry.status === "online_review_mergeable" &&
+        entry.event === "online_review_mergeable") ||
+      (entry.status === "online_review_verify_continued" &&
+        entry.event === "online_review_verify_continued")
+    ) {
+      pendingIdx = -1;
+      pending = undefined;
+      pendingAuth = undefined;
+    }
+  }
+  if (pending === undefined || pendingAuth === undefined) return undefined;
+  return {
+    fixerResult: pending,
+    fixMarkedFindingIdentityKeys: pendingAuth.fixMarkedFindingIdentityKeys,
+    fixMarkedFindingThreads: pendingAuth.fixMarkedFindingThreads,
+  };
 }
 
 /** Stop summary for the verifier's explicit decision-gate signal. */
@@ -495,6 +605,12 @@ export async function runOnlineReviewLoopStage(
       readonly identityKey: string;
       readonly threadId: string;
     }>;
+    /**
+     * #1145 post-fixer crash resume: opaque fixer cargo already durable.
+     * When set, this round skips first Verify + Fixer and goes to same-round
+     * Verify with the cargo (Collector still runs — checkpoint short-circuit).
+     */
+    readonly initialPendingFixerResult?: FixerResult;
     /** Optional runner-owned landing enrichment (#711 prior-round data). */
     readonly enrichVerifyLanding?: (
       landing: WorkerLandingPayload,
@@ -511,13 +627,34 @@ export async function runOnlineReviewLoopStage(
   let recheckFixMarkedFindingThreads:
     | ReadonlyArray<{ readonly identityKey: string; readonly threadId: string }>
     | undefined = opts?.initialFixMarkedFindingThreads;
+  /**
+   * When set, skip first Verify + Fixer and feed this cargo to same-round Verify.
+   * Cleared after the post-fixer Verify seat consumes it (or attempts to).
+   */
+  let pendingFixerResult: FixerResult | undefined = opts?.initialPendingFixerResult;
+  /**
+   * Crash between Fixer return and resolveFixCommitSha left envelope SHA without
+   * fix_committed — call the callback once on resume when ledger had no head.
+   */
+  let resumeNeedsFixShaBookkeeping = false;
+  if (pendingFixerResult !== undefined) {
+    const resumedSha = fixerEnvelopeFixCommitSha(pendingFixerResult);
+    if (
+      resumedSha !== undefined &&
+      resumedSha.length > 0 &&
+      (lastFixCommitSha === undefined || lastFixCommitSha.length === 0)
+    ) {
+      lastFixCommitSha = resumedSha;
+      resumeNeedsFixShaBookkeeping = true;
+    }
+  }
 
   // #940 / ID-012: no mechanical round cap — persistent verify judge owns
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
     // Base landing only — Collector owns GH evidence (#1145).
     let landing = buildOnlineReviewBaseLanding(ship, round, lastFixCommitSha);
-    if (round > 1) {
+    if (round > 1 || pendingFixerResult !== undefined) {
       landing = {
         ...landing,
         fixMarkedFindingIdentityKeys:
@@ -531,6 +668,7 @@ export async function runOnlineReviewLoopStage(
 
     // ── 1. Collector: query/wait/retrigger/evidence (no judge enum) ──
     // Action may return a durable checkpoint without re-burning wait.
+    // Also runs on post-fixer resume so frozen evidence is restored.
     let collectorArtifacts: NonNullable<
       WorkerLandingPayload["rawReviewerArtifacts"]
     > | undefined;
@@ -570,81 +708,97 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "collector", err);
     }
 
-    // ── 2. Verify: judgment only on Collector evidence ──
     let verify: VerifyResult | undefined;
-    try {
-      const dispatchedVerify = await dispatch.dispatchVerify(landing, round);
-      verify = dispatchedVerify.verify;
-      if (dispatchedVerify.artifacts !== undefined) {
-        landing = {
-          ...landing,
-          rawReviewerArtifacts: dispatchedVerify.artifacts,
-        };
-      } else if (collectorArtifacts !== undefined) {
-        landing = {
-          ...landing,
-          rawReviewerArtifacts: collectorArtifacts,
-        };
-      }
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
-      }
-      return decisionGateFromDispatchInfra(round, "verify", err);
-    }
 
-    {
-      const terminal = applyVerifyDisposition(verify, round);
-      if (terminal !== "continue") return terminal;
-    }
-    // Sparse / unusable verify cargo (no typed disposition) continues to fixer
-    // with raw artifacts — never host empty-success (#940 / ID-012).
-
-    // Opaque fixer packet = THIS round's Verify cargo only. Missing/sparse must
-    // not fall back to prior-round recheck keys seeded on the Verify landing.
-    const packet = fixerPacketFromVerify(verify);
-    const fixKeys = packet.fixMarkedFindingIdentityKeys;
-    const fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
-    landing = {
-      ...landing,
-      fixMarkedFindingIdentityKeys: fixKeys,
-      fixMarkedFindingThreads,
-    };
-
-    // continue disposition: fixer path (no mechanical round cap).
-    recheckFixMarkedFindingIdentityKeys = fixKeys;
-    recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
-
-    let fixerOutput: FixerResult | undefined;
-    try {
-      fixerOutput = await dispatch.dispatchFixer(landing);
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
-      }
-      return decisionGateFromDispatchInfra(round, "fixer", err);
-    }
-
-    // #1145: EVERY fixer result is opaque cargo back to the SAME Verify judge.
-    // Do not branch topology on committed / alreadySatisfied / fixCommitSha
-    // (no fourth state, no isFixerLegalNoOp control-flow fork).
-    landing = {
-      ...landing,
-      ...(fixerOutput !== undefined ? { fixerResult: fixerOutput } : {}),
-    };
-
-    // Envelope SHA bookkeeping only — presence does not fork the next seat.
-    const envelopeFixSha =
-      fixerOutput !== undefined
-        ? fixerEnvelopeFixCommitSha(fixerOutput)
-        : undefined;
-    if (envelopeFixSha !== undefined && dispatch.resolveFixCommitSha) {
+    // ── 2/3. First Verify + Fixer — skipped when resuming durable fixer cargo ──
+    if (pendingFixerResult === undefined) {
       try {
-        const resolved = await dispatch.resolveFixCommitSha(envelopeFixSha);
+        const dispatchedVerify = await dispatch.dispatchVerify(landing, round);
+        verify = dispatchedVerify.verify;
+        if (dispatchedVerify.artifacts !== undefined) {
+          landing = {
+            ...landing,
+            rawReviewerArtifacts: dispatchedVerify.artifacts,
+          };
+        } else if (collectorArtifacts !== undefined) {
+          landing = {
+            ...landing,
+            rawReviewerArtifacts: collectorArtifacts,
+          };
+        }
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) {
+          throw err;
+        }
+        return decisionGateFromDispatchInfra(round, "verify", err);
+      }
+
+      {
+        const terminal = applyVerifyDisposition(verify, round);
+        if (terminal !== "continue") return terminal;
+      }
+      // Sparse / unusable verify cargo (no typed disposition) continues to fixer
+      // with raw artifacts — never host empty-success (#940 / ID-012).
+
+      // Opaque fixer packet = THIS round's Verify cargo only. Missing/sparse must
+      // not fall back to prior-round recheck keys seeded on the Verify landing.
+      const packet = fixerPacketFromVerify(verify);
+      const fixKeys = packet.fixMarkedFindingIdentityKeys;
+      const fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
+      landing = {
+        ...landing,
+        fixMarkedFindingIdentityKeys: fixKeys,
+        fixMarkedFindingThreads,
+      };
+
+      // continue disposition: fixer path (no mechanical round cap).
+      recheckFixMarkedFindingIdentityKeys = fixKeys;
+      recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
+
+      let fixerOutput: FixerResult | undefined;
+      try {
+        fixerOutput = await dispatch.dispatchFixer(landing);
+      } catch (err) {
+        if (err instanceof OnlineReviewLoopTerminal) {
+          throw err;
+        }
+        return decisionGateFromDispatchInfra(round, "fixer", err);
+      }
+      pendingFixerResult = fixerOutput;
+
+      // Envelope SHA bookkeeping only — presence does not fork the next seat.
+      // Always adopt envelope SHA first; resolveFixCommitSha may override only.
+      const envelopeFixSha =
+        fixerOutput !== undefined
+          ? fixerEnvelopeFixCommitSha(fixerOutput)
+          : undefined;
+      if (envelopeFixSha !== undefined && envelopeFixSha.length > 0) {
+        lastFixCommitSha = envelopeFixSha;
+        if (dispatch.resolveFixCommitSha) {
+          try {
+            const resolved = await dispatch.resolveFixCommitSha(envelopeFixSha);
+            if (typeof resolved === "string" && resolved.length > 0) {
+              lastFixCommitSha = resolved;
+            }
+          } catch (err) {
+            if (err instanceof OnlineReviewLoopTerminal) {
+              throw err;
+            }
+            return decisionGateFromDispatchInfra(round, "fixer", err);
+          }
+        }
+      }
+    } else if (
+      resumeNeedsFixShaBookkeeping &&
+      lastFixCommitSha !== undefined &&
+      lastFixCommitSha.length > 0 &&
+      dispatch.resolveFixCommitSha
+    ) {
+      resumeNeedsFixShaBookkeeping = false;
+      try {
+        const resolved = await dispatch.resolveFixCommitSha(lastFixCommitSha);
         if (typeof resolved === "string" && resolved.length > 0) {
           lastFixCommitSha = resolved;
-        } else {
-          lastFixCommitSha = envelopeFixSha;
         }
       } catch (err) {
         if (err instanceof OnlineReviewLoopTerminal) {
@@ -652,10 +806,32 @@ export async function runOnlineReviewLoopStage(
         }
         return decisionGateFromDispatchInfra(round, "fixer", err);
       }
+    } else {
+      resumeNeedsFixShaBookkeeping = false;
     }
 
-    // Same-round Verify re-entry with fixer cargo — skip Collector so frozen
-    // checkpoint evidence is not the only thing the judge sees.
+    // #1145: EVERY fixer result is opaque cargo back to the SAME Verify judge.
+    // Do not branch topology on committed / alreadySatisfied / fixCommitSha
+    // (no fourth state, no isFixerLegalNoOp control-flow fork).
+    landing = {
+      ...landing,
+      fixMarkedFindingIdentityKeys:
+        recheckFixMarkedFindingIdentityKeys ??
+        landing.fixMarkedFindingIdentityKeys ??
+        [],
+      fixMarkedFindingThreads:
+        recheckFixMarkedFindingThreads ??
+        landing.fixMarkedFindingThreads ??
+        [],
+      ...(pendingFixerResult !== undefined
+        ? { fixerResult: pendingFixerResult }
+        : {}),
+    };
+    // Cargo handed to same-round Verify — clear so a later continue iteration
+    // does not skip first Verify + Fixer again.
+    pendingFixerResult = undefined;
+
+    // Same-round Verify with fixer cargo (Collector already ran this iteration).
     try {
       const recheck = await dispatch.dispatchVerify(landing, round);
       verify = recheck.verify;

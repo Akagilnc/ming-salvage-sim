@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  FixerResult,
   OnlineReviewLandingSnapshot,
   PriorFindingDisposition,
   StepId,
@@ -130,6 +131,16 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "online_review_round_retrigger",
   /** #1145 — Collector completed wait/evidence checkpoint for durable resume. */
   "online_review_collector_completed",
+  /**
+   * #1145 — Fixer completed (commit or legal no-op). Opaque fixerResult cargo is
+   * durable so crash before same-round Verify still returns the same packet.
+   */
+  "online_review_fixer_completed",
+  /**
+   * #1145 — Post-fixer Verify returned continue. Durable proof side effects for
+   * that seat are done; re-entry advances to the next Collector without replay.
+   */
+  "online_review_verify_continued",
   /** #1145 — Verify converged / side effects done; re-entry must not re-dispatch. */
   "online_review_mergeable",
   "worker_dispatched",
@@ -288,6 +299,8 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "online_review_collector_completed"
+    | "online_review_fixer_completed"
+    | "online_review_verify_continued"
     | "online_review_mergeable"
     | "worker_dispatched"
     | "route_degraded"
@@ -481,6 +494,12 @@ export interface FamilyLedgerEntry {
    * Runner does not read bot/CI/finding semantics from this field.
    */
   readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
+  /**
+   * #1145 — opaque Fixer envelope on `online_review_fixer_completed`. Includes
+   * legal no-op (no SHA). Runner transports as-is to same-round Verify; never
+   * branches topology on committed / alreadySatisfied.
+   */
+  readonly fixerResultCargo?: FixerResult;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

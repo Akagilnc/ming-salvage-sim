@@ -44,6 +44,7 @@ import {
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
+  lastPendingFixerCargoFromFamilyLedger,
   onlineReviewJudgeDisposition,
   onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
@@ -133,7 +134,9 @@ import {
   recordFamilyEscalated,
   recordOnlineReviewCollectorCompleted,
   recordOnlineReviewFixCommitted,
+  recordOnlineReviewFixerCompleted,
   recordOnlineReviewMergeable,
+  recordOnlineReviewVerifyContinued,
   recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
@@ -1962,15 +1965,27 @@ export async function runFamilyOnlineReviewLoop(input: {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
+  // #1145 post-fixer seam: opaque fixer cargo may already be durable (incl. no-op).
+  const pendingFixerCargo = lastPendingFixerCargoFromFamilyLedger(
+    familyLedger,
+    loopState.round,
+  );
   const resumedFixAuthorization =
-    lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
+    pendingFixerCargo !== undefined
+      ? {
+          fixMarkedFindingIdentityKeys:
+            pendingFixerCargo.fixMarkedFindingIdentityKeys,
+          fixMarkedFindingThreads: pendingFixerCargo.fixMarkedFindingThreads,
+        }
+      : lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
-  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> = [];
+  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> =
+    resumedFixAuthorization.fixMarkedFindingIdentityKeys;
   let lastFixMarkedFindingThreads: ReadonlyArray<{
     readonly identityKey: string;
     readonly threadId: string;
-  }> = [];
+  }> = resumedFixAuthorization.fixMarkedFindingThreads;
   let lastFixerOnlineReviewRound = loopState.round;
 
   try {
@@ -2178,11 +2193,35 @@ export async function runFamilyOnlineReviewLoop(input: {
           // SAME channel-(b) disposition machine as stage routing — never a
           // parallel cargo predicate (contradictory cargo must not swallow
           // decision_gate on re-entry).
-          if (onlineReviewJudgeDisposition(verifyOut) === "converged") {
+          const disposition = onlineReviewJudgeDisposition(verifyOut);
+          if (disposition === "converged") {
             await recordOnlineReviewMergeable(input.familyBackend, {
               onlineReviewRound: round,
               pr: prUrl,
             });
+          } else if (
+            disposition === "continue" &&
+            landing.fixerResult !== undefined
+          ) {
+            // Post-fixer Verify continue — single durable truth that this seat
+            // consumed fixer cargo; re-entry starts next Collector, no replay.
+            await recordOnlineReviewVerifyContinued(input.familyBackend, {
+              onlineReviewRound: round,
+              pr: prUrl,
+              ...(verifyOut.fixMarkedFindingIdentityKeys !== undefined
+                ? {
+                    fixMarkedFindingIdentityKeys:
+                      verifyOut.fixMarkedFindingIdentityKeys,
+                  }
+                : {}),
+              ...(verifyOut.fixMarkedFindingThreads !== undefined
+                ? {
+                    fixMarkedFindingThreads:
+                      verifyOut.fixMarkedFindingThreads,
+                  }
+                : {}),
+            });
+            loopState.round = Math.max(loopState.round, round + 1);
           }
           return { artifacts, verify: verifyOut };
         },
@@ -2194,6 +2233,17 @@ export async function runFamilyOnlineReviewLoop(input: {
           lastFixMarkedFindingThreads =
             landing.fixMarkedFindingThreads ?? [];
           lastFixerOnlineReviewRound = round;
+
+          // Durable fixer cargo already on ledger → never re-dispatch Fixer.
+          const ledgerNow = await input.familyBackend.readFamilyLedger();
+          const already = lastPendingFixerCargoFromFamilyLedger(
+            ledgerNow,
+            round,
+          );
+          if (already !== undefined) {
+            return already.fixerResult;
+          }
+
           const fixerPool = poolForKind("fixer");
           const result = await dispatchOrAbort(
             input.familyBackend,
@@ -2242,7 +2292,30 @@ export async function runFamilyOnlineReviewLoop(input: {
               }),
             });
           }
-          return result.output.kind === "fixer" ? result.output : undefined;
+          const output =
+            result.output.kind === "fixer" ? result.output : undefined;
+          // Always durable the opaque envelope (commit OR legal no-op).
+          // Not a host gate on committed/alreadySatisfied — pure cargo.
+          if (output !== undefined) {
+            await recordOnlineReviewFixerCompleted(input.familyBackend, {
+              onlineReviewRound: round,
+              fixerResult: output,
+              pr: prUrl,
+              ...(lastFixMarkedFindingIdentityKeys.length > 0
+                ? {
+                    fixMarkedFindingIdentityKeys:
+                      lastFixMarkedFindingIdentityKeys,
+                  }
+                : {}),
+              ...(lastFixMarkedFindingThreads.length > 0
+                ? {
+                    fixMarkedFindingThreads: lastFixMarkedFindingThreads,
+                  }
+                : {}),
+            });
+            loopState.round = Math.max(loopState.round, round);
+          }
+          return output;
         },
         // #941: landing Action owns docs/merge/close/cleanup after this loop.
         // #1145: post-fix retrigger/wait is the next Collector seat — no host
@@ -2277,6 +2350,9 @@ export async function runFamilyOnlineReviewLoop(input: {
           resumedFixAuthorization.fixMarkedFindingIdentityKeys,
         initialFixMarkedFindingThreads:
           resumedFixAuthorization.fixMarkedFindingThreads,
+        ...(pendingFixerCargo !== undefined
+          ? { initialPendingFixerResult: pendingFixerCargo.fixerResult }
+          : {}),
         enrichVerifyLanding: async (landing, round) => {
           // Ledger prior-round keys from durable fix_committed markers only
           // (#711 / #1145 — no in-process disposition accumulation).

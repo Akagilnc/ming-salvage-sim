@@ -15,6 +15,10 @@
  *    - mergeable re-entry does not re-dispatch Verify (side effects once)
  * 8. Sparse collector cargo → Verify receives it and typed-escalates (no infra throw)
  * 9. post-fix retrigger plan is a real Collector capability export
+ * 10. Post-fixer crash seam (durable phase, not round arithmetic):
+ *    - Fixer no-op completed → crash before same-round Verify → re-entry
+ *    - Fixer commit completed → crash before same-round Verify → re-entry
+ *    - Post-fixer Verify continue → crash before next Collector → no replay
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -600,6 +604,64 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(result.stopSummary?.summary).not.toMatch(/dispatch failed/i);
     });
 
+    it("envelope SHA updates lastFixCommitSha without resolveFixCommitSha callback", async () => {
+      const collectorHeads: Array<string | undefined> = [];
+      let verifyCalls = 0;
+
+      const result = await runOnlineReviewLoopStage(
+        offlineShip,
+        onlineReviewDispatch({
+          // Intentionally NO resolveFixCommitSha — envelope SHA must still land.
+          dispatchCollector: async (landing) => {
+            collectorHeads.push(landing.shipDelivery?.prHead);
+            return {
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: landing.shipDelivery?.prHead ?? offlineShip.prHead!,
+              }),
+            };
+          },
+          dispatchVerify: async (landing) => {
+            verifyCalls += 1;
+            if (verifyCalls === 1) {
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: ["k-env"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "k-env", threadId: "t-env" },
+                  ],
+                },
+              };
+            }
+            if (verifyCalls === 2) {
+              expect(landing.fixerResult?.fixCommitSha).toBe("envelope-only-sha");
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  isRecheck: true,
+                },
+              };
+            }
+            return { verify: { kind: "verify", converged: true, isRecheck: true } };
+          },
+          dispatchFixer: async () => ({
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "envelope-only-sha",
+          }),
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(collectorHeads).toEqual([
+        offlineShip.prHead,
+        "envelope-only-sha",
+      ]);
+    });
+
     it("post-fix continue: next Collector sees fix head; prior Verify saw fixer cargo", async () => {
       const collectorHeads: Array<string | undefined> = [];
       const verifyFixerShas: Array<string | undefined> = [];
@@ -841,6 +903,380 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(
         backend.ledger.filter((e) => e.event === "online_review_mergeable"),
       ).toHaveLength(1);
+    });
+
+    it("post-fixer crash: no-op fixerResult survives; re-entry skips Fixer and feeds same Verify", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      let crashPostFixerVerify = true;
+      const verifyFixerCargo: Array<WorkerLandingPayload["fixerResult"]> = [];
+
+      // Crash at same-round Verify entry AFTER fixer_completed is durable.
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (
+          crashPostFixerVerify &&
+          spec.kind === "verify" &&
+          landing?.fixerResult !== undefined
+        ) {
+          backend.kinds.push(spec.kind);
+          backend.models.push(spec.model);
+          backend.landings.push(landing);
+          backend.verifyDispatchCount += 1;
+          return {
+            kind: "failed",
+            reason:
+              "simulated crash after fixer no-op before same-round verify: EISDIR: illegal operation on a directory",
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        verifyFixerCargo.push(landing?.fixerResult);
+        if (landing?.fixerResult !== undefined) {
+          // Same-round Verify after durable fixer cargo.
+          expect(landing.fixerResult).toEqual({
+            kind: "fixer",
+            committed: false,
+            alreadySatisfied: true,
+          });
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["noop:1"],
+            fixMarkedFindingThreads: [
+              { identityKey: "noop:1", threadId: "t-noop" },
+            ],
+          },
+        };
+      };
+
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: false,
+            alreadySatisfied: true,
+          },
+        };
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.stopSummary?.summary).toMatch(
+        /simulated crash after fixer no-op/,
+      );
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(1); // first seat only (post-fixer crashed)
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_fixer_completed"),
+      ).toBe(true);
+      const fixerMarker = backend.ledger.find(
+        (e) => e.event === "online_review_fixer_completed",
+      );
+      expect(fixerMarker?.fixerResultCargo).toEqual({
+        kind: "fixer",
+        committed: false,
+        alreadySatisfied: true,
+      });
+
+      // Re-entry: no second Fixer; same-round Verify gets opaque cargo.
+      crashPostFixerVerify = false;
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(2);
+      expect(verifyFixerCargo).toEqual([
+        undefined,
+        { kind: "fixer", committed: false, alreadySatisfied: true },
+      ]);
+      // Collector checkpoint reused — not re-burned.
+      expect(backend.collectorDispatchCount).toBe(1);
+    });
+
+    it("post-fixer crash: commit fixerResult survives; re-entry skips Fixer and feeds same Verify", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      let crashPostFixerVerify = true;
+      const verifyFixerCargo: Array<WorkerLandingPayload["fixerResult"]> = [];
+
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        if (
+          crashPostFixerVerify &&
+          spec.kind === "verify" &&
+          landing?.fixerResult !== undefined
+        ) {
+          backend.kinds.push(spec.kind);
+          backend.models.push(spec.model);
+          backend.landings.push(landing);
+          backend.verifyDispatchCount += 1;
+          return {
+            kind: "failed",
+            reason:
+              "simulated crash after fixer commit before same-round verify: EISDIR: illegal operation on a directory",
+          };
+        }
+        return origDispatch(spec, ctx, landing);
+      };
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        verifyFixerCargo.push(landing?.fixerResult);
+        if (landing?.fixerResult !== undefined) {
+          expect(landing.fixerResult).toEqual({
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "fix-sha-post-crash-1145",
+          });
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["commit:1"],
+            fixMarkedFindingThreads: [
+              { identityKey: "commit:1", threadId: "t-commit" },
+            ],
+          },
+        };
+      };
+
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "fix-sha-post-crash-1145",
+          },
+        };
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.stopSummary?.summary).toMatch(
+        /simulated crash after fixer commit/,
+      );
+      expect(fixerCalls).toBe(1);
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_fixer_completed"),
+      ).toBe(true);
+
+      crashPostFixerVerify = false;
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(2);
+      expect(verifyFixerCargo[1]).toEqual({
+        kind: "fixer",
+        committed: true,
+        fixCommitSha: "fix-sha-post-crash-1145",
+      });
+      // Commit bookkeeping lands via resolveFixCommitSha (before V2 crash).
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.event === "online_review_fix_committed" &&
+            e.familyHeadAfter === "fix-sha-post-crash-1145",
+        ),
+      ).toBe(true);
+    });
+
+    it("post-fixer continue crash: re-entry starts next Collector; Verify side effects not replayed", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      const collectorRounds: number[] = [];
+      let crashAfterContinue = true;
+
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        backend.kinds.push(spec.kind);
+        backend.models.push(spec.model);
+        if (landing !== undefined) backend.landings.push(landing);
+
+        if (spec.kind === "collector") {
+          const round =
+            landing?.onlineReviewRound ?? ctx.onlineReviewRound ?? 1;
+          collectorRounds.push(round);
+          // After post-fixer continue is durable, crash before next Collector burns.
+          if (
+            crashAfterContinue &&
+            round === 2 &&
+            backend.ledger.some(
+              (e) =>
+                e.event === "online_review_verify_continued" &&
+                e.onlineReviewRound === 1,
+            )
+          ) {
+            backend.collectorDispatchCount += 1;
+            return {
+              kind: "failed",
+              reason:
+                "simulated crash after post-fixer verify continue before next collector: EISDIR: illegal operation on a directory",
+            };
+          }
+          backend.collectorDispatchCount += 1;
+          return {
+            kind: "completed",
+            output: {
+              kind: "collector",
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: `head-r${round}`,
+                totalFindingCount: round,
+                droppedBots: [`marker-r${round}`],
+              }),
+            },
+          };
+        }
+
+        if (spec.kind === "verify") {
+          verifyCalls += 1;
+          backend.verifyDispatchCount += 1;
+          const hadFixer = landing?.fixerResult !== undefined;
+          const round = landing?.onlineReviewRound ?? 1;
+
+          if (round >= 2) {
+            // Next-round seat after durable continue — converge, no new Fixer.
+            return {
+              kind: "completed",
+              output: { kind: "verify", converged: true, isRecheck: false },
+            };
+          }
+
+          if (!hadFixer) {
+            return {
+              kind: "completed",
+              output: {
+                kind: "verify",
+                converged: false,
+                fixMarkedFindingIdentityKeys: [`r${round}:k`],
+                fixMarkedFindingThreads: [
+                  { identityKey: `r${round}:k`, threadId: `t-r${round}` },
+                ],
+              },
+            };
+          }
+
+          // Round-1 post-fixer continue — durable verify_continued then next Collector crashes.
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              isRecheck: true,
+              fixMarkedFindingIdentityKeys: ["r1:next"],
+              fixMarkedFindingThreads: [
+                { identityKey: "r1:next", threadId: "t-next" },
+              ],
+            },
+          };
+        }
+
+        if (spec.kind === "fixer") {
+          fixerCalls += 1;
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false },
+          };
+        }
+
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.stopSummary?.summary).toMatch(
+        /simulated crash after post-fixer verify continue/,
+      );
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(2); // V1 + V2
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.event === "online_review_verify_continued" &&
+            e.onlineReviewRound === 1,
+        ),
+      ).toBe(true);
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+
+      const verifyBefore = verifyCalls;
+      const fixerBefore = fixerCalls;
+      // Round-2 collector was attempted (and failed) — not short-circuited.
+      expect(collectorRounds.filter((r) => r === 2).length).toBeGreaterThanOrEqual(
+        1,
+      );
+
+      // Re-entry: must NOT re-run round-1 Verify (side effects once).
+      crashAfterContinue = false;
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second.ok).toBe(true);
+      expect(second.terminalState).toBe("mergeable");
+      expect(second.round).toBe(2);
+      expect(fixerCalls).toBe(fixerBefore); // no re-Fixer
+      // Only new Verify seats for round 2 — no replay of round-1 V1/V2.
+      expect(verifyCalls).toBe(verifyBefore + 1);
+      expect(collectorRounds.filter((r) => r === 1)).toHaveLength(1);
+      // Successful round-2 collector on re-entry (plus the crashed attempt).
+      expect(collectorRounds.filter((r) => r === 2).length).toBeGreaterThanOrEqual(
+        2,
+      );
     });
 
     it("durable round: multi no-op continue → round-3 checkpoint → crash/re-entry uses latest evidence", async () => {
