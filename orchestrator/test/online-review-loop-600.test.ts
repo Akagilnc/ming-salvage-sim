@@ -1,51 +1,13 @@
 /**
- * #600 — online review-loop: bot polling library + stage-level regressions.
- * Host poll/retrigger/side-effect dual-owner path deleted in #1145.
+ * #600 — online review-loop: bot polling + evidence + CI classification pins.
+ * Host poll/retrigger/side-effect dual-owner path deleted in #1145; pins here
+ * cover production symbols still owned by botPolling / evidenceAdmissibility /
+ * Landing (`pollPrReviewState`) / autoMerge (`classifyCheckRuns`).
  */
 
-import { describe, expect, it, vi } from "vitest";
-import {
-  type MechanicalRetryOptions,
-  MAX_DISPATCH_ATTEMPTS,
-  withMechanicalRetry,
-} from "../src/dispatchRetry.js";
-import {
-  landingWorkerSpec,
-  verifyWorkerSpec,
-  fixerWorkerSpec,
-} from "../src/dispatchWorker.js";
-import {
-  legacyDispatchFamilyWorker,
-} from "../src/family/dispatchFamilyWorker.js";
-import type {
-  Backend,
-  DispatchContext,
-  FixerResult,
-  IssueMeta,
-  OnlineReviewLandingSnapshot,
-  PersistentLedgerEntry,
-  StepOutput,
-  VerifyResult,
-  WorkerKind,
-  WorkerResult,
-  WorkerSpec,
-  WorktreeHandle,
-} from "../src/types.js";
+import { describe, expect, it } from "vitest";
+import type { OnlineReviewLandingSnapshot } from "../src/types.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
-
-const FIXER_ENVELOPE_SHA = "fixsha1111111111111111111111111111111111";
-const fixerCommitted = (fixCommitSha = FIXER_ENVELOPE_SHA): FixerResult => ({
-  kind: "fixer",
-  committed: true,
-  fixCommitSha,
-});
-const fixerNotFixed = (): FixerResult => ({ kind: "fixer", committed: false });
-const fixerAlreadySatisfied = (fixCommitSha: string): FixerResult => ({
-  kind: "fixer",
-  committed: false,
-  alreadySatisfied: true,
-  fixCommitSha,
-});
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_OVERDUE_MIN_WALL_MS,
@@ -55,6 +17,7 @@ import {
   classifyCheckRuns,
   ONLINE_REVIEW_BOT_IDS,
   ONLINE_REVIEW_BOT_LOGINS,
+  ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
   paginateReviewThreadNodes,
   parsePrRef,
   pollPrReviewState,
@@ -67,33 +30,8 @@ import {
   evidenceAdmissible,
   offlineSyntheticPollAdmissible,
 } from "../src/evidenceAdmissibility.js";
-import {
-  lastFixMarkedFindingAuthorizationFromFamilyLedger,
-  lastOnlineReviewFixCommitShaFromFamilyLedger,
-  onlineReviewRoundFromFamilyLedger,
-  runOnlineReviewLoopStage,
-  onlineReviewFixerNothingToFixStopSummary,
-} from "../src/family/onlineReviewLoop.js";
-import {
-  fixerHasFixCommit,
-  skeletonReviewLoopWorkerResult,
-  stubCollectorEvidence,
-} from "../src/reviewLoopOutcome.js";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Sh } from "../src/familyDriver.js";
-import {
-  familyReviewLoopConvergedForHead,
-  recordOnlineReviewFixCommitted,
-} from "../src/family/ledger.js";
-import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
-import { onlineReviewDispatch } from "./helpers/online-review-dispatch.js";
-import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
-import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
-import type { WorkerLandingPayload } from "../src/types.js";
-import { buildExplicitLandingLiveHooks } from "../src/family/landing.js";
-
-
+import { familyReviewLoopConvergedForHead } from "../src/family/ledger.js";
 
 /** Snapshot → opaque collector evidence (test-only; host toLandingSnapshot deleted). */
 function evidenceFromSnapshot(snap: PrReviewSnapshot): OnlineReviewLandingSnapshot {
@@ -250,46 +188,11 @@ function reviewThreadsGraphqlFallback(cmd: string): string | undefined {
   return undefined;
 }
 
-const LANDING_THREAD_PAIR_GRAPHQL = JSON.stringify({
-  data: {
-    repository: {
-      pullRequest: {
-        reviewThreads: {
-          pageInfo: { endCursor: "", hasNextPage: false },
-          nodes: [
-            {
-              id: "PRRT_kwDOExampleThread",
-              isResolved: false,
-              comments: { nodes: [{ databaseId: 4242 }] },
-            },
-          ],
-        },
-      },
-    },
-  },
-});
-
 const FRESH_BOT_TIMESTAMP = "2026-07-08T12:00:00.000Z";
 const TEST_ROUND_TRIGGER = buildRoundTrigger(
   "headsha1",
   "2026-07-08T11:00:00.000Z",
 );
-
-const GITHUB_REPLY_SHAPE = [{
-  id: 99,
-  body: "reply body",
-  path: "src/example.ts",
-  user: { login: "orchestrator-host" },
-}];
-
-const GITHUB_RESOLVE_MUTATION_SHAPE = {
-  data: {
-    resolveReviewThread: {
-      thread: { isResolved: true },
-    },
-  },
-};
-
 
 describe("#600 botPolling — parsePrRef + paginated gh api", () => {
   it("keeps every exact-match bot login lowercase", () => {
@@ -714,6 +617,22 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     ).toContain("gemini");
   });
 
+  it("pin overdue constants: N = ceil(15m/interval)+1 so wall clock cannot be mis-counted", () => {
+    expect(BOT_POLL_INTERVAL_MS).toBe(120_000);
+    expect(BOT_OVERDUE_MIN_WALL_MS).toBe(15 * 60_000);
+    expect(BOT_OVERDUE_POLL_COUNT).toBe(
+      Math.ceil(BOT_OVERDUE_MIN_WALL_MS / BOT_POLL_INTERVAL_MS) + 1,
+    );
+    expect(BOT_OVERDUE_POLL_COUNT).toBe(9);
+    // sleeps before drop
+    expect(BOT_OVERDUE_POLL_COUNT - 1).toBe(8);
+    expect(botOverdueWallClockMs(9)).toBe(16 * 60_000);
+    expect(botOverdueWallClockMs(1)).toBe(0);
+    expect(botOverdueWallClockMs(0)).toBe(0);
+    // Regression: N=8 would only sleep 7×2m = 14m (< 15m).
+    expect(botOverdueWallClockMs(8)).toBeLessThan(BOT_OVERDUE_MIN_WALL_MS);
+  });
+
   it("marks a zero-finding bot review as complete (not pending/dropped)", () => {
     const sh: Sh = (file, args) => {
       const cmd = args.join(" ");
@@ -797,7 +716,21 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
       isResolved: false,
       headOid: "oldhead0000000000000000000000000000000000",
     };
-    expect(stale.headOid === "headsha1").toBe(false);
+    // Production gate: head-bearing evidence uses SHA equality (host isThreadEvidenceFresh deleted).
+    expect(
+      classifyEvidenceFreshness(
+        { headOid: stale.headOid },
+        "headsha1",
+        TEST_ROUND_TRIGGER,
+      ),
+    ).toBe("stale");
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", headOid: stale.headOid },
+        "headsha1",
+        TEST_ROUND_TRIGGER,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -893,5 +826,583 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
       quiescent: true,
     });
     expect(evidence.headOid).toBe(postFixHead);
+  });
+});
+
+describe("#600 CI classification (Landing/autoMerge via classifyCheckRuns)", () => {
+  it("pin checkRunsConverged: in-progress or failed runs block convergence", () => {
+    expect(
+      checkRunsConverged([
+        {
+          id: 1,
+          name: "ci",
+          headSha: "h",
+          status: "completed",
+          conclusion: "success",
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      checkRunsConverged([
+        {
+          id: 2,
+          name: "ci",
+          headSha: "h",
+          status: "in_progress",
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      classifyCheckRuns([
+        { id: 2, name: "ci", headSha: "h", status: "in_progress" },
+      ]),
+    ).toBe("pending");
+    expect(
+      checkRunsConverged([
+        {
+          id: 3,
+          name: "ci",
+          headSha: "h",
+          status: "completed",
+          conclusion: "failure",
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      classifyCheckRuns([
+        {
+          id: 3,
+          name: "ci",
+          headSha: "h",
+          status: "completed",
+          conclusion: "failure",
+        },
+      ]),
+    ).toBe("failed");
+    expect(checkRunsConverged([])).toBe(true);
+    expect(classifyCheckRuns([])).toBe("converged");
+    // Live post-push race: empty check_runs must not mean CI green
+    expect(classifyCheckRuns([], "pending")).toBe("pending");
+    expect(checkRunsConverged([], "pending")).toBe(false);
+  });
+});
+
+describe("#600 r4 central evidence admissibility gate", () => {
+  const trigger = buildRoundTrigger("head-a", "2026-07-08T10:00:00.000Z");
+
+  it("matrix: only fresh_live correlating evidence is admissible", () => {
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", headOid: "head-a" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(true);
+    for (const terminalState of [
+      "stale",
+      "synthetic",
+      "failed",
+      "fallback",
+      "silent",
+    ] as const) {
+      expect(
+        evidenceAdmissible(
+          { terminalState, headOid: "head-a" },
+          "head-a",
+          trigger,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("matrix: timestamp freshness accepts post-trigger artifacts only", () => {
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: "2026-07-08T11:00:00.000Z",
+        },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(true);
+    expect(
+      evidenceAdmissible(
+        {
+          terminalState: "fresh_live",
+          timestamp: "2026-07-08T09:00:00.000Z",
+        },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(false);
+  });
+
+  it("pin r15: timestamp freshness compares parsed instants (precision/timezone formats)", () => {
+    const triggerZ = buildRoundTrigger("head-a", "2026-07-08T10:00:00Z");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:30:00.000Z" },
+        "head-a",
+        triggerZ,
+      ),
+    ).toBe("fresh_live");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T09:30:00Z" },
+        "head-a",
+        triggerZ,
+      ),
+    ).toBe("stale");
+  });
+
+  it("pin r10: GitHub second-precision bot timestamp in trigger second is fresh", () => {
+    // trigger captured with ms; GH reaction/comment created_at is second-truncated
+    // to the same wall second → must not be stale (Codex R10 P2, verified).
+    const triggerMs = buildRoundTrigger("head-a", "2026-07-08T10:00:00.900Z");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:00:00Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("fresh_live");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T09:59:59Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("stale");
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T10:00:01Z" },
+        "head-a",
+        triggerMs,
+      ),
+    ).toBe("fresh_live");
+  });
+
+  it("pin r15: unparseable timestamp → stale (fail-closed)", () => {
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "not-a-timestamp" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe("stale");
+    expect(
+      evidenceAdmissible(
+        { terminalState: "fresh_live", timestamp: "garbage-ts" },
+        "head-a",
+        trigger,
+      ),
+    ).toBe(false);
+    expect(
+      classifyEvidenceFreshness(
+        { timestamp: "2026-07-08T11:00:00.000Z" },
+        "head-a",
+        buildRoundTrigger("head-a", "also-not-a-timestamp"),
+      ),
+    ).toBe("stale");
+  });
+
+  it("pin botPolling r15/r14: eyes ACK on re-trigger is alive-only, not complete", () => {
+    // Codex ACKs the manual re-trigger via `eyes` on the issue comment — that is
+    // NOT a finished review (R14 Codex P1). Leg stays pending until review/+1.
+    const calls: string[] = [];
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8801,
+            user: { login: "orchestrator-host" },
+            body: ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
+            created_at: TEST_ROUND_TRIGGER.triggeredAt,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("issues/comments/8801/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "eyes",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(
+      calls.some((c) => c.includes("repos/o/r/issues/comments/8801/reactions")),
+    ).toBe(true);
+    expect(snap.bots.codex.state).toBe("pending");
+    expect(snap.bots.codex).not.toEqual({ state: "complete", findingCount: 0 });
+  });
+
+  it("pin botPolling r17: Codex PR-level +1 reaction is completion evidence, not a finding", () => {
+    const calls: string[] = [];
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      calls.push(cmd);
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return "[]";
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("repos/o/r/issues/42/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "+1",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(calls.some((c) => c.includes("repos/o/r/issues/42/reactions"))).toBe(
+      true,
+    );
+    expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 0 });
+  });
+
+  it("pin botPolling r15: stale pre-trigger issue-comment reaction stays inadmissible", () => {
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") && !cmd.includes("issues/comments/")) {
+        return JSON.stringify([
+          {
+            id: 8802,
+            user: { login: "orchestrator-host" },
+            body: ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
+            created_at: TEST_ROUND_TRIGGER.triggeredAt,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/comments")) {
+        return "[]";
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (cmd.includes("issues/comments/8802/reactions")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            content: "eyes",
+            created_at: "2020-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(snap.bots.codex.state).toBe("pending");
+    expect(snap.bots.codex).not.toEqual({ state: "complete", findingCount: 1 });
+  });
+
+  it("pin #741: substring-spoof logins do not count as bot evidence via pollPrReviewState", () => {
+    // Production seam: pollPrReviewState → hasBotReviewSignal/countBotFindings → loginMatchesBot.
+    // Substring match would treat "xxx-coderabbit-fan" / "sourcery-fan" / "codex-fan" as bots.
+    const emptyPr = (cmd: string): string | undefined => {
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd);
+    };
+
+    const spoofSh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      const pr = emptyPr(cmd);
+      if (pr !== undefined) return pr;
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "xxx-coderabbit-fan" },
+            body: "Summary: spoofed coderabbit complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "sourcery-fan" },
+            body: "Sourcery spoof review complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "gemini-code-fan" },
+            body: "Gemini spoof review complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-fan" },
+            state: "COMMENTED",
+            submitted_at: FRESH_BOT_TIMESTAMP,
+            body: "Codex spoof review complete",
+          },
+        ]);
+      }
+      return "[]";
+    };
+
+    const spoofSnap = pollPrReviewState(spoofSh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    for (const bot of ONLINE_REVIEW_BOT_IDS) {
+      expect(spoofSnap.bots[bot].state).toBe("pending");
+    }
+    expect(spoofSnap.bots.coderabbit).not.toEqual(
+      expect.objectContaining({ state: "complete" }),
+    );
+
+    // Real bot logins still count; case differs only in letter case (GitHub login rules).
+    const realSh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      const pr = emptyPr(cmd);
+      if (pr !== undefined) return pr;
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "CodeRabbitAI[bot]" },
+            body: "Summary: real coderabbit complete signal body",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "sourcery-ai[bot]" },
+            body: "Sourcery review complete signal body ok",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+          {
+            user: { login: "gemini-code-assist[bot]" },
+            body: "Gemini review complete signal body ok",
+            created_at: FRESH_BOT_TIMESTAMP,
+          },
+        ]);
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return JSON.stringify([
+          {
+            user: { login: "chatgpt-codex-connector[bot]" },
+            state: "COMMENTED",
+            submitted_at: FRESH_BOT_TIMESTAMP,
+            body: "Codex review complete",
+          },
+        ]);
+      }
+      return "[]";
+    };
+
+    const realSnap = pollPrReviewState(realSh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    for (const bot of ONLINE_REVIEW_BOT_IDS) {
+      expect(realSnap.bots[bot].state).toBe("complete");
+    }
+  });
+
+  it("pin botPolling: historical bot comments before round trigger stay pending", () => {
+    const sh: Sh = (_file, args) => {
+      const cmd = args.join(" ");
+      if (
+        cmd.includes("pulls/42") &&
+        cmd.includes("repos/o/r/pulls/42") &&
+        !cmd.includes("comments") &&
+        !cmd.includes("reviews") &&
+        !cmd.includes("check-runs")
+      ) {
+        return JSON.stringify({
+          head: { sha: "headsha1" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (cmd.includes("issues/42/comments") || cmd.includes("pulls/42/comments")) {
+        return JSON.stringify([
+          {
+            user: { login: "coderabbitai[bot]" },
+            body: "stale summary from prior round",
+            created_at: "2020-01-01T00:00:00.000Z",
+          },
+        ]);
+      }
+      if (cmd.includes("check-runs")) {
+        return JSON.stringify({ check_runs: [] });
+      }
+      if (cmd.includes("pulls/42/reviews")) {
+        return "[]";
+      }
+      if (
+        (cmd.includes("pulls/comments/") || cmd.includes("issues/comments/")) &&
+        cmd.includes("/reactions")
+      ) {
+        return "[]";
+      }
+      return reviewThreadsGraphqlFallback(cmd) ?? "[]";
+    };
+    const snap = pollPrReviewState(sh, {
+      repo: "o/r",
+      prUrl: "https://github.com/o/r/pull/42",
+      pollCount: 1,
+      roundTrigger: TEST_ROUND_TRIGGER,
+    });
+    expect(snap.bots.coderabbit.state).toBe("pending");
+  });
+
+  it("pin offline gate: default-deny synthetic snapshots outside admissible handles", () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    try {
+      expect(
+        offlineSyntheticPollAdmissible("https://github.com/o/r/pull/1", "o/r"),
+      ).toBe(false);
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible(
+          "https://github.com/o/r/pull/1",
+          "o/r",
+        ),
+      ).toThrow(/refused for live GitHub PR/);
+
+      delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible(
+          "https://github.com/o/r/pull/1",
+          "o/r",
+        ),
+      ).toThrow(/refused for live GitHub PR/);
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible("pr://family/offline", "o/r"),
+      ).toThrow(/refused for non-admissible PR handle/);
+
+      process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+      expect(offlineSyntheticPollAdmissible("pr://family/offline", "o/r")).toBe(
+        true,
+      );
+      expect(() =>
+        assertOfflineSyntheticPollAdmissible("pr://family/offline", "o/r"),
+      ).not.toThrow();
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
   });
 });
