@@ -18,23 +18,12 @@ import type {
   WorkerResult,
 } from "./types.js";
 
-/** Every well-shaped fixer envelope returns to fresh S9 verification. */
-export function fixerProceedsToVerify(_output: FixerResult): boolean {
-  return true;
-}
-
 /**
  * Optional fix SHA from the fixer envelope. A no-fix envelope has no SHA and
  * proceeds through the verify findings channel.
  */
 export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
   return output.fixCommitSha;
-}
-
-/** Whether the fixer envelope carries a commit that permits commit side effects. */
-export function fixerHasFixCommit(output: FixerResult): boolean {
-  const fixCommitSha = fixerEnvelopeFixCommitSha(output);
-  return fixCommitSha !== undefined && fixCommitSha.length > 0;
 }
 
 export function isValidCleanupResult(
