@@ -1,9 +1,7 @@
 /**
  * #1145 test helper — build OnlineReviewLoopDispatch with independent
- * Collector + Verify seats (no host poll / retriggerAfterFix dual-owner seams).
+ * Collector + Verify seats (no host poll / side-effect dual-owner seams).
  */
-import type { PrReviewSnapshot } from "../../src/botPolling.js";
-import { toLandingSnapshot } from "../../src/family/onlineReviewLoop.js";
 import type {
   OnlineReviewCollectorDispatchResult,
   OnlineReviewLoopDispatch,
@@ -15,99 +13,123 @@ import type {
   VerifyResult,
   WorkerLandingPayload,
 } from "../../src/types.js";
-
-export type LegacyVerifyReturn =
-  | VerifyResult
-  | {
-      readonly kind: "rawReviewerArtifacts";
-      readonly artifacts: NonNullable<
-        WorkerLandingPayload["rawReviewerArtifacts"]
-      >;
-      readonly verify?: VerifyResult;
-    }
-  | OnlineReviewVerifyDispatchResult
-  | (OnlineReviewVerifyDispatchResult & {
-      readonly snapshot?: PrReviewSnapshot;
-    });
-
-function snapshotToEvidence(
-  snapshot: PrReviewSnapshot,
-): OnlineReviewLandingSnapshot {
-  return toLandingSnapshot(snapshot);
-}
-
-function normalizeVerify(
-  raw: LegacyVerifyReturn | undefined,
-): OnlineReviewVerifyDispatchResult {
-  if (raw && typeof raw === "object" && "verify" in raw && !("converged" in raw)) {
-    const r = raw as OnlineReviewVerifyDispatchResult & {
-      artifacts?: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
-    };
-    return {
-      ...(r.verify !== undefined ? { verify: r.verify } : {}),
-      ...(r.artifacts !== undefined ? { artifacts: r.artifacts } : {}),
-    };
-  }
-  if (
-    raw &&
-    typeof raw === "object" &&
-    (raw as { kind?: string }).kind === "rawReviewerArtifacts"
-  ) {
-    const r = raw as {
-      artifacts?: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
-      verify?: VerifyResult;
-    };
-    return {
-      ...(r.artifacts !== undefined ? { artifacts: r.artifacts } : {}),
-      ...(r.verify !== undefined ? { verify: r.verify } : {}),
-    };
-  }
-  if (raw && typeof raw === "object" && "converged" in raw) {
-    return { verify: raw as VerifyResult };
-  }
-  return {};
-}
+import { stubCollectorEvidence } from "../../src/reviewLoopOutcome.js";
 
 /**
  * Build stage dispatch for unit tests.
- * - `snapshot` feeds the default Collector evidence (host does not poll).
- * - `dispatchVerify` is judgment only (may still return legacy shapes).
- * - optional `dispatchCollector` overrides the default snapshot→evidence seat.
+ * - `evidence` feeds the default Collector cargo (host does not poll).
+ * - `dispatchVerify` is judgment only.
+ * - optional `dispatchCollector` overrides the default evidence seat.
  */
+/** Loose fixture shape accepted by tests (PrReviewSnapshot-compatible). */
+type EvidenceFixture =
+  | OnlineReviewLandingSnapshot
+  | (OnlineReviewLandingSnapshot & Record<string, unknown>)
+  | {
+      readonly prUrl: string;
+      readonly headOid: string;
+      readonly totalFindingCount?: number;
+      readonly quiescent?: boolean;
+      readonly bots?: OnlineReviewLandingSnapshot["bots"];
+      readonly threads?: OnlineReviewLandingSnapshot["threads"];
+      readonly checkRuns?: OnlineReviewLandingSnapshot["checkRuns"];
+      readonly checkRunsEmptyMeans?: OnlineReviewLandingSnapshot["checkRunsEmptyMeans"];
+      readonly [key: string]: unknown;
+    };
+
+function toEvidence(raw: EvidenceFixture): OnlineReviewLandingSnapshot {
+  return {
+    prUrl: raw.prUrl,
+    headOid: raw.headOid,
+    ...(typeof raw.totalFindingCount === "number"
+      ? { totalFindingCount: raw.totalFindingCount }
+      : {}),
+    ...(typeof raw.quiescent === "boolean" ? { quiescent: raw.quiescent } : {}),
+    ...(raw.bots !== undefined ? { bots: raw.bots } : {}),
+    ...(raw.threads !== undefined ? { threads: raw.threads } : {}),
+    ...(raw.checkRuns !== undefined ? { checkRuns: raw.checkRuns } : {}),
+    ...(raw.checkRunsEmptyMeans !== undefined
+      ? { checkRunsEmptyMeans: raw.checkRunsEmptyMeans }
+      : {}),
+  };
+}
+
 export function onlineReviewDispatch(input: {
-  readonly snapshot:
-    | PrReviewSnapshot
-    | ((round: number) => PrReviewSnapshot | Promise<PrReviewSnapshot>);
+  readonly evidence?:
+    | EvidenceFixture
+    | ((
+        round: number,
+      ) =>
+        | EvidenceFixture
+        | Promise<EvidenceFixture>
+        | OnlineReviewCollectorDispatchResult
+        | Promise<OnlineReviewCollectorDispatchResult>);
+  /** Fixture alias — accepts evidence or PrReviewSnapshot-shaped objects. */
+  readonly snapshot?:
+    | EvidenceFixture
+    | ((
+        round: number,
+      ) => EvidenceFixture | Promise<EvidenceFixture>);
+  readonly dispatchVerify?: (
+    landing: WorkerLandingPayload,
+    round: number,
+  ) =>
+    | OnlineReviewVerifyDispatchResult
+    | VerifyResult
+    | undefined
+    | Promise<OnlineReviewVerifyDispatchResult | VerifyResult | undefined>;
   readonly dispatchCollector?: (
     landing: WorkerLandingPayload,
     round: number,
-  ) => Promise<OnlineReviewCollectorDispatchResult>;
-  readonly dispatchVerify: (
+  ) =>
+    | OnlineReviewCollectorDispatchResult
+    | Promise<OnlineReviewCollectorDispatchResult>;
+  readonly dispatchFixer?: (
     landing: WorkerLandingPayload,
-    round: number,
-  ) => Promise<LegacyVerifyReturn | OnlineReviewVerifyDispatchResult>;
-  readonly dispatchFixer: (
-    landing: WorkerLandingPayload,
-  ) => Promise<FixerResult | undefined>;
+  ) => FixerResult | undefined | Promise<FixerResult | undefined>;
   readonly resolveFixCommitSha?: (
     envelopeFixSha: string,
   ) => string | Promise<string>;
 }): OnlineReviewLoopDispatch {
+  const defaultEvidence = (): OnlineReviewLandingSnapshot =>
+    stubCollectorEvidence();
+
   return {
-    dispatchCollector:
-      input.dispatchCollector ??
-      (async (_landing, round) => {
-        const snapshot =
-          typeof input.snapshot === "function"
-            ? await input.snapshot(round)
-            : input.snapshot;
-        return { evidence: snapshotToEvidence(snapshot) };
-      }),
-    dispatchVerify: async (landing, round) => {
-      const raw = await input.dispatchVerify(landing, round);
-      return normalizeVerify(raw);
+    dispatchCollector: async (landing, round) => {
+      if (input.dispatchCollector !== undefined) {
+        return input.dispatchCollector(landing, round);
+      }
+      const src = input.evidence ?? input.snapshot ?? defaultEvidence;
+      const raw = typeof src === "function" ? await src(round) : src;
+      if (
+        raw &&
+        typeof raw === "object" &&
+        "evidence" in raw &&
+        !("prUrl" in raw)
+      ) {
+        return raw as OnlineReviewCollectorDispatchResult;
+      }
+      return { evidence: toEvidence(raw as EvidenceFixture) };
     },
-    dispatchFixer: input.dispatchFixer,
+    dispatchVerify: async (landing, round) => {
+      if (input.dispatchVerify === undefined) {
+        return { verify: { kind: "verify", converged: true } };
+      }
+      const raw = await input.dispatchVerify(landing, round);
+      if (raw === undefined) return {};
+      if (
+        typeof raw === "object" &&
+        "converged" in raw &&
+        !("verify" in raw)
+      ) {
+        return { verify: raw as VerifyResult };
+      }
+      return raw as OnlineReviewVerifyDispatchResult;
+    },
+    dispatchFixer: async (landing) => {
+      if (input.dispatchFixer === undefined) return undefined;
+      return input.dispatchFixer(landing);
+    },
     ...(input.resolveFixCommitSha !== undefined
       ? { resolveFixCommitSha: input.resolveFixCommitSha }
       : {}),

@@ -22,6 +22,7 @@ import type {
   CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
+  OnlineReviewLandingSnapshot,
 } from "../types.js";
 import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
@@ -1401,6 +1402,58 @@ export async function recordOnlineReviewFixCommitted(
         ? { fixMarkedFindingThreads: fixThreads }
         : {}),
       ts: new Date().toISOString(),
+    }) as FamilyLedgerEntry,
+  );
+}
+
+/**
+ * Append one Collector-completed durable checkpoint (#1145 AC2).
+ * Action-owned: stores opaque evidence cargo + pointer so crash re-entry does
+ * not re-burn completed wait/evidence. Runner never interprets the body.
+ */
+export async function recordOnlineReviewCollectorCompleted(
+  backend: FamilyBackend,
+  record: {
+    readonly onlineReviewRound: number;
+    readonly evidence: OnlineReviewLandingSnapshot;
+    readonly cargoPointer?: string;
+    readonly pr?: string;
+  },
+): Promise<void> {
+  const onlineReviewRound = record.onlineReviewRound;
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 1) {
+    throw new Error(
+      "family online_review_collector_completed marker must include onlineReviewRound >= 1",
+    );
+  }
+  const evidence = record.evidence;
+  if (
+    typeof evidence.prUrl !== "string" ||
+    evidence.prUrl.trim().length === 0 ||
+    typeof evidence.headOid !== "string" ||
+    evidence.headOid.trim().length === 0
+  ) {
+    throw new Error(
+      "family online_review_collector_completed marker must include evidence.prUrl and evidence.headOid",
+    );
+  }
+  const ts = new Date().toISOString();
+  const cargoPointer =
+    typeof record.cargoPointer === "string" && record.cargoPointer.trim().length > 0
+      ? record.cargoPointer.trim()
+      : `ledger:online_review_collector_completed:round=${onlineReviewRound}:ts=${ts}`;
+  await backend.appendFamilyLedger(
+    compact({
+      status: "online_review_collector_completed",
+      event: "online_review_collector_completed",
+      phase: "final",
+      onlineReviewRound,
+      cargoPointer,
+      collectorEvidenceCargo: evidence,
+      ...(record.pr !== undefined && record.pr.trim().length > 0
+        ? { pr: record.pr.trim() }
+        : {}),
+      ts,
     }) as FamilyLedgerEntry,
   );
 }

@@ -25,29 +25,36 @@ validates via `Output.object` against
 | --- | --- |
 | `station` | `"onlineReview"` |
 | `status` | `"completed"` \| `"escalate"` |
-| `evidence` | **required** on `completed` — transport envelope below |
 | `cargoPointer` | optional non-empty path/URI to opaque cargo body |
 | `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
 
-Completed evidence envelope (schema pins only `prUrl` + `headOid`; other
-business fields are your judgment and must not be invented by the host):
+Thin gate only: completed \| escalate. **Business evidence is never a typed
+traffic field** — sparse cargo does not change process fate (ADR 0131).
+
+### Role cargo (opaque; not SO-validated)
+
+Write collector evidence cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set
+(sidecar is cargo transport). You may also emit opaque `<collector>` cargo JSON
+for the same body. Shape of the cargo body (when evidence is ready):
 
 ```json
 {
-  "station": "onlineReview",
-  "status": "completed",
-  "evidence": {
-    "prUrl": "…",
-    "headOid": "…",
-    "totalFindingCount": 0,
-    "quiescent": true,
-    "bots": {},
-    "droppedBots": [],
-    "threads": [],
-    "checkRuns": [],
-    "checkRunsEmptyMeans": "converged"
-  }
+  "prUrl": "…",
+  "headOid": "…",
+  "totalFindingCount": 0,
+  "quiescent": true,
+  "bots": {},
+  "droppedBots": [],
+  "threads": [],
+  "checkRuns": [],
+  "checkRunsEmptyMeans": "converged"
 }
+```
+
+Completed thin envelope (evidence lives on sidecar / cargoPointer only):
+
+```text
+<onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>
 ```
 
 Escalate:
@@ -63,4 +70,4 @@ Rules:
   judgment is Verify's job.
 - Do not set `converged`, `findingDispositions`, or fixer plan fields.
 - This seat is single-iteration. Completion is clean exit + legal typed
-  envelope with evidence — no STEP_COMPLETE password.
+  envelope — no STEP_COMPLETE password.

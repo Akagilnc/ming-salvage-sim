@@ -40,6 +40,7 @@ import {
 } from "../dispatchWorker.js";
 import {
   OnlineReviewLoopTerminal,
+  lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
@@ -128,6 +129,7 @@ import {
   recordCmrPassed,
   recordCmrReviewed,
   recordFamilyEscalated,
+  recordOnlineReviewCollectorCompleted,
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
@@ -1962,251 +1964,296 @@ export async function runFamilyOnlineReviewLoop(input: {
     return await runOnlineReviewLoopStage(
       input.ship,
       {
-    // #1145: Collector (evidence) and Verify (judgment) are independent Actions.
-    // Runner never host-polls GH, never pre-assembles bot evidence, never
-    // post-applies residual side-effect plans.
-    dispatchCollector: async (landing, round) => {
-      let collectorMonitorHandle: WorkerMonitorHandle | undefined;
-      const collectorPool = poolForKind("collector");
-      const result = await dispatchOrAbort(
-        input.familyBackend,
-        collectorWorkerSpec(modelRoute),
-        {
-          ...baseCtx,
-          modelRoute,
-          onlineReviewRound: round,
-          ...(collectorPool !== undefined ? { billingPool: collectorPool } : {}),
-        },
-        landing,
-        {
-          onMonitorHandle: (handle) => {
-            collectorMonitorHandle = handle;
-          },
-        },
-      );
-      if (result.kind === "escalated") {
-        const escalationSummary = `family collector worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-        const stopSummary = isRunnerSynthesizedFailureEscalation(result.escalation)
-          ? stageFailureStopSummary({
-              status: "online_review_failed",
-              summary: escalationSummary,
-              repairHint:
-                "repair the family collector worker startup/authentication failure, then re-feed the family online review loop",
-            })
-          : decisionGateParkStopSummary({
-              summary: escalationSummary,
-              repairHint:
-                "answer the decision gate / unstick the collector worker, then re-feed the family online review loop",
+        // #1145: Collector (evidence) and Verify (judgment) are independent
+        // Actions. Runner never host-polls GH, never pre-assembles bot evidence,
+        // never post-applies residual side-effect plans.
+        dispatchCollector: async (landing, round) => {
+          // Action-owned durable resume (#1145 AC2): reuse completed Collector
+          // cargo for this round without re-burning wait/evidence. Stage only
+          // calls this seat; checkpoint load/store stays in the Action.
+          const ledgerNow = await input.familyBackend.readFamilyLedger();
+          const checkpoint = lastCollectorCheckpointFromFamilyLedger(
+            ledgerNow,
+            round,
+          );
+          if (checkpoint !== undefined) {
+            return {
+              evidence: checkpoint.evidence,
+              ...(checkpoint.cargoPointer !== undefined
+                ? { cargoPointer: checkpoint.cargoPointer }
+                : {}),
+            };
+          }
+
+          let collectorMonitorHandle: WorkerMonitorHandle | undefined;
+          const collectorPool = poolForKind("collector");
+          const result = await dispatchOrAbort(
+            input.familyBackend,
+            collectorWorkerSpec(modelRoute),
+            {
+              ...baseCtx,
+              modelRoute,
+              onlineReviewRound: round,
+              ...(collectorPool !== undefined
+                ? { billingPool: collectorPool }
+                : {}),
+            },
+            landing,
+            {
+              onMonitorHandle: (handle) => {
+                collectorMonitorHandle = handle;
+              },
+            },
+          );
+          if (result.kind === "escalated") {
+            const escalationSummary = `family collector worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+            const stopSummary = isRunnerSynthesizedFailureEscalation(
+              result.escalation,
+            )
+              ? stageFailureStopSummary({
+                  status: "online_review_failed",
+                  summary: escalationSummary,
+                  repairHint:
+                    "repair the family collector worker startup/authentication failure, then re-feed the family online review loop",
+                })
+              : decisionGateParkStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "answer the decision gate / unstick the collector worker, then re-feed the family online review loop",
+                });
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary,
             });
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary,
-        });
-      }
-      if (result.kind !== "completed") {
-        const detail = result.kind === "failed" ? `: ${result.reason}` : "";
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
-            summary: `family collector worker returned ${result.kind}${detail}`,
-            repairHint:
-              "inspect the collector worker envelope and re-feed the family online review loop",
-          }),
-        });
-      }
-      const artifacts = reviewerArtifactPointers(
-        collectorMonitorHandle,
-        result.sessionId,
-      );
-      // #1145: evidence is required on CollectorResult (native SO schema). Stage
-      // only transports — never synthesizes or re-validates the envelope.
-      if (result.output.kind !== "collector") {
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-            status: "online_review_failed",
-            summary: `family collector worker returned unexpected output kind ${result.output.kind}`,
-            repairHint:
-              "inspect the collector worker envelope and re-feed the family online review loop",
-          }),
-        });
-      }
-      const evidence = result.output.evidence;
-      // Dumb ledger transport fact for resume anchors — not bot-state judgment.
-      if (round > 1 || familyLastFixCommitSha !== undefined) {
-        await recordOnlineReviewRoundRetrigger(input.familyBackend, {
-          roundTriggerHeadOid: evidence.headOid,
-          roundTriggerAt: new Date().toISOString(),
-          onlineReviewRound: round,
-          pr: prUrl,
-        });
-        loopState.round = Math.max(loopState.round, round);
-      }
-      return { evidence, artifacts };
-    },
-    dispatchVerify: async (landing, round) => {
-      // Landing already carries Collector evidence — Verify judges only.
-      let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
-      const verifyPool = poolForKind("verify");
-      const result = await dispatchOrAbort(
-        input.familyBackend,
-        verifyWorkerSpec(modelRoute),
-        {
-          ...baseCtx,
-          modelRoute,
-          onlineReviewRound: round,
-          ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
-        },
-        landing,
-        {
-          onMonitorHandle: (handle) => {
-            reviewerMonitorHandle = handle;
-          },
-        },
-      );
-      // Cursor R11 medium + self-check: escalated must park with decision_gate_park
-      // + escalate payload text — not a bare decision_gate_raised that drops reason.
-      if (result.kind === "escalated") {
-        const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-        const stopSummary = isRunnerSynthesizedFailureEscalation(result.escalation)
-          ? stageFailureStopSummary({
-      status: "online_review_failed",
-              summary: escalationSummary,
-              repairHint:
-                "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
-            })
-          : decisionGateParkStopSummary({
-              summary: escalationSummary,
-              repairHint:
-                "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
-            });
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary,
-        });
-      }
-      if (result.kind !== "completed") {
-        const detail = result.kind === "failed" ? `: ${result.reason}` : "";
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-      status: "online_review_failed",
-            summary: `family verify worker returned ${result.kind}${detail}`,
-            repairHint:
-              "inspect the verify worker envelope and re-feed the family online review loop",
-          }),
-        });
-      }
-      const artifacts = reviewerArtifactPointers(
-        reviewerMonitorHandle,
-        result.sessionId,
-      );
-      if (result.output.kind !== "verify") {
-        return { artifacts };
-      }
-      // #1002: continue disposition + advanceCoder rewrites fixer before fix
-      // dispatch (same never-terminal contract as CMR/single-slice courts).
-      const verifyOut = result.output;
-      if (
-        !verifyOut.converged &&
-        verifyOut.terminalState !== "decision_gate_raised" &&
-        typeof verifyOut.advanceCoder === "string" &&
-        verifyOut.advanceCoder.trim().length > 0
-      ) {
-        await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
-      }
-      // Worker owns side effects (#1145). Residual plan cargo is never
-      // host-replayed after the Action returns.
-      return { artifacts, verify: verifyOut };
-    },
-    dispatchFixer: async (landing: WorkerLandingPayload) => {
-      const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
-      lastFixMarkedFindingIdentityKeys =
-        landing.fixMarkedFindingIdentityKeys ?? [];
-      lastFixMarkedFindingThreads = landing.fixMarkedFindingThreads ?? [];
-      lastFixerOnlineReviewRound = round;
-      const fixerPool = poolForKind("fixer");
-      const result = await dispatchOrAbort(
-        input.familyBackend,
-        fixerWorkerSpec(modelRoute),
-        {
-          ...baseCtx,
-          modelRoute,
-          ...(fixerPool !== undefined ? { billingPool: fixerPool } : {}),
-        },
-        landing,
-      );
-      if (result.kind === "escalated") {
-        const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: isRunnerSynthesizedFailureEscalation(result.escalation)
-            ? stageFailureStopSummary({
-      status: "online_review_failed",
-                summary: escalationSummary,
+          }
+          if (result.kind !== "completed") {
+            const detail =
+              result.kind === "failed" ? `: ${result.reason}` : "";
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: stageFailureStopSummary({
+                status: "online_review_failed",
+                summary: `family collector worker returned ${result.kind}${detail}`,
                 repairHint:
-                  "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
-              })
-            : decisionGateParkStopSummary({
-                summary: escalationSummary,
-                repairHint:
-                  "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+                  "inspect the collector worker envelope and re-feed the family online review loop",
               }),
-        });
-      }
-      if (result.kind !== "completed") {
-        const detail =
-          result.kind === "failed"
-            ? `: ${result.reason}`
-            : "";
-        throw new OnlineReviewLoopTerminal({
-          ok: false,
-          terminalState: "decision_gate_raised",
-          round,
-          stopSummary: stageFailureStopSummary({
-      status: "online_review_failed",
-            summary: `family fixer worker returned ${result.kind}${detail}`,
-            repairHint:
-              "inspect the fixer worker envelope and re-feed the family online review loop",
-          }),
-        });
-      }
-      return result.output.kind === "fixer" ? result.output : undefined;
-    },
-    // #941: landing Action owns docs/merge/close/cleanup after this loop.
-    // #1145: post-fix retrigger/wait is the next Collector seat — no host
-    // post-fix poll/retrigger seam.
-    resolveFixCommitSha: async (envelopeFixSha: string) => {
-      const sha = envelopeFixSha;
-      familyLastFixCommitSha = sha;
-      loopState.lastFixSha = sha;
-      await recordOnlineReviewFixCommitted(input.familyBackend, {
-        familyHeadAfter: sha,
-        pr: prUrl,
-        onlineReviewRound: lastFixerOnlineReviewRound,
-        ...(lastFixMarkedFindingIdentityKeys.length > 0
-          ? { fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys }
-          : {}),
-        ...(lastFixMarkedFindingThreads.length > 0
-          ? { fixMarkedFindingThreads: lastFixMarkedFindingThreads }
-          : {}),
-      });
-      return sha;
-    },
-  },
+            });
+          }
+          const artifacts = reviewerArtifactPointers(
+            collectorMonitorHandle,
+            result.sessionId,
+          );
+          // Sparse collector cargo is legal (ADR 0131). Unexpected kind is infra.
+          if (result.output.kind !== "collector") {
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: stageFailureStopSummary({
+                status: "online_review_failed",
+                summary: `family collector worker returned unexpected output kind ${result.output.kind}`,
+                repairHint:
+                  "inspect the collector worker envelope and re-feed the family online review loop",
+              }),
+            });
+          }
+          const evidence = result.output.evidence;
+          const cargoPointer = result.output.cargoPointer;
+          // Persist Action-owned checkpoint when evidence body is present so
+          // crash before Verify does not re-burn wait (#1145 AC2).
+          if (evidence !== undefined) {
+            await recordOnlineReviewCollectorCompleted(input.familyBackend, {
+              onlineReviewRound: round,
+              evidence,
+              ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+              pr: prUrl,
+            });
+            // Dumb ledger transport fact for resume anchors — not bot-state judgment.
+            if (round > 1 || familyLastFixCommitSha !== undefined) {
+              await recordOnlineReviewRoundRetrigger(input.familyBackend, {
+                roundTriggerHeadOid: evidence.headOid,
+                roundTriggerAt: new Date().toISOString(),
+                onlineReviewRound: round,
+                pr: prUrl,
+              });
+              loopState.round = Math.max(loopState.round, round);
+            }
+          }
+          return {
+            ...(evidence !== undefined ? { evidence } : {}),
+            ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+            artifacts,
+          };
+        },
+        dispatchVerify: async (landing, round) => {
+          // Landing already carries Collector evidence — Verify judges only.
+          let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
+          const verifyPool = poolForKind("verify");
+          const result = await dispatchOrAbort(
+            input.familyBackend,
+            verifyWorkerSpec(modelRoute),
+            {
+              ...baseCtx,
+              modelRoute,
+              onlineReviewRound: round,
+              ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
+            },
+            landing,
+            {
+              onMonitorHandle: (handle) => {
+                reviewerMonitorHandle = handle;
+              },
+            },
+          );
+          // Cursor R11 medium + self-check: escalated must park with
+          // decision_gate_park + escalate payload text — not a bare
+          // decision_gate_raised that drops reason.
+          if (result.kind === "escalated") {
+            const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+            const stopSummary = isRunnerSynthesizedFailureEscalation(
+              result.escalation,
+            )
+              ? stageFailureStopSummary({
+                  status: "online_review_failed",
+                  summary: escalationSummary,
+                  repairHint:
+                    "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
+                })
+              : decisionGateParkStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
+                });
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary,
+            });
+          }
+          if (result.kind !== "completed") {
+            const detail =
+              result.kind === "failed" ? `: ${result.reason}` : "";
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: stageFailureStopSummary({
+                status: "online_review_failed",
+                summary: `family verify worker returned ${result.kind}${detail}`,
+                repairHint:
+                  "inspect the verify worker envelope and re-feed the family online review loop",
+              }),
+            });
+          }
+          const artifacts = reviewerArtifactPointers(
+            reviewerMonitorHandle,
+            result.sessionId,
+          );
+          if (result.output.kind !== "verify") {
+            return { artifacts };
+          }
+          // #1002: continue disposition + advanceCoder rewrites fixer before fix
+          // dispatch (same never-terminal contract as CMR/single-slice courts).
+          const verifyOut = result.output;
+          if (
+            !verifyOut.converged &&
+            verifyOut.terminalState !== "decision_gate_raised" &&
+            typeof verifyOut.advanceCoder === "string" &&
+            verifyOut.advanceCoder.trim().length > 0
+          ) {
+            await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
+          }
+          // Worker owns side effects (#1145). Residual plan cargo is never
+          // host-replayed after the Action returns.
+          return { artifacts, verify: verifyOut };
+        },
+        dispatchFixer: async (landing: WorkerLandingPayload) => {
+          const round =
+            landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
+          lastFixMarkedFindingIdentityKeys =
+            landing.fixMarkedFindingIdentityKeys ?? [];
+          lastFixMarkedFindingThreads =
+            landing.fixMarkedFindingThreads ?? [];
+          lastFixerOnlineReviewRound = round;
+          const fixerPool = poolForKind("fixer");
+          const result = await dispatchOrAbort(
+            input.familyBackend,
+            fixerWorkerSpec(modelRoute),
+            {
+              ...baseCtx,
+              modelRoute,
+              ...(fixerPool !== undefined ? { billingPool: fixerPool } : {}),
+            },
+            landing,
+          );
+          if (result.kind === "escalated") {
+            const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: isRunnerSynthesizedFailureEscalation(
+                result.escalation,
+              )
+                ? stageFailureStopSummary({
+                    status: "online_review_failed",
+                    summary: escalationSummary,
+                    repairHint:
+                      "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
+                  })
+                : decisionGateParkStopSummary({
+                    summary: escalationSummary,
+                    repairHint:
+                      "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+                  }),
+            });
+          }
+          if (result.kind !== "completed") {
+            const detail =
+              result.kind === "failed" ? `: ${result.reason}` : "";
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: stageFailureStopSummary({
+                status: "online_review_failed",
+                summary: `family fixer worker returned ${result.kind}${detail}`,
+                repairHint:
+                  "inspect the fixer worker envelope and re-feed the family online review loop",
+              }),
+            });
+          }
+          return result.output.kind === "fixer" ? result.output : undefined;
+        },
+        // #941: landing Action owns docs/merge/close/cleanup after this loop.
+        // #1145: post-fix retrigger/wait is the next Collector seat — no host
+        // post-fix poll/retrigger seam.
+        resolveFixCommitSha: async (envelopeFixSha: string) => {
+          const sha = envelopeFixSha;
+          familyLastFixCommitSha = sha;
+          loopState.lastFixSha = sha;
+          await recordOnlineReviewFixCommitted(input.familyBackend, {
+            familyHeadAfter: sha,
+            pr: prUrl,
+            onlineReviewRound: lastFixerOnlineReviewRound,
+            ...(lastFixMarkedFindingIdentityKeys.length > 0
+              ? {
+                  fixMarkedFindingIdentityKeys:
+                    lastFixMarkedFindingIdentityKeys,
+                }
+              : {}),
+            ...(lastFixMarkedFindingThreads.length > 0
+              ? { fixMarkedFindingThreads: lastFixMarkedFindingThreads }
+              : {}),
+          });
+          return sha;
+        },
+      },
       {
         initialRound: loopState.round,
         ...(loopState.lastFixSha !== undefined
@@ -2217,9 +2264,8 @@ export async function runFamilyOnlineReviewLoop(input: {
         initialFixMarkedFindingThreads:
           resumedFixAuthorization.fixMarkedFindingThreads,
         enrichVerifyLanding: async (landing, round) => {
-          // Merge ledger history with in-process accumulation — never either/or.
-          // After mid-loop resume, in-process only has post-resume rounds; a
-          // non-empty array must not skip ledger enrichment or r3 loses r1.
+          // Ledger prior-round keys from durable fix_committed markers only
+          // (#711 / #1145 — no in-process disposition accumulation).
           const ledger = await input.familyBackend.readFamilyLedger();
           const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
             ledger,

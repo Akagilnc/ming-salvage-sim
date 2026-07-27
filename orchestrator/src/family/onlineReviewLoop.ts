@@ -8,34 +8,22 @@
  * side effects by Verify. Runner never host-polls GH or interprets bot/CI/
  * finding semantics (#1145). No mechanical round cap, no empty-success from
  * counts (#934 ID-012).
+ *
+ * Verify→Fixer transport is a single opaque packet field-passthrough: Runner
+ * copies Verify cargo keys/threads as-is and never filters dispositions,
+ * accumulates old findings, or overwrites `isRecheck`.
  */
 
 import {
-  BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
-  BOT_RETRIGGER_COMMENT,
-  classifyCheckRuns,
-  droppedBotIds,
-  findAdmissibleRetriggerComment,
-  ONLINE_REVIEW_BOT_IDS,
-  parsePrRef,
-  pollPrReviewState,
-  postBotRetriggerComment,
-  type OnlineReviewBotId,
-  type PrReviewSnapshot,
 } from "../botPolling.js";
 import {
-  assertOfflineSyntheticPollAdmissible,
-  buildRoundTrigger,
   convergenceHeadToRecord,
-  type RoundTrigger,
 } from "../evidenceAdmissibility.js";
-import type { Sh } from "../familyDriver.js";
 import type {
   FixerResult,
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
-  PriorRoundFindingSnapshot,
   ShipResult,
   VerifyResult,
   WorkerLandingPayload,
@@ -47,11 +35,6 @@ import {
 } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
-import {
-  fixMarkedFindingThreadsFromVerify,
-  fixMarkedKeysFromVerify,
-  type FixMarkedFindingThread,
-} from "../onlineReviewSideEffects.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
 
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
@@ -75,52 +58,7 @@ export function onlineReviewJudgeDisposition(
   return "continue";
 }
 
-export type { FixMarkedFindingThread };
-export { fixMarkedKeysFromVerify, fixMarkedFindingThreadsFromVerify };
-
 export type { OnlineReviewTerminalState } from "../types.js";
-
-/**
- * Build the rich landing payload for verify/fixer workers (信封宪法 ADR 0062:
- * finding content in landing file, not DispatchContext).
- */
-export function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnapshot {
-  return {
-    prUrl: snapshot.prUrl,
-    headOid: snapshot.headOid,
-    totalFindingCount: snapshot.totalFindingCount,
-    quiescent: snapshot.quiescent,
-    bots: snapshot.bots,
-    droppedBots: droppedBotIds(snapshot),
-    threads: snapshot.threads.map((t) => ({
-      id: t.id,
-      threadNodeId: t.threadNodeId,
-      path: t.path,
-      line: t.line,
-      body: t.body,
-      isResolved: t.isResolved,
-      headOid: t.headOid,
-      authorLogin: t.authorLogin,
-    })),
-    checkRuns: snapshot.checkRuns,
-    checkRunsEmptyMeans: snapshot.checkRunsEmptyMeans,
-  };
-}
-
-/**
- * Worker is green but CI is still running — re-poll / re-verify, do not fixer
- * and do not merge (online R2 Codex P2).
- */
-export function verifyBlockedOnlyOnPendingCheckRuns(
-  verify: VerifyResult,
-  landing: OnlineReviewLandingSnapshot | undefined,
-): boolean {
-  if (!verify.converged || landing === undefined) {
-    return false;
-  }
-  const emptyMeans = landing.checkRunsEmptyMeans ?? "converged";
-  return classifyCheckRuns(landing.checkRuns ?? [], emptyMeans) === "pending";
-}
 
 type OnlineReviewRetriggerRecoveryEntry = {
   readonly event?: string;
@@ -145,191 +83,6 @@ function latestOnlineReviewRetriggerRecovery(
     }
   }
   return undefined;
-}
-
-/** Latest persisted family round freshness anchor. */
-function roundTriggerFromEntries(
-  ledger: ReadonlyArray<{
-    readonly event?: string;
-    readonly roundTriggerHeadOid?: string;
-    readonly roundTriggerAt?: string;
-  }>,
-): RoundTrigger | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.event === "online_review_round_retrigger" &&
-      typeof entry.roundTriggerHeadOid === "string" &&
-      entry.roundTriggerHeadOid.length > 0 &&
-      typeof entry.roundTriggerAt === "string" &&
-      entry.roundTriggerAt.length > 0
-    ) {
-      return buildRoundTrigger(
-        entry.roundTriggerHeadOid,
-        entry.roundTriggerAt,
-      );
-    }
-  }
-  return undefined;
-}
-
-/** Retrigger marker head used to pair with a fix signal (#600 r35). */
-function retriggerPairedFixHead(entry: {
-  readonly event?: string;
-  readonly roundTriggerHeadOid?: string;
-  readonly branchHEAD?: string;
-  readonly familyHeadAfter?: string;
-}): string | undefined {
-  if (entry.event !== "online_review_round_retrigger") {
-    return undefined;
-  }
-  if (
-    typeof entry.roundTriggerHeadOid === "string" &&
-    entry.roundTriggerHeadOid.length > 0
-  ) {
-    return entry.roundTriggerHeadOid;
-  }
-  if (typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0) {
-    return entry.branchHEAD;
-  }
-  if (
-    typeof entry.familyHeadAfter === "string" &&
-    entry.familyHeadAfter.length > 0
-  ) {
-    return entry.familyHeadAfter;
-  }
-  return undefined;
-}
-
-/**
- * Among unpaired fix signals, pick the chronologically latest by `ts`
- * (Cursor R11 medium — not last-in-ledger-order, which can lag a later fix
- * if ledger rows are not strictly append-time-ordered).
- */
-function latestFixSignalByTimestamp(
-  signals: ReadonlyArray<{ readonly sha: string; readonly ts: string }>,
-): { readonly sha: string; readonly ts: string } | undefined {
-  let latest: { readonly sha: string; readonly ts: string } | undefined;
-  for (const signal of signals) {
-    if (latest === undefined) {
-      latest = signal;
-      continue;
-    }
-    const signalMs = Date.parse(signal.ts);
-    const latestMs = Date.parse(latest.ts);
-    if (Number.isFinite(signalMs) && Number.isFinite(latestMs)) {
-      if (signalMs >= latestMs) latest = signal;
-    } else if (Number.isFinite(signalMs)) {
-      latest = signal;
-    }
-  }
-  return latest;
-}
-
-/** Family ledger: fix-committed landed but retrigger persistence crashed mid-gap (#600 r27). */
-export function familyPendingRoundTriggerFromFixGap(
-  entries: ReadonlyArray<{
-    readonly status?: string;
-    readonly event?: string;
-    readonly familyHeadAfter?: string;
-    readonly roundTriggerHeadOid?: string;
-    readonly branchHEAD?: string;
-    readonly ts?: string;
-  }>,
-): RoundTrigger | undefined {
-  const pairedFixShas = new Set<string>();
-  for (const entry of entries) {
-    const head = retriggerPairedFixHead(entry);
-    if (head !== undefined) {
-      pairedFixShas.add(head);
-    }
-  }
-  const unpaired: Array<{ readonly sha: string; readonly ts: string }> = [];
-  for (const entry of entries) {
-    if (
-      entry.status === "online_review_fix_committed" &&
-      entry.event === "online_review_fix_committed" &&
-      typeof entry.familyHeadAfter === "string" &&
-      entry.familyHeadAfter.length > 0 &&
-      typeof entry.ts === "string" &&
-      entry.ts.length > 0 &&
-      !pairedFixShas.has(entry.familyHeadAfter)
-    ) {
-      unpaired.push({ sha: entry.familyHeadAfter, ts: entry.ts });
-    }
-  }
-  const latestUnpaired = latestFixSignalByTimestamp(unpaired);
-  if (latestUnpaired === undefined) {
-    return undefined;
-  }
-  return buildRoundTrigger(latestUnpaired.sha, latestUnpaired.ts);
-}
-
-function roundTriggerRecencyMs(trigger: RoundTrigger): number | undefined {
-  const ms = Date.parse(trigger.triggeredAt);
-  return Number.isFinite(ms) ? ms : undefined;
-}
-
-/** Pick the fresher recovery anchor when multiple sources are present (#600 r32). */
-export function newerRoundTrigger(
-  a: RoundTrigger,
-  b: RoundTrigger,
-): RoundTrigger {
-  const aMs = roundTriggerRecencyMs(a);
-  const bMs = roundTriggerRecencyMs(b);
-  if (aMs !== undefined && bMs !== undefined) {
-    return aMs >= bMs ? a : b;
-  }
-  if (aMs !== undefined) return a;
-  if (bMs !== undefined) return b;
-  return a;
-}
-
-/**
- * Resolve the bot-poll freshness anchor for the current online review round.
- * Round 1 may fall back to the family ship ledger timestamp; round ≥2 requires a
- * persisted re-trigger anchor and never reuses the ship anchor (#600 r25).
- * When fix-committed landed before retrigger (crash gap), reconstruct the
- * pending anchor from the fix record so resume stays in-band (#600 r27).
- * When both persisted and fix-gap anchors exist, precedence is by recency (#600 r32).
- */
-export function resolveOnlineReviewRoundTrigger(input: {
-  readonly onlineReviewRound: number;
-  readonly persistedRoundTrigger?: RoundTrigger;
-  readonly pendingRetriggerFromFixGap?: RoundTrigger;
-  readonly fixCommitSha?: string;
-  readonly shipPrHead?: string;
-  readonly shipLedgerTriggeredAt?: string;
-}): RoundTrigger {
-  const { persistedRoundTrigger, pendingRetriggerFromFixGap, onlineReviewRound } =
-    input;
-  if (onlineReviewRound > 1) {
-    if (
-      persistedRoundTrigger !== undefined &&
-      pendingRetriggerFromFixGap !== undefined
-    ) {
-      return newerRoundTrigger(
-        pendingRetriggerFromFixGap,
-        persistedRoundTrigger,
-      );
-    }
-    if (persistedRoundTrigger !== undefined) {
-      return persistedRoundTrigger;
-    }
-    if (pendingRetriggerFromFixGap !== undefined) {
-      return pendingRetriggerFromFixGap;
-    }
-    throw new Error(
-      "online review round ≥2 requires a persisted round trigger from ledger retrigger",
-    );
-  }
-  if (persistedRoundTrigger !== undefined) {
-    return persistedRoundTrigger;
-  }
-  return buildRoundTrigger(
-    input.fixCommitSha ?? input.shipPrHead ?? "offline-review-head",
-    input.shipLedgerTriggeredAt,
-  );
 }
 
 /** 1-based online review round from the family ledger (#600 r26 resume). */
@@ -429,48 +182,53 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   };
 }
 
-/** Latest persisted round ≥2 freshness anchor from the family ledger (#600 r26). */
-export function onlineReviewRoundTriggerFromFamilyLedger(
-  entries: ReadonlyArray<{
-    readonly event?: string;
-    readonly roundTriggerHeadOid?: string;
-    readonly roundTriggerAt?: string;
-  }>,
-): RoundTrigger | undefined {
-  return roundTriggerFromEntries(entries);
-}
-
-/** Family runner owns round ≥2 post-fixer recheck truth. */
-export function enforceRunnerOwnedRecheck(
-  verify: VerifyResult,
-  onlineReviewRound: number,
-): VerifyResult {
-  const runnerRecheck = onlineReviewRound > 1;
-  return { ...verify, isRecheck: runnerRecheck };
-}
-
-/** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
-export function shipLedgerTriggeredAtFromFamilyLedger(
+/**
+ * Action-owned Collector checkpoint for durable resume (#1145 AC2).
+ * Returns the latest completed Collector cargo for `round` when present.
+ * Runner/stage never interprets evidence semantics — only the Online Review
+ * Action loads this before deciding whether to re-dispatch Collector.
+ */
+export function lastCollectorCheckpointFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
-    readonly pr?: string;
-    readonly ts?: string;
+    readonly onlineReviewRound?: number;
+    readonly cargoPointer?: string;
+    readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
   }>,
-  prUrl: string,
-): string | undefined {
-  const normalized = prUrl.trim();
+  round: number,
+):
+  | {
+      readonly cargoPointer?: string;
+      readonly evidence: OnlineReviewLandingSnapshot;
+    }
+  | undefined {
+  if (!Number.isSafeInteger(round) || round < 1) return undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
-      entry.status === "shipped" &&
-      entry.event === "shipped" &&
-      entry.pr?.trim() === normalized &&
-      typeof entry.ts === "string" &&
-      entry.ts.length > 0
+      entry.status !== "online_review_collector_completed" ||
+      entry.event !== "online_review_collector_completed"
     ) {
-      return entry.ts;
+      continue;
     }
+    if (entry.onlineReviewRound !== round) continue;
+    const evidence = entry.collectorEvidenceCargo;
+    if (evidence === undefined) continue;
+    if (
+      typeof evidence.prUrl !== "string" ||
+      evidence.prUrl.length === 0 ||
+      typeof evidence.headOid !== "string" ||
+      evidence.headOid.length === 0
+    ) {
+      continue;
+    }
+    return {
+      ...(typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0
+        ? { cargoPointer: entry.cargoPointer }
+        : {}),
+      evidence,
+    };
   }
   return undefined;
 }
@@ -482,36 +240,6 @@ export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
       "online review verifier raised an explicit decision-gate signal",
     repairHint:
       "answer the decision gate, then rerun the online review loop",
-  });
-}
-
-/** Stop summary when host GitHub verify side effects fail closed (#600 r18). */
-export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
-  const detail = err instanceof Error ? err.message : String(err);
-  // #922: family surface terminal owns online_review_failed at the source —
-  // do not emit infra_failure for callers to restamp.
-  return stageFailureStopSummary({
-      status: "online_review_failed",
-    summary: `online review verify side effects failed: ${detail}`,
-    repairHint:
-      "fix GitHub side-effect preconditions (valid PR ref, recheck fixing commit, defer issue creation) and rerun the online review loop",
-  });
-}
-
-/**
- * Stop summary when an Online Review Action host-op fails closed
- * (e.g. post-fix bot retrigger). Side effects are worker-owned (#1145);
- * residual plan is never host-replayed.
- */
-export function onlineReviewHostOpFailureStopSummary(err: unknown): StopSummary {
-  const detail = err instanceof Error ? err.message : String(err);
-  // #922: family surface terminal owns online_review_failed at the source —
-  // do not emit infra_failure for callers to restamp.
-  return stageFailureStopSummary({
-      status: "online_review_failed",
-    summary: `online review host operation failed: ${detail}`,
-    repairHint:
-      "repair the online review Action operation (bot retrigger) and rerun the online review loop",
   });
 }
 
@@ -530,7 +258,7 @@ export function onlineReviewDispatchFailureStopSummary(
         ? "verify dispatch"
         : "fixer dispatch";
   return stageFailureStopSummary({
-      status: "online_review_failed",
+    status: "online_review_failed",
     summary: `online review ${label} failed: ${detail}`,
     repairHint:
       "repair the online review loop infrastructure failure and rerun the online review loop",
@@ -556,39 +284,6 @@ export class OnlineReviewLoopTerminal extends Error {
     super(`online review loop terminal: ${result.terminalState}`);
     this.name = "OnlineReviewLoopTerminal";
   }
-}
-
-/**
- * Synthetic bot snapshot for offline/test PR handles (`pr://…`) where live `gh api`
- * polling is impossible. Worker dispatch still runs; only host polling is skipped.
- */
-export function offlinePrReviewSnapshot(input: {
-  readonly repo: string;
-  readonly prUrl: string;
-  readonly headOid: string;
-  readonly pollCount: number;
-}): PrReviewSnapshot {
-  assertOfflineSyntheticPollAdmissible(input.prUrl, input.repo);
-  const bots = Object.fromEntries(
-    ONLINE_REVIEW_BOT_IDS.map((bot) => [
-      bot,
-      { state: "complete" as const, findingCount: 0 },
-    ]),
-  ) as PrReviewSnapshot["bots"];
-  return {
-    repo: input.repo,
-    prNumber: 0,
-    prUrl: input.prUrl,
-    headOid: input.headOid,
-    pollCount: input.pollCount,
-    bots,
-    threads: [],
-    checkRuns: [],
-    totalFindingCount: 0,
-    quiescent: true,
-    roundTriggerUsed: buildRoundTrigger(input.headOid, "1970-01-01T00:00:00.000Z"),
-    checkRunsEmptyMeans: "converged",
-  };
 }
 
 /**
@@ -628,29 +323,6 @@ export function buildOnlineReviewBaseLanding(
   };
 }
 
-export function buildOnlineReviewLanding(
-  snapshot: PrReviewSnapshot,
-  ship: ShipResult,
-  round: number,
-): WorkerLandingPayload {
-  // Fail-closed: never non-null-assert a missing convergence head (Cursor R11 low).
-  // Prefer snapshot/post-fix head; omit prHead when neither side supplies one.
-  const prHead = convergenceHeadForLanding({
-    snapshotHeadOid: snapshot.headOid,
-    shipPrHead: ship.prHead,
-  });
-  return {
-    onlineReviewSnapshot: toLandingSnapshot(snapshot),
-    shipDelivery: {
-      branch: ship.branch,
-      pr: ship.pr,
-      ...(prHead !== undefined && prHead.length > 0 ? { prHead } : {}),
-      ...(ship.status !== undefined ? { status: ship.status } : {}),
-    },
-    onlineReviewRound: round,
-  };
-}
-
 /** Write the bot snapshot JSON the verify worker reads (state dir, outside git). */
 export interface BotPollClock {
   sleep(ms: number): void | Promise<void>;
@@ -671,6 +343,9 @@ export const immediateBotPollClock: BotPollClock = {
  * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
  * Production uses real 2-minute cadence between pending-CI polls (#934 ID-004:
  * CI pending is not on the bot overdue window — no finite host-fail budget).
+ *
+ * Used by Landing Action CI wait — not by Online Review Runner host polling
+ * (host poll path deleted in #1145).
  */
 export async function sleepPendingCiPollInterval(
   clock?: BotPollClock,
@@ -682,124 +357,13 @@ export async function sleepPendingCiPollInterval(
 }
 
 /**
- * Poll until bots are quiescent or the poll budget for this wait is exhausted.
- * Enforces ~2-minute cadence between polls; production defaults to
- * {@link BOT_OVERDUE_POLL_COUNT} (N polls ⇒ N−1 sleeps, ≥15 min wall clock).
- * Pass `maxPolls: 1` and `clock: immediateBotPollClock` in unit tests.
- */
-export async function waitForBotQuiescence(
-  sh: Sh,
-  input: {
-    readonly repo: string;
-    readonly prUrl: string;
-    readonly roundTrigger: RoundTrigger;
-    readonly maxPolls?: number;
-    readonly botPendingPolls?: Readonly<
-      Partial<Record<OnlineReviewBotId, number>>
-    >;
-    readonly clock?: BotPollClock;
-  },
-): Promise<PrReviewSnapshot> {
-  const maxPolls = input.maxPolls ?? BOT_OVERDUE_POLL_COUNT;
-  if (maxPolls < 1) {
-    throw new Error("waitForBotQuiescence requires maxPolls >= 1");
-  }
-  const clock = input.clock ?? realBotPollClock;
-  // Chain re-anchored triggers across polls (online R5 Codex P1): after head
-  // drift, pollPrReviewState re-anchors once; subsequent polls must reuse that
-  // anchor rather than re-anchoring with a newer now (which stales real replies).
-  let roundTrigger = input.roundTrigger;
-  let last: PrReviewSnapshot | undefined;
-  for (let poll = 1; poll <= maxPolls; poll += 1) {
-    last = pollPrReviewState(sh, {
-      repo: input.repo,
-      prUrl: input.prUrl,
-      pollCount: poll,
-      roundTrigger,
-      botPendingPolls: input.botPendingPolls,
-    });
-    roundTrigger = last.roundTriggerUsed;
-    if (last.quiescent) return last;
-    if (poll < maxPolls) {
-      await clock.sleep(BOT_POLL_INTERVAL_MS);
-    }
-  }
-  return last!;
-}
-
-/**
- * Gap-resume recovery: post the bot re-trigger when fix_committed landed but the
- * retrigger marker did not (#600 r34). Idempotent — skips posting when evidence
- * collection already finds an admissible re-trigger comment for this round/head.
- */
-export function ensureOnlineReviewRetriggerAfterFixGap(input: {
-  readonly sh: Sh;
-  readonly repo: string;
-  readonly prUrl: string;
-  readonly gapTrigger: RoundTrigger;
-}): { readonly roundTrigger: RoundTrigger; readonly posted: boolean } {
-  // findAdmissible polls once and fail-closes when live head left gapTrigger.head.
-  const existing = findAdmissibleRetriggerComment(
-    input.sh,
-    input.repo,
-    input.prUrl,
-    input.gapTrigger,
-  );
-  if (existing !== undefined) {
-    return { roundTrigger: existing, posted: false };
-  }
-  // Post against the live head (probe again so post uses current headOid even if
-  // HEAD advanced between find and post — rare; second poll is intentional).
-  const headProbe = pollPrReviewState(input.sh, {
-    repo: input.repo,
-    prUrl: input.prUrl,
-    pollCount: 0,
-    roundTrigger: input.gapTrigger,
-  });
-  const { prNumber } = parsePrRef(input.prUrl, input.repo);
-  const triggeredAt = new Date().toISOString();
-  postBotRetriggerComment(input.sh, input.repo, prNumber, BOT_RETRIGGER_COMMENT);
-  // Always key the new trigger to the live head + post time (not gap fix SHA alone).
-  return {
-    roundTrigger: buildRoundTrigger(headProbe.headOid, triggeredAt),
-    posted: true,
-  };
-}
-
-/** Post R2/R3 re-trigger then poll once (caller may loop). */
-export function retriggerBotsAndPoll(
-  sh: Sh,
-  repo: string,
-  prUrl: string,
-  pollCount: number,
-  roundTriggerHead: string,
-): { readonly snapshot: PrReviewSnapshot; readonly roundTrigger: RoundTrigger } {
-  const headProbe = pollPrReviewState(sh, {
-    repo,
-    prUrl,
-    pollCount: 0,
-    roundTrigger: buildRoundTrigger(roundTriggerHead),
-    botPendingPolls: {},
-  });
-  const triggeredAt = new Date().toISOString();
-  postBotRetriggerComment(sh, repo, headProbe.prNumber, BOT_RETRIGGER_COMMENT);
-  const roundTrigger = buildRoundTrigger(headProbe.headOid, triggeredAt);
-  const snapshot = pollPrReviewState(sh, {
-    repo,
-    prUrl,
-    pollCount,
-    roundTrigger,
-  });
-  // Prefer snapshot.roundTriggerUsed (identity with roundTrigger when no further drift).
-  return { snapshot, roundTrigger: snapshot.roundTriggerUsed };
-}
-
-/**
  * Online Review Collector Action result (#1145).
  * Opaque evidence only — never judge enum. Runner transports as-is to Verify.
+ * Sparse / missing evidence does not change Action fate (ADR 0131 cargo ≠ fate).
  */
 export interface OnlineReviewCollectorDispatchResult {
-  readonly evidence: OnlineReviewLandingSnapshot;
+  readonly evidence?: OnlineReviewLandingSnapshot;
+  readonly cargoPointer?: string;
   readonly artifacts?: NonNullable<
     WorkerLandingPayload["rawReviewerArtifacts"]
   >;
@@ -822,6 +386,8 @@ export interface OnlineReviewLoopDispatch {
    * Online Review Collector seat (#1145): owns GitHub query, necessary wait,
    * post-fix retrigger, and evidence assembly. Runner only counts exit and
    * transports opaque evidence — never interprets bot/CI/finding semantics.
+   * Action-owned durable resume may short-circuit re-dispatch when a completed
+   * checkpoint already holds this round's cargo.
    */
   readonly dispatchCollector: (
     landing: WorkerLandingPayload,
@@ -829,7 +395,8 @@ export interface OnlineReviewLoopDispatch {
   ) => Promise<OnlineReviewCollectorDispatchResult>;
   /**
    * Online Review Verify seat (#1145): owns judgment + side effects only.
-   * Receives Collector evidence via landing; returns typed disposition.
+   * Receives Collector evidence via landing; returns typed disposition +
+   * opaque fixer packet on continue.
    */
   readonly dispatchVerify: (
     landing: WorkerLandingPayload,
@@ -855,6 +422,34 @@ export interface OnlineReviewLoopStageResult {
   readonly round: number;
   /** Optional stop summary for non-success terminals. */
   readonly stopSummary?: StopSummary;
+}
+
+/**
+ * Passthrough Verify → Fixer opaque packet (#1145).
+ * Copies self-reported keys/threads only — never filters dispositions.
+ */
+function fixerPacketFromVerify(verify: VerifyResult): {
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
+} {
+  const keys = (verify.fixMarkedFindingIdentityKeys ?? []).filter(
+    (key) => typeof key === "string" && key.trim().length > 0,
+  );
+  const threads = (verify.fixMarkedFindingThreads ?? []).flatMap((binding) =>
+    typeof binding.identityKey === "string" &&
+    binding.identityKey.trim().length > 0 &&
+    typeof binding.threadId === "string" &&
+    binding.threadId.trim().length > 0
+      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
+      : [],
+  );
+  return {
+    fixMarkedFindingIdentityKeys: keys,
+    fixMarkedFindingThreads: threads,
+  };
 }
 
 /**
@@ -884,31 +479,18 @@ export async function runOnlineReviewLoopStage(
   },
 ): Promise<OnlineReviewLoopStageResult> {
   let round = opts?.initialRound ?? 1;
-  let lastFixCommitSha = opts?.initialFixCommitSha;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
   let recheckFixMarkedFindingThreads:
     | ReadonlyArray<{ readonly identityKey: string; readonly threadId: string }>
     | undefined = opts?.initialFixMarkedFindingThreads;
-  /**
-   * In-loop prior-round findings (#711). Family ledgers only persist
-   * fix/retrigger markers — not verify output rows — so the continuous multi-round
-   * path accumulates snapshots here after each successful fix cycle.
-   */
-  const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
 
   // #940 / ID-012: no mechanical round cap — persistent verify judge owns
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
     // Base landing only — Collector owns GH evidence (#1145).
     let landing = buildOnlineReviewBaseLanding(ship, round);
-    if (priorRoundFindingsAccum.length > 0) {
-      landing = {
-        ...landing,
-        priorRoundFindings: priorRoundFindingsAccum.map((s) => ({ ...s })),
-      };
-    }
     if (round > 1) {
       landing = {
         ...landing,
@@ -922,19 +504,24 @@ export async function runOnlineReviewLoopStage(
     }
 
     // ── 1. Collector: query/wait/retrigger/evidence (no judge enum) ──
+    // Action may return a durable checkpoint without re-burning wait.
     let collectorArtifacts: NonNullable<
       WorkerLandingPayload["rawReviewerArtifacts"]
     > | undefined;
     try {
       const collected = await dispatch.dispatchCollector(landing, round);
       // Opaque evidence transport — Runner does not interpret bot/CI fields.
+      // Sparse cargo does not change fate (ADR 0131).
       landing = {
         ...landing,
-        onlineReviewSnapshot: collected.evidence,
+        ...(collected.evidence !== undefined
+          ? { onlineReviewSnapshot: collected.evidence }
+          : {}),
         shipDelivery: {
           branch: ship.branch,
           pr: ship.pr,
-          ...(collected.evidence.headOid.length > 0
+          ...(collected.evidence !== undefined &&
+          collected.evidence.headOid.length > 0
             ? { prHead: collected.evidence.headOid }
             : ship.prHead !== undefined && ship.prHead.length > 0
               ? { prHead: ship.prHead }
@@ -976,12 +563,14 @@ export async function runOnlineReviewLoopStage(
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
     let disposition: OnlineReviewJudgeDisposition = "continue";
-    let fixKeys: string[] = [];
-    let fixMarkedFindingThreads: FixMarkedFindingThread[] = [];
+    let fixKeys: ReadonlyArray<string> = [];
+    let fixMarkedFindingThreads: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }> = [];
 
     if (verify !== undefined) {
-      // #877: isRecheck force-normalize is routing plumbing.
-      verify = enforceRunnerOwnedRecheck(verify, round);
+      // #1145: isRecheck is Verify-owned cargo — Runner never overwrites it.
       disposition = onlineReviewJudgeDisposition(verify);
 
       if (disposition === "escalate") {
@@ -993,8 +582,10 @@ export async function runOnlineReviewLoopStage(
         };
       }
 
-      fixKeys = fixMarkedKeysFromVerify(verify);
-      fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
+      // Opaque fixer packet passthrough — no disposition filtering.
+      const packet = fixerPacketFromVerify(verify);
+      fixKeys = packet.fixMarkedFindingIdentityKeys;
+      fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
       landing = {
         ...landing,
         fixMarkedFindingIdentityKeys: fixKeys,
@@ -1035,9 +626,9 @@ export async function runOnlineReviewLoopStage(
         try {
           // Persist envelope SHA for ledger / recheck landing. Next iteration's
           // Collector owns post-fix retrigger/query/wait (#1145).
-          lastFixCommitSha = dispatch.resolveFixCommitSha
-            ? await dispatch.resolveFixCommitSha(envelopeFixSha)
-            : envelopeFixSha;
+          if (dispatch.resolveFixCommitSha) {
+            await dispatch.resolveFixCommitSha(envelopeFixSha);
+          }
         } catch (err) {
           if (err instanceof OnlineReviewLoopTerminal) {
             throw err;
@@ -1046,14 +637,9 @@ export async function runOnlineReviewLoopStage(
         }
       }
     }
-    // #711: record this round's fix-marked keys for the next verify's priorRoundFindings.
-    priorRoundFindingsAccum.push({
-      round,
-      fixMarkedFindingIdentityKeys: fixKeys,
-      ...(verify?.findingDispositions !== undefined
-        ? { findingDispositions: verify.findingDispositions }
-        : {}),
-    });
+    // #1145: do not accumulate findingDispositions as a parallel history true
+    // source. Next-round recheck keys come from this round's opaque packet and
+    // durable fix_committed markers only.
     round += 1;
   }
 }
