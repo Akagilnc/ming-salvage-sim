@@ -1069,10 +1069,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("decodes well-typed host side-effect plan fields; drops malformed optional cargo", async () => {
+  it("drops side-effect plan fields from verify host typing; keeps opaque audit-only (#1145)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    // #1145: worker-owned side-effect cargo needs plan fields decoded when
-    // well-typed; malformed values stay dropped (not crash).
+    // #1145: threadReplies / threadsToResolve / deferredIssueUrls are no longer
+    // host-typed plan cargo — decoder ignores them whether well-formed or not.
     expect(
       mod.parseVerifyOutcome(
         `<verify>${JSON.stringify({
@@ -1085,9 +1085,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toEqual({
       kind: "verify",
       converged: true,
-      threadReplies: [{ threadId: "t1", body: "fixed" }],
-      threadsToResolve: ["t1"],
-      deferredIssueUrls: ["https://github.com/o/r/issues/1"],
     });
     expect(
       mod.parseVerifyOutcome(

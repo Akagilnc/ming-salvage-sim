@@ -62,16 +62,15 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
     expect(stageSrc).not.toMatch(/dispatch\.poll/);
   });
 
-  it("POSITIVE: mergeable accepts worker-owned side-effect cargo without host replay (#1145)", async () => {
-    // Worker reports converged with residual plan cargo; stage must NOT require
-    // a host applySideEffects seam — sole owner is the Online Review Action.
+  it("POSITIVE: mergeable accepts converged verify without host side-effect replay (#1145)", async () => {
+    // Worker reports converged after executing its own side effects; stage must
+    // NOT require a host applySideEffects seam — sole owner is the Action.
     const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
       snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
         ({
           kind: "verify",
           converged: true,
-          threadReplies: [{ threadId: "1", body: "fixed: evidence" }],
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run on converged");

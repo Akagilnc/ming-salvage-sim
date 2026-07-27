@@ -229,7 +229,6 @@ import type {
   FixerResult,
   OnlineReviewFindingDisposition,
   OnlineReviewLandingSnapshot,
-  OnlineReviewThreadReply,
   PriorFindingDisposition,
   VerifyResult,
   VerifyWorkerTerminalState,
@@ -2596,14 +2595,11 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       this.checkoutSharedRepo(ctx.familyBase);
       // Sparse / missing snapshot is legal cargo (ADR 0131). Collector assembles
-      // it; Verify may receive sparse cargo and typed-escalate. Never throw
-      // infra failure for missing snapshot on the next seat (#1145).
+      // it; Verify may receive sparse cargo and typed-escalate (#1145).
       const onlineReviewLanding =
         spec.kind === "landing"
           ? undefined
-          : this.writeFamilyOnlineReviewLandingFile(ctx, landing, {
-              allowMissingSnapshot: true,
-            });
+          : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
@@ -2647,16 +2643,8 @@ export class RealFamilyBackend implements FamilyBackend {
   protected writeFamilyOnlineReviewLandingFile(
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
-    opts?: { readonly allowMissingSnapshot?: boolean },
   ): { path: string; sandboxPath: string } {
-    if (
-      landing?.onlineReviewSnapshot === undefined &&
-      opts?.allowMissingSnapshot !== true
-    ) {
-      throw new Error(
-        "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
-      );
-    }
+    // Sparse landing is the only path — missing snapshot is legal cargo.
     ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
     writeFileSync(
@@ -4712,8 +4700,8 @@ function decodeCollectorEvidenceCargo(
 /**
  * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
  * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
- * Worker-owned side-effect cargo (#1145) needs threadReplies /
- * threadsToResolve / deferredIssueUrls decoded when well-typed.
+ * Side-effect plan fields (threadReplies / threadsToResolve / deferredIssueUrls)
+ * are not host-typed — raw sidecar may keep them opaque for audit only (#1145).
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4735,13 +4723,6 @@ export function parseVerifyOutcome(
           (item.reason === undefined || typeof item.reason === "string")
         );
       })
-    : undefined;
-  const threadReplies = Array.isArray(parsed.threadReplies)
-    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
-        isJsonRecord(item) &&
-        typeof item.threadId === "string" &&
-        typeof item.body === "string",
-      )
     : undefined;
   const terminalState: VerifyWorkerTerminalState | undefined =
     parsed.terminalState === "mergeable" ||
@@ -4777,13 +4758,6 @@ export function parseVerifyOutcome(
                 : [],
           ),
         }
-      : {}),
-    ...(threadReplies !== undefined ? { threadReplies } : {}),
-    ...(stringArray(parsed.threadsToResolve)
-      ? { threadsToResolve: parsed.threadsToResolve }
-      : {}),
-    ...(stringArray(parsed.deferredIssueUrls)
-      ? { deferredIssueUrls: parsed.deferredIssueUrls }
       : {}),
     ...(terminalState !== undefined ? { terminalState } : {}),
     ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
