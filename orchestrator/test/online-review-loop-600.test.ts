@@ -51,21 +51,13 @@ import {
   BOT_OVERDUE_MIN_WALL_MS,
   BOT_POLL_INTERVAL_MS,
   botOverdueWallClockMs,
-  BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
   classifyCheckRuns,
-  droppedBotIds,
-  hasDroppedBots,
-  isBotQuiescent,
-  isThreadEvidenceFresh,
   ONLINE_REVIEW_BOT_IDS,
   ONLINE_REVIEW_BOT_LOGINS,
   paginateReviewThreadNodes,
   parsePrRef,
-  findAdmissibleRetriggerComment,
-  isBotRetriggerCommentBody,
   pollPrReviewState,
-  postBotRetriggerComment,
 } from "../src/botPolling.js";
 import {
   assertOfflineSyntheticPollAdmissible,
@@ -111,7 +103,9 @@ function evidenceFromSnapshot(snap: PrReviewSnapshot): OnlineReviewLandingSnapsh
     totalFindingCount: snap.totalFindingCount,
     quiescent: snap.quiescent,
     bots: snap.bots,
-    droppedBots: droppedBotIds(snap),
+    droppedBots: ONLINE_REVIEW_BOT_IDS.filter(
+      (bot) => snap.bots[bot].state === "dropped",
+    ),
     threads: snap.threads.map((t) => ({
       id: t.id,
       threadNodeId: t.threadNodeId,
@@ -711,9 +705,13 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
       botPendingPolls: { gemini: BOT_OVERDUE_POLL_COUNT },
     });
     expect(snap.bots.gemini.state).toBe("dropped");
-    expect(isBotQuiescent(snap)).toBe(true);
-    expect(hasDroppedBots(snap)).toBe(true);
-    expect(droppedBotIds(snap)).toContain("gemini");
+    expect(snap.quiescent).toBe(true);
+    expect(
+      ONLINE_REVIEW_BOT_IDS.some((bot) => snap.bots[bot].state === "dropped"),
+    ).toBe(true);
+    expect(
+      ONLINE_REVIEW_BOT_IDS.filter((bot) => snap.bots[bot].state === "dropped"),
+    ).toContain("gemini");
   });
 
   it("marks a zero-finding bot review as complete (not pending/dropped)", () => {
@@ -773,40 +771,6 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
     ).toThrow(/gh api failed/);
   });
 
-  it("pin BOT_RETRIGGER_COMMENT matches wiki concepts/pr-review-loop.md bot commands", () => {
-    // Wiki core (ADR 0061) + `/gemini review` slash form (Codex R12 / current Gemini docs).
-    expect(BOT_RETRIGGER_COMMENT).toBe(
-      "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review",
-    );
-    // Old 3-line wiki body still admissible for gap recovery.
-    expect(
-      isBotRetriggerCommentBody(
-        "@sourcery-ai review\n@codex review\n@gemini-code-assist please review",
-      ),
-    ).toBe(true);
-  });
-
-  it("postBotRetriggerComment posts the R2/R3 manual re-trigger body", () => {
-    const calls: Array<{ file: string; args: string[] }> = [];
-    const sh: Sh = (file, args) => {
-      calls.push({ file, args: [...args] });
-      if (args.join(" ").includes("pulls/42") && !args.includes("-f")) {
-        return JSON.stringify({ head: { sha: "h" }, html_url: "https://github.com/o/r/pull/42" });
-      }
-      return "{}";
-    };
-    postBotRetriggerComment(sh, "o/r", 42);
-    // CR-18: pin full API path + complete retrigger body (not first line only).
-    expect(calls).toContainEqual({
-      file: "gh",
-      args: [
-        "api",
-        "repos/o/r/issues/42/comments",
-        "-f",
-        `body=${BOT_RETRIGGER_COMMENT}`,
-      ],
-    });
-  });
 });
 
 describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
@@ -819,8 +783,9 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
       pollCount: 1,
       roundTrigger: TEST_ROUND_TRIGGER,
     });
+    // Native head absent → not fresh for current head (Collector judges; host helper gone).
     expect(snap.threads[0]?.headOid).toBeUndefined();
-    expect(isThreadEvidenceFresh(snap.threads[0]!, snap.headOid)).toBe(false);
+    expect(snap.threads[0]?.headOid === snap.headOid).toBe(false);
   });
 
   it("stale prior-head thread is not counted fresh", () => {
@@ -832,7 +797,7 @@ describe("#600 stale head + artifact bot freshness (#600 AC3)", () => {
       isResolved: false,
       headOid: "oldhead0000000000000000000000000000000000",
     };
-    expect(isThreadEvidenceFresh(stale, "headsha1")).toBe(false);
+    expect(stale.headOid === "headsha1").toBe(false);
   });
 });
 

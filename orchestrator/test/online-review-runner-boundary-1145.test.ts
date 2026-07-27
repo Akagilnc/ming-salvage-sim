@@ -5,11 +5,14 @@
  * 1. Runner dispatches Collector before Verify.
  * 2. Collector evidence is transported as-is into the Verify landing.
  * 3. Verify does not start until Collector returns.
- * 4. Runner does not host-call GH poll/retrigger/side-effect seams (deleted).
+ * 4. Runner does not host-call GH poll seams; host dual-owner module is gone.
  * 5. Collector model comes from the independent `collector` route slot.
  * 6. AC3: old-round 5 keys + current-round 6 fix items → fixer gets only this
- *    round's opaque packet, verbatim.
- * 7. AC2: crash after Collector success reuses durable checkpoint (no re-burn).
+ *    round's opaque packet, verbatim (including isRecheck:false passthrough).
+ * 7. Three shortest repros on the crash/no-op/re-entry seam:
+ *    - Collector writes checkpoint → fail before Verify → re-entry
+ *    - fixer legal no-op returns to same judge (no new Collector, no round++)
+ *    - mergeable re-entry does not re-dispatch Verify (side effects once)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -69,9 +72,13 @@ class TracerFamilyBackend implements FamilyBackend {
   collectorReturnedAt: number | undefined;
   verifyStartedAt: number | undefined;
   collectorDispatchCount = 0;
-  /** Crash window: throw after first Collector success, before Verify. */
-  crashAfterCollectorOnce = false;
-  private crashedOnce = false;
+  verifyDispatchCount = 0;
+  /**
+   * Crash window: Collector may complete + write checkpoint, but every Verify
+   * dispatch fails for this run (mechanical retry must not "self-heal" mid-run).
+   * Clear between runs to allow re-entry success.
+   */
+  blockVerify = false;
   collectorEvidence = stubCollectorEvidence({
     prUrl: offlineShip.pr,
     headOid: offlineShip.prHead,
@@ -136,15 +143,6 @@ class TracerFamilyBackend implements FamilyBackend {
       // Simulate async seat so ordering vs verify is observable.
       await Promise.resolve();
       this.collectorReturnedAt = Date.now();
-      if (this.crashAfterCollectorOnce && !this.crashedOnce) {
-        this.crashedOnce = true;
-        // Action persists checkpoint via ledger write in verifyCmr AFTER this
-        // returns — so we return success then the harness simulates crash by
-        // throwing from verify on the first entry. For true post-collector
-        // crash, verifyCmr records checkpoint before returning to stage; the
-        // crash is simulated by aborting the first runFamilyOnlineReviewLoop
-        // via verify throw after checkpoint is written. Here we just complete.
-      }
       return {
         kind: "completed",
         output: { kind: "collector", evidence: this.collectorEvidence },
@@ -152,7 +150,18 @@ class TracerFamilyBackend implements FamilyBackend {
     }
 
     if (spec.kind === "verify") {
+      this.verifyDispatchCount += 1;
       this.verifyStartedAt = Date.now();
+      if (this.blockVerify) {
+        // EISDIR-class fails closed without burning the full mechanical-retry
+        // budget — models a hard crash after Collector checkpoint, not a
+        // six-hit empty spin that would block re-entry Verify.
+        return {
+          kind: "failed",
+          reason:
+            "simulated crash after collector checkpoint: EISDIR: illegal operation on a directory",
+        };
+      }
       if (this.verifyImpl) return this.verifyImpl(spec, ctx, landing);
       return {
         kind: "completed",
@@ -207,7 +216,6 @@ describe("#1145 production shared-tail Online Review boundary", () => {
 
   it("tracer: collector then verify; evidence passthrough; verify after collector; no host GH", async () => {
     const pollSpy = vi.spyOn(botPolling, "pollPrReviewState");
-    const retriggerSpy = vi.spyOn(botPolling, "postBotRetriggerComment");
 
     const backend = new TracerFamilyBackend();
     const result = await runFamilyOnlineReviewLoop({
@@ -249,7 +257,10 @@ describe("#1145 production shared-tail Online Review boundary", () => {
 
     // Host GH poll seams stay dark (deleted dual-owner path).
     expect(pollSpy).not.toHaveBeenCalled();
-    expect(retriggerSpy).not.toHaveBeenCalled();
+    // Host retrigger export is gone — not merely uncalled.
+    expect(
+      Object.prototype.hasOwnProperty.call(botPolling, "postBotRetriggerComment"),
+    ).toBe(false);
 
     // Host dual-owner module is gone — not merely uncalled.
     const { existsSync } = await import("node:fs");
@@ -259,15 +270,22 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     );
     expect(existsSync(sideEffectsPath)).toBe(false);
 
-    // Action-owned checkpoint is durable after Collector success.
+    // Action-owned checkpoints are durable after Collector + mergeable.
     expect(
       backend.ledger.some(
         (e) => e.event === "online_review_collector_completed",
       ),
     ).toBe(true);
+    expect(
+      backend.ledger.some((e) => e.event === "online_review_mergeable"),
+    ).toBe(true);
+    // No parallel retrigger truth next to collector checkpoint.
+    expect(
+      backend.ledger.some((e) => e.event === "online_review_round_retrigger"),
+    ).toBe(false);
   });
 
-  it("AC3 tracer: old-round 5 keys + current 6-item opaque packet reaches fixer verbatim", async () => {
+  it("AC3 tracer: old-round 5 keys + current 6-item opaque packet reaches fixer verbatim; isRecheck:false passthrough", async () => {
     const backend = new TracerFamilyBackend({ seedPriorRound5Keys: true });
     let fixerLanding: WorkerLandingPayload | undefined;
 
@@ -287,7 +305,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         output: {
           kind: "verify",
           converged: false,
-          isRecheck: true, // Verify-owned; Runner must not overwrite
+          isRecheck: false, // Verify-owned; Runner must transport as-is
           // Opaque fixer packet — 6 current items, distinct from prior 5.
           fixMarkedFindingIdentityKeys: [...CURRENT_ROUND_6_KEYS],
           fixMarkedFindingThreads: CURRENT_ROUND_6_THREADS,
@@ -328,7 +346,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       if (verifyCalls === 1) return firstVerify!(spec, ctx, landing);
       return {
         kind: "completed",
-        output: { kind: "verify", converged: true, isRecheck: true },
+        output: { kind: "verify", converged: true, isRecheck: false },
       };
     };
 
@@ -354,19 +372,40 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     expect(fixerLanding!.fixMarkedFindingIdentityKeys).toHaveLength(6);
   });
 
-  it("AC2 tracer: crash after Collector reuses durable checkpoint (no re-burn)", async () => {
-    // Crash window: Collector completed + durable checkpoint written, process
-    // died before Verify. Re-entry must NOT re-dispatch Collector / re-burn wait.
-    const backend = new TracerFamilyBackend();
-    const evidence = backend.collectorEvidence;
-    backend.ledger.push({
-      status: "online_review_collector_completed",
-      event: "online_review_collector_completed",
-      onlineReviewRound: 1,
-      cargoPointer: "ledger:online_review_collector_completed:round=1:crash",
-      collectorEvidenceCargo: evidence,
-      ts: "2026-01-01T00:00:00.000Z",
-    });
+  it("sparse Verify cargo must not backfill prior-round recheck keys into Fixer packet", async () => {
+    const backend = new TracerFamilyBackend({ seedPriorRound5Keys: true });
+    let fixerLanding: WorkerLandingPayload | undefined;
+    let verifyCalls = 0;
+
+    backend.verifyImpl = async (_spec, _ctx, landing) => {
+      verifyCalls += 1;
+      if (verifyCalls === 1) {
+        // Round-2 resume seeds prior fix keys onto Verify landing for recheck
+        // context — they must NOT leak into Fixer when this-round packet is sparse.
+        expect(landing?.fixMarkedFindingIdentityKeys).toEqual([
+          ...PRIOR_ROUND_5_KEYS,
+        ]);
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            isRecheck: false,
+            // Sparse: no fixMarkedFindingIdentityKeys / threads this round.
+          },
+        };
+      }
+      return {
+        kind: "completed",
+        output: { kind: "verify", converged: true, isRecheck: false },
+      };
+    };
+
+    backend.fixerImpl = async (_spec, _ctx, landing) => {
+      fixerLanding = landing;
+      // Legal no-op so we return to same judge without a new commit round.
+      return { kind: "completed", output: { kind: "fixer", committed: false } };
+    };
 
     const result = await runFamilyOnlineReviewLoop({
       familyBackend: backend,
@@ -374,36 +413,153 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ship: offlineShip,
     });
     expect(result.ok).toBe(true);
-    // No live Collector dispatch — Action short-circuited on checkpoint.
-    expect(backend.collectorDispatchCount).toBe(0);
-    expect(backend.kinds.filter((k) => k === "collector")).toEqual([]);
-    expect(backend.kinds).toContain("verify");
-
-    const verifyLanding = backend.kinds
-      .map((kind, i) => ({ kind, landing: backend.landings[i] }))
-      .find((p) => p.kind === "verify")?.landing;
-    expect(verifyLanding?.onlineReviewSnapshot).toEqual(evidence);
+    expect(fixerLanding).toBeDefined();
+    // Missing this-round packet → empty transport, NOT prior 5 keys.
+    expect(fixerLanding!.fixMarkedFindingIdentityKeys).toEqual([]);
+    expect(fixerLanding!.fixMarkedFindingThreads ?? []).toEqual([]);
   });
 
-  it("tracer: residual side-effect cargo never host-replays on re-entry", async () => {
-    const backend = new TracerFamilyBackend();
+  describe("three shortest repros — crash / no-op / re-entry", () => {
+    it("crash: Collector writes checkpoint → Verify fails → re-entry skips Collector", async () => {
+      const backend = new TracerFamilyBackend();
+      // Real path: Collector runs + checkpoint, Verify process-fails the run.
+      backend.blockVerify = true;
 
-    const first = await runFamilyOnlineReviewLoop({
-      familyBackend: backend,
-      familyBase: "family/1145",
-      ship: offlineShip,
-    });
-    expect(first.ok).toBe(true);
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.terminalState).toBe("decision_gate_raised");
+      expect(first.stopSummary?.summary).toMatch(
+        /simulated crash after collector checkpoint/,
+      );
 
-    // Second entry after mergeable: checkpoint for round 1 still present, so
-    // Collector is not re-dispatched; Verify runs again on reused evidence.
-    const second = await runFamilyOnlineReviewLoop({
-      familyBackend: backend,
-      familyBase: "family/1145",
-      ship: offlineShip,
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(
+        backend.ledger.some(
+          (e) => e.event === "online_review_collector_completed",
+        ),
+      ).toBe(true);
+      // Crash before Verify success → no mergeable proof yet.
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+      const evidence = backend.collectorEvidence;
+      // Hard-fail path: one Verify attempt, not a six-hit retry spin.
+      expect(backend.verifyDispatchCount).toBe(1);
+
+      // Re-entry: clear crash window; must NOT re-dispatch Collector / re-burn wait.
+      backend.blockVerify = false;
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.kinds.filter((k) => k === "collector")).toHaveLength(1);
+      // First-run fail + one successful Verify on re-entry.
+      expect(backend.verifyDispatchCount).toBe(2);
+
+      const verifyLanding = backend.kinds
+        .map((kind, i) => ({ kind, landing: backend.landings[i] }))
+        .filter((p) => p.kind === "verify")
+        .at(-1)?.landing;
+      expect(verifyLanding?.onlineReviewSnapshot).toEqual(evidence);
     });
-    expect(second.ok).toBe(true);
-    expect(backend.collectorDispatchCount).toBe(1);
-    expect(backend.kinds.filter((k) => k === "verify").length).toBe(2);
+
+    it("no-op: legal fixer no-op returns to same judge without new Collector / round++", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      const fixerRounds: number[] = [];
+      const verifyRounds: number[] = [];
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        verifyRounds.push(landing?.onlineReviewRound ?? -1);
+        if (verifyCalls === 1) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              isRecheck: false,
+              fixMarkedFindingIdentityKeys: ["live:1"],
+              fixMarkedFindingThreads: [
+                { identityKey: "live:1", threadId: "t1" },
+              ],
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true, isRecheck: false },
+        };
+      };
+
+      backend.fixerImpl = async (_spec, _ctx, landing) => {
+        fixerCalls += 1;
+        fixerRounds.push(landing?.onlineReviewRound ?? -1);
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(verifyCalls).toBe(2);
+      expect(fixerCalls).toBe(1);
+      // Same round both times — no unconditional round++ after no-op.
+      expect(verifyRounds).toEqual([1, 1]);
+      expect(fixerRounds).toEqual([1]);
+      // Collector only once — no-op does not open a new Collector seat.
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.kinds.filter((k) => k === "collector")).toHaveLength(1);
+    });
+
+    it("re-entry: mergeable side effects dispatch only once", async () => {
+      const backend = new TracerFamilyBackend();
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(true);
+      expect(first.terminalState).toBe("mergeable");
+      expect(backend.verifyDispatchCount).toBe(1);
+      expect(
+        backend.ledger.filter((e) => e.event === "online_review_mergeable"),
+      ).toHaveLength(1);
+
+      // Second entry after mergeable: Action-owned completion recovery — no
+      // re-dispatch of Verify (side effects already proven done).
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.verifyDispatchCount).toBe(1);
+      expect(backend.kinds.filter((k) => k === "verify")).toHaveLength(1);
+    });
   });
 });

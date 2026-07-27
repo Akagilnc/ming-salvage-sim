@@ -125,6 +125,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "online_review_round_retrigger",
   /** #1145 — Collector completed wait/evidence checkpoint for durable resume. */
   "online_review_collector_completed",
+  /** #1145 — Verify converged / side effects done; re-entry must not re-dispatch. */
+  "online_review_mergeable",
   "worker_dispatched",
   "route_degraded",
   /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
@@ -281,6 +283,7 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "online_review_collector_completed"
+    | "online_review_mergeable"
     | "worker_dispatched"
     | "route_degraded"
     /** #919 — paired with status coder_advance. */

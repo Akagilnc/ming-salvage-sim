@@ -1458,36 +1458,29 @@ export async function recordOnlineReviewCollectorCompleted(
   );
 }
 
-/** Append one online-review round ≥2 freshness anchor (#600 r26 family resume). */
-export async function recordOnlineReviewRoundRetrigger(
+/**
+ * Append Verify-converged durable completion (#1145 re-entry).
+ * Action-owned proof that reply/resolve/defer side effects for this round are
+ * done — re-entry must short-circuit to mergeable without re-dispatching Verify.
+ */
+export async function recordOnlineReviewMergeable(
   backend: FamilyBackend,
   record: {
-    readonly roundTriggerHeadOid: string;
-    readonly roundTriggerAt: string;
     readonly onlineReviewRound: number;
     readonly pr?: string;
   },
 ): Promise<void> {
-  const headOid = record.roundTriggerHeadOid.trim();
-  const triggeredAt = record.roundTriggerAt.trim();
   const onlineReviewRound = record.onlineReviewRound;
-  if (headOid.length === 0 || triggeredAt.length === 0) {
+  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 1) {
     throw new Error(
-      "family online_review_round_retrigger marker must include roundTriggerHeadOid and roundTriggerAt",
-    );
-  }
-  if (!Number.isSafeInteger(onlineReviewRound) || onlineReviewRound < 2) {
-    throw new Error(
-      "family online_review_round_retrigger marker must include onlineReviewRound >= 2",
+      "family online_review_mergeable marker must include onlineReviewRound >= 1",
     );
   }
   await backend.appendFamilyLedger(
     compact({
-      status: "online_review_round_retrigger",
-      event: "online_review_round_retrigger",
+      status: "online_review_mergeable",
+      event: "online_review_mergeable",
       phase: "final",
-      roundTriggerHeadOid: headOid,
-      roundTriggerAt: triggeredAt,
       onlineReviewRound,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }

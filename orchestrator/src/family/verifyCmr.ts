@@ -43,6 +43,7 @@ import {
   lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
+  lastOnlineReviewMergeableFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
   type OnlineReviewLoopStageResult,
@@ -131,7 +132,7 @@ import {
   recordFamilyEscalated,
   recordOnlineReviewCollectorCompleted,
   recordOnlineReviewFixCommitted,
-  recordOnlineReviewRoundRetrigger,
+  recordOnlineReviewMergeable,
   recordReviewLoopConverged,
   recordShipped,
 } from "./ledger.js";
@@ -1923,6 +1924,17 @@ export async function runFamilyOnlineReviewLoop(input: {
   };
 
   const familyLedger = await input.familyBackend.readFamilyLedger();
+  // #1145: Action-owned mergeable recovery — side effects already done.
+  // Re-entry must not re-dispatch Verify (no reply/resolve/defer replay).
+  const alreadyMergeable =
+    lastOnlineReviewMergeableFromFamilyLedger(familyLedger);
+  if (alreadyMergeable !== undefined) {
+    return {
+      ok: true,
+      terminalState: "mergeable",
+      round: alreadyMergeable.round,
+    };
+  }
   // #1002 / #1017 — rebuild sticky **fixer** from latest family ledger
   // coder_advance scoped to advanceSeat:"fixer" (not stay_put, not CMR
   // coderFix advances on the same ledger). Process re-entry keeps the
@@ -2065,6 +2077,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           const cargoPointer = result.output.cargoPointer;
           // Persist Action-owned checkpoint when evidence body is present so
           // crash before Verify does not re-burn wait (#1145 AC2).
+          // Single resume truth = collector_completed (no parallel retrigger row).
           if (evidence !== undefined) {
             await recordOnlineReviewCollectorCompleted(input.familyBackend, {
               onlineReviewRound: round,
@@ -2072,16 +2085,7 @@ export async function runFamilyOnlineReviewLoop(input: {
               ...(cargoPointer !== undefined ? { cargoPointer } : {}),
               pr: prUrl,
             });
-            // Dumb ledger transport fact for resume anchors — not bot-state judgment.
-            if (round > 1 || familyLastFixCommitSha !== undefined) {
-              await recordOnlineReviewRoundRetrigger(input.familyBackend, {
-                roundTriggerHeadOid: evidence.headOid,
-                roundTriggerAt: new Date().toISOString(),
-                onlineReviewRound: round,
-                pr: prUrl,
-              });
-              loopState.round = Math.max(loopState.round, round);
-            }
+            loopState.round = Math.max(loopState.round, round);
           }
           return {
             ...(evidence !== undefined ? { evidence } : {}),
@@ -2169,7 +2173,17 @@ export async function runFamilyOnlineReviewLoop(input: {
             await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
           }
           // Worker owns side effects (#1145). Residual plan cargo is never
-          // host-replayed after the Action returns.
+          // host-replayed after the Action returns. On converge, persist
+          // Action-owned mergeable proof so re-entry does not re-dispatch.
+          if (
+            verifyOut.converged ||
+            verifyOut.terminalState === "mergeable"
+          ) {
+            await recordOnlineReviewMergeable(input.familyBackend, {
+              onlineReviewRound: round,
+              pr: prUrl,
+            });
+          }
           return { artifacts, verify: verifyOut };
         },
         dispatchFixer: async (landing: WorkerLandingPayload) => {

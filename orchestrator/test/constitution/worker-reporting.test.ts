@@ -309,7 +309,8 @@ describe("#825 Group A family roles", () => {
 
       }),
     );
-    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 2 });
+    // #1145: legal no-op returns to same judge — no round++ / no new Collector.
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1 });
     expect({ verifyCalls, fixerCalls }).toEqual({ verifyCalls: 2, fixerCalls: 1 });
   });
 });
@@ -335,10 +336,16 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
 
       }),
     );
-    expect({ verifyCalls, ok: result.ok, terminalState: result.terminalState }).toEqual({
+    expect({
+      verifyCalls,
+      ok: result.ok,
+      terminalState: result.terminalState,
+      round: result.round,
+    }).toEqual({
       verifyCalls: 2,
       ok: true,
       terminalState: "mergeable",
+      round: 1,
     });
   });
 });
