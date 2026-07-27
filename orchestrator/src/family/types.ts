@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  OnlineReviewLandingSnapshot,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -122,6 +123,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "admission_skipped",
   "online_review_fix_committed",
   "online_review_round_retrigger",
+  /** #1145 — Collector completed wait/evidence checkpoint for durable resume. */
+  "online_review_collector_completed",
   "worker_dispatched",
   "route_degraded",
   /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
@@ -277,6 +280,7 @@ export interface FamilyLedgerEntry {
     | "admission_skipped"
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
+    | "online_review_collector_completed"
     | "worker_dispatched"
     | "route_degraded"
     /** #919 — paired with status coder_advance. */
@@ -459,6 +463,16 @@ export interface FamilyLedgerEntry {
     readonly identityKey: string;
     readonly threadId: string;
   }[];
+  /**
+   * #1145 — optional pointer to Action-owned opaque cargo (Collector evidence).
+   * Runner transports the pointer; never interprets the body.
+   */
+  readonly cargoPointer?: string;
+  /**
+   * #1145 — opaque Collector evidence body for durable resume. Action-owned;
+   * Runner does not read bot/CI/finding semantics from this field.
+   */
+  readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

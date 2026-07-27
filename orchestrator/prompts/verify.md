@@ -77,14 +77,20 @@ or, when findings remain:
   "converged": false,
   "findingDispositions": [],
   "fixMarkedFindingIdentityKeys": [],
+  "fixMarkedFindingThreads": [{"identityKey": "…", "threadId": "…"}],
   "threadReplies": [{"threadId": "…", "body": "…"}],
   "threadsToResolve": ["…"]
 }
 ```
 
-On a post-fixer fresh re-check include `isRecheck: true` and echo every
-`fixMarkedFindingIdentityKeys` value from the landing file before returning
-`converged:true`; otherwise return `converged:false`.
+When findings remain, emit the **opaque fixer packet** yourself:
+`fixMarkedFindingIdentityKeys` + `fixMarkedFindingThreads`. Runner copies
+that packet as-is and never derives threads from dispositions.
+
+On a post-fixer fresh re-check include `isRecheck: true` (you own this flag;
+Runner never overwrites it) and echo every `fixMarkedFindingIdentityKeys`
+value from the landing file before returning `converged:true`; otherwise
+return `converged:false`.
 
 ### Examples
 

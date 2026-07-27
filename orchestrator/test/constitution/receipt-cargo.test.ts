@@ -12,7 +12,6 @@
 
 import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
-import { enforceRunnerOwnedRecheck } from "../../src/family/onlineReviewLoop.js";
 import {
   skeletonReviewLoopWorkerResult,
 } from "../../src/reviewLoopOutcome.js";
@@ -151,22 +150,17 @@ describe("#877 residual read-word fate forks — survival", () => {
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
   });
 
-  it("R4: enforceRunnerOwnedRecheck never returns contradiction; forces runner truth", () => {
-    // Pre-#877: worker isRecheck:false on round≥2 → recheck_contradiction kill.
-    // Post-#877: force-normalize is plumbing; never a fate fork.
-    expect(
-      enforceRunnerOwnedRecheck(
-        { kind: "verify", converged: true, isRecheck: false },
-        2,
-      ),
-    ).toEqual({ kind: "verify", converged: true, isRecheck: true });
-
-    expect(
-      enforceRunnerOwnedRecheck(
-        { kind: "verify", converged: true, isRecheck: true },
-        1,
-      ),
-    ).toEqual({ kind: "verify", converged: true, isRecheck: false });
+  it("R4: isRecheck is Verify-owned cargo — Runner has no force-normalize helper", async () => {
+    // #1145: enforceRunnerOwnedRecheck deleted. isRecheck stays on Verify cargo;
+    // Runner never overwrites it. The dual-owner helper module is gone.
+    await expect(
+      import("../../src/family/onlineReviewLoop.js").then((m) => {
+        expect(
+          "enforceRunnerOwnedRecheck" in m,
+          "enforceRunnerOwnedRecheck must stay deleted",
+        ).toBe(false);
+      }),
+    ).resolves.toBeUndefined();
   });
 
 });

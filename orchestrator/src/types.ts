@@ -1343,15 +1343,18 @@ export interface MergeWorkerResult {
  * Collector owns GitHub query / wait / retrigger / evidence assembly only.
  * Cargo is opaque evidence for Verify — Collector never emits judge enum.
  * Runner transports evidence without interpreting bot/CI/finding semantics.
+ * Sparse / missing evidence does not change Action fate (ADR 0131 cargo ≠ fate).
  */
 export interface CollectorResult {
   readonly kind: "collector";
   /**
-   * Required opaque evidence for a completed Collector Action (#1145).
-   * Missing/malformed evidence fails the Action (channel ①) — Runner never
-   * synthesizes a substitute snapshot.
+   * Opaque evidence cargo for Verify (#1145). Optional — missing/sparse cargo
+   * completes the Action; Runner never synthesizes a substitute snapshot and
+   * never fails the process on cargo shape.
    */
-  readonly evidence: OnlineReviewLandingSnapshot;
+  readonly evidence?: OnlineReviewLandingSnapshot;
+  /** Optional durable pointer to the opaque evidence body. */
+  readonly cargoPointer?: string;
 }
 
 /**
@@ -1376,10 +1379,18 @@ export interface VerifyResult {
   /** Per-finding dispositions judged by the verify worker (opaque cargo). */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
-   * Identity keys carried through as data for the verify worker to use when
-   * reporting which fix-marked findings it evaluated (fixer landing).
+   * Opaque fixer packet — identity keys self-reported by Verify for fixer
+   * landing. Runner copies as-is; never derives from findingDispositions.
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * Opaque fixer packet — identity→thread bindings self-reported by Verify.
+   * Runner copies as-is; never filters dispositions to synthesize threads.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
   /** Thread IDs to resolve only after a fresh re-check confirms the fix. */

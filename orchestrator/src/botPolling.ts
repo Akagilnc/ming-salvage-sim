@@ -29,11 +29,10 @@ export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 /**
  * Bot-poll cadence and overdue window (R15–R16 Codex P1 — do not hand-count).
  *
- * `waitForBotQuiescence` does:
- *   for poll = 1..N: pollOnce(); if poll < N: sleep(INTERVAL)
- * so wall-clock sleeps = N − 1 (first poll is immediate).
- *
- * Codex body often lands 9–13+ min after `eyes`; require ≥15 min of sleeps:
+ * Host `waitForBotQuiescence` was deleted in #1145 (Collector owns wait).
+ * These constants remain for Landing CI sleep cadence and any worker-side
+ * poll budget math that still references the overdue window:
+ *   sleeps = N − 1 (first poll immediate)
  *   N = ceil(MIN_WALL / INTERVAL) + 1
  *   e.g. 15 min / 2 min → 8 sleeps → N = 9 → 16 min wall clock.
  */
