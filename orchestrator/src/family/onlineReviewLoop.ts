@@ -56,7 +56,12 @@ export function onlineReviewJudgeDisposition(
 
 export type { OnlineReviewTerminalState } from "../types.js";
 
-/** 1-based online review round from the family ledger (#600 r26 resume). */
+/**
+ * 1-based online review round from the family ledger (#600 r26 / #1145 resume).
+ * Single truth = max `onlineReviewRound` on live Collector / fix / mergeable
+ * markers. Do not count fix commits — legal no-op continues advance the loop
+ * without a new commit and still write later Collector checkpoints.
+ */
 export function onlineReviewRoundFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
@@ -64,14 +69,25 @@ export function onlineReviewRoundFromFamilyLedger(
     readonly onlineReviewRound?: number;
   }>,
 ): number {
-  // Single truth: completed fixer rounds. Collector checkpoint is per-round
-  // resume cargo — not a parallel round counter (#1145: drop retrigger dual-source).
-  const completedFixerRounds = entries.filter(
-    (e) =>
-      e.status === "online_review_fix_committed" &&
-      e.event === "online_review_fix_committed",
-  ).length;
-  return completedFixerRounds > 0 ? completedFixerRounds + 1 : 1;
+  let maxRound = 0;
+  for (const entry of entries) {
+    const live =
+      (entry.status === "online_review_collector_completed" &&
+        entry.event === "online_review_collector_completed") ||
+      (entry.status === "online_review_fix_committed" &&
+        entry.event === "online_review_fix_committed") ||
+      (entry.status === "online_review_mergeable" &&
+        entry.event === "online_review_mergeable");
+    if (!live) continue;
+    if (
+      typeof entry.onlineReviewRound === "number" &&
+      Number.isSafeInteger(entry.onlineReviewRound) &&
+      entry.onlineReviewRound >= 1
+    ) {
+      maxRound = Math.max(maxRound, entry.onlineReviewRound);
+    }
+  }
+  return maxRound > 0 ? maxRound : 1;
 }
 
 /** Last family online-review fix HEAD — fixing commit for recheck side effects (#600 r26). */
@@ -229,7 +245,7 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
 }
 
 /** Stop summary for the verifier's explicit decision-gate signal. */
-export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
+export function onlineReviewDecisionGateStopSummary(): StopSummary {
   return decisionGateParkStopSummary({
     summary:
       "online review verifier raised an explicit decision-gate signal",
@@ -449,7 +465,7 @@ function applyVerifyDisposition(
       ok: false,
       terminalState: "decision_gate_raised",
       round,
-      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+      stopSummary: onlineReviewDecisionGateStopSummary(),
     };
   }
   if (disposition === "converged") {

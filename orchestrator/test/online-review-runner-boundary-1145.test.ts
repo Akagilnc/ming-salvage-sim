@@ -112,6 +112,7 @@ class TracerFamilyBackend implements FamilyBackend {
 
   constructor(opts?: { readonly seedPriorRound5Keys?: boolean }) {
     if (opts?.seedPriorRound5Keys) {
+      // Prior fix at round 1 = history for priorRoundFindings / recheck keys.
       this.ledger.push({
         status: "online_review_fix_committed",
         event: "online_review_fix_committed",
@@ -123,6 +124,21 @@ class TracerFamilyBackend implements FamilyBackend {
           threadId: `thread-old-${i + 1}`,
         })),
         ts: "2026-01-01T00:00:00.000Z",
+      });
+      // Live high-water is round 2 (max onlineReviewRound on Collector/fix/
+      // mergeable markers — not fix-commit count). Without this marker, resume
+      // would stay at 1 and prior keys would not be "prior".
+      this.ledger.push({
+        status: "online_review_collector_completed",
+        event: "online_review_collector_completed",
+        onlineReviewRound: 2,
+        collectorEvidenceCargo: stubCollectorEvidence({
+          prUrl: offlineShip.pr,
+          headOid: offlineShip.prHead,
+          totalFindingCount: 6,
+          droppedBots: ["marker-bot-1145"],
+        }),
+        ts: "2026-01-01T00:01:00.000Z",
       });
     }
   }
@@ -723,6 +739,291 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(backend.collectorDispatchCount).toBe(1);
       expect(backend.verifyDispatchCount).toBe(1);
       expect(backend.kinds.filter((k) => k === "verify")).toHaveLength(1);
+    });
+
+    it("contradictory cargo: converged+decision_gate never writes mergeable; re-entry keeps the gate", async () => {
+      const backend = new TracerFamilyBackend();
+      backend.verifyImpl = async () => ({
+        kind: "completed",
+        output: {
+          kind: "verify",
+          // Contradictory: green flag + escalate terminal. Disposition machine
+          // is escalate-first; mergeable checkpoint must NOT swallow the gate.
+          converged: true,
+          terminalState: "decision_gate_raised",
+        },
+      });
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.terminalState).toBe("decision_gate_raised");
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+
+      // Re-entry must not short-circuit to mergeable — gate still stands.
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second.ok).toBe(false);
+      expect(second.terminalState).toBe("decision_gate_raised");
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+      // Collector checkpoint reused; Verify re-dispatched (no mergeable skip).
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.verifyDispatchCount).toBe(2);
+    });
+
+    it("contradictory cargo: !converged+terminalState mergeable does not write mergeable; continues to fixer", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        if (verifyCalls === 1) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              // Contradictory: not green, but terminalState says mergeable.
+              // Disposition = continue (only converged===true converges).
+              converged: false,
+              terminalState: "mergeable",
+              fixMarkedFindingIdentityKeys: ["live:contradict"],
+              fixMarkedFindingThreads: [
+                { identityKey: "live:contradict", threadId: "t-c" },
+              ],
+            },
+          };
+        }
+        // Same-round return-to-judge after fixer.
+        expect(landing?.fixerResult).toEqual({
+          kind: "fixer",
+          committed: false,
+        });
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true, isRecheck: false },
+        };
+      };
+
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(2);
+      // First contradictory cargo must NOT have written mergeable; only the
+      // later real converge writes one.
+      expect(
+        backend.ledger.filter((e) => e.event === "online_review_mergeable"),
+      ).toHaveLength(1);
+    });
+
+    it("durable round: multi no-op continue → round-3 checkpoint → crash/re-entry uses latest evidence", async () => {
+      const backend = new TracerFamilyBackend();
+      const r3Evidence = stubCollectorEvidence({
+        prUrl: offlineShip.pr,
+        headOid: "head-round-3-latest",
+        totalFindingCount: 3,
+        droppedBots: ["marker-r3-latest"],
+      });
+      let verifyByRound = new Map<number, number>();
+
+      backend.dispatchWorker = async function (
+        this: TracerFamilyBackend,
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.kinds.push(spec.kind);
+        this.models.push(spec.model);
+        if (landing !== undefined) this.landings.push(landing);
+
+        if (spec.kind === "collector") {
+          this.collectorDispatchCount += 1;
+          const round = landing?.onlineReviewRound ?? ctx.onlineReviewRound ?? 1;
+          // Distinct evidence per round so resume can prove latest-wins.
+          const evidence =
+            round >= 3
+              ? r3Evidence
+              : stubCollectorEvidence({
+                  prUrl: offlineShip.pr,
+                  headOid: `head-round-${round}`,
+                  totalFindingCount: round,
+                  droppedBots: [`marker-r${round}`],
+                });
+          this.collectorEvidence = evidence;
+          return {
+            kind: "completed",
+            output: { kind: "collector", evidence },
+          };
+        }
+
+        if (spec.kind === "verify") {
+          this.verifyDispatchCount += 1;
+          const round = landing?.onlineReviewRound ?? 1;
+          verifyByRound.set(round, (verifyByRound.get(round) ?? 0) + 1);
+          const callsThisRound = verifyByRound.get(round)!;
+
+          if (this.blockVerify) {
+            return {
+              kind: "failed",
+              reason:
+                "simulated crash after round-3 collector checkpoint: EISDIR",
+            };
+          }
+
+          // Rounds 1–2: first seat continues → fixer no-op → same-round
+          // re-entry continues → advance to next Collector cycle.
+          // Round 3: first seat crashes (blockVerify) or converges on re-entry.
+          if (round < 3) {
+            if (callsThisRound === 1) {
+              return {
+                kind: "completed",
+                output: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: [`r${round}:k`],
+                  fixMarkedFindingThreads: [
+                    { identityKey: `r${round}:k`, threadId: `t-r${round}` },
+                  ],
+                },
+              };
+            }
+            // After no-op fixer cargo: continue to next round (no new commit).
+            return {
+              kind: "completed",
+              output: {
+                kind: "verify",
+                converged: false,
+                isRecheck: true,
+                fixMarkedFindingIdentityKeys: [`r${round}:k`],
+                fixMarkedFindingThreads: [
+                  { identityKey: `r${round}:k`, threadId: `t-r${round}` },
+                ],
+              },
+            };
+          }
+
+          // Round 3: converge (re-entry after crash).
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: false },
+          };
+        }
+
+        if (spec.kind === "fixer") {
+          // Legal no-op — no fix_committed marker, round still advances.
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false },
+          };
+        }
+
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      };
+
+      // First run: drive to round-3 Collector checkpoint, then crash Verify.
+      backend.blockVerify = true;
+      // Unblock only after round-3 collector has written; crash the first
+      // Verify of round 3. blockVerify is checked inside dispatch above.
+      // We need blockVerify true only once round 3 collector is done.
+      // Simpler: let rounds 1–2 run with blockVerify false, flip before r3 verify.
+      backend.blockVerify = false;
+      const origDispatch = backend.dispatchWorker.bind(backend);
+      let r3CollectorDone = false;
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        const result = await origDispatch(spec, ctx, landing);
+        if (
+          spec.kind === "collector" &&
+          (landing?.onlineReviewRound ?? ctx.onlineReviewRound) === 3 &&
+          result.kind === "completed"
+        ) {
+          r3CollectorDone = true;
+          backend.blockVerify = true;
+        }
+        return result;
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.terminalState).toBe("decision_gate_raised");
+      expect(r3CollectorDone).toBe(true);
+
+      const r3Checkpoints = backend.ledger.filter(
+        (e) =>
+          e.event === "online_review_collector_completed" &&
+          e.onlineReviewRound === 3,
+      );
+      expect(r3Checkpoints).toHaveLength(1);
+      expect(r3Checkpoints[0]?.collectorEvidenceCargo).toEqual(r3Evidence);
+      // No fix commits across no-op continues — old count-based resume would
+      // under-count and orphan round-3 evidence.
+      expect(
+        backend.ledger.filter((e) => e.event === "online_review_fix_committed"),
+      ).toHaveLength(0);
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+
+      const collectorsBefore = backend.collectorDispatchCount;
+      const verifyBefore = backend.verifyDispatchCount;
+
+      // Re-entry: durable round must be 3 (max live marker), not 1 (zero fixes).
+      backend.blockVerify = false;
+      // Keep the wrapped dispatch so collector still serves r3 evidence when
+      // asked, but checkpoint should short-circuit Collector entirely.
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 3,
+      });
+      // Collector not re-burned — checkpoint for round 3 reused.
+      expect(backend.collectorDispatchCount).toBe(collectorsBefore);
+      expect(backend.verifyDispatchCount).toBe(verifyBefore + 1);
+
+      const reentryVerify = backend.kinds
+        .map((kind, i) => ({ kind, landing: backend.landings[i] }))
+        .filter((p) => p.kind === "verify")
+        .at(-1);
+      expect(reentryVerify?.landing?.onlineReviewRound).toBe(3);
+      expect(reentryVerify?.landing?.onlineReviewSnapshot).toEqual(r3Evidence);
     });
   });
 });

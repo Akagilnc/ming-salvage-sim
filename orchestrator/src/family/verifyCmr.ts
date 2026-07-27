@@ -44,6 +44,7 @@ import {
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
+  onlineReviewJudgeDisposition,
   onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
   type OnlineReviewLoopStageResult,
@@ -2173,12 +2174,11 @@ export async function runFamilyOnlineReviewLoop(input: {
             await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
           }
           // Worker owns side effects (#1145). Residual plan cargo is never
-          // host-replayed after the Action returns. On converge, persist
-          // Action-owned mergeable proof so re-entry does not re-dispatch.
-          if (
-            verifyOut.converged ||
-            verifyOut.terminalState === "mergeable"
-          ) {
+          // host-replayed after the Action returns. Mergeable proof uses the
+          // SAME channel-(b) disposition machine as stage routing — never a
+          // parallel cargo predicate (contradictory cargo must not swallow
+          // decision_gate on re-entry).
+          if (onlineReviewJudgeDisposition(verifyOut) === "converged") {
             await recordOnlineReviewMergeable(input.familyBackend, {
               onlineReviewRound: round,
               pr: prUrl,

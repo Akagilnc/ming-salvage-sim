@@ -21,37 +21,30 @@ import { stubCollectorEvidence } from "../../src/reviewLoopOutcome.js";
  * - `dispatchVerify` is judgment only.
  * - optional `dispatchCollector` overrides the default evidence seat.
  */
-/** Loose fixture shape accepted by tests (PrReviewSnapshot-compatible). */
-type EvidenceFixture =
-  | OnlineReviewLandingSnapshot
-  | (OnlineReviewLandingSnapshot & Record<string, unknown>)
-  | {
-      readonly prUrl: string;
-      readonly headOid: string;
-      readonly totalFindingCount?: number;
-      readonly quiescent?: boolean;
-      readonly bots?: OnlineReviewLandingSnapshot["bots"];
-      readonly threads?: OnlineReviewLandingSnapshot["threads"];
-      readonly checkRuns?: OnlineReviewLandingSnapshot["checkRuns"];
-      readonly checkRunsEmptyMeans?: OnlineReviewLandingSnapshot["checkRunsEmptyMeans"];
-      readonly [key: string]: unknown;
-    };
+/**
+ * Loose fixture shape accepted by tests (PrReviewSnapshot-compatible).
+ * No index signature — named snapshot interfaces stay assignable; soft fields
+ * ride through toEvidence as opaque cargo.
+ */
+type EvidenceFixture = {
+  readonly prUrl: string;
+  readonly headOid: string;
+  readonly repo?: string;
+  readonly prNumber?: number;
+  readonly pollCount?: number;
+  readonly totalFindingCount?: number;
+  readonly quiescent?: boolean;
+  readonly bots?: unknown;
+  readonly droppedBots?: unknown;
+  readonly threads?: unknown;
+  readonly checkRuns?: unknown;
+  readonly checkRunsEmptyMeans?: unknown;
+  readonly roundTriggerUsed?: unknown;
+};
 
 function toEvidence(raw: EvidenceFixture): OnlineReviewLandingSnapshot {
-  return {
-    prUrl: raw.prUrl,
-    headOid: raw.headOid,
-    ...(typeof raw.totalFindingCount === "number"
-      ? { totalFindingCount: raw.totalFindingCount }
-      : {}),
-    ...(typeof raw.quiescent === "boolean" ? { quiescent: raw.quiescent } : {}),
-    ...(raw.bots !== undefined ? { bots: raw.bots } : {}),
-    ...(raw.threads !== undefined ? { threads: raw.threads } : {}),
-    ...(raw.checkRuns !== undefined ? { checkRuns: raw.checkRuns } : {}),
-    ...(raw.checkRunsEmptyMeans !== undefined
-      ? { checkRunsEmptyMeans: raw.checkRunsEmptyMeans }
-      : {}),
-  };
+  // Opaque envelope only — remaining keys ride through as-is (#1145).
+  return { ...raw, prUrl: raw.prUrl, headOid: raw.headOid };
 }
 
 export function onlineReviewDispatch(input: {
