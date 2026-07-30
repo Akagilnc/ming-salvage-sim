@@ -168,6 +168,59 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
     ]);
   });
 
+  it("explicit empty verify_continued clears same-round fix_committed; omitted preserves", () => {
+    const cleared = [
+      {
+        event: "online_review_fix_committed",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["old-stale"],
+        familyHeadAfter: "sha1",
+      },
+      {
+        event: "online_review_verify_continued",
+        onlineReviewRound: 1,
+        // Explicit empty later marker must clear the earlier snapshot.
+        fixMarkedFindingIdentityKeys: [],
+      },
+      {
+        event: "online_review_fix_committed",
+        onlineReviewRound: 2,
+        fixMarkedFindingIdentityKeys: ["keep:r2"],
+        familyHeadAfter: "sha2",
+      },
+    ];
+    expect(priorOnlineReviewFindingsFromFamilyLedger(cleared, 3)).toEqual([
+      { round: 2, fixMarkedFindingIdentityKeys: ["keep:r2"] },
+    ]);
+
+    const omitted = [
+      {
+        event: "online_review_fix_committed",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["keep:r1"],
+        familyHeadAfter: "sha1",
+      },
+      {
+        // Field absent — preserve prior history for the round.
+        event: "online_review_verify_continued",
+        onlineReviewRound: 1,
+      },
+      // Malformed must not clear either.
+      {
+        event: "online_review_verify_continued",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: "not-an-array",
+      } as unknown as {
+        event: string;
+        onlineReviewRound: number;
+        fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      },
+    ];
+    expect(priorOnlineReviewFindingsFromFamilyLedger(omitted, 2)).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["keep:r1"] },
+    ]);
+  });
+
   it("priorCmrFindingsFromFamilyLedger excludes other and unclassified CMR passes", () => {
     const finding = {
       severity: "medium" as const,

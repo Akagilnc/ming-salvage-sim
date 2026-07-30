@@ -62,7 +62,10 @@ import {
 } from "../src/family/onlineReviewLoop.js";
 import {
   familyShippedRecordForReviewLoopResume,
+  recordOnlineReviewFixCommitted,
+  recordOnlineReviewVerifyContinued,
 } from "../src/family/ledger.js";
+import { priorOnlineReviewFindingsFromFamilyLedger } from "../src/priorRoundFindings.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import {
   skeletonReviewLoopWorkerResult,
@@ -1351,6 +1354,179 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         2,
       );
     });
+
+    it("explicit-empty post-fixer verify_continued clears same-round fix_committed snapshot on next Verify", async () => {
+      const backend = new TracerFamilyBackend();
+      const verifyLandings: WorkerLandingPayload[] = [];
+      const fixerLandings: WorkerLandingPayload[] = [];
+      let verifyCalls = 0;
+
+      // Seed a nonempty fix_committed row for round 1 via production ledger writer.
+      await recordOnlineReviewFixCommitted(backend, {
+        familyHeadAfter: "fix-sha-old-r1",
+        pr: offlineShip.pr,
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["old-stale-r1"],
+        fixMarkedFindingThreads: [
+          { identityKey: "old-stale-r1", threadId: "thread-old-stale" },
+        ],
+      });
+      // Round high-water so production resume starts at round 1 still (only fix
+      // row). Drive a full primary→fixer→post-fixer continue with explicit [].
+
+      backend.dispatchWorker = async (spec, ctx, landing) => {
+        backend.kinds.push(spec.kind);
+        backend.models.push(spec.model);
+        if (landing !== undefined) backend.landings.push(landing);
+
+        if (spec.kind === "collector") {
+          backend.collectorDispatchCount += 1;
+          const round =
+            landing?.onlineReviewRound ?? ctx.onlineReviewRound ?? 1;
+          return {
+            kind: "completed",
+            output: {
+              kind: "collector",
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: round === 1 ? offlineShip.prHead! : "head-r2-cleared",
+                marker: `marker-empty-clear-r${round}`,
+              }),
+            },
+          };
+        }
+
+        if (spec.kind === "verify") {
+          verifyCalls += 1;
+          backend.verifyDispatchCount += 1;
+          if (landing !== undefined) verifyLandings.push(landing);
+          const round = landing?.onlineReviewRound ?? 1;
+          const hadFixer = landing?.fixerResult !== undefined;
+
+          if (round === 1 && !hadFixer) {
+            // Primary continue → Fixer (so fix_committed already seeded is same-round).
+            return {
+              kind: "completed",
+              output: {
+                kind: "verify",
+                converged: false,
+                fixMarkedFindingIdentityKeys: ["live-packet-r1"],
+                fixMarkedFindingThreads: [
+                  { identityKey: "live-packet-r1", threadId: "t-live-r1" },
+                ],
+              },
+            };
+          }
+
+          if (round === 1 && hadFixer) {
+            // Explicit empty post-fixer continue — production path must durable-write [].
+            return {
+              kind: "completed",
+              output: {
+                kind: "verify",
+                converged: false,
+                isRecheck: true,
+                fixMarkedFindingIdentityKeys: [],
+              },
+            };
+          }
+
+          // Round 2 primary: converge after proving history was cleared.
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: true,
+              isRecheck: false,
+              // This-round packet only — history must not rewrite Fixer keys.
+              fixMarkedFindingIdentityKeys: ["live-packet-r2"],
+            },
+          };
+        }
+
+        if (spec.kind === "fixer") {
+          if (landing !== undefined) fixerLandings.push(landing);
+          // Legal no-op so we do not append a second fix_committed that would
+          // reintroduce nonempty keys after the explicit-empty continue.
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false, alreadySatisfied: true },
+          };
+        }
+
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+
+      // Durable explicit-empty verify_continued row present (not compacted away).
+      const continued = backend.ledger.filter(
+        (e) =>
+          e.event === "online_review_verify_continued" &&
+          e.onlineReviewRound === 1,
+      );
+      expect(continued.length).toBeGreaterThanOrEqual(1);
+      const lastContinued = continued[continued.length - 1]!;
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          lastContinued,
+          "fixMarkedFindingIdentityKeys",
+        ),
+      ).toBe(true);
+      expect(lastContinued.fixMarkedFindingIdentityKeys).toEqual([]);
+
+      // Reader contract: explicit empty clears same-round fix_committed snapshot.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(backend.ledger, 2),
+      ).toEqual([]);
+
+      const primaryR2 = verifyLandings.find(
+        (l) => l.onlineReviewRound === 2 && l.fixerResult === undefined,
+      );
+      expect(primaryR2).toBeDefined();
+      // Next-round Verify landing has no stale snapshot.
+      expect(primaryR2!.priorRoundFindings ?? []).toEqual([]);
+
+      // Fixer packet stays this-round cargo only — history never enters.
+      expect(fixerLandings.length).toBeGreaterThanOrEqual(1);
+      expect(fixerLandings[0]!.fixMarkedFindingIdentityKeys).toEqual([
+        "live-packet-r1",
+      ]);
+      expect(fixerLandings[0]!.priorRoundFindings).toBeUndefined();
+      expect(
+        fixerLandings.every(
+          (l) =>
+            !(l.fixMarkedFindingIdentityKeys ?? []).includes("old-stale-r1"),
+        ),
+      ).toBe(true);
+
+      // Retain nonempty later-marker-wins (direct writer path, same production seam).
+      await recordOnlineReviewFixCommitted(backend, {
+        familyHeadAfter: "fix-sha-r9",
+        pr: offlineShip.pr,
+        onlineReviewRound: 9,
+        fixMarkedFindingIdentityKeys: ["committed:r9-stale"],
+      });
+      await recordOnlineReviewVerifyContinued(backend, {
+        onlineReviewRound: 9,
+        pr: offlineShip.pr,
+        fixMarkedFindingIdentityKeys: ["continued:r9-wins"],
+      });
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(backend.ledger, 10),
+      ).toEqual([
+        { round: 9, fixMarkedFindingIdentityKeys: ["continued:r9-wins"] },
+      ]);
+    });
+
 
     it("durable round: multi no-op continue → round-3 checkpoint → crash/re-entry uses latest evidence", async () => {
       const backend = new TracerFamilyBackend();

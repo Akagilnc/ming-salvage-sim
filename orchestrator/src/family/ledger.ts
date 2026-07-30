@@ -1608,12 +1608,14 @@ export async function recordOnlineReviewVerifyContinued(
       "family online_review_verify_continued marker must include onlineReviewRound >= 1",
     );
   }
-  const fixKeys =
-    record.fixMarkedFindingIdentityKeys !== undefined
-      ? record.fixMarkedFindingIdentityKeys.filter(
-          (k) => typeof k === "string" && k.trim().length > 0,
-        )
-      : [];
+  // Explicit [] must remain durable and distinguishable from an omitted field
+  // so same-round later-marker-wins can clear an earlier fix_committed snapshot.
+  const hasExplicitFixKeys = record.fixMarkedFindingIdentityKeys !== undefined;
+  const fixKeys = hasExplicitFixKeys
+    ? record.fixMarkedFindingIdentityKeys.filter(
+        (k) => typeof k === "string" && k.trim().length > 0,
+      )
+    : undefined;
   const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
     typeof binding.identityKey === "string" &&
     binding.identityKey.trim().length > 0 &&
@@ -1631,7 +1633,7 @@ export async function recordOnlineReviewVerifyContinued(
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
-      ...(fixKeys.length > 0
+      ...(hasExplicitFixKeys
         ? { fixMarkedFindingIdentityKeys: fixKeys }
         : {}),
       ...(fixThreads.length > 0
