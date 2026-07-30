@@ -46,14 +46,8 @@ export function stubCollectorEvidence(
     readonly [key: string]: unknown;
   },
 ): OnlineReviewLandingSnapshot {
+  // Minimal host-typed keys only — free-form extras opt-in via overrides.
   return {
-    totalFindingCount: 0,
-    quiescent: true,
-    bots: {},
-    droppedBots: [],
-    threads: [],
-    checkRuns: [],
-    checkRunsEmptyMeans: "converged",
     ...overrides,
     prUrl: overrides?.prUrl ?? "pr://offline",
     headOid: overrides?.headOid ?? "offline-head",

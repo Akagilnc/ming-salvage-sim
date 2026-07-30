@@ -143,16 +143,6 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "online_review_verify_continued",
   /** #1145 — Verify converged / side effects done; re-entry must not re-dispatch. */
   "online_review_mergeable",
-  /**
-   * #1145 — Action-owned mutating side-effect receipt (attempted|succeeded|failed).
-   * Not a Runner traffic signal; Collector/Verify recovery only.
-   */
-  "online_review_side_effect_receipt",
-  /**
-   * #1145 — Action-owned Collector wait/evidence progress (pristine/resume).
-   * Not a Runner traffic signal.
-   */
-  "online_review_collection_progress",
   "worker_dispatched",
   "route_degraded",
   /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
@@ -312,8 +302,6 @@ export interface FamilyLedgerEntry {
     | "online_review_fixer_completed"
     | "online_review_verify_continued"
     | "online_review_mergeable"
-    | "online_review_side_effect_receipt"
-    | "online_review_collection_progress"
     | "worker_dispatched"
     | "route_degraded"
     /** #919 — paired with status coder_advance. */
@@ -513,24 +501,6 @@ export interface FamilyLedgerEntry {
    * branches topology on committed / alreadySatisfied.
    */
   readonly fixerResultCargo?: FixerResult;
-  /** #1145 side-effect receipt seat. */
-  readonly sideEffectSeat?: "collector" | "verify";
-  /** #1145 side-effect receipt op. */
-  readonly sideEffectOp?: "retrigger" | "reply" | "resolve" | "defer";
-  /** #1145 side-effect receipt stable idempotency key. */
-  readonly sideEffectIdempotencyKey?: string;
-  /** #1145 side-effect receipt state. */
-  readonly sideEffectState?: "attempted" | "succeeded" | "failed";
-  /** #1145 side-effect receipt queryable external handle. */
-  readonly sideEffectExternalHandle?: string;
-  /** #1145 collection-progress phase. */
-  readonly collectionProgressPhase?: "initialized" | "waiting" | "evidence_ready";
-  /** #1145 collection-progress wait deadline (ISO). */
-  readonly collectionWaitDeadlineAt?: string;
-  /** #1145 collection-progress completed wait epochs. */
-  readonly collectionCompletedWaitEpochs?: number;
-  /** #1145 collection-progress opaque evidence handle (cargoPointer). */
-  readonly collectionEvidenceHandle?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
