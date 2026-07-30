@@ -1213,6 +1213,15 @@ export function familyOnlineReviewLoopInProgressForHead(
     ) {
       return true;
     }
+    // #1145 F5: committed fixer_completed carries familyHeadAfter so a crash
+    // before fix_committed still admits top-level shipped resume at the new head.
+    if (
+      e.event === "online_review_fixer_completed" &&
+      typeof e.familyHeadAfter === "string" &&
+      e.familyHeadAfter.trim() === head
+    ) {
+      return true;
+    }
     // Live truth (#1145): Action-owned Collector checkpoint bookkeeping head
     // (familyHeadAfter from schedule context — never parsed from evidence body).
     if (
@@ -1261,14 +1270,17 @@ export function familyShippedRecordForReviewLoopResume(
       entry.event === "online_review_fix_committed" &&
       typeof entry.familyHeadAfter === "string"
         ? entry.familyHeadAfter.trim()
-        : entry.event === "online_review_collector_completed" &&
+        : entry.event === "online_review_fixer_completed" &&
             typeof entry.familyHeadAfter === "string"
           ? entry.familyHeadAfter.trim()
-          : // Legacy read-only width (#1145 — no live writer).
-            entry.event === "online_review_round_retrigger" &&
-              typeof entry.roundTriggerHeadOid === "string"
-            ? entry.roundTriggerHeadOid.trim()
-            : undefined;
+          : entry.event === "online_review_collector_completed" &&
+              typeof entry.familyHeadAfter === "string"
+            ? entry.familyHeadAfter.trim()
+            : // Legacy read-only width (#1145 — no live writer).
+              entry.event === "online_review_round_retrigger" &&
+                typeof entry.roundTriggerHeadOid === "string"
+              ? entry.roundTriggerHeadOid.trim()
+              : undefined;
     if (markerHead === undefined || markerHead !== currentHead) {
       continue;
     }
@@ -1501,6 +1513,12 @@ export async function recordOnlineReviewFixerCompleted(
     readonly onlineReviewRound: number;
     readonly fixerResult: FixerResult;
     readonly pr?: string;
+    /**
+     * Committed fixer head (#1145 F5). When set, top-level Runner re-feed can
+     * admit shipped resume at this head even if fix_committed is not yet written.
+     * Legal no-ops omit this field (same-head resume uses other cycle markers).
+     */
+    readonly familyHeadAfter?: string;
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly fixMarkedFindingThreads?: ReadonlyArray<{
       readonly identityKey: string;
@@ -1537,6 +1555,11 @@ export async function recordOnlineReviewFixerCompleted(
       ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
       : [],
   );
+  const familyHeadAfter =
+    typeof record.familyHeadAfter === "string" &&
+    record.familyHeadAfter.trim().length > 0
+      ? record.familyHeadAfter.trim()
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_fixer_completed",
@@ -1546,6 +1569,9 @@ export async function recordOnlineReviewFixerCompleted(
       fixerResultCargo: record.fixerResult,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
+        : {}),
+      ...(familyHeadAfter !== undefined
+        ? { familyHeadAfter }
         : {}),
       ...(fixKeys.length > 0
         ? { fixMarkedFindingIdentityKeys: fixKeys }

@@ -45,6 +45,9 @@ function runBin(
   };
 }
 
+const HEAD_A = "head-a-1145";
+const HEAD_B = "head-b-1145";
+
 describe("#1145 durable bin.mjs CLI (sole capability)", () => {
   it("evidence-put → progress-classify resume → evidence-get same handle (no re-wait)", () => {
     const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-1145-"));
@@ -55,16 +58,24 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         readFileSync(BIN_SRC, "utf8"),
       );
 
-      const init = runBin(hostPath, ["progress-init", "--round", "1"]);
+      const init = runBin(hostPath, [
+        "progress-init",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+      ]);
       expect(init.status).toBe(0);
 
       const body = JSON.stringify({
         sparse: true,
         marker: "same-handle-1145",
       });
-      const put = runBin(hostPath, ["evidence-put", "--round", "1", "--file", "-"], {
-        stdin: body,
-      });
+      const put = runBin(
+        hostPath,
+        ["evidence-put", "--round", "1", "--head", HEAD_A, "--file", "-"],
+        { stdin: body },
+      );
       expect(put.status).toBe(0);
       const putJson = JSON.parse(put.stdout) as { handle?: string };
       expect(typeof putJson.handle).toBe("string");
@@ -72,20 +83,106 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       expect(handle.startsWith("blobs/")).toBe(true);
 
       // Second open (fresh process) sees resume + same handle.
-      const classify = runBin(hostPath, ["progress-classify", "--round", "1"]);
+      const classify = runBin(hostPath, [
+        "progress-classify",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+      ]);
       expect(classify.status).toBe(0);
       const classified = JSON.parse(classify.stdout) as {
         kind?: string;
-        progress?: { evidenceHandle?: string };
+        progress?: { evidenceHandle?: string; head?: string };
       };
       expect(classified.kind).toBe("resume");
       expect(classified.progress?.evidenceHandle).toBe(handle);
+      expect(classified.progress?.head).toBe(HEAD_A);
 
       const get = runBin(hostPath, ["evidence-get", "--handle", handle]);
       expect(get.status).toBe(0);
       expect(JSON.parse(get.stdout)).toEqual({
         sparse: true,
         marker: "same-handle-1145",
+      });
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("same-round new-head does not resume old evidence or old receipts", () => {
+    const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-headns-1145-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
+      const body = JSON.stringify({ marker: "old-head-evidence" });
+      const put = runBin(
+        hostPath,
+        ["evidence-put", "--round", "1", "--head", HEAD_A, "--file", "-"],
+        { stdin: body },
+      );
+      expect(put.status).toBe(0);
+      const handle = (JSON.parse(put.stdout) as { handle: string }).handle;
+
+      const key = "resolve:discussion_old";
+      expect(
+        runBin(hostPath, [
+          "receipt-succeeded",
+          "--round",
+          "1",
+          "--head",
+          HEAD_A,
+          "--key",
+          key,
+        ]).status,
+      ).toBe(0);
+
+      // Same round, new head → pristine (must not return A's handle/receipts).
+      const classifyB = runBin(hostPath, [
+        "progress-classify",
+        "--round",
+        "1",
+        "--head",
+        HEAD_B,
+      ]);
+      expect(classifyB.status).toBe(0);
+      expect(JSON.parse(classifyB.stdout)).toEqual({ kind: "pristine" });
+
+      const receiptB = runBin(hostPath, [
+        "receipt-get",
+        "--round",
+        "1",
+        "--head",
+        HEAD_B,
+        "--key",
+        key,
+      ]);
+      expect(receiptB.status).toBe(0);
+      expect(receiptB.stdout.trim()).toBe("null");
+
+      // Old head still resumes its own namespace.
+      const classifyA = runBin(hostPath, [
+        "progress-classify",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+      ]);
+      expect(JSON.parse(classifyA.stdout)).toMatchObject({
+        kind: "resume",
+        progress: { evidenceHandle: handle, head: HEAD_A },
+      });
+      const receiptA = runBin(hostPath, [
+        "receipt-get",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+        "--key",
+        key,
+      ]);
+      expect(JSON.parse(receiptA.stdout)).toMatchObject({
+        state: "succeeded",
+        head: HEAD_A,
       });
     } finally {
       rmSync(workingRepo, { recursive: true, force: true });
@@ -101,6 +198,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         "receipt-attempted",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--seat",
         "verify",
         "--op",
@@ -116,6 +215,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         "receipt-decide",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--key",
         key,
         "--fact",
@@ -131,6 +232,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         "receipt-decide",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--key",
         key,
         "--fact",
@@ -146,6 +249,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         "receipt-attempted",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--seat",
         "verify",
         "--op",
@@ -157,6 +262,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         "receipt-decide",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--key",
         key2,
         "--fact",
@@ -253,24 +360,39 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // Crashed owner wreckage: lock file with a dead pid must not block forever.
       writeFileSync(
         lockPath,
-        `${JSON.stringify({ pid: 2_147_483_647, ts: Date.now() - 60_000 })}\n`,
+        `${JSON.stringify({
+          pid: 2_147_483_647,
+          token: "dead-sandbox",
+          ts: Date.now() - 60_000,
+        })}\n`,
         "utf8",
       );
-      const afterCrash = runBin(hostPath, ["progress-init", "--round", "1"]);
+      const afterCrash = runBin(hostPath, [
+        "progress-init",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+      ]);
       expect(afterCrash.status).toBe(0);
       expect(existsSync(lockPath)).toBe(false);
 
-      // Live exclusive holder: this test process is alive → CLI must time out,
-      // not steal the lock.
+      // Fresh live lease: recent ts + alive pid → CLI must time out, not steal.
       writeFileSync(
         lockPath,
-        `${JSON.stringify({ pid: process.pid, ts: Date.now() })}\n`,
+        `${JSON.stringify({
+          pid: process.pid,
+          token: "live-holder",
+          ts: Date.now(),
+        })}\n`,
         "utf8",
       );
       const blocked = runBin(hostPath, [
         "progress-set-epochs",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--epochs",
         "1",
       ]);
@@ -278,18 +400,47 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       expect(blocked.stderr).toMatch(/lock timeout/);
       expect(existsSync(lockPath)).toBe(true);
 
-      // After owner dies (simulate by rewriting dead pid), reclaim succeeds.
+      // Cross-container PID collision: stale lease whose numeric PID collides
+      // with this live process must still be reclaimed (lease/token rule).
       writeFileSync(
         lockPath,
-        `${JSON.stringify({ pid: 2_147_483_647, ts: Date.now() - 60_000 })}\n`,
+        `${JSON.stringify({
+          pid: process.pid,
+          token: "stale-other-container",
+          ts: Date.now() - 60_000,
+        })}\n`,
+        "utf8",
+      );
+      const recoveredCollision = runBin(hostPath, [
+        "progress-set-epochs",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+        "--epochs",
+        "1",
+      ]);
+      expect(recoveredCollision.status).toBe(0);
+      expect(existsSync(lockPath)).toBe(false);
+
+      // After owner dies (dead pid + stale ts), reclaim succeeds.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({
+          pid: 2_147_483_647,
+          token: "dead-again",
+          ts: Date.now() - 60_000,
+        })}\n`,
         "utf8",
       );
       const recovered = runBin(hostPath, [
         "progress-set-epochs",
         "--round",
         "1",
+        "--head",
+        HEAD_A,
         "--epochs",
-        "1",
+        "2",
       ]);
       expect(recovered.status).toBe(0);
       expect(existsSync(lockPath)).toBe(false);

@@ -6,7 +6,11 @@
  *   node "$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH/bin.mjs" <cmd> ...
  *
  * Host never parses state — workers own all transitions.
+ *
+ * Progress / receipts / evidence are namespaced by (round, head) so a
+ * same-round re-ship at a new head cannot resume prior-cycle evidence.
  */
+import { randomBytes } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -27,8 +31,9 @@ const BLOBS_DIR = "blobs";
 /** Wait budget while another live owner holds the lock. */
 const LOCK_WAIT_MS = 5000;
 /**
- * Lock files older than this with a dead/missing owner pid are abandoned wreckage
- * and may be reclaimed. Live owners remain exclusive for the full wait budget.
+ * Lock lease TTL. Critical sections are short (append/read). Expired leases are
+ * reclaimable even when the numeric PID appears alive — required for
+ * cross-container PID reuse after a dead sandbox (#1145 F3).
  */
 const LOCK_STALE_MS = 2000;
 
@@ -67,9 +72,14 @@ function readLockOwner(lockPath) {
     if (parsed && typeof parsed === "object") {
       const pid = Number(parsed.pid);
       const ts = Number(parsed.ts);
+      const token =
+        typeof parsed.token === "string" && parsed.token.trim().length > 0
+          ? parsed.token.trim()
+          : undefined;
       return {
         pid: Number.isFinite(pid) ? pid : undefined,
         ts: Number.isFinite(ts) ? ts : undefined,
+        token,
       };
     }
   } catch {
@@ -81,19 +91,41 @@ function readLockOwner(lockPath) {
 function tryReclaimStaleLock(lockPath) {
   const owner = readLockOwner(lockPath);
   const now = Date.now();
-  // No owner token: reclaim only when mtime is stale (half-created wreckage).
-  if (owner === undefined || owner.pid === undefined) {
+
+  // Lease expiry is the cross-container-safe signal: a dead sandbox may leave a
+  // lock whose numeric PID collides with a live process in the replacement
+  // container. Fresh live leases (recent ts) stay exclusive.
+  if (owner !== undefined && owner.ts !== undefined) {
+    const age = now - owner.ts;
+    if (Number.isFinite(age) && age >= LOCK_STALE_MS) {
+      try {
+        unlinkSync(lockPath);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    // Fresh lease + live pid → exclusive (including same-pid collision with
+    // a concurrent holder that just wrote).
+    if (owner.pid !== undefined && isPidAlive(owner.pid)) {
+      return false;
+    }
+    // Fresh lease but dead/missing pid → reclaim.
     try {
-      const st = statSync(lockPath);
-      if (now - st.mtimeMs < LOCK_STALE_MS) return false;
+      unlinkSync(lockPath);
+      return true;
     } catch {
       return false;
     }
-  } else if (isPidAlive(owner.pid)) {
-    // Live owner remains exclusive — never reclaim.
+  }
+
+  // No owner token/ts: reclaim only when mtime is stale (half-created wreckage).
+  try {
+    const st = statSync(lockPath);
+    if (now - st.mtimeMs < LOCK_STALE_MS) return false;
+  } catch {
     return false;
   }
-  // Dead/missing owner (or stale empty lock): best-effort unlink.
   try {
     unlinkSync(lockPath);
     return true;
@@ -110,10 +142,15 @@ function withLock(root, fn) {
     try {
       fd = openSync(lockPath, "wx");
       // Persist owner immediately so a crash between create and finally can be
-      // diagnosed and reclaimed by a later CLI call.
+      // diagnosed and reclaimed by a later CLI call. Token + ts form the lease;
+      // PID alone is not authoritative across containers.
       writeFileSync(
         lockPath,
-        `${JSON.stringify({ pid: process.pid, ts: Date.now() })}\n`,
+        `${JSON.stringify({
+          pid: process.pid,
+          token: randomBytes(16).toString("hex"),
+          ts: Date.now(),
+        })}\n`,
         "utf8",
       );
     } catch (err) {
@@ -199,30 +236,47 @@ function requireRound(args) {
   return n;
 }
 
-function lastProgress(events, round) {
+/** Reviewed head that owns this worker namespace (#1145 F2). */
+function requireHead(args) {
+  const h = String(args.head ?? "").trim();
+  if (!h) die("--head H (non-empty reviewed head) required");
+  return h;
+}
+
+function sameNamespace(event, round, head) {
+  return (
+    event.round === round &&
+    typeof event.head === "string" &&
+    event.head === head
+  );
+}
+
+function lastProgress(events, round, head) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.kind === "collection_progress" && e.round === round) return e;
+    if (e.kind === "collection_progress" && sameNamespace(e, round, head)) {
+      return e;
+    }
   }
   return undefined;
 }
 
-function receiptsForRound(events, round) {
+function receiptsForRound(events, round, head) {
   const map = new Map();
   for (const e of events) {
-    if (e.kind === "side_effect_receipt" && e.round === round) {
+    if (e.kind === "side_effect_receipt" && sameNamespace(e, round, head)) {
       map.set(e.idempotencyKey, e);
     }
   }
   return [...map.values()];
 }
 
-function lastReceipt(events, round, key) {
+function lastReceipt(events, round, head, key) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
       e.kind === "side_effect_receipt" &&
-      e.round === round &&
+      sameNamespace(e, round, head) &&
       e.idempotencyKey === key
     ) {
       return e;
@@ -247,15 +301,22 @@ function evidenceReadable(root, handle) {
   }
 }
 
-function classify(root, round) {
+function classify(root, round, head) {
   const events = readEvents(root);
-  const progress = lastProgress(events, round);
-  const receipts = receiptsForRound(events, round);
+  const progress = lastProgress(events, round, head);
+  const receipts = receiptsForRound(events, round, head);
   if (!Number.isSafeInteger(round) || round < 1) {
     return {
       kind: "corrupt",
       reason: "invalid_round",
       diagnosis: `round must be >= 1`,
+    };
+  }
+  if (typeof head !== "string" || head.trim().length === 0) {
+    return {
+      kind: "corrupt",
+      reason: "invalid_head",
+      diagnosis: "head must be non-empty",
     };
   }
   if (progress === undefined && receipts.length === 0) {
@@ -265,7 +326,7 @@ function classify(root, round) {
     return {
       kind: "corrupt",
       reason: "unpaired_receipts",
-      diagnosis: `round ${round} has receipts without progress`,
+      diagnosis: `round ${round} head ${head} has receipts without progress`,
     };
   }
   if (
@@ -299,6 +360,7 @@ function classify(root, round) {
     kind: "resume",
     progress: {
       round: progress.round,
+      head: progress.head,
       phase: progress.phase,
       waitDeadlineAt: progress.waitDeadlineAt,
       completedWaitEpochs: progress.completedWaitEpochs,
@@ -341,59 +403,67 @@ function main() {
   switch (cmd) {
     case "progress-init": {
       const round = requireRound(args);
+      const head = requireHead(args);
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
         round,
+        head,
         ts: nowIso(),
         phase: "initialized",
       });
-      out({ ok: true, round, phase: "initialized" });
+      out({ ok: true, round, head, phase: "initialized" });
       break;
     }
     case "progress-set-deadline": {
       const round = requireRound(args);
+      const head = requireHead(args);
       const deadline = String(args.deadline ?? "").trim();
       if (!deadline) die("--deadline ISO required");
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
         round,
+        head,
         ts: nowIso(),
         phase: "waiting",
         waitDeadlineAt: deadline,
         completedWaitEpochs: Number(args.epochs ?? 0) || 0,
       });
-      out({ ok: true, round, waitDeadlineAt: deadline });
+      out({ ok: true, round, head, waitDeadlineAt: deadline });
       break;
     }
     case "progress-set-epochs": {
       const round = requireRound(args);
+      const head = requireHead(args);
       const epochs = Number(args.epochs);
       if (!Number.isSafeInteger(epochs) || epochs < 0) die("--epochs K required");
-      const prev = lastProgress(readEvents(root), round);
+      const prev = lastProgress(readEvents(root), round, head);
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
         round,
+        head,
         ts: nowIso(),
         phase: prev?.phase === "evidence_ready" ? "evidence_ready" : "waiting",
         waitDeadlineAt: prev?.waitDeadlineAt,
         completedWaitEpochs: epochs,
         evidenceHandle: prev?.evidenceHandle,
       });
-      out({ ok: true, round, completedWaitEpochs: epochs });
+      out({ ok: true, round, head, completedWaitEpochs: epochs });
       break;
     }
     case "progress-classify": {
       const round = requireRound(args);
-      out(classify(root, round));
+      const head = requireHead(args);
+      out(classify(root, round, head));
       break;
     }
     case "receipt-attempted":
     case "receipt-succeeded":
     case "receipt-failed": {
       const round = requireRound(args);
+      const head = requireHead(args);
       const key = String(args.key ?? "").trim();
       if (!key) die("--key required");
       const seat = String(args.seat ?? "verify");
@@ -410,6 +480,7 @@ function main() {
         v: 1,
         kind: "side_effect_receipt",
         round,
+        head,
         ts: nowIso(),
         seat,
         op,
@@ -417,18 +488,19 @@ function main() {
         state,
         ...(handle ? { externalHandle: handle } : {}),
       });
-      out({ ok: true, round, key, state });
+      out({ ok: true, round, head, key, state });
       break;
     }
     case "receipt-decide": {
       const round = requireRound(args);
+      const head = requireHead(args);
       const key = String(args.key ?? "").trim();
       const fact = String(args.fact ?? "").trim();
       if (!key) die("--key required");
       if (!["applied", "not_applied", "unknown"].includes(fact)) {
         die("--fact applied|not_applied|unknown required");
       }
-      const receipt = lastReceipt(readEvents(root), round, key);
+      const receipt = lastReceipt(readEvents(root), round, head, key);
       const decision = decide(receipt, fact);
       if (
         decision.action === "skip_already_done" &&
@@ -439,6 +511,7 @@ function main() {
           v: 1,
           kind: "side_effect_receipt",
           round,
+          head,
           ts: nowIso(),
           seat: receipt.seat,
           op: receipt.op,
@@ -454,14 +527,16 @@ function main() {
     }
     case "receipt-get": {
       const round = requireRound(args);
+      const head = requireHead(args);
       const key = String(args.key ?? "").trim();
       if (!key) die("--key required");
-      const receipt = lastReceipt(readEvents(root), round, key);
+      const receipt = lastReceipt(readEvents(root), round, head, key);
       out(receipt ?? null);
       break;
     }
     case "evidence-put": {
       const round = requireRound(args);
+      const head = requireHead(args);
       let body;
       if (args.file === "-" || args.file === undefined) {
         body = readFileSync(0);
@@ -479,6 +554,7 @@ function main() {
         v: 1,
         kind: "collection_progress",
         round,
+        head,
         ts: nowIso(),
         phase: "evidence_ready",
         evidenceHandle: handle,

@@ -149,6 +149,74 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
   return undefined;
 }
 
+/**
+ * Latest fix SHA belonging to the review cycle anchored at `shipHead` (#1145).
+ *
+ * Cycle starts after the latest `shipped` marker whose `familyHeadAfter` equals
+ * `shipHead`. Prior-cycle fixer SHAs (before that anchor) must not override a
+ * newly shipped head; in-cycle fixer SHAs after the anchor remain effective
+ * after a crash. When no matching shipped anchor exists (direct stage tests),
+ * the whole ledger is the cycle window.
+ */
+export function lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+  }>,
+  shipHead: string,
+): string | undefined {
+  const head = typeof shipHead === "string" ? shipHead.trim() : "";
+  if (head.length === 0) return undefined;
+
+  let cycleStart = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim() === head
+    ) {
+      cycleStart = i + 1;
+      break;
+    }
+  }
+
+  for (let i = entries.length - 1; i >= cycleStart; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "online_review_fix_committed" &&
+      entry.event === "online_review_fix_committed" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim().length > 0
+    ) {
+      return entry.familyHeadAfter.trim();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Effective reviewed head for the current online-review cycle (#1145 F1).
+ * Prefer an in-cycle fixer SHA; otherwise the ship head that opened the cycle.
+ */
+export function effectiveOnlineReviewHeadFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+  }>,
+  shipHead: string,
+): string {
+  const ship = typeof shipHead === "string" ? shipHead.trim() : "";
+  const inCycle = lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
+    entries,
+    ship,
+  );
+  return inCycle !== undefined && inCycle.length > 0 ? inCycle : ship;
+}
+
 function authorizationFromLedgerEntry(entry: {
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   readonly fixMarkedFindingThreads?: ReadonlyArray<{

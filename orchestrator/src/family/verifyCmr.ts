@@ -40,8 +40,10 @@ import {
 } from "../dispatchWorker.js";
 import {
   OnlineReviewLoopTerminal,
+  effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
+  lastInCycleOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
   lastPendingFixerCargoFromFamilyLedger,
@@ -106,6 +108,7 @@ import type {
   WorkerSpec,
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
+import { fixerEnvelopeFixCommitSha } from "../reviewLoopOutcome.js";
 import {
   closeFamilyCourtFromJudgeOutput,
   familyJudgeResumeSessionIdFromPriorRows,
@@ -1950,18 +1953,24 @@ export async function runFamilyOnlineReviewLoop(input: {
       );
     }
   }
+  const shipHead =
+    typeof input.ship.prHead === "string" ? input.ship.prHead : "";
   const loopState = {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
-    lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
+    // #1145 F1: cycle-scoped fix SHA — prior cycle must not override new ship head.
+    lastFixSha: lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
+      familyLedger,
+      shipHead,
+    ),
   };
   // #1145: Action-owned mergeable recovery — side effects already done.
-  // Bound to effective reviewed head (last fix SHA or ship head); short-circuit
-  // only on exact current-head match. Otherwise run Collector→Verify.
+  // Bound to cycle-effective reviewed head; short-circuit only on exact match.
+  // Prior-cycle fixer SHA cannot override a newly shipped head.
   {
-    const effectiveHead =
-      loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
-        ? loopState.lastFixSha
-        : input.ship.prHead;
+    const effectiveHead = effectiveOnlineReviewHeadFromFamilyLedger(
+      familyLedger,
+      shipHead,
+    );
     const alreadyMergeable = lastOnlineReviewMergeableFromFamilyLedger(
       familyLedger,
       effectiveHead,
@@ -2010,10 +2019,11 @@ export async function runFamilyOnlineReviewLoop(input: {
           // (progress/receipts/blobs) is worker-owned via mounted durable dir +
           // bin.mjs — host never classify/progress-write/mint pointer.
           const ledgerNow = await input.familyBackend.readFamilyLedger();
+          // Prefer live in-loop lastFixSha (updated after each fix); else cycle head.
           const bookkeepingHead =
             loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
               ? loopState.lastFixSha
-              : input.ship.prHead;
+              : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead);
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
             round,
@@ -2338,10 +2348,16 @@ export async function runFamilyOnlineReviewLoop(input: {
           // Always durable the opaque envelope (commit OR legal no-op).
           // Not a host gate on committed/alreadySatisfied — pure cargo.
           if (output !== undefined) {
+            // #1145 F5: committed envelope SHA on fixer_completed admits top-level
+            // shipped resume when crash precedes fix_committed bookkeeping.
+            const committedHead = fixerEnvelopeFixCommitSha(output);
             await recordOnlineReviewFixerCompleted(input.familyBackend, {
               onlineReviewRound: round,
               fixerResult: output,
               pr: prUrl,
+              ...(committedHead !== undefined && committedHead.length > 0
+                ? { familyHeadAfter: committedHead }
+                : {}),
               ...(lastFixMarkedFindingIdentityKeys.length > 0
                 ? {
                     fixMarkedFindingIdentityKeys:

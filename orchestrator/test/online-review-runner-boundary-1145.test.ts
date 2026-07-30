@@ -39,11 +39,15 @@ import {
 } from "../src/botPolling.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import {
+  effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
+import {
+  familyShippedRecordForReviewLoopResume,
+} from "../src/family/ledger.js";
 import {
   skeletonReviewLoopWorkerResult,
   stubCollectorEvidence,
@@ -1506,6 +1510,65 @@ describe("#1145 production shared-tail Online Review boundary", () => {
   });
 
   describe("#1145 five recovery seams", () => {
+    it("F1: prior-cycle fixer SHA cannot override newly shipped head mergeable", async () => {
+      const backend = new TracerFamilyBackend();
+      const priorFix = "prior-cycle-fix-a";
+      const newShip = "new-ship-head-b";
+      // Prior cycle: fix A + mergeable(A).
+      backend.ledger.push(
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: priorFix,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_mergeable",
+          event: "online_review_mergeable",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: priorFix,
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        // New ship B opens a fresh review cycle.
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: offlineShip.pr,
+          familyHeadAfter: newShip,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      );
+      expect(
+        effectiveOnlineReviewHeadFromFamilyLedger(backend.ledger, newShip),
+      ).toBe(newShip);
+      expect(
+        lastOnlineReviewMergeableFromFamilyLedger(backend.ledger, newShip),
+      ).toBeUndefined();
+
+      const collectorsBefore = backend.collectorDispatchCount;
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, prHead: newShip },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Must re-run Collector→Verify for B — not short-circuit on mergeable(A).
+      expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
+      expect(backend.verifyDispatchCount).toBe(1);
+      const mergeableHeads = backend.ledger
+        .filter((e) => e.event === "online_review_mergeable")
+        .map((e) => e.familyHeadAfter);
+      expect(mergeableHeads).toEqual([priorFix, newShip]);
+    });
+
     it("mergeable is bound to reviewed head; re-ship new head re-runs Collector→Verify", async () => {
       const backend = new TracerFamilyBackend();
 
@@ -1702,6 +1765,122 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(postFixVerify?.shipDelivery?.prHead).toBe("new-fix-sha-r2");
       // Collector checkpoint reused — no second wait burn.
       expect(backend.collectorDispatchCount).toBe(collectorsBeforeResume);
+    });
+
+    it("F5 production re-feed: fixer_completed head admits shipped resume before fix_committed", async () => {
+      const shipHead = offlineShip.prHead;
+      const fixHead = "fixer-completed-head-f5";
+      // Canonical PR URL required by isValidFamilyShipped (top-level resume gate).
+      const pr = "https://github.com/test/repo/pull/1145";
+      const backend = new TracerFamilyBackend();
+      // Ancestor shipped + committed fixer_completed (crash before fix_committed).
+      backend.ledger.push(
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: shipHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_collector_completed",
+          event: "online_review_collector_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: shipHead,
+          collectorEvidenceCargo: stubCollectorEvidence({
+            prUrl: pr,
+            headOid: shipHead,
+            marker: "f5-collector",
+          }),
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_fixer_completed",
+          event: "online_review_fixer_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr,
+          familyHeadAfter: fixHead,
+          fixerResultCargo: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: fixHead,
+          },
+          fixMarkedFindingIdentityKeys: ["f5:1"],
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      );
+
+      // Top-level Runner gate: live HEAD = fixHead must find shipped resume anchor.
+      const resume = familyShippedRecordForReviewLoopResume(
+        backend.ledger,
+        fixHead,
+      );
+      expect(resume).toEqual({ pr, familyHeadAfter: shipHead });
+
+      let fixerCalls = 0;
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: true, fixCommitSha: fixHead },
+        };
+      };
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        if (landing?.fixerResult !== undefined) {
+          expect(landing.fixerResult).toEqual({
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: fixHead,
+          });
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["f5:1"],
+          },
+        };
+      };
+
+      // Production re-feed shape: ship.prHead = resume anchor (Runner path).
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: {
+          ...offlineShip,
+          pr,
+          prHead: resume!.familyHeadAfter,
+        },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // No second Fixer; fix_committed booked once at fixHead.
+      expect(fixerCalls).toBe(0);
+      expect(
+        backend.ledger.filter(
+          (e) =>
+            e.event === "online_review_fix_committed" &&
+            e.familyHeadAfter === fixHead,
+        ),
+      ).toHaveLength(1);
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.event === "online_review_mergeable" &&
+            e.familyHeadAfter === fixHead,
+        ),
+      ).toBe(true);
     });
 
     it("empty opaque Collector completed writes checkpoint; Verify-crash re-entry does not redispatch", async () => {
@@ -2227,10 +2406,12 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       );
       expect(collectorSoul).toMatch(/bin\.mjs/);
       expect(collectorSoul).toMatch(/progress-classify/);
+      expect(collectorSoul).toMatch(/--head/);
       expect(collectorSoul).toMatch(/evidence-put/);
       expect(verifySoul).toMatch(/副作用方法/);
       expect(verifySoul).toMatch(/receipt-attempted/);
       expect(verifySoul).toMatch(/receipt-decide/);
+      expect(verifySoul).toMatch(/--head/);
       // F1 / AC2: handle-only cargoPointer → evidence-get; never re-run Collector wait.
       expect(verifySoul).toMatch(/evidence-get --handle/);
       expect(verifySoul).toMatch(/cargoPointer/);

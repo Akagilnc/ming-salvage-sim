@@ -70,6 +70,34 @@ describe("#683 bridge-child quota wall serialization", () => {
     expect(tryParseQuotaWaitForResetBridge("hostCliWorkerRunner: worker threw")).toBeUndefined();
   });
 
+  it("#1145 F4: S13 Collector step survives quota bridge serialize/parse", () => {
+    const resetAt = new Date("2026-07-10T16:10:00.000Z");
+    const err = new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "collector quota limited (429); wait for reset",
+      },
+      applied: {
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "collector quota limited (429); wait for reset",
+          step: "S13",
+          workerPid: 5151,
+          ts: "2026-07-10T12:00:00.000Z",
+        },
+      },
+      pool: "zai",
+    });
+    const reason = serializeQuotaWaitForResetBridge(err);
+    const restored = tryParseQuotaWaitForResetBridge(reason);
+    expect(restored).toBeInstanceOf(QuotaWaitForResetError);
+    expect(restored?.applied.ledgerEntry?.step).toBe("S13");
+  });
+
   it("rejects bridge payload whose pool is not a QuotaPoolId", () => {
     const reason =
       "QUOTA_WAIT_FOR_RESET_V1:" +
