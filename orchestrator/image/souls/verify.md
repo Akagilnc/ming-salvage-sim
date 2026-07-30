@@ -27,10 +27,14 @@ DURABLE="$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH"
 CLI="node $DURABLE/bin.mjs"
 ROUND=<landing onlineReviewRound>
 HEAD=<landing shipDelivery.prHead / cycle reviewed head>
+PR=<landing shipDelivery.pr / resolved current PR，非空>
 ```
 
-Receipts 按 `(round, head)` 命名空间隔离（与 Collector 同 CLI）；同 round 新
-head 不得 resume 旧 head 的副作用回执（#1145 F2）。
+Receipts 按 `(round, head, resolved-current-PR)` 命名空间隔离（与 Collector
+同 CLI）；同 round 新 head 不得 resume 旧 head 的副作用回执；同 round+head
+的替换/重开 PR 不得 resume 旧 PR 回执（#1145 F2 / PR-cycle）。`evidence-get`
+可仅带 handle，但 handle 只可来自本 PR 作用域 progress（landing
+`cargoPointer` 必须是当前 PR Collector 交卷的 handle）。
 
 ### Collector 证据解析（handle-only · 禁重取证）
 
@@ -52,14 +56,14 @@ landing 可能只带 `cargoPointer`、不带 `onlineReviewSnapshot`（Collector
 `reply:<threadId>:<identityKey>` / `defer:<identityKey>`）：
 
 1. 重入时先：
-   `$CLI receipt-decide --round $ROUND --head $HEAD --key K --fact applied|not_applied|unknown`
+   `$CLI receipt-decide --round $ROUND --head $HEAD --pr $PR --key K --fact applied|not_applied|unknown`
    - `skip_already_done` → **零**第二次变更调用（可只读核对）
    - `execute_once` → 继续步骤 2
    - `escalate` → typed escalate（平台不能判定时 **禁盲重放**）
-2. `$CLI receipt-attempted --round $ROUND --head $HEAD --seat verify --op resolve|reply|defer --key K [--handle H]`
+2. `$CLI receipt-attempted --round $ROUND --head $HEAD --pr $PR --seat verify --op resolve|reply|defer --key K [--handle H]`
    （**先于** GH mutate 落盘）
 3. 执行 GH：`gh api` 线程回复 / resolve / 开 deferred tracking issue
-4. 成功 → `$CLI receipt-succeeded --round $ROUND --head $HEAD --key K [--handle H]`
+4. 成功 → `$CLI receipt-succeeded --round $ROUND --head $HEAD --pr $PR --key K [--handle H]`
 5. 抛错且未生效 → `$CLI receipt-failed …` 或保留 attempted + 你方 escalate
 
 顺序：全部计划副作用 succeeded（或本席 escalate）之后，才写 role cargo

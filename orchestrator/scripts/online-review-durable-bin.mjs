@@ -7,8 +7,9 @@
  *
  * Host never parses state — workers own all transitions.
  *
- * Progress / receipts / evidence are namespaced by (round, head) so a
- * same-round re-ship at a new head cannot resume prior-cycle evidence.
+ * Progress / receipts / evidence are namespaced by
+ * (round, head, resolved-current-PR) so a same-round re-ship at a new head
+ * or a replacement PR at the same SHA cannot resume prior-cycle evidence.
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -333,40 +334,49 @@ function requireHead(args) {
   return h;
 }
 
-function sameNamespace(event, round, head) {
+/** Resolved current PR identity that owns this worker namespace (#1145). */
+function requirePr(args) {
+  const p = String(args.pr ?? "").trim();
+  if (!p) die("--pr P (non-empty resolved current PR) required");
+  return p;
+}
+
+function sameNamespace(event, round, head, pr) {
   return (
     event.round === round &&
     typeof event.head === "string" &&
-    event.head === head
+    event.head === head &&
+    typeof event.pr === "string" &&
+    event.pr === pr
   );
 }
 
-function lastProgress(events, round, head) {
+function lastProgress(events, round, head, pr) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.kind === "collection_progress" && sameNamespace(e, round, head)) {
+    if (e.kind === "collection_progress" && sameNamespace(e, round, head, pr)) {
       return e;
     }
   }
   return undefined;
 }
 
-function receiptsForRound(events, round, head) {
+function receiptsForRound(events, round, head, pr) {
   const map = new Map();
   for (const e of events) {
-    if (e.kind === "side_effect_receipt" && sameNamespace(e, round, head)) {
+    if (e.kind === "side_effect_receipt" && sameNamespace(e, round, head, pr)) {
       map.set(e.idempotencyKey, e);
     }
   }
   return [...map.values()];
 }
 
-function lastReceipt(events, round, head, key) {
+function lastReceipt(events, round, head, pr, key) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (
       e.kind === "side_effect_receipt" &&
-      sameNamespace(e, round, head) &&
+      sameNamespace(e, round, head, pr) &&
       e.idempotencyKey === key
     ) {
       return e;
@@ -391,7 +401,7 @@ function evidenceReadable(root, handle) {
   }
 }
 
-function classify(root, round, head) {
+function classify(root, round, head, pr) {
   if (!Number.isSafeInteger(round) || round < 1) {
     return {
       kind: "corrupt",
@@ -406,6 +416,13 @@ function classify(root, round, head) {
       diagnosis: "head must be non-empty",
     };
   }
+  if (typeof pr !== "string" || pr.trim().length === 0) {
+    return {
+      kind: "corrupt",
+      reason: "invalid_pr",
+      diagnosis: "pr must be non-empty",
+    };
+  }
   const loaded = readEventsResult(root);
   if (loaded.kind === "corrupt") {
     return {
@@ -415,8 +432,8 @@ function classify(root, round, head) {
     };
   }
   const events = loaded.events;
-  const progress = lastProgress(events, round, head);
-  const receipts = receiptsForRound(events, round, head);
+  const progress = lastProgress(events, round, head, pr);
+  const receipts = receiptsForRound(events, round, head, pr);
   if (progress === undefined && receipts.length === 0) {
     return { kind: "pristine" };
   }
@@ -424,7 +441,7 @@ function classify(root, round, head) {
     return {
       kind: "corrupt",
       reason: "unpaired_receipts",
-      diagnosis: `round ${round} head ${head} has receipts without progress`,
+      diagnosis: `round ${round} head ${head} pr ${pr} has receipts without progress`,
     };
   }
   if (
@@ -459,6 +476,7 @@ function classify(root, round, head) {
     progress: {
       round: progress.round,
       head: progress.head,
+      pr: progress.pr,
       phase: progress.phase,
       waitDeadlineAt: progress.waitDeadlineAt,
       completedWaitEpochs: progress.completedWaitEpochs,
@@ -502,20 +520,23 @@ function main() {
     case "progress-init": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
         round,
         head,
+        pr,
         ts: nowIso(),
         phase: "initialized",
       });
-      out({ ok: true, round, head, phase: "initialized" });
+      out({ ok: true, round, head, pr, phase: "initialized" });
       break;
     }
     case "progress-set-deadline": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       const deadline = String(args.deadline ?? "").trim();
       if (!deadline) die("--deadline ISO required");
       appendEvent(root, {
@@ -523,38 +544,42 @@ function main() {
         kind: "collection_progress",
         round,
         head,
+        pr,
         ts: nowIso(),
         phase: "waiting",
         waitDeadlineAt: deadline,
         completedWaitEpochs: Number(args.epochs ?? 0) || 0,
       });
-      out({ ok: true, round, head, waitDeadlineAt: deadline });
+      out({ ok: true, round, head, pr, waitDeadlineAt: deadline });
       break;
     }
     case "progress-set-epochs": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       const epochs = Number(args.epochs);
       if (!Number.isSafeInteger(epochs) || epochs < 0) die("--epochs K required");
-      const prev = lastProgress(requireEvents(root), round, head);
+      const prev = lastProgress(requireEvents(root), round, head, pr);
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
         round,
         head,
+        pr,
         ts: nowIso(),
         phase: prev?.phase === "evidence_ready" ? "evidence_ready" : "waiting",
         waitDeadlineAt: prev?.waitDeadlineAt,
         completedWaitEpochs: epochs,
         evidenceHandle: prev?.evidenceHandle,
       });
-      out({ ok: true, round, head, completedWaitEpochs: epochs });
+      out({ ok: true, round, head, pr, completedWaitEpochs: epochs });
       break;
     }
     case "progress-classify": {
       const round = requireRound(args);
       const head = requireHead(args);
-      out(classify(root, round, head));
+      const pr = requirePr(args);
+      out(classify(root, round, head, pr));
       break;
     }
     case "receipt-attempted":
@@ -562,6 +587,7 @@ function main() {
     case "receipt-failed": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       const key = String(args.key ?? "").trim();
       if (!key) die("--key required");
       const seat = String(args.seat ?? "verify");
@@ -579,6 +605,7 @@ function main() {
         kind: "side_effect_receipt",
         round,
         head,
+        pr,
         ts: nowIso(),
         seat,
         op,
@@ -586,19 +613,20 @@ function main() {
         state,
         ...(handle ? { externalHandle: handle } : {}),
       });
-      out({ ok: true, round, head, key, state });
+      out({ ok: true, round, head, pr, key, state });
       break;
     }
     case "receipt-decide": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       const key = String(args.key ?? "").trim();
       const fact = String(args.fact ?? "").trim();
       if (!key) die("--key required");
       if (!["applied", "not_applied", "unknown"].includes(fact)) {
         die("--fact applied|not_applied|unknown required");
       }
-      const receipt = lastReceipt(requireEvents(root), round, head, key);
+      const receipt = lastReceipt(requireEvents(root), round, head, pr, key);
       const decision = decide(receipt, fact);
       if (
         decision.action === "skip_already_done" &&
@@ -610,6 +638,7 @@ function main() {
           kind: "side_effect_receipt",
           round,
           head,
+          pr,
           ts: nowIso(),
           seat: receipt.seat,
           op: receipt.op,
@@ -626,15 +655,17 @@ function main() {
     case "receipt-get": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       const key = String(args.key ?? "").trim();
       if (!key) die("--key required");
-      const receipt = lastReceipt(requireEvents(root), round, head, key);
+      const receipt = lastReceipt(requireEvents(root), round, head, pr, key);
       out(receipt ?? null);
       break;
     }
     case "evidence-put": {
       const round = requireRound(args);
       const head = requireHead(args);
+      const pr = requirePr(args);
       let body;
       if (args.file === "-" || args.file === undefined) {
         body = readFileSync(0);
@@ -653,6 +684,7 @@ function main() {
         kind: "collection_progress",
         round,
         head,
+        pr,
         ts: nowIso(),
         phase: "evidence_ready",
         evidenceHandle: handle,

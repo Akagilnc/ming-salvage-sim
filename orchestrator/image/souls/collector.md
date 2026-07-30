@@ -41,30 +41,34 @@ CLI="node $DURABLE/bin.mjs"
 
 | cmd | 何时 |
 | --- | --- |
-| `$CLI progress-classify --round N --head H` | 开席先跑：pristine / resume / corrupt |
-| `$CLI progress-init --round N --head H` | classify=pristine 后、任何 wait/GH 前 |
-| `$CLI progress-set-deadline --round N --head H --deadline ISO` | wait 开始前落截止 |
-| `$CLI progress-set-epochs --round N --head H --epochs K` | 完成一个 wait 周期 |
-| `$CLI receipt-attempted/succeeded … --round N --head H` | 变更性 GH（retrigger）前后 |
-| `$CLI receipt-decide --round N --head H --key K --fact applied\|not_applied\|unknown` | 重入恢复；unknown → escalate，禁盲重放 |
-| `$CLI evidence-put --round N --head H --file -` | 证据 bytes 原子写入；stdout `{handle}` |
-| `$CLI evidence-get --handle H` | 校验 handle 可读 |
+| `$CLI progress-classify --round N --head H --pr P` | 开席先跑：pristine / resume / corrupt |
+| `$CLI progress-init --round N --head H --pr P` | classify=pristine 后、任何 wait/GH 前 |
+| `$CLI progress-set-deadline --round N --head H --pr P --deadline ISO` | wait 开始前落截止 |
+| `$CLI progress-set-epochs --round N --head H --pr P --epochs K` | 完成一个 wait 周期 |
+| `$CLI receipt-attempted/succeeded … --round N --head H --pr P` | 变更性 GH（retrigger）前后 |
+| `$CLI receipt-decide --round N --head H --pr P --key K --fact applied\|not_applied\|unknown` | 重入恢复；unknown → escalate，禁盲重放 |
+| `$CLI evidence-put --round N --head H --pr P --file -` | 证据 bytes 原子写入；stdout `{handle}` |
+| `$CLI evidence-get --handle H` | 校验 handle 可读（handle 只可来自本 PR 命名空间的 progress） |
 
 `N` = landing `onlineReviewRound`；`H` = 本轮 reviewed head
-（`shipDelivery.prHead` / 当前 cycle head）。进度、receipt、evidence 按
-`(round, head)` 命名空间隔离——同 round 新 head **不得** resume 旧 head
-证据（#1145 F2）。
+（`shipDelivery.prHead` / 当前 cycle head）；`P` = landing
+`shipDelivery.pr`（resolved current PR，非空）。进度、receipt、evidence 按
+`(round, head, resolved-current-PR)` 命名空间隔离——同 round 新 head **不得**
+resume 旧 head 证据；同 round+head 的替换/重开 PR **不得** resume 旧 PR
+证据或 receipt（#1145 F2 / PR-cycle）。`evidence-get` 可仅带 handle，但
+handle **必须**来自本 PR 作用域 progress 记录（classify/resume 返回的
+`evidenceHandle`），禁止跨 PR 猜 handle。
 
 **开席规程**
 
-1. `progress-classify --round N --head H`。
-2. **pristine** → `progress-init --round N --head H`，再做 wait/GH/组装。
+1. `progress-classify --round N --head H --pr P`。
+2. **pristine** → `progress-init --round N --head H --pr P`，再做 wait/GH/组装。
 3. **resume** 且有 `evidenceHandle` → **零** sleep / retrigger / 重取证；
    `evidence-get` 确认可读后，交卷同一 handle 作 `cargoPointer`。
 4. **resume** 无 handle、有 deadline → 只睡剩余时间，不重开全长 window。
 5. **corrupt**（handle 坏 / unpaired）→ typed `escalate`，diagnosis 写清；
    勿让 Runner 代判。
-6. 组装完成后：`evidence-put --round N --head H`（允许 sparse JSON）→ 交卷
+6. 组装完成后：`evidence-put --round N --head H --pr P`（允许 sparse JSON）→ 交卷
    `cargoPointer=<handle>` + 可选 sidecar body。**禁止**因缺 prUrl/bots 等
    业务字段把 completed 改写成 escalate（cargo ≠ fate）。
 

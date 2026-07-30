@@ -3964,11 +3964,19 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(collectorSoul).toMatch(/bin\.mjs/);
       expect(collectorSoul).toMatch(/progress-classify/);
       expect(collectorSoul).toMatch(/--head/);
+      expect(collectorSoul).toMatch(/--pr/);
+      expect(collectorSoul).toMatch(
+        /\(round, head, resolved-current-PR\)/,
+      );
       expect(collectorSoul).toMatch(/evidence-put/);
       expect(verifySoul).toMatch(/副作用方法/);
       expect(verifySoul).toMatch(/receipt-attempted/);
       expect(verifySoul).toMatch(/receipt-decide/);
       expect(verifySoul).toMatch(/--head/);
+      expect(verifySoul).toMatch(/--pr \$PR/);
+      expect(verifySoul).toMatch(
+        /\(round, head, resolved-current-PR\)/,
+      );
       // F1 / AC2: handle-only cargoPointer → evidence-get; never re-run Collector wait.
       expect(verifySoul).toMatch(/evidence-get --handle/);
       expect(verifySoul).toMatch(/cargoPointer/);
