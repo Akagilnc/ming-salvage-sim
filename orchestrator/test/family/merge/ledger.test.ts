@@ -279,6 +279,46 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         shipHead,
       )?.familyHeadAfter,
     ).toBe(shipHead);
+    // #1145 F5: committed fixer_completed with familyHeadAfter admits resume
+    // when crash precedes fix_committed.
+    const fixerCompleted = {
+      status: "online_review_fixer_completed" as const,
+      event: "online_review_fixer_completed" as const,
+      phase: "final" as const,
+      onlineReviewRound: 1,
+      familyHeadAfter: postFixHead,
+      pr,
+      fixerResultCargo: {
+        kind: "fixer" as const,
+        committed: true,
+        fixCommitSha: postFixHead,
+      },
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [...mergedOnly, shipped, fixerCompleted],
+        postFixHead,
+      ),
+    ).toEqual({ pr, familyHeadAfter: shipHead });
+    // No-op fixer_completed without familyHeadAfter does not admit new-head resume.
+    const fixerNoop = {
+      status: "online_review_fixer_completed" as const,
+      event: "online_review_fixer_completed" as const,
+      phase: "final" as const,
+      onlineReviewRound: 1,
+      pr,
+      fixerResultCargo: {
+        kind: "fixer" as const,
+        committed: false,
+        alreadySatisfied: true,
+      },
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [...mergedOnly, shipped, fixerNoop],
+        postFixHead,
+      ),
+    ).toBeUndefined();
   });
 
   it("familyShippedRecordForReviewLoopResume accepts ancestor shipped + in-loop markers (#600 r28)", () => {
