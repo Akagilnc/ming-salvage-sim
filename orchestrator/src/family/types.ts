@@ -494,7 +494,7 @@ export interface FamilyLedgerEntry {
    * Runner does not read bot/CI/finding semantics from this field.
    * Sparse body is legal (ADR 0131 cargo≠fate).
    */
-  readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot | { readonly [key: string]: unknown };
+  readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
   /**
    * #1145 — opaque Fixer envelope on `online_review_fixer_completed`. Includes
    * legal no-op (no SHA). Runner transports as-is to same-round Verify; never

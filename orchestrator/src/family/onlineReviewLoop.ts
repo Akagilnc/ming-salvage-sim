@@ -199,7 +199,7 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
 /**
  * Action-owned Collector checkpoint for durable resume (#1145 AC2).
  * Returns the latest completed Collector cargo handle/body for `round`.
- * Opaque only — no prUrl/headOid structure gate (ADR 0131 cargo≠fate).
+ * Opaque only — no field structure gate (ADR 0131 cargo≠fate).
  * Runner/stage never interprets evidence semantics.
  */
 export function lastCollectorCheckpointFromFamilyLedger(
@@ -208,17 +208,13 @@ export function lastCollectorCheckpointFromFamilyLedger(
     readonly event?: string;
     readonly onlineReviewRound?: number;
     readonly cargoPointer?: string;
-    readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot | {
-      readonly [key: string]: unknown;
-    };
+    readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
   }>,
   round: number,
 ):
   | {
       readonly cargoPointer?: string;
-      readonly evidence?: OnlineReviewLandingSnapshot | {
-        readonly [key: string]: unknown;
-      };
+      readonly evidence?: OnlineReviewLandingSnapshot;
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
@@ -484,18 +480,15 @@ export async function sleepPendingCiPollInterval(
 /**
  * Online Review Collector Action result (#1145).
  * Opaque evidence handle/body only — never judge enum. Runner transports as-is
- * without reading prUrl/headOid/thread/check fields (ADR 0131).
- * Sparse / missing body does not change Action fate (cargo ≠ fate).
+ * without reading body fields (ADR 0131). Sparse / missing body ≠ fate.
  */
 export interface OnlineReviewCollectorDispatchResult {
   /**
-   * Opaque evidence blob for Verify unpack only. Stage copies by reference and
-   * must not read business fields (headOid/prUrl/…). Prefer cargoPointer when
-   * both are present for durable identity.
+   * Opaque evidence blob for Verify unpack only. Stage copies any object body
+   * verbatim and must not read business fields. Prefer cargoPointer when both
+   * are present for durable identity.
    */
-  readonly evidence?: OnlineReviewLandingSnapshot | {
-    readonly [key: string]: unknown;
-  };
+  readonly evidence?: OnlineReviewLandingSnapshot;
   readonly cargoPointer?: string;
   readonly artifacts?: NonNullable<
     WorkerLandingPayload["rawReviewerArtifacts"]
@@ -686,30 +679,19 @@ export async function runOnlineReviewLoopStage(
     try {
       const collected = await dispatch.dispatchCollector(landing, round);
       // Opaque evidence transport — stage copies handle/blob by reference and
-      // NEVER reads prUrl/headOid/thread/check fields to drive scheduling
-      // (#1145 / ADR 0131). prHead bookkeeping = ship/fix SHA only.
-      // Sparse cargo does not change fate (cargo ≠ fate).
+      // never inspects body fields to drive scheduling (#1145 / ADR 0131).
+      // prHead bookkeeping = ship/fix SHA only. Sparse cargo ≠ fate.
       const baseHead =
         lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
           ? lastFixCommitSha
           : ship.prHead;
-      // Opaque handle/body transport only — never elevate business fields.
-      // Pointer-only completion is legal (cargo ≠ fate / DecisionGate A).
+      // Any object body copied verbatim; pointer-only remains legal.
       landing = {
         ...landing,
-        // Pass-through opaque blob for Verify unpack — no field elevation.
         ...(collected.evidence !== undefined &&
         typeof collected.evidence === "object" &&
-        collected.evidence !== null &&
-        typeof (collected.evidence as { readonly prUrl?: unknown }).prUrl ===
-          "string" &&
-        typeof (collected.evidence as { readonly headOid?: unknown }).headOid ===
-          "string"
-          ? {
-              onlineReviewSnapshot: collected.evidence as NonNullable<
-                WorkerLandingPayload["onlineReviewSnapshot"]
-              >,
-            }
+        collected.evidence !== null
+          ? { onlineReviewSnapshot: collected.evidence }
           : {}),
         ...(typeof collected.cargoPointer === "string" &&
         collected.cargoPointer.trim().length > 0

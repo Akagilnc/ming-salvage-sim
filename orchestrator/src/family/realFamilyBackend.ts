@@ -4673,9 +4673,9 @@ function reviewLoopCargoResult(
 
 /**
  * #1145 Collector cargo-only decode. Opaque handle and/or body.
- * Pointer-only completion is legal — never require prUrl/headOid, never
- * inspect pointer contents, never mint a replacement, never turn missing
- * body into fate (ADR 0131 cargo ≠ fate / DecisionGate A).
+ * Any object body is copied verbatim — no prUrl/headOid admission.
+ * Pointer-only completion is legal; missing body is never fate
+ * (ADR 0131 cargo ≠ fate / DecisionGate A).
  */
 export function parseCollectorOutcome(
   stdout: string,
@@ -4688,27 +4688,18 @@ export function parseCollectorOutcome(
     typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
       ? parsed.cargoPointer.trim()
       : undefined;
-  const body = isJsonRecord(parsed.evidence)
-    ? parsed.evidence
-    : // Top-level body only when it is not a pure handle envelope.
-      isJsonRecord(parsed) &&
-        (typeof parsed.prUrl === "string" || typeof parsed.headOid === "string")
-      ? parsed
-      : undefined;
   let evidence: OnlineReviewLandingSnapshot | undefined;
-  if (
-    isJsonRecord(body) &&
-    typeof body.prUrl === "string" &&
-    body.prUrl.trim().length > 0 &&
-    typeof body.headOid === "string" &&
-    body.headOid.trim().length > 0
-  ) {
-    // Sole typing boundary when body is present: prUrl/headOid only.
-    evidence = {
-      ...body,
-      prUrl: body.prUrl.trim(),
-      headOid: body.headOid.trim(),
-    };
+  if (isJsonRecord(parsed.evidence)) {
+    // Nested evidence blob — copy verbatim.
+    evidence = parsed.evidence;
+  } else {
+    // Top-level sidecar body: keys beyond the handle envelope.
+    // Pointer stays on cargoPointer; body is the remainder, any shape.
+    const topLevelBody: Record<string, unknown> = { ...parsed };
+    delete topLevelBody.cargoPointer;
+    if (Object.keys(topLevelBody).length > 0) {
+      evidence = topLevelBody;
+    }
   }
   if (evidence === undefined && cargoPointer === undefined) {
     // Nothing usable — opaque miss (never fails the Action).
