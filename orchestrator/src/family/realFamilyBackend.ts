@@ -168,6 +168,10 @@ import {
   RAW_REVIEWER_STDOUT_SANDBOX_FILE,
 } from "../rawReviewerArtifacts.js";
 import {
+  ONLINE_REVIEW_DURABLE_PATH_ENV,
+  onlineReviewDurableMount,
+} from "./onlineReviewActionDurable.js";
+import {
   ONLINE_REVIEW_LANDING_FILE,
   OnlineReviewLoopTerminal,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
@@ -2722,6 +2726,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
+    // #1145 DecisionGate A: worker-owned durable store (progress/receipts/blobs).
+    // Host mounts RW only — never parses state.jsonl.
+    const durable = onlineReviewDurableMount(this.opts.workingRepo);
+    env[ONLINE_REVIEW_DURABLE_PATH_ENV] = durable.sandboxPath;
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -2743,6 +2751,10 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    mounts.push({
+      hostPath: durable.hostPath,
+      sandboxPath: durable.sandboxPath,
+    });
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }

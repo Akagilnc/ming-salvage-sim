@@ -15,24 +15,21 @@ PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 You own **finding judgment** and **side effects** on this seat. Collector owns
 GitHub query/wait/retrigger/evidence assembly as a **separate prior Action**.
 The Runner never re-queries PR state and never replays residual side-effect
-plans after you return:
+plans after you return.
+
+**Side-effect method truth lives in the Verify soul** (`image/souls/verify.md`
+§副作用方法): durable CLI receipt-attempted → GH → succeeded, recover via
+receipt-decide + external fact, never blind-replay. This promptFile is params +
+envelope only — do not treat the bullets below as a second method source.
 
 1. Read review state from the Collector landing snapshot (and `gh` only as
-   needed to act on threads you are about to reply/resolve — not to re-run
-   the wait loop).
+   needed to act on threads — not to re-run the wait loop).
 2. Judge each finding (`fix` / `reject` / `defer`). Include CI check-runs from
    the evidence: only report `converged:true` when bots are clean **and** CI is
-   green (or offline-empty-means-converged). If CI is still pending or red,
-   do **not** converge — continue or escalate as appropriate.
-3. **Execute** the side effects yourself **before** self-reporting disposition:
-   - evidence-bearing thread **replies** (`gh api` comment on the review thread)
-   - thread **resolve** after a fresh re-check confirms the fix
-   - **deferred** tracking issues for `defer` findings
-4. Only after those side effects succeed, self-report the judge three-state via
-   role cargo (`converged`) + typed envelope. If a required side effect cannot
-   complete, raise via the typed envelope (`status:"escalate"`) — do **not**
-   report `converged:true` with unfinished effects. There is no host fail-safe
-   second executor.
+   green (or offline-empty-means-converged).
+3. Execute side effects per **soul** before self-reporting disposition.
+4. Self-report three-state via role cargo + typed envelope. Unfinished effects
+   → escalate, never `converged:true`.
 
 ## Required output
 
@@ -108,8 +105,8 @@ Rules:
 
 - Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
 - Role cargo never carries escalate — fate is the typed envelope only.
-- Execute side effects yourself before emit. Never report `converged:true` with
-  unfinished effects — escalate instead. Runner will not replay residual plans
-  (#1145 sole-owner rule).
+- Execute side effects per Verify soul before emit. Never report
+  `converged:true` with unfinished effects — escalate instead. Runner will not
+  replay residual plans (#1145 DecisionGate A).
 - This seat is single-iteration. Completion is clean exit + legal typed
   envelope / sidecar — no STEP_COMPLETE password.
