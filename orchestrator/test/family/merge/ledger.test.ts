@@ -251,16 +251,18 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         postFixHead,
       ),
     ).toEqual({ pr, familyHeadAfter: shipHead });
-    // Live truth: collector_completed evidence head also proves in-progress.
+    // Live truth: collector_completed bookkeeping head (familyHeadAfter) proves
+    // in-progress — never lifted from evidence body fields (#1145).
     const collectorCompleted = {
       status: "online_review_collector_completed" as const,
       event: "online_review_collector_completed" as const,
       phase: "final" as const,
       onlineReviewRound: 1,
       cargoPointer: "ledger:test",
+      familyHeadAfter: postFixHead,
       collectorEvidenceCargo: {
-        prUrl: pr,
-        headOid: postFixHead,
+        // sparse opaque body is legal; head match uses familyHeadAfter only
+        marker: "opaque",
       },
       pr,
     };

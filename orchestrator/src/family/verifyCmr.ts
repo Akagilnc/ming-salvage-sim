@@ -31,6 +31,12 @@ import {
   runLandingAction,
 } from "./landing.js";
 import {
+  classifyCollectionProgress,
+  lastCollectionProgressFromFamilyLedger,
+  recordOnlineReviewCollectionProgress,
+  sideEffectReceiptsForRound,
+} from "./onlineReviewActionDurable.js";
+import {
   convergenceHeadToRecord,
 } from "../evidenceAdmissibility.js";
 import {
@@ -1996,9 +2002,9 @@ export async function runFamilyOnlineReviewLoop(input: {
         // Actions. Runner never host-polls GH, never pre-assembles bot evidence,
         // never post-applies residual side-effect plans.
         dispatchCollector: async (landing, round) => {
-          // Action-owned durable resume (#1145 AC2): reuse completed Collector
-          // cargo for this round without re-burning wait/evidence. Stage only
-          // calls this seat; checkpoint load/store stays in the Action.
+          // Action-owned durable resume (#1145 AC2): completed checkpoint,
+          // collection-progress handle, and pristine init. Stage only calls
+          // this seat; load/store stays in the Action. Runner never reads body.
           const ledgerNow = await input.familyBackend.readFamilyLedger();
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
@@ -2006,11 +2012,68 @@ export async function runFamilyOnlineReviewLoop(input: {
           );
           if (checkpoint !== undefined) {
             return {
-              evidence: checkpoint.evidence,
+              ...(checkpoint.evidence !== undefined
+                ? { evidence: checkpoint.evidence }
+                : {}),
               ...(checkpoint.cargoPointer !== undefined
                 ? { cargoPointer: checkpoint.cargoPointer }
                 : {}),
             };
+          }
+
+          // collection-progress trichotomy (pristine | resume | corrupt).
+          const progress = lastCollectionProgressFromFamilyLedger(
+            ledgerNow,
+            round,
+          );
+          const sameRoundReceipts = sideEffectReceiptsForRound(ledgerNow, round);
+          const classified = classifyCollectionProgress({
+            round,
+            progress,
+            sameRoundReceipts,
+          });
+          if (classified.kind === "corrupt") {
+            throw new OnlineReviewLoopTerminal({
+              ok: false,
+              terminalState: "decision_gate_raised",
+              round,
+              stopSummary: decisionGateParkStopSummary({
+                summary: `family collector progress corrupt: ${classified.reason} — ${classified.diagnosis}`,
+                repairHint:
+                  "repair collection-progress / evidence handle pairing for this round, then re-feed the family online review loop",
+              }),
+            });
+          }
+          if (classified.kind === "resume") {
+            const handle = classified.progress.evidenceHandle;
+            if (handle !== undefined && handle.length > 0) {
+              // Evidence handle already durable — zero re-wait / re-collect.
+              // Patch collector_completed with the same opaque handle only.
+              const bookkeepingHead =
+                loopState.lastFixSha !== undefined &&
+                loopState.lastFixSha.length > 0
+                  ? loopState.lastFixSha
+                  : input.ship.prHead;
+              await recordOnlineReviewCollectorCompleted(input.familyBackend, {
+                onlineReviewRound: round,
+                cargoPointer: handle,
+                pr: prUrl,
+                ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
+                  ? { familyHeadAfter: bookkeepingHead }
+                  : {}),
+              });
+              loopState.round = Math.max(loopState.round, round);
+              return { cargoPointer: handle };
+            }
+            // In-progress without handle: continue into worker with existing
+            // deadline/epochs (worker owns remaining wait; host does not reset).
+          } else {
+            // pristine: durable init BEFORE any wait/GH/collect work.
+            await recordOnlineReviewCollectionProgress(input.familyBackend, {
+              round,
+              phase: "initialized",
+              ts: new Date().toISOString(),
+            }, { pr: prUrl });
           }
 
           let collectorMonitorHandle: WorkerMonitorHandle | undefined;
@@ -2091,23 +2154,38 @@ export async function runFamilyOnlineReviewLoop(input: {
           }
           const evidence = result.output.evidence;
           const cargoPointer = result.output.cargoPointer;
-          // Persist Action-owned checkpoint when evidence body is present so
-          // crash before Verify does not re-burn wait (#1145 AC2).
-          // Single resume truth = collector_completed (no parallel retrigger row).
-          if (evidence !== undefined) {
+          const bookkeepingHead =
+            loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
+              ? loopState.lastFixSha
+              : input.ship.prHead;
+          // Durable handle (opaque) before/with completed — sparse body legal.
+          if (evidence !== undefined || cargoPointer !== undefined) {
+            const handle =
+              cargoPointer ??
+              `ledger:online-review-evidence:r${round}`;
+            await recordOnlineReviewCollectionProgress(input.familyBackend, {
+              round,
+              phase: "evidence_ready",
+              evidenceHandle: handle,
+              ts: new Date().toISOString(),
+            }, { pr: prUrl });
             await recordOnlineReviewCollectorCompleted(input.familyBackend, {
               onlineReviewRound: round,
-              evidence,
-              ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+              ...(evidence !== undefined ? { evidence } : {}),
+              cargoPointer: handle,
               pr: prUrl,
+              ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
+                ? { familyHeadAfter: bookkeepingHead }
+                : {}),
             });
             loopState.round = Math.max(loopState.round, round);
+            return {
+              ...(evidence !== undefined ? { evidence } : {}),
+              cargoPointer: handle,
+              artifacts,
+            };
           }
-          return {
-            ...(evidence !== undefined ? { evidence } : {}),
-            ...(cargoPointer !== undefined ? { cargoPointer } : {}),
-            artifacts,
-          };
+          return { artifacts };
         },
         dispatchVerify: async (landing, round) => {
           // Landing already carries Collector evidence — Verify judges only.

@@ -62,51 +62,56 @@ function asCollectorDispatchResult(
     return undefined;
   }
   const result: {
-    evidence?: OnlineReviewLandingSnapshot;
+    evidence?: OnlineReviewCollectorDispatchResult["evidence"];
     cargoPointer?: string;
     artifacts?: OnlineReviewCollectorDispatchResult["artifacts"];
   } = {};
   if (raw.evidence !== undefined) {
     if (!isRecord(raw.evidence)) return undefined;
+    // Opaque pass-through — sparse body legal; no prUrl/headOid gate (#1145).
     if (
-      typeof raw.evidence.prUrl !== "string" ||
-      typeof raw.evidence.headOid !== "string"
+      typeof raw.evidence.prUrl === "string" &&
+      typeof raw.evidence.headOid === "string"
     ) {
-      return undefined;
+      result.evidence = toEvidence({
+        prUrl: raw.evidence.prUrl,
+        headOid: raw.evidence.headOid,
+        ...(typeof raw.evidence.repo === "string" ? { repo: raw.evidence.repo } : {}),
+        ...(typeof raw.evidence.prNumber === "number"
+          ? { prNumber: raw.evidence.prNumber }
+          : {}),
+        ...(typeof raw.evidence.pollCount === "number"
+          ? { pollCount: raw.evidence.pollCount }
+          : {}),
+        ...(typeof raw.evidence.totalFindingCount === "number"
+          ? { totalFindingCount: raw.evidence.totalFindingCount }
+          : {}),
+        ...(typeof raw.evidence.quiescent === "boolean"
+          ? { quiescent: raw.evidence.quiescent }
+          : {}),
+        ...(raw.evidence.bots !== undefined ? { bots: raw.evidence.bots } : {}),
+        ...(raw.evidence.droppedBots !== undefined
+          ? { droppedBots: raw.evidence.droppedBots }
+          : {}),
+        ...(raw.evidence.threads !== undefined
+          ? { threads: raw.evidence.threads }
+          : {}),
+        ...(raw.evidence.checkRuns !== undefined
+          ? { checkRuns: raw.evidence.checkRuns }
+          : {}),
+        ...(raw.evidence.checkRunsEmptyMeans !== undefined
+          ? { checkRunsEmptyMeans: raw.evidence.checkRunsEmptyMeans }
+          : {}),
+        ...(raw.evidence.roundTriggerUsed !== undefined
+          ? { roundTriggerUsed: raw.evidence.roundTriggerUsed }
+          : {}),
+      });
+    } else {
+      // Sparse opaque blob — legal cargo≠fate; no prUrl/headOid required.
+      result.evidence = { ...raw.evidence } as {
+        readonly [key: string]: unknown;
+      };
     }
-    result.evidence = toEvidence({
-      prUrl: raw.evidence.prUrl,
-      headOid: raw.evidence.headOid,
-      ...(typeof raw.evidence.repo === "string" ? { repo: raw.evidence.repo } : {}),
-      ...(typeof raw.evidence.prNumber === "number"
-        ? { prNumber: raw.evidence.prNumber }
-        : {}),
-      ...(typeof raw.evidence.pollCount === "number"
-        ? { pollCount: raw.evidence.pollCount }
-        : {}),
-      ...(typeof raw.evidence.totalFindingCount === "number"
-        ? { totalFindingCount: raw.evidence.totalFindingCount }
-        : {}),
-      ...(typeof raw.evidence.quiescent === "boolean"
-        ? { quiescent: raw.evidence.quiescent }
-        : {}),
-      ...(raw.evidence.bots !== undefined ? { bots: raw.evidence.bots } : {}),
-      ...(raw.evidence.droppedBots !== undefined
-        ? { droppedBots: raw.evidence.droppedBots }
-        : {}),
-      ...(raw.evidence.threads !== undefined
-        ? { threads: raw.evidence.threads }
-        : {}),
-      ...(raw.evidence.checkRuns !== undefined
-        ? { checkRuns: raw.evidence.checkRuns }
-        : {}),
-      ...(raw.evidence.checkRunsEmptyMeans !== undefined
-        ? { checkRunsEmptyMeans: raw.evidence.checkRunsEmptyMeans }
-        : {}),
-      ...(raw.evidence.roundTriggerUsed !== undefined
-        ? { roundTriggerUsed: raw.evidence.roundTriggerUsed }
-        : {}),
-    });
   }
   if (typeof raw.cargoPointer === "string") {
     result.cargoPointer = raw.cargoPointer;
