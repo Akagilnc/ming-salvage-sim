@@ -35,14 +35,18 @@ head 不得 resume 旧 head 的副作用回执（#1145 F2）。
 ### Collector 证据解析（handle-only · 禁重取证）
 
 landing 可能只带 `cargoPointer`、不带 `onlineReviewSnapshot`（Collector
-`evidence-put` / checkpoint 短接的合法形态）。开席裁决前：
+`evidence-put` / checkpoint 短接的合法形态）；body/handle 都缺时还可能只带
+`rawReviewerArtifacts`（sandbox-relative 原始卷面）。开席裁决前：
 
 1. 若 `onlineReviewSnapshot` 已有 body → 直接用该 opaque body 判卷。
 2. 若无 body 且有非空 `cargoPointer` →
    `$CLI evidence-get --handle "$cargoPointer"`，stdout 即 opaque 证据 body，
    **用它判卷**。
-3. handle 不可读 / CLI 非 0 → typed `escalate`（diagnosis 写清 handle），
-   **禁止**自己重跑 Collector 的 query/wait/retrigger，也禁止让 Runner 代查。
+3. body 与 handle 皆无，但 `rawReviewerArtifacts` 指向可读 sandbox 文件
+   （stdout/sidecar）→ **只读该原始卷面**判卷；不得把它解释成 fate 信号。
+4. handle 不可读 / CLI 非 0 / 原始卷面也不可读 → typed `escalate`
+   （diagnosis 写清缺什么），**禁止**自己重跑 Collector 的
+   query/wait/retrigger，也禁止让 Runner 代查或从原始卷面推断收敛。
 
 对每一笔变更性 op（稳定 `idempotencyKey`，如 `resolve:discussion_r…` /
 `reply:<threadId>:<identityKey>` / `defer:<identityKey>`）：

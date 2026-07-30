@@ -30,6 +30,9 @@
  * 15. Owner-instance durable lock lease (live never stolen for age).
  * 16. Collector is a monitored CLI kind (RealFamilyBackend monitor dispatch).
  * 17. postFixTransition one-shot stage fact on effective-head move (not SHA presence / round).
+ * 18. Cycle-bound fixer authorization (re-ship without pending cargo seeds empty).
+ * 19. Mergeable shortcut requires current PR cycle (replacement PR at same SHA).
+ * 20. Collector raw artifacts: sandbox materialise + checkpoint resume, no host-path leak.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -53,6 +56,7 @@ import {
   buildOnlineReviewBaseLanding,
   effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
+  lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
@@ -60,6 +64,10 @@ import {
   postFixTransitionUnconsumedFromFamilyLedger,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
+import {
+  RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+  RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+} from "../src/rawReviewerArtifacts.js";
 import {
   familyShippedRecordForReviewLoopResume,
   recordOnlineReviewFixCommitted,
@@ -2194,6 +2202,315 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBe(false);
     });
 
+    it("production tracer: fixer authorization is cycle-bound after matching shipped anchor", async () => {
+      const priorShip = "prior-auth-ship";
+      const newShip = "new-auth-ship";
+      const pr = "https://github.com/test/repo/pull/1145-auth";
+      const staleKeys = ["stale-auth:1", "stale-auth:2"];
+      const staleThreads = staleKeys.map((identityKey, i) => ({
+        identityKey,
+        threadId: `thread-stale-auth-${i + 1}`,
+      }));
+
+      const ledger: FamilyLedgerEntry[] = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: priorShip,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          onlineReviewRound: 2,
+          pr,
+          familyHeadAfter: "prior-auth-fix",
+          fixMarkedFindingIdentityKeys: staleKeys,
+          fixMarkedFindingThreads: staleThreads,
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_verify_continued",
+          event: "online_review_verify_continued",
+          phase: "final",
+          onlineReviewRound: 2,
+          pr,
+          fixMarkedFindingIdentityKeys: staleKeys,
+          fixMarkedFindingThreads: staleThreads,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: newShip,
+          ts: "2026-01-01T00:03:00.000Z",
+        },
+      ];
+
+      // Whole-ledger scan still sees prior-cycle bindings (legacy width).
+      expect(
+        lastFixMarkedFindingAuthorizationFromFamilyLedger(ledger),
+      ).toEqual({
+        fixMarkedFindingIdentityKeys: staleKeys,
+        fixMarkedFindingThreads: staleThreads,
+      });
+      // Current shipped cycle with no pending cargo → empty authorization.
+      expect(
+        lastFixMarkedFindingAuthorizationFromFamilyLedger(ledger, {
+          shippedAnchorHead: newShip,
+        }),
+      ).toEqual({
+        fixMarkedFindingIdentityKeys: [],
+        fixMarkedFindingThreads: [],
+      });
+
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [...ledger];
+      const verifyKeySnapshots: ReadonlyArray<string>[] = [];
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifyKeySnapshots.push([
+          ...(landing?.fixMarkedFindingIdentityKeys ?? []),
+        ]);
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr, prHead: newShip },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      // First Verify of the fresh cycle must not inherit prior-cycle threads
+      // even when global round water is still > 1 from the prior cycle.
+      expect(verifyKeySnapshots[0]).toEqual([]);
+      expect(
+        backend.landings.some((l) =>
+          (l.fixMarkedFindingIdentityKeys ?? []).some((k) =>
+            staleKeys.includes(k),
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it("production tracer: mergeable shortcut requires current PR cycle at identical SHA", async () => {
+      const sharedHead = "same-sha-replacement-1145";
+      const oldPr = "https://github.com/test/repo/pull/1145-old";
+      const newPr = "https://github.com/test/repo/pull/1145-new";
+
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: oldPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_mergeable",
+          event: "online_review_mergeable",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr: oldPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        // Replacement / re-opened PR at identical SHA opens a new ship cycle.
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: newPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      ];
+
+      // Head-only match is insufficient once PR identity / cycle window apply.
+      expect(
+        lastOnlineReviewMergeableFromFamilyLedger(backend.ledger, sharedHead, {
+          currentPr: newPr,
+          shippedAnchorHead: sharedHead,
+        }),
+      ).toBeUndefined();
+      // Old PR identity still sees its own mergeable (same-head re-entry).
+      expect(
+        lastOnlineReviewMergeableFromFamilyLedger(
+          [
+            backend.ledger[0]!,
+            backend.ledger[1]!,
+          ],
+          sharedHead,
+          { currentPr: oldPr, shippedAnchorHead: sharedHead },
+        ),
+      ).toEqual({ round: 1, familyHeadAfter: sharedHead });
+
+      const collectorsBefore = backend.collectorDispatchCount;
+      const verifiesBefore = backend.verifyDispatchCount;
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Must run Collector→Verify for the replacement PR — not short-circuit.
+      expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
+      expect(backend.verifyDispatchCount).toBe(verifiesBefore + 1);
+      const mergeablePrs = backend.ledger
+        .filter((e) => e.event === "online_review_mergeable")
+        .map((e) => e.pr);
+      expect(mergeablePrs).toEqual([oldPr, newPr]);
+    });
+
+    it("production tracer: Collector raw artifacts reach Verify landing + resume without host-path leak", async () => {
+      const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } =
+        await import("node:fs");
+      const { join } = await import("node:path");
+      const { tmpdir } = await import("node:os");
+      const { fileURLToPath } = await import("node:url");
+      const { RealFamilyBackend } = await import(
+        "../src/family/realFamilyBackend.js"
+      );
+      const { recordOnlineReviewCollectorCompleted } = await import(
+        "../src/family/ledger.js"
+      );
+
+      const hostRoot = mkdtempSync(join(tmpdir(), "or-raw-art-host-1145-"));
+      const workingRepo = mkdtempSync(join(tmpdir(), "or-raw-art-repo-1145-"));
+      const hostStdout = join(hostRoot, "collector.stdout.log");
+      const hostSidecar = join(hostRoot, "collector.result.json");
+      writeFileSync(hostStdout, "collector raw stdout paper\n", "utf8");
+      writeFileSync(hostSidecar, '{"kind":"collector","sparse":true}\n', "utf8");
+
+      try {
+        mkdirSync(join(workingRepo, ".git", "info"), { recursive: true });
+        writeFileSync(join(workingRepo, ".git", "config"), "");
+        const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+        class LandingHarness extends RealFamilyBackend {
+          writeLanding(landing: WorkerLandingPayload) {
+            return this.writeFamilyOnlineReviewLandingFile(
+              { familyBase: "family/1145", onlineReviewRound: 1 },
+              landing,
+            );
+          }
+        }
+        const landingBackend = new LandingHarness({
+          workingRepo,
+          familyBase: "family/1145",
+          ledgerDir: join(workingRepo, "ledger"),
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: join(packageRoot, "prompts"),
+          soulsDir: join(packageRoot, "image", "souls"),
+          imageName: "test-image",
+        });
+
+        const hostArtifacts = {
+          stdoutPath: hostStdout,
+          sidecarPath: hostSidecar,
+          reviewerSessionId: "collector-session-1145",
+          statement: "the previous reviewer raw artifacts are here" as const,
+        };
+
+        // Production landing writer materialises host paths → sandbox names.
+        const written = landingBackend.writeLanding({
+          shipDelivery: {
+            branch: "family/1145",
+            pr: offlineShip.pr,
+            prHead: offlineShip.prHead,
+          },
+          onlineReviewRound: 1,
+          rawReviewerArtifacts: hostArtifacts,
+        });
+        const onDisk = JSON.parse(readFileSync(written.path, "utf8")) as {
+          rawReviewerArtifacts?: {
+            stdoutPath?: string;
+            sidecarPath?: string;
+            reviewerSessionId?: string;
+            statement?: string;
+          };
+        };
+        expect(onDisk.rawReviewerArtifacts).toEqual({
+          stdoutPath: RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+          sidecarPath: RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+          reviewerSessionId: "collector-session-1145",
+          statement: "the previous reviewer raw artifacts are here",
+        });
+        // Host-path non-leakage on the Verify landing paper.
+        const landingText = readFileSync(written.path, "utf8");
+        expect(landingText).not.toContain(hostStdout);
+        expect(landingText).not.toContain(hostSidecar);
+        expect(landingText).not.toContain(hostRoot);
+        expect(
+          existsSync(join(workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE)),
+        ).toBe(true);
+        expect(
+          existsSync(join(workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE)),
+        ).toBe(true);
+
+        // Shared-tail resume: collector_completed retains opaque raw artifacts
+        // (no body/handle). Crash before Verify success; re-entry restores them
+        // onto the Verify landing without re-dispatching Collector.
+        const artifactBackend = new TracerFamilyBackend();
+        await recordOnlineReviewCollectorCompleted(artifactBackend, {
+          onlineReviewRound: 1,
+          pr: offlineShip.pr,
+          familyHeadAfter: offlineShip.prHead,
+          rawReviewerArtifacts: hostArtifacts,
+        });
+        // Checkpoint retained opaque raw artifacts (host-side durable).
+        const checkpoint = lastCollectorCheckpointFromFamilyLedger(
+          artifactBackend.ledger,
+          1,
+          offlineShip.prHead,
+        );
+        expect(checkpoint?.artifacts).toEqual(hostArtifacts);
+        expect(checkpoint?.evidence).toBeUndefined();
+        expect(checkpoint?.cargoPointer).toBeUndefined();
+
+        let verifySawArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+        artifactBackend.verifyImpl = async (_s, _c, landing) => {
+          verifySawArtifacts = landing?.rawReviewerArtifacts;
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        };
+        const resumed = await runFamilyOnlineReviewLoop({
+          familyBackend: artifactBackend,
+          familyBase: "family/1145",
+          ship: offlineShip,
+        });
+        expect(resumed).toEqual({
+          ok: true,
+          terminalState: "mergeable",
+          round: 1,
+        });
+        // Resumed raw-artifact visibility on the Verify landing transport.
+        expect(verifySawArtifacts).toEqual(hostArtifacts);
+        // Collector was not re-dispatched (checkpoint short-circuit).
+        expect(artifactBackend.collectorDispatchCount).toBe(0);
+        expect(artifactBackend.verifyDispatchCount).toBe(1);
+      } finally {
+        rmSync(hostRoot, { recursive: true, force: true });
+        rmSync(workingRepo, { recursive: true, force: true });
+      }
+    });
+
     it("production tracer: Collector is monitored on RealFamilyBackend dispatch path", () => {
       expect(isMonitoredWorkerKind("collector")).toBe(true);
       expect(isMonitoredWorkerKind("verify")).toBe(true);
@@ -3337,7 +3654,10 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(verifySoul).toMatch(/evidence-get --handle/);
       expect(verifySoul).toMatch(/cargoPointer/);
       expect(verifySoul).toMatch(/onlineReviewSnapshot/);
-      expect(verifySoul).toMatch(/禁止.*Collector.*query\/wait|never re-run Collector|禁重取证/);
+      expect(verifySoul).toMatch(/rawReviewerArtifacts/);
+      expect(verifySoul).toMatch(/禁止.*Collector|never re-run Collector|禁重取证/);
+      expect(verifyPrompt).toMatch(/rawReviewerArtifacts/);
+      expect(verifyPrompt).toMatch(/never re-run Collector/i);
       expect(verifyPrompt).toMatch(/Method truth[\s\S]*Verify\s+soul|lives in the Verify/i);
       expect(verifyPrompt).not.toMatch(/gh api` comment on the review thread/);
       // F2: promptFiles stay thin — no numbered role-method outline / evidence cookbook.

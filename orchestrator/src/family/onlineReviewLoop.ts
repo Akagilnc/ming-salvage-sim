@@ -250,17 +250,26 @@ function authorizationFromLedgerEntry(entry: {
  * Rebuild the last fixer authorization from durable phase markers (#1145).
  * Prefer latest verify_continued / fixer_completed / fix_committed — no-op
  * continues have no fix_committed row.
+ *
+ * When `shippedAnchorHead` is set, only entries after the latest matching
+ * `shipped` marker for that head are considered — prior-cycle thread bindings
+ * must not seed a re-shipped head that has no current-cycle pending cargo.
  */
 export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
+    readonly familyHeadAfter?: string;
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly fixMarkedFindingThreads?: ReadonlyArray<{
       readonly identityKey?: string;
       readonly threadId?: string;
     }>;
   }>,
+  opts?: {
+    /** Current matching shipped anchor head — cycle window lower bound. */
+    readonly shippedAnchorHead?: string;
+  },
 ): {
   readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
   readonly fixMarkedFindingThreads: ReadonlyArray<{
@@ -268,7 +277,26 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
     readonly threadId: string;
   }>;
 } {
-  for (let i = entries.length - 1; i >= 0; i--) {
+  let cycleStart = 0;
+  const anchor =
+    typeof opts?.shippedAnchorHead === "string"
+      ? opts.shippedAnchorHead.trim()
+      : "";
+  if (anchor.length > 0) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      if (
+        entry.status === "shipped" &&
+        entry.event === "shipped" &&
+        typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim() === anchor
+      ) {
+        cycleStart = i + 1;
+        break;
+      }
+    }
+  }
+  for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     const live =
       (entry.status === "online_review_verify_continued" &&
@@ -302,6 +330,7 @@ export function lastCollectorCheckpointFromFamilyLedger(
     readonly cargoPointer?: string;
     readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
     readonly familyHeadAfter?: string;
+    readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
   }>,
   round: number,
   currentHead?: string,
@@ -309,6 +338,9 @@ export function lastCollectorCheckpointFromFamilyLedger(
   | {
       readonly cargoPointer?: string;
       readonly evidence?: OnlineReviewLandingSnapshot;
+      readonly artifacts?: NonNullable<
+        WorkerLandingPayload["rawReviewerArtifacts"]
+      >;
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
@@ -343,12 +375,31 @@ export function lastCollectorCheckpointFromFamilyLedger(
       evidence !== undefined &&
       typeof evidence === "object" &&
       evidence !== null;
+    const raw =
+      entry.rawReviewerArtifacts !== undefined &&
+      typeof entry.rawReviewerArtifacts === "object" &&
+      entry.rawReviewerArtifacts !== null
+        ? entry.rawReviewerArtifacts
+        : undefined;
+    // Statement-alone is not readable paper — only restore when a path/session
+    // pointer exists (empty checkpoints must stay empty).
+    const artifacts =
+      raw !== undefined &&
+      ((typeof raw.stdoutPath === "string" && raw.stdoutPath.trim().length > 0) ||
+        (typeof raw.sidecarPath === "string" &&
+          raw.sidecarPath.trim().length > 0) ||
+        (typeof raw.reviewerSessionId === "string" &&
+          raw.reviewerSessionId.trim().length > 0))
+        ? raw
+        : undefined;
     // Completed marker is enough — empty opaque cargo is a legal checkpoint
     // (ADR 0131 cargo≠fate). Reader returns {} so Verify-crash re-entry does
-    // not redispatch / re-wait Collector.
+    // not redispatch / re-wait Collector. Raw artifact pointers ride the same
+    // opaque transport for Verify-crash resume when body/handle are absent.
     return {
       ...(cargoPointer !== undefined ? { cargoPointer } : {}),
       ...(hasBody ? { evidence } : {}),
+      ...(artifacts !== undefined ? { artifacts } : {}),
     };
   }
   return undefined;
@@ -359,8 +410,12 @@ export function lastCollectorCheckpointFromFamilyLedger(
  * When Verify has already converged (side effects done), re-entry must not
  * re-dispatch Verify and replay reply/resolve/defer external effects.
  *
- * Bound to the effective reviewed head (last fix SHA or ship head). Short-circuit
- * only on exact current-head match; otherwise run Collector→Verify for the new head.
+ * Bound to the current shipped PR cycle AND effective reviewed head:
+ * - exact current-head match
+ * - current PR identity match when both marker and current PR are known
+ * - marker must not precede the latest matching `shipped` anchor for that head
+ *
+ * A replacement/re-opened PR at identical SHA therefore runs Collector→Verify.
  */
 export function lastOnlineReviewMergeableFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -368,15 +423,45 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
     readonly event?: string;
     readonly onlineReviewRound?: number;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
   }>,
   currentHead: string | undefined,
+  opts?: {
+    /** Current ship PR identity — replacement PR at same SHA must not short-circuit. */
+    readonly currentPr?: string;
+    /** Current matching shipped anchor head — cycle window lower bound. */
+    readonly shippedAnchorHead?: string;
+  },
 ): { readonly round: number; readonly familyHeadAfter: string } | undefined {
   const head =
     typeof currentHead === "string" && currentHead.trim().length > 0
       ? currentHead.trim()
       : undefined;
   if (head === undefined) return undefined;
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
+  let cycleStart = 0;
+  const anchor =
+    typeof opts?.shippedAnchorHead === "string"
+      ? opts.shippedAnchorHead.trim()
+      : "";
+  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
+  const anchorHead = anchor.length > 0 ? anchor : head;
   for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim() === anchorHead
+    ) {
+      cycleStart = i + 1;
+      break;
+    }
+  }
+  for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     if (
       entry.status !== "online_review_mergeable" ||
@@ -392,6 +477,16 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
     // No head on marker (legacy) or head mismatch → not a safe short-circuit.
     if (storedHead === undefined || storedHead !== head) {
       continue;
+    }
+    if (currentPr !== undefined) {
+      const storedPr =
+        typeof entry.pr === "string" && entry.pr.trim().length > 0
+          ? entry.pr.trim()
+          : undefined;
+      // Marker without PR is not safe against a known current PR identity.
+      if (storedPr === undefined || storedPr !== currentPr) {
+        continue;
+      }
     }
     const round =
       typeof entry.onlineReviewRound === "number" &&
