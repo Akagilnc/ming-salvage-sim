@@ -2,7 +2,13 @@
  * #1145 — shipped durable CLI is the sole worker capability (DecisionGate A).
  * Behavioral recovery is exercised via subprocess of bin.mjs, not a TS twin.
  */
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -237,4 +243,58 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       ].sort(),
     );
   });
+
+  it("stale lock from dead owner is reclaimed; live lock stays exclusive", () => {
+    const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-lock-1145-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
+      const lockPath = join(hostPath, "state.jsonl.lock");
+
+      // Crashed owner wreckage: lock file with a dead pid must not block forever.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ pid: 2_147_483_647, ts: Date.now() - 60_000 })}\n`,
+        "utf8",
+      );
+      const afterCrash = runBin(hostPath, ["progress-init", "--round", "1"]);
+      expect(afterCrash.status).toBe(0);
+      expect(existsSync(lockPath)).toBe(false);
+
+      // Live exclusive holder: this test process is alive → CLI must time out,
+      // not steal the lock.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ pid: process.pid, ts: Date.now() })}\n`,
+        "utf8",
+      );
+      const blocked = runBin(hostPath, [
+        "progress-set-epochs",
+        "--round",
+        "1",
+        "--epochs",
+        "1",
+      ]);
+      expect(blocked.status).not.toBe(0);
+      expect(blocked.stderr).toMatch(/lock timeout/);
+      expect(existsSync(lockPath)).toBe(true);
+
+      // After owner dies (simulate by rewriting dead pid), reclaim succeeds.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ pid: 2_147_483_647, ts: Date.now() - 60_000 })}\n`,
+        "utf8",
+      );
+      const recovered = runBin(hostPath, [
+        "progress-set-epochs",
+        "--round",
+        "1",
+        "--epochs",
+        "1",
+      ]);
+      expect(recovered.status).toBe(0);
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

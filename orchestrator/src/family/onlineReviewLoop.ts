@@ -58,9 +58,12 @@ export type { OnlineReviewTerminalState } from "../types.js";
 
 /**
  * 1-based online review round from the family ledger (#600 r26 / #1145 resume).
- * Single truth = max live phase marker, not fix-commit count:
+ * Live phase markers (preferred):
  *   - collector / fixer_completed / fix_committed / mergeable → that round
  *   - verify_continued(N) → N+1 (next Collector cycle; side effects already done)
+ * Legacy read-only width (no live writer / host poll / compatibility route):
+ *   - online_review_round_retrigger(R) → R (old protocol: next round to enter)
+ *   - fix_committed without onlineReviewRound → count+1 (old protocol)
  * Legal no-op continues advance without a new commit and still write later
  * Collector checkpoints.
  */
@@ -72,15 +75,13 @@ export function onlineReviewRoundFromFamilyLedger(
   }>,
 ): number {
   let maxRound = 0;
+  let legacyFixCount = 0;
   for (const entry of entries) {
-    if (
-      typeof entry.onlineReviewRound !== "number" ||
-      !Number.isSafeInteger(entry.onlineReviewRound) ||
-      entry.onlineReviewRound < 1
-    ) {
-      continue;
-    }
-    const round = entry.onlineReviewRound;
+    const hasRound =
+      typeof entry.onlineReviewRound === "number" &&
+      Number.isSafeInteger(entry.onlineReviewRound) &&
+      entry.onlineReviewRound >= 1;
+    const round = hasRound ? entry.onlineReviewRound : undefined;
     const liveSameRound =
       (entry.status === "online_review_collector_completed" &&
         entry.event === "online_review_collector_completed") ||
@@ -91,16 +92,37 @@ export function onlineReviewRoundFromFamilyLedger(
       (entry.status === "online_review_mergeable" &&
         entry.event === "online_review_mergeable");
     if (liveSameRound) {
-      maxRound = Math.max(maxRound, round);
+      if (round !== undefined) {
+        maxRound = Math.max(maxRound, round);
+      } else if (
+        entry.status === "online_review_fix_committed" &&
+        entry.event === "online_review_fix_committed"
+      ) {
+        // Pre-round-field fix markers: old protocol counted completed fixes.
+        legacyFixCount += 1;
+      }
       continue;
     }
     // Post-fixer Verify continue is durable proof round N is done → start N+1.
     if (
       entry.status === "online_review_verify_continued" &&
-      entry.event === "online_review_verify_continued"
+      entry.event === "online_review_verify_continued" &&
+      round !== undefined
     ) {
       maxRound = Math.max(maxRound, round + 1);
+      continue;
     }
+    // Legacy retrigger read-only: marker stores the next round to enter.
+    if (
+      entry.status === "online_review_round_retrigger" &&
+      entry.event === "online_review_round_retrigger" &&
+      round !== undefined
+    ) {
+      maxRound = Math.max(maxRound, round);
+    }
+  }
+  if (legacyFixCount > 0) {
+    maxRound = Math.max(maxRound, legacyFixCount + 1);
   }
   return maxRound > 0 ? maxRound : 1;
 }
@@ -200,6 +222,8 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
  * Action-owned Collector checkpoint for durable resume (#1145 AC2).
  * Returns the latest completed Collector cargo handle/body for `round`.
  * Opaque only — no field structure gate (ADR 0131 cargo≠fate).
+ * When `currentHead` is provided, only a checkpoint bound to that exact head
+ * short-circuits (re-ship at a new head must re-run Collector).
  * Runner/stage never interprets evidence semantics.
  */
 export function lastCollectorCheckpointFromFamilyLedger(
@@ -209,8 +233,10 @@ export function lastCollectorCheckpointFromFamilyLedger(
     readonly onlineReviewRound?: number;
     readonly cargoPointer?: string;
     readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
+    readonly familyHeadAfter?: string;
   }>,
   round: number,
+  currentHead?: string,
 ):
   | {
       readonly cargoPointer?: string;
@@ -218,6 +244,10 @@ export function lastCollectorCheckpointFromFamilyLedger(
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
+  const head =
+    typeof currentHead === "string" && currentHead.trim().length > 0
+      ? currentHead.trim()
+      : undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
@@ -227,6 +257,15 @@ export function lastCollectorCheckpointFromFamilyLedger(
       continue;
     }
     if (entry.onlineReviewRound !== round) continue;
+    if (head !== undefined) {
+      const storedHead =
+        typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim().length > 0
+          ? entry.familyHeadAfter.trim()
+          : undefined;
+      // Head-bound resume only — missing/mismatched head is not a safe skip.
+      if (storedHead === undefined || storedHead !== head) continue;
+    }
     const cargoPointer =
       typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0
         ? entry.cargoPointer
@@ -236,8 +275,9 @@ export function lastCollectorCheckpointFromFamilyLedger(
       evidence !== undefined &&
       typeof evidence === "object" &&
       evidence !== null;
-    // Handle and/or opaque body — sparse body is legal; no field guards.
-    if (cargoPointer === undefined && !hasBody) continue;
+    // Completed marker is enough — empty opaque cargo is a legal checkpoint
+    // (ADR 0131 cargo≠fate). Reader returns {} so Verify-crash re-entry does
+    // not redispatch / re-wait Collector.
     return {
       ...(cargoPointer !== undefined ? { cargoPointer } : {}),
       ...(hasBody ? { evidence } : {}),
@@ -250,14 +290,24 @@ export function lastCollectorCheckpointFromFamilyLedger(
  * Action-owned mergeable completion checkpoint (#1145 re-entry).
  * When Verify has already converged (side effects done), re-entry must not
  * re-dispatch Verify and replay reply/resolve/defer external effects.
+ *
+ * Bound to the effective reviewed head (last fix SHA or ship head). Short-circuit
+ * only on exact current-head match; otherwise run Collector→Verify for the new head.
  */
 export function lastOnlineReviewMergeableFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
     readonly onlineReviewRound?: number;
+    readonly familyHeadAfter?: string;
   }>,
-): { readonly round: number } | undefined {
+  currentHead: string | undefined,
+): { readonly round: number; readonly familyHeadAfter: string } | undefined {
+  const head =
+    typeof currentHead === "string" && currentHead.trim().length > 0
+      ? currentHead.trim()
+      : undefined;
+  if (head === undefined) return undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
@@ -266,13 +316,22 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
     ) {
       continue;
     }
+    const storedHead =
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim().length > 0
+        ? entry.familyHeadAfter.trim()
+        : undefined;
+    // No head on marker (legacy) or head mismatch → not a safe short-circuit.
+    if (storedHead === undefined || storedHead !== head) {
+      continue;
+    }
     const round =
       typeof entry.onlineReviewRound === "number" &&
       Number.isSafeInteger(entry.onlineReviewRound) &&
       entry.onlineReviewRound >= 1
         ? entry.onlineReviewRound
         : 1;
-    return { round };
+    return { round, familyHeadAfter: storedHead };
   }
   return undefined;
 }
@@ -638,7 +697,8 @@ export async function runOnlineReviewLoopStage(
   let pendingFixerResult: FixerResult | undefined = opts?.initialPendingFixerResult;
   /**
    * Crash between Fixer return and resolveFixCommitSha left envelope SHA without
-   * fix_committed — call the callback once on resume when ledger had no head.
+   * fix_committed — call the callback once on resume whenever the pending SHA
+   * differs from the ledger's previous head (incl. second-round old→new).
    */
   let resumeNeedsFixShaBookkeeping = false;
   if (pendingFixerResult !== undefined) {
@@ -646,7 +706,7 @@ export async function runOnlineReviewLoopStage(
     if (
       resumedSha !== undefined &&
       resumedSha.length > 0 &&
-      (lastFixCommitSha === undefined || lastFixCommitSha.length === 0)
+      resumedSha !== lastFixCommitSha
     ) {
       lastFixCommitSha = resumedSha;
       resumeNeedsFixShaBookkeeping = true;

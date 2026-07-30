@@ -1928,17 +1928,6 @@ export async function runFamilyOnlineReviewLoop(input: {
   };
 
   const familyLedger = await input.familyBackend.readFamilyLedger();
-  // #1145: Action-owned mergeable recovery — side effects already done.
-  // Re-entry must not re-dispatch Verify (no reply/resolve/defer replay).
-  const alreadyMergeable =
-    lastOnlineReviewMergeableFromFamilyLedger(familyLedger);
-  if (alreadyMergeable !== undefined) {
-    return {
-      ok: true,
-      terminalState: "mergeable",
-      round: alreadyMergeable.round,
-    };
-  }
   // #1002 / #1017 — rebuild sticky **fixer** from latest family ledger
   // coder_advance scoped to advanceSeat:"fixer" (not stay_put, not CMR
   // coderFix advances on the same ledger). Process re-entry keeps the
@@ -1965,6 +1954,26 @@ export async function runFamilyOnlineReviewLoop(input: {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     lastFixSha: lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedger),
   };
+  // #1145: Action-owned mergeable recovery — side effects already done.
+  // Bound to effective reviewed head (last fix SHA or ship head); short-circuit
+  // only on exact current-head match. Otherwise run Collector→Verify.
+  {
+    const effectiveHead =
+      loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
+        ? loopState.lastFixSha
+        : input.ship.prHead;
+    const alreadyMergeable = lastOnlineReviewMergeableFromFamilyLedger(
+      familyLedger,
+      effectiveHead,
+    );
+    if (alreadyMergeable !== undefined) {
+      return {
+        ok: true,
+        terminalState: "mergeable",
+        round: alreadyMergeable.round,
+      };
+    }
+  }
   // #1145 post-fixer seam: opaque fixer cargo may already be durable (incl. no-op).
   const pendingFixerCargo = lastPendingFixerCargoFromFamilyLedger(
     familyLedger,
@@ -2001,9 +2010,14 @@ export async function runFamilyOnlineReviewLoop(input: {
           // (progress/receipts/blobs) is worker-owned via mounted durable dir +
           // bin.mjs — host never classify/progress-write/mint pointer.
           const ledgerNow = await input.familyBackend.readFamilyLedger();
+          const bookkeepingHead =
+            loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
+              ? loopState.lastFixSha
+              : input.ship.prHead;
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
             round,
+            bookkeepingHead,
           );
           if (checkpoint !== undefined) {
             return {
@@ -2094,23 +2108,19 @@ export async function runFamilyOnlineReviewLoop(input: {
           }
           const evidence = result.output.evidence;
           const cargoPointer = result.output.cargoPointer;
-          const bookkeepingHead =
-            loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
-              ? loopState.lastFixSha
-              : input.ship.prHead;
-          // Thin completed marker from worker-reported opaque only — never host-mint.
-          if (evidence !== undefined || cargoPointer !== undefined) {
-            await recordOnlineReviewCollectorCompleted(input.familyBackend, {
-              onlineReviewRound: round,
-              ...(evidence !== undefined ? { evidence } : {}),
-              ...(cargoPointer !== undefined ? { cargoPointer } : {}),
-              pr: prUrl,
-              ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
-                ? { familyHeadAfter: bookkeepingHead }
-                : {}),
-            });
-            loopState.round = Math.max(loopState.round, round);
-          }
+          // Always write Action-completed checkpoint — empty opaque cargo is legal
+          // (ADR 0131). Completion drives the marker, not optional cargo presence.
+          // bookkeepingHead computed above for checkpoint head-match short-circuit.
+          await recordOnlineReviewCollectorCompleted(input.familyBackend, {
+            onlineReviewRound: round,
+            ...(evidence !== undefined ? { evidence } : {}),
+            ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+            pr: prUrl,
+            ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
+              ? { familyHeadAfter: bookkeepingHead }
+              : {}),
+          });
+          loopState.round = Math.max(loopState.round, round);
           return {
             ...(evidence !== undefined ? { evidence } : {}),
             ...(cargoPointer !== undefined ? { cargoPointer } : {}),
@@ -2203,9 +2213,32 @@ export async function runFamilyOnlineReviewLoop(input: {
           // decision_gate on re-entry).
           const disposition = onlineReviewJudgeDisposition(verifyOut);
           if (disposition === "converged") {
+            const mergeableHead =
+              loopState.lastFixSha !== undefined &&
+              loopState.lastFixSha.length > 0
+                ? loopState.lastFixSha
+                : input.ship.prHead;
+            if (
+              mergeableHead === undefined ||
+              mergeableHead.trim().length === 0
+            ) {
+              throw new OnlineReviewLoopTerminal({
+                ok: false,
+                terminalState: "decision_gate_raised",
+                round,
+                stopSummary: stageFailureStopSummary({
+                  status: "online_review_failed",
+                  summary:
+                    "family online review converged without an effective reviewed head to bind mergeable",
+                  repairHint:
+                    "ensure ship.prHead or a fix commit SHA is present, then re-feed the family online review loop",
+                }),
+              });
+            }
             await recordOnlineReviewMergeable(input.familyBackend, {
               onlineReviewRound: round,
               pr: prUrl,
+              familyHeadAfter: mergeableHead,
             });
           } else if (
             disposition === "continue" &&
