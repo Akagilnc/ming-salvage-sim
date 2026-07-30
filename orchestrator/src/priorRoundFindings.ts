@@ -48,10 +48,10 @@ type FamilyOnlineReviewLedgerEntry = {
 /**
  * Prior online-review rounds from the family ledger.
  *
- * Family loop persists fix_committed markers rather than verify output rows.
- * Prefer `online_review_fix_committed` rows that carry
- * `fixMarkedFindingIdentityKeys` + `onlineReviewRound`.
- * (`online_review_round_retrigger` is legacy ledger read-only — no live writer.)
+ * Family loop persists fix_committed markers and post-fixer verify_continued
+ * markers (legal no-op continues have no fix_committed row). Later same-round
+ * marker wins. (`online_review_round_retrigger` is legacy ledger read-only —
+ * no live writer.) History is enrichment only — never Fixer packet routing.
  */
 export function priorOnlineReviewFindingsFromFamilyLedger(
   ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
@@ -60,7 +60,12 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
   if (currentRound <= 1) return [];
   const byRound = new Map<number, PriorRoundFindingSnapshot>();
   for (const entry of ledger) {
-    if (entry.event !== "online_review_fix_committed") continue;
+    if (
+      entry.event !== "online_review_fix_committed" &&
+      entry.event !== "online_review_verify_continued"
+    ) {
+      continue;
+    }
     const keys = entry.fixMarkedFindingIdentityKeys;
     if (!Array.isArray(keys) || keys.length === 0) continue;
     const round =
@@ -70,6 +75,7 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
         ? entry.onlineReviewRound
         : undefined;
     if (round === undefined || round >= currentRound) continue;
+    // Later same-round marker overwrites (Map set).
     byRound.set(round, {
       round,
       fixMarkedFindingIdentityKeys: [...keys],

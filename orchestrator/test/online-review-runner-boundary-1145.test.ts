@@ -57,6 +57,7 @@ import {
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
   postFixTransitionFromCommittedFixerResumeMarker,
+  postFixTransitionUnconsumedFromFamilyLedger,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
 import {
@@ -2409,6 +2410,177 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           (e) => e.event === "online_review_collector_completed",
         ),
       ).toHaveLength(1);
+    });
+
+    it("completed wrong-shape Collector cargo → empty transport + empty checkpoint (no kind gate)", async () => {
+      const backend = new TracerFamilyBackend();
+      backend.collectorImpl = async () => ({
+        kind: "completed",
+        // Wrong role kind on completed process — must not raise decision gate.
+        output: { kind: "verify", converged: false },
+      });
+      let verifyLanding: WorkerLandingPayload | undefined;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifyLanding = landing;
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(verifyLanding?.onlineReviewSnapshot).toBeUndefined();
+      expect(verifyLanding?.cargoPointer).toBeUndefined();
+      const completed = backend.ledger.find(
+        (e) => e.event === "online_review_collector_completed",
+      );
+      expect(completed).toBeDefined();
+      expect(completed?.collectorEvidenceCargo).toBeUndefined();
+      expect(completed?.cargoPointer).toBeUndefined();
+      expect(
+        lastCollectorCheckpointFromFamilyLedger(backend.ledger, 1),
+      ).toEqual({});
+    });
+
+    it("crash after fix_committed before new-head Collector checkpoint re-triggers postFixTransition once", async () => {
+      const fixHead = "fix-committed-head-unconsumed-1145";
+      const backend = new TracerFamilyBackend();
+      // Ledger: collector at ship head → fixer committed at new head → crash
+      // before Collector checkpoint at fixHead.
+      backend.ledger.push(
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: offlineShip.pr,
+          familyHeadAfter: offlineShip.prHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_collector_completed",
+          event: "online_review_collector_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: offlineShip.prHead,
+          collectorEvidenceCargo: stubCollectorEvidence({
+            prUrl: offlineShip.pr,
+            headOid: offlineShip.prHead,
+            marker: "pre-fix-collector",
+          }),
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_fixer_completed",
+          event: "online_review_fixer_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr: offlineShip.pr,
+          familyHeadAfter: fixHead,
+          fixerResultCargo: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: fixHead,
+          },
+          fixMarkedFindingIdentityKeys: ["post-fix:1"],
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: fixHead,
+          fixMarkedFindingIdentityKeys: ["post-fix:1"],
+          ts: "2026-01-01T00:03:00.000Z",
+        },
+      );
+
+      // Pure reconstruction: same SHA already on lastFixSha is still unconsumed.
+      expect(
+        postFixTransitionUnconsumedFromFamilyLedger(backend.ledger, fixHead),
+      ).toBe(true);
+      expect(
+        postFixTransitionFromCommittedFixerResumeMarker({
+          previousEffectiveHead: fixHead,
+          committedFixerHead: fixHead,
+        }),
+      ).toBe(false);
+
+      let sawPostFix = false;
+      backend.collectorImpl = async (_s, _c, landing) => {
+        if (landing?.postFixTransition === true) sawPostFix = true;
+        expect(landing?.shipDelivery?.prHead).toBe(fixHead);
+        expect(landing?.postFixTransition).toBe(true);
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: stubCollectorEvidence({
+              prUrl: offlineShip.pr,
+              headOid: fixHead,
+              marker: "post-fix-recollect",
+            }),
+          },
+        };
+      };
+      backend.verifyImpl = async (_s, _c, landing) => {
+        // Pending fixer cargo → post-fixer Verify seat only.
+        expect(landing?.fixerResult).toBeDefined();
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(sawPostFix).toBe(true);
+      expect(backend.collectorDispatchCount).toBe(1);
+      // Checkpoint at new head consumes the one-shot.
+      expect(
+        postFixTransitionUnconsumedFromFamilyLedger(backend.ledger, fixHead),
+      ).toBe(false);
+
+      // Re-entry after checkpoint: must not re-trigger postFixTransition.
+      const collectorsBefore = backend.collectorDispatchCount;
+      let postFixOnReentry: boolean | undefined;
+      backend.collectorImpl = async (_s, _c, landing) => {
+        postFixOnReentry = landing?.postFixTransition === true;
+        return {
+          kind: "completed",
+          output: { kind: "collector" },
+        };
+      };
+      // Mergeable already written — full loop short-circuits before Collector.
+      const reentry = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(reentry).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(backend.collectorDispatchCount).toBe(collectorsBefore);
+      expect(postFixOnReentry).toBeUndefined();
     });
 
     it("legacy read round reconstruction: retrigger/fix fixtures choose next correct round", () => {

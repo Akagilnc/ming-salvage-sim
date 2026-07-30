@@ -302,18 +302,20 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     }
   });
 
-  it("parseCollectorOutcome: pointer-only is legal; any object body is verbatim; missing body is not fate", () => {
-    const pointerOnly = parseCollectorOutcome(
+  it("parseCollectorOutcome: entire body opaque incl. cargoPointer; no sidecar handle extract", () => {
+    // Body shaped like a handle is still opaque evidence — transport handle
+    // arrives only via typed station envelope merge, never sidecar extraction.
+    const pointerShapedBody = parseCollectorOutcome(
       `<collector>${JSON.stringify({
         cargoPointer: "blobs/r1-handle-only",
       })}</collector>`,
     );
-    expect(pointerOnly).toEqual({
+    expect(pointerShapedBody).toEqual({
       kind: "collector",
-      cargoPointer: "blobs/r1-handle-only",
+      evidence: { cargoPointer: "blobs/r1-handle-only" },
     });
 
-    // cargoPointer stripped; remaining keys (including top-level evidence) kept.
+    // cargoPointer key stays inside opaque body with siblings.
     const bodyAndPointer = parseCollectorOutcome(
       `<collector>${JSON.stringify({
         cargoPointer: "blobs/r1-both",
@@ -326,8 +328,8 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     );
     expect(bodyAndPointer).toEqual({
       kind: "collector",
-      cargoPointer: "blobs/r1-both",
       evidence: {
+        cargoPointer: "blobs/r1-both",
         evidence: {
           prUrl: "pr://x",
           headOid: "abc",
