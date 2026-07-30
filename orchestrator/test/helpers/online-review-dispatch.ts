@@ -99,25 +99,13 @@ function asBareVerifyResult(raw: unknown): VerifyResult | undefined {
             ),
         }
       : {}),
+    // Opaque fixer packet — transport array as-is (production parseVerifyOutcome).
     ...(Array.isArray(raw.fixMarkedFindingThreads)
       ? {
-          fixMarkedFindingThreads: raw.fixMarkedFindingThreads.flatMap(
-            (binding) => {
-              if (!isRecord(binding)) return [];
-              if (
-                typeof binding.identityKey !== "string" ||
-                typeof binding.threadId !== "string"
-              ) {
-                return [];
-              }
-              return [
-                {
-                  identityKey: binding.identityKey,
-                  threadId: binding.threadId,
-                },
-              ];
-            },
-          ),
+          fixMarkedFindingThreads:
+            raw.fixMarkedFindingThreads as NonNullable<
+              VerifyResult["fixMarkedFindingThreads"]
+            >,
         }
       : {}),
     ...(typeof raw.terminalState === "string"

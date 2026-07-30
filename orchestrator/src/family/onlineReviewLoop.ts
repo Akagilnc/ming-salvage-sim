@@ -234,15 +234,14 @@ function authorizationFromLedgerEntry(entry: {
     fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
       (key) => typeof key === "string" && key.trim().length > 0,
     ),
-    fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
-      (binding) =>
-        typeof binding.identityKey === "string" &&
-        binding.identityKey.trim().length > 0 &&
-        typeof binding.threadId === "string" &&
-        binding.threadId.trim().length > 0
-          ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-          : [],
-    ),
+    // Opaque Verify packet — byte-for-byte / shape-for-shape. Never reconstruct
+    // or drop extended/malformed business bindings into empty work (#1145).
+    fixMarkedFindingThreads: Array.isArray(entry.fixMarkedFindingThreads)
+      ? (entry.fixMarkedFindingThreads as ReadonlyArray<{
+          readonly identityKey: string;
+          readonly threadId: string;
+        }>)
+      : [],
   };
 }
 
@@ -320,6 +319,13 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
  * Opaque only — no field structure gate (ADR 0131 cargo≠fate).
  * When `currentHead` is provided, only a checkpoint bound to that exact head
  * short-circuits (re-ship at a new head must re-run Collector).
+ *
+ * Bound to the current shipped PR cycle (same window as mergeable / fixer auth):
+ * - current PR identity match when both marker and current PR are known
+ * - marker must not precede the latest matching `shipped` anchor for that head
+ *
+ * A replacement/re-opened PR at identical SHA + same global round therefore
+ * re-runs Collector instead of feeding the old PR's evidence to Verify.
  * Runner/stage never interprets evidence semantics.
  */
 export function lastCollectorCheckpointFromFamilyLedger(
@@ -330,10 +336,17 @@ export function lastCollectorCheckpointFromFamilyLedger(
     readonly cargoPointer?: string;
     readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
     readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
   }>,
   round: number,
   currentHead?: string,
+  opts?: {
+    /** Current ship PR identity — replacement PR at same SHA must not short-circuit. */
+    readonly currentPr?: string;
+    /** Current matching shipped anchor head — cycle window lower bound. */
+    readonly shippedAnchorHead?: string;
+  },
 ):
   | {
       readonly cargoPointer?: string;
@@ -348,7 +361,32 @@ export function lastCollectorCheckpointFromFamilyLedger(
     typeof currentHead === "string" && currentHead.trim().length > 0
       ? currentHead.trim()
       : undefined;
-  for (let i = entries.length - 1; i >= 0; i--) {
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
+  let cycleStart = 0;
+  const anchor =
+    typeof opts?.shippedAnchorHead === "string"
+      ? opts.shippedAnchorHead.trim()
+      : "";
+  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
+  const anchorHead = anchor.length > 0 ? anchor : head;
+  if (anchorHead !== undefined && anchorHead.length > 0) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      if (
+        entry.status === "shipped" &&
+        entry.event === "shipped" &&
+        typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim() === anchorHead
+      ) {
+        cycleStart = i + 1;
+        break;
+      }
+    }
+  }
+  for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     if (
       entry.status !== "online_review_collector_completed" ||
@@ -365,6 +403,14 @@ export function lastCollectorCheckpointFromFamilyLedger(
           : undefined;
       // Head-bound resume only — missing/mismatched head is not a safe skip.
       if (storedHead === undefined || storedHead !== head) continue;
+    }
+    if (currentPr !== undefined) {
+      const storedPr =
+        typeof entry.pr === "string" && entry.pr.trim().length > 0
+          ? entry.pr.trim()
+          : undefined;
+      // Marker without PR is not safe against a known current PR identity.
+      if (storedPr === undefined || storedPr !== currentPr) continue;
     }
     const cargoPointer =
       typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0

@@ -583,6 +583,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "coder_fix.md",
         "family_ship.md",
         "merger_resolve_conflict.md",
+        "collector.md",
         "verify.md",
         "fixer.md",
         "landing.md",
@@ -599,6 +600,17 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
     );
     expect(() => new RealFamilyBackend(opts("/clone/root", { promptsDir: dir }))).toThrow(
       /wave_verify_judge\.md/,
+    );
+  });
+
+  it("construction throws when collector.md is missing from promptsDir (#1145)", () => {
+    // Collector is family-dispatched (S13); missing prompt must fail at
+    // construction, not after ship on the first Collector dispatch.
+    const dir = promptsDirWith(
+      REFERENCED_FAMILY_PROMPT_FILES.filter((f) => f !== "collector.md"),
+    );
+    expect(() => new RealFamilyBackend(opts("/clone/root", { promptsDir: dir }))).toThrow(
+      /collector\.md/,
     );
   });
 

@@ -33,6 +33,9 @@
  * 18. Cycle-bound fixer authorization (re-ship without pending cargo seeds empty).
  * 19. Mergeable shortcut requires current PR cycle (replacement PR at same SHA).
  * 20. Collector raw artifacts: sandbox materialise + checkpoint resume, no host-path leak.
+ * 21. Collector checkpoint scoped by current PR + shipped anchor (same SHA re-ship).
+ * 22. prior-round history cycle-bound after matching shipped anchor.
+ * 23. fixMarkedFindingThreads opaque byte-for-byte through landing + durable rows.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -86,6 +89,7 @@ import { onlineReviewDispatch } from "./helpers/online-review-dispatch.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
 import type {
   DispatchContext,
+  VerifyResult,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -2374,6 +2378,321 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         .filter((e) => e.event === "online_review_mergeable")
         .map((e) => e.pr);
       expect(mergeablePrs).toEqual([oldPr, newPr]);
+    });
+
+    it("production tracer: Collector checkpoint is cycle/PR-bound at identical SHA", async () => {
+      const sharedHead = "same-sha-collector-cycle-1145";
+      const oldPr = "https://github.com/test/repo/pull/1145-collector-old";
+      const newPr = "https://github.com/test/repo/pull/1145-collector-new";
+      const staleEvidence = stubCollectorEvidence({
+        prUrl: oldPr,
+        headOid: sharedHead,
+        marker: "stale-old-pr-collector",
+      });
+
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: oldPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_collector_completed",
+          event: "online_review_collector_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr: oldPr,
+          familyHeadAfter: sharedHead,
+          collectorEvidenceCargo: staleEvidence,
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        // Replacement / re-opened PR at identical SHA + same global round.
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: newPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      ];
+
+      // Round+head alone would hit the old PR checkpoint; cycle/PR must reject.
+      expect(
+        lastCollectorCheckpointFromFamilyLedger(backend.ledger, 1, sharedHead, {
+          currentPr: newPr,
+          shippedAnchorHead: sharedHead,
+        }),
+      ).toBeUndefined();
+      // Old PR identity still sees its own checkpoint (same-head re-entry).
+      expect(
+        lastCollectorCheckpointFromFamilyLedger(
+          [backend.ledger[0]!, backend.ledger[1]!],
+          1,
+          sharedHead,
+          { currentPr: oldPr, shippedAnchorHead: sharedHead },
+        ),
+      ).toEqual({ evidence: staleEvidence });
+
+      const freshEvidence = stubCollectorEvidence({
+        prUrl: newPr,
+        headOid: sharedHead,
+        marker: "fresh-new-pr-collector",
+      });
+      let verifySawSnapshot: WorkerLandingPayload["onlineReviewSnapshot"];
+      backend.collectorImpl = async () => ({
+        kind: "completed",
+        output: { kind: "collector", evidence: freshEvidence },
+      });
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifySawSnapshot = landing?.onlineReviewSnapshot;
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const collectorsBefore = backend.collectorDispatchCount;
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Must re-run Collector — not short-circuit on the old PR checkpoint.
+      expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
+      expect(verifySawSnapshot).toEqual(freshEvidence);
+      expect(verifySawSnapshot).not.toEqual(staleEvidence);
+    });
+
+    it("production tracer: prior-round findings are cycle-bound after matching shipped anchor", async () => {
+      const priorHead = "prior-cycle-head-prior-findings-1145";
+      const newHead = "new-cycle-head-prior-findings-1145";
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: offlineShip.pr,
+          familyHeadAfter: priorHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: "fix-prior-r1",
+          fixMarkedFindingIdentityKeys: ["prior-cycle:r1"],
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_verify_continued",
+          event: "online_review_verify_continued",
+          phase: "final",
+          onlineReviewRound: 2,
+          fixMarkedFindingIdentityKeys: ["prior-cycle:r2"],
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+        // New ship cycle at a new head — global round water may still be > 1.
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr: offlineShip.pr,
+          familyHeadAfter: newHead,
+          ts: "2026-01-01T00:03:00.000Z",
+        },
+      ];
+
+      // Without cycle bound, whole-ledger reader would surface prior-cycle keys.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(backend.ledger, 3),
+      ).toEqual([
+        { round: 1, fixMarkedFindingIdentityKeys: ["prior-cycle:r1"] },
+        { round: 2, fixMarkedFindingIdentityKeys: ["prior-cycle:r2"] },
+      ]);
+      // With current shipped anchor: prior-cycle history must not enrich.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(backend.ledger, 3, {
+          shippedAnchorHead: newHead,
+        }),
+      ).toEqual([]);
+
+      const verifyPriors: Array<
+        ReadonlyArray<{ round: number; fixMarkedFindingIdentityKeys: string[] }>
+      > = [];
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifyPriors.push(
+          (landing?.priorRoundFindings ?? []).map((s) => ({
+            round: s.round,
+            fixMarkedFindingIdentityKeys: [...s.fixMarkedFindingIdentityKeys],
+          })),
+        );
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, prHead: newHead },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      // Fresh-cycle first Verify must not inherit prior-cycle findings.
+      expect(verifyPriors[0] ?? []).toEqual([]);
+    });
+
+    it("production tracer: fixMarkedFindingThreads ride opaque byte-for-byte through landing + durable rows", async () => {
+      const { parseVerifyOutcome } = await import(
+        "../src/family/realFamilyBackend.js"
+      );
+      const {
+        recordOnlineReviewFixCommitted,
+        recordOnlineReviewFixerCompleted,
+        recordOnlineReviewVerifyContinued,
+      } = await import("../src/family/ledger.js");
+
+      // Extended + "malformed" (missing threadId) bindings must not be dropped
+      // or reconstructed into the old two-field shape.
+      const opaqueThreads = [
+        {
+          identityKey: "ext:1",
+          threadId: "T1",
+          extraField: "keep-me",
+          nested: { a: 1 },
+        },
+        {
+          identityKey: "malformed-no-thread",
+          note: "still-work",
+        },
+        {
+          threadId: "T-only",
+          reason: "no-identity-yet",
+        },
+      ];
+
+      const parsed = parseVerifyOutcome(
+        `<verify>${JSON.stringify({
+          converged: false,
+          fixMarkedFindingIdentityKeys: ["ext:1", "malformed-no-thread"],
+          fixMarkedFindingThreads: opaqueThreads,
+        })}</verify>`,
+      );
+      expect(parsed.kind).toBe("verify");
+      if (parsed.kind !== "verify") return;
+      expect(parsed.fixMarkedFindingThreads).toEqual(opaqueThreads);
+
+      const backend = new TracerFamilyBackend();
+      let fixerSawThreads: unknown;
+      backend.dispatchWorker = async function (
+        this: TracerFamilyBackend,
+        spec,
+        _ctx,
+        landing,
+      ) {
+        this.landings.push(landing ?? {});
+        if (spec.kind === "collector") {
+          this.collectorDispatchCount += 1;
+          return {
+            kind: "completed",
+            output: {
+              kind: "collector",
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: offlineShip.prHead,
+              }),
+            },
+          };
+        }
+        if (spec.kind === "verify") {
+          this.verifyDispatchCount += 1;
+          if (landing?.fixerResult !== undefined) {
+            return {
+              kind: "completed",
+              output: { kind: "verify", converged: true },
+            };
+          }
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              fixMarkedFindingIdentityKeys: ["ext:1", "malformed-no-thread"],
+              fixMarkedFindingThreads: opaqueThreads as VerifyResult["fixMarkedFindingThreads"],
+            },
+          };
+        }
+        if (spec.kind === "fixer") {
+          fixerSawThreads = landing?.fixMarkedFindingThreads;
+          return {
+            kind: "completed",
+            output: {
+              kind: "fixer",
+              committed: true,
+              fixCommitSha: "opaque-thread-fix-sha-1145",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      // Fixer landing receives the full opaque array, not a reconstructed subset.
+      expect(fixerSawThreads).toEqual(opaqueThreads);
+
+      // Durable writers must not strip extended/malformed bindings either.
+      const durableBackend = new TracerFamilyBackend();
+      await recordOnlineReviewFixerCompleted(durableBackend, {
+        onlineReviewRound: 1,
+        pr: offlineShip.pr,
+        fixerResult: { kind: "fixer", committed: false, alreadySatisfied: true },
+        fixMarkedFindingThreads: opaqueThreads as never,
+      });
+      await recordOnlineReviewFixCommitted(durableBackend, {
+        familyHeadAfter: "opaque-thread-fix-sha-1145",
+        pr: offlineShip.pr,
+        onlineReviewRound: 1,
+        fixMarkedFindingThreads: opaqueThreads as never,
+      });
+      await recordOnlineReviewVerifyContinued(durableBackend, {
+        onlineReviewRound: 1,
+        pr: offlineShip.pr,
+        fixMarkedFindingThreads: opaqueThreads as never,
+      });
+      for (const event of [
+        "online_review_fixer_completed",
+        "online_review_fix_committed",
+        "online_review_verify_continued",
+      ] as const) {
+        const row = durableBackend.ledger.find((e) => e.event === event);
+        expect(row?.fixMarkedFindingThreads).toEqual(opaqueThreads);
+      }
+      // Resume authorization must also return the opaque array as-is.
+      expect(
+        lastFixMarkedFindingAuthorizationFromFamilyLedger(durableBackend.ledger)
+          .fixMarkedFindingThreads,
+      ).toEqual(opaqueThreads);
     });
 
     it("production tracer: Collector raw artifacts reach Verify landing + resume without host-path leak", async () => {
