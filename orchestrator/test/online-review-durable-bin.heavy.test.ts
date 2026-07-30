@@ -47,6 +47,17 @@ function runBin(
 
 const HEAD_A = "head-a-1145";
 const HEAD_B = "head-b-1145";
+const PR_A = "pr://family/1145-a";
+const PR_B = "pr://family/1145-b";
+
+/** Namespace args: (round, head, resolved-current-PR). */
+function ns(
+  round: string | number,
+  head: string,
+  pr: string,
+): readonly string[] {
+  return ["--round", String(round), "--head", head, "--pr", pr];
+}
 
 /** Mirror bin.mjs processStarttime so lock identity fixtures match production. */
 function processStarttime(pid: number): string | undefined {
@@ -82,13 +93,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         readFileSync(BIN_SRC, "utf8"),
       );
 
-      const init = runBin(hostPath, [
-        "progress-init",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
-      ]);
+      const init = runBin(hostPath, ["progress-init", ...ns(1, HEAD_A, PR_A)]);
       expect(init.status).toBe(0);
 
       const body = JSON.stringify({
@@ -97,7 +102,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       });
       const put = runBin(
         hostPath,
-        ["evidence-put", "--round", "1", "--head", HEAD_A, "--file", "-"],
+        ["evidence-put", ...ns(1, HEAD_A, PR_A), "--file", "-"],
         { stdin: body },
       );
       expect(put.status).toBe(0);
@@ -109,20 +114,19 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // Second open (fresh process) sees resume + same handle.
       const classify = runBin(hostPath, [
         "progress-classify",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
       ]);
       expect(classify.status).toBe(0);
       const classified = JSON.parse(classify.stdout) as {
         kind?: string;
-        progress?: { evidenceHandle?: string; head?: string };
+        progress?: { evidenceHandle?: string; head?: string; pr?: string };
       };
       expect(classified.kind).toBe("resume");
       expect(classified.progress?.evidenceHandle).toBe(handle);
       expect(classified.progress?.head).toBe(HEAD_A);
+      expect(classified.progress?.pr).toBe(PR_A);
 
+      // evidence-get is handle-only; handle came from PR-scoped progress.
       const get = runBin(hostPath, ["evidence-get", "--handle", handle]);
       expect(get.status).toBe(0);
       expect(JSON.parse(get.stdout)).toEqual({
@@ -141,7 +145,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       const body = JSON.stringify({ marker: "old-head-evidence" });
       const put = runBin(
         hostPath,
-        ["evidence-put", "--round", "1", "--head", HEAD_A, "--file", "-"],
+        ["evidence-put", ...ns(1, HEAD_A, PR_A), "--file", "-"],
         { stdin: body },
       );
       expect(put.status).toBe(0);
@@ -151,10 +155,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       expect(
         runBin(hostPath, [
           "receipt-succeeded",
-          "--round",
-          "1",
-          "--head",
-          HEAD_A,
+          ...ns(1, HEAD_A, PR_A),
           "--key",
           key,
         ]).status,
@@ -163,20 +164,14 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // Same round, new head → pristine (must not return A's handle/receipts).
       const classifyB = runBin(hostPath, [
         "progress-classify",
-        "--round",
-        "1",
-        "--head",
-        HEAD_B,
+        ...ns(1, HEAD_B, PR_A),
       ]);
       expect(classifyB.status).toBe(0);
       expect(JSON.parse(classifyB.stdout)).toEqual({ kind: "pristine" });
 
       const receiptB = runBin(hostPath, [
         "receipt-get",
-        "--round",
-        "1",
-        "--head",
-        HEAD_B,
+        ...ns(1, HEAD_B, PR_A),
         "--key",
         key,
       ]);
@@ -186,28 +181,142 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // Old head still resumes its own namespace.
       const classifyA = runBin(hostPath, [
         "progress-classify",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
       ]);
       expect(JSON.parse(classifyA.stdout)).toMatchObject({
         kind: "resume",
-        progress: { evidenceHandle: handle, head: HEAD_A },
+        progress: { evidenceHandle: handle, head: HEAD_A, pr: PR_A },
       });
       const receiptA = runBin(hostPath, [
         "receipt-get",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--key",
         key,
       ]);
       expect(JSON.parse(receiptA.stdout)).toMatchObject({
         state: "succeeded",
         head: HEAD_A,
+        pr: PR_A,
       });
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("same-round same-head replacement PR is pristine; old PR still resumes", () => {
+    const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-prns-1145-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
+      const sharedHead = HEAD_A;
+      const body = JSON.stringify({ marker: "pr-a-evidence-1145" });
+
+      // PR A: write evidence + succeeded retrigger/Verify receipt.
+      const putA = runBin(
+        hostPath,
+        ["evidence-put", ...ns(1, sharedHead, PR_A), "--file", "-"],
+        { stdin: body },
+      );
+      expect(putA.status).toBe(0);
+      const handleA = (JSON.parse(putA.stdout) as { handle: string }).handle;
+      expect(handleA.startsWith("blobs/")).toBe(true);
+
+      const retriggerKey = "retrigger:bot-comment";
+      const verifyKey = "resolve:discussion_r_pr_a";
+      expect(
+        runBin(hostPath, [
+          "receipt-succeeded",
+          ...ns(1, sharedHead, PR_A),
+          "--seat",
+          "collector",
+          "--op",
+          "retrigger",
+          "--key",
+          retriggerKey,
+        ]).status,
+      ).toBe(0);
+      expect(
+        runBin(hostPath, [
+          "receipt-succeeded",
+          ...ns(1, sharedHead, PR_A),
+          "--seat",
+          "verify",
+          "--op",
+          "resolve",
+          "--key",
+          verifyKey,
+        ]).status,
+      ).toBe(0);
+
+      // Identical round/head, replacement PR B → pristine; no A handle/receipt.
+      const classifyB = runBin(hostPath, [
+        "progress-classify",
+        ...ns(1, sharedHead, PR_B),
+      ]);
+      expect(classifyB.status).toBe(0);
+      expect(JSON.parse(classifyB.stdout)).toEqual({ kind: "pristine" });
+
+      const receiptRetriggerB = runBin(hostPath, [
+        "receipt-get",
+        ...ns(1, sharedHead, PR_B),
+        "--key",
+        retriggerKey,
+      ]);
+      expect(receiptRetriggerB.status).toBe(0);
+      expect(receiptRetriggerB.stdout.trim()).toBe("null");
+
+      const receiptVerifyB = runBin(hostPath, [
+        "receipt-get",
+        ...ns(1, sharedHead, PR_B),
+        "--key",
+        verifyKey,
+      ]);
+      expect(receiptVerifyB.status).toBe(0);
+      expect(receiptVerifyB.stdout.trim()).toBe("null");
+
+      // PR A still resumes its own namespace (handle + both receipts).
+      const classifyA = runBin(hostPath, [
+        "progress-classify",
+        ...ns(1, sharedHead, PR_A),
+      ]);
+      expect(JSON.parse(classifyA.stdout)).toMatchObject({
+        kind: "resume",
+        progress: {
+          evidenceHandle: handleA,
+          head: sharedHead,
+          pr: PR_A,
+        },
+      });
+      expect(
+        JSON.parse(
+          runBin(hostPath, [
+            "receipt-get",
+            ...ns(1, sharedHead, PR_A),
+            "--key",
+            retriggerKey,
+          ]).stdout,
+        ),
+      ).toMatchObject({ state: "succeeded", head: sharedHead, pr: PR_A });
+      expect(
+        JSON.parse(
+          runBin(hostPath, [
+            "receipt-get",
+            ...ns(1, sharedHead, PR_A),
+            "--key",
+            verifyKey,
+          ]).stdout,
+        ),
+      ).toMatchObject({ state: "succeeded", head: sharedHead, pr: PR_A });
+
+      // Missing --pr fails closed on progress/receipt ops (not evidence-get).
+      const missingPr = runBin(hostPath, [
+        "progress-classify",
+        "--round",
+        "1",
+        "--head",
+        sharedHead,
+      ]);
+      expect(missingPr.status).not.toBe(0);
+      expect(missingPr.stderr).toMatch(/--pr/i);
     } finally {
       rmSync(workingRepo, { recursive: true, force: true });
     }
@@ -220,10 +329,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       const key = "resolve:discussion_r3652932124";
       const attempted = runBin(hostPath, [
         "receipt-attempted",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--seat",
         "verify",
         "--op",
@@ -237,10 +343,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
 
       const decideApplied = runBin(hostPath, [
         "receipt-decide",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--key",
         key,
         "--fact",
@@ -254,10 +357,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // After applied decide, receipt is succeeded — second decide still skips.
       const decideAgain = runBin(hostPath, [
         "receipt-decide",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--key",
         key,
         "--fact",
@@ -271,10 +371,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       const key2 = "reply:discussion_r999";
       runBin(hostPath, [
         "receipt-attempted",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--seat",
         "verify",
         "--op",
@@ -284,10 +381,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       ]);
       const decideUnknown = runBin(hostPath, [
         "receipt-decide",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--key",
         key2,
         "--fact",
@@ -379,21 +473,12 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
 
       expect(
-        runBin(hostPath, [
-          "progress-init",
-          "--round",
-          "1",
-          "--head",
-          HEAD_A,
-        ]).status,
+        runBin(hostPath, ["progress-init", ...ns(1, HEAD_A, PR_A)]).status,
       ).toBe(0);
 
       const attempted = runBin(hostPath, [
         "receipt-attempted",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--seat",
         "verify",
         "--op",
@@ -411,10 +496,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
 
       const classify = runBin(hostPath, [
         "progress-classify",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
       ]);
       expect(classify.status).toBe(0);
       const classified = JSON.parse(classify.stdout) as {
@@ -430,20 +512,14 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       // Mutation/append blocked — refuse to join the truncated fragment.
       const blockedInit = runBin(hostPath, [
         "progress-init",
-        "--round",
-        "2",
-        "--head",
-        HEAD_B,
+        ...ns(2, HEAD_B, PR_B),
       ]);
       expect(blockedInit.status).not.toBe(0);
       expect(blockedInit.stderr).toMatch(/corrupt/i);
 
       const blockedReceipt = runBin(hostPath, [
         "receipt-attempted",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--key",
         "k-after-corrupt",
       ]);
@@ -494,10 +570,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       );
       const afterCrash = runBin(hostPath, [
         "progress-init",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
       ]);
       expect(afterCrash.status).toBe(0);
       expect(existsSync(lockPath)).toBe(false);
@@ -515,10 +588,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       );
       const blocked = runBin(hostPath, [
         "progress-set-epochs",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--epochs",
         "1",
       ]);
@@ -539,10 +609,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       );
       const stillBlocked = runBin(hostPath, [
         "progress-set-epochs",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--epochs",
         "1",
       ]);
@@ -564,10 +631,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       );
       const recoveredCollision = runBin(hostPath, [
         "progress-set-epochs",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--epochs",
         "1",
       ]);
@@ -587,10 +651,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       );
       const recovered = runBin(hostPath, [
         "progress-set-epochs",
-        "--round",
-        "1",
-        "--head",
-        HEAD_A,
+        ...ns(1, HEAD_A, PR_A),
         "--epochs",
         "2",
       ]);
