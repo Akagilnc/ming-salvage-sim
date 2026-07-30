@@ -14,6 +14,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +24,13 @@ import { fileURLToPath } from "node:url";
 const STATE_FILE = "state.jsonl";
 const LOCK_FILE = "state.jsonl.lock";
 const BLOBS_DIR = "blobs";
+/** Wait budget while another live owner holds the lock. */
+const LOCK_WAIT_MS = 5000;
+/**
+ * Lock files older than this with a dead/missing owner pid are abandoned wreckage
+ * and may be reclaimed. Live owners remain exclusive for the full wait budget.
+ */
+const LOCK_STALE_MS = 2000;
 
 function rootFromEnv() {
   const env = process.env.ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH?.trim();
@@ -40,6 +48,60 @@ function out(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
 
+function isPidAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH = dead; EPERM = alive but not signalable.
+    return err?.code === "EPERM";
+  }
+}
+
+function readLockOwner(lockPath) {
+  try {
+    const raw = readFileSync(lockPath, "utf8").trim();
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const pid = Number(parsed.pid);
+      const ts = Number(parsed.ts);
+      return {
+        pid: Number.isFinite(pid) ? pid : undefined,
+        ts: Number.isFinite(ts) ? ts : undefined,
+      };
+    }
+  } catch {
+    /* empty / half-written / non-json lock */
+  }
+  return undefined;
+}
+
+function tryReclaimStaleLock(lockPath) {
+  const owner = readLockOwner(lockPath);
+  const now = Date.now();
+  // No owner token: reclaim only when mtime is stale (half-created wreckage).
+  if (owner === undefined || owner.pid === undefined) {
+    try {
+      const st = statSync(lockPath);
+      if (now - st.mtimeMs < LOCK_STALE_MS) return false;
+    } catch {
+      return false;
+    }
+  } else if (isPidAlive(owner.pid)) {
+    // Live owner remains exclusive — never reclaim.
+    return false;
+  }
+  // Dead/missing owner (or stale empty lock): best-effort unlink.
+  try {
+    unlinkSync(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function withLock(root, fn) {
   const lockPath = join(root, LOCK_FILE);
   const started = Date.now();
@@ -47,9 +109,19 @@ function withLock(root, fn) {
   while (fd === undefined) {
     try {
       fd = openSync(lockPath, "wx");
+      // Persist owner immediately so a crash between create and finally can be
+      // diagnosed and reclaimed by a later CLI call.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ pid: process.pid, ts: Date.now() })}\n`,
+        "utf8",
+      );
     } catch (err) {
       if (err?.code !== "EEXIST") throw err;
-      if (Date.now() - started > 5000) {
+      if (tryReclaimStaleLock(lockPath)) {
+        continue;
+      }
+      if (Date.now() - started > LOCK_WAIT_MS) {
         die(`lock timeout: ${lockPath}`);
       }
       const until = Date.now() + 20;

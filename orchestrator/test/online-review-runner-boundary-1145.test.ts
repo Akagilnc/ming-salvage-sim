@@ -39,6 +39,9 @@ import {
 } from "../src/botPolling.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import {
+  lastCollectorCheckpointFromFamilyLedger,
+  lastOnlineReviewMergeableFromFamilyLedger,
+  onlineReviewRoundFromFamilyLedger,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
 import {
@@ -1499,6 +1502,321 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         .at(-1);
       expect(reentryVerify?.landing?.onlineReviewRound).toBe(3);
       expect(reentryVerify?.landing?.onlineReviewSnapshot).toEqual(r3Evidence);
+    });
+  });
+
+  describe("#1145 five recovery seams", () => {
+    it("mergeable is bound to reviewed head; re-ship new head re-runs Collector→Verify", async () => {
+      const backend = new TracerFamilyBackend();
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      const mergeable = backend.ledger.find(
+        (e) => e.event === "online_review_mergeable",
+      );
+      expect(mergeable?.familyHeadAfter).toBe(offlineShip.prHead);
+      // Exact head match short-circuits.
+      expect(
+        lastOnlineReviewMergeableFromFamilyLedger(
+          backend.ledger,
+          offlineShip.prHead,
+        ),
+      ).toEqual({ round: 1, familyHeadAfter: offlineShip.prHead });
+      // Stale/mismatched head must NOT short-circuit.
+      expect(
+        lastOnlineReviewMergeableFromFamilyLedger(backend.ledger, "new-head-1145"),
+      ).toBeUndefined();
+
+      const collectorsAfterFirst = backend.collectorDispatchCount;
+      const verifiesAfterFirst = backend.verifyDispatchCount;
+
+      // Same head re-entry: no re-dispatch.
+      const sameHead = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(sameHead.terminalState).toBe("mergeable");
+      expect(backend.collectorDispatchCount).toBe(collectorsAfterFirst);
+      expect(backend.verifyDispatchCount).toBe(verifiesAfterFirst);
+
+      // Re-ship at a new head: must run Collector→Verify again.
+      const reShip = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, prHead: "new-head-1145" },
+      });
+      expect(reShip).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(backend.collectorDispatchCount).toBe(collectorsAfterFirst + 1);
+      expect(backend.verifyDispatchCount).toBe(verifiesAfterFirst + 1);
+      const mergeableHeads = backend.ledger
+        .filter((e) => e.event === "online_review_mergeable")
+        .map((e) => e.familyHeadAfter);
+      expect(mergeableHeads).toEqual([offlineShip.prHead, "new-head-1145"]);
+    });
+
+    it("second-round pending fixer SHA adopts new head and books fix_committed once", async () => {
+      const backend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      let crashOnNewFixBookkeeping = true;
+
+      // Seed round-1 fix already on ledger (previous SHA).
+      backend.ledger.push({
+        status: "online_review_fix_committed",
+        event: "online_review_fix_committed",
+        phase: "final",
+        onlineReviewRound: 1,
+        familyHeadAfter: "old-fix-sha-r1",
+        fixMarkedFindingIdentityKeys: ["r1:1"],
+        ts: "2026-01-01T00:00:00.000Z",
+      });
+      backend.ledger.push({
+        status: "online_review_verify_continued",
+        event: "online_review_verify_continued",
+        phase: "final",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["r1:1"],
+        ts: "2026-01-01T00:01:00.000Z",
+      });
+
+      // Crash window: fixer_completed already durable; resolveFixCommitSha has
+      // not yet written the new SHA (process dies mid-bookkeeping).
+      const origAppend = backend.appendFamilyLedger.bind(backend);
+      backend.appendFamilyLedger = async (entry) => {
+        if (
+          crashOnNewFixBookkeeping &&
+          entry.event === "online_review_fix_committed" &&
+          entry.familyHeadAfter === "new-fix-sha-r2"
+        ) {
+          throw new Error(
+            "simulated crash after fixer_completed before fix_committed bookkeeping",
+          );
+        }
+        return origAppend(entry);
+      };
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        if (landing?.fixerResult !== undefined) {
+          expect(landing.fixerResult).toEqual({
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "new-fix-sha-r2",
+          });
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["r2:1"],
+            fixMarkedFindingThreads: [
+              { identityKey: "r2:1", threadId: "t-r2" },
+            ],
+          },
+        };
+      };
+
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "new-fix-sha-r2",
+          },
+        };
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(first.stopSummary?.summary).toMatch(
+        /simulated crash after fixer_completed before fix_committed/,
+      );
+      expect(fixerCalls).toBe(1);
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_fixer_completed"),
+      ).toBe(true);
+      // Old SHA remains; new SHA was never booked.
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.event === "online_review_fix_committed" &&
+            e.familyHeadAfter === "old-fix-sha-r1",
+        ),
+      ).toBe(true);
+      expect(
+        backend.ledger.some(
+          (e) =>
+            e.event === "online_review_fix_committed" &&
+            e.familyHeadAfter === "new-fix-sha-r2",
+        ),
+      ).toBe(false);
+
+      crashOnNewFixBookkeeping = false;
+      const collectorsBeforeResume = backend.collectorDispatchCount;
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 2,
+      });
+      // No second Fixer; new SHA booked once; Collect/Verify resume at new SHA.
+      expect(fixerCalls).toBe(1);
+      expect(verifyCalls).toBe(2); // first seat + post-fixer resume seat
+      const newFixMarkers = backend.ledger.filter(
+        (e) =>
+          e.event === "online_review_fix_committed" &&
+          e.familyHeadAfter === "new-fix-sha-r2",
+      );
+      expect(newFixMarkers).toHaveLength(1);
+      const postFixVerify = backend.landings
+        .filter((l, i) => backend.kinds[i] === "verify" && l.fixerResult)
+        .at(-1);
+      expect(postFixVerify?.shipDelivery?.prHead).toBe("new-fix-sha-r2");
+      // Collector checkpoint reused — no second wait burn.
+      expect(backend.collectorDispatchCount).toBe(collectorsBeforeResume);
+    });
+
+    it("empty opaque Collector completed writes checkpoint; Verify-crash re-entry does not redispatch", async () => {
+      const backend = new TracerFamilyBackend();
+      backend.collectorImpl = async () => ({
+        kind: "completed",
+        output: { kind: "collector" },
+      });
+      backend.blockVerify = true;
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first.ok).toBe(false);
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(
+        backend.ledger.some(
+          (e) => e.event === "online_review_collector_completed",
+        ),
+      ).toBe(true);
+      // Empty completed checkpoint is readable as {} (not undefined).
+      expect(
+        lastCollectorCheckpointFromFamilyLedger(backend.ledger, 1),
+      ).toEqual({});
+
+      backend.blockVerify = false;
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // No second Collector dispatch / re-wait.
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.verifyDispatchCount).toBe(2); // fail + success
+      expect(
+        backend.ledger.filter(
+          (e) => e.event === "online_review_collector_completed",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("legacy read round reconstruction: retrigger/fix fixtures choose next correct round", () => {
+      // Old protocol: fix_committed without onlineReviewRound + retrigger(R).
+      expect(
+        onlineReviewRoundFromFamilyLedger([
+          {
+            status: "online_review_fix_committed",
+            event: "online_review_fix_committed",
+          },
+          {
+            status: "online_review_round_retrigger",
+            event: "online_review_round_retrigger",
+            onlineReviewRound: 2,
+          },
+        ]),
+      ).toBe(2);
+
+      // Two legacy fixes without round field → count+1.
+      expect(
+        onlineReviewRoundFromFamilyLedger([
+          {
+            status: "online_review_fix_committed",
+            event: "online_review_fix_committed",
+          },
+          {
+            status: "online_review_fix_committed",
+            event: "online_review_fix_committed",
+          },
+        ]),
+      ).toBe(3);
+
+      // Live fix_committed(N) stays at N (verify_continued advances).
+      expect(
+        onlineReviewRoundFromFamilyLedger([
+          {
+            status: "online_review_fix_committed",
+            event: "online_review_fix_committed",
+            onlineReviewRound: 1,
+          },
+        ]),
+      ).toBe(1);
+
+      // Live + legacy: max wins; retrigger must not lose to same-round fix.
+      expect(
+        onlineReviewRoundFromFamilyLedger([
+          {
+            status: "online_review_fix_committed",
+            event: "online_review_fix_committed",
+            onlineReviewRound: 1,
+          },
+          {
+            status: "online_review_round_retrigger",
+            event: "online_review_round_retrigger",
+            onlineReviewRound: 2,
+          },
+        ]),
+      ).toBe(2);
+
+      // No live writer for retrigger — production happy path still omits it.
+      expect(
+        onlineReviewRoundFromFamilyLedger([
+          {
+            status: "online_review_verify_continued",
+            event: "online_review_verify_continued",
+            onlineReviewRound: 1,
+          },
+        ]),
+      ).toBe(2);
     });
   });
 

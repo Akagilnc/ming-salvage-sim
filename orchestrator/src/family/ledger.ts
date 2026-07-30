@@ -1434,7 +1434,8 @@ export async function recordOnlineReviewFixCommitted(
  * Append one Collector-completed durable checkpoint (#1145 AC2).
  * Action-owned: stores opaque evidence handle/body so crash re-entry does not
  * re-burn completed wait/evidence. Runner never interprets the body.
- * Sparse cargo is legal (ADR 0131 cargo≠fate) — no field structure gate.
+ * Sparse / empty cargo is legal (ADR 0131 cargo≠fate) — completion is driven by
+ * Action completed status, not optional cargo presence. No field structure gate.
  * `familyHeadAfter` is schedule bookkeeping (ship/fix head), never lifted from
  * evidence business fields.
  */
@@ -1442,7 +1443,7 @@ export async function recordOnlineReviewCollectorCompleted(
   backend: FamilyBackend,
   record: {
     readonly onlineReviewRound: number;
-    /** Opaque evidence body — may be sparse; not field-validated. */
+    /** Opaque evidence body — may be sparse or absent; not field-validated. */
     readonly evidence?: OnlineReviewLandingSnapshot;
     readonly cargoPointer?: string;
     readonly pr?: string;
@@ -1466,11 +1467,6 @@ export async function recordOnlineReviewCollectorCompleted(
     record.evidence !== undefined &&
     typeof record.evidence === "object" &&
     record.evidence !== null;
-  if (cargoPointer === undefined && !hasEvidenceBody) {
-    throw new Error(
-      "family online_review_collector_completed marker must include cargoPointer and/or opaque evidence body",
-    );
-  }
   const familyHeadAfter =
     typeof record.familyHeadAfter === "string" &&
     record.familyHeadAfter.trim().length > 0
@@ -1624,12 +1620,16 @@ export async function recordOnlineReviewVerifyContinued(
  * Append Verify-converged durable completion (#1145 re-entry).
  * Action-owned proof that reply/resolve/defer side effects for this round are
  * done — re-entry must short-circuit to mergeable without re-dispatching Verify.
+ * Bound to the effective reviewed head (last fix SHA or ship head); recovery
+ * short-circuits only on exact current-head match.
  */
 export async function recordOnlineReviewMergeable(
   backend: FamilyBackend,
   record: {
     readonly onlineReviewRound: number;
     readonly pr?: string;
+    /** Effective reviewed head (last fix SHA or ship head). */
+    readonly familyHeadAfter: string;
   },
 ): Promise<void> {
   const onlineReviewRound = record.onlineReviewRound;
@@ -1638,12 +1638,19 @@ export async function recordOnlineReviewMergeable(
       "family online_review_mergeable marker must include onlineReviewRound >= 1",
     );
   }
+  const familyHeadAfter = record.familyHeadAfter.trim();
+  if (familyHeadAfter.length === 0) {
+    throw new Error(
+      "family online_review_mergeable marker must include a non-empty familyHeadAfter",
+    );
+  }
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_mergeable",
       event: "online_review_mergeable",
       phase: "final",
       onlineReviewRound,
+      familyHeadAfter,
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
