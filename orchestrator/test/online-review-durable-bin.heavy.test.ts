@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -47,6 +47,30 @@ function runBin(
 
 const HEAD_A = "head-a-1145";
 const HEAD_B = "head-b-1145";
+
+/** Mirror bin.mjs processStarttime so lock identity fixtures match production. */
+function processStarttime(pid: number): string | undefined {
+  try {
+    const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = raw.lastIndexOf(")");
+    if (closeParen >= 0) {
+      const rest = raw.slice(closeParen + 2).trim().split(/\s+/);
+      const st = rest[19];
+      if (typeof st === "string" && /^\d+$/.test(st)) return `linux:${st}`;
+    }
+  } catch {
+    /* not Linux */
+  }
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim();
+    if (out.length > 0) return `ps:${out}`;
+  } catch {
+    /* ps unavailable */
+  }
+  return undefined;
+}
 
 describe("#1145 durable bin.mjs CLI (sole capability)", () => {
   it("evidence-put → progress-classify resume → evidence-get same handle (no re-wait)", () => {
@@ -351,11 +375,14 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     );
   });
 
-  it("stale lock from dead owner is reclaimed; live lock stays exclusive", () => {
+  it("owner-instance lease: live owner never stolen for age; stale other-container reclaimable", () => {
     const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-lock-1145-"));
     try {
       const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
       const lockPath = join(hostPath, "state.jsonl.lock");
+
+      const selfStart = processStarttime(process.pid);
+      expect(selfStart).toBeTypeOf("string");
 
       // Crashed owner wreckage: lock file with a dead pid must not block forever.
       writeFileSync(
@@ -363,6 +390,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         `${JSON.stringify({
           pid: 2_147_483_647,
           token: "dead-sandbox",
+          starttime: "ps:Thu Jan  1 00:00:00 1970",
           ts: Date.now() - 60_000,
         })}\n`,
         "utf8",
@@ -377,12 +405,13 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       expect(afterCrash.status).toBe(0);
       expect(existsSync(lockPath)).toBe(false);
 
-      // Fresh live lease: recent ts + alive pid → CLI must time out, not steal.
+      // Fresh live lease: recent ts + matching live identity → CLI must time out.
       writeFileSync(
         lockPath,
         `${JSON.stringify({
           pid: process.pid,
           token: "live-holder",
+          starttime: selfStart,
           ts: Date.now(),
         })}\n`,
         "utf8",
@@ -400,13 +429,38 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       expect(blocked.stderr).toMatch(/lock timeout/);
       expect(existsSync(lockPath)).toBe(true);
 
-      // Cross-container PID collision: stale lease whose numeric PID collides
-      // with this live process must still be reclaimed (lease/token rule).
+      // Live owner over TTL: same identity + old ts must still NOT be stolen.
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({
+          pid: process.pid,
+          token: "live-over-ttl",
+          starttime: selfStart,
+          ts: Date.now() - 60_000,
+        })}\n`,
+        "utf8",
+      );
+      const stillBlocked = runBin(hostPath, [
+        "progress-set-epochs",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+        "--epochs",
+        "1",
+      ]);
+      expect(stillBlocked.status).not.toBe(0);
+      expect(stillBlocked.stderr).toMatch(/lock timeout/);
+      expect(existsSync(lockPath)).toBe(true);
+
+      // Stale other-container: same numeric PID, different starttime, stale ts
+      // → distinguishable and reclaimable.
       writeFileSync(
         lockPath,
         `${JSON.stringify({
           pid: process.pid,
           token: "stale-other-container",
+          starttime: "ps:Thu Jan  1 00:00:00 1970",
           ts: Date.now() - 60_000,
         })}\n`,
         "utf8",
@@ -429,6 +483,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         `${JSON.stringify({
           pid: 2_147_483_647,
           token: "dead-again",
+          starttime: "ps:Thu Jan  1 00:00:00 1970",
           ts: Date.now() - 60_000,
         })}\n`,
         "utf8",
@@ -447,5 +502,5 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     } finally {
       rmSync(workingRepo, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 30_000);
 });

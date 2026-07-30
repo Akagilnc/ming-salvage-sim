@@ -26,8 +26,15 @@
  * 13. Verify soul pins handle-only consume: cargoPointer + no snapshot →
  *     evidence-get; unreadable → escalate; never re-run Collector query/wait.
  *     promptFiles stay thin (no method outline / evidence cookbook).
+ * 14. Cycle-bound pending fixer cargo (after matching shipped anchor).
+ * 15. Owner-instance durable lock lease (live never stolen for age).
+ * 16. Collector is a monitored CLI kind (RealFamilyBackend monitor dispatch).
+ * 17. postFixTransition fact from committed-fixer resume marker (not round).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as botPolling from "../src/botPolling.js";
 import {
@@ -37,17 +44,25 @@ import {
   collectorPostFixRetriggerPlan,
   ONLINE_REVIEW_BOT_RETRIGGER_COMMENT,
 } from "../src/botPolling.js";
+import {
+  buildCliMonitorSpawnSpec,
+  isMonitoredWorkerKind,
+} from "../src/cliMonitorHooks.js";
 import { runFamilyOnlineReviewLoop } from "../src/family/verifyCmr.js";
 import {
+  buildOnlineReviewBaseLanding,
   effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
+  lastPendingFixerCargoFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
+  postFixTransitionFromCommittedFixerResumeMarker,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
 import {
   familyShippedRecordForReviewLoopResume,
 } from "../src/family/ledger.js";
+import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
 import {
   skeletonReviewLoopWorkerResult,
   stubCollectorEvidence,
@@ -795,15 +810,24 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT).toContain("@codex review");
       expect(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT).toContain("/gemini review");
 
+      // Round-1 pristine: no transition fact → no retrigger.
       const idle = collectorPostFixRetriggerPlan({
         onlineReviewRound: 1,
         headOid: "head-1",
       });
       expect(idle.shouldRetrigger).toBe(false);
 
-      const postFix = collectorPostFixRetriggerPlan({
+      // Round alone never triggers — needs explicit postFixTransition fact.
+      const roundOnly = collectorPostFixRetriggerPlan({
         onlineReviewRound: 2,
         headOid: "fix-sha",
+      });
+      expect(roundOnly.shouldRetrigger).toBe(false);
+
+      const postFix = collectorPostFixRetriggerPlan({
+        onlineReviewRound: 1,
+        headOid: "fix-sha",
+        postFixTransition: true,
       });
       expect(postFix.shouldRetrigger).toBe(true);
       expect(postFix.commentBody).toBe(ONLINE_REVIEW_BOT_RETRIGGER_COMMENT);
@@ -1763,8 +1787,15 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         .filter((l, i) => backend.kinds[i] === "verify" && l.fixerResult)
         .at(-1);
       expect(postFixVerify?.shipDelivery?.prHead).toBe("new-fix-sha-r2");
-      // Collector checkpoint reused — no second wait burn.
-      expect(backend.collectorDispatchCount).toBe(collectorsBeforeResume);
+      // Committed fixer advanced the reviewed head — old-head Collector
+      // checkpoint must not short-circuit; re-collect at the new head once.
+      expect(backend.collectorDispatchCount).toBe(collectorsBeforeResume + 1);
+      const resumeCollector = backend.landings
+        .map((l, i) => ({ l, kind: backend.kinds[i] }))
+        .filter((x) => x.kind === "collector")
+        .at(-1)?.l;
+      expect(resumeCollector?.shipDelivery?.prHead).toBe("new-fix-sha-r2");
+      expect(resumeCollector?.postFixTransition).toBe(true);
     });
 
     it("F5 production re-feed: fixer_completed head admits shipped resume before fix_committed", async () => {
@@ -1880,6 +1911,302 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             e.event === "online_review_mergeable" &&
             e.familyHeadAfter === fixHead,
         ),
+      ).toBe(true);
+    });
+
+    it("production tracer: pending fixer cargo is cycle-bound after matching shipped anchor", async () => {
+      const priorShip = "prior-ship-head";
+      const newShip = "new-ship-head";
+      const staleFixSha = "stale-unconsumed-fix";
+      const pr = "https://github.com/test/repo/pull/1145";
+
+      // Prior cycle left unconsumed fixer_completed(round=1); then re-ship at new head.
+      const ledger: FamilyLedgerEntry[] = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: priorShip,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_fixer_completed",
+          event: "online_review_fixer_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr,
+          familyHeadAfter: staleFixSha,
+          fixerResultCargo: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: staleFixSha,
+          },
+          fixMarkedFindingIdentityKeys: ["stale:1"],
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: newShip,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      ];
+
+      // Without anchor: stale cargo still visible (legacy whole-ledger scan).
+      expect(
+        lastPendingFixerCargoFromFamilyLedger(ledger, 1)?.fixerResult,
+      ).toEqual({
+        kind: "fixer",
+        committed: true,
+        fixCommitSha: staleFixSha,
+      });
+      // With current shipped anchor: prior-cycle cargo must not resume.
+      expect(
+        lastPendingFixerCargoFromFamilyLedger(ledger, 1, {
+          shippedAnchorHead: newShip,
+        }),
+      ).toBeUndefined();
+
+      // Production entry: re-ship must not adopt stale fix SHA as lastFixCommitSha.
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [...ledger];
+      const collectorHeads: string[] = [];
+      backend.collectorImpl = async (_s, _c, landing) => {
+        collectorHeads.push(landing?.shipDelivery?.prHead ?? "");
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: stubCollectorEvidence({
+              prUrl: pr,
+              headOid: landing?.shipDelivery?.prHead ?? newShip,
+              marker: "cycle-bound-1145",
+            }),
+          },
+        };
+      };
+      let fixerCalls = 0;
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr, prHead: newShip },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Fresh cycle at newShip — no stale fix head, no phantom fixer resume.
+      expect(collectorHeads[0]).toBe(newShip);
+      expect(fixerCalls).toBe(0);
+      expect(
+        backend.landings.some(
+          (l) => l.fixerResult?.fixCommitSha === staleFixSha,
+        ),
+      ).toBe(false);
+    });
+
+    it("production tracer: Collector is monitored on RealFamilyBackend dispatch path", () => {
+      expect(isMonitoredWorkerKind("collector")).toBe(true);
+      expect(isMonitoredWorkerKind("verify")).toBe(true);
+
+      const logDir = mkdtempSync(join(tmpdir(), "or-mon-collector-1145-"));
+      try {
+        const spawn = buildCliMonitorSpawnSpec({
+          backendKind: "realFamily",
+          backendOpts: { ledgerDir: logDir },
+          spec: collectorWorkerSpec(),
+          ctx: {
+            familyBase: "family/1145",
+            telemetryDir: logDir,
+            stateDir: logDir,
+          },
+        });
+        expect(spawn).toBeDefined();
+        expect(spawn?.command.length).toBeGreaterThan(0);
+
+        // Production RealFamilyBackend.resolveCliMonitorDispatch → same builder.
+        const backend = Object.create(
+          RealFamilyBackend.prototype,
+        ) as RealFamilyBackend;
+        Object.defineProperty(backend, "opts", {
+          value: { ledgerDir: logDir },
+        });
+        const fromBackend = backend.resolveCliMonitorDispatch(
+          collectorWorkerSpec(),
+          {
+            familyBase: "family/1145",
+            telemetryDir: logDir,
+            stateDir: logDir,
+          },
+        );
+        expect(fromBackend).toBeDefined();
+        expect(fromBackend?.command).toEqual(spawn?.command);
+      } finally {
+        rmSync(logDir, { recursive: true, force: true });
+      }
+    });
+
+    it("production tracer: same-round first-fixer crash sets postFixTransition and re-collects at new head", async () => {
+      // Fact derivation is marker-only — never round arithmetic.
+      expect(
+        postFixTransitionFromCommittedFixerResumeMarker({
+          committedFixerHead: undefined,
+        }),
+      ).toBe(false);
+      expect(
+        postFixTransitionFromCommittedFixerResumeMarker({
+          committedFixerHead: "",
+        }),
+      ).toBe(false);
+      expect(
+        postFixTransitionFromCommittedFixerResumeMarker({
+          committedFixerHead: "fix-head-x",
+        }),
+      ).toBe(true);
+
+      const landingIdle = buildOnlineReviewBaseLanding(offlineShip, 1);
+      expect(landingIdle.postFixTransition).toBeUndefined();
+      const landingPost = buildOnlineReviewBaseLanding(
+        offlineShip,
+        1,
+        "committed-fix-sha",
+      );
+      expect(landingPost.postFixTransition).toBe(true);
+      expect(landingPost.shipDelivery?.prHead).toBe("committed-fix-sha");
+
+      // Round-1 no-retrigger without fact; with fact + head → exactly once plan.
+      expect(
+        collectorPostFixRetriggerPlan({
+          onlineReviewRound: 1,
+          headOid: offlineShip.prHead,
+        }).shouldRetrigger,
+      ).toBe(false);
+      expect(
+        collectorPostFixRetriggerPlan({
+          onlineReviewRound: 1,
+          headOid: "committed-fix-sha",
+          postFixTransition: true,
+        }).shouldRetrigger,
+      ).toBe(true);
+
+      // Production entry: fixer_completed(committed) crash before Verify →
+      // re-feed re-dispatches Collector at new head with postFixTransition.
+      const shipHead = offlineShip.prHead;
+      const fixHead = "first-fix-crash-head";
+      const pr = "https://github.com/test/repo/pull/1145";
+      const backend = new TracerFamilyBackend();
+      backend.ledger.push(
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final",
+          pr,
+          familyHeadAfter: shipHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_collector_completed",
+          event: "online_review_collector_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          familyHeadAfter: shipHead,
+          collectorEvidenceCargo: stubCollectorEvidence({
+            prUrl: pr,
+            headOid: shipHead,
+            marker: "pre-fix-collector",
+          }),
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_fixer_completed",
+          event: "online_review_fixer_completed",
+          phase: "final",
+          onlineReviewRound: 1,
+          pr,
+          familyHeadAfter: fixHead,
+          fixerResultCargo: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: fixHead,
+          },
+          fixMarkedFindingIdentityKeys: ["crash:1"],
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      );
+
+      const collectorLandings: WorkerLandingPayload[] = [];
+      backend.collectorImpl = async (_s, _c, landing) => {
+        collectorLandings.push(landing ?? {});
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: stubCollectorEvidence({
+              prUrl: pr,
+              headOid: landing?.shipDelivery?.prHead ?? fixHead,
+              marker: "post-fix-recollect",
+            }),
+          },
+        };
+      };
+      backend.verifyImpl = async (_s, _c, landing) => {
+        if (landing?.fixerResult !== undefined) {
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true, isRecheck: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["crash:1"],
+          },
+        };
+      };
+      let fixerCalls = 0;
+      backend.fixerImpl = async () => {
+        fixerCalls += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: true, fixCommitSha: fixHead },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr, prHead: shipHead },
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Collector re-ran at the committed fix head (old ship-head checkpoint skipped).
+      expect(collectorLandings.length).toBe(1);
+      expect(collectorLandings[0]?.shipDelivery?.prHead).toBe(fixHead);
+      expect(collectorLandings[0]?.postFixTransition).toBe(true);
+      expect(fixerCalls).toBe(0);
+      // Receipt/plan idempotency: fact+head still yields a single shouldRetrigger plan.
+      expect(
+        collectorPostFixRetriggerPlan({
+          headOid: collectorLandings[0]?.shipDelivery?.prHead,
+          postFixTransition: collectorLandings[0]?.postFixTransition,
+        }).shouldRetrigger,
       ).toBe(true);
     });
 
