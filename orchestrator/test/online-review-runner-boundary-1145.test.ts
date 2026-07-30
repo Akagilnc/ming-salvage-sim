@@ -36,6 +36,10 @@
  * 21. Collector checkpoint scoped by current PR + shipped anchor (same SHA re-ship).
  * 22. prior-round history cycle-bound after matching shipped anchor.
  * 23. fixMarkedFindingThreads opaque byte-for-byte through landing + durable rows.
+ * 24. Post-fixer same-round Verify receives fixer cargo + effective head on
+ *     shipDelivery.prHead (Collector evidence retained).
+ * 25. Typed completed + escalate-only Collector body preserves escalate as
+ *     opaque evidence (result-level; fate stays on typed envelope).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -819,6 +823,70 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(collectorHeads).toEqual([offlineShip.prHead, "post-fix-sha-1145"]);
       expect(verifyFixerShas[1]).toBe("post-fix-sha-1145");
       expect(fixerCalls).toBeGreaterThanOrEqual(1);
+    });
+
+    it("post-fixer same-round Verify receives fixer cargo AND effective head on shipDelivery.prHead", async () => {
+      // After Fixer envelope SHA is accepted/resolved, before same-round recheck
+      // Verify: landing.shipDelivery.prHead must pin the new effective head while
+      // retaining Collector evidence + opaque fixer cargo (durable receipt
+      // namespace (round, head, PR) stable across crash/resume).
+      const verifyLandings: WorkerLandingPayload[] = [];
+      let verifyCalls = 0;
+      const collectorEvidence = stubCollectorEvidence({
+        prUrl: offlineShip.pr,
+        headOid: offlineShip.prHead!,
+        marker: "pre-fix-evidence",
+      });
+
+      const result = await runOnlineReviewLoopStage(
+        offlineShip,
+        onlineReviewDispatch({
+          dispatchCollector: async () => ({ evidence: collectorEvidence }),
+          dispatchVerify: async (landing) => {
+            verifyCalls += 1;
+            verifyLandings.push(landing);
+            if (verifyCalls === 1) {
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: ["k1"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "k1", threadId: "t1" },
+                  ],
+                },
+              };
+            }
+            // Same-round recheck after fixer commit.
+            return {
+              verify: { kind: "verify", converged: true, isRecheck: true },
+            };
+          },
+          dispatchFixer: async () => ({
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "post-fix-sha-1145",
+          }),
+          resolveFixCommitSha: async (sha) => sha,
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      expect(verifyCalls).toBe(2);
+      const recheck = verifyLandings[1];
+      expect(recheck).toBeDefined();
+      expect(recheck.fixerResult).toEqual({
+        kind: "fixer",
+        committed: true,
+        fixCommitSha: "post-fix-sha-1145",
+      });
+      expect(recheck.shipDelivery?.prHead).toBe("post-fix-sha-1145");
+      // Collector evidence retained on the same landing.
+      expect(recheck.onlineReviewSnapshot).toEqual(collectorEvidence);
+      // First Verify still saw the pre-fix head (no premature elevation).
+      expect(verifyLandings[0]?.shipDelivery?.prHead).toBe(offlineShip.prHead);
+      expect(verifyLandings[0]?.fixerResult).toBeUndefined();
     });
 
     it("post-fix: Collector capability plan is real (not host dual-owner)", () => {
@@ -3678,6 +3746,110 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           (e) => e.event === "online_review_collector_completed",
         ),
       ).toBe(true);
+    });
+
+    it("typed completed + escalate-only Collector body preserves escalate as opaque evidence", async () => {
+      // Result-level (familyReviewLoopResultFromRun), not only parseCollectorOutcome:
+      // a business key named `escalate` in the Collector sidecar must survive the
+      // completed path. Fate stays on the typed onlineReview envelope alone.
+      const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { tmpdir } = await import("node:os");
+      const { fileURLToPath } = await import("node:url");
+      const { RealFamilyBackend } = await import(
+        "../src/family/realFamilyBackend.js"
+      );
+      const { buildExplicitLandingLiveHooks } = await import(
+        "../src/family/landing.js"
+      );
+
+      const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+      const dir = mkdtempSync(join(tmpdir(), "collector-escalate-only-1145-"));
+      try {
+        const reviewLoopSpec = (): WorkerSpec => ({
+          id: "S13",
+          kind: "collector",
+          role: "coder",
+          host: "claude",
+          session: "fresh",
+          contextRetention: "clean",
+          promptFile: "x.md",
+          maxIter: 1,
+          model: "sonnet",
+          soul: "coder",
+          toolchain: [],
+        });
+        class Harness extends RealFamilyBackend {
+          resolveLandingLiveHooks(input: {
+            prUrl: string;
+            convergedHeadOid: string;
+            familyBase: string;
+          }) {
+            return buildExplicitLandingLiveHooks({
+              prUrl: input.prUrl,
+              headOid: input.convergedHeadOid,
+              remoteBranchName: input.familyBase,
+            });
+          }
+
+          public classify(
+            result: {
+              output?: unknown;
+              stdout: string;
+              iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+            },
+            outcomePath: string,
+          ) {
+            return this.familyReviewLoopResultFromRun(
+              {
+                stdout: result.stdout,
+                iterations: [...(result.iterations ?? [])],
+                ...(result.output !== undefined
+                  ? { output: result.output }
+                  : {}),
+              },
+              reviewLoopSpec(),
+              outcomePath,
+            );
+          }
+        }
+
+        const outcomePath = join(dir, "outcome.json");
+        const escalateOnlyBody = {
+          escalate: {
+            reason: "business key, not fate",
+            diagnosis: "collector evidence flag",
+          },
+        };
+        writeFileSync(outcomePath, JSON.stringify(escalateOnlyBody), "utf8");
+        const be = new Harness({
+          workingRepo: dir,
+          familyBase: "fb",
+          ledgerDir: dir,
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: join(packageRoot, "prompts"),
+          soulsDir: join(packageRoot, "image", "souls"),
+          imageName: "img",
+          familyBaseStartHead: "abc",
+        });
+        const out = be.classify(
+          {
+            output: { station: "onlineReview", status: "completed" },
+            stdout: "",
+          },
+          outcomePath,
+        );
+        expect(out.kind).toBe("completed");
+        if (out.kind === "completed") {
+          expect(out.output).toEqual({
+            kind: "collector",
+            evidence: escalateOnlyBody,
+          });
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
     it("keyless body-only Collector blob reaches Verify verbatim; no fate change",

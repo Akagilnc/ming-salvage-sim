@@ -1231,6 +1231,30 @@ export async function runOnlineReviewLoopStage(
     // #1145: EVERY fixer result is opaque cargo back to the SAME Verify judge.
     // Do not branch topology on committed / alreadySatisfied / fixCommitSha
     // (no fourth state, no isFixerLegalNoOp control-flow fork).
+    // After accepting/resolving the Fixer envelope SHA, pin shipDelivery.prHead
+    // to the already-established effective head before same-round recheck
+    // Verify — retain Collector evidence + opaque fixer cargo so the durable
+    // (round, head, PR) receipt namespace stays stable across crash/resume.
+    const effectiveHead =
+      lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
+        ? lastFixCommitSha
+        : ship.prHead;
+    const shipDeliveryForRecheck =
+      landing.shipDelivery !== undefined
+        ? {
+            ...landing.shipDelivery,
+            ...(effectiveHead !== undefined && effectiveHead.length > 0
+              ? { prHead: effectiveHead }
+              : {}),
+          }
+        : {
+            branch: ship.branch,
+            pr: ship.pr,
+            ...(effectiveHead !== undefined && effectiveHead.length > 0
+              ? { prHead: effectiveHead }
+              : {}),
+            ...(ship.status !== undefined ? { status: ship.status } : {}),
+          };
     landing = {
       ...landing,
       fixMarkedFindingIdentityKeys:
@@ -1244,6 +1268,7 @@ export async function runOnlineReviewLoopStage(
       ...(pendingFixerResult !== undefined
         ? { fixerResult: pendingFixerResult }
         : {}),
+      shipDelivery: shipDeliveryForRecheck,
     };
     // Cargo handed to same-round Verify — clear so a later continue iteration
     // does not skip first Verify + Fixer again.

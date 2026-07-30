@@ -4652,10 +4652,12 @@ function sparseReviewLoopCompleted(
 }
 
 /**
- * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
- * — those transports enrich delivery cargo only (#899). Fate comes solely from
- * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
- * Collector evidence is opaque sidecar/`<collector>` cargo — never typed SO.
+ * Cargo-only review-loop result. Fate comes solely from the T2 onlineReview
+ * station receipt handled by the caller (#919 CR N1 / #899).
+ * Collector evidence is fully opaque sidecar/`<collector>` cargo — including a
+ * business key named `escalate` — never typed SO (#1145). Other review-loop
+ * roles still strip escalate so a spoofed sidecar bell cannot ride into their
+ * fielded cargo before role decode.
  */
 function reviewLoopCargoResult(
   stdout: string,
@@ -4671,15 +4673,16 @@ function reviewLoopCargoResult(
     kind === "landing"
       ? kind
       : "verify";
-  // Read cargo, strip fate keys, re-decode without escalate so a spoofed
-  // sidecar bell cannot mask legitimate delivery cargo.
   const raw = parseOutcomePayload(stdout, tag, outcomePath);
   if ("error" in raw || !isJsonRecord(raw.parsed)) {
     // Sparse / unreadable cargo: process success + opaque miss (not #598).
     return sparseReviewLoopCompleted(kind, sessionId);
   }
   const cargo: Record<string, unknown> = { ...raw.parsed };
-  delete cargo.escalate;
+  // Collector body is opaque evidence end-to-end — do not strip business keys.
+  if (kind !== "collector") {
+    delete cargo.escalate;
+  }
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
   const parsed =
     kind === "collector"
