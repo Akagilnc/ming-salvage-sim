@@ -78,10 +78,20 @@ const BOT_RETRIGGER_REQUIRED_LINES = [
 /**
  * Collector post-fix retrigger plan (#1145 executable capability).
  * Host does not run this loop — Collector soul/worker applies it via `gh` + sleep.
+ *
+ * Retrigger is gated on an explicit worker-owned `postFixTransition` fact
+ * (derived only from the head-bound committed-fixer resume marker), not on
+ * round arithmetic. Round-1 pristine stays idle; same-round first-fixer crash
+ * resume at a new head retriggers once when the fact is present.
  */
 export function collectorPostFixRetriggerPlan(input: {
-  readonly onlineReviewRound: number;
+  readonly onlineReviewRound?: number;
   readonly headOid?: string;
+  /**
+   * Explicit post-fix head-transition fact from the committed-fixer resume
+   * marker. Never inferred from evidence body or disposition cargo.
+   */
+  readonly postFixTransition?: boolean;
 }): {
   readonly shouldRetrigger: boolean;
   readonly commentBody: string;
@@ -89,10 +99,8 @@ export function collectorPostFixRetriggerPlan(input: {
   readonly intervalMs: number;
   readonly overdueWallMs: number;
 } {
-  const round = input.onlineReviewRound;
   const shouldRetrigger =
-    Number.isSafeInteger(round) &&
-    round > 1 &&
+    input.postFixTransition === true &&
     typeof input.headOid === "string" &&
     input.headOid.length > 0;
   return {

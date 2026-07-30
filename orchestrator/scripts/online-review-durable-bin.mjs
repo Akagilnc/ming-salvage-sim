@@ -10,6 +10,7 @@
  * Progress / receipts / evidence are namespaced by (round, head) so a
  * same-round re-ship at a new head cannot resume prior-cycle evidence.
  */
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   closeSync,
@@ -31,9 +32,9 @@ const BLOBS_DIR = "blobs";
 /** Wait budget while another live owner holds the lock. */
 const LOCK_WAIT_MS = 5000;
 /**
- * Lock lease TTL. Critical sections are short (append/read). Expired leases are
- * reclaimable even when the numeric PID appears alive — required for
- * cross-container PID reuse after a dead sandbox (#1145 F3).
+ * Stale threshold for *other* owner identities (cross-container PID reuse /
+ * dead sandbox wreckage). A live owner with matching process identity is never
+ * stolen merely for age (#1145 owner-instance/lease protocol).
  */
 const LOCK_STALE_MS = 2000;
 
@@ -64,6 +65,38 @@ function isPidAlive(pid) {
   }
 }
 
+/**
+ * Stable process identity for the lock owner-instance protocol.
+ * PID alone is not authoritative across containers (PID namespaces reuse
+ * numbers). Pairing pid + starttime distinguishes live same-owner from
+ * stale cross-container wreckage that collides on the numeric pid.
+ */
+function processStarttime(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return undefined;
+  try {
+    const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const closeParen = raw.lastIndexOf(")");
+    if (closeParen >= 0) {
+      const rest = raw.slice(closeParen + 2).trim().split(/\s+/);
+      // Field 22 (starttime) is index 19 after "pid (comm)".
+      const st = rest[19];
+      if (typeof st === "string" && /^\d+$/.test(st)) return `linux:${st}`;
+    }
+  } catch {
+    /* not Linux or process gone */
+  }
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 1000,
+    }).trim();
+    if (out.length > 0) return `ps:${out}`;
+  } catch {
+    /* ps unavailable or process gone */
+  }
+  return undefined;
+}
+
 function readLockOwner(lockPath) {
   try {
     const raw = readFileSync(lockPath, "utf8").trim();
@@ -76,10 +109,15 @@ function readLockOwner(lockPath) {
         typeof parsed.token === "string" && parsed.token.trim().length > 0
           ? parsed.token.trim()
           : undefined;
+      const starttime =
+        typeof parsed.starttime === "string" && parsed.starttime.trim().length > 0
+          ? parsed.starttime.trim()
+          : undefined;
       return {
         pid: Number.isFinite(pid) ? pid : undefined,
         ts: Number.isFinite(ts) ? ts : undefined,
         token,
+        starttime,
       };
     }
   } catch {
@@ -88,35 +126,48 @@ function readLockOwner(lockPath) {
   return undefined;
 }
 
+function unlinkLock(lockPath) {
+  try {
+    unlinkSync(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function tryReclaimStaleLock(lockPath) {
   const owner = readLockOwner(lockPath);
   const now = Date.now();
 
-  // Lease expiry is the cross-container-safe signal: a dead sandbox may leave a
-  // lock whose numeric PID collides with a live process in the replacement
-  // container. Fresh live leases (recent ts) stay exclusive.
-  if (owner !== undefined && owner.ts !== undefined) {
-    const age = now - owner.ts;
-    if (Number.isFinite(age) && age >= LOCK_STALE_MS) {
-      try {
-        unlinkSync(lockPath);
-        return true;
-      } catch {
+  if (owner !== undefined) {
+    const alive =
+      owner.pid !== undefined ? isPidAlive(owner.pid) : false;
+
+    if (alive) {
+      const liveStart =
+        owner.pid !== undefined ? processStarttime(owner.pid) : undefined;
+      // Same live process identity → never steal merely for age.
+      if (
+        owner.starttime !== undefined &&
+        liveStart !== undefined &&
+        owner.starttime === liveStart
+      ) {
         return false;
       }
-    }
-    // Fresh lease + live pid → exclusive (including same-pid collision with
-    // a concurrent holder that just wrote).
-    if (owner.pid !== undefined && isPidAlive(owner.pid)) {
+      // PID appears alive but identity mismatches (cross-container PID reuse)
+      // or owner left no starttime: reclaim only when the lease is stale.
+      if (owner.ts !== undefined) {
+        const age = now - owner.ts;
+        if (Number.isFinite(age) && age >= LOCK_STALE_MS) {
+          return unlinkLock(lockPath);
+        }
+      }
+      // Fresh foreign/unknown lease — wait out the budget.
       return false;
     }
-    // Fresh lease but dead/missing pid → reclaim.
-    try {
-      unlinkSync(lockPath);
-      return true;
-    } catch {
-      return false;
-    }
+
+    // Dead or missing pid → reclaim (token-checked write happens on re-acquire).
+    return unlinkLock(lockPath);
   }
 
   // No owner token/ts: reclaim only when mtime is stale (half-created wreckage).
@@ -126,29 +177,35 @@ function tryReclaimStaleLock(lockPath) {
   } catch {
     return false;
   }
-  try {
-    unlinkSync(lockPath);
-    return true;
-  } catch {
-    return false;
-  }
+  return unlinkLock(lockPath);
+}
+
+/** Release only when the on-disk token still matches this acquisition. */
+function releaseLockIfOwner(lockPath, token) {
+  const owner = readLockOwner(lockPath);
+  if (owner === undefined || owner.token !== token) return;
+  unlinkLock(lockPath);
 }
 
 function withLock(root, fn) {
   const lockPath = join(root, LOCK_FILE);
   const started = Date.now();
   let fd;
+  let token;
   while (fd === undefined) {
     try {
       fd = openSync(lockPath, "wx");
       // Persist owner immediately so a crash between create and finally can be
-      // diagnosed and reclaimed by a later CLI call. Token + ts form the lease;
-      // PID alone is not authoritative across containers.
+      // diagnosed and reclaimed by a later CLI call. Token + starttime form the
+      // owner-instance lease; PID alone is not authoritative across containers.
+      token = randomBytes(16).toString("hex");
+      const starttime = processStarttime(process.pid);
       writeFileSync(
         lockPath,
         `${JSON.stringify({
           pid: process.pid,
-          token: randomBytes(16).toString("hex"),
+          token,
+          ...(starttime !== undefined ? { starttime } : {}),
           ts: Date.now(),
         })}\n`,
         "utf8",
@@ -171,10 +228,8 @@ function withLock(root, fn) {
     fn();
   } finally {
     closeSync(fd);
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      /* ignore */
+    if (typeof token === "string") {
+      releaseLockIfOwner(lockPath, token);
     }
   }
 }

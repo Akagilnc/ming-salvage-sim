@@ -1984,9 +1984,11 @@ export async function runFamilyOnlineReviewLoop(input: {
     }
   }
   // #1145 post-fixer seam: opaque fixer cargo may already be durable (incl. no-op).
+  // Cycle-bound: prior-cycle unconsumed same-round cargo cannot override a re-ship.
   const pendingFixerCargo = lastPendingFixerCargoFromFamilyLedger(
     familyLedger,
     loopState.round,
+    { shippedAnchorHead: shipHead },
   );
   const resumedFixAuthorization =
     pendingFixerCargo !== undefined
@@ -2019,11 +2021,20 @@ export async function runFamilyOnlineReviewLoop(input: {
           // (progress/receipts/blobs) is worker-owned via mounted durable dir +
           // bin.mjs — host never classify/progress-write/mint pointer.
           const ledgerNow = await input.familyBackend.readFamilyLedger();
-          // Prefer live in-loop lastFixSha (updated after each fix); else cycle head.
+          // Prefer landing reviewed head (includes pending committed-fixer resume
+          // SHA) so same-round first-fixer crash re-dispatches Collector at the
+          // new head instead of short-circuiting on the prior ship-head checkpoint.
+          const landingHead =
+            typeof landing.shipDelivery?.prHead === "string"
+              ? landing.shipDelivery.prHead.trim()
+              : "";
           const bookkeepingHead =
-            loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
-              ? loopState.lastFixSha
-              : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead);
+            landingHead.length > 0
+              ? landingHead
+              : loopState.lastFixSha !== undefined &&
+                  loopState.lastFixSha.length > 0
+                ? loopState.lastFixSha
+                : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead);
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
             round,
@@ -2286,10 +2297,12 @@ export async function runFamilyOnlineReviewLoop(input: {
           lastFixerOnlineReviewRound = round;
 
           // Durable fixer cargo already on ledger → never re-dispatch Fixer.
+          // Cycle-bound to current shipped anchor (same as loop entry).
           const ledgerNow = await input.familyBackend.readFamilyLedger();
           const already = lastPendingFixerCargoFromFamilyLedger(
             ledgerNow,
             round,
+            { shippedAnchorHead: shipHead },
           );
           if (already !== undefined) {
             return already.fixerResult;

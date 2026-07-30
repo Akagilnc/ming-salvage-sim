@@ -43,6 +43,7 @@ const MONITORED_KINDS: ReadonlySet<WorkerKind> = new Set([
   "cmr",
   "verify",
   "fixer",
+  "collector",
   "cleanup",
   "landing",
 ]);

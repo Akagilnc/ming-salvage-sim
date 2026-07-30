@@ -409,12 +409,17 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
  * Returns opaque fixerResult when fixer_completed(round) exists and has not
  * been consumed by a later mergeable(round) or verify_continued(round).
  * Legal no-op (no SHA) is first-class cargo — never gated on committed.
+ *
+ * When `shippedAnchorHead` is set, only entries after the latest matching
+ * `shipped` marker for that head are considered — prior-cycle unconsumed
+ * same-round cargo must not override a re-shipped head (#1145 cycle bound).
  */
 export function lastPendingFixerCargoFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
     readonly onlineReviewRound?: number;
+    readonly familyHeadAfter?: string;
     readonly fixerResultCargo?: FixerResult;
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly fixMarkedFindingThreads?: ReadonlyArray<{
@@ -423,6 +428,10 @@ export function lastPendingFixerCargoFromFamilyLedger(
     }>;
   }>,
   round: number,
+  opts?: {
+    /** Current matching shipped anchor head — cycle window lower bound. */
+    readonly shippedAnchorHead?: string;
+  },
 ):
   | {
       readonly fixerResult: FixerResult;
@@ -434,6 +443,27 @@ export function lastPendingFixerCargoFromFamilyLedger(
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
+
+  let cycleStart = 0;
+  const anchor =
+    typeof opts?.shippedAnchorHead === "string"
+      ? opts.shippedAnchorHead.trim()
+      : "";
+  if (anchor.length > 0) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      if (
+        entry.status === "shipped" &&
+        entry.event === "shipped" &&
+        typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim() === anchor
+      ) {
+        cycleStart = i + 1;
+        break;
+      }
+    }
+  }
+
   let pendingIdx = -1;
   let pending: FixerResult | undefined;
   let pendingAuth:
@@ -445,7 +475,7 @@ export function lastPendingFixerCargoFromFamilyLedger(
         }>;
       }
     | undefined;
-  for (let i = 0; i < entries.length; i++) {
+  for (let i = cycleStart; i < entries.length; i++) {
     const entry = entries[i]!;
     if (entry.onlineReviewRound !== round) continue;
     if (
@@ -551,6 +581,20 @@ function convergenceHeadForLanding(input: {
   });
 }
 
+/**
+ * Explicit Collector post-fix transition fact (#1145).
+ * True only when a head-bound committed-fixer resume marker advanced the
+ * reviewed head — never from evidence body, disposition cargo, or round alone.
+ */
+export function postFixTransitionFromCommittedFixerResumeMarker(input: {
+  readonly committedFixerHead?: string;
+}): boolean {
+  return (
+    typeof input.committedFixerHead === "string" &&
+    input.committedFixerHead.trim().length > 0
+  );
+}
+
 /** Base landing before the Online Review Action assembles evidence (#1145). */
 export function buildOnlineReviewBaseLanding(
   ship: ShipResult,
@@ -561,6 +605,9 @@ export function buildOnlineReviewBaseLanding(
     shipPrHead: ship.prHead,
     postFixCommitSha,
   });
+  const postFixTransition = postFixTransitionFromCommittedFixerResumeMarker({
+    committedFixerHead: postFixCommitSha,
+  });
   return {
     shipDelivery: {
       branch: ship.branch,
@@ -569,6 +616,7 @@ export function buildOnlineReviewBaseLanding(
       ...(ship.status !== undefined ? { status: ship.status } : {}),
     },
     onlineReviewRound: round,
+    ...(postFixTransition ? { postFixTransition: true } : {}),
   };
 }
 

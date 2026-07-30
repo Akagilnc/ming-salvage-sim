@@ -21,7 +21,10 @@ judge enum**。判官（Verify）是下一棒。
 
 - `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`
 - `BOT_POLL_INTERVAL_MS` / `BOT_OVERDUE_MIN_WALL_MS` / `BOT_OVERDUE_POLL_COUNT`
-- `collectorPostFixRetriggerPlan({ onlineReviewRound, headOid })`
+- `collectorPostFixRetriggerPlan({ headOid, postFixTransition })`
+  — `postFixTransition` 是 landing 上的显式 worker-owned 事实（仅来自
+  head-bound committed-fixer resume marker），**不是** round>1 算术，也不是
+  evidence body / disposition cargo。
 
 ### Durable capability（#1145 DecisionGate A · 本席唯一进度真源）
 
@@ -73,14 +76,18 @@ CLI="node $DURABLE/bin.mjs"
    deadline 先 `progress-set-deadline`。
 5. 超时仍不齐 → evidence 如实标记 dropped / pending，或 typed `escalate`。
 
-### post-fix 重触发（round > 1 或 landing head 已是 fix SHA）
+### post-fix 重触发（landing.`postFixTransition` === true）
 
-1. 开席 classify；已有 handle 则跳过重触发。
-2. retrigger：`receipt-attempted` → `gh pr comment`（body =
+1. 开席 classify；已有 handle 则跳过重触发（receipt 幂等）。
+2. `collectorPostFixRetriggerPlan({ headOid: H, postFixTransition: landing.postFixTransition })`
+   — 仅当 fact 为 true 且 H 非空才 shouldRetrigger。**round-1 无 marker 不触发**；
+   同轮 first-fixer crash 恢复、landing 带 committed-fixer head fact 时，在新 head
+   上恰好重触发一次。
+3. retrigger：`receipt-attempted` → `gh pr comment`（body =
    `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`，至多一条）→ `receipt-succeeded`。
    重入先 `receipt-decide` + 核外事实。
-3. 新 head 上 overdue 窗口有限轮询 → `evidence-put` → 交卷 handle。
-4. 网络抖动有限重试后仍无法取证 → typed `escalate`。
+4. 新 head 上 overdue 窗口有限轮询 → `evidence-put` → 交卷 handle。
+5. 网络抖动有限重试后仍无法取证 → typed `escalate`。
 
 ## 交卷
 
