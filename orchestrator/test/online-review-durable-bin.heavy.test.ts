@@ -313,6 +313,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       cargoPointer: "blobs/r1-handle-only",
     });
 
+    // cargoPointer stripped; remaining keys (including top-level evidence) kept.
     const bodyAndPointer = parseCollectorOutcome(
       `<collector>${JSON.stringify({
         cargoPointer: "blobs/r1-both",
@@ -327,24 +328,32 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
       kind: "collector",
       cargoPointer: "blobs/r1-both",
       evidence: {
-        prUrl: "pr://x",
-        headOid: "abc",
-        marker: "kept",
+        evidence: {
+          prUrl: "pr://x",
+          headOid: "abc",
+          marker: "kept",
+        },
       },
     });
 
-    // Keyless body-only — no prUrl/headOid admission required.
-    const keylessNested = parseCollectorOutcome(
+    // Mixed body with top-level evidence object + siblings — no unwrap, full body.
+    const mixed = parseCollectorOutcome(
       `<collector>${JSON.stringify({
-        evidence: { sparse: true, marker: "keyless-body-1145" },
+        evidence: { threads: [{ id: "t1" }] },
+        checkRuns: [{ name: "ci", status: "completed" }],
+        marker: "mixed-body-1145",
       })}</collector>`,
     );
-    expect(keylessNested).toEqual({
+    expect(mixed).toEqual({
       kind: "collector",
-      evidence: { sparse: true, marker: "keyless-body-1145" },
+      evidence: {
+        evidence: { threads: [{ id: "t1" }] },
+        checkRuns: [{ name: "ci", status: "completed" }],
+        marker: "mixed-body-1145",
+      },
     });
 
-    // Top-level sidecar body (production form) — same keyless blob verbatim.
+    // Top-level sidecar body (production form) — keyless blob verbatim.
     const keylessTopLevel = parseCollectorOutcome(
       `<collector>${JSON.stringify({
         sparse: true,
@@ -360,6 +369,92 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     expect(parseCollectorOutcome("<collector>{}</collector>")).toEqual({
       kind: "cargo",
     });
+  });
+
+  it("truncated final JSONL record after valid progress/receipt → progress-classify corrupt; blocks mutate", () => {
+    const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-corrupt-1145-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
+
+      expect(
+        runBin(hostPath, [
+          "progress-init",
+          "--round",
+          "1",
+          "--head",
+          HEAD_A,
+        ]).status,
+      ).toBe(0);
+
+      const attempted = runBin(hostPath, [
+        "receipt-attempted",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+        "--seat",
+        "verify",
+        "--op",
+        "reply",
+        "--key",
+        "k-trunc-1145",
+      ]);
+      expect(attempted.status).toBe(0);
+
+      const statePath = join(hostPath, "state.jsonl");
+      const before = readFileSync(statePath, "utf8");
+      expect(before.endsWith("\n")).toBe(true);
+      // Crash mid-append: truncated final record, no trailing newline.
+      writeFileSync(statePath, `${before}{"v":1,"kind":"collection_progress","round":1,"hea`);
+
+      const classify = runBin(hostPath, [
+        "progress-classify",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+      ]);
+      expect(classify.status).toBe(0);
+      const classified = JSON.parse(classify.stdout) as {
+        kind?: string;
+        reason?: string;
+      };
+      expect(classified.kind).toBe("corrupt");
+      expect(classified.reason).toBe("unparseable_event");
+      // Must not look pristine / resume past the broken tail.
+      expect(classified.kind).not.toBe("pristine");
+      expect(classified.kind).not.toBe("resume");
+
+      // Mutation/append blocked — refuse to join the truncated fragment.
+      const blockedInit = runBin(hostPath, [
+        "progress-init",
+        "--round",
+        "2",
+        "--head",
+        HEAD_B,
+      ]);
+      expect(blockedInit.status).not.toBe(0);
+      expect(blockedInit.stderr).toMatch(/corrupt/i);
+
+      const blockedReceipt = runBin(hostPath, [
+        "receipt-attempted",
+        "--round",
+        "1",
+        "--head",
+        HEAD_A,
+        "--key",
+        "k-after-corrupt",
+      ]);
+      expect(blockedReceipt.status).not.toBe(0);
+      expect(blockedReceipt.stderr).toMatch(/corrupt/i);
+
+      // File still ends with the truncated fragment (no silent join-append).
+      expect(readFileSync(statePath, "utf8")).toBe(
+        `${before}{"v":1,"kind":"collection_progress","round":1,"hea`,
+      );
+    } finally {
+      rmSync(workingRepo, { recursive: true, force: true });
+    }
   });
 
   it("host durable module is mount/copy surface only", async () => {
