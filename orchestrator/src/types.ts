@@ -904,16 +904,14 @@ export type OnlineReviewTerminalState =
   | "contract_drift";
 
 /**
- * Collector opaque evidence envelope (#1145).
+ * Collector opaque evidence blob (#1145 / ADR 0131).
  *
- * Host types only the transport keys `prUrl` + `headOid`. Every other field is
- * unknown business cargo transported as-is — Runner never expands a second
- * schema, never invents defaults, never filters keys.
+ * Entirely opaque business cargo transported as-is — Runner never expands a
+ * schema, never invents defaults, never filters keys, never admits on field shape.
  */
 export type OnlineReviewLandingSnapshot = {
-  readonly prUrl: string;
-  readonly headOid: string;
-} & { readonly [key: string]: unknown };
+  readonly [key: string]: unknown;
+};
 
 export interface WorkerLandingPayload {
   /**

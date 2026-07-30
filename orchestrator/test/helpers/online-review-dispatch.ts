@@ -22,27 +22,16 @@ import { stubCollectorEvidence } from "../../src/reviewLoopOutcome.js";
  * - optional `dispatchCollector` overrides the default evidence seat.
  */
 /**
- * Host-typed keys only. Named snapshots (e.g. PrReviewSnapshot) stay assignable
- * structurally; loose object literals use {@link LooseEvidenceFixture}.
- * No business-field allowlist — runtime extras ride through spread (#1145).
+ * Fixture bodies: fully opaque blob, or any named structural snapshot that
+ * happens to carry prUrl/headOid (e.g. PrReviewSnapshot). No admission gate —
+ * both arms are copied verbatim into Collector evidence.
  */
-type EvidenceFixture = {
-  readonly prUrl: string;
-  readonly headOid: string;
-};
-
-/** Open fixture for object-literal extras (index signature). */
-type LooseEvidenceFixture = EvidenceFixture & {
-  readonly [key: string]: unknown;
-};
-
-/** Public input: named snapshots OR loose literals with opaque extras. */
-type EvidenceInput = EvidenceFixture | LooseEvidenceFixture;
-
-function toEvidence(raw: EvidenceFixture): OnlineReviewLandingSnapshot {
-  // Opaque envelope only — remaining own keys ride through as-is (#1145).
-  return { ...raw, prUrl: raw.prUrl, headOid: raw.headOid };
-}
+type EvidenceInput =
+  | OnlineReviewLandingSnapshot
+  | {
+      readonly prUrl: string;
+      readonly headOid: string;
+    };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
@@ -53,8 +42,6 @@ function asCollectorDispatchResult(
   raw: unknown,
 ): OnlineReviewCollectorDispatchResult | undefined {
   if (!isRecord(raw)) return undefined;
-  // Bare evidence fixtures carry prUrl at the top level.
-  if (typeof raw.prUrl === "string") return undefined;
   if (!("evidence" in raw) && !("cargoPointer" in raw) && !("artifacts" in raw)) {
     return undefined;
   }
@@ -65,17 +52,8 @@ function asCollectorDispatchResult(
   } = {};
   if (raw.evidence !== undefined) {
     if (!isRecord(raw.evidence)) return undefined;
-    // Opaque pass-through — sparse body legal; no prUrl/headOid gate (#1145).
-    if (
-      typeof raw.evidence.prUrl === "string" &&
-      typeof raw.evidence.headOid === "string"
-    ) {
-      // Full opaque pass-through — no field allowlist.
-      result.evidence = toEvidence(raw.evidence as EvidenceFixture);
-    } else {
-      // Sparse opaque blob — legal cargo≠fate; no prUrl/headOid required.
-      result.evidence = { ...raw.evidence };
-    }
+    // Any object body — copy verbatim.
+    result.evidence = { ...raw.evidence };
   }
   if (typeof raw.cargoPointer === "string") {
     result.cargoPointer = raw.cargoPointer;
@@ -87,13 +65,14 @@ function asCollectorDispatchResult(
   return result;
 }
 
-function asEvidenceFixture(raw: unknown): EvidenceFixture | undefined {
+/** Bare opaque body (not a seat wrapper) — copy all own keys verbatim. */
+function asBareEvidence(raw: unknown): OnlineReviewLandingSnapshot | undefined {
   if (!isRecord(raw)) return undefined;
-  if (typeof raw.prUrl !== "string" || typeof raw.headOid !== "string") {
+  if ("evidence" in raw || "cargoPointer" in raw || "artifacts" in raw) {
     return undefined;
   }
-  // Keep the full runtime object so soft fields survive toEvidence spread.
-  return raw as EvidenceFixture;
+  // Spread into a fresh index-signature blob so named snapshots assign cleanly.
+  return { ...raw };
 }
 
 /** Bare VerifyResult vs seat wrapper — structural, no cast fork. */
@@ -222,8 +201,8 @@ export function onlineReviewDispatch(input: {
       const raw = typeof src === "function" ? await src(round) : src;
       const asResult = asCollectorDispatchResult(raw);
       if (asResult !== undefined) return asResult;
-      const fixture = asEvidenceFixture(raw);
-      if (fixture !== undefined) return { evidence: toEvidence(fixture) };
+      const bare = asBareEvidence(raw);
+      if (bare !== undefined) return { evidence: bare };
       return { evidence: defaultEvidence() };
     },
     dispatchVerify: async (landing, round) => {

@@ -165,7 +165,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
     }
   });
 
-  it("parseCollectorOutcome: pointer-only is legal; missing body is not fate", () => {
+  it("parseCollectorOutcome: pointer-only is legal; any object body is verbatim; missing body is not fate", () => {
     const pointerOnly = parseCollectorOutcome(
       `<collector>${JSON.stringify({
         cargoPointer: "blobs/r1-handle-only",
@@ -186,7 +186,7 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         },
       })}</collector>`,
     );
-    expect(bodyAndPointer).toMatchObject({
+    expect(bodyAndPointer).toEqual({
       kind: "collector",
       cargoPointer: "blobs/r1-both",
       evidence: {
@@ -194,6 +194,29 @@ describe("#1145 durable bin.mjs CLI (sole capability)", () => {
         headOid: "abc",
         marker: "kept",
       },
+    });
+
+    // Keyless body-only — no prUrl/headOid admission required.
+    const keylessNested = parseCollectorOutcome(
+      `<collector>${JSON.stringify({
+        evidence: { sparse: true, marker: "keyless-body-1145" },
+      })}</collector>`,
+    );
+    expect(keylessNested).toEqual({
+      kind: "collector",
+      evidence: { sparse: true, marker: "keyless-body-1145" },
+    });
+
+    // Top-level sidecar body (production form) — same keyless blob verbatim.
+    const keylessTopLevel = parseCollectorOutcome(
+      `<collector>${JSON.stringify({
+        sparse: true,
+        marker: "keyless-body-1145",
+      })}</collector>`,
+    );
+    expect(keylessTopLevel).toEqual({
+      kind: "collector",
+      evidence: { sparse: true, marker: "keyless-body-1145" },
     });
 
     // Empty / off-shape → opaque miss cargo (not throw / not process fail).

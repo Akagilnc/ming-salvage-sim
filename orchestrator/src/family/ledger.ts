@@ -1434,7 +1434,7 @@ export async function recordOnlineReviewFixCommitted(
  * Append one Collector-completed durable checkpoint (#1145 AC2).
  * Action-owned: stores opaque evidence handle/body so crash re-entry does not
  * re-burn completed wait/evidence. Runner never interprets the body.
- * Sparse cargo is legal (ADR 0131 cargo≠fate) — no prUrl/headOid field gate.
+ * Sparse cargo is legal (ADR 0131 cargo≠fate) — no field structure gate.
  * `familyHeadAfter` is schedule bookkeeping (ship/fix head), never lifted from
  * evidence business fields.
  */
@@ -1443,7 +1443,7 @@ export async function recordOnlineReviewCollectorCompleted(
   record: {
     readonly onlineReviewRound: number;
     /** Opaque evidence body — may be sparse; not field-validated. */
-    readonly evidence?: OnlineReviewLandingSnapshot | { readonly [key: string]: unknown };
+    readonly evidence?: OnlineReviewLandingSnapshot;
     readonly cargoPointer?: string;
     readonly pr?: string;
     /** Bookkeeping head from ship/fix context — not from evidence cargo. */

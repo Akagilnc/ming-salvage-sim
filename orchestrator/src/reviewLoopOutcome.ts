@@ -46,7 +46,8 @@ export function stubCollectorEvidence(
     readonly [key: string]: unknown;
   },
 ): OnlineReviewLandingSnapshot {
-  // Minimal host-typed keys only — free-form extras opt-in via overrides.
+  // Convenience defaults for fixtures that still want PR/head bookkeeping keys.
+  // Production transport admits any object body — these keys are not required.
   return {
     ...overrides,
     prUrl: overrides?.prUrl ?? "pr://offline",

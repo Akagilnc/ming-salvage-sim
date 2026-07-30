@@ -21,6 +21,8 @@
  *    - Post-fixer Verify continue → crash before next Collector → no replay
  * 11. Handle-only cargoPointer (evidence-put style) survives shared-tail →
  *     Verify landing / collector_completed / re-entry without body or re-wait.
+ * 12. Keyless body-only Collector blob (no prUrl/headOid) reaches Verify
+ *     verbatim with no fate rewrite.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1708,6 +1710,58 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(
         backend.ledger.some(
           (e) => e.event === "online_review_collector_completed",
+        ),
+      ).toBe(true);
+    });
+
+    it("keyless body-only Collector blob reaches Verify verbatim; no fate change",
+      async () => {
+      const KEYLESS = { sparse: true, marker: "keyless-body-1145" } as const;
+      const backend = new TracerFamilyBackend();
+      backend.collectorEvidence = { ...KEYLESS };
+      let verifySaw: unknown;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifySaw = landing?.onlineReviewSnapshot;
+        // Host must not invent prUrl/headOid or rewrite fate from body shape.
+        expect(landing?.onlineReviewSnapshot).toEqual(KEYLESS);
+        expect(
+          (landing?.onlineReviewSnapshot as { prUrl?: unknown } | undefined)
+            ?.prUrl,
+        ).toBeUndefined();
+        expect(
+          (landing?.onlineReviewSnapshot as { headOid?: unknown } | undefined)
+            ?.headOid,
+        ).toBeUndefined();
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(verifySaw).toEqual(KEYLESS);
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(backend.verifyDispatchCount).toBe(1);
+
+      const completed = backend.ledger.find(
+        (e) => e.event === "online_review_collector_completed",
+      );
+      expect(completed?.collectorEvidenceCargo).toEqual(KEYLESS);
+      expect(completed?.cargoPointer).toBeUndefined();
+      // Bookkeeping head stays ship/fix SHA — never lifted from body.
+      expect(completed?.familyHeadAfter).toBe(offlineShip.prHead);
+      expect(
+        backend.ledger.some(
+          (e) => e.event === "online_review_mergeable",
         ),
       ).toBe(true);
     });
