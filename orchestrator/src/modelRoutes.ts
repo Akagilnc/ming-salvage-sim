@@ -271,9 +271,10 @@ function parseRoutePreset(
  * Production docs point `ORCHESTRATOR_ROUTE_PRESETS_PATH` at an owner-edited
  * external file. When `collector` became a required slot, existing custom files
  * without that key would fail strict parse before worksite creation. Materialize
- * `collector` into the file once (prefer same-named factory preset, else
- * factory `normal`, else shipped default slug) — never default/alias at runtime
- * inside `parseRoutePreset`.
+ * `collector` into the file once only when the key is absent (prefer same-named
+ * factory preset, else factory `normal`, else shipped default slug) — never
+ * rewrite explicit values (`null`, `""`, whitespace, numbers, …) and never
+ * default/alias at runtime inside `parseRoutePreset`.
  */
 function materializeCollectorSlotInExternalPresetsFile(path: string): void {
   if (path === DEFAULT_ROUTE_PRESETS_PATH) return;
@@ -329,7 +330,9 @@ function materializeCollectorSlotInExternalPresetsFile(path: string): void {
     const preset = value as Record<string, unknown>;
     if (typeof preset.slots !== "object" || preset.slots === null) continue;
     const slots = preset.slots as Record<string, unknown>;
-    if (typeof slots.collector === "string" && slots.collector.trim() !== "") {
+    // Only absent-key is omission. Explicit null/""/whitespace/number stay so
+    // parseRoutePreset's strict slot validation rejects them unchanged.
+    if (Object.prototype.hasOwnProperty.call(slots, "collector")) {
       continue;
     }
     slots.collector =

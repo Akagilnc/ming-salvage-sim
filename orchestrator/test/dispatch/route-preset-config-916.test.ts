@@ -348,6 +348,41 @@ describe("#916 route presets config load + priority", () => {
     expect(after.normal.slots.collector).toBe("grok-4.5");
     expect(after["custom-only"].slots.collector).toBe("grok-4.5");
   });
+
+  // #1145: explicit invalid collector is owner intent — migrate only absent key,
+  // leave the value untouched so parseRoutePreset rejects under strict slots.
+  it.each([123, null, "", "   "] as const)(
+    "does not rewrite explicit invalid collector %j on external presets",
+    (invalidCollector) => {
+      const slots = fullSlots();
+      (slots as Record<string, unknown>).collector = invalidCollector;
+
+      const path = writePresetsFile({
+        broken: {
+          slots,
+          legCollections: {
+            cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+          },
+        },
+      });
+
+      const beforeRaw = readFileSync(path, "utf8");
+      const before = JSON.parse(beforeRaw) as {
+        broken: { slots: Record<string, unknown> };
+      };
+      expect(before.broken.slots).toHaveProperty("collector", invalidCollector);
+
+      vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+      resetRoutePresetsCacheForTests();
+
+      expect(() => resolveRouteModels("broken", {})).toThrow(
+        /route preset "broken" missing slot "collector"/,
+      );
+
+      // Disk must stay byte-stable — migration must not rewrite explicit values.
+      expect(readFileSync(path, "utf8")).toBe(beforeRaw);
+    },
+  );
 });
 
 describe("#914 C1 custom tightFamilies survive route mutations", () => {
