@@ -2658,6 +2658,11 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(landing?.onlineReviewSnapshot !== undefined
             ? { onlineReviewSnapshot: landing.onlineReviewSnapshot }
             : {}),
+          // Opaque durable handle — never inspect body, never mint (#1145).
+          ...(landing?.cargoPointer !== undefined &&
+          landing.cargoPointer.length > 0
+            ? { cargoPointer: landing.cargoPointer }
+            : {}),
           shipDelivery: landing?.shipDelivery,
           onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,
           fixMarkedFindingIdentityKeys:
@@ -2806,7 +2811,38 @@ export class RealFamilyBackend implements FamilyBackend {
     // completed: sidecar/stdout enrich role cargo only — never escalate.
     // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
     // cargo shape is never a #598 process failure (#899 / ADR 0131).
-    return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
+    const cargoResult = reviewLoopCargoResult(
+      result.stdout,
+      spec.kind,
+      sessionId,
+      outcomePath,
+    );
+    // Envelope cargoPointer is typed traffic — merge into Collector completed
+    // output when sidecar did not already carry the handle (#1145 / DecisionGate A).
+    if (
+      spec.kind === "collector" &&
+      cargoResult.kind === "completed" &&
+      cargoResult.output.kind === "collector"
+    ) {
+      const envelopePointer =
+        typeof decoded.value.cargoPointer === "string" &&
+        decoded.value.cargoPointer.trim().length > 0
+          ? decoded.value.cargoPointer.trim()
+          : undefined;
+      if (
+        envelopePointer !== undefined &&
+        cargoResult.output.cargoPointer === undefined
+      ) {
+        return {
+          ...cargoResult,
+          output: {
+            ...cargoResult.output,
+            cargoPointer: envelopePointer,
+          },
+        };
+      }
+    }
+    return cargoResult;
   }
 
   /**
@@ -4636,9 +4672,10 @@ function reviewLoopCargoResult(
 }
 
 /**
- * #1145 Collector cargo-only decode. Evidence is opaque — whole-blob
- * passthrough when prUrl+headOid are present. Sparse cargo is opaque miss
- * (never throws / never fails the Action).
+ * #1145 Collector cargo-only decode. Opaque handle and/or body.
+ * Pointer-only completion is legal — never require prUrl/headOid, never
+ * inspect pointer contents, never mint a replacement, never turn missing
+ * body into fate (ADR 0131 cargo ≠ fate / DecisionGate A).
  */
 export function parseCollectorOutcome(
   stdout: string,
@@ -4647,31 +4684,39 @@ export function parseCollectorOutcome(
   const payload = parseOutcomePayload(stdout, "collector", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  const body =
-    isJsonRecord(parsed.evidence) ? parsed.evidence : parsed;
-  if (!isJsonRecord(body)) return RECEIPT_CARGO;
-  if (
-    typeof body.prUrl !== "string" ||
-    body.prUrl.trim().length === 0 ||
-    typeof body.headOid !== "string" ||
-    body.headOid.trim().length === 0
-  ) {
-    return RECEIPT_CARGO;
-  }
-  // Sole typing boundary: only prUrl/headOid are host-typed; remaining keys
-  // ride through unknown as-is (no secondary schema, no predicate laundering).
-  const evidence: OnlineReviewLandingSnapshot = {
-    ...body,
-    prUrl: body.prUrl.trim(),
-    headOid: body.headOid.trim(),
-  };
   const cargoPointer =
     typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
       ? parsed.cargoPointer.trim()
       : undefined;
+  const body = isJsonRecord(parsed.evidence)
+    ? parsed.evidence
+    : // Top-level body only when it is not a pure handle envelope.
+      isJsonRecord(parsed) &&
+        (typeof parsed.prUrl === "string" || typeof parsed.headOid === "string")
+      ? parsed
+      : undefined;
+  let evidence: OnlineReviewLandingSnapshot | undefined;
+  if (
+    isJsonRecord(body) &&
+    typeof body.prUrl === "string" &&
+    body.prUrl.trim().length > 0 &&
+    typeof body.headOid === "string" &&
+    body.headOid.trim().length > 0
+  ) {
+    // Sole typing boundary when body is present: prUrl/headOid only.
+    evidence = {
+      ...body,
+      prUrl: body.prUrl.trim(),
+      headOid: body.headOid.trim(),
+    };
+  }
+  if (evidence === undefined && cargoPointer === undefined) {
+    // Nothing usable — opaque miss (never fails the Action).
+    return RECEIPT_CARGO;
+  }
   return {
     kind: "collector",
-    evidence,
+    ...(evidence !== undefined ? { evidence } : {}),
     ...(cargoPointer !== undefined ? { cargoPointer } : {}),
   };
 }

@@ -974,6 +974,12 @@ export interface WorkerLandingPayload {
   /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /**
+   * #1145 opaque durable evidence handle from Collector (worker cargoPointer).
+   * Runner transports as-is to Verify landing / landing file; never inspects
+   * the pointed body and never mints a replacement handle.
+   */
+  readonly cargoPointer?: string;
+  /**
    * Opaque fixer envelope cargo returned to the same Verify judge (#1145).
    * Runner transports as-is; does not branch topology on committed /
    * alreadySatisfied / fixCommitSha. Three-state disposition decides next.

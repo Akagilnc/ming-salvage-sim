@@ -19,6 +19,8 @@
  *    - Fixer no-op completed → crash before same-round Verify → re-entry
  *    - Fixer commit completed → crash before same-round Verify → re-entry
  *    - Post-fixer Verify continue → crash before next Collector → no replay
+ * 11. Handle-only cargoPointer (evidence-put style) survives shared-tail →
+ *     Verify landing / collector_completed / re-entry without body or re-wait.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -81,7 +83,7 @@ const CURRENT_ROUND_6_THREADS = CURRENT_ROUND_6_KEYS.map((identityKey, i) => ({
 }));
 
 class TracerFamilyBackend implements FamilyBackend {
-  readonly ledger: FamilyLedgerEntry[] = [];
+  ledger: FamilyLedgerEntry[] = [];
   readonly landings: WorkerLandingPayload[] = [];
   readonly kinds: string[] = [];
   readonly models: string[] = [];
@@ -99,16 +101,22 @@ class TracerFamilyBackend implements FamilyBackend {
   collectorEvidence = stubCollectorEvidence({
     prUrl: offlineShip.pr,
     headOid: offlineShip.prHead,
-    totalFindingCount: 6,
     // Distinct marker so passthrough asserts the exact blob.
-    droppedBots: ["marker-bot-1145"],
+    marker: "marker-bot-1145",
   });
+  /** When set, Collector returns handle-only (no evidence body). */
+  collectorCargoPointer: string | undefined;
   verifyImpl?: (
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ) => Promise<WorkerResult>;
   fixerImpl?: (
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ) => Promise<WorkerResult>;
+  collectorImpl?: (
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
@@ -139,8 +147,7 @@ class TracerFamilyBackend implements FamilyBackend {
         collectorEvidenceCargo: stubCollectorEvidence({
           prUrl: offlineShip.pr,
           headOid: offlineShip.prHead,
-          totalFindingCount: 6,
-          droppedBots: ["marker-bot-1145"],
+          marker: "marker-bot-1145",
         }),
         ts: "2026-01-01T00:01:00.000Z",
       });
@@ -176,6 +183,22 @@ class TracerFamilyBackend implements FamilyBackend {
       // Simulate async seat so ordering vs verify is observable.
       await Promise.resolve();
       this.collectorReturnedAt = Date.now();
+      if (this.collectorImpl !== undefined) {
+        return this.collectorImpl(spec, ctx, landing);
+      }
+      if (
+        this.collectorCargoPointer !== undefined &&
+        this.collectorCargoPointer.length > 0
+      ) {
+        // Handle-only completion — no evidence body (#1145 DecisionGate A).
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            cargoPointer: this.collectorCargoPointer,
+          },
+        };
+      }
       return {
         kind: "completed",
         output: { kind: "collector", evidence: this.collectorEvidence },
@@ -293,7 +316,9 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     // DecisionGate A: host must NOT write collection_progress to family ledger.
     expect(
       backend.ledger.some(
-        (e) => e.event === "online_review_collection_progress",
+        (e) =>
+          (e.event as string | undefined) ===
+          "online_review_collection_progress",
       ),
     ).toBe(false);
 
@@ -689,7 +714,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               evidence: stubCollectorEvidence({
                 prUrl: offlineShip.pr,
                 headOid: landing.shipDelivery?.prHead ?? offlineShip.prHead!,
-                totalFindingCount: round === 1 ? 1 : 0,
+                marker: round === 1 ? "r1" : "r2",
               }),
             };
           },
@@ -1179,8 +1204,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               evidence: stubCollectorEvidence({
                 prUrl: offlineShip.pr,
                 headOid: `head-r${round}`,
-                totalFindingCount: round,
-                droppedBots: [`marker-r${round}`],
+                marker: `marker-r${round}`,
               }),
             },
           };
@@ -1296,8 +1320,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       const r3Evidence = stubCollectorEvidence({
         prUrl: offlineShip.pr,
         headOid: "head-round-3-latest",
-        totalFindingCount: 3,
-        droppedBots: ["marker-r3-latest"],
+        marker: "marker-r3-latest",
       });
       let verifyByRound = new Map<number, number>();
 
@@ -1321,8 +1344,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               : stubCollectorEvidence({
                   prUrl: offlineShip.pr,
                   headOid: `head-round-${round}`,
-                  totalFindingCount: round,
-                  droppedBots: [`marker-r${round}`],
+                  marker: `marker-r${round}`,
                 });
           this.collectorEvidence = evidence;
           return {
@@ -1483,17 +1505,15 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       backend.collectorEvidence = stubCollectorEvidence({
         prUrl: offlineShip.pr,
         headOid: "evidence-head-MUST-NOT-ELEVATE",
-        totalFindingCount: 2,
-        droppedBots: ["t2-marker"],
+        marker: "t2-marker",
       });
       let verifySawBody: unknown;
       backend.verifyImpl = async (_s, _c, landing) => {
         verifySawBody = landing?.onlineReviewSnapshot;
         expect(landing?.shipDelivery?.prHead).toBe(offlineShip.prHead);
-        expect(
-          (landing?.onlineReviewSnapshot as { headOid?: string } | undefined)
-            ?.headOid,
-        ).toBe("evidence-head-MUST-NOT-ELEVATE");
+        expect(landing?.onlineReviewSnapshot?.headOid).toBe(
+          "evidence-head-MUST-NOT-ELEVATE",
+        );
         return {
           kind: "completed",
           output: { kind: "verify", converged: true },
@@ -1513,11 +1533,80 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(completed?.familyHeadAfter).toBe(offlineShip.prHead);
       // Worker did not supply cargoPointer — host must not mint one.
       expect(completed?.cargoPointer).toBeUndefined();
+      // Dead host progress status must not reappear on the ledger.
       expect(
         backend.ledger.some(
-          (e) => e.event === "online_review_collection_progress",
+          (e) =>
+            (e.event as string | undefined) ===
+            "online_review_collection_progress",
         ),
       ).toBe(false);
+    });
+
+    it("handle-only cargoPointer survives shared-tail → Verify / re-entry (no body, no re-wait)",
+      async () => {
+      const HANDLE = "blobs/r1-evidence-put-handle-only-1145";
+      const backend = new TracerFamilyBackend();
+      backend.collectorCargoPointer = HANDLE;
+
+      let firstVerifyLanding: WorkerLandingPayload | undefined;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        firstVerifyLanding = landing;
+        // Simulate Verify calling evidence-get on the durable handle without
+        // re-waiting — host only transported the pointer.
+        expect(landing?.cargoPointer).toBe(HANDLE);
+        expect(landing?.onlineReviewSnapshot).toBeUndefined();
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const first = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(first).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      expect(backend.collectorDispatchCount).toBe(1);
+      expect(firstVerifyLanding?.cargoPointer).toBe(HANDLE);
+      expect(firstVerifyLanding?.onlineReviewSnapshot).toBeUndefined();
+
+      const completed = backend.ledger.find(
+        (e) => e.event === "online_review_collector_completed",
+      );
+      expect(completed?.cargoPointer).toBe(HANDLE);
+      expect(completed?.collectorEvidenceCargo).toBeUndefined();
+
+      // Re-entry: checkpoint short-circuits Collector (no re-wait); same handle
+      // reaches Verify again. Strip mergeable so the loop runs; keep checkpoint.
+      backend.ledger = backend.ledger.filter(
+        (e) => e.event !== "online_review_mergeable",
+      );
+      let reentryLanding: WorkerLandingPayload | undefined;
+      const priorCollectorDispatches = backend.collectorDispatchCount;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        reentryLanding = landing;
+        expect(landing?.cargoPointer).toBe(HANDLE);
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+      const second = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(second.ok).toBe(true);
+      // Checkpoint short-circuit — no second live Collector dispatch.
+      expect(backend.collectorDispatchCount).toBe(priorCollectorDispatches);
+      expect(reentryLanding?.cargoPointer).toBe(HANDLE);
+      expect(reentryLanding?.onlineReviewSnapshot).toBeUndefined();
     });
 
     it("T4: missing durable progress does not gate — host still dispatches Collector",
@@ -1584,7 +1673,9 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(backend2.collectorDispatchCount).toBeGreaterThanOrEqual(2);
       expect(
         backend2.ledger.some(
-          (e) => e.event === "online_review_collection_progress",
+          (e) =>
+            (e.event as string | undefined) ===
+            "online_review_collection_progress",
         ),
       ).toBe(false);
     });
@@ -1592,10 +1683,10 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     it("T5 sparse opaque blob: Collector completes; Verify receives body; no fate rewrite",
       async () => {
       const backend = new TracerFamilyBackend();
-      backend.collectorEvidence = {
+      backend.collectorEvidence = stubCollectorEvidence({
         prUrl: offlineShip.pr,
         headOid: offlineShip.prHead,
-      } as ReturnType<typeof stubCollectorEvidence>;
+      });
       let verifyLanding: WorkerLandingPayload | undefined;
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyLanding = landing;
@@ -1621,7 +1712,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBe(true);
     });
 
-    it("T1+T3: worker durable store — receipt recover + dual-open same handle",
+    it("durable host ships bin.mjs only — no TS store twin; no host classify",
       async () => {
       const { mkdtempSync, rmSync, readFileSync, existsSync } =
         await import("node:fs");
@@ -1629,9 +1720,6 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       const { tmpdir } = await import("node:os");
       const {
         ensureOnlineReviewDurableDir,
-        openOnlineReviewDurableStore,
-        decideSideEffectRecovery,
-        executeIdempotentSideEffect,
         ONLINE_REVIEW_DURABLE_DIR,
       } = await import("../src/family/onlineReviewActionDurable.js");
 
@@ -1641,72 +1729,21 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         expect(hostPath).toBe(join(workingRepo, ONLINE_REVIEW_DURABLE_DIR));
         const binPath = join(hostPath, "bin.mjs");
         expect(existsSync(binPath)).toBe(true);
-        // Worker-callable CLI is shipped into the durable root (no host parse).
+        // Worker-callable CLI is the sole durable capability (no host twin).
         const binSrc = readFileSync(binPath, "utf8");
         expect(binSrc).toMatch(/progress-classify/);
         expect(binSrc).toMatch(/receipt-decide/);
         expect(binSrc).toMatch(/evidence-put/);
+        expect(binSrc).toMatch(/evidence-get/);
 
-        // Dispatch-1 simulation: worker writes evidence via store (same cmds as CLI).
-        const store1 = openOnlineReviewDurableStore(hostPath);
-        store1.appendProgress({
-          round: 1,
-          phase: "initialized",
-          ts: new Date().toISOString(),
-        });
-        const handle = store1.putEvidence(
-          1,
-          JSON.stringify({ sparse: true, marker: "same-handle-1145" }),
+        // Host module is mount/copy only — no store twin exports.
+        const durableMod = await import(
+          "../src/family/onlineReviewActionDurable.js"
         );
-
-        // Dispatch-2 simulation: new open on SAME hostPath sees same handle.
-        const store2 = openOnlineReviewDurableStore(hostPath);
-        const classified = store2.classify(1);
-        expect(classified.kind).toBe("resume");
-        if (classified.kind === "resume") {
-          expect(classified.progress.evidenceHandle).toBe(handle);
-        }
-        const body = store2.getEvidence(handle).toString("utf8");
-        expect(JSON.parse(body)).toEqual({
-          sparse: true,
-          marker: "same-handle-1145",
-        });
-
-        // T1: attempted only + external applied → zero mutate.
-        const key = "resolve:discussion_r3652932124";
-        const base = {
-          seat: "verify" as const,
-          round: 1,
-          op: "resolve" as const,
-          idempotencyKey: key,
-          externalHandle: "discussion_r3652932124",
-        };
-        store2.appendReceipt({
-          ...base,
-          state: "attempted",
-          ts: new Date().toISOString(),
-        });
-        let mutateCalls = 0;
-        const outcome = await executeIdempotentSideEffect({
-          receipt: store2.lastReceipt(1, key),
-          queryExternal: async () => "applied" as const,
-          mutate: async () => {
-            mutateCalls += 1;
-            return { externalHandle: base.externalHandle };
-          },
-          saveReceipt: (r) => store2.appendReceipt(r),
-          base,
-        });
-        expect(outcome).toEqual({ ok: true, skipped: true });
-        expect(mutateCalls).toBe(0);
-        expect(store2.lastReceipt(1, key)?.state).toBe("succeeded");
-
-        expect(
-          decideSideEffectRecovery(
-            { ...base, state: "attempted", ts: new Date().toISOString() },
-            "unknown",
-          ).action,
-        ).toBe("escalate");
+        expect(durableMod).not.toHaveProperty("openOnlineReviewDurableStore");
+        expect(durableMod).not.toHaveProperty("classifyCollectionProgress");
+        expect(durableMod).not.toHaveProperty("decideSideEffectRecovery");
+        expect(durableMod).not.toHaveProperty("executeIdempotentSideEffect");
 
         // Host production path must not import-call classify (static pin).
         const verifyCmrSrc = readFileSync(
@@ -1745,13 +1782,11 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         const promptsDir = join(packageRoot, "prompts");
         const soulsDir = join(packageRoot, "image", "souls");
         class Harness extends RealFamilyBackend {
-          exposeConfig(
-            spec: { kind: string; model: string; id: string },
-          ) {
+          exposeConfig(spec: WorkerSpec, ctx: DispatchContext) {
             return this.familyReviewLoopSandboxConfig(
               {},
-              spec as never,
-              { familyBase: "family/1145" } as never,
+              spec,
+              ctx,
               undefined,
               undefined,
             );
@@ -1768,12 +1803,9 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           imageName: "test-image",
         });
 
-        for (const kind of ["collector", "verify"] as const) {
-          const cfg = backend.exposeConfig({
-            kind,
-            model: "grok-4.5",
-            id: kind === "collector" ? "S13" : "S9",
-          });
+        const ctx: DispatchContext = { familyBase: "family/1145" };
+        for (const spec of [collectorWorkerSpec(), verifyWorkerSpec()]) {
+          const cfg = backend.exposeConfig(spec, ctx);
           expect(cfg.env[ONLINE_REVIEW_DURABLE_PATH_ENV]).toBe(
             ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
           );

@@ -693,14 +693,27 @@ export async function runOnlineReviewLoopStage(
         lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
           ? lastFixCommitSha
           : ship.prHead;
+      // Opaque handle/body transport only — never elevate business fields.
+      // Pointer-only completion is legal (cargo ≠ fate / DecisionGate A).
       landing = {
         ...landing,
         // Pass-through opaque blob for Verify unpack — no field elevation.
-        ...(collected.evidence !== undefined
+        ...(collected.evidence !== undefined &&
+        typeof collected.evidence === "object" &&
+        collected.evidence !== null &&
+        typeof (collected.evidence as { readonly prUrl?: unknown }).prUrl ===
+          "string" &&
+        typeof (collected.evidence as { readonly headOid?: unknown }).headOid ===
+          "string"
           ? {
-              onlineReviewSnapshot:
-                collected.evidence as WorkerLandingPayload["onlineReviewSnapshot"],
+              onlineReviewSnapshot: collected.evidence as NonNullable<
+                WorkerLandingPayload["onlineReviewSnapshot"]
+              >,
             }
+          : {}),
+        ...(typeof collected.cargoPointer === "string" &&
+        collected.cargoPointer.trim().length > 0
+          ? { cargoPointer: collected.cargoPointer.trim() }
           : {}),
         shipDelivery: {
           branch: ship.branch,

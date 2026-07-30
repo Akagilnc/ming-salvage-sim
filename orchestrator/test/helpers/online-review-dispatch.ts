@@ -22,28 +22,25 @@ import { stubCollectorEvidence } from "../../src/reviewLoopOutcome.js";
  * - optional `dispatchCollector` overrides the default evidence seat.
  */
 /**
- * Loose fixture shape accepted by tests (PrReviewSnapshot-compatible).
- * No index signature — named snapshot interfaces stay assignable; soft fields
- * ride through toEvidence as opaque cargo.
+ * Host-typed keys only. Named snapshots (e.g. PrReviewSnapshot) stay assignable
+ * structurally; loose object literals use {@link LooseEvidenceFixture}.
+ * No business-field allowlist — runtime extras ride through spread (#1145).
  */
 type EvidenceFixture = {
   readonly prUrl: string;
   readonly headOid: string;
-  readonly repo?: string;
-  readonly prNumber?: number;
-  readonly pollCount?: number;
-  readonly totalFindingCount?: number;
-  readonly quiescent?: boolean;
-  readonly bots?: unknown;
-  readonly droppedBots?: unknown;
-  readonly threads?: unknown;
-  readonly checkRuns?: unknown;
-  readonly checkRunsEmptyMeans?: unknown;
-  readonly roundTriggerUsed?: unknown;
 };
 
+/** Open fixture for object-literal extras (index signature). */
+type LooseEvidenceFixture = EvidenceFixture & {
+  readonly [key: string]: unknown;
+};
+
+/** Public input: named snapshots OR loose literals with opaque extras. */
+type EvidenceInput = EvidenceFixture | LooseEvidenceFixture;
+
 function toEvidence(raw: EvidenceFixture): OnlineReviewLandingSnapshot {
-  // Opaque envelope only — remaining keys ride through as-is (#1145).
+  // Opaque envelope only — remaining own keys ride through as-is (#1145).
   return { ...raw, prUrl: raw.prUrl, headOid: raw.headOid };
 }
 
@@ -73,44 +70,11 @@ function asCollectorDispatchResult(
       typeof raw.evidence.prUrl === "string" &&
       typeof raw.evidence.headOid === "string"
     ) {
-      result.evidence = toEvidence({
-        prUrl: raw.evidence.prUrl,
-        headOid: raw.evidence.headOid,
-        ...(typeof raw.evidence.repo === "string" ? { repo: raw.evidence.repo } : {}),
-        ...(typeof raw.evidence.prNumber === "number"
-          ? { prNumber: raw.evidence.prNumber }
-          : {}),
-        ...(typeof raw.evidence.pollCount === "number"
-          ? { pollCount: raw.evidence.pollCount }
-          : {}),
-        ...(typeof raw.evidence.totalFindingCount === "number"
-          ? { totalFindingCount: raw.evidence.totalFindingCount }
-          : {}),
-        ...(typeof raw.evidence.quiescent === "boolean"
-          ? { quiescent: raw.evidence.quiescent }
-          : {}),
-        ...(raw.evidence.bots !== undefined ? { bots: raw.evidence.bots } : {}),
-        ...(raw.evidence.droppedBots !== undefined
-          ? { droppedBots: raw.evidence.droppedBots }
-          : {}),
-        ...(raw.evidence.threads !== undefined
-          ? { threads: raw.evidence.threads }
-          : {}),
-        ...(raw.evidence.checkRuns !== undefined
-          ? { checkRuns: raw.evidence.checkRuns }
-          : {}),
-        ...(raw.evidence.checkRunsEmptyMeans !== undefined
-          ? { checkRunsEmptyMeans: raw.evidence.checkRunsEmptyMeans }
-          : {}),
-        ...(raw.evidence.roundTriggerUsed !== undefined
-          ? { roundTriggerUsed: raw.evidence.roundTriggerUsed }
-          : {}),
-      });
+      // Full opaque pass-through — no field allowlist.
+      result.evidence = toEvidence(raw.evidence as EvidenceFixture);
     } else {
       // Sparse opaque blob — legal cargo≠fate; no prUrl/headOid required.
-      result.evidence = { ...raw.evidence } as {
-        readonly [key: string]: unknown;
-      };
+      result.evidence = { ...raw.evidence };
     }
   }
   if (typeof raw.cargoPointer === "string") {
@@ -128,27 +92,8 @@ function asEvidenceFixture(raw: unknown): EvidenceFixture | undefined {
   if (typeof raw.prUrl !== "string" || typeof raw.headOid !== "string") {
     return undefined;
   }
-  return {
-    prUrl: raw.prUrl,
-    headOid: raw.headOid,
-    ...(typeof raw.repo === "string" ? { repo: raw.repo } : {}),
-    ...(typeof raw.prNumber === "number" ? { prNumber: raw.prNumber } : {}),
-    ...(typeof raw.pollCount === "number" ? { pollCount: raw.pollCount } : {}),
-    ...(typeof raw.totalFindingCount === "number"
-      ? { totalFindingCount: raw.totalFindingCount }
-      : {}),
-    ...(typeof raw.quiescent === "boolean" ? { quiescent: raw.quiescent } : {}),
-    ...(raw.bots !== undefined ? { bots: raw.bots } : {}),
-    ...(raw.droppedBots !== undefined ? { droppedBots: raw.droppedBots } : {}),
-    ...(raw.threads !== undefined ? { threads: raw.threads } : {}),
-    ...(raw.checkRuns !== undefined ? { checkRuns: raw.checkRuns } : {}),
-    ...(raw.checkRunsEmptyMeans !== undefined
-      ? { checkRunsEmptyMeans: raw.checkRunsEmptyMeans }
-      : {}),
-    ...(raw.roundTriggerUsed !== undefined
-      ? { roundTriggerUsed: raw.roundTriggerUsed }
-      : {}),
-  };
+  // Keep the full runtime object so soft fields survive toEvidence spread.
+  return raw as EvidenceFixture;
 }
 
 /** Bare VerifyResult vs seat wrapper — structural, no cast fork. */
@@ -230,20 +175,20 @@ function asVerifyDispatchResult(
 
 export function onlineReviewDispatch(input: {
   readonly evidence?:
-    | EvidenceFixture
+    | EvidenceInput
     | ((
         round: number,
       ) =>
-        | EvidenceFixture
-        | Promise<EvidenceFixture>
+        | EvidenceInput
+        | Promise<EvidenceInput>
         | OnlineReviewCollectorDispatchResult
         | Promise<OnlineReviewCollectorDispatchResult>);
   /** Fixture alias — accepts evidence or PrReviewSnapshot-shaped objects. */
   readonly snapshot?:
-    | EvidenceFixture
+    | EvidenceInput
     | ((
         round: number,
-      ) => EvidenceFixture | Promise<EvidenceFixture>);
+      ) => EvidenceInput | Promise<EvidenceInput>);
   readonly dispatchVerify?: (
     landing: WorkerLandingPayload,
     round: number,
