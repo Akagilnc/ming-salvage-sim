@@ -904,9 +904,10 @@ export type OnlineReviewTerminalState =
   | "contract_drift";
 
 /**
- * Collector opaque evidence blob (#1145 / ADR 0131).
+ * Collector opaque evidence cargo (#1145 / ADR 0131).
  *
- * Entirely opaque business cargo transported as-is — Runner never expands a
+ * Name is historical (`onlineReviewSnapshot` landing field); the value is an
+ * entirely opaque business blob transported as-is — Runner never expands a
  * schema, never invents defaults, never filters keys, never admits on field shape.
  */
 export type OnlineReviewLandingSnapshot = {

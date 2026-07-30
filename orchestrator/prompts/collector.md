@@ -6,6 +6,9 @@
   ship metadata + optional prior round fix-marked keys. May lack evidence on
   first entry; you assemble it.
 - Round / PR URL / head from the landing file and env.
+- Method truth (query/wait/retrigger/durable evidence) lives in the Collector
+  soul (`image/souls/collector.md`) — this promptFile is params + envelope/cargo
+  contract only.
 
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
@@ -35,21 +38,12 @@ traffic field** — sparse cargo does not change process fate (ADR 0131).
 
 Write collector evidence cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set
 (sidecar is cargo transport). You may also emit opaque `<collector>` cargo JSON
-for the same body. Shape of the cargo body (when evidence is ready):
+for the same body.
 
-```json
-{
-  "prUrl": "…",
-  "headOid": "…",
-  "totalFindingCount": 0,
-  "quiescent": true,
-  "bots": {},
-  "droppedBots": [],
-  "threads": [],
-  "checkRuns": [],
-  "checkRunsEmptyMeans": "converged"
-}
-```
+Evidence body is **opaque**: any object shape is Collector judgment for Verify
+to consume. Host/Runner never admits on field names and never expands a schema.
+Prefer durable handle via `cargoPointer` (see Collector soul `evidence-put`);
+sidecar/body may accompany or stand alone.
 
 Completed thin envelope (evidence is optional opaque cargo on sidecar /
 cargoPointer / `<collector>` — never a typed traffic field):
@@ -74,7 +68,6 @@ Rules:
   or missing evidence does not fail the process; escalate yourself when you
   cannot continue collection.
 - Post-fix retrigger / limited wait / overdue exit are **your** methods (see
-  collector soul + `collectorPostFixRetriggerPlan` /
-  `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`). Host does not poll or re-trigger.
+  collector soul). Host does not poll or re-trigger.
 - This seat is single-iteration. Completion is clean exit + legal typed
   envelope — no STEP_COMPLETE password.

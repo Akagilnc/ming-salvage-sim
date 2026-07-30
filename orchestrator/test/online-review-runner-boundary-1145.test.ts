@@ -23,6 +23,9 @@
  *     Verify landing / collector_completed / re-entry without body or re-wait.
  * 12. Keyless body-only Collector blob (no prUrl/headOid) reaches Verify
  *     verbatim with no fate rewrite.
+ * 13. Verify soul pins handle-only consume: cargoPointer + no snapshot →
+ *     evidence-get; unreadable → escalate; never re-run Collector query/wait.
+ *     promptFiles stay thin (no method outline / evidence cookbook).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1900,14 +1903,34 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         new URL("../prompts/verify.md", import.meta.url),
         "utf8",
       );
+      const collectorPrompt = readFileSync(
+        new URL("../prompts/collector.md", import.meta.url),
+        "utf8",
+      );
       expect(collectorSoul).toMatch(/bin\.mjs/);
       expect(collectorSoul).toMatch(/progress-classify/);
       expect(collectorSoul).toMatch(/evidence-put/);
       expect(verifySoul).toMatch(/副作用方法/);
       expect(verifySoul).toMatch(/receipt-attempted/);
       expect(verifySoul).toMatch(/receipt-decide/);
-      expect(verifyPrompt).toMatch(/Side-effect method truth lives in the Verify soul/);
+      // F1 / AC2: handle-only cargoPointer → evidence-get; never re-run Collector wait.
+      expect(verifySoul).toMatch(/evidence-get --handle/);
+      expect(verifySoul).toMatch(/cargoPointer/);
+      expect(verifySoul).toMatch(/onlineReviewSnapshot/);
+      expect(verifySoul).toMatch(/禁止.*Collector.*query\/wait|never re-run Collector|禁重取证/);
+      expect(verifyPrompt).toMatch(/Method truth[\s\S]*Verify\s+soul|lives in the Verify/i);
       expect(verifyPrompt).not.toMatch(/gh api` comment on the review thread/);
+      // F2: promptFiles stay thin — no numbered role-method outline / evidence cookbook.
+      expect(verifyPrompt).not.toMatch(
+        /1\.\s*Read review state from the Collector landing snapshot/,
+      );
+      expect(verifyPrompt).not.toMatch(/2\.\s*Judge each finding/);
+      expect(verifyPrompt).not.toMatch(/3\.\s*Execute side effects/);
+      expect(collectorPrompt).toMatch(/opaque/i);
+      expect(collectorPrompt).toMatch(/Collector judgment|shape is Collector/i);
+      expect(collectorPrompt).not.toMatch(/"bots"\s*:/);
+      expect(collectorPrompt).not.toMatch(/"threads"\s*:/);
+      expect(collectorPrompt).not.toMatch(/"checkRuns"\s*:/);
     });
   });
 });

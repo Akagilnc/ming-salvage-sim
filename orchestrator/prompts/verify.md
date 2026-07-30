@@ -3,33 +3,16 @@
 ## Params
 
 - `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` —
-  **Collector-assembled** bot snapshot + ship metadata landing file mounted for
-  this seat. Collector already completed query/wait/evidence.
+  **Collector-assembled** landing for this seat (may carry
+  `onlineReviewSnapshot` body and/or `cargoPointer` handle). Collector already
+  completed query/wait/evidence.
+- Method truth (evidence resolve, judgment, side effects) lives in the Verify
+  soul (`image/souls/verify.md`) — this promptFile is params + envelope/cargo
+  contract only.
 
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 `gh pr view <decoded-branch>` before reviewing.
-
-## Ownership (Verify = judgment only — #1145)
-
-You own **finding judgment** and **side effects** on this seat. Collector owns
-GitHub query/wait/retrigger/evidence assembly as a **separate prior Action**.
-The Runner never re-queries PR state and never replays residual side-effect
-plans after you return.
-
-**Side-effect method truth lives in the Verify soul** (`image/souls/verify.md`
-§副作用方法): durable CLI receipt-attempted → GH → succeeded, recover via
-receipt-decide + external fact, never blind-replay. This promptFile is params +
-envelope only — do not treat the bullets below as a second method source.
-
-1. Read review state from the Collector landing snapshot (and `gh` only as
-   needed to act on threads — not to re-run the wait loop).
-2. Judge each finding (`fix` / `reject` / `defer`). Include CI check-runs from
-   the evidence: only report `converged:true` when bots are clean **and** CI is
-   green (or offline-empty-means-converged).
-3. Execute side effects per **soul** before self-reporting disposition.
-4. Self-report three-state via role cargo + typed envelope. Unfinished effects
-   → escalate, never `converged:true`.
 
 ## Required output
 
@@ -61,7 +44,8 @@ never a fate signal on this envelope.
 
 Write verify cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set (sidecar is cargo
 transport). You may also emit opaque `<verify>` cargo JSON for the same body.
-Shape of the cargo — disposition + fixer landing (side effects already executed):
+Shape of the cargo — disposition + fixer landing (side effects already executed
+per soul):
 
 ```json
 {"converged": true}
