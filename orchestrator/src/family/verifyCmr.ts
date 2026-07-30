@@ -21,7 +21,7 @@
  */
 
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
-import { shWithClock } from "../externalCall.js";
+import * as externalCall from "../externalCall.js";
 
 import {
   isCanonicalGithubPrUrl,
@@ -44,7 +44,6 @@ import {
   lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
   lastInCycleOnlineReviewFixCommitShaFromFamilyLedger,
-  lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewJudgeDisposition,
@@ -1851,10 +1850,27 @@ export async function runFamilyOnlineReviewLoop(input: {
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-  const prUrl = input.ship.pr;
-  if (prUrl === undefined || prUrl.trim().length === 0) {
+  // #1145: resolve the currently open PR for the family branch BEFORE any
+  // mergeable / Collector-checkpoint short-circuit. Shipped-ledger PR may be
+  // stale after replacement/re-open at the same SHA — short-circuits and the
+  // worker durable namespace must bind the actual open PR, not the frozen ship
+  // handle. Live resolve is thin identity only (not host review polling);
+  // offline / empty list falls back to the ship handle.
+  const liveOpenPr = resolveFamilyShipPr(input.familyBase);
+  const shippedPrHandle =
+    typeof input.ship.pr === "string" && input.ship.pr.trim().length > 0
+      ? input.ship.pr.trim()
+      : undefined;
+  const prUrl = liveOpenPr ?? shippedPrHandle;
+  if (prUrl === undefined || prUrl.length === 0) {
     return { ok: false, terminalState: "decision_gate_raised", round: 1 };
   }
+  // Effective ship identity for landing / stage / ledger — resolved PR rides as
+  // thin typed transport only (never decoded from evidence cargo).
+  const ship: ShipResult = {
+    ...input.ship,
+    pr: prUrl,
+  };
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute =
@@ -1884,7 +1900,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
     repo,
     prUrl,
-    prHead: input.ship.prHead,
+    prHead: ship.prHead,
     ...(input.escalationAnswer !== undefined
       ? { escalationAnswer: input.escalationAnswer }
       : {}),
@@ -1955,7 +1971,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     }
   }
   const shipHead =
-    typeof input.ship.prHead === "string" ? input.ship.prHead : "";
+    typeof ship.prHead === "string" ? ship.prHead : "";
   const loopState = {
     round: onlineReviewRoundFromFamilyLedger(familyLedger),
     // #1145 F1: cycle-scoped fix SHA — prior cycle must not override new ship head.
@@ -2031,7 +2047,7 @@ export async function runFamilyOnlineReviewLoop(input: {
 
   try {
     return await runOnlineReviewLoopStage(
-      input.ship,
+      ship,
       {
         // #1145: Collector (evidence) and Verify (judgment) are independent
         // Actions. Runner never host-polls GH, never pre-assembles bot evidence,
@@ -2261,7 +2277,7 @@ export async function runFamilyOnlineReviewLoop(input: {
               loopState.lastFixSha !== undefined &&
               loopState.lastFixSha.length > 0
                 ? loopState.lastFixSha
-                : input.ship.prHead;
+                : ship.prHead;
             if (
               mergeableHead === undefined ||
               mergeableHead.trim().length === 0
@@ -3641,7 +3657,9 @@ export function resolveFamilyShipPr(branch: string): string | undefined {
     repo,
   ];
   try {
-    const out = shWithClock("gh", args, { stage: "resolve:shipPr" });
+    // Namespace call so tests can spyOn(externalCall, "shWithClock") for live
+    // open-PR identity without host review polling (#1145 replacement resume).
+    const out = externalCall.shWithClock("gh", args, { stage: "resolve:shipPr" });
     const parsed = JSON.parse(out) as ReadonlyArray<{ readonly url?: unknown }>;
     const url = parsed[0]?.url;
     return typeof url === "string" && isPrUrl(url) ? url : undefined;
@@ -4192,8 +4210,18 @@ export async function runVerifyCmr(
     ...scopedPoolFields,
   });
   const familyLedgerForHead = await familyBackend.readFamilyLedger();
+  // #1145: abort/converged heads + Landing input use the current shipped-cycle
+  // fix SHA only — prior-cycle H1 fix must not override a new ship H2 with no
+  // in-cycle fix.
   const knownPostFixHead =
-    lastOnlineReviewFixCommitShaFromFamilyLedger(familyLedgerForHead);
+    lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
+      familyLedgerForHead,
+      exactPostShipFamilyHead,
+    );
+  // Thin typed PR identity for post-loop ledger + Landing — prefer live open PR
+  // (replacement during the loop) over the frozen ship handle; never decode
+  // evidence cargo and never host-poll review state.
+  const landingPrUrl = resolveFamilyShipPr(familyBase) ?? shipPr;
   if (!reviewLoop.ok) {
     const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
     const reason = stopSummary.summary;
@@ -4228,7 +4256,7 @@ export async function runVerifyCmr(
     knownPostFixHead,
   );
   await recordReviewLoopConverged(familyBackend, {
-    pr: shipPr,
+    pr: landingPrUrl,
     familyHeadAfter: convergedFamilyHead,
     ...(shippedStopSummary !== undefined
       ? { stopSummary: shippedStopSummary }
@@ -4242,7 +4270,7 @@ export async function runVerifyCmr(
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     convergedHeadOid: convergedFamilyHead,
-    prUrl: shipPr,
+    prUrl: landingPrUrl,
     ...(familyIssue !== undefined ? { familyIssue } : {}),
     resolvedRoute,
     ...scopedPoolFields,

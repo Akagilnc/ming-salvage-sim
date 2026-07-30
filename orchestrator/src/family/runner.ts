@@ -73,6 +73,7 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import {
+  resolveFamilyShipPr,
   runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
@@ -2366,8 +2367,12 @@ export async function runFamily(
       (await readCurrentFamilyHead(familyBackend, familyBase)) ??
       preFinalFamilyHead ??
       shippedRecord.familyHeadAfter;
+    // #1145: Landing + converged marker bind the currently open PR, not a stale
+    // shipped-ledger handle after replacement/re-open (thin identity only).
+    const landingPrUrl =
+      resolveFamilyShipPr(familyBase) ?? shippedRecord.pr;
     await recordReviewLoopConverged(familyBackend, {
-      pr: shippedRecord.pr,
+      pr: landingPrUrl,
       familyHeadAfter: convergedHead,
       ...(shippedRecord.stopSummary !== undefined
         ? { stopSummary: shippedRecord.stopSummary }
@@ -2386,7 +2391,7 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
-      prUrl: shippedRecord.pr,
+      prUrl: landingPrUrl,
       children,
       ...(runRelayBilling !== undefined
         ? { runRelayBilling }
@@ -2562,8 +2567,12 @@ export async function runFamily(
         const convergedHead =
           (await readCurrentFamilyHead(familyBackend, familyBase)) ??
           openShipped.familyHeadAfter;
+        // #1145: Landing + converged marker bind the currently open PR, not a
+        // stale shipped-ledger handle after replacement/re-open.
+        const landingPrUrl =
+          resolveFamilyShipPr(familyBase) ?? openShipped.pr;
         await recordReviewLoopConverged(familyBackend, {
-          pr: openShipped.pr,
+          pr: landingPrUrl,
           familyHeadAfter: convergedHead,
           ...(openShipped.stopSummary !== undefined
             ? { stopSummary: openShipped.stopSummary }
@@ -2574,7 +2583,7 @@ export async function runFamily(
           familyBase,
           runId,
           familyHeadAfter: convergedHead,
-          prUrl: openShipped.pr,
+          prUrl: landingPrUrl,
           familyIssue: epic.issue,
           resolvedRoute: route,
           children: openChildren,

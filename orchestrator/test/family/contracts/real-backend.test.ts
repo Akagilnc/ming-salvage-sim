@@ -1069,8 +1069,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("RAW extra keys on fixer remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseFixerOutcome(`<fixer>{"committed": false, "foo": 1, "bar": {}}</fixer>`);
-    expect(out.kind).toBe("fixer");
+    const out = mod.parseFixerOutcome(
+      `<fixer>{"committed": false, "foo": 1, "bar": {}, "notes": "opaque"}</fixer>`,
+    );
+    // #1145: after minimal object/committed check, preserve all fields with
+    // canonical kind:"fixer" — typed envelope retains sole fate authority.
+    expect(out).toEqual({
+      kind: "fixer",
+      committed: false,
+      foo: 1,
+      bar: {},
+      notes: "opaque",
+    });
   });
 
   it("RAW extra keys on cleanup remain cargo", async () => {

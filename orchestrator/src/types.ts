@@ -1400,6 +1400,12 @@ export interface FixerResult {
    * only (ADR 0030 envelope-only); never a fourth traffic signal (#1145).
    */
   readonly fixCommitSha?: string;
+  /**
+   * #1145 — entire fixer role body is opaque end-to-end after the minimal
+   * object/`committed:boolean` role check. Extra fields ride landing + durable
+   * fixer row unchanged; typed onlineReview envelope retains sole fate authority.
+   */
+  readonly [key: string]: unknown;
 }
 
 /** Per-step branch-delete outcome recorded by the #603 cleanup worker. */

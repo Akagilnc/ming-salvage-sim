@@ -40,6 +40,12 @@
  *     shipDelivery.prHead (Collector evidence retained).
  * 25. Typed completed + escalate-only Collector body preserves escalate as
  *     opaque evidence (result-level; fate stays on typed envelope).
+ * 26. Resume with stale shipped-ledger PR resolves live open PR first —
+ *     mergeable/Collector short-circuits bind actual-PR namespace.
+ * 27. Extended Fixer cargo (extra fields beyond committed/SHA) rides landing +
+ *     durable fixer row opaque end-to-end.
+ * 28. Old-cycle H1 fix SHA must not override new ship H2 no-fix convergence head
+ *     (post-loop uses current-shipped-cycle reader).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -47,6 +53,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as botPolling from "../src/botPolling.js";
+import * as externalCall from "../src/externalCall.js";
 import {
   BOT_OVERDUE_MIN_WALL_MS,
   BOT_OVERDUE_POLL_COUNT,
@@ -64,6 +71,8 @@ import {
   effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
+  lastInCycleOnlineReviewFixCommitShaFromFamilyLedger,
+  lastOnlineReviewFixCommitShaFromFamilyLedger,
   lastOnlineReviewMergeableFromFamilyLedger,
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
@@ -2539,6 +2548,234 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
       expect(verifySawSnapshot).toEqual(freshEvidence);
       expect(verifySawSnapshot).not.toEqual(staleEvidence);
+    });
+
+    it("production tracer: resume resolves live open PR — stale shipped-ledger PR does not short-circuit", async () => {
+      // ship.pr stays on the closed/replaced PR while gh pr list yields the
+      // currently open replacement. Host must not mergeable/Collector-skip on
+      // the stale handle; durable namespace + landing identity use actual-PR.
+      const sharedHead = "same-sha-live-resolve-1145";
+      // Canonical https PR URLs require a numeric /pull/<n> (#1090).
+      const staleShippedPr = "https://github.com/test/repo/pull/11450";
+      const liveOpenPr = "https://github.com/test/repo/pull/11451";
+      const shSpy = vi
+        .spyOn(externalCall, "shWithClock")
+        .mockImplementation((file, args, opts) => {
+          if (
+            file === "gh" &&
+            args[0] === "pr" &&
+            args[1] === "list" &&
+            opts?.stage === "resolve:shipPr"
+          ) {
+            return JSON.stringify([{ url: liveOpenPr }]);
+          }
+          if (file === "gh") return "[]";
+          throw new Error(`unexpected sh in live-PR resume tracer: ${file}`);
+        });
+
+      try {
+        const backend = new TracerFamilyBackend();
+        backend.ledger = [
+          {
+            status: "shipped",
+            event: "shipped",
+            phase: "final",
+            pr: staleShippedPr,
+            familyHeadAfter: sharedHead,
+            ts: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            status: "online_review_mergeable",
+            event: "online_review_mergeable",
+            phase: "final",
+            onlineReviewRound: 1,
+            pr: staleShippedPr,
+            familyHeadAfter: sharedHead,
+            ts: "2026-01-01T00:01:00.000Z",
+          },
+          {
+            status: "online_review_collector_completed",
+            event: "online_review_collector_completed",
+            phase: "final",
+            onlineReviewRound: 1,
+            pr: staleShippedPr,
+            familyHeadAfter: sharedHead,
+            collectorEvidenceCargo: stubCollectorEvidence({
+              prUrl: staleShippedPr,
+              headOid: sharedHead,
+              marker: "stale-shipped-pr-collector",
+            }),
+            ts: "2026-01-01T00:01:30.000Z",
+          },
+        ];
+
+        let collectorCtxPr: string | undefined;
+        let verifyLandingPr: string | undefined;
+        backend.collectorImpl = async (_s, ctx) => {
+          collectorCtxPr = ctx.prUrl;
+          return {
+            kind: "completed",
+            output: {
+              kind: "collector",
+              evidence: stubCollectorEvidence({
+                prUrl: liveOpenPr,
+                headOid: sharedHead,
+                marker: "live-open-pr-collector",
+              }),
+            },
+          };
+        };
+        backend.verifyImpl = async (_s, _c, landing) => {
+          verifyLandingPr = landing?.shipDelivery?.pr;
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        };
+
+        const collectorsBefore = backend.collectorDispatchCount;
+        const verifiesBefore = backend.verifyDispatchCount;
+        // Production resume shape: ship.pr is the frozen shipped-ledger handle.
+        const result = await runFamilyOnlineReviewLoop({
+          familyBackend: backend,
+          familyBase: "family/1145",
+          ship: {
+            ...offlineShip,
+            pr: staleShippedPr,
+            prHead: sharedHead,
+          },
+        });
+        expect(result).toEqual({
+          ok: true,
+          terminalState: "mergeable",
+          round: 1,
+        });
+        // Must NOT short-circuit on stale-PR mergeable/collector markers.
+        expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
+        expect(backend.verifyDispatchCount).toBe(verifiesBefore + 1);
+        // Thin typed identity to Collector ctx + Verify landing is the live PR.
+        expect(collectorCtxPr).toBe(liveOpenPr);
+        expect(verifyLandingPr).toBe(liveOpenPr);
+        const mergeablePrs = backend.ledger
+          .filter((e) => e.event === "online_review_mergeable")
+          .map((e) => e.pr);
+        expect(mergeablePrs).toEqual([staleShippedPr, liveOpenPr]);
+        const collectorPrs = backend.ledger
+          .filter((e) => e.event === "online_review_collector_completed")
+          .map((e) => e.pr);
+        expect(collectorPrs).toContain(liveOpenPr);
+      } finally {
+        shSpy.mockRestore();
+      }
+    });
+
+    it("production tracer: extended Fixer cargo rides landing + durable row opaque end-to-end", async () => {
+      const backend = new TracerFamilyBackend();
+      const extendedFixer = {
+        kind: "fixer" as const,
+        committed: false,
+        alreadySatisfied: true,
+        notes: "worker-private opaque field",
+        nested: { findingRefs: ["a", "b"], meta: { source: "fixer-ext" } },
+        extraFlag: true,
+      };
+      let verifySawFixer: WorkerLandingPayload["fixerResult"];
+      backend.fixerImpl = async () => ({
+        kind: "completed",
+        output: extendedFixer,
+      });
+      backend.verifyImpl = async (_s, _c, landing) => {
+        if (landing?.fixerResult !== undefined) {
+          verifySawFixer = landing.fixerResult;
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: false,
+            fixMarkedFindingIdentityKeys: ["ext-key-1"],
+            fixMarkedFindingThreads: [
+              { identityKey: "ext-key-1", threadId: "thr-ext-1" },
+            ],
+          },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+      });
+      // Same-round Verify landing preserves every extended field.
+      expect(verifySawFixer).toEqual(extendedFixer);
+      expect(verifySawFixer).toMatchObject({
+        kind: "fixer",
+        committed: false,
+        notes: "worker-private opaque field",
+        nested: { findingRefs: ["a", "b"], meta: { source: "fixer-ext" } },
+        extraFlag: true,
+      });
+      // Durable fixer_completed row keeps the full opaque body.
+      const fixerRow = backend.ledger.find(
+        (e) => e.event === "online_review_fixer_completed",
+      );
+      expect(fixerRow?.fixerResultCargo).toEqual(extendedFixer);
+    });
+
+    it("production tracer: old-cycle H1 fix SHA does not override new ship H2 no-fix convergence head", () => {
+      // Post-loop abort/converged heads + Landing input must use the
+      // current-shipped-cycle reader — global last-fix would poison H2 with H1.
+      const h1 = "ship-head-H1-old-cycle-1145";
+      const h1Fix = "fix-sha-from-old-cycle-H1-1145";
+      const h2 = "ship-head-H2-new-cycle-1145";
+      const ledger = [
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final" as const,
+          pr: offlineShip.pr,
+          familyHeadAfter: h1,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_fix_committed",
+          event: "online_review_fix_committed",
+          phase: "final" as const,
+          onlineReviewRound: 1,
+          familyHeadAfter: h1Fix,
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "shipped",
+          event: "shipped",
+          phase: "final" as const,
+          pr: offlineShip.pr,
+          familyHeadAfter: h2,
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+        // New cycle: no fix committed — convergence head must stay H2.
+      ];
+      // Global reader (forbidden for post-loop) would still see H1's fix.
+      expect(lastOnlineReviewFixCommitShaFromFamilyLedger(ledger)).toBe(h1Fix);
+      // Current-shipped-cycle reader (post-loop authority) sees no in-cycle fix.
+      expect(
+        lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(ledger, h2),
+      ).toBeUndefined();
+      // Effective reviewed head for the new ship cycle is the ship head itself.
+      expect(effectiveOnlineReviewHeadFromFamilyLedger(ledger, h2)).toBe(h2);
+      // And the prior cycle still sees its own fix when asked for H1.
+      expect(
+        lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(ledger, h1),
+      ).toBe(h1Fix);
     });
 
     it("production tracer: prior-round findings are cycle-bound after matching shipped anchor", async () => {

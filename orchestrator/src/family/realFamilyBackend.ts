@@ -4794,16 +4794,15 @@ export function parseFixerOutcome(
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  // Minimal role check only — object + committed:boolean. Every other field is
+  // opaque cargo through landing + durable fixer row (#1145). Canonical kind is
+  // always "fixer"; typed onlineReview envelope retains sole fate authority.
   if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
+  const { kind: _ignoredKind, ...rest } = parsed;
   const candidate: FixerResult = {
+    ...rest,
     kind: "fixer",
     committed: parsed.committed,
-    ...(typeof parsed.alreadySatisfied === "boolean"
-      ? { alreadySatisfied: parsed.alreadySatisfied }
-      : {}),
-    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
-      ? { fixCommitSha: parsed.fixCommitSha }
-      : {}),
   };
   return candidate;
 }
