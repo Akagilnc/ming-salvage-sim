@@ -1,13 +1,43 @@
 /**
- * #1145 Action-owned durable receipts + collection progress.
+ * #1145 worker-owned online-review durable capability (DecisionGate A).
  *
- * Runner/stage never interprets these rows for fate. Collector/Verify Actions
- * own recovery: pristine start, in-progress resume, corrupt escalate.
- * Mutating GH ops: attempted → query external fact → succeeded | escalate
- * (never blind-replay attempted).
+ * Sole store: `{workingRepo}/.orchestrator-online-review-durable/`
+ * Host may only ensure dir + RW-mount + ship bin.mjs — never parse/classify.
+ * Workers call bin.mjs (or this module in tests) for progress/receipts/blobs.
  */
 
-import type { FamilyBackend, FamilyLedgerEntry } from "./types.js";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { ensureGitInfoExclude } from "../gitInfoExclude.js";
+
+// ─── Paths / env (sole names) ─────────────────────────────────────────
+
+/** Host + sandbox relative directory name (sole durable store). */
+export const ONLINE_REVIEW_DURABLE_DIR = ".orchestrator-online-review-durable";
+
+/** Env pointing at the mounted durable root inside the sandbox. */
+export const ONLINE_REVIEW_DURABLE_PATH_ENV =
+  "ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH";
+
+/** Sandbox mount / env value (relative to worker workdir). */
+export const ONLINE_REVIEW_DURABLE_SANDBOX_PATH = ONLINE_REVIEW_DURABLE_DIR;
+
+const STATE_FILE = "state.jsonl";
+const LOCK_FILE = "state.jsonl.lock";
+const BLOBS_DIR = "blobs";
+const BIN_NAME = "bin.mjs";
 
 // ─── Side-effect receipts (mutating GH ops) ───────────────────────────
 
@@ -45,7 +75,7 @@ export type SideEffectRecoveryDecision =
 
 /**
  * attempted recovery: always query external fact first; never bare-retry.
- * succeeded → skip. No receipt → first execute. Unknown fact → escalate.
+ * succeeded → skip. Unknown fact → escalate.
  */
 export function decideSideEffectRecovery(
   receipt: OnlineReviewSideEffectReceipt | undefined,
@@ -84,8 +114,7 @@ export function decideSideEffectRecovery(
 
 /**
  * Run one mutating op with durable attempted→call→succeeded order.
- * `mutate` is invoked at most once per call when decision is execute_once.
- * On skip_already_done after attempted, backfills succeeded without mutate.
+ * `mutate` is invoked at most once when decision is execute_once.
  */
 export async function executeIdempotentSideEffect(input: {
   readonly receipt: OnlineReviewSideEffectReceipt | undefined;
@@ -136,7 +165,6 @@ export async function executeIdempotentSideEffect(input: {
     return { ok: true, skipped: true };
   }
 
-  // execute_once — durable attempted BEFORE mutate
   const attempted: OnlineReviewSideEffectReceipt = {
     ...input.base,
     state: "attempted",
@@ -167,124 +195,7 @@ export async function executeIdempotentSideEffect(input: {
   }
 }
 
-export function lastSideEffectReceiptFromFamilyLedger(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  idempotencyKey: string,
-): OnlineReviewSideEffectReceipt | undefined {
-  const key = idempotencyKey.trim();
-  if (key.length === 0) return undefined;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status !== "online_review_side_effect_receipt" ||
-      entry.event !== "online_review_side_effect_receipt"
-    ) {
-      continue;
-    }
-    const receipt = receiptFromLedgerEntry(entry);
-    if (receipt !== undefined && receipt.idempotencyKey === key) {
-      return receipt;
-    }
-  }
-  return undefined;
-}
-
-export function sideEffectReceiptsForRound(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  round: number,
-): ReadonlyArray<OnlineReviewSideEffectReceipt> {
-  if (!Number.isSafeInteger(round) || round < 1) return [];
-  const latestByKey = new Map<string, OnlineReviewSideEffectReceipt>();
-  for (const entry of entries) {
-    if (
-      entry.status !== "online_review_side_effect_receipt" ||
-      entry.event !== "online_review_side_effect_receipt"
-    ) {
-      continue;
-    }
-    const receipt = receiptFromLedgerEntry(entry);
-    if (receipt === undefined || receipt.round !== round) continue;
-    latestByKey.set(receipt.idempotencyKey, receipt);
-  }
-  return [...latestByKey.values()];
-}
-
-function receiptFromLedgerEntry(
-  entry: FamilyLedgerEntry,
-): OnlineReviewSideEffectReceipt | undefined {
-  const seat = entry.sideEffectSeat;
-  const op = entry.sideEffectOp;
-  const state = entry.sideEffectState;
-  const key = entry.sideEffectIdempotencyKey;
-  const round = entry.onlineReviewRound;
-  if (
-    (seat !== "collector" && seat !== "verify") ||
-    (op !== "retrigger" &&
-      op !== "reply" &&
-      op !== "resolve" &&
-      op !== "defer") ||
-    (state !== "attempted" && state !== "succeeded" && state !== "failed") ||
-    typeof key !== "string" ||
-    key.trim().length === 0 ||
-    typeof round !== "number" ||
-    !Number.isSafeInteger(round) ||
-    round < 1
-  ) {
-    return undefined;
-  }
-  return {
-    seat,
-    round,
-    op,
-    idempotencyKey: key.trim(),
-    ...(typeof entry.sideEffectExternalHandle === "string" &&
-    entry.sideEffectExternalHandle.trim().length > 0
-      ? { externalHandle: entry.sideEffectExternalHandle.trim() }
-      : {}),
-    state,
-    ts:
-      typeof entry.ts === "string" && entry.ts.length > 0
-        ? entry.ts
-        : new Date(0).toISOString(),
-  };
-}
-
-export async function recordOnlineReviewSideEffectReceipt(
-  backend: FamilyBackend,
-  receipt: OnlineReviewSideEffectReceipt,
-  opts?: { readonly pr?: string },
-): Promise<void> {
-  if (!Number.isSafeInteger(receipt.round) || receipt.round < 1) {
-    throw new Error(
-      "family online_review_side_effect_receipt must include round >= 1",
-    );
-  }
-  if (receipt.idempotencyKey.trim().length === 0) {
-    throw new Error(
-      "family online_review_side_effect_receipt must include idempotencyKey",
-    );
-  }
-  await backend.appendFamilyLedger({
-    status: "online_review_side_effect_receipt",
-    event: "online_review_side_effect_receipt",
-    phase: "final",
-    onlineReviewRound: receipt.round,
-    sideEffectSeat: receipt.seat,
-    sideEffectOp: receipt.op,
-    sideEffectIdempotencyKey: receipt.idempotencyKey.trim(),
-    sideEffectState: receipt.state,
-    ...(receipt.externalHandle !== undefined &&
-    receipt.externalHandle.trim().length > 0
-      ? { sideEffectExternalHandle: receipt.externalHandle.trim() }
-      : {}),
-    ...(opts?.pr !== undefined && opts.pr.trim().length > 0
-      ? { pr: opts.pr.trim() }
-      : {}),
-    ts: receipt.ts,
-  });
-}
-
-// ─── Collection progress (wait / evidence handle) ─────────────────────
+// ─── Collection progress ──────────────────────────────────────────────
 
 export type CollectionProgressPhase =
   | "initialized"
@@ -296,7 +207,6 @@ export interface OnlineReviewCollectionProgress {
   readonly phase: CollectionProgressPhase;
   readonly waitDeadlineAt?: string;
   readonly completedWaitEpochs?: number;
-  /** Opaque evidence handle (cargoPointer). No business fields. */
   readonly evidenceHandle?: string;
   readonly ts: string;
 }
@@ -315,7 +225,7 @@ export type CollectionProgressClassification =
 
 /**
  * Same-round trichotomy: pristine | resume | corrupt.
- * Old-round rows are ignored. Missing same-round row = pristine (never escalate).
+ * Missing same-round row = pristine (never escalate).
  */
 export function classifyCollectionProgress(input: {
   readonly round: number;
@@ -347,11 +257,8 @@ export function classifyCollectionProgress(input: {
     };
   }
 
-  // progress defined
   const p = progress!;
   if (p.round !== round) {
-    // Caller should only pass same-round progress; treat mismatch as pristine
-    // for this round (old rows ignored).
     if (!hasReceipts) return { kind: "pristine" };
     return {
       kind: "corrupt",
@@ -391,15 +298,9 @@ export function classifyCollectionProgress(input: {
     }
   }
 
-  // attempted receipts without externalHandle are not corrupt by themselves —
-  // recovery path (decideSideEffectRecovery) escalates when fact is unknown.
   return { kind: "resume", progress: p };
 }
 
-/**
- * Remaining wait ms from durable deadline. 0 if overdue or absent.
- * Never re-opens a full window — caller must have persisted deadline first.
- */
 export function remainingWaitMs(
   progress: OnlineReviewCollectionProgress,
   nowMs: number = Date.now(),
@@ -415,93 +316,341 @@ export function remainingWaitMs(
   return Math.max(0, deadline - nowMs);
 }
 
-export function lastCollectionProgressFromFamilyLedger(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  round: number,
-): OnlineReviewCollectionProgress | undefined {
-  if (!Number.isSafeInteger(round) || round < 1) return undefined;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status !== "online_review_collection_progress" ||
-      entry.event !== "online_review_collection_progress"
-    ) {
-      continue;
-    }
-    if (entry.onlineReviewRound !== round) continue;
-    const parsed = progressFromLedgerEntry(entry);
-    if (parsed !== undefined) return parsed;
-  }
-  return undefined;
+// ─── File store (worker + tests; host must not classify) ──────────────
+
+type ProgressEvent = {
+  readonly v: 1;
+  readonly kind: "collection_progress";
+  readonly round: number;
+  readonly ts: string;
+  readonly phase: CollectionProgressPhase;
+  readonly waitDeadlineAt?: string;
+  readonly completedWaitEpochs?: number;
+  readonly evidenceHandle?: string;
+};
+
+type ReceiptEvent = {
+  readonly v: 1;
+  readonly kind: "side_effect_receipt";
+  readonly round: number;
+  readonly ts: string;
+  readonly seat: OnlineReviewSideEffectSeat;
+  readonly op: OnlineReviewSideEffectOp;
+  readonly idempotencyKey: string;
+  readonly state: OnlineReviewSideEffectState;
+  readonly externalHandle?: string;
+};
+
+type DurableEvent = ProgressEvent | ReceiptEvent;
+
+export interface OnlineReviewDurableStore {
+  readonly root: string;
+  appendProgress(progress: OnlineReviewCollectionProgress): void;
+  appendReceipt(receipt: OnlineReviewSideEffectReceipt): void;
+  lastProgress(round: number): OnlineReviewCollectionProgress | undefined;
+  lastReceipt(
+    round: number,
+    idempotencyKey: string,
+  ): OnlineReviewSideEffectReceipt | undefined;
+  receiptsForRound(round: number): ReadonlyArray<OnlineReviewSideEffectReceipt>;
+  classify(round: number): CollectionProgressClassification;
+  putEvidence(round: number, body: string | Buffer): string;
+  getEvidence(handle: string): Buffer;
+  evidenceReadable(handle: string): boolean;
 }
 
-function progressFromLedgerEntry(
-  entry: FamilyLedgerEntry,
-): OnlineReviewCollectionProgress | undefined {
-  const round = entry.onlineReviewRound;
-  const phase = entry.collectionProgressPhase;
-  if (
-    typeof round !== "number" ||
-    !Number.isSafeInteger(round) ||
-    round < 1 ||
-    (phase !== "initialized" &&
-      phase !== "waiting" &&
-      phase !== "evidence_ready")
-  ) {
-    return undefined;
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function withLock(root: string, fn: () => void): void {
+  const lockPath = join(root, LOCK_FILE);
+  const started = Date.now();
+  let fd: number | undefined;
+  while (fd === undefined) {
+    try {
+      fd = openSync(lockPath, "wx");
+    } catch (err) {
+      const code =
+        err !== null && typeof err === "object" && "code" in err
+          ? String((err as { code?: unknown }).code)
+          : "";
+      if (code !== "EEXIST") throw err;
+      if (Date.now() - started > 5_000) {
+        throw new Error(
+          `online-review durable lock timeout on ${lockPath}`,
+        );
+      }
+      // busy-wait briefly (no Atomics/SAB dependency in worker images)
+      const until = Date.now() + 20;
+      while (Date.now() < until) {
+        /* spin */
+      }
+    }
   }
+  try {
+    fn();
+  } finally {
+    closeSync(fd);
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // best-effort unlock
+    }
+  }
+}
+
+function readEvents(root: string): DurableEvent[] {
+  const path = join(root, STATE_FILE);
+  if (!existsSync(path)) return [];
+  const text = readFileSync(path, "utf8");
+  const out: DurableEvent[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        (parsed as { v?: unknown }).v === 1 &&
+        typeof (parsed as { kind?: unknown }).kind === "string"
+      ) {
+        out.push(parsed as DurableEvent);
+      }
+    } catch {
+      // skip corrupt lines
+    }
+  }
+  return out;
+}
+
+function appendEvent(root: string, event: DurableEvent): void {
+  withLock(root, () => {
+    const path = join(root, STATE_FILE);
+    writeFileSync(path, `${JSON.stringify(event)}\n`, {
+      encoding: "utf8",
+      flag: "a",
+    });
+  });
+}
+
+function progressFromEvent(
+  e: ProgressEvent,
+): OnlineReviewCollectionProgress {
   return {
-    round,
-    phase,
-    ...(typeof entry.collectionWaitDeadlineAt === "string" &&
-    entry.collectionWaitDeadlineAt.trim().length > 0
-      ? { waitDeadlineAt: entry.collectionWaitDeadlineAt.trim() }
+    round: e.round,
+    phase: e.phase,
+    ...(e.waitDeadlineAt !== undefined
+      ? { waitDeadlineAt: e.waitDeadlineAt }
       : {}),
-    ...(typeof entry.collectionCompletedWaitEpochs === "number" &&
-    Number.isSafeInteger(entry.collectionCompletedWaitEpochs) &&
-    entry.collectionCompletedWaitEpochs >= 0
-      ? { completedWaitEpochs: entry.collectionCompletedWaitEpochs }
+    ...(e.completedWaitEpochs !== undefined
+      ? { completedWaitEpochs: e.completedWaitEpochs }
       : {}),
-    ...(typeof entry.collectionEvidenceHandle === "string" &&
-    entry.collectionEvidenceHandle.trim().length > 0
-      ? { evidenceHandle: entry.collectionEvidenceHandle.trim() }
+    ...(e.evidenceHandle !== undefined
+      ? { evidenceHandle: e.evidenceHandle }
       : {}),
-    ts:
-      typeof entry.ts === "string" && entry.ts.length > 0
-        ? entry.ts
-        : new Date(0).toISOString(),
+    ts: e.ts,
   };
 }
 
-export async function recordOnlineReviewCollectionProgress(
-  backend: FamilyBackend,
-  progress: OnlineReviewCollectionProgress,
-  opts?: { readonly pr?: string },
-): Promise<void> {
-  if (!Number.isSafeInteger(progress.round) || progress.round < 1) {
-    throw new Error(
-      "family online_review_collection_progress must include round >= 1",
+function receiptFromEvent(e: ReceiptEvent): OnlineReviewSideEffectReceipt {
+  return {
+    seat: e.seat,
+    round: e.round,
+    op: e.op,
+    idempotencyKey: e.idempotencyKey,
+    ...(e.externalHandle !== undefined
+      ? { externalHandle: e.externalHandle }
+      : {}),
+    state: e.state,
+    ts: e.ts,
+  };
+}
+
+/** Open a durable store rooted at an existing directory. */
+export function openOnlineReviewDurableStore(
+  root: string,
+): OnlineReviewDurableStore {
+  mkdirSync(join(root, BLOBS_DIR), { recursive: true });
+
+  const blobPath = (handle: string): string => {
+    const normalized = handle.replace(/\\/g, "/");
+    if (
+      normalized.includes("..") ||
+      !normalized.startsWith(`${BLOBS_DIR}/`)
+    ) {
+      throw new Error(`invalid evidence handle: ${handle}`);
+    }
+    return join(root, normalized);
+  };
+
+  const store: OnlineReviewDurableStore = {
+    root,
+    appendProgress(progress) {
+      const event: ProgressEvent = {
+        v: 1,
+        kind: "collection_progress",
+        round: progress.round,
+        ts: progress.ts,
+        phase: progress.phase,
+        ...(progress.waitDeadlineAt !== undefined
+          ? { waitDeadlineAt: progress.waitDeadlineAt }
+          : {}),
+        ...(progress.completedWaitEpochs !== undefined
+          ? { completedWaitEpochs: progress.completedWaitEpochs }
+          : {}),
+        ...(progress.evidenceHandle !== undefined
+          ? { evidenceHandle: progress.evidenceHandle }
+          : {}),
+      };
+      appendEvent(root, event);
+    },
+    appendReceipt(receipt) {
+      const event: ReceiptEvent = {
+        v: 1,
+        kind: "side_effect_receipt",
+        round: receipt.round,
+        ts: receipt.ts,
+        seat: receipt.seat,
+        op: receipt.op,
+        idempotencyKey: receipt.idempotencyKey,
+        state: receipt.state,
+        ...(receipt.externalHandle !== undefined
+          ? { externalHandle: receipt.externalHandle }
+          : {}),
+      };
+      appendEvent(root, event);
+    },
+    lastProgress(round) {
+      if (!Number.isSafeInteger(round) || round < 1) return undefined;
+      const events = readEvents(root);
+      for (let i = events.length - 1; i >= 0; i--) {
+        const e = events[i]!;
+        if (e.kind === "collection_progress" && e.round === round) {
+          return progressFromEvent(e);
+        }
+      }
+      return undefined;
+    },
+    lastReceipt(round, idempotencyKey) {
+      const key = idempotencyKey.trim();
+      if (!Number.isSafeInteger(round) || round < 1 || key.length === 0) {
+        return undefined;
+      }
+      const events = readEvents(root);
+      for (let i = events.length - 1; i >= 0; i--) {
+        const e = events[i]!;
+        if (
+          e.kind === "side_effect_receipt" &&
+          e.round === round &&
+          e.idempotencyKey === key
+        ) {
+          return receiptFromEvent(e);
+        }
+      }
+      return undefined;
+    },
+    receiptsForRound(round) {
+      if (!Number.isSafeInteger(round) || round < 1) return [];
+      const latest = new Map<string, OnlineReviewSideEffectReceipt>();
+      for (const e of readEvents(root)) {
+        if (e.kind !== "side_effect_receipt" || e.round !== round) continue;
+        latest.set(e.idempotencyKey, receiptFromEvent(e));
+      }
+      return [...latest.values()];
+    },
+    classify(round) {
+      return classifyCollectionProgress({
+        round,
+        progress: store.lastProgress(round),
+        sameRoundReceipts: store.receiptsForRound(round),
+        evidenceHandleReadable: (h) => store.evidenceReadable(h),
+      });
+    },
+    putEvidence(round, body) {
+      if (!Number.isSafeInteger(round) || round < 1) {
+        throw new Error("evidence-put requires round >= 1");
+      }
+      const id = `r${round}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const handle = `${BLOBS_DIR}/${id}`;
+      const dest = blobPath(handle);
+      const tmp = `${dest}.tmp`;
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(tmp, body);
+      renameSync(tmp, dest);
+      store.appendProgress({
+        round,
+        phase: "evidence_ready",
+        evidenceHandle: handle,
+        ts: nowIso(),
+      });
+      return handle;
+    },
+    getEvidence(handle) {
+      const path = blobPath(handle);
+      if (!existsSync(path)) {
+        throw new Error(`evidence handle unreadable: ${handle}`);
+      }
+      return readFileSync(path);
+    },
+    evidenceReadable(handle) {
+      try {
+        return existsSync(blobPath(handle));
+      } catch {
+        return false;
+      }
+    },
+  };
+  return store;
+}
+
+function bundledBinSourcePath(): string {
+  // Prefer scripts/ next to package root (src/family → ../../scripts).
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "..", "scripts", "online-review-durable-bin.mjs");
+}
+
+/**
+ * Host-only: mkdir store, ship bin.mjs, git-exclude.
+ * Must not read/parse state.jsonl.
+ */
+export function ensureOnlineReviewDurableDir(workingRepo: string): {
+  readonly hostPath: string;
+  readonly sandboxPath: string;
+} {
+  const hostPath = join(workingRepo, ONLINE_REVIEW_DURABLE_DIR);
+  mkdirSync(join(hostPath, BLOBS_DIR), { recursive: true });
+  const binSrc = bundledBinSourcePath();
+  const binDest = join(hostPath, BIN_NAME);
+  if (existsSync(binSrc)) {
+    copyFileSync(binSrc, binDest);
+  } else {
+    // Fallback stub so mount always has a bin (tests may inject full script).
+    writeFileSync(
+      binDest,
+      `#!/usr/bin/env node\nconsole.error("online-review durable bin missing source");\nprocess.exit(2);\n`,
+      "utf8",
     );
   }
-  await backend.appendFamilyLedger({
-    status: "online_review_collection_progress",
-    event: "online_review_collection_progress",
-    phase: "final",
-    onlineReviewRound: progress.round,
-    collectionProgressPhase: progress.phase,
-    ...(progress.waitDeadlineAt !== undefined
-      ? { collectionWaitDeadlineAt: progress.waitDeadlineAt }
-      : {}),
-    ...(progress.completedWaitEpochs !== undefined
-      ? { collectionCompletedWaitEpochs: progress.completedWaitEpochs }
-      : {}),
-    ...(progress.evidenceHandle !== undefined &&
-    progress.evidenceHandle.trim().length > 0
-      ? { collectionEvidenceHandle: progress.evidenceHandle.trim() }
-      : {}),
-    ...(opts?.pr !== undefined && opts.pr.trim().length > 0
-      ? { pr: opts.pr.trim() }
-      : {}),
-    ts: progress.ts,
-  });
+  ensureGitInfoExclude(workingRepo, ONLINE_REVIEW_DURABLE_DIR);
+  ensureGitInfoExclude(workingRepo, `${ONLINE_REVIEW_DURABLE_DIR}/`);
+  return {
+    hostPath,
+    sandboxPath: ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
+  };
+}
+
+/** Mount descriptor for familyReviewLoopSandboxConfig (RW). */
+export function onlineReviewDurableMount(workingRepo: string): {
+  readonly hostPath: string;
+  readonly sandboxPath: string;
+  readonly readonly?: boolean;
+} {
+  const ensured = ensureOnlineReviewDurableDir(workingRepo);
+  return {
+    hostPath: ensured.hostPath,
+    sandboxPath: ensured.sandboxPath,
+    // RW — workers append state / blobs
+  };
 }

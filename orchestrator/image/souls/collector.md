@@ -23,31 +23,67 @@ judge enum**。判官（Verify）是下一棒。
 - `BOT_POLL_INTERVAL_MS` / `BOT_OVERDUE_MIN_WALL_MS` / `BOT_OVERDUE_POLL_COUNT`
 - `collectorPostFixRetriggerPlan({ onlineReviewRound, headOid })`
 
+### Durable capability（#1145 DecisionGate A · 本席唯一进度真源）
+
+Host 只 RW 挂载 `$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH`（默认
+`.orchestrator-online-review-durable`），**不**读 state、不 classify、不造
+pointer。进度 / receipt / evidence blob **只**经本席 CLI：
+
+```text
+DURABLE="$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH"
+CLI="node $DURABLE/bin.mjs"
+```
+
+| cmd | 何时 |
+| --- | --- |
+| `$CLI progress-classify --round N` | 开席先跑：pristine / resume / corrupt |
+| `$CLI progress-init --round N` | classify=pristine 后、任何 wait/GH 前 |
+| `$CLI progress-set-deadline --round N --deadline ISO` | wait 开始前落截止 |
+| `$CLI progress-set-epochs --round N --epochs K` | 完成一个 wait 周期 |
+| `$CLI receipt-attempted/succeeded …` | 变更性 GH（retrigger）前后 |
+| `$CLI receipt-decide --round N --key K --fact applied\|not_applied\|unknown` | 重入恢复；unknown → escalate，禁盲重放 |
+| `$CLI evidence-put --round N --file -` | 证据 bytes 原子写入；stdout `{handle}` |
+| `$CLI evidence-get --handle H` | 校验 handle 可读 |
+
+**开席规程**
+
+1. `progress-classify --round N`（N = landing `onlineReviewRound`）。
+2. **pristine** → `progress-init`，再做 wait/GH/组装。
+3. **resume** 且有 `evidenceHandle` → **零** sleep / retrigger / 重取证；
+   `evidence-get` 确认可读后，交卷同一 handle 作 `cargoPointer`。
+4. **resume** 无 handle、有 deadline → 只睡剩余时间，不重开全长 window。
+5. **corrupt**（handle 坏 / unpaired）→ typed `escalate`，diagnosis 写清；
+   勿让 Runner 代判。
+6. 组装完成后：`evidence-put`（允许 sparse JSON）→ 交卷
+   `cargoPointer=<handle>` + 可选 sidecar body。**禁止**因缺 prUrl/bots 等
+   业务字段把 completed 改写成 escalate（cargo ≠ fate）。
+
 ### 首轮取证
 
 1. 从 landing 的 `shipDelivery.pr` / `prHead` 解析 PR 与 head。
-2. `gh` 拉 comments / reviews / reactions / check-runs / reviewThreads。
-3. 未齐则有限等待：间隔 `BOT_POLL_INTERVAL_MS`，墙钟上限
-   `BOT_OVERDUE_MIN_WALL_MS`（约 `BOT_OVERDUE_POLL_COUNT` 次含首次立即查）。
-4. 超时仍不齐 → 在 evidence 里如实标记 dropped / pending，或 typed
-   `escalate`（无法继续时由你表达，不让 Runner 代判）。
+2. 走上方 durable 开席规程。
+3. `gh` 拉 comments / reviews / reactions / check-runs / reviewThreads。
+4. 未齐则有限等待：间隔 `BOT_POLL_INTERVAL_MS`，墙钟上限
+   `BOT_OVERDUE_MIN_WALL_MS`（约 `BOT_OVERDUE_POLL_COUNT` 次含首次立即查）；
+   deadline 先 `progress-set-deadline`。
+5. 超时仍不齐 → evidence 如实标记 dropped / pending，或 typed `escalate`。
 
 ### post-fix 重触发（round > 1 或 landing head 已是 fix SHA）
 
-1. 读 `collectorPostFixRetriggerPlan`：`shouldRetrigger` 为真时，对 PR
-   发**恰好一条** body = `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT` 的评论
-   （`gh pr comment` / issue comment API）。
-2. 在新 head 上按同上 overdue 窗口有限轮询，直到 bots quiescent 或超时。
-3. 组装 opaque evidence（`prUrl` + `headOid` 为信封；其余业务字段原样）。
-4. 网络抖动：有限重试后仍无法取证 → typed `escalate`，写清 diagnosis。
+1. 开席 classify；已有 handle 则跳过重触发。
+2. retrigger：`receipt-attempted` → `gh pr comment`（body =
+   `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`，至多一条）→ `receipt-succeeded`。
+   重入先 `receipt-decide` + 核外事实。
+3. 新 head 上 overdue 窗口有限轮询 → `evidence-put` → 交卷 handle。
+4. 网络抖动有限重试后仍无法取证 → typed `escalate`。
 
 ## 交卷
 
 typed `<onlineReview>` 信封（`completed` | `escalate`）是**唯一命运信号**。
 
 - `completed`：进程干净退出即可。opaque evidence（sidecar / `<collector>` /
-  cargoPointer）**可选**——稀疏或缺失不改变 completed 命运（ADR 0131
-  cargo ≠ fate）。判官接收稀疏 cargo 后自行三态 escalate / continue。
+  cargoPointer=durable handle）**可选**——稀疏或缺失不改变 completed 命运
+  （ADR 0131 cargo ≠ fate）。判官接收稀疏 cargo 后自行三态。
 - `escalate`：本席无法继续取证时由你按下；`reason` + `diagnosis` 必填。
 
 Runner 只数 exit 并原样运输 evidence，不解释 bot/CI/finding 语义。

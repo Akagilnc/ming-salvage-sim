@@ -290,12 +290,12 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     expect(verifyPair?.landing?.shipDelivery?.prHead).not.toBe(
       "elevated-from-evidence-head",
     );
-    // Pristine collection-progress init is durable before/around first collect.
+    // DecisionGate A: host must NOT write collection_progress to family ledger.
     expect(
       backend.ledger.some(
         (e) => e.event === "online_review_collection_progress",
       ),
-    ).toBe(true);
+    ).toBe(false);
 
     // Host GH poll seams stay dark (deleted dual-owner path).
     expect(pollSpy).not.toHaveBeenCalled();
@@ -1475,12 +1475,11 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     });
   });
 
-  describe("#1145 T1–T5 durable receipt / progress / opaque cargo",
+  describe("#1145 DecisionGate A — worker durable store / opaque / no host classify",
     () => {
-    it("T2 capability: stage does not lift evidence headOid; Verify unpacks body",
+    it("T2: stage does not lift evidence headOid; Verify unpacks body; no host-mint pointer",
       async () => {
       const backend = new TracerFamilyBackend();
-      // Distinct evidence head — must NOT become landing prHead.
       backend.collectorEvidence = stubCollectorEvidence({
         prUrl: offlineShip.pr,
         headOid: "evidence-head-MUST-NOT-ELEVATE",
@@ -1490,7 +1489,6 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       let verifySawBody: unknown;
       backend.verifyImpl = async (_s, _c, landing) => {
         verifySawBody = landing?.onlineReviewSnapshot;
-        // Verify (seat) may read business fields; stage must not have rewritten prHead.
         expect(landing?.shipDelivery?.prHead).toBe(offlineShip.prHead);
         expect(
           (landing?.onlineReviewSnapshot as { headOid?: string } | undefined)
@@ -1509,15 +1507,20 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       });
       expect(result.ok).toBe(true);
       expect(verifySawBody).toEqual(backend.collectorEvidence);
-      // completed marker stores bookkeeping head from ship, not evidence body.
       const completed = backend.ledger.find(
         (e) => e.event === "online_review_collector_completed",
       );
       expect(completed?.familyHeadAfter).toBe(offlineShip.prHead);
-      expect(completed?.cargoPointer).toEqual(expect.any(String));
+      // Worker did not supply cargoPointer — host must not mint one.
+      expect(completed?.cargoPointer).toBeUndefined();
+      expect(
+        backend.ledger.some(
+          (e) => e.event === "online_review_collection_progress",
+        ),
+      ).toBe(false);
     });
 
-    it("T4 pristine round-1 / round+1: init progress, normal dispatch not gate",
+    it("T4: missing durable progress does not gate — host still dispatches Collector",
       async () => {
       const backend = new TracerFamilyBackend();
       const result = await runFamilyOnlineReviewLoop({
@@ -1529,21 +1532,13 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ok: true,
         terminalState: "mergeable",
       });
-      // Not escalated on missing progress — pristine init then collect.
       expect(result.terminalState).not.toBe("decision_gate_raised");
-      const progressRows = backend.ledger.filter(
-        (e) => e.event === "online_review_collection_progress",
-      );
-      expect(progressRows.length).toBeGreaterThanOrEqual(1);
-      expect(progressRows[0]?.collectionProgressPhase).toBe("initialized");
       expect(backend.collectorDispatchCount).toBe(1);
 
-      // round+1 after continue: new pristine init, does not reuse round-1 handle.
+      // round+1 after continue: second Collector dispatch (pristine for worker).
       const backend2 = new TracerFamilyBackend();
-      let roundSeen: number[] = [];
       backend2.verifyImpl = async (_s, _c, landing) => {
         const r = landing?.onlineReviewRound ?? 1;
-        roundSeen.push(r);
         if (r === 1 && landing?.fixerResult === undefined) {
           return {
             kind: "completed",
@@ -1585,22 +1580,18 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ship: offlineShip,
       });
       expect(multi.ok).toBe(true);
-      const inits = backend2.ledger.filter(
-        (e) =>
-          e.event === "online_review_collection_progress" &&
-          e.collectionProgressPhase === "initialized",
-      );
-      const rounds = new Set(inits.map((e) => e.onlineReviewRound));
-      expect(rounds.has(1)).toBe(true);
-      expect(rounds.has(2)).toBe(true);
-      // round-2 init is a separate pristine row — not escalate.
       expect(multi.terminalState).toBe("mergeable");
+      expect(backend2.collectorDispatchCount).toBeGreaterThanOrEqual(2);
+      expect(
+        backend2.ledger.some(
+          (e) => e.event === "online_review_collection_progress",
+        ),
+      ).toBe(false);
     });
 
     it("T5 sparse opaque blob: Collector completes; Verify receives body; no fate rewrite",
       async () => {
       const backend = new TracerFamilyBackend();
-      // Sparse — missing bots/threads/checks; still legal cargo≠fate.
       backend.collectorEvidence = {
         prUrl: offlineShip.pr,
         headOid: offlineShip.prHead,
@@ -1608,8 +1599,6 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       let verifyLanding: WorkerLandingPayload | undefined;
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyLanding = landing;
-        // Verify may escalate on sparse — that is judge authority, not collection fate.
-        // Here we accept sparse and converge to prove Collector/Runner did not gate.
         return {
           kind: "completed",
           output: { kind: "verify", converged: true },
@@ -1632,104 +1621,207 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBe(true);
     });
 
-    it("T3: evidence handle durable, collector_completed missing → re-entry zero recollect",
+    it("T1+T3: worker durable store — receipt recover + dual-open same handle",
       async () => {
-      const handle = "opaque://evidence/r1-pre-completed";
-      const backend = new TracerFamilyBackend();
-      // Simulate crash after evidence_ready progress, before collector_completed.
-      backend.ledger.push({
-        status: "online_review_collection_progress",
-        event: "online_review_collection_progress",
-        phase: "final",
-        onlineReviewRound: 1,
-        collectionProgressPhase: "evidence_ready",
-        collectionEvidenceHandle: handle,
-        ts: "2026-01-01T00:00:00.000Z",
-      });
-
-      const result = await runFamilyOnlineReviewLoop({
-        familyBackend: backend,
-        familyBase: "family/1145",
-        ship: offlineShip,
-      });
-      expect(result.ok).toBe(true);
-      // Collector worker not re-dispatched — handle resume patches completed only.
-      expect(backend.collectorDispatchCount).toBe(0);
-      const completed = backend.ledger.filter(
-        (e) => e.event === "online_review_collector_completed",
-      );
-      expect(completed.length).toBeGreaterThanOrEqual(1);
-      expect(completed[0]?.cargoPointer).toBe(handle);
-      // Same opaque handle reached Verify (pointer transport; body may be absent).
-      const verifyLanding = backend.landings.find(
-        (_, i) => backend.kinds[i] === "verify",
-      );
-      // Stage may pass only pointer-derived empty snapshot absence — Verify still ran.
-      expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
-      expect(verifyLanding).toBeDefined();
-    });
-
-    it("T1: GH succeeded with only attempted durable → re-entry zero second mutate",
-      async () => {
+      const { mkdtempSync, rmSync, readFileSync, existsSync } =
+        await import("node:fs");
+      const { join } = await import("node:path");
+      const { tmpdir } = await import("node:os");
       const {
+        ensureOnlineReviewDurableDir,
+        openOnlineReviewDurableStore,
         decideSideEffectRecovery,
         executeIdempotentSideEffect,
-        lastSideEffectReceiptFromFamilyLedger,
-        recordOnlineReviewSideEffectReceipt,
+        ONLINE_REVIEW_DURABLE_DIR,
       } = await import("../src/family/onlineReviewActionDurable.js");
 
-      const backend = new TracerFamilyBackend();
-      const key = "resolve:discussion_r3652932124";
-      const base = {
-        seat: "verify" as const,
-        round: 1,
-        op: "resolve" as const,
-        idempotencyKey: key,
-        externalHandle: "discussion_r3652932124",
-      };
+      const workingRepo = mkdtempSync(join(tmpdir(), "or-durable-1145-"));
+      try {
+        const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
+        expect(hostPath).toBe(join(workingRepo, ONLINE_REVIEW_DURABLE_DIR));
+        const binPath = join(hostPath, "bin.mjs");
+        expect(existsSync(binPath)).toBe(true);
+        // Worker-callable CLI is shipped into the durable root (no host parse).
+        const binSrc = readFileSync(binPath, "utf8");
+        expect(binSrc).toMatch(/progress-classify/);
+        expect(binSrc).toMatch(/receipt-decide/);
+        expect(binSrc).toMatch(/evidence-put/);
 
-      // Window: GH already succeeded; only attempted persisted.
-      await recordOnlineReviewSideEffectReceipt(backend, {
-        ...base,
-        state: "attempted",
-        ts: "2026-01-01T00:00:00.000Z",
-      });
+        // Dispatch-1 simulation: worker writes evidence via store (same cmds as CLI).
+        const store1 = openOnlineReviewDurableStore(hostPath);
+        store1.appendProgress({
+          round: 1,
+          phase: "initialized",
+          ts: new Date().toISOString(),
+        });
+        const handle = store1.putEvidence(
+          1,
+          JSON.stringify({ sparse: true, marker: "same-handle-1145" }),
+        );
 
-      let mutateCalls = 0;
-      let queryCalls = 0;
-      const outcome = await executeIdempotentSideEffect({
-        receipt: lastSideEffectReceiptFromFamilyLedger(backend.ledger, key),
-        queryExternal: async (): Promise<"applied" | "not_applied" | "unknown"> => {
-          queryCalls += 1;
-          // External fact: already applied (GH succeeded before crash).
-          return "applied";
-        },
-        mutate: async () => {
-          mutateCalls += 1;
-          return { externalHandle: base.externalHandle };
-        },
-        saveReceipt: async (r) => {
-          await recordOnlineReviewSideEffectReceipt(backend, r);
-        },
-        base,
-      });
+        // Dispatch-2 simulation: new open on SAME hostPath sees same handle.
+        const store2 = openOnlineReviewDurableStore(hostPath);
+        const classified = store2.classify(1);
+        expect(classified.kind).toBe("resume");
+        if (classified.kind === "resume") {
+          expect(classified.progress.evidenceHandle).toBe(handle);
+        }
+        const body = store2.getEvidence(handle).toString("utf8");
+        expect(JSON.parse(body)).toEqual({
+          sparse: true,
+          marker: "same-handle-1145",
+        });
 
-      expect(outcome).toEqual({ ok: true, skipped: true });
-      expect(mutateCalls).toBe(0);
-      expect(queryCalls).toBe(1);
-      const final = lastSideEffectReceiptFromFamilyLedger(backend.ledger, key);
-      expect(final?.state).toBe("succeeded");
-
-      // attempted + unknown fact must escalate — never blind replay.
-      const decision = decideSideEffectRecovery(
-        {
+        // T1: attempted only + external applied → zero mutate.
+        const key = "resolve:discussion_r3652932124";
+        const base = {
+          seat: "verify" as const,
+          round: 1,
+          op: "resolve" as const,
+          idempotencyKey: key,
+          externalHandle: "discussion_r3652932124",
+        };
+        store2.appendReceipt({
           ...base,
           state: "attempted",
-          ts: "2026-01-01T00:00:00.000Z",
-        },
-        "unknown",
+          ts: new Date().toISOString(),
+        });
+        let mutateCalls = 0;
+        const outcome = await executeIdempotentSideEffect({
+          receipt: store2.lastReceipt(1, key),
+          queryExternal: async () => "applied" as const,
+          mutate: async () => {
+            mutateCalls += 1;
+            return { externalHandle: base.externalHandle };
+          },
+          saveReceipt: (r) => store2.appendReceipt(r),
+          base,
+        });
+        expect(outcome).toEqual({ ok: true, skipped: true });
+        expect(mutateCalls).toBe(0);
+        expect(store2.lastReceipt(1, key)?.state).toBe("succeeded");
+
+        expect(
+          decideSideEffectRecovery(
+            { ...base, state: "attempted", ts: new Date().toISOString() },
+            "unknown",
+          ).action,
+        ).toBe("escalate");
+
+        // Host production path must not import-call classify (static pin).
+        const verifyCmrSrc = readFileSync(
+          new URL("../src/family/verifyCmr.ts", import.meta.url),
+          "utf8",
+        );
+        expect(verifyCmrSrc).not.toMatch(/classifyCollectionProgress/);
+        expect(verifyCmrSrc).not.toMatch(/recordOnlineReviewCollectionProgress/);
+        expect(verifyCmrSrc).not.toMatch(/ledger:online-review-evidence/);
+      } finally {
+        rmSync(workingRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("sandbox-config mounts durable RW + env on collector/verify seats",
+      async () => {
+      const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } =
+        await import("node:fs");
+      const { join } = await import("node:path");
+      const { tmpdir } = await import("node:os");
+      const { RealFamilyBackend } = await import(
+        "../src/family/realFamilyBackend.js"
       );
-      expect(decision.action).toBe("escalate");
+      const {
+        ONLINE_REVIEW_DURABLE_DIR,
+        ONLINE_REVIEW_DURABLE_PATH_ENV,
+        ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
+      } = await import("../src/family/onlineReviewActionDurable.js");
+
+      const workingRepo = mkdtempSync(join(tmpdir(), "or-sandbox-1145-"));
+      try {
+        mkdirSync(join(workingRepo, ".git", "info"), { recursive: true });
+        writeFileSync(join(workingRepo, ".git", "config"), "");
+        const { fileURLToPath } = await import("node:url");
+        const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+        const promptsDir = join(packageRoot, "prompts");
+        const soulsDir = join(packageRoot, "image", "souls");
+        class Harness extends RealFamilyBackend {
+          exposeConfig(
+            spec: { kind: string; model: string; id: string },
+          ) {
+            return this.familyReviewLoopSandboxConfig(
+              {},
+              spec as never,
+              { familyBase: "family/1145" } as never,
+              undefined,
+              undefined,
+            );
+          }
+        }
+        const backend = new Harness({
+          workingRepo,
+          familyBase: "family/1145",
+          ledgerDir: join(workingRepo, "ledger"),
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir,
+          soulsDir,
+          imageName: "test-image",
+        });
+
+        for (const kind of ["collector", "verify"] as const) {
+          const cfg = backend.exposeConfig({
+            kind,
+            model: "grok-4.5",
+            id: kind === "collector" ? "S13" : "S9",
+          });
+          expect(cfg.env[ONLINE_REVIEW_DURABLE_PATH_ENV]).toBe(
+            ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
+          );
+          const durableMount = cfg.mounts.find(
+            (m) => m.sandboxPath === ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
+          );
+          expect(durableMount).toBeDefined();
+          expect(durableMount?.hostPath).toBe(
+            join(workingRepo, ONLINE_REVIEW_DURABLE_DIR),
+          );
+          expect(durableMount?.readonly).not.toBe(true);
+        }
+
+        // Source pin: production config wires durable mount (not host classify).
+        const src = readFileSync(
+          new URL("../src/family/realFamilyBackend.ts", import.meta.url),
+          "utf8",
+        );
+        expect(src).toMatch(/onlineReviewDurableMount/);
+        expect(src).toMatch(/ONLINE_REVIEW_DURABLE_PATH_ENV/);
+      } finally {
+        rmSync(workingRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("souls own side-effect/durable methods; promptFile is not second truth",
+      async () => {
+      const { readFileSync } = await import("node:fs");
+      const collectorSoul = readFileSync(
+        new URL("../image/souls/collector.md", import.meta.url),
+        "utf8",
+      );
+      const verifySoul = readFileSync(
+        new URL("../image/souls/verify.md", import.meta.url),
+        "utf8",
+      );
+      const verifyPrompt = readFileSync(
+        new URL("../prompts/verify.md", import.meta.url),
+        "utf8",
+      );
+      expect(collectorSoul).toMatch(/bin\.mjs/);
+      expect(collectorSoul).toMatch(/progress-classify/);
+      expect(collectorSoul).toMatch(/evidence-put/);
+      expect(verifySoul).toMatch(/副作用方法/);
+      expect(verifySoul).toMatch(/receipt-attempted/);
+      expect(verifySoul).toMatch(/receipt-decide/);
+      expect(verifyPrompt).toMatch(/Side-effect method truth lives in the Verify soul/);
+      expect(verifyPrompt).not.toMatch(/gh api` comment on the review thread/);
     });
   });
 });

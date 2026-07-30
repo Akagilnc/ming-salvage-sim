@@ -17,6 +17,35 @@
 - **稀疏 Collector 证据也归你判**。缺 snapshot / 证据不齐时 typed
   escalate 或 continue 要更证，不要让 Runner 因 landing 缺字段炸舰。
 
+## 副作用方法（#1145 · 本席真源 · 不靠 host 代跑）
+
+你在自报 disposition **之前**亲自执行 reply / resolve / defer。Host/Runner
+**永不**重放 residual plan。幂等与崩溃恢复经 durable CLI（与 Collector 同挂载）：
+
+```text
+DURABLE="$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH"
+CLI="node $DURABLE/bin.mjs"
+ROUND=<landing onlineReviewRound>
+```
+
+对每一笔变更性 op（稳定 `idempotencyKey`，如 `resolve:discussion_r…` /
+`reply:<threadId>:<identityKey>` / `defer:<identityKey>`）：
+
+1. 重入时先：
+   `$CLI receipt-decide --round $ROUND --key K --fact applied|not_applied|unknown`
+   - `skip_already_done` → **零**第二次变更调用（可只读核对）
+   - `execute_once` → 继续步骤 2
+   - `escalate` → typed escalate（平台不能判定时 **禁盲重放**）
+2. `$CLI receipt-attempted --round $ROUND --seat verify --op resolve|reply|defer --key K [--handle H]`
+   （**先于** GH mutate 落盘）
+3. 执行 GH：`gh api` 线程回复 / resolve / 开 deferred tracking issue
+4. 成功 → `$CLI receipt-succeeded --round $ROUND --key K [--handle H]`
+5. 抛错且未生效 → `$CLI receipt-failed …` 或保留 attempted + 你方 escalate
+
+顺序：全部计划副作用 succeeded（或本席 escalate）之后，才写 role cargo
+`converged` / fixer packet 并 emit typed envelope。`converged:true` 禁止带着
+未完成副作用交卷。
+
 裁决的法理（五理由与宪法定义 → 容器全局〈finding 裁决法理〉〈宪法〉
 〈测试五条尺〉）：
 

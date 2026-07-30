@@ -31,12 +31,6 @@ import {
   runLandingAction,
 } from "./landing.js";
 import {
-  classifyCollectionProgress,
-  lastCollectionProgressFromFamilyLedger,
-  recordOnlineReviewCollectionProgress,
-  sideEffectReceiptsForRound,
-} from "./onlineReviewActionDurable.js";
-import {
   convergenceHeadToRecord,
 } from "../evidenceAdmissibility.js";
 import {
@@ -2002,9 +1996,10 @@ export async function runFamilyOnlineReviewLoop(input: {
         // Actions. Runner never host-polls GH, never pre-assembles bot evidence,
         // never post-applies residual side-effect plans.
         dispatchCollector: async (landing, round) => {
-          // Action-owned durable resume (#1145 AC2): completed checkpoint,
-          // collection-progress handle, and pristine init. Stage only calls
-          // this seat; load/store stays in the Action. Runner never reads body.
+          // #1145 DecisionGate A: host only short-circuits on Action-completed
+          // thin marker and transports opaque pointer/body. Durability
+          // (progress/receipts/blobs) is worker-owned via mounted durable dir +
+          // bin.mjs — host never classify/progress-write/mint pointer.
           const ledgerNow = await input.familyBackend.readFamilyLedger();
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
@@ -2019,61 +2014,6 @@ export async function runFamilyOnlineReviewLoop(input: {
                 ? { cargoPointer: checkpoint.cargoPointer }
                 : {}),
             };
-          }
-
-          // collection-progress trichotomy (pristine | resume | corrupt).
-          const progress = lastCollectionProgressFromFamilyLedger(
-            ledgerNow,
-            round,
-          );
-          const sameRoundReceipts = sideEffectReceiptsForRound(ledgerNow, round);
-          const classified = classifyCollectionProgress({
-            round,
-            progress,
-            sameRoundReceipts,
-          });
-          if (classified.kind === "corrupt") {
-            throw new OnlineReviewLoopTerminal({
-              ok: false,
-              terminalState: "decision_gate_raised",
-              round,
-              stopSummary: decisionGateParkStopSummary({
-                summary: `family collector progress corrupt: ${classified.reason} — ${classified.diagnosis}`,
-                repairHint:
-                  "repair collection-progress / evidence handle pairing for this round, then re-feed the family online review loop",
-              }),
-            });
-          }
-          if (classified.kind === "resume") {
-            const handle = classified.progress.evidenceHandle;
-            if (handle !== undefined && handle.length > 0) {
-              // Evidence handle already durable — zero re-wait / re-collect.
-              // Patch collector_completed with the same opaque handle only.
-              const bookkeepingHead =
-                loopState.lastFixSha !== undefined &&
-                loopState.lastFixSha.length > 0
-                  ? loopState.lastFixSha
-                  : input.ship.prHead;
-              await recordOnlineReviewCollectorCompleted(input.familyBackend, {
-                onlineReviewRound: round,
-                cargoPointer: handle,
-                pr: prUrl,
-                ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
-                  ? { familyHeadAfter: bookkeepingHead }
-                  : {}),
-              });
-              loopState.round = Math.max(loopState.round, round);
-              return { cargoPointer: handle };
-            }
-            // In-progress without handle: continue into worker with existing
-            // deadline/epochs (worker owns remaining wait; host does not reset).
-          } else {
-            // pristine: durable init BEFORE any wait/GH/collect work.
-            await recordOnlineReviewCollectionProgress(input.familyBackend, {
-              round,
-              phase: "initialized",
-              ts: new Date().toISOString(),
-            }, { pr: prUrl });
           }
 
           let collectorMonitorHandle: WorkerMonitorHandle | undefined;
@@ -2158,34 +2098,24 @@ export async function runFamilyOnlineReviewLoop(input: {
             loopState.lastFixSha !== undefined && loopState.lastFixSha.length > 0
               ? loopState.lastFixSha
               : input.ship.prHead;
-          // Durable handle (opaque) before/with completed — sparse body legal.
+          // Thin completed marker from worker-reported opaque only — never host-mint.
           if (evidence !== undefined || cargoPointer !== undefined) {
-            const handle =
-              cargoPointer ??
-              `ledger:online-review-evidence:r${round}`;
-            await recordOnlineReviewCollectionProgress(input.familyBackend, {
-              round,
-              phase: "evidence_ready",
-              evidenceHandle: handle,
-              ts: new Date().toISOString(),
-            }, { pr: prUrl });
             await recordOnlineReviewCollectorCompleted(input.familyBackend, {
               onlineReviewRound: round,
               ...(evidence !== undefined ? { evidence } : {}),
-              cargoPointer: handle,
+              ...(cargoPointer !== undefined ? { cargoPointer } : {}),
               pr: prUrl,
               ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
                 ? { familyHeadAfter: bookkeepingHead }
                 : {}),
             });
             loopState.round = Math.max(loopState.round, round);
-            return {
-              ...(evidence !== undefined ? { evidence } : {}),
-              cargoPointer: handle,
-              artifacts,
-            };
           }
-          return { artifacts };
+          return {
+            ...(evidence !== undefined ? { evidence } : {}),
+            ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+            artifacts,
+          };
         },
         dispatchVerify: async (landing, round) => {
           // Landing already carries Collector evidence — Verify judges only.
