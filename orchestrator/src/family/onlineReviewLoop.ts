@@ -603,6 +603,40 @@ export function postFixTransitionFromCommittedFixerResumeMarker(input: {
   return next !== prev;
 }
 
+/**
+ * Reconstruct unconsumed post-fix one-shot from ledger (#1145).
+ *
+ * True when `committedFixHead` is non-empty and no Collector checkpoint has
+ * been written bound to that head yet. A crash after fix_committed (or
+ * committed fixer_completed) and before the new-head Collector checkpoint must
+ * re-trigger once; after that checkpoint it must not. SHA equality alone is
+ * not enough — lastFixSha already equals the new head on that resume path.
+ */
+export function postFixTransitionUnconsumedFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+  }>,
+  committedFixHead: string | undefined,
+): boolean {
+  const head =
+    typeof committedFixHead === "string" ? committedFixHead.trim() : "";
+  if (head.length === 0) return false;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "online_review_collector_completed" &&
+      entry.event === "online_review_collector_completed" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim() === head
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Base landing before the Online Review Action assembles evidence (#1145). */
 export function buildOnlineReviewBaseLanding(
   ship: ShipResult,
@@ -800,6 +834,12 @@ export async function runOnlineReviewLoopStage(
      * Verify with the cargo (Collector still runs — checkpoint short-circuit).
      */
     readonly initialPendingFixerResult?: FixerResult;
+    /**
+     * #1145: reconstructed unconsumed post-fix one-shot. True when a committed
+     * fix head has no Collector checkpoint yet (crash after fix_committed).
+     * Live head-move during this process still sets the flag independently.
+     */
+    readonly initialPostFixTransition?: boolean;
     /** Optional runner-owned landing enrichment (#711 prior-round data). */
     readonly enrichVerifyLanding?: (
       landing: WorkerLandingPayload,
@@ -815,8 +855,11 @@ export async function runOnlineReviewLoopStage(
    * committed-fixer resume or current fixer envelope moves the effective head;
    * cleared immediately after that Collector dispatch. Legal no-op retaining
    * the prior fix SHA must not set it (#1145).
+   *
+   * May also be reconstructed from ledger when fix_committed already advanced
+   * lastFixSha to the new head but no Collector checkpoint exists yet.
    */
-  let postFixTransition = false;
+  let postFixTransition = opts?.initialPostFixTransition === true;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -836,17 +879,25 @@ export async function runOnlineReviewLoopStage(
   let resumeNeedsFixShaBookkeeping = false;
   if (pendingFixerResult !== undefined) {
     const resumedSha = fixerEnvelopeFixCommitSha(pendingFixerResult);
-    if (
-      resumedSha !== undefined &&
-      resumedSha.length > 0 &&
-      postFixTransitionFromCommittedFixerResumeMarker({
-        previousEffectiveHead: lastFixCommitSha ?? ship.prHead,
-        committedFixerHead: resumedSha,
-      })
-    ) {
-      lastFixCommitSha = resumedSha;
-      resumeNeedsFixShaBookkeeping = true;
-      postFixTransition = true;
+    if (resumedSha !== undefined && resumedSha.length > 0) {
+      const previousEffectiveHead =
+        lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
+          ? lastFixCommitSha
+          : ship.prHead;
+      if (
+        postFixTransitionFromCommittedFixerResumeMarker({
+          previousEffectiveHead,
+          committedFixerHead: resumedSha,
+        })
+      ) {
+        lastFixCommitSha = resumedSha;
+        resumeNeedsFixShaBookkeeping = true;
+        postFixTransition = true;
+      } else if (postFixTransition) {
+        // fix_committed already booked the new head (SHA equality); keep the
+        // reconstructed one-shot until Collector checkpoint consumes it.
+        lastFixCommitSha = resumedSha;
+      }
     }
   }
 

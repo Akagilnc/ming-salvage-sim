@@ -139,6 +139,35 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
     ]);
   });
 
+  it("priorOnlineReviewFindingsFromFamilyLedger includes verify_continued; later same-round wins", () => {
+    const familyLedger = [
+      {
+        event: "online_review_fix_committed",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["committed:r1-stale"],
+        familyHeadAfter: "sha1",
+      },
+      {
+        // Legal no-op continue — no fix_committed; later same-round marker wins.
+        event: "online_review_verify_continued",
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: ["continued:r1-noop"],
+      },
+      {
+        event: "online_review_verify_continued",
+        onlineReviewRound: 2,
+        fixMarkedFindingIdentityKeys: ["continued:r2-a", "continued:r2-b"],
+      },
+    ];
+    expect(priorOnlineReviewFindingsFromFamilyLedger(familyLedger, 3)).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["continued:r1-noop"] },
+      {
+        round: 2,
+        fixMarkedFindingIdentityKeys: ["continued:r2-a", "continued:r2-b"],
+      },
+    ]);
+  });
+
   it("priorCmrFindingsFromFamilyLedger excludes other and unclassified CMR passes", () => {
     const finding = {
       severity: "medium" as const,
@@ -411,6 +440,112 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     expect(priorOnlineReviewFindingsFromFamilyLedger(familyLedger, 3)).toEqual([
       { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
       { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
+    ]);
+  });
+
+  it("no-op continue history reaches next Verify via verify_continued; never alters Fixer packet", async () => {
+    const verifyLandings: WorkerLandingPayload[] = [];
+    const fixerLandings: WorkerLandingPayload[] = [];
+    const familyLedger: Array<{
+      event: string;
+      onlineReviewRound?: number;
+      fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      familyHeadAfter?: string;
+    }> = [];
+
+    const result = await runOnlineReviewLoopStage(
+      stageShip,
+      onlineReviewDispatch({
+        snapshot: baseSnapshot,
+        dispatchVerify: async (landing, round) => {
+          verifyLandings.push(landing);
+          // Post-fixer return-to-judge: continue once with no-op history, then green.
+          if (landing.fixerResult !== undefined) {
+            if (round === 1) {
+              const keys = ["noop-continue:r1"];
+              familyLedger.push({
+                event: "online_review_verify_continued",
+                onlineReviewRound: 1,
+                fixMarkedFindingIdentityKeys: keys,
+              });
+              return {
+                kind: "verify",
+                converged: false,
+                isRecheck: true,
+                fixMarkedFindingIdentityKeys: keys,
+              } satisfies VerifyResult;
+            }
+            return {
+              kind: "verify",
+              converged: true,
+              isRecheck: true,
+            } satisfies VerifyResult;
+          }
+          // Primary seats: r1 continues to fixer (no-op); r2 greens after history.
+          if (round === 1) {
+            return {
+              kind: "verify",
+              converged: false,
+              fixMarkedFindingIdentityKeys: ["primary:r1"],
+              findingDispositions: [
+                {
+                  identityKey: "primary:r1",
+                  threadId: "thread-silence",
+                  action: "fix",
+                },
+              ],
+            } satisfies VerifyResult;
+          }
+          return {
+            kind: "verify",
+            converged: true,
+            isRecheck: true,
+            // This-round packet only — prior history must not rewrite Fixer keys.
+            fixMarkedFindingIdentityKeys: ["primary:r2-only"],
+          } satisfies VerifyResult;
+        },
+        dispatchFixer: async (landing) => {
+          fixerLandings.push(landing);
+          // Legal no-op — no fix_committed row.
+          return { kind: "fixer", committed: false, alreadySatisfied: true };
+        },
+      }),
+      {
+        enrichVerifyLanding: mergeEnrichFromLedger(familyLedger),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      terminalState: "mergeable",
+      round: 2,
+    });
+
+    const primaryR2 = verifyLandings.find(
+      (l) => l.onlineReviewRound === 2 && l.fixerResult === undefined,
+    );
+    expect(primaryR2).toBeDefined();
+    // verify_continued snapshot reaches next primary Verify as prior history.
+    expect(primaryR2!.priorRoundFindings).toMatchObject([
+      { round: 1, fixMarkedFindingIdentityKeys: ["noop-continue:r1"] },
+    ]);
+
+    // Fixer packet routing stays this-round Verify cargo only — never prior keys.
+    expect(fixerLandings).toHaveLength(1);
+    expect(fixerLandings[0]!.fixMarkedFindingIdentityKeys).toEqual([
+      "primary:r1",
+    ]);
+    expect(fixerLandings[0]!.priorRoundFindings).toBeUndefined();
+    // No second Fixer on r2 (Verify greened without continue).
+    expect(
+      fixerLandings.every(
+        (l) =>
+          !(l.fixMarkedFindingIdentityKeys ?? []).includes("noop-continue:r1"),
+      ),
+    ).toBe(true);
+
+    expect(priorOnlineReviewFindingsFromFamilyLedger(familyLedger, 2)).toEqual([
+      { round: 1, fixMarkedFindingIdentityKeys: ["noop-continue:r1"] },
     ]);
   });
 

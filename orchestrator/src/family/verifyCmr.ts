@@ -49,6 +49,7 @@ import {
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewJudgeDisposition,
   onlineReviewRoundFromFamilyLedger,
+  postFixTransitionUnconsumedFromFamilyLedger,
   runOnlineReviewLoopStage,
   type OnlineReviewLoopStageResult,
 } from "./onlineReviewLoop.js";
@@ -1998,6 +1999,20 @@ export async function runFamilyOnlineReviewLoop(input: {
           fixMarkedFindingThreads: pendingFixerCargo.fixMarkedFindingThreads,
         }
       : lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
+  // Unconsumed post-fix one-shot: committed head present, no Collector
+  // checkpoint at that head yet (crash after fix_committed / committed fixer).
+  const pendingResumeFixSha =
+    pendingFixerCargo !== undefined
+      ? fixerEnvelopeFixCommitSha(pendingFixerCargo.fixerResult)
+      : undefined;
+  const resumePostFixHead =
+    pendingResumeFixSha !== undefined && pendingResumeFixSha.length > 0
+      ? pendingResumeFixSha
+      : loopState.lastFixSha;
+  const initialPostFixTransition = postFixTransitionUnconsumedFromFamilyLedger(
+    familyLedger,
+    resumePostFixHead,
+  );
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
   let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> =
@@ -2113,22 +2128,13 @@ export async function runFamilyOnlineReviewLoop(input: {
             collectorMonitorHandle,
             result.sessionId,
           );
-          // Sparse collector cargo is legal (ADR 0131). Unexpected kind is infra.
-          if (result.output.kind !== "collector") {
-            throw new OnlineReviewLoopTerminal({
-              ok: false,
-              terminalState: "decision_gate_raised",
-              round,
-              stopSummary: stageFailureStopSummary({
-                status: "online_review_failed",
-                summary: `family collector worker returned unexpected output kind ${result.output.kind}`,
-                repairHint:
-                  "inspect the collector worker envelope and re-feed the family online review loop",
-              }),
-            });
-          }
-          const evidence = result.output.evidence;
-          const cargoPointer = result.output.cargoPointer;
+          // Completed sparse / wrong-shape cargo is empty Collector transport
+          // (ADR 0131). Cargo kind must not rewrite process completion into
+          // decision_gate_raised — empty checkpoint still short-circuits re-wait.
+          const collectorOutput =
+            result.output.kind === "collector" ? result.output : undefined;
+          const evidence = collectorOutput?.evidence;
+          const cargoPointer = collectorOutput?.cargoPointer;
           // Always write Action-completed checkpoint — empty opaque cargo is legal
           // (ADR 0131). Completion drives the marker, not optional cargo presence.
           // bookkeepingHead computed above for checkpoint head-match short-circuit.
@@ -2422,6 +2428,9 @@ export async function runFamilyOnlineReviewLoop(input: {
           resumedFixAuthorization.fixMarkedFindingThreads,
         ...(pendingFixerCargo !== undefined
           ? { initialPendingFixerResult: pendingFixerCargo.fixerResult }
+          : {}),
+        ...(initialPostFixTransition
+          ? { initialPostFixTransition: true }
           : {}),
         enrichVerifyLanding: async (landing, round) => {
           // Ledger prior-round keys from durable fix_committed markers only

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -265,12 +265,89 @@ function parseRoutePreset(
   };
 }
 
+/**
+ * One-time on-disk migration for external route-preset files (#1145).
+ *
+ * Production docs point `ORCHESTRATOR_ROUTE_PRESETS_PATH` at an owner-edited
+ * external file. When `collector` became a required slot, existing custom files
+ * without that key would fail strict parse before worksite creation. Materialize
+ * `collector` into the file once (prefer same-named factory preset, else
+ * factory `normal`, else shipped default slug) — never default/alias at runtime
+ * inside `parseRoutePreset`.
+ */
+function materializeCollectorSlotInExternalPresetsFile(path: string): void {
+  if (path === DEFAULT_ROUTE_PRESETS_PATH) return;
+  if (!existsSync(path)) return;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    // Let loadRoutePresetsFromFile fail-loud on unreadable JSON.
+    return;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return;
+  }
+
+  let factoryCollectorByRoute = new Map<string, string>();
+  let factoryNormalCollector: string | undefined;
+  try {
+    if (existsSync(DEFAULT_ROUTE_PRESETS_PATH)) {
+      const factoryRaw = JSON.parse(
+        readFileSync(DEFAULT_ROUTE_PRESETS_PATH, "utf8"),
+      ) as unknown;
+      if (
+        typeof factoryRaw === "object" &&
+        factoryRaw !== null &&
+        !Array.isArray(factoryRaw)
+      ) {
+        for (const [name, value] of Object.entries(
+          factoryRaw as Record<string, unknown>,
+        )) {
+          if (typeof value !== "object" || value === null) continue;
+          const slots = (value as Record<string, unknown>).slots;
+          if (typeof slots !== "object" || slots === null) continue;
+          const collector = (slots as Record<string, unknown>).collector;
+          if (typeof collector === "string" && collector.trim() !== "") {
+            const trimmed = collector.trim();
+            factoryCollectorByRoute.set(name, trimmed);
+            if (name === "normal") factoryNormalCollector = trimmed;
+          }
+        }
+      }
+    }
+  } catch {
+    // Factory unreadable — fall through to shipped default slug.
+  }
+  const fallbackCollector = factoryNormalCollector ?? "grok-4.5";
+
+  const root = parsed as Record<string, unknown>;
+  let changed = false;
+  for (const [name, value] of Object.entries(root)) {
+    if (typeof value !== "object" || value === null) continue;
+    const preset = value as Record<string, unknown>;
+    if (typeof preset.slots !== "object" || preset.slots === null) continue;
+    const slots = preset.slots as Record<string, unknown>;
+    if (typeof slots.collector === "string" && slots.collector.trim() !== "") {
+      continue;
+    }
+    slots.collector =
+      factoryCollectorByRoute.get(name) ?? fallbackCollector;
+    changed = true;
+  }
+  if (!changed) return;
+  writeFileSync(path, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+}
+
 function loadRoutePresetsFromFile(
   path: string,
 ): Readonly<Record<string, ModelRoutePreset>> {
   if (!existsSync(path)) {
     throw new Error(`route presets file not found: ${path}`);
   }
+  // External custom file only — factory JSON is already current.
+  materializeCollectorSlotInExternalPresetsFile(path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));

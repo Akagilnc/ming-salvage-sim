@@ -2821,26 +2821,30 @@ export class RealFamilyBackend implements FamilyBackend {
       sessionId,
       outcomePath,
     );
-    // Envelope cargoPointer is typed traffic — merge into Collector completed
-    // output when sidecar did not already carry the handle (#1145 / DecisionGate A).
-    if (
-      spec.kind === "collector" &&
-      cargoResult.kind === "completed" &&
-      cargoResult.output.kind === "collector"
-    ) {
+    // Transport handle only via typed station envelope — never from opaque
+    // sidecar body extraction (#1145). Envelope cargoPointer is the sole
+    // non-opaque pointer merge into Collector completed output.
+    if (spec.kind === "collector" && cargoResult.kind === "completed") {
       const envelopePointer =
         typeof decoded.value.cargoPointer === "string" &&
         decoded.value.cargoPointer.trim().length > 0
           ? decoded.value.cargoPointer.trim()
           : undefined;
-      if (
-        envelopePointer !== undefined &&
-        cargoResult.output.cargoPointer === undefined
-      ) {
+      if (envelopePointer !== undefined) {
+        if (cargoResult.output.kind === "collector") {
+          return {
+            ...cargoResult,
+            output: {
+              ...cargoResult.output,
+              cargoPointer: envelopePointer,
+            },
+          };
+        }
+        // Completed wrong-shape cargo + envelope handle → empty collector transport.
         return {
           ...cargoResult,
           output: {
-            ...cargoResult.output,
+            kind: "collector",
             cargoPointer: envelopePointer,
           },
         };
@@ -4676,10 +4680,10 @@ function reviewLoopCargoResult(
 }
 
 /**
- * #1145 Collector cargo-only decode. Opaque handle and/or body.
- * Any object body is copied verbatim — no prUrl/headOid admission.
- * Pointer-only completion is legal; missing body is never fate
- * (ADR 0131 cargo ≠ fate / DecisionGate A).
+ * #1145 Collector cargo-only decode. Entire sidecar body is opaque evidence
+ * — including a body shaped `{ cargoPointer: ... }`. No generic sidecar
+ * cargoPointer extraction: transport handles arrive only via the typed
+ * station envelope merge (ADR 0131 / DecisionGate A). Empty body is never fate.
  */
 export function parseCollectorOutcome(
   stdout: string,
@@ -4688,25 +4692,13 @@ export function parseCollectorOutcome(
   const payload = parseOutcomePayload(stdout, "collector", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  const cargoPointer =
-    typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
-      ? parsed.cargoPointer.trim()
-      : undefined;
-  // Opaque body = every remaining key after optional cargoPointer extraction.
-  // No evidence-wrapper special case: a top-level `evidence` object is body,
-  // same as checkRuns/marker/any sibling (#1145 / ADR 0131).
-  const body: Record<string, unknown> = { ...parsed };
-  delete body.cargoPointer;
-  const evidence: OnlineReviewLandingSnapshot | undefined =
-    Object.keys(body).length > 0 ? body : undefined;
-  if (evidence === undefined && cargoPointer === undefined) {
-    // Nothing usable — opaque miss (never fails the Action).
+  // Full body opaque — do not strip or promote cargoPointer from sidecar.
+  if (Object.keys(parsed).length === 0) {
     return RECEIPT_CARGO;
   }
   return {
     kind: "collector",
-    ...(evidence !== undefined ? { evidence } : {}),
-    ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+    evidence: parsed as OnlineReviewLandingSnapshot,
   };
 }
 

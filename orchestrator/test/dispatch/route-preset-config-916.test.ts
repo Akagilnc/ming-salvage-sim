@@ -3,7 +3,7 @@
  * lineup + gpt-5.6-sol-low registry row; env > config file (sole table;
  * missing custom path falls back to shipped factory JSON only).
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -297,6 +297,56 @@ describe("#916 route presets config load + priority", () => {
     // Same object ⇒ loadPath-keyed cache hit (no second factory I/O).
     expect(second).toBe(first);
     expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
+  });
+
+  // #1145: existing custom external file missing collector is migrated on disk
+  // once before strict parse — not runtime-defaulted inside parseRoutePreset.
+  it("one-time migrates external custom presets missing collector onto disk", () => {
+    const slotsWithoutCollector = fullSlots();
+    delete (slotsWithoutCollector as { collector?: string }).collector;
+    expect(slotsWithoutCollector.collector).toBeUndefined();
+
+    const path = writePresetsFile({
+      normal: {
+        slots: slotsWithoutCollector,
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+      "custom-only": {
+        slots: { ...slotsWithoutCollector, coder: "gpt-5.6-terra" },
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    });
+
+    // Pre-condition: on-disk file has no collector key.
+    const before = JSON.parse(readFileSync(path, "utf8")) as {
+      normal: { slots: Record<string, string> };
+      "custom-only": { slots: Record<string, string> };
+    };
+    expect(before.normal.slots.collector).toBeUndefined();
+    expect(before["custom-only"].slots.collector).toBeUndefined();
+
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    const normal = resolveRouteModels("normal", {});
+    const custom = resolveRouteModels("custom-only", {});
+    // Factory normal.collector (grok-4.5) materializes for same-named route;
+    // unknown route names fall back to factory normal / shipped default.
+    expect(normal.slots.collector).toBe("grok-4.5");
+    expect(custom.slots.collector).toBe("grok-4.5");
+    // Custom coder preserved — migration only fills missing collector.
+    expect(custom.slots.coder).toBe("gpt-5.6-terra");
+
+    const after = JSON.parse(readFileSync(path, "utf8")) as {
+      normal: { slots: Record<string, string> };
+      "custom-only": { slots: Record<string, string> };
+    };
+    expect(after.normal.slots.collector).toBe("grok-4.5");
+    expect(after["custom-only"].slots.collector).toBe("grok-4.5");
   });
 });
 
