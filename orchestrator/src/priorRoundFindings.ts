@@ -40,8 +40,10 @@ export function mergePriorRoundFindings(
 }
 
 type FamilyOnlineReviewLedgerEntry = {
+  readonly status?: string;
   readonly event?: string;
   readonly onlineReviewRound?: number;
+  readonly familyHeadAfter?: string;
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
 };
 
@@ -55,14 +57,43 @@ type FamilyOnlineReviewLedgerEntry = {
  * field leaves prior history untouched. (`online_review_round_retrigger` is
  * legacy ledger read-only — no live writer.) History is enrichment only —
  * never Fixer packet routing.
+ *
+ * When `shippedAnchorHead` is set, only entries after the latest matching
+ * `shipped` marker for that head are considered — prior-cycle fix_committed /
+ * verify_continued findings must not seed a re-shipped head's first Verify
+ * (same cycle window as fixer authorization / pending cargo).
  */
 export function priorOnlineReviewFindingsFromFamilyLedger(
   ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
   currentRound: number,
+  opts?: {
+    /** Current matching shipped anchor head — cycle window lower bound. */
+    readonly shippedAnchorHead?: string;
+  },
 ): ReadonlyArray<PriorRoundFindingSnapshot> {
   if (currentRound <= 1) return [];
+  let cycleStart = 0;
+  const anchor =
+    typeof opts?.shippedAnchorHead === "string"
+      ? opts.shippedAnchorHead.trim()
+      : "";
+  if (anchor.length > 0) {
+    for (let i = ledger.length - 1; i >= 0; i--) {
+      const entry = ledger[i]!;
+      if (
+        entry.status === "shipped" &&
+        entry.event === "shipped" &&
+        typeof entry.familyHeadAfter === "string" &&
+        entry.familyHeadAfter.trim() === anchor
+      ) {
+        cycleStart = i + 1;
+        break;
+      }
+    }
+  }
   const byRound = new Map<number, PriorRoundFindingSnapshot>();
-  for (const entry of ledger) {
+  for (let i = cycleStart; i < ledger.length; i++) {
+    const entry = ledger[i]!;
     if (
       entry.event !== "online_review_fix_committed" &&
       entry.event !== "online_review_verify_continued"

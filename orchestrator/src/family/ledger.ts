@@ -1409,14 +1409,10 @@ export async function recordOnlineReviewFixCommitted(
           (k) => typeof k === "string" && k.trim().length > 0,
         )
       : [];
-  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
-    typeof binding.identityKey === "string" &&
-    binding.identityKey.trim().length > 0 &&
-    typeof binding.threadId === "string" &&
-    binding.threadId.trim().length > 0
-      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-      : [],
-  );
+  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
+  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
+    ? record.fixMarkedFindingThreads
+    : [];
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_fix_committed",
@@ -1561,14 +1557,10 @@ export async function recordOnlineReviewFixerCompleted(
           (k) => typeof k === "string" && k.trim().length > 0,
         )
       : [];
-  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
-    typeof binding.identityKey === "string" &&
-    binding.identityKey.trim().length > 0 &&
-    typeof binding.threadId === "string" &&
-    binding.threadId.trim().length > 0
-      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-      : [],
-  );
+  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
+  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
+    ? record.fixMarkedFindingThreads
+    : [];
   const familyHeadAfter =
     typeof record.familyHeadAfter === "string" &&
     record.familyHeadAfter.trim().length > 0
@@ -1630,14 +1622,10 @@ export async function recordOnlineReviewVerifyContinued(
         (k) => typeof k === "string" && k.trim().length > 0,
       )
     : undefined;
-  const fixThreads = (record.fixMarkedFindingThreads ?? []).flatMap((binding) =>
-    typeof binding.identityKey === "string" &&
-    binding.identityKey.trim().length > 0 &&
-    typeof binding.threadId === "string" &&
-    binding.threadId.trim().length > 0
-      ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-      : [],
-  );
+  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
+  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
+    ? record.fixMarkedFindingThreads
+    : [];
   await backend.appendFamilyLedger(
     compact({
       status: "online_review_verify_continued",

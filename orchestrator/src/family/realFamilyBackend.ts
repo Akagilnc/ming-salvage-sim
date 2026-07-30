@@ -205,6 +205,7 @@ import {
   isSandcastleAgentError,
 } from "../sandcastleAgentError.js";
 import {
+  COLLECTOR_PROMPT_FILE,
   LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
@@ -391,6 +392,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "coder_fix.md",
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
+    // #1145 Collector is family-dispatched (S13); fail closed at construction
+    // when an external/incomplete promptsDir lacks collector.md.
+    COLLECTOR_PROMPT_FILE,
     VERIFY_PROMPT_FILE,
     FIXER_PROMPT_FILE,
     LANDING_PROMPT_FILE,
@@ -4761,23 +4765,15 @@ export function parseVerifyOutcome(
     ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
       ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
       : {}),
+    // Opaque fixer packet — transport array byte-for-byte / shape-for-shape.
+    // Never reconstruct bindings or drop extended/malformed items to empty work
+    // (#1145 / ADR 0131). Downstream agents judge or raise.
     ...(Array.isArray(parsed.fixMarkedFindingThreads)
       ? {
-          fixMarkedFindingThreads: parsed.fixMarkedFindingThreads.flatMap(
-            (binding) =>
-              isJsonRecord(binding) &&
-              typeof binding.identityKey === "string" &&
-              binding.identityKey.trim().length > 0 &&
-              typeof binding.threadId === "string" &&
-              binding.threadId.trim().length > 0
-                ? [
-                    {
-                      identityKey: binding.identityKey,
-                      threadId: binding.threadId,
-                    },
-                  ]
-                : [],
-          ),
+          fixMarkedFindingThreads:
+            parsed.fixMarkedFindingThreads as NonNullable<
+              VerifyResult["fixMarkedFindingThreads"]
+            >,
         }
       : {}),
     ...(terminalState !== undefined ? { terminalState } : {}),

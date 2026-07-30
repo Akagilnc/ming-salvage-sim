@@ -2060,6 +2060,10 @@ export async function runFamilyOnlineReviewLoop(input: {
             ledgerNow,
             round,
             bookkeepingHead,
+            {
+              currentPr: prUrl,
+              shippedAnchorHead: shipHead,
+            },
           );
           if (checkpoint !== undefined) {
             return {
@@ -2449,9 +2453,11 @@ export async function runFamilyOnlineReviewLoop(input: {
           // Ledger prior-round keys from durable fix_committed markers only
           // (#711 / #1145 — no in-process disposition accumulation).
           const ledger = await input.familyBackend.readFamilyLedger();
+          // Cycle-bound to current shipped anchor (same window as fixer auth).
           const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
             ledger,
             round,
+            { shippedAnchorHead: shipHead },
           );
           const priorRoundFindings = mergePriorRoundFindings(
             fromLedger,
