@@ -1213,10 +1213,12 @@ export function familyOnlineReviewLoopInProgressForHead(
     ) {
       return true;
     }
-    // Live truth (#1145): Action-owned Collector checkpoint evidence head.
+    // Live truth (#1145): Action-owned Collector checkpoint bookkeeping head
+    // (familyHeadAfter from schedule context — never parsed from evidence body).
     if (
       e.event === "online_review_collector_completed" &&
-      e.collectorEvidenceCargo?.headOid === head
+      typeof e.familyHeadAfter === "string" &&
+      e.familyHeadAfter.trim() === head
     ) {
       return true;
     }
@@ -1260,8 +1262,8 @@ export function familyShippedRecordForReviewLoopResume(
       typeof entry.familyHeadAfter === "string"
         ? entry.familyHeadAfter.trim()
         : entry.event === "online_review_collector_completed" &&
-            typeof entry.collectorEvidenceCargo?.headOid === "string"
-          ? entry.collectorEvidenceCargo.headOid.trim()
+            typeof entry.familyHeadAfter === "string"
+          ? entry.familyHeadAfter.trim()
           : // Legacy read-only width (#1145 — no live writer).
             entry.event === "online_review_round_retrigger" &&
               typeof entry.roundTriggerHeadOid === "string"
@@ -1430,16 +1432,22 @@ export async function recordOnlineReviewFixCommitted(
 
 /**
  * Append one Collector-completed durable checkpoint (#1145 AC2).
- * Action-owned: stores opaque evidence cargo + pointer so crash re-entry does
- * not re-burn completed wait/evidence. Runner never interprets the body.
+ * Action-owned: stores opaque evidence handle/body so crash re-entry does not
+ * re-burn completed wait/evidence. Runner never interprets the body.
+ * Sparse cargo is legal (ADR 0131 cargo≠fate) — no prUrl/headOid field gate.
+ * `familyHeadAfter` is schedule bookkeeping (ship/fix head), never lifted from
+ * evidence business fields.
  */
 export async function recordOnlineReviewCollectorCompleted(
   backend: FamilyBackend,
   record: {
     readonly onlineReviewRound: number;
-    readonly evidence: OnlineReviewLandingSnapshot;
+    /** Opaque evidence body — may be sparse; not field-validated. */
+    readonly evidence?: OnlineReviewLandingSnapshot | { readonly [key: string]: unknown };
     readonly cargoPointer?: string;
     readonly pr?: string;
+    /** Bookkeeping head from ship/fix context — not from evidence cargo. */
+    readonly familyHeadAfter?: string;
   },
 ): Promise<void> {
   const onlineReviewRound = record.onlineReviewRound;
@@ -1448,22 +1456,25 @@ export async function recordOnlineReviewCollectorCompleted(
       "family online_review_collector_completed marker must include onlineReviewRound >= 1",
     );
   }
-  const evidence = record.evidence;
-  if (
-    typeof evidence.prUrl !== "string" ||
-    evidence.prUrl.trim().length === 0 ||
-    typeof evidence.headOid !== "string" ||
-    evidence.headOid.trim().length === 0
-  ) {
-    throw new Error(
-      "family online_review_collector_completed marker must include evidence.prUrl and evidence.headOid",
-    );
-  }
   const ts = new Date().toISOString();
   // cargoPointer is worker cargo only — never host-synthesized (#1145 / ADR 0131).
   const cargoPointer =
     typeof record.cargoPointer === "string" && record.cargoPointer.trim().length > 0
       ? record.cargoPointer.trim()
+      : undefined;
+  const hasEvidenceBody =
+    record.evidence !== undefined &&
+    typeof record.evidence === "object" &&
+    record.evidence !== null;
+  if (cargoPointer === undefined && !hasEvidenceBody) {
+    throw new Error(
+      "family online_review_collector_completed marker must include cargoPointer and/or opaque evidence body",
+    );
+  }
+  const familyHeadAfter =
+    typeof record.familyHeadAfter === "string" &&
+    record.familyHeadAfter.trim().length > 0
+      ? record.familyHeadAfter.trim()
       : undefined;
   await backend.appendFamilyLedger(
     compact({
@@ -1472,7 +1483,8 @@ export async function recordOnlineReviewCollectorCompleted(
       phase: "final",
       onlineReviewRound,
       ...(cargoPointer !== undefined ? { cargoPointer } : {}),
-      collectorEvidenceCargo: evidence,
+      ...(hasEvidenceBody ? { collectorEvidenceCargo: record.evidence } : {}),
+      ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),

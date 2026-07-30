@@ -284,6 +284,18 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     expect(verifyPair?.landing?.onlineReviewSnapshot).toEqual(
       backend.collectorEvidence,
     );
+    // T2: stage must NOT elevate evidence.headOid into shipDelivery.prHead —
+    // bookkeeping head stays ship/fix SHA only (ADR 0131 zero-read cargo).
+    expect(verifyPair?.landing?.shipDelivery?.prHead).toBe(offlineShip.prHead);
+    expect(verifyPair?.landing?.shipDelivery?.prHead).not.toBe(
+      "elevated-from-evidence-head",
+    );
+    // Pristine collection-progress init is durable before/around first collect.
+    expect(
+      backend.ledger.some(
+        (e) => e.event === "online_review_collection_progress",
+      ),
+    ).toBe(true);
 
     // Host GH poll seams stay dark (deleted dual-owner path).
     expect(pollSpy).not.toHaveBeenCalled();
@@ -1460,6 +1472,264 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         .at(-1);
       expect(reentryVerify?.landing?.onlineReviewRound).toBe(3);
       expect(reentryVerify?.landing?.onlineReviewSnapshot).toEqual(r3Evidence);
+    });
+  });
+
+  describe("#1145 T1–T5 durable receipt / progress / opaque cargo",
+    () => {
+    it("T2 capability: stage does not lift evidence headOid; Verify unpacks body",
+      async () => {
+      const backend = new TracerFamilyBackend();
+      // Distinct evidence head — must NOT become landing prHead.
+      backend.collectorEvidence = stubCollectorEvidence({
+        prUrl: offlineShip.pr,
+        headOid: "evidence-head-MUST-NOT-ELEVATE",
+        totalFindingCount: 2,
+        droppedBots: ["t2-marker"],
+      });
+      let verifySawBody: unknown;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifySawBody = landing?.onlineReviewSnapshot;
+        // Verify (seat) may read business fields; stage must not have rewritten prHead.
+        expect(landing?.shipDelivery?.prHead).toBe(offlineShip.prHead);
+        expect(
+          (landing?.onlineReviewSnapshot as { headOid?: string } | undefined)
+            ?.headOid,
+        ).toBe("evidence-head-MUST-NOT-ELEVATE");
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(verifySawBody).toEqual(backend.collectorEvidence);
+      // completed marker stores bookkeeping head from ship, not evidence body.
+      const completed = backend.ledger.find(
+        (e) => e.event === "online_review_collector_completed",
+      );
+      expect(completed?.familyHeadAfter).toBe(offlineShip.prHead);
+      expect(completed?.cargoPointer).toEqual(expect.any(String));
+    });
+
+    it("T4 pristine round-1 / round+1: init progress, normal dispatch not gate",
+      async () => {
+      const backend = new TracerFamilyBackend();
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        terminalState: "mergeable",
+      });
+      // Not escalated on missing progress — pristine init then collect.
+      expect(result.terminalState).not.toBe("decision_gate_raised");
+      const progressRows = backend.ledger.filter(
+        (e) => e.event === "online_review_collection_progress",
+      );
+      expect(progressRows.length).toBeGreaterThanOrEqual(1);
+      expect(progressRows[0]?.collectionProgressPhase).toBe("initialized");
+      expect(backend.collectorDispatchCount).toBe(1);
+
+      // round+1 after continue: new pristine init, does not reuse round-1 handle.
+      const backend2 = new TracerFamilyBackend();
+      let roundSeen: number[] = [];
+      backend2.verifyImpl = async (_s, _c, landing) => {
+        const r = landing?.onlineReviewRound ?? 1;
+        roundSeen.push(r);
+        if (r === 1 && landing?.fixerResult === undefined) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              fixMarkedFindingIdentityKeys: ["k1"],
+              fixMarkedFindingThreads: [
+                { identityKey: "k1", threadId: "t1" },
+              ],
+            },
+          };
+        }
+        if (r === 1 && landing?.fixerResult !== undefined) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              fixMarkedFindingIdentityKeys: ["k2"],
+              fixMarkedFindingThreads: [
+                { identityKey: "k2", threadId: "t2" },
+              ],
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+      backend2.fixerImpl = async () => ({
+        kind: "completed",
+        output: { kind: "fixer", committed: false },
+      });
+      const multi = await runFamilyOnlineReviewLoop({
+        familyBackend: backend2,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(multi.ok).toBe(true);
+      const inits = backend2.ledger.filter(
+        (e) =>
+          e.event === "online_review_collection_progress" &&
+          e.collectionProgressPhase === "initialized",
+      );
+      const rounds = new Set(inits.map((e) => e.onlineReviewRound));
+      expect(rounds.has(1)).toBe(true);
+      expect(rounds.has(2)).toBe(true);
+      // round-2 init is a separate pristine row — not escalate.
+      expect(multi.terminalState).toBe("mergeable");
+    });
+
+    it("T5 sparse opaque blob: Collector completes; Verify receives body; no fate rewrite",
+      async () => {
+      const backend = new TracerFamilyBackend();
+      // Sparse — missing bots/threads/checks; still legal cargo≠fate.
+      backend.collectorEvidence = {
+        prUrl: offlineShip.pr,
+        headOid: offlineShip.prHead,
+      } as ReturnType<typeof stubCollectorEvidence>;
+      let verifyLanding: WorkerLandingPayload | undefined;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifyLanding = landing;
+        // Verify may escalate on sparse — that is judge authority, not collection fate.
+        // Here we accept sparse and converge to prove Collector/Runner did not gate.
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(result.terminalState).toBe("mergeable");
+      expect(verifyLanding?.onlineReviewSnapshot).toEqual(
+        backend.collectorEvidence,
+      );
+      expect(
+        backend.ledger.some(
+          (e) => e.event === "online_review_collector_completed",
+        ),
+      ).toBe(true);
+    });
+
+    it("T3: evidence handle durable, collector_completed missing → re-entry zero recollect",
+      async () => {
+      const handle = "opaque://evidence/r1-pre-completed";
+      const backend = new TracerFamilyBackend();
+      // Simulate crash after evidence_ready progress, before collector_completed.
+      backend.ledger.push({
+        status: "online_review_collection_progress",
+        event: "online_review_collection_progress",
+        phase: "final",
+        onlineReviewRound: 1,
+        collectionProgressPhase: "evidence_ready",
+        collectionEvidenceHandle: handle,
+        ts: "2026-01-01T00:00:00.000Z",
+      });
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      // Collector worker not re-dispatched — handle resume patches completed only.
+      expect(backend.collectorDispatchCount).toBe(0);
+      const completed = backend.ledger.filter(
+        (e) => e.event === "online_review_collector_completed",
+      );
+      expect(completed.length).toBeGreaterThanOrEqual(1);
+      expect(completed[0]?.cargoPointer).toBe(handle);
+      // Same opaque handle reached Verify (pointer transport; body may be absent).
+      const verifyLanding = backend.landings.find(
+        (_, i) => backend.kinds[i] === "verify",
+      );
+      // Stage may pass only pointer-derived empty snapshot absence — Verify still ran.
+      expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
+      expect(verifyLanding).toBeDefined();
+    });
+
+    it("T1: GH succeeded with only attempted durable → re-entry zero second mutate",
+      async () => {
+      const {
+        decideSideEffectRecovery,
+        executeIdempotentSideEffect,
+        lastSideEffectReceiptFromFamilyLedger,
+        recordOnlineReviewSideEffectReceipt,
+      } = await import("../src/family/onlineReviewActionDurable.js");
+
+      const backend = new TracerFamilyBackend();
+      const key = "resolve:discussion_r3652932124";
+      const base = {
+        seat: "verify" as const,
+        round: 1,
+        op: "resolve" as const,
+        idempotencyKey: key,
+        externalHandle: "discussion_r3652932124",
+      };
+
+      // Window: GH already succeeded; only attempted persisted.
+      await recordOnlineReviewSideEffectReceipt(backend, {
+        ...base,
+        state: "attempted",
+        ts: "2026-01-01T00:00:00.000Z",
+      });
+
+      let mutateCalls = 0;
+      let queryCalls = 0;
+      const outcome = await executeIdempotentSideEffect({
+        receipt: lastSideEffectReceiptFromFamilyLedger(backend.ledger, key),
+        queryExternal: async (): Promise<"applied" | "not_applied" | "unknown"> => {
+          queryCalls += 1;
+          // External fact: already applied (GH succeeded before crash).
+          return "applied";
+        },
+        mutate: async () => {
+          mutateCalls += 1;
+          return { externalHandle: base.externalHandle };
+        },
+        saveReceipt: async (r) => {
+          await recordOnlineReviewSideEffectReceipt(backend, r);
+        },
+        base,
+      });
+
+      expect(outcome).toEqual({ ok: true, skipped: true });
+      expect(mutateCalls).toBe(0);
+      expect(queryCalls).toBe(1);
+      const final = lastSideEffectReceiptFromFamilyLedger(backend.ledger, key);
+      expect(final?.state).toBe("succeeded");
+
+      // attempted + unknown fact must escalate — never blind replay.
+      const decision = decideSideEffectRecovery(
+        {
+          ...base,
+          state: "attempted",
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        "unknown",
+      );
+      expect(decision.action).toBe("escalate");
     });
   });
 });

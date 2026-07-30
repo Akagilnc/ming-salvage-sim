@@ -198,9 +198,9 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
 
 /**
  * Action-owned Collector checkpoint for durable resume (#1145 AC2).
- * Returns the latest completed Collector cargo for `round` when present.
- * Runner/stage never interprets evidence semantics — only the Online Review
- * Action loads this before deciding whether to re-dispatch Collector.
+ * Returns the latest completed Collector cargo handle/body for `round`.
+ * Opaque only — no prUrl/headOid structure gate (ADR 0131 cargo≠fate).
+ * Runner/stage never interprets evidence semantics.
  */
 export function lastCollectorCheckpointFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -208,13 +208,17 @@ export function lastCollectorCheckpointFromFamilyLedger(
     readonly event?: string;
     readonly onlineReviewRound?: number;
     readonly cargoPointer?: string;
-    readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
+    readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot | {
+      readonly [key: string]: unknown;
+    };
   }>,
   round: number,
 ):
   | {
       readonly cargoPointer?: string;
-      readonly evidence: OnlineReviewLandingSnapshot;
+      readonly evidence?: OnlineReviewLandingSnapshot | {
+        readonly [key: string]: unknown;
+      };
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
@@ -227,21 +231,20 @@ export function lastCollectorCheckpointFromFamilyLedger(
       continue;
     }
     if (entry.onlineReviewRound !== round) continue;
+    const cargoPointer =
+      typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0
+        ? entry.cargoPointer
+        : undefined;
     const evidence = entry.collectorEvidenceCargo;
-    if (evidence === undefined) continue;
-    if (
-      typeof evidence.prUrl !== "string" ||
-      evidence.prUrl.length === 0 ||
-      typeof evidence.headOid !== "string" ||
-      evidence.headOid.length === 0
-    ) {
-      continue;
-    }
+    const hasBody =
+      evidence !== undefined &&
+      typeof evidence === "object" &&
+      evidence !== null;
+    // Handle and/or opaque body — sparse body is legal; no field guards.
+    if (cargoPointer === undefined && !hasBody) continue;
     return {
-      ...(typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0
-        ? { cargoPointer: entry.cargoPointer }
-        : {}),
-      evidence,
+      ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+      ...(hasBody ? { evidence } : {}),
     };
   }
   return undefined;
@@ -480,11 +483,19 @@ export async function sleepPendingCiPollInterval(
 
 /**
  * Online Review Collector Action result (#1145).
- * Opaque evidence only — never judge enum. Runner transports as-is to Verify.
- * Sparse / missing evidence does not change Action fate (ADR 0131 cargo ≠ fate).
+ * Opaque evidence handle/body only — never judge enum. Runner transports as-is
+ * without reading prUrl/headOid/thread/check fields (ADR 0131).
+ * Sparse / missing body does not change Action fate (cargo ≠ fate).
  */
 export interface OnlineReviewCollectorDispatchResult {
-  readonly evidence?: OnlineReviewLandingSnapshot;
+  /**
+   * Opaque evidence blob for Verify unpack only. Stage copies by reference and
+   * must not read business fields (headOid/prUrl/…). Prefer cargoPointer when
+   * both are present for durable identity.
+   */
+  readonly evidence?: OnlineReviewLandingSnapshot | {
+    readonly [key: string]: unknown;
+  };
   readonly cargoPointer?: string;
   readonly artifacts?: NonNullable<
     WorkerLandingPayload["rawReviewerArtifacts"]
@@ -674,26 +685,29 @@ export async function runOnlineReviewLoopStage(
     > | undefined;
     try {
       const collected = await dispatch.dispatchCollector(landing, round);
-      // Opaque evidence transport — Runner does not interpret bot/CI fields.
-      // Sparse cargo does not change fate (ADR 0131).
+      // Opaque evidence transport — stage copies handle/blob by reference and
+      // NEVER reads prUrl/headOid/thread/check fields to drive scheduling
+      // (#1145 / ADR 0131). prHead bookkeeping = ship/fix SHA only.
+      // Sparse cargo does not change fate (cargo ≠ fate).
       const baseHead =
         lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
           ? lastFixCommitSha
           : ship.prHead;
       landing = {
         ...landing,
+        // Pass-through opaque blob for Verify unpack — no field elevation.
         ...(collected.evidence !== undefined
-          ? { onlineReviewSnapshot: collected.evidence }
+          ? {
+              onlineReviewSnapshot:
+                collected.evidence as WorkerLandingPayload["onlineReviewSnapshot"],
+            }
           : {}),
         shipDelivery: {
           branch: ship.branch,
           pr: ship.pr,
-          ...(collected.evidence !== undefined &&
-          collected.evidence.headOid.length > 0
-            ? { prHead: collected.evidence.headOid }
-            : baseHead !== undefined && baseHead.length > 0
-              ? { prHead: baseHead }
-              : {}),
+          ...(baseHead !== undefined && baseHead.length > 0
+            ? { prHead: baseHead }
+            : {}),
           ...(ship.status !== undefined ? { status: ship.status } : {}),
         },
         ...(collected.artifacts !== undefined
