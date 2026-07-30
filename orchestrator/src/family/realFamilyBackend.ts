@@ -2665,6 +2665,10 @@ export class RealFamilyBackend implements FamilyBackend {
             : {}),
           shipDelivery: landing?.shipDelivery,
           onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,
+          // One-shot stage fact — transport verbatim; never re-derive in worker.
+          ...(landing?.postFixTransition === true
+            ? { postFixTransition: true }
+            : {}),
           fixMarkedFindingIdentityKeys:
             landing?.fixMarkedFindingIdentityKeys ?? [],
           ...(landing?.fixMarkedFindingThreads !== undefined &&
@@ -4688,19 +4692,13 @@ export function parseCollectorOutcome(
     typeof parsed.cargoPointer === "string" && parsed.cargoPointer.trim().length > 0
       ? parsed.cargoPointer.trim()
       : undefined;
-  let evidence: OnlineReviewLandingSnapshot | undefined;
-  if (isJsonRecord(parsed.evidence)) {
-    // Nested evidence blob — copy verbatim.
-    evidence = parsed.evidence;
-  } else {
-    // Top-level sidecar body: keys beyond the handle envelope.
-    // Pointer stays on cargoPointer; body is the remainder, any shape.
-    const topLevelBody: Record<string, unknown> = { ...parsed };
-    delete topLevelBody.cargoPointer;
-    if (Object.keys(topLevelBody).length > 0) {
-      evidence = topLevelBody;
-    }
-  }
+  // Opaque body = every remaining key after optional cargoPointer extraction.
+  // No evidence-wrapper special case: a top-level `evidence` object is body,
+  // same as checkRuns/marker/any sibling (#1145 / ADR 0131).
+  const body: Record<string, unknown> = { ...parsed };
+  delete body.cargoPointer;
+  const evidence: OnlineReviewLandingSnapshot | undefined =
+    Object.keys(body).length > 0 ? body : undefined;
   if (evidence === undefined && cargoPointer === undefined) {
     // Nothing usable — opaque miss (never fails the Action).
     return RECEIPT_CARGO;

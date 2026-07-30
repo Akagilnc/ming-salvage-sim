@@ -2794,6 +2794,97 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       }
     });
 
+    it("serializes postFixTransition into .orchestrator-online-review.json for Collector",
+      async () => {
+      // Production landing file is the only path Collector reads the one-shot
+      // fact from — stage payload alone is not enough if write drops it.
+      const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } =
+        await import("node:fs");
+      const { join } = await import("node:path");
+      const { tmpdir } = await import("node:os");
+      const { fileURLToPath } = await import("node:url");
+      const { RealFamilyBackend } = await import(
+        "../src/family/realFamilyBackend.js"
+      );
+      const { ONLINE_REVIEW_LANDING_FILE } = await import(
+        "../src/family/onlineReviewLoop.js"
+      );
+
+      const workingRepo = mkdtempSync(join(tmpdir(), "or-landing-pft-1145-"));
+      try {
+        mkdirSync(join(workingRepo, ".git", "info"), { recursive: true });
+        writeFileSync(join(workingRepo, ".git", "config"), "");
+        const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+        class LandingHarness extends RealFamilyBackend {
+          writeLanding(landing: WorkerLandingPayload) {
+            return this.writeFamilyOnlineReviewLandingFile(
+              { familyBase: "family/1145", onlineReviewRound: 1 },
+              landing,
+            );
+          }
+        }
+        const backend = new LandingHarness({
+          workingRepo,
+          familyBase: "family/1145",
+          ledgerDir: join(workingRepo, "ledger"),
+          repo: "Akagilnc/ming-salvage-sim",
+          base: "main",
+          promptsDir: join(packageRoot, "prompts"),
+          soulsDir: join(packageRoot, "image", "souls"),
+          imageName: "test-image",
+        });
+
+        const withFlag = backend.writeLanding({
+          shipDelivery: {
+            branch: "family/1145",
+            pr: "https://example.test/pr/1",
+            prHead: "fix-head-pft",
+          },
+          onlineReviewRound: 1,
+          postFixTransition: true,
+        });
+        expect(withFlag.path).toBe(
+          join(workingRepo, ONLINE_REVIEW_LANDING_FILE),
+        );
+        const flagged = JSON.parse(readFileSync(withFlag.path, "utf8")) as {
+          postFixTransition?: unknown;
+          shipDelivery?: { prHead?: string };
+        };
+        expect(flagged.postFixTransition).toBe(true);
+        expect(flagged.shipDelivery?.prHead).toBe("fix-head-pft");
+        // Collector retrigger input is the on-disk fact, not a host re-derive.
+        expect(
+          collectorPostFixRetriggerPlan({
+            headOid:
+              typeof flagged.shipDelivery?.prHead === "string"
+                ? flagged.shipDelivery.prHead
+                : undefined,
+            postFixTransition: flagged.postFixTransition === true,
+          }).shouldRetrigger,
+        ).toBe(true);
+
+        const withoutFlag = backend.writeLanding({
+          shipDelivery: {
+            branch: "family/1145",
+            prHead: "fix-head-pft",
+          },
+          onlineReviewRound: 1,
+        });
+        const plain = JSON.parse(readFileSync(withoutFlag.path, "utf8")) as {
+          postFixTransition?: unknown;
+        };
+        expect(plain.postFixTransition).toBeUndefined();
+        expect(
+          collectorPostFixRetriggerPlan({
+            headOid: "fix-head-pft",
+            postFixTransition: plain.postFixTransition === true,
+          }).shouldRetrigger,
+        ).toBe(false);
+      } finally {
+        rmSync(workingRepo, { recursive: true, force: true });
+      }
+    });
+
     it("sandbox-config mounts durable RW + env on collector/verify seats",
       async () => {
       const { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } =

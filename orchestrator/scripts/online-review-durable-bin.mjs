@@ -234,26 +234,61 @@ function withLock(root, fn) {
   }
 }
 
-function readEvents(root) {
+/**
+ * Fail-closed JSONL load (#1145).
+ * Any nonblank unparseable/invalid line is corrupt — never skip or join fragments.
+ * @returns {{ kind: "ok", events: object[] } | { kind: "corrupt", reason: string, diagnosis: string }}
+ */
+function readEventsResult(root) {
   const path = join(root, STATE_FILE);
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return { kind: "ok", events: [] };
   const text = readFileSync(path, "utf8");
   const events = [];
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
+    let p;
     try {
-      const p = JSON.parse(t);
-      if (p && p.v === 1 && typeof p.kind === "string") events.push(p);
+      p = JSON.parse(t);
     } catch {
-      /* skip */
+      return {
+        kind: "corrupt",
+        reason: "unparseable_event",
+        diagnosis: "state.jsonl has nonblank unparseable line",
+      };
     }
+    if (
+      p === null ||
+      typeof p !== "object" ||
+      Array.isArray(p) ||
+      p.v !== 1 ||
+      typeof p.kind !== "string" ||
+      p.kind.trim().length === 0
+    ) {
+      return {
+        kind: "corrupt",
+        reason: "invalid_event",
+        diagnosis: "state.jsonl has nonblank invalid event",
+      };
+    }
+    events.push(p);
   }
-  return events;
+  return { kind: "ok", events };
+}
+
+/** Load events or die — blocks mutation/append on corrupt durable state. */
+function requireEvents(root) {
+  const loaded = readEventsResult(root);
+  if (loaded.kind === "corrupt") {
+    die(`durable state corrupt: ${loaded.reason}: ${loaded.diagnosis}`, 2);
+  }
+  return loaded.events;
 }
 
 function appendEvent(root, event) {
   withLock(root, () => {
+    // Refuse to append onto a corrupt log (would join a truncated fragment).
+    requireEvents(root);
     writeFileSync(join(root, STATE_FILE), `${JSON.stringify(event)}\n`, {
       encoding: "utf8",
       flag: "a",
@@ -357,9 +392,6 @@ function evidenceReadable(root, handle) {
 }
 
 function classify(root, round, head) {
-  const events = readEvents(root);
-  const progress = lastProgress(events, round, head);
-  const receipts = receiptsForRound(events, round, head);
   if (!Number.isSafeInteger(round) || round < 1) {
     return {
       kind: "corrupt",
@@ -374,6 +406,17 @@ function classify(root, round, head) {
       diagnosis: "head must be non-empty",
     };
   }
+  const loaded = readEventsResult(root);
+  if (loaded.kind === "corrupt") {
+    return {
+      kind: "corrupt",
+      reason: loaded.reason,
+      diagnosis: loaded.diagnosis,
+    };
+  }
+  const events = loaded.events;
+  const progress = lastProgress(events, round, head);
+  const receipts = receiptsForRound(events, round, head);
   if (progress === undefined && receipts.length === 0) {
     return { kind: "pristine" };
   }
@@ -493,7 +536,7 @@ function main() {
       const head = requireHead(args);
       const epochs = Number(args.epochs);
       if (!Number.isSafeInteger(epochs) || epochs < 0) die("--epochs K required");
-      const prev = lastProgress(readEvents(root), round, head);
+      const prev = lastProgress(requireEvents(root), round, head);
       appendEvent(root, {
         v: 1,
         kind: "collection_progress",
@@ -555,7 +598,7 @@ function main() {
       if (!["applied", "not_applied", "unknown"].includes(fact)) {
         die("--fact applied|not_applied|unknown required");
       }
-      const receipt = lastReceipt(readEvents(root), round, head, key);
+      const receipt = lastReceipt(requireEvents(root), round, head, key);
       const decision = decide(receipt, fact);
       if (
         decision.action === "skip_already_done" &&
@@ -585,7 +628,7 @@ function main() {
       const head = requireHead(args);
       const key = String(args.key ?? "").trim();
       if (!key) die("--key required");
-      const receipt = lastReceipt(readEvents(root), round, head, key);
+      const receipt = lastReceipt(requireEvents(root), round, head, key);
       out(receipt ?? null);
       break;
     }
