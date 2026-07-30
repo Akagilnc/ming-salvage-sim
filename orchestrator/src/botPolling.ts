@@ -79,17 +79,18 @@ const BOT_RETRIGGER_REQUIRED_LINES = [
  * Collector post-fix retrigger plan (#1145 executable capability).
  * Host does not run this loop — Collector soul/worker applies it via `gh` + sleep.
  *
- * Retrigger is gated on an explicit worker-owned `postFixTransition` fact
- * (derived only from the head-bound committed-fixer resume marker), not on
- * round arithmetic. Round-1 pristine stays idle; same-round first-fixer crash
- * resume at a new head retriggers once when the fact is present.
+ * Retrigger is gated on an explicit worker-owned one-shot `postFixTransition`
+ * fact (set only when effective head actually moved; consumed after that
+ * Collector), not on SHA presence or round arithmetic. Round-1 pristine stays
+ * idle; same-round first-fixer crash resume at a new head retriggers once when
+ * the fact is present; later no-op at the same head does not.
  */
 export function collectorPostFixRetriggerPlan(input: {
   readonly onlineReviewRound?: number;
   readonly headOid?: string;
   /**
-   * Explicit post-fix head-transition fact from the committed-fixer resume
-   * marker. Never inferred from evidence body or disposition cargo.
+   * One-shot post-fix head-transition fact from the stage. Never inferred
+   * from SHA presence, evidence body, or disposition cargo.
    */
   readonly postFixTransition?: boolean;
 }): {

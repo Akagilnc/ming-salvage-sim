@@ -29,7 +29,7 @@
  * 14. Cycle-bound pending fixer cargo (after matching shipped anchor).
  * 15. Owner-instance durable lock lease (live never stolen for age).
  * 16. Collector is a monitored CLI kind (RealFamilyBackend monitor dispatch).
- * 17. postFixTransition fact from committed-fixer resume marker (not round).
+ * 17. postFixTransition one-shot stage fact on effective-head move (not SHA presence / round).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -2059,7 +2059,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     });
 
     it("production tracer: same-round first-fixer crash sets postFixTransition and re-collects at new head", async () => {
-      // Fact derivation is marker-only — never round arithmetic.
+      // Fact derivation = effective-head move, never SHA presence / round alone.
       expect(
         postFixTransitionFromCommittedFixerResumeMarker({
           committedFixerHead: undefined,
@@ -2072,19 +2072,35 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBe(false);
       expect(
         postFixTransitionFromCommittedFixerResumeMarker({
+          previousEffectiveHead: undefined,
           committedFixerHead: "fix-head-x",
         }),
       ).toBe(true);
+      // Same head retained (legal no-op SHA echo) is not a transition.
+      expect(
+        postFixTransitionFromCommittedFixerResumeMarker({
+          previousEffectiveHead: "fix-head-x",
+          committedFixerHead: "fix-head-x",
+        }),
+      ).toBe(false);
 
       const landingIdle = buildOnlineReviewBaseLanding(offlineShip, 1);
       expect(landingIdle.postFixTransition).toBeUndefined();
-      const landingPost = buildOnlineReviewBaseLanding(
+      // SHA alone on the landing builder does not mint the one-shot fact.
+      const landingShaOnly = buildOnlineReviewBaseLanding(
         offlineShip,
         1,
         "committed-fix-sha",
       );
+      expect(landingShaOnly.postFixTransition).toBeUndefined();
+      expect(landingShaOnly.shipDelivery?.prHead).toBe("committed-fix-sha");
+      const landingPost = buildOnlineReviewBaseLanding(
+        offlineShip,
+        1,
+        "committed-fix-sha",
+        true,
+      );
       expect(landingPost.postFixTransition).toBe(true);
-      expect(landingPost.shipDelivery?.prHead).toBe("committed-fix-sha");
 
       // Round-1 no-retrigger without fact; with fact + head → exactly once plan.
       expect(
@@ -2208,6 +2224,145 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           postFixTransition: collectorLandings[0]?.postFixTransition,
         }).shouldRetrigger,
       ).toBe(true);
+    });
+
+    it("production tracer: real fix head retriggers once; later no-op at same head has no postFixTransition", async () => {
+      // Stage path: real fix moves head → first post-fix Collector carries
+      // postFixTransition and plans retrigger; later legal no-op retaining the
+      // prior fix SHA + Verify continue → next Collector at the same head has
+      // the fact absent and plans no retrigger. No durable channel / markers.
+      const fixHead = "real-fix-head-once";
+      const collectorLandings: WorkerLandingPayload[] = [];
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+
+      const result = await runOnlineReviewLoopStage(
+        offlineShip,
+        onlineReviewDispatch({
+          dispatchCollector: async (landing) => {
+            collectorLandings.push(landing);
+            return {
+              evidence: stubCollectorEvidence({
+                prUrl: offlineShip.pr,
+                headOid: landing.shipDelivery?.prHead ?? offlineShip.prHead!,
+                marker: `collector-r${landing.onlineReviewRound ?? "?"}`,
+              }),
+            };
+          },
+          dispatchVerify: async (landing) => {
+            verifyCalls += 1;
+            // Round 1 first seat → continue to fixer (real commit).
+            if (verifyCalls === 1) {
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: ["once:1"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "once:1", threadId: "t-once" },
+                  ],
+                },
+              };
+            }
+            // Round 1 same-round post-fixer → continue to next Collector cycle.
+            if (verifyCalls === 2) {
+              expect(landing.fixerResult?.fixCommitSha).toBe(fixHead);
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  isRecheck: true,
+                  fixMarkedFindingIdentityKeys: ["once:2"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "once:2", threadId: "t-once-2" },
+                  ],
+                },
+              };
+            }
+            // Round 2 first seat → continue to fixer (legal no-op, same SHA).
+            if (verifyCalls === 3) {
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  fixMarkedFindingIdentityKeys: ["once:2"],
+                  fixMarkedFindingThreads: [
+                    { identityKey: "once:2", threadId: "t-once-2" },
+                  ],
+                },
+              };
+            }
+            // Round 2 same-round post-no-op → continue again (same head).
+            if (verifyCalls === 4) {
+              expect(landing.fixerResult?.fixCommitSha).toBe(fixHead);
+              return {
+                verify: {
+                  kind: "verify",
+                  converged: false,
+                  isRecheck: true,
+                  fixMarkedFindingIdentityKeys: ["once:2"],
+                },
+              };
+            }
+            // Round 3 first seat → converge (observe third Collector landing).
+            return {
+              verify: { kind: "verify", converged: true, isRecheck: false },
+            };
+          },
+          dispatchFixer: async () => {
+            fixerCalls += 1;
+            if (fixerCalls === 1) {
+              return {
+                kind: "fixer",
+                committed: true,
+                fixCommitSha: fixHead,
+              };
+            }
+            // Legal no-op retaining the prior fix SHA — must NOT re-arm fact.
+            return {
+              kind: "fixer",
+              committed: false,
+              alreadySatisfied: true,
+              fixCommitSha: fixHead,
+            };
+          },
+        }),
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        terminalState: "mergeable",
+        round: 3,
+      });
+      expect(fixerCalls).toBe(2);
+      // C1 pristine ship head; C2 first post-fix; C3 after no-op at same head.
+      expect(collectorLandings).toHaveLength(3);
+      expect(collectorLandings[0]?.shipDelivery?.prHead).toBe(offlineShip.prHead);
+      expect(collectorLandings[0]?.postFixTransition).toBeUndefined();
+      expect(
+        collectorPostFixRetriggerPlan({
+          headOid: collectorLandings[0]?.shipDelivery?.prHead,
+          postFixTransition: collectorLandings[0]?.postFixTransition,
+        }).shouldRetrigger,
+      ).toBe(false);
+
+      expect(collectorLandings[1]?.shipDelivery?.prHead).toBe(fixHead);
+      expect(collectorLandings[1]?.postFixTransition).toBe(true);
+      expect(
+        collectorPostFixRetriggerPlan({
+          headOid: collectorLandings[1]?.shipDelivery?.prHead,
+          postFixTransition: collectorLandings[1]?.postFixTransition,
+        }).shouldRetrigger,
+      ).toBe(true);
+
+      expect(collectorLandings[2]?.shipDelivery?.prHead).toBe(fixHead);
+      expect(collectorLandings[2]?.postFixTransition).toBeUndefined();
+      expect(
+        collectorPostFixRetriggerPlan({
+          headOid: collectorLandings[2]?.shipDelivery?.prHead,
+          postFixTransition: collectorLandings[2]?.postFixTransition,
+        }).shouldRetrigger,
+      ).toBe(false);
     });
 
     it("empty opaque Collector completed writes checkpoint; Verify-crash re-entry does not redispatch", async () => {
