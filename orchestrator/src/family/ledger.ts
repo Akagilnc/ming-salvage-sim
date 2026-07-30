@@ -1458,6 +1458,11 @@ export async function recordOnlineReviewCollectorCompleted(
     /** Opaque evidence body — may be sparse or absent; not field-validated. */
     readonly evidence?: OnlineReviewLandingSnapshot;
     readonly cargoPointer?: string;
+    /**
+     * Opaque raw-artifact pointers for Verify-crash resume when body/handle
+     * cargo is absent. Host paths stay host-side; landing materialises them.
+     */
+    readonly rawReviewerArtifacts?: FamilyLedgerEntry["rawReviewerArtifacts"];
     readonly pr?: string;
     /** Bookkeeping head from ship/fix context — not from evidence cargo. */
     readonly familyHeadAfter?: string;
@@ -1479,6 +1484,12 @@ export async function recordOnlineReviewCollectorCompleted(
     record.evidence !== undefined &&
     typeof record.evidence === "object" &&
     record.evidence !== null;
+  const rawReviewerArtifacts =
+    record.rawReviewerArtifacts !== undefined &&
+    typeof record.rawReviewerArtifacts === "object" &&
+    record.rawReviewerArtifacts !== null
+      ? record.rawReviewerArtifacts
+      : undefined;
   const familyHeadAfter =
     typeof record.familyHeadAfter === "string" &&
     record.familyHeadAfter.trim().length > 0
@@ -1492,6 +1503,9 @@ export async function recordOnlineReviewCollectorCompleted(
       onlineReviewRound,
       ...(cargoPointer !== undefined ? { cargoPointer } : {}),
       ...(hasEvidenceBody ? { collectorEvidenceCargo: record.evidence } : {}),
+      ...(rawReviewerArtifacts !== undefined
+        ? { rawReviewerArtifacts }
+        : {}),
       ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }

@@ -1975,6 +1975,10 @@ export async function runFamilyOnlineReviewLoop(input: {
     const alreadyMergeable = lastOnlineReviewMergeableFromFamilyLedger(
       familyLedger,
       effectiveHead,
+      {
+        currentPr: prUrl,
+        shippedAnchorHead: shipHead,
+      },
     );
     if (alreadyMergeable !== undefined) {
       return {
@@ -1998,7 +2002,9 @@ export async function runFamilyOnlineReviewLoop(input: {
             pendingFixerCargo.fixMarkedFindingIdentityKeys,
           fixMarkedFindingThreads: pendingFixerCargo.fixMarkedFindingThreads,
         }
-      : lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger);
+      : lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger, {
+          shippedAnchorHead: shipHead,
+        });
   // Unconsumed post-fix one-shot: committed head present, no Collector
   // checkpoint at that head yet (crash after fix_committed / committed fixer).
   const pendingResumeFixSha =
@@ -2063,6 +2069,9 @@ export async function runFamilyOnlineReviewLoop(input: {
               ...(checkpoint.cargoPointer !== undefined
                 ? { cargoPointer: checkpoint.cargoPointer }
                 : {}),
+              ...(checkpoint.artifacts !== undefined
+                ? { artifacts: checkpoint.artifacts }
+                : {}),
             };
           }
 
@@ -2124,7 +2133,7 @@ export async function runFamilyOnlineReviewLoop(input: {
               }),
             });
           }
-          const artifacts = reviewerArtifactPointers(
+          const artifacts = collectorRawArtifactsForTransport(
             collectorMonitorHandle,
             result.sessionId,
           );
@@ -2138,10 +2147,14 @@ export async function runFamilyOnlineReviewLoop(input: {
           // Always write Action-completed checkpoint — empty opaque cargo is legal
           // (ADR 0131). Completion drives the marker, not optional cargo presence.
           // bookkeepingHead computed above for checkpoint head-match short-circuit.
+          // Raw artifacts ride the same checkpoint when readable paper exists.
           await recordOnlineReviewCollectorCompleted(input.familyBackend, {
             onlineReviewRound: round,
             ...(evidence !== undefined ? { evidence } : {}),
             ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+            ...(artifacts !== undefined
+              ? { rawReviewerArtifacts: artifacts }
+              : {}),
             pr: prUrl,
             ...(bookkeepingHead !== undefined && bookkeepingHead.length > 0
               ? { familyHeadAfter: bookkeepingHead }
@@ -2151,7 +2164,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           return {
             ...(evidence !== undefined ? { evidence } : {}),
             ...(cargoPointer !== undefined ? { cargoPointer } : {}),
-            artifacts,
+            ...(artifacts !== undefined ? { artifacts } : {}),
           };
         },
         dispatchVerify: async (landing, round) => {
@@ -2573,6 +2586,25 @@ function reviewerArtifactPointers(
     ...(sessionId !== undefined ? { reviewerSessionId: sessionId } : {}),
     statement: "the previous reviewer raw artifacts are here",
   };
+}
+
+/**
+ * Collector raw-artifact transport only when readable paper exists (#1145).
+ * Statement-alone is not paper — omit so empty checkpoints stay empty.
+ */
+function collectorRawArtifactsForTransport(
+  handle: WorkerMonitorHandle | undefined,
+  sessionId: string | undefined,
+): NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]> | undefined {
+  const artifacts = reviewerArtifactPointers(handle, sessionId);
+  const hasPaper =
+    (typeof artifacts.stdoutPath === "string" &&
+      artifacts.stdoutPath.trim().length > 0) ||
+    (typeof artifacts.sidecarPath === "string" &&
+      artifacts.sidecarPath.trim().length > 0) ||
+    (typeof artifacts.reviewerSessionId === "string" &&
+      artifacts.reviewerSessionId.trim().length > 0);
+  return hasPaper ? artifacts : undefined;
 }
 
 async function runIntegratedCmrPass(input: {

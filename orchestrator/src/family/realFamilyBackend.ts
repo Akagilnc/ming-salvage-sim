@@ -2650,7 +2650,19 @@ export class RealFamilyBackend implements FamilyBackend {
   ): { path: string; sandboxPath: string } {
     // Sparse landing is the only path — missing snapshot is legal cargo.
     ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    // Host monitor paths are not visible inside the Verify container. Copy
+    // readable Collector raw products into the sandbox cwd and rewrite pointers
+    // (#1145 / #899) — same opaque transport as coder-fix landing.
+    const rawReviewerArtifacts =
+      landing?.rawReviewerArtifacts !== undefined
+        ? materializeRawReviewerArtifactsForSandbox(
+            landing.rawReviewerArtifacts,
+            this.opts.workingRepo,
+          )
+        : undefined;
     writeFileSync(
       path,
       `${JSON.stringify(
@@ -2662,6 +2674,10 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(landing?.cargoPointer !== undefined &&
           landing.cargoPointer.length > 0
             ? { cargoPointer: landing.cargoPointer }
+            : {}),
+          // Opaque raw paper when body/handle cargo is absent (#1145).
+          ...(rawReviewerArtifacts !== undefined
+            ? { rawReviewerArtifacts }
             : {}),
           shipDelivery: landing?.shipDelivery,
           onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,

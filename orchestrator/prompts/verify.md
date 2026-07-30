@@ -4,11 +4,13 @@
 
 - `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` —
   **Collector-assembled** landing for this seat (may carry
-  `onlineReviewSnapshot` body and/or `cargoPointer` handle). Collector already
-  completed query/wait/evidence.
+  `onlineReviewSnapshot` body and/or `cargoPointer` handle; when both are
+  absent may carry sandbox-relative `rawReviewerArtifacts` paper only).
+  Collector already completed query/wait/evidence.
 - Method truth (evidence resolve, judgment, side effects) lives in the Verify
   soul (`image/souls/verify.md`) — this promptFile is params + envelope/cargo
-  contract only.
+  contract only. Use raw artifact paper only when body/handle cargo is absent;
+  never re-run Collector or infer fate from artifact presence.
 
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
 PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with

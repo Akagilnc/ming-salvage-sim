@@ -496,6 +496,18 @@ export interface FamilyLedgerEntry {
    */
   readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
   /**
+   * #1145 — opaque Collector raw-artifact pointers on
+   * `online_review_collector_completed`. Host-side resume transport only;
+   * materialised to sandbox-relative paths when writing Verify landing.
+   * Verify reads them only when body/handle cargo is absent.
+   */
+  readonly rawReviewerArtifacts?: {
+    readonly stdoutPath?: string;
+    readonly sidecarPath?: string;
+    readonly reviewerSessionId?: string;
+    readonly statement: "the previous reviewer raw artifacts are here";
+  };
+  /**
    * #1145 — opaque Fixer envelope on `online_review_fixer_completed`. Includes
    * legal no-op (no SHA). Runner transports as-is to same-round Verify; never
    * branches topology on committed / alreadySatisfied.
