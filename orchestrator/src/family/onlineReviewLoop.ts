@@ -583,16 +583,24 @@ function convergenceHeadForLanding(input: {
 
 /**
  * Explicit Collector post-fix transition fact (#1145).
- * True only when a head-bound committed-fixer resume marker advanced the
- * reviewed head — never from evidence body, disposition cargo, or round alone.
+ * True only when a committed-fixer head actually advances the effective
+ * reviewed head — never from SHA presence alone, evidence body, disposition
+ * cargo, or round arithmetic. Stage owns one-shot set/consume.
  */
 export function postFixTransitionFromCommittedFixerResumeMarker(input: {
+  readonly previousEffectiveHead?: string;
   readonly committedFixerHead?: string;
 }): boolean {
-  return (
-    typeof input.committedFixerHead === "string" &&
-    input.committedFixerHead.trim().length > 0
-  );
+  const next =
+    typeof input.committedFixerHead === "string"
+      ? input.committedFixerHead.trim()
+      : "";
+  if (next.length === 0) return false;
+  const prev =
+    typeof input.previousEffectiveHead === "string"
+      ? input.previousEffectiveHead.trim()
+      : "";
+  return next !== prev;
 }
 
 /** Base landing before the Online Review Action assembles evidence (#1145). */
@@ -600,13 +608,15 @@ export function buildOnlineReviewBaseLanding(
   ship: ShipResult,
   round: number,
   postFixCommitSha?: string,
+  /**
+   * One-shot stage fact: true only for the Collector that immediately follows
+   * an effective-head move. Caller clears after that dispatch.
+   */
+  postFixTransition?: boolean,
 ): WorkerLandingPayload {
   const prHead = convergenceHeadForLanding({
     shipPrHead: ship.prHead,
     postFixCommitSha,
-  });
-  const postFixTransition = postFixTransitionFromCommittedFixerResumeMarker({
-    committedFixerHead: postFixCommitSha,
   });
   return {
     shipDelivery: {
@@ -616,7 +626,7 @@ export function buildOnlineReviewBaseLanding(
       ...(ship.status !== undefined ? { status: ship.status } : {}),
     },
     onlineReviewRound: round,
-    ...(postFixTransition ? { postFixTransition: true } : {}),
+    ...(postFixTransition === true ? { postFixTransition: true } : {}),
   };
 }
 
@@ -800,6 +810,13 @@ export async function runOnlineReviewLoopStage(
   let round = opts?.initialRound ?? 1;
   /** Last known fix head for Collector post-fix landing (opaque transport). */
   let lastFixCommitSha = opts?.initialFixCommitSha;
+  /**
+   * One-shot stage fact for the next Collector only. Set when pending
+   * committed-fixer resume or current fixer envelope moves the effective head;
+   * cleared immediately after that Collector dispatch. Legal no-op retaining
+   * the prior fix SHA must not set it (#1145).
+   */
+  let postFixTransition = false;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
   let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
@@ -822,10 +839,14 @@ export async function runOnlineReviewLoopStage(
     if (
       resumedSha !== undefined &&
       resumedSha.length > 0 &&
-      resumedSha !== lastFixCommitSha
+      postFixTransitionFromCommittedFixerResumeMarker({
+        previousEffectiveHead: lastFixCommitSha ?? ship.prHead,
+        committedFixerHead: resumedSha,
+      })
     ) {
       lastFixCommitSha = resumedSha;
       resumeNeedsFixShaBookkeeping = true;
+      postFixTransition = true;
     }
   }
 
@@ -833,7 +854,12 @@ export async function runOnlineReviewLoopStage(
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
     // Base landing only — Collector owns GH evidence (#1145).
-    let landing = buildOnlineReviewBaseLanding(ship, round, lastFixCommitSha);
+    let landing = buildOnlineReviewBaseLanding(
+      ship,
+      round,
+      lastFixCommitSha,
+      postFixTransition,
+    );
     if (round > 1 || pendingFixerResult !== undefined) {
       landing = {
         ...landing,
@@ -854,6 +880,8 @@ export async function runOnlineReviewLoopStage(
     > | undefined;
     try {
       const collected = await dispatch.dispatchCollector(landing, round);
+      // One-shot: consume after the immediately following Collector dispatch.
+      postFixTransition = false;
       // Opaque evidence transport — stage copies handle/blob by reference and
       // never inspects body fields to drive scheduling (#1145 / ADR 0131).
       // prHead bookkeeping = ship/fix SHA only. Sparse cargo ≠ fate.
@@ -953,11 +981,16 @@ export async function runOnlineReviewLoopStage(
 
       // Envelope SHA bookkeeping only — presence does not fork the next seat.
       // Always adopt envelope SHA first; resolveFixCommitSha may override only.
+      // postFixTransition is set only when the effective head actually moves.
       const envelopeFixSha =
         fixerOutput !== undefined
           ? fixerEnvelopeFixCommitSha(fixerOutput)
           : undefined;
       if (envelopeFixSha !== undefined && envelopeFixSha.length > 0) {
+        const previousEffectiveHead =
+          lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
+            ? lastFixCommitSha
+            : ship.prHead;
         lastFixCommitSha = envelopeFixSha;
         if (dispatch.resolveFixCommitSha) {
           try {
@@ -971,6 +1004,14 @@ export async function runOnlineReviewLoopStage(
             }
             return decisionGateFromDispatchInfra(round, "fixer", err);
           }
+        }
+        if (
+          postFixTransitionFromCommittedFixerResumeMarker({
+            previousEffectiveHead,
+            committedFixerHead: lastFixCommitSha,
+          })
+        ) {
+          postFixTransition = true;
         }
       }
     } else if (

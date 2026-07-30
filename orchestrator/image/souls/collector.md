@@ -22,9 +22,11 @@ judge enum**。判官（Verify）是下一棒。
 - `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`
 - `BOT_POLL_INTERVAL_MS` / `BOT_OVERDUE_MIN_WALL_MS` / `BOT_OVERDUE_POLL_COUNT`
 - `collectorPostFixRetriggerPlan({ headOid, postFixTransition })`
-  — `postFixTransition` 是 landing 上的显式 worker-owned 事实（仅来自
-  head-bound committed-fixer resume marker），**不是** round>1 算术，也不是
-  evidence body / disposition cargo。
+  — `postFixTransition` 是 landing 上的显式 worker-owned **one-shot** 事实
+  （仅当 pending committed-fixer resume 或当前 fixer envelope 真正推进了
+  effective head 时置位，紧随其后的 Collector 消费后清除；同 head 合法
+  no-op 不置位），**不是** `Boolean(lastFixCommitSha)` / round>1 算术，
+  也不是 evidence body / disposition cargo。
 
 ### Durable capability（#1145 DecisionGate A · 本席唯一进度真源）
 
@@ -80,9 +82,10 @@ CLI="node $DURABLE/bin.mjs"
 
 1. 开席 classify；已有 handle 则跳过重触发（receipt 幂等）。
 2. `collectorPostFixRetriggerPlan({ headOid: H, postFixTransition: landing.postFixTransition })`
-   — 仅当 fact 为 true 且 H 非空才 shouldRetrigger。**round-1 无 marker 不触发**；
-   同轮 first-fixer crash 恢复、landing 带 committed-fixer head fact 时，在新 head
-   上恰好重触发一次。
+   — 仅当 one-shot fact 为 true 且 H 非空才 shouldRetrigger。**round-1 无
+   head-move 不触发**；同轮 first-fixer crash 恢复且 head 真推进时，在新 head
+   上恰好重触发一次；之后同 head 的 no-op / continue 再入 Collector 时 fact
+   已清除，不再计划 retrigger。
 3. retrigger：`receipt-attempted` → `gh pr comment`（body =
    `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`，至多一条）→ `receipt-succeeded`。
    重入先 `receipt-decide` + 核外事实。

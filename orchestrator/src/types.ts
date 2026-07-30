@@ -995,9 +995,10 @@ export interface WorkerLandingPayload {
   /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
   /**
-   * #1145 Collector post-fix transition fact — true only when a head-bound
-   * committed-fixer resume marker advanced the reviewed head. Worker-owned
-   * retrigger input; never derived from evidence body or disposition cargo.
+   * #1145 Collector post-fix transition fact — one-shot stage fact true only
+   * for the Collector immediately after an effective-head move (resume or
+   * current fixer envelope). Worker-owned retrigger input; never derived from
+   * SHA presence alone, evidence body, or disposition cargo.
    */
   readonly postFixTransition?: boolean;
   /** Family fixer: fix-marked finding identity keys from verify worker. */
