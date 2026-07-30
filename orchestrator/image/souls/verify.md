@@ -28,6 +28,18 @@ CLI="node $DURABLE/bin.mjs"
 ROUND=<landing onlineReviewRound>
 ```
 
+### Collector 证据解析（handle-only · 禁重取证）
+
+landing 可能只带 `cargoPointer`、不带 `onlineReviewSnapshot`（Collector
+`evidence-put` / checkpoint 短接的合法形态）。开席裁决前：
+
+1. 若 `onlineReviewSnapshot` 已有 body → 直接用该 opaque body 判卷。
+2. 若无 body 且有非空 `cargoPointer` →
+   `$CLI evidence-get --handle "$cargoPointer"`，stdout 即 opaque 证据 body，
+   **用它判卷**。
+3. handle 不可读 / CLI 非 0 → typed `escalate`（diagnosis 写清 handle），
+   **禁止**自己重跑 Collector 的 query/wait/retrigger，也禁止让 Runner 代查。
+
 对每一笔变更性 op（稳定 `idempotencyKey`，如 `resolve:discussion_r…` /
 `reply:<threadId>:<identityKey>` / `defer:<identityKey>`）：
 

@@ -105,7 +105,7 @@ export function onlineReviewRoundFromFamilyLedger(
   return maxRound > 0 ? maxRound : 1;
 }
 
-/** Last family online-review fix HEAD — fixing commit for recheck side effects (#600 r26). */
+/** Last family online-review fix HEAD — ship/fix SHA bookkeeping for Collector post-fix landing head (#1145). */
 export function lastOnlineReviewFixCommitShaFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
