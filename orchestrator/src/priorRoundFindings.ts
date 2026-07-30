@@ -50,8 +50,11 @@ type FamilyOnlineReviewLedgerEntry = {
  *
  * Family loop persists fix_committed markers and post-fixer verify_continued
  * markers (legal no-op continues have no fix_committed row). Later same-round
- * marker wins. (`online_review_round_retrigger` is legacy ledger read-only —
- * no live writer.) History is enrichment only — never Fixer packet routing.
+ * marker wins. Explicit empty `fixMarkedFindingIdentityKeys: []` is a real
+ * later marker that clears the earlier same-round snapshot; omitted/malformed
+ * field leaves prior history untouched. (`online_review_round_retrigger` is
+ * legacy ledger read-only — no live writer.) History is enrichment only —
+ * never Fixer packet routing.
  */
 export function priorOnlineReviewFindingsFromFamilyLedger(
   ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
@@ -67,7 +70,9 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
       continue;
     }
     const keys = entry.fixMarkedFindingIdentityKeys;
-    if (!Array.isArray(keys) || keys.length === 0) continue;
+    // Omitted or malformed → do not touch this round (preserve prior history).
+    // Explicit [] is a later marker and must overwrite/clear.
+    if (!Array.isArray(keys)) continue;
     const round =
       typeof entry.onlineReviewRound === "number" &&
       Number.isSafeInteger(entry.onlineReviewRound) &&
@@ -75,13 +80,18 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
         ? entry.onlineReviewRound
         : undefined;
     if (round === undefined || round >= currentRound) continue;
-    // Later same-round marker overwrites (Map set).
+    // Later same-round marker overwrites (Map set), including explicit empty.
     byRound.set(round, {
       round,
-      fixMarkedFindingIdentityKeys: [...keys],
+      fixMarkedFindingIdentityKeys: keys.filter(
+        (k): k is string => typeof k === "string" && k.trim().length > 0,
+      ),
     });
   }
-  return [...byRound.values()].sort((a, b) => a.round - b.round);
+  // Cleared rounds (explicit empty later marker) drop out of enrichment.
+  return [...byRound.values()]
+    .filter((snap) => snap.fixMarkedFindingIdentityKeys.length > 0)
+    .sort((a, b) => a.round - b.round);
 }
 
 type CmrLedgerEntry = {
