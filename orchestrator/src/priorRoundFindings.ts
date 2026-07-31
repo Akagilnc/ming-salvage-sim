@@ -7,7 +7,10 @@
 
 import type { Finding, PriorRoundFindingSnapshot } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
-import { cycleWindowStart } from "./family/onlineReviewLoop.js";
+import {
+  cycleWindowStart,
+  onlineReviewPrIdentityEquals,
+} from "./family/onlineReviewLoop.js";
 
 export type { PriorRoundFindingSnapshot } from "./types.js";
 
@@ -45,6 +48,8 @@ type FamilyOnlineReviewLedgerEntry = {
   readonly event?: string;
   readonly onlineReviewRound?: number;
   readonly familyHeadAfter?: string;
+  /** Bound PR identity — replacement PR isolation (#1145). */
+  readonly pr?: string;
   /** Opaque keys array when well-formed; non-array runtime junk is ignored. */
   readonly fixMarkedFindingIdentityKeys?: unknown;
 };
@@ -64,6 +69,10 @@ type FamilyOnlineReviewLedgerEntry = {
  * `shipped` marker for that head are considered — prior-cycle fix_committed /
  * verify_continued findings must not seed a re-shipped head's first Verify
  * (same cycle window as fixer authorization / pending cargo).
+ *
+ * When `currentPr` is set, only markers whose `pr` canonical-equals this id
+ * count — replacement PR at identical SHA must not inherit prior ticket history.
+ * Missing marker pr = fail-closed skip (same contract as pending cargo / auth).
  */
 export function priorOnlineReviewFindingsFromFamilyLedger(
   ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
@@ -71,10 +80,16 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
   opts?: {
     /** Current matching shipped anchor head — cycle window lower bound. */
     readonly shippedAnchorHead?: string;
+    /** Current bound PR identity — replacement PR must not inherit prior history. */
+    readonly currentPr?: string;
   },
 ): ReadonlyArray<PriorRoundFindingSnapshot> {
   if (currentRound <= 1) return [];
   const cycleStart = cycleWindowStart(ledger, opts?.shippedAnchorHead);
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
   const byRound = new Map<number, PriorRoundFindingSnapshot>();
   for (let i = cycleStart; i < ledger.length; i++) {
     const entry = ledger[i]!;
@@ -83,6 +98,14 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
       entry.event !== "online_review_verify_continued"
     ) {
       continue;
+    }
+    if (currentPr !== undefined) {
+      const storedPr =
+        typeof entry.pr === "string" && entry.pr.trim().length > 0
+          ? entry.pr.trim()
+          : undefined;
+      // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+      if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
     }
     const keys = entry.fixMarkedFindingIdentityKeys;
     // Omitted or malformed → do not touch this round (preserve prior history).

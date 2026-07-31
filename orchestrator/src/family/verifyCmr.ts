@@ -2024,6 +2024,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         }
       : lastFixMarkedFindingAuthorizationFromFamilyLedger(familyLedger, {
           shippedAnchorHead: shipHead,
+          currentPr: reviewedPr,
         });
   // Unconsumed post-fix one-shot: committed head present, no Collector
   // checkpoint at that head yet (crash after fix_committed / committed fixer).
@@ -2426,17 +2427,9 @@ export async function runFamilyOnlineReviewLoop(input: {
               ...(committedHead !== undefined && committedHead.length > 0
                 ? { familyHeadAfter: committedHead }
                 : {}),
-              ...(lastFixMarkedFindingIdentityKeys.length > 0
-                ? {
-                    fixMarkedFindingIdentityKeys:
-                      lastFixMarkedFindingIdentityKeys,
-                  }
-                : {}),
-              ...(lastFixMarkedFindingThreads.length > 0
-                ? {
-                    fixMarkedFindingThreads: lastFixMarkedFindingThreads,
-                  }
-                : {}),
+              // Preserve arrays exactly, including explicit [] (#1145).
+              fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys,
+              fixMarkedFindingThreads: lastFixMarkedFindingThreads,
             });
             loopState.round = Math.max(loopState.round, round);
           }
@@ -2453,15 +2446,9 @@ export async function runFamilyOnlineReviewLoop(input: {
             familyHeadAfter: sha,
             pr: prUrl,
             onlineReviewRound: lastFixerOnlineReviewRound,
-            ...(lastFixMarkedFindingIdentityKeys.length > 0
-              ? {
-                  fixMarkedFindingIdentityKeys:
-                    lastFixMarkedFindingIdentityKeys,
-                }
-              : {}),
-            ...(lastFixMarkedFindingThreads.length > 0
-              ? { fixMarkedFindingThreads: lastFixMarkedFindingThreads }
-              : {}),
+            // Preserve arrays exactly, including explicit [] (#1145).
+            fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys,
+            fixMarkedFindingThreads: lastFixMarkedFindingThreads,
           });
           return sha;
         },
@@ -2489,7 +2476,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           const fromLedger = priorOnlineReviewFindingsFromFamilyLedger(
             ledger,
             round,
-            { shippedAnchorHead: shipHead },
+            { shippedAnchorHead: shipHead, currentPr: reviewedPr },
           );
           const priorRoundFindings = mergePriorRoundFindings(
             fromLedger,
