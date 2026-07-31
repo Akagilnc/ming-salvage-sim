@@ -478,12 +478,9 @@ export interface FamilyLedgerEntry {
    * Family online-review does not persist S9 verify rows; these keys on fix
    * markers are the durable prior-round data for resume.
    */
-  readonly fixMarkedFindingIdentityKeys?: readonly string[];
-  /** Original thread binding for each fix-marked identity (#743 resume authority). */
-  readonly fixMarkedFindingThreads?: readonly {
-    readonly identityKey: string;
-    readonly threadId: string;
-  }[];
+  readonly fixMarkedFindingIdentityKeys?: readonly unknown[];
+  /** Opaque thread bindings — whole-array passthrough (#1145 A3). */
+  readonly fixMarkedFindingThreads?: readonly unknown[];
   /**
    * #1145 — optional pointer to Action-owned opaque cargo (Collector evidence).
    * Runner transports the pointer; never interprets the body.

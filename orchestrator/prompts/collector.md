@@ -2,51 +2,24 @@
 
 ## Params
 
-- `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` —
-  ship metadata + optional prior round fix-marked keys. May lack evidence on
-  first entry; you assemble it.
-- Round / PR URL / head from the landing file and env.
-- Method truth (query/wait/retrigger/durable evidence) lives in the Collector
-  soul (`image/souls/collector.md`) — this promptFile is params + envelope/cargo
-  contract only.
+- `$ORCHESTRATOR_ONLINE_REVIEW_PATH` / `.orchestrator-online-review.json` — ship metadata landing
+- `$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH` — worker durable store + `bin.mjs`
+- Round / PR / head from landing + env
 
-If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
-PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
-`gh pr view <decoded-branch>` before collecting.
+**Method truth lives in the Collector soul** (`image/souls/collector.md`). This file is params + envelope only.
 
 ## Required output
 
-Emit **one** typed `<onlineReview>` station-receipt envelope. Sandcastle
-validates via `Output.object` against
-`collectorOnlineReviewStationReceiptSchema` in
-`orchestrator/src/stationReceiptContracts.ts` (tag `onlineReview` /
-`ONLINE_REVIEW_RECEIPT_TAG`). **JSON only** inside the tag — never YAML or prose.
-
-### Envelope traffic fields (schema-validated)
+Emit **one** typed `<onlineReview>` station-receipt envelope (tag `onlineReview`). JSON only inside the tag.
 
 | field | meaning |
 | --- | --- |
 | `station` | `"onlineReview"` |
 | `status` | `"completed"` \| `"escalate"` |
-| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
-| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+| `cargoPointer` | optional non-empty path/URI to opaque evidence |
+| `reason` / `diagnosis` | required when `status:"escalate"` |
 
-Thin gate only: completed \| escalate. **Business evidence is never a typed
-traffic field** — sparse cargo does not change process fate (ADR 0131).
-
-### Role cargo (opaque; not SO-validated)
-
-Write collector evidence cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set
-(sidecar is cargo transport). You may also emit opaque `<collector>` cargo JSON
-for the same body.
-
-Evidence body is **opaque**: any object shape is Collector judgment for Verify
-to consume. Host/Runner never admits on field names and never expands a schema.
-Prefer durable handle via `cargoPointer` (see Collector soul `evidence-put`);
-sidecar/body may accompany or stand alone.
-
-Completed thin envelope (evidence is optional opaque cargo on sidecar /
-cargoPointer / `<collector>` — never a typed traffic field):
+Completed:
 
 ```text
 <onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>
@@ -55,19 +28,7 @@ cargoPointer / `<collector>` — never a typed traffic field):
 Escalate:
 
 ```text
-<onlineReview>{"station":"onlineReview","status":"escalate","reason":"<short>","diagnosis":"<what blocks collection>"}</onlineReview>
+<onlineReview>{"station":"onlineReview","status":"escalate","reason":"<short>","diagnosis":"<block>"}</onlineReview>
 ```
 
-Rules:
-
-- Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
-- Role cargo never carries escalate or judge enum — fate is the typed envelope;
-  judgment is Verify's job.
-- Do not set `converged`, `findingDispositions`, or fixer plan fields.
-- Evidence cargo is **optional** on completed (ADR 0131 cargo ≠ fate). Sparse
-  or missing evidence does not fail the process; escalate yourself when you
-  cannot continue collection.
-- Post-fix retrigger / limited wait / overdue exit are **your** methods (see
-  collector soul). Host does not poll or re-trigger.
-- This seat is single-iteration. Completion is clean exit + legal typed
-  envelope — no STEP_COMPLETE password.
+Opaque evidence cargo (sidecar / handle) is optional on completed (ADR 0131 cargo ≠ fate). Single-iteration seat; clean exit + legal envelope.

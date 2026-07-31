@@ -2041,12 +2041,10 @@ export async function runFamilyOnlineReviewLoop(input: {
   );
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
-  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<string> =
+  let lastFixMarkedFindingIdentityKeys: ReadonlyArray<unknown> =
     resumedFixAuthorization.fixMarkedFindingIdentityKeys;
-  let lastFixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }> = resumedFixAuthorization.fixMarkedFindingThreads;
+  let lastFixMarkedFindingThreads: ReadonlyArray<unknown> =
+    resumedFixAuthorization.fixMarkedFindingThreads;
   let lastFixerOnlineReviewRound = loopState.round;
 
   try {

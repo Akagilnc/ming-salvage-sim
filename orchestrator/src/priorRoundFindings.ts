@@ -7,6 +7,7 @@
 
 import type { Finding, PriorRoundFindingSnapshot } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
+import { cycleWindowStart } from "./family/onlineReviewLoop.js";
 
 export type { PriorRoundFindingSnapshot } from "./types.js";
 
@@ -44,7 +45,8 @@ type FamilyOnlineReviewLedgerEntry = {
   readonly event?: string;
   readonly onlineReviewRound?: number;
   readonly familyHeadAfter?: string;
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Opaque keys array when well-formed; non-array runtime junk is ignored. */
+  readonly fixMarkedFindingIdentityKeys?: unknown;
 };
 
 /**
@@ -72,25 +74,7 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
   },
 ): ReadonlyArray<PriorRoundFindingSnapshot> {
   if (currentRound <= 1) return [];
-  let cycleStart = 0;
-  const anchor =
-    typeof opts?.shippedAnchorHead === "string"
-      ? opts.shippedAnchorHead.trim()
-      : "";
-  if (anchor.length > 0) {
-    for (let i = ledger.length - 1; i >= 0; i--) {
-      const entry = ledger[i]!;
-      if (
-        entry.status === "shipped" &&
-        entry.event === "shipped" &&
-        typeof entry.familyHeadAfter === "string" &&
-        entry.familyHeadAfter.trim() === anchor
-      ) {
-        cycleStart = i + 1;
-        break;
-      }
-    }
-  }
+  const cycleStart = cycleWindowStart(ledger, opts?.shippedAnchorHead);
   const byRound = new Map<number, PriorRoundFindingSnapshot>();
   for (let i = cycleStart; i < ledger.length; i++) {
     const entry = ledger[i]!;
@@ -112,11 +96,10 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
         : undefined;
     if (round === undefined || round >= currentRound) continue;
     // Later same-round marker overwrites (Map set), including explicit empty.
+    // #1145 A3: opaque keys whole-array passthrough — no element filter.
     byRound.set(round, {
       round,
-      fixMarkedFindingIdentityKeys: keys.filter(
-        (k): k is string => typeof k === "string" && k.trim().length > 0,
-      ),
+      fixMarkedFindingIdentityKeys: keys,
     });
   }
   // Cleared rounds (explicit empty later marker) drop out of enrichment.
@@ -124,6 +107,8 @@ export function priorOnlineReviewFindingsFromFamilyLedger(
     .filter((snap) => snap.fixMarkedFindingIdentityKeys.length > 0)
     .sort((a, b) => a.round - b.round);
 }
+
+
 
 type CmrLedgerEntry = {
   readonly event?: string;

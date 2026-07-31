@@ -1389,12 +1389,9 @@ export async function recordOnlineReviewFixCommitted(
     /** 1-based online-review round that produced this fix (#711 prior rounds). */
     readonly onlineReviewRound?: number;
     /** Fix-marked identity keys from the verify that drove this fix (#711). */
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    /** Original thread binding for each fix-marked identity (#743 resume authority). */
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }>;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+    /** Opaque thread bindings — whole-array passthrough (#1145 A3). */
+    readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   },
 ): Promise<void> {
   const familyHeadAfter = record.familyHeadAfter.trim();
@@ -1403,22 +1400,13 @@ export async function recordOnlineReviewFixCommitted(
       "family online_review_fix_committed marker must include a non-empty familyHeadAfter",
     );
   }
-  const fixKeys =
-    record.fixMarkedFindingIdentityKeys !== undefined
-      ? record.fixMarkedFindingIdentityKeys.filter(
-          (k) => typeof k === "string" && k.trim().length > 0,
-        )
-      : [];
-  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
-  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
-    ? record.fixMarkedFindingThreads
-    : [];
-  await backend.appendFamilyLedger(
-    compact({
+  // #1145 A3: opaque packet arrays — whole-array passthrough, no element filter.
+  const entry: FamilyLedgerEntry = {
       status: "online_review_fix_committed",
       event: "online_review_fix_committed",
       phase: "final",
       familyHeadAfter,
+      ts: new Date().toISOString(),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
@@ -1427,15 +1415,14 @@ export async function recordOnlineReviewFixCommitted(
       record.onlineReviewRound >= 1
         ? { onlineReviewRound: record.onlineReviewRound }
         : {}),
-      ...(fixKeys.length > 0
-        ? { fixMarkedFindingIdentityKeys: fixKeys }
+      ...(record.fixMarkedFindingIdentityKeys !== undefined
+        ? { fixMarkedFindingIdentityKeys: record.fixMarkedFindingIdentityKeys }
         : {}),
-      ...(fixThreads.length > 0
-        ? { fixMarkedFindingThreads: fixThreads }
+      ...(record.fixMarkedFindingThreads !== undefined
+        ? { fixMarkedFindingThreads: record.fixMarkedFindingThreads }
         : {}),
-      ts: new Date().toISOString(),
-    }) as FamilyLedgerEntry,
-  );
+  };
+  await backend.appendFamilyLedger(entry);
 }
 
 /**
@@ -1491,12 +1478,12 @@ export async function recordOnlineReviewCollectorCompleted(
     record.familyHeadAfter.trim().length > 0
       ? record.familyHeadAfter.trim()
       : undefined;
-  await backend.appendFamilyLedger(
-    compact({
+  const entry: FamilyLedgerEntry = {
       status: "online_review_collector_completed",
       event: "online_review_collector_completed",
       phase: "final",
       onlineReviewRound,
+      ts,
       ...(cargoPointer !== undefined ? { cargoPointer } : {}),
       ...(hasEvidenceBody ? { collectorEvidenceCargo: record.evidence } : {}),
       ...(rawReviewerArtifacts !== undefined
@@ -1506,9 +1493,8 @@ export async function recordOnlineReviewCollectorCompleted(
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
-      ts,
-    }) as FamilyLedgerEntry,
-  );
+  };
+  await backend.appendFamilyLedger(entry);
 }
 
 /**
@@ -1529,11 +1515,8 @@ export async function recordOnlineReviewFixerCompleted(
      * Legal no-ops omit this field (same-head resume uses other cycle markers).
      */
     readonly familyHeadAfter?: string;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }>;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   },
 ): Promise<void> {
   const onlineReviewRound = record.onlineReviewRound;
@@ -1551,43 +1534,33 @@ export async function recordOnlineReviewFixerCompleted(
       "family online_review_fixer_completed marker must include opaque fixerResult cargo",
     );
   }
-  const fixKeys =
-    record.fixMarkedFindingIdentityKeys !== undefined
-      ? record.fixMarkedFindingIdentityKeys.filter(
-          (k) => typeof k === "string" && k.trim().length > 0,
-        )
-      : [];
-  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
-  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
-    ? record.fixMarkedFindingThreads
-    : [];
   const familyHeadAfter =
     typeof record.familyHeadAfter === "string" &&
     record.familyHeadAfter.trim().length > 0
       ? record.familyHeadAfter.trim()
       : undefined;
-  await backend.appendFamilyLedger(
-    compact({
+  // #1145 A3: opaque arrays whole-passthrough — no element filter / no cast.
+  const entry: FamilyLedgerEntry = {
       status: "online_review_fixer_completed",
       event: "online_review_fixer_completed",
       phase: "final",
       onlineReviewRound,
       fixerResultCargo: record.fixerResult,
+      ts: new Date().toISOString(),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
       ...(familyHeadAfter !== undefined
         ? { familyHeadAfter }
         : {}),
-      ...(fixKeys.length > 0
-        ? { fixMarkedFindingIdentityKeys: fixKeys }
+      ...(record.fixMarkedFindingIdentityKeys !== undefined
+        ? { fixMarkedFindingIdentityKeys: record.fixMarkedFindingIdentityKeys }
         : {}),
-      ...(fixThreads.length > 0
-        ? { fixMarkedFindingThreads: fixThreads }
+      ...(record.fixMarkedFindingThreads !== undefined
+        ? { fixMarkedFindingThreads: record.fixMarkedFindingThreads }
         : {}),
-      ts: new Date().toISOString(),
-    }) as FamilyLedgerEntry,
-  );
+  };
+  await backend.appendFamilyLedger(entry);
 }
 
 /**
@@ -1601,11 +1574,8 @@ export async function recordOnlineReviewVerifyContinued(
   record: {
     readonly onlineReviewRound: number;
     readonly pr?: string;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }>;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   },
 ): Promise<void> {
   const onlineReviewRound = record.onlineReviewRound;
@@ -1614,36 +1584,25 @@ export async function recordOnlineReviewVerifyContinued(
       "family online_review_verify_continued marker must include onlineReviewRound >= 1",
     );
   }
-  // Explicit [] must remain durable and distinguishable from an omitted field
-  // so same-round later-marker-wins can clear an earlier fix_committed snapshot.
-  const hasExplicitFixKeys = record.fixMarkedFindingIdentityKeys !== undefined;
-  const fixKeys = hasExplicitFixKeys
-    ? record.fixMarkedFindingIdentityKeys.filter(
-        (k) => typeof k === "string" && k.trim().length > 0,
-      )
-    : undefined;
-  // Opaque Verify packet — durable row keeps the array shape/fields as-is (#1145).
-  const fixThreads = Array.isArray(record.fixMarkedFindingThreads)
-    ? record.fixMarkedFindingThreads
-    : [];
-  await backend.appendFamilyLedger(
-    compact({
+  // Explicit [] must remain durable and distinguishable from an omitted field.
+  // #1145 A3: opaque arrays whole-passthrough — no element filter / no cast.
+  const entry: FamilyLedgerEntry = {
       status: "online_review_verify_continued",
       event: "online_review_verify_continued",
       phase: "final",
       onlineReviewRound,
+      ts: new Date().toISOString(),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
-      ...(hasExplicitFixKeys
-        ? { fixMarkedFindingIdentityKeys: fixKeys }
+      ...(record.fixMarkedFindingIdentityKeys !== undefined
+        ? { fixMarkedFindingIdentityKeys: record.fixMarkedFindingIdentityKeys }
         : {}),
-      ...(fixThreads.length > 0
-        ? { fixMarkedFindingThreads: fixThreads }
+      ...(record.fixMarkedFindingThreads !== undefined
+        ? { fixMarkedFindingThreads: record.fixMarkedFindingThreads }
         : {}),
-      ts: new Date().toISOString(),
-    }) as FamilyLedgerEntry,
-  );
+  };
+  await backend.appendFamilyLedger(entry);
 }
 
 /**
@@ -1674,19 +1633,18 @@ export async function recordOnlineReviewMergeable(
       "family online_review_mergeable marker must include a non-empty familyHeadAfter",
     );
   }
-  await backend.appendFamilyLedger(
-    compact({
+  const entry: FamilyLedgerEntry = {
       status: "online_review_mergeable",
       event: "online_review_mergeable",
       phase: "final",
       onlineReviewRound,
       familyHeadAfter,
+      ts: new Date().toISOString(),
       ...(record.pr !== undefined && record.pr.trim().length > 0
         ? { pr: record.pr.trim() }
         : {}),
-      ts: new Date().toISOString(),
-    }) as FamilyLedgerEntry,
-  );
+  };
+  await backend.appendFamilyLedger(entry);
 }
 
 /**

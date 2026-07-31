@@ -15,9 +15,6 @@
  */
 
 import {
-  BOT_POLL_INTERVAL_MS,
-} from "../botPolling.js";
-import {
   convergenceHeadToRecord,
 } from "../evidenceAdmissibility.js";
 import type {
@@ -32,6 +29,36 @@ import { fixerEnvelopeFixCommitSha } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
+
+
+/**
+ * Index just after the latest matching `shipped` marker for `anchorHead`.
+ * Shared cycle lower bound for online-review ledger scanners (#1145 B1).
+ * Returns 0 when anchor empty or no match.
+ */
+export function cycleWindowStart(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly familyHeadAfter?: string;
+  }>,
+  anchorHead?: string,
+): number {
+  const anchor = typeof anchorHead === "string" ? anchorHead.trim() : "";
+  if (anchor.length === 0) return 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "shipped" &&
+      entry.event === "shipped" &&
+      typeof entry.familyHeadAfter === "string" &&
+      entry.familyHeadAfter.trim() === anchor
+    ) {
+      return i + 1;
+    }
+  }
+  return 0;
+}
 
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
@@ -169,19 +196,7 @@ export function lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
   const head = typeof shipHead === "string" ? shipHead.trim() : "";
   if (head.length === 0) return undefined;
 
-  let cycleStart = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status === "shipped" &&
-      entry.event === "shipped" &&
-      typeof entry.familyHeadAfter === "string" &&
-      entry.familyHeadAfter.trim() === head
-    ) {
-      cycleStart = i + 1;
-      break;
-    }
-  }
+  const cycleStart = cycleWindowStart(entries, head);
 
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
@@ -218,29 +233,19 @@ export function effectiveOnlineReviewHeadFromFamilyLedger(
 }
 
 function authorizationFromLedgerEntry(entry: {
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey?: string;
-    readonly threadId?: string;
-  }>;
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+  readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
 }): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
 } {
+  // #1145 A3: opaque arrays whole-passthrough — no element filter / no cast.
   return {
-    fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
-      (key) => typeof key === "string" && key.trim().length > 0,
-    ),
-    // Opaque Verify packet — byte-for-byte / shape-for-shape. Never reconstruct
-    // or drop extended/malformed business bindings into empty work (#1145).
+    fixMarkedFindingIdentityKeys: Array.isArray(entry.fixMarkedFindingIdentityKeys)
+      ? entry.fixMarkedFindingIdentityKeys
+      : [],
     fixMarkedFindingThreads: Array.isArray(entry.fixMarkedFindingThreads)
-      ? (entry.fixMarkedFindingThreads as ReadonlyArray<{
-          readonly identityKey: string;
-          readonly threadId: string;
-        }>)
+      ? entry.fixMarkedFindingThreads
       : [],
   };
 }
@@ -259,42 +264,21 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey?: string;
-      readonly threadId?: string;
-    }>;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   }>,
   opts?: {
     /** Current matching shipped anchor head — cycle window lower bound. */
     readonly shippedAnchorHead?: string;
   },
 ): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
 } {
-  let cycleStart = 0;
-  const anchor =
-    typeof opts?.shippedAnchorHead === "string"
-      ? opts.shippedAnchorHead.trim()
-      : "";
-  if (anchor.length > 0) {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i]!;
-      if (
-        entry.status === "shipped" &&
-        entry.event === "shipped" &&
-        typeof entry.familyHeadAfter === "string" &&
-        entry.familyHeadAfter.trim() === anchor
-      ) {
-        cycleStart = i + 1;
-        break;
-      }
-    }
-  }
+  const cycleStart = cycleWindowStart(
+    entries,
+    opts?.shippedAnchorHead,
+  );
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     const live =
@@ -365,27 +349,13 @@ export function lastCollectorCheckpointFromFamilyLedger(
     typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
       ? opts.currentPr.trim()
       : undefined;
-  let cycleStart = 0;
+  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
   const anchor =
     typeof opts?.shippedAnchorHead === "string"
       ? opts.shippedAnchorHead.trim()
       : "";
-  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
   const anchorHead = anchor.length > 0 ? anchor : head;
-  if (anchorHead !== undefined && anchorHead.length > 0) {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i]!;
-      if (
-        entry.status === "shipped" &&
-        entry.event === "shipped" &&
-        typeof entry.familyHeadAfter === "string" &&
-        entry.familyHeadAfter.trim() === anchorHead
-      ) {
-        cycleStart = i + 1;
-        break;
-      }
-    }
-  }
+  const cycleStart = cycleWindowStart(entries, anchorHead);
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     if (
@@ -488,25 +458,13 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
     typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
       ? opts.currentPr.trim()
       : undefined;
-  let cycleStart = 0;
+  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
   const anchor =
     typeof opts?.shippedAnchorHead === "string"
       ? opts.shippedAnchorHead.trim()
       : "";
-  // Prefer explicit anchor; otherwise the effective/current head opens the cycle.
   const anchorHead = anchor.length > 0 ? anchor : head;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status === "shipped" &&
-      entry.event === "shipped" &&
-      typeof entry.familyHeadAfter === "string" &&
-      entry.familyHeadAfter.trim() === anchorHead
-    ) {
-      cycleStart = i + 1;
-      break;
-    }
-  }
+  const cycleStart = cycleWindowStart(entries, anchorHead);
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     if (
@@ -563,11 +521,8 @@ export function lastPendingFixerCargoFromFamilyLedger(
     readonly familyHeadAfter?: string;
     readonly pr?: string;
     readonly fixerResultCargo?: FixerResult;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey?: string;
-      readonly threadId?: string;
-    }>;
+    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+    readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   }>,
   round: number,
   opts?: {
@@ -583,34 +538,16 @@ export function lastPendingFixerCargoFromFamilyLedger(
 ):
   | {
       readonly fixerResult: FixerResult;
-      readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-      readonly fixMarkedFindingThreads: ReadonlyArray<{
-        readonly identityKey: string;
-        readonly threadId: string;
-      }>;
+      readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+      readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
     }
   | undefined {
   if (!Number.isSafeInteger(round) || round < 1) return undefined;
 
-  let cycleStart = 0;
-  const anchor =
-    typeof opts?.shippedAnchorHead === "string"
-      ? opts.shippedAnchorHead.trim()
-      : "";
-  if (anchor.length > 0) {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i]!;
-      if (
-        entry.status === "shipped" &&
-        entry.event === "shipped" &&
-        typeof entry.familyHeadAfter === "string" &&
-        entry.familyHeadAfter.trim() === anchor
-      ) {
-        cycleStart = i + 1;
-        break;
-      }
-    }
-  }
+  const cycleStart = cycleWindowStart(
+    entries,
+    opts?.shippedAnchorHead,
+  );
 
   const currentPr =
     typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
@@ -630,11 +567,8 @@ export function lastPendingFixerCargoFromFamilyLedger(
   let pending: FixerResult | undefined;
   let pendingAuth:
     | {
-        readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-        readonly fixMarkedFindingThreads: ReadonlyArray<{
-          readonly identityKey: string;
-          readonly threadId: string;
-        }>;
+        readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+        readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
       }
     | undefined;
   for (let i = cycleStart; i < entries.length; i++) {
@@ -829,38 +763,6 @@ export function buildOnlineReviewBaseLanding(
   };
 }
 
-export interface BotPollClock {
-  sleep(ms: number): void | Promise<void>;
-}
-
-export const realBotPollClock: BotPollClock = {
-  sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  },
-};
-
-export const immediateBotPollClock: BotPollClock = {
-  sleep() {},
-};
-
-/**
- * Family pending-CI re-poll delay.
- * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
- * Production uses real 2-minute cadence between pending-CI polls (#934 ID-004:
- * CI pending is not on the bot overdue window — no finite host-fail budget).
- *
- * Used by Landing Action CI wait — not by Online Review Runner host polling
- * (host poll path deleted in #1145).
- */
-export async function sleepPendingCiPollInterval(
-  clock?: BotPollClock,
-): Promise<void> {
-  const resolved =
-    clock ??
-    (process.env.VITEST !== undefined ? immediateBotPollClock : realBotPollClock);
-  await resolved.sleep(BOT_POLL_INTERVAL_MS);
-}
-
 /**
  * Online Review Collector Action result (#1145).
  * Opaque evidence handle/body only — never judge enum. Runner transports as-is
@@ -1039,11 +941,8 @@ export function unboundOnlineReviewLoopResult(
  * filtering, no disposition derivation, no history backfill when sparse/missing.
  */
 function fixerPacketFromVerify(verify: VerifyResult | undefined): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+  readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
 } {
   return {
     fixMarkedFindingIdentityKeys: verify?.fixMarkedFindingIdentityKeys ?? [],
@@ -1091,12 +990,9 @@ export async function runOnlineReviewLoopStage(
     /** Prior fixing commit SHA — surfaces post-fix head to Collector landing. */
     readonly initialFixCommitSha?: string;
     /** Durable fixer authorization reconstructed for a post-crash recheck. */
-    readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
     /** Durable identity-to-thread bindings reconstructed for fixer landing. */
-    readonly initialFixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey: string;
-      readonly threadId: string;
-    }>;
+    readonly initialFixMarkedFindingThreads?: ReadonlyArray<unknown>;
     /**
      * #1145 post-fixer crash resume: opaque fixer cargo already durable.
      * When set, this round skips first Verify + Fixer and goes to same-round
@@ -1146,11 +1042,10 @@ export async function runOnlineReviewLoopStage(
    */
   let postFixTransition = opts?.initialPostFixTransition === true;
   /** The previous fixer assignment, required as the next verify's recheck contract. */
-  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<string> | undefined =
+  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<unknown> | undefined =
     opts?.initialFixMarkedFindingIdentityKeys;
-  let recheckFixMarkedFindingThreads:
-    | ReadonlyArray<{ readonly identityKey: string; readonly threadId: string }>
-    | undefined = opts?.initialFixMarkedFindingThreads;
+  let recheckFixMarkedFindingThreads: ReadonlyArray<unknown> | undefined =
+    opts?.initialFixMarkedFindingThreads;
   /**
    * When set, skip first Verify + Fixer and feed this cargo to same-round Verify.
    * Cleared after the post-fixer Verify seat consumes it (or attempts to).
