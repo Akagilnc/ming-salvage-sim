@@ -40,6 +40,8 @@ import {
 } from "../dispatchWorker.js";
 import {
   OnlineReviewLoopTerminal,
+  boundOnlineReviewLoopResult,
+  unboundOnlineReviewLoopResult,
   effectiveOnlineReviewHeadFromFamilyLedger,
   lastCollectorCheckpointFromFamilyLedger,
   lastFixMarkedFindingAuthorizationFromFamilyLedger,
@@ -1863,8 +1865,10 @@ export async function runFamilyOnlineReviewLoop(input: {
       : undefined;
   const prUrl = liveOpenPr ?? shippedPrHandle;
   if (prUrl === undefined || prUrl.length === 0) {
-    return { ok: false, terminalState: "decision_gate_raised", round: 1 };
+    // #1145: unbound — no reviewedPr; post-loop must not Landing/converged.
+    return unboundOnlineReviewLoopResult();
   }
+  const reviewedPr = prUrl;
   // Effective ship identity for landing / stage / ledger — resolved PR rides as
   // thin typed transport only (never decoded from evidence cargo).
   const ship: ShipResult = {
@@ -1880,7 +1884,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         async () => ({ cliVersion: "standalone-online-review-test" }),
       ));
   } catch (err) {
-    return {
+    return boundOnlineReviewLoopResult(reviewedPr, {
       ok: false,
       terminalState: "decision_gate_raised",
       round: 1,
@@ -1890,7 +1894,7 @@ export async function runFamilyOnlineReviewLoop(input: {
         repairHint:
           "provide the family startup-smoked model route before dispatching online review workers",
       }),
-    };
+    });
   }
   // F2: do not put sticky baton pool on baseCtx — each dispatch scopes by slot.
   // modelRoute is intentionally omitted here and injected per-dispatch so
@@ -1997,11 +2001,11 @@ export async function runFamilyOnlineReviewLoop(input: {
       },
     );
     if (alreadyMergeable !== undefined) {
-      return {
+      return boundOnlineReviewLoopResult(reviewedPr, {
         ok: true,
         terminalState: "mergeable",
         round: alreadyMergeable.round,
-      };
+      });
     }
   }
   // #1145 post-fixer seam: opaque fixer cargo may already be durable (incl. no-op).
@@ -2009,7 +2013,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   const pendingFixerCargo = lastPendingFixerCargoFromFamilyLedger(
     familyLedger,
     loopState.round,
-    { shippedAnchorHead: shipHead },
+    { shippedAnchorHead: shipHead, currentPr: reviewedPr },
   );
   const resumedFixAuthorization =
     pendingFixerCargo !== undefined
@@ -2131,17 +2135,20 @@ export async function runFamilyOnlineReviewLoop(input: {
                   repairHint:
                     "answer the decision gate / unstick the collector worker, then re-feed the family online review loop",
                 });
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
               stopSummary,
-            });
+              }),
+            );
           }
           if (result.kind !== "completed") {
             const detail =
               result.kind === "failed" ? `: ${result.reason}` : "";
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
@@ -2151,7 +2158,8 @@ export async function runFamilyOnlineReviewLoop(input: {
                 repairHint:
                   "inspect the collector worker envelope and re-feed the family online review loop",
               }),
-            });
+              }),
+            );
           }
           const artifacts = collectorRawArtifactsForTransport(
             collectorMonitorHandle,
@@ -2226,17 +2234,20 @@ export async function runFamilyOnlineReviewLoop(input: {
                   repairHint:
                     "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
                 });
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
               stopSummary,
-            });
+              }),
+            );
           }
           if (result.kind !== "completed") {
             const detail =
               result.kind === "failed" ? `: ${result.reason}` : "";
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
@@ -2246,7 +2257,8 @@ export async function runFamilyOnlineReviewLoop(input: {
                 repairHint:
                   "inspect the verify worker envelope and re-feed the family online review loop",
               }),
-            });
+              }),
+            );
           }
           const artifacts = reviewerArtifactPointers(
             reviewerMonitorHandle,
@@ -2282,8 +2294,9 @@ export async function runFamilyOnlineReviewLoop(input: {
               mergeableHead === undefined ||
               mergeableHead.trim().length === 0
             ) {
-              throw new OnlineReviewLoopTerminal({
-                ok: false,
+              throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
+              ok: false,
                 terminalState: "decision_gate_raised",
                 round,
                 stopSummary: stageFailureStopSummary({
@@ -2293,7 +2306,8 @@ export async function runFamilyOnlineReviewLoop(input: {
                   repairHint:
                     "ensure ship.prHead or a fix commit SHA is present, then re-feed the family online review loop",
                 }),
-              });
+              }),
+            );
             }
             await recordOnlineReviewMergeable(input.familyBackend, {
               onlineReviewRound: round,
@@ -2341,7 +2355,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           const already = lastPendingFixerCargoFromFamilyLedger(
             ledgerNow,
             round,
-            { shippedAnchorHead: shipHead },
+            { shippedAnchorHead: shipHead, currentPr: reviewedPr },
           );
           if (already !== undefined) {
             return already.fixerResult;
@@ -2360,7 +2374,8 @@ export async function runFamilyOnlineReviewLoop(input: {
           );
           if (result.kind === "escalated") {
             const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
@@ -2378,12 +2393,14 @@ export async function runFamilyOnlineReviewLoop(input: {
                     repairHint:
                       "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
                   }),
-            });
+              }),
+            );
           }
           if (result.kind !== "completed") {
             const detail =
               result.kind === "failed" ? `: ${result.reason}` : "";
-            throw new OnlineReviewLoopTerminal({
+            throw new OnlineReviewLoopTerminal(
+              boundOnlineReviewLoopResult(reviewedPr, {
               ok: false,
               terminalState: "decision_gate_raised",
               round,
@@ -2393,7 +2410,8 @@ export async function runFamilyOnlineReviewLoop(input: {
                 repairHint:
                   "inspect the fixer worker envelope and re-feed the family online review loop",
               }),
-            });
+              }),
+            );
           }
           const output =
             result.output.kind === "fixer" ? result.output : undefined;
@@ -4218,10 +4236,32 @@ export async function runVerifyCmr(
       familyLedgerForHead,
       exactPostShipFamilyHead,
     );
-  // Thin typed PR identity for post-loop ledger + Landing — prefer live open PR
-  // (replacement during the loop) over the frozen ship handle; never decode
-  // evidence cargo and never host-poll review state.
-  const landingPrUrl = resolveFamilyShipPr(familyBase) ?? shipPr;
+  // #1145: post-loop uses loop-bound reviewedPr only — never re-resolve.
+  // Unbound (no PR identity) cannot enter converged/Landing.
+  if (reviewLoop.binding !== "bound") {
+    const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
+    const reason = stopSummary.summary;
+    const abortFamilyHead = await familyConvergenceMarkerHead(
+      familyBackend,
+      familyBase,
+      exactPostShipFamilyHead,
+      knownPostFixHead,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: abortFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: abortFamilyHead,
+      stopSummary,
+    });
+    return stageGate("online_review_failed");
+  }
+  const landingPrUrl = reviewLoop.reviewedPr;
   if (!reviewLoop.ok) {
     const stopSummary = familyOnlineReviewLoopFailureStopSummary(reviewLoop);
     const reason = stopSummary.summary;

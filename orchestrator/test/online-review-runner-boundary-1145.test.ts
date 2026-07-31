@@ -333,11 +333,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ship: offlineShip,
     });
 
-    expect(result).toEqual({
-      ok: true,
-      terminalState: "mergeable",
-      round: 1,
-    });
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
 
     // Collector before Verify; no other GH seats.
     expect(backend.kinds[0]).toBe("collector");
@@ -647,11 +643,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ship: offlineShip,
       });
 
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(verifyCalls).toBe(2);
       expect(fixerCalls).toBe(1);
       // Same round both times — no unconditional round++ after no-op.
@@ -959,11 +951,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(backend.collectorDispatchCount).toBe(1);
       expect(backend.verifyDispatchCount).toBe(1);
       expect(backend.kinds.filter((k) => k === "verify")).toHaveLength(1);
@@ -1057,11 +1045,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ship: offlineShip,
       });
 
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(fixerCalls).toBe(1);
       expect(verifyCalls).toBe(2);
       // First contradictory cargo must NOT have written mergeable; only the
@@ -1169,11 +1153,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(fixerCalls).toBe(1);
       expect(verifyCalls).toBe(2);
       expect(verifyFixerCargo).toEqual([
@@ -1270,11 +1250,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(fixerCalls).toBe(1);
       expect(verifyCalls).toBe(2);
       expect(verifyFixerCargo[1]).toEqual({
@@ -1781,11 +1757,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ship: offlineShip,
       });
 
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 3,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 3, binding: "bound" });
       // Collector not re-burned — checkpoint for round 3 reused.
       expect(backend.collectorDispatchCount).toBe(collectorsBefore);
       expect(backend.verifyDispatchCount).toBe(verifyBefore + 1);
@@ -1845,11 +1817,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, prHead: newShip },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Must re-run Collector→Verify for B — not short-circuit on mergeable(A).
       expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
       expect(backend.verifyDispatchCount).toBe(1);
@@ -1867,11 +1835,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(first).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(first).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       const mergeable = backend.ledger.find(
         (e) => e.event === "online_review_mergeable",
       );
@@ -1907,11 +1871,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, prHead: "new-head-1145" },
       });
-      expect(reShip).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(reShip).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(backend.collectorDispatchCount).toBe(collectorsAfterFirst + 1);
       expect(backend.verifyDispatchCount).toBe(verifiesAfterFirst + 1);
       const mergeableHeads = backend.ledger
@@ -2035,11 +1995,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 2,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 2, binding: "bound" });
       // No second Fixer; new SHA booked once; Collect/Verify resume at new SHA.
       expect(fixerCalls).toBe(1);
       expect(verifyCalls).toBe(2); // first seat + post-fixer resume seat
@@ -2157,11 +2113,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           prHead: resume!.familyHeadAfter,
         },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // No second Fixer; fix_committed booked once at fixHead.
       expect(fixerCalls).toBe(0);
       expect(
@@ -2268,11 +2220,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, pr, prHead: newShip },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Fresh cycle at newShip — no stale fix head, no phantom fixer resume.
       expect(collectorHeads[0]).toBe(newShip);
       expect(fixerCalls).toBe(0);
@@ -2443,11 +2391,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Must run Collector→Verify for the replacement PR — not short-circuit.
       expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
       expect(backend.verifyDispatchCount).toBe(verifiesBefore + 1);
@@ -2539,11 +2483,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Must re-run Collector — not short-circuit on the old PR checkpoint.
       expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
       expect(verifySawSnapshot).toEqual(freshEvidence);
@@ -2645,11 +2585,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             prHead: sharedHead,
           },
         });
-        expect(result).toEqual({
-          ok: true,
-          terminalState: "mergeable",
-          round: 1,
-        });
+        expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
         // Must NOT short-circuit on stale-PR mergeable/collector markers.
         expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
         expect(backend.verifyDispatchCount).toBe(verifiesBefore + 1);
@@ -2710,11 +2646,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Same-round Verify landing preserves every extended field.
       expect(verifySawFixer).toEqual(extendedFixer);
       expect(verifySawFixer).toMatchObject({
@@ -3119,11 +3051,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           familyBase: "family/1145",
           ship: offlineShip,
         });
-        expect(resumed).toEqual({
-          ok: true,
-          terminalState: "mergeable",
-          round: 1,
-        });
+        expect(resumed).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
         // Resumed raw-artifact visibility on the Verify landing transport.
         expect(verifySawArtifacts).toEqual(hostArtifacts);
         // Collector was not re-dispatched (checkpoint short-circuit).
@@ -3325,11 +3253,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, pr, prHead: shipHead },
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // Collector re-ran at the committed fix head (old ship-head checkpoint skipped).
       expect(collectorLandings.length).toBe(1);
       expect(collectorLandings[0]?.shipDelivery?.prHead).toBe(fixHead);
@@ -3447,11 +3371,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         }),
       );
 
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 3,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 3, binding: "bound" });
       expect(fixerCalls).toBe(2);
       // C1 pristine ship head; C2 first post-fix; C3 after no-op at same head.
       expect(collectorLandings).toHaveLength(3);
@@ -3514,11 +3434,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(second).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(second).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       // No second Collector dispatch / re-wait.
       expect(backend.collectorDispatchCount).toBe(1);
       expect(backend.verifyDispatchCount).toBe(2); // fail + success
@@ -3550,11 +3466,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(verifyLanding?.onlineReviewSnapshot).toBeUndefined();
       expect(verifyLanding?.cargoPointer).toBeUndefined();
       const completed = backend.ledger.find(
@@ -3663,11 +3575,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(sawPostFix).toBe(true);
       expect(backend.collectorDispatchCount).toBe(1);
       // Checkpoint at new head consumes the one-shot.
@@ -3691,11 +3599,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(reentry).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(reentry).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(backend.collectorDispatchCount).toBe(collectorsBefore);
       expect(postFixOnReentry).toBeUndefined();
     });
@@ -3840,11 +3744,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(first).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(first).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(backend.collectorDispatchCount).toBe(1);
       expect(firstVerifyLanding?.cargoPointer).toBe(HANDLE);
       expect(firstVerifyLanding?.onlineReviewSnapshot).toBeUndefined();
@@ -4118,11 +4018,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: true,
-        terminalState: "mergeable",
-        round: 1,
-      });
+      expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
       expect(verifySaw).toEqual(KEYLESS);
       expect(backend.collectorDispatchCount).toBe(1);
       expect(backend.verifyDispatchCount).toBe(1);
@@ -4407,6 +4303,185 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(collectorPrompt).not.toMatch(/"bots"\s*:/);
       expect(collectorPrompt).not.toMatch(/"threads"\s*:/);
       expect(collectorPrompt).not.toMatch(/"checkRuns"\s*:/);
+    });
+  });
+
+  describe("#1145 P1/P2 bound reviewedPr + canonical pending PR",
+    () => {
+    it("canonicalOnlineReviewPrId normalizes URL and owner/repo#n",
+      async () => {
+      const {
+        canonicalOnlineReviewPrId,
+        onlineReviewPrIdentityEquals,
+      } = await import("../src/family/onlineReviewLoop.js");
+      expect(
+        canonicalOnlineReviewPrId(
+          "https://github.com/Akagilnc/ming-salvage-sim/pull/1144",
+        ),
+      ).toBe("akagilnc/ming-salvage-sim#1144");
+      expect(
+        canonicalOnlineReviewPrId("Akagilnc/ming-salvage-sim#1144"),
+      ).toBe("akagilnc/ming-salvage-sim#1144");
+      expect(
+        onlineReviewPrIdentityEquals(
+          "https://github.com/Akagilnc/ming-salvage-sim/pull/1144",
+          "akagilnc/ming-salvage-sim#1144",
+        ),
+      ).toBe(true);
+      expect(
+        onlineReviewPrIdentityEquals(
+          "https://github.com/Akagilnc/ming-salvage-sim/pull/1",
+          "https://github.com/Akagilnc/ming-salvage-sim/pull/2",
+        ),
+      ).toBe(false);
+      expect(canonicalOnlineReviewPrId("pr://family/1145")).toBe(
+        "pr://family/1145",
+      );
+      expect(canonicalOnlineReviewPrId("")).toBeUndefined();
+    });
+
+    it("T-P1-unbound: no PR identity → unbound; not ok mergeable",
+      async () => {
+      const backend = new TracerFamilyBackend();
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: {
+          kind: "ship",
+          branch: "family/1145",
+          // no pr
+          prHead: "head-1145",
+          status: "pr_opened",
+        },
+      });
+      expect(result).toMatchObject({
+        binding: "unbound",
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round: 1,
+      });
+      expect("reviewedPr" in result).toBe(false);
+      expect(backend.collectorDispatchCount).toBe(0);
+      expect(backend.verifyDispatchCount).toBe(0);
+      expect(
+        backend.ledger.some((e) => e.event === "online_review_mergeable"),
+      ).toBe(false);
+    });
+
+    it("T-P1a: bound result carries entry reviewedPr (no post-loop swap field)",
+      async () => {
+      const backend = new TracerFamilyBackend();
+      const pr1 = "https://github.com/Akagilnc/ming-salvage-sim/pull/1111";
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr: pr1 },
+      });
+      expect(result.binding).toBe("bound");
+      if (result.binding === "bound") {
+        expect(result.reviewedPr).toBe(pr1);
+        expect(result.ok).toBe(true);
+        expect(result.terminalState).toBe("mergeable");
+      }
+    });
+
+    it("T-P2: pending fixer cargo scoped by currentPr canonical id",
+      async () => {
+      const {
+        lastPendingFixerCargoFromFamilyLedger,
+      } = await import("../src/family/onlineReviewLoop.js");
+      const pr1 = "https://github.com/Akagilnc/ming-salvage-sim/pull/1";
+      const pr2 = "https://github.com/Akagilnc/ming-salvage-sim/pull/2";
+      const shipHead = "ship-head-p2";
+      const entries = [
+        {
+          status: "shipped" as const,
+          event: "shipped" as const,
+          familyHeadAfter: shipHead,
+          pr: pr1,
+        },
+        {
+          status: "online_review_fixer_completed" as const,
+          event: "online_review_fixer_completed" as const,
+          onlineReviewRound: 1,
+          pr: pr1,
+          fixerResultCargo: {
+            kind: "fixer" as const,
+            committed: true,
+            fixCommitSha: "fix-pr1",
+          },
+          fixMarkedFindingIdentityKeys: ["old-pr1-key"],
+          fixMarkedFindingThreads: [
+            { identityKey: "old-pr1-key", threadId: "t-pr1" },
+          ],
+        },
+      ];
+      // PR2 must not resume PR1 pending cargo.
+      expect(
+        lastPendingFixerCargoFromFamilyLedger(entries, 1, {
+          shippedAnchorHead: shipHead,
+          currentPr: pr2,
+        }),
+      ).toBeUndefined();
+      // PR1 still recovers.
+      const pending = lastPendingFixerCargoFromFamilyLedger(entries, 1, {
+        shippedAnchorHead: shipHead,
+        currentPr: pr1,
+      });
+      expect(pending?.fixerResult.fixCommitSha).toBe("fix-pr1");
+      expect(pending?.fixMarkedFindingIdentityKeys).toEqual(["old-pr1-key"]);
+      // URL vs short form same ticket.
+      expect(
+        lastPendingFixerCargoFromFamilyLedger(entries, 1, {
+          shippedAnchorHead: shipHead,
+          currentPr: "Akagilnc/ming-salvage-sim#1",
+        })?.fixerResult.fixCommitSha,
+      ).toBe("fix-pr1");
+      // Missing pr on marker + currentPr set → fail-closed.
+      expect(
+        lastPendingFixerCargoFromFamilyLedger(
+          [
+            entries[0]!,
+            {
+              ...entries[1]!,
+              pr: undefined,
+            },
+          ],
+          1,
+          { shippedAnchorHead: shipHead, currentPr: pr1 },
+        ),
+      ).toBeUndefined();
+    });
+
+    it("static: post-loop runners do not re-resolve for Landing/converged",
+      async () => {
+      const { readFileSync } = await import("node:fs");
+      const verifyCmr = readFileSync(
+        new URL("../src/family/verifyCmr.ts", import.meta.url),
+        "utf8",
+      );
+      const runner = readFileSync(
+        new URL("../src/family/runner.ts", import.meta.url),
+        "utf8",
+      );
+      // After runFamilyOnlineReviewLoop, landing must use reviewedPr not resolve.
+      const finalIdx = verifyCmr.indexOf(
+        "const reviewLoop = await runFamilyOnlineReviewLoop({",
+      );
+      expect(finalIdx).toBeGreaterThan(0);
+      const afterLoop = verifyCmr.slice(finalIdx);
+      const landingSection = afterLoop.slice(
+        0,
+        afterLoop.indexOf("runLandingAction") + 200,
+      );
+      expect(landingSection).toMatch(/reviewLoop\.reviewedPr/);
+      expect(landingSection).not.toMatch(
+        /landingPrUrl\s*=\s*resolveFamilyShipPr/,
+      );
+      expect(runner).toMatch(/reviewLoop\.reviewedPr/);
+      expect(runner).not.toMatch(
+        /landingPrUrl\s*=\s*\n?\s*resolveFamilyShipPr/,
+      );
     });
   });
 });

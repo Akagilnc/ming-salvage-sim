@@ -73,7 +73,6 @@ import {
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import {
-  resolveFamilyShipPr,
   runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
@@ -2301,7 +2300,8 @@ export async function runFamily(
       runRelayBilling = reviewBarrier.relayBilling;
     }
     const reviewLoop = reviewBarrier.value;
-    if (!reviewLoop.ok) {
+    // #1145: unbound / failed never re-resolve for Landing; bound uses reviewedPr only.
+    if (reviewLoop.binding !== "bound" || !reviewLoop.ok) {
       const rawStop =
         reviewLoop.stopSummary ??
         stageFailureStopSummary({
@@ -2367,10 +2367,8 @@ export async function runFamily(
       (await readCurrentFamilyHead(familyBackend, familyBase)) ??
       preFinalFamilyHead ??
       shippedRecord.familyHeadAfter;
-    // #1145: Landing + converged marker bind the currently open PR, not a stale
-    // shipped-ledger handle after replacement/re-open (thin identity only).
-    const landingPrUrl =
-      resolveFamilyShipPr(familyBase) ?? shippedRecord.pr;
+    // #1145: Landing + converged bind loop-entry reviewedPr — never post-loop re-resolve.
+    const landingPrUrl = reviewLoop.reviewedPr;
     await recordReviewLoopConverged(familyBackend, {
       pr: landingPrUrl,
       familyHeadAfter: convergedHead,
@@ -2498,7 +2496,8 @@ export async function runFamily(
             : {}),
           ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         });
-        if (!reviewLoop.ok) {
+        // #1145: unbound / failed never re-resolve for Landing; bound uses reviewedPr.
+        if (reviewLoop.binding !== "bound" || !reviewLoop.ok) {
           const rawStop =
             reviewLoop.stopSummary ??
             stageFailureStopSummary({
@@ -2567,10 +2566,8 @@ export async function runFamily(
         const convergedHead =
           (await readCurrentFamilyHead(familyBackend, familyBase)) ??
           openShipped.familyHeadAfter;
-        // #1145: Landing + converged marker bind the currently open PR, not a
-        // stale shipped-ledger handle after replacement/re-open.
-        const landingPrUrl =
-          resolveFamilyShipPr(familyBase) ?? openShipped.pr;
+        // #1145: loop-entry reviewedPr only — never post-loop re-resolve.
+        const landingPrUrl = reviewLoop.reviewedPr;
         await recordReviewLoopConverged(familyBackend, {
           pr: landingPrUrl,
           familyHeadAfter: convergedHead,
