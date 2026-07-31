@@ -99,11 +99,28 @@ export function onlineReviewRoundFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly onlineReviewRound?: number;
+    readonly pr?: string;
   }>,
+  opts?: {
+    /** Current bound PR identity — replacement PR must not inherit prior round. */
+    readonly currentPr?: string;
+  },
 ): number {
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
   let maxRound = 0;
   let legacyFixCount = 0;
   for (const entry of entries) {
+    if (currentPr !== undefined) {
+      const storedPr =
+        typeof entry.pr === "string" && entry.pr.trim().length > 0
+          ? entry.pr.trim()
+          : undefined;
+      // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+      if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
+    }
     const hasRound =
       typeof entry.onlineReviewRound === "number" &&
       Number.isSafeInteger(entry.onlineReviewRound) &&
@@ -160,8 +177,17 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
   }>,
+  opts?: {
+    /** Current bound PR identity — replacement PR must not inherit prior fix head. */
+    readonly currentPr?: string;
+  },
 ): string | undefined {
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
@@ -170,6 +196,14 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
       typeof entry.familyHeadAfter === "string" &&
       entry.familyHeadAfter.length > 0
     ) {
+      if (currentPr !== undefined) {
+        const storedPr =
+          typeof entry.pr === "string" && entry.pr.trim().length > 0
+            ? entry.pr.trim()
+            : undefined;
+        // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+        if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
+      }
       return entry.familyHeadAfter;
     }
   }
@@ -190,13 +224,22 @@ export function lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
   }>,
   shipHead: string,
+  opts?: {
+    /** Current bound PR identity — replacement PR must not inherit prior fix SHA. */
+    readonly currentPr?: string;
+  },
 ): string | undefined {
   const head = typeof shipHead === "string" ? shipHead.trim() : "";
   if (head.length === 0) return undefined;
 
   const cycleStart = cycleWindowStart(entries, head);
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
 
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
@@ -206,6 +249,14 @@ export function lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
       typeof entry.familyHeadAfter === "string" &&
       entry.familyHeadAfter.trim().length > 0
     ) {
+      if (currentPr !== undefined) {
+        const storedPr =
+          typeof entry.pr === "string" && entry.pr.trim().length > 0
+            ? entry.pr.trim()
+            : undefined;
+        // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+        if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
+      }
       return entry.familyHeadAfter.trim();
     }
   }
@@ -221,13 +272,19 @@ export function effectiveOnlineReviewHeadFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
   }>,
   shipHead: string,
+  opts?: {
+    /** Current bound PR identity — replacement PR must not inherit prior fix head. */
+    readonly currentPr?: string;
+  },
 ): string {
   const ship = typeof shipHead === "string" ? shipHead.trim() : "";
   const inCycle = lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
     entries,
     ship,
+    opts,
   );
   return inCycle !== undefined && inCycle.length > 0 ? inCycle : ship;
 }
@@ -735,12 +792,21 @@ export function postFixTransitionUnconsumedFromFamilyLedger(
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
   }>,
   committedFixHead: string | undefined,
+  opts?: {
+    /** Current bound PR identity — replacement PR must not inherit prior one-shot. */
+    readonly currentPr?: string;
+  },
 ): boolean {
   const head =
     typeof committedFixHead === "string" ? committedFixHead.trim() : "";
   if (head.length === 0) return false;
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
@@ -749,6 +815,14 @@ export function postFixTransitionUnconsumedFromFamilyLedger(
       typeof entry.familyHeadAfter === "string" &&
       entry.familyHeadAfter.trim() === head
     ) {
+      if (currentPr !== undefined) {
+        const storedPr =
+          typeof entry.pr === "string" && entry.pr.trim().length > 0
+            ? entry.pr.trim()
+            : undefined;
+        // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+        if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
+      }
       return false;
     }
   }

@@ -232,7 +232,6 @@ import type {
   WorkerMonitorHandle,
   Finding,
   FixerResult,
-  OnlineReviewFindingDisposition,
   OnlineReviewLandingSnapshot,
   PriorFindingDisposition,
   VerifyResult,
