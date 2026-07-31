@@ -2607,7 +2607,7 @@ export class RealFamilyBackend implements FamilyBackend {
       const onlineReviewLanding =
         spec.kind === "landing"
           ? undefined
-          : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
+          : this.writeFamilyOnlineReviewLandingFile(ctx, landing, spec.kind);
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
@@ -2651,6 +2651,8 @@ export class RealFamilyBackend implements FamilyBackend {
   protected writeFamilyOnlineReviewLandingFile(
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
+    /** Seat kind — priorRoundFindings is Verify history only (#1145). */
+    kind?: WorkerSpec["kind"],
   ): { path: string; sandboxPath: string } {
     // Sparse landing is the only path — missing snapshot is legal cargo.
     ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
@@ -2667,6 +2669,11 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
+    // priorRoundFindings stays on Verify history only — never Fixer landing.
+    const writePriorHistory =
+      kind !== "fixer" &&
+      landing?.priorRoundFindings !== undefined &&
+      landing.priorRoundFindings.length > 0;
     writeFileSync(
       path,
       `${JSON.stringify(
@@ -2689,10 +2696,10 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(landing?.postFixTransition === true
             ? { postFixTransition: true }
             : {}),
+          // Opaque arrays — preserve exactly, including explicit [] (#1145).
           fixMarkedFindingIdentityKeys:
             landing?.fixMarkedFindingIdentityKeys ?? [],
-          ...(landing?.fixMarkedFindingThreads !== undefined &&
-          landing.fixMarkedFindingThreads.length > 0
+          ...(landing?.fixMarkedFindingThreads !== undefined
             ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
             : {}),
           // Opaque fixer cargo back to the same Verify judge (#1145).
@@ -2702,9 +2709,8 @@ export class RealFamilyBackend implements FamilyBackend {
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
             : {}),
-          ...(landing?.priorRoundFindings !== undefined &&
-          landing.priorRoundFindings.length > 0
-            ? { priorRoundFindings: landing.priorRoundFindings }
+          ...(writePriorHistory
+            ? { priorRoundFindings: landing!.priorRoundFindings }
             : {}),
         },
         null,
@@ -4730,7 +4736,9 @@ export function parseCollectorOutcome(
 /**
  * #919 / #1145 A3: cargo-only decode. Fate = typed onlineReview envelope + exit.
  * Required role gate: object + converged:boolean (+ kind "verify" when present).
- * Every other enumerable field is preserved unchanged (opaque arrays included).
+ * Every other enumerable field is preserved unchanged (opaque arrays included),
+ * except retired host-typed plan fields which stay audit-only on the raw
+ * sidecar and must not re-enter host-decoded VerifyResult (#1145).
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4741,6 +4749,13 @@ export function parseVerifyOutcome(
   const parsed = payload.parsed;
   if (parsed.kind !== undefined && parsed.kind !== "verify") return RECEIPT_CARGO;
   if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
+  // Retired dual-owner plan fields — drop from host typing only.
+  // Raw sidecar cargo is untouched; never re-bless as host-typed plan.
+  const RETIRED_HOST_PLAN_KEYS = new Set([
+    "threadReplies",
+    "threadsToResolve",
+    "deferredIssueUrls",
+  ]);
   // Build verify cargo: force kind/converged; copy every other own key as-is.
   const built: { kind: "verify"; converged: boolean; [key: string]: unknown } = {
     kind: "verify",
@@ -4748,6 +4763,7 @@ export function parseVerifyOutcome(
   };
   for (const [key, value] of Object.entries(parsed)) {
     if (key === "kind" || key === "converged") continue;
+    if (RETIRED_HOST_PLAN_KEYS.has(key)) continue;
     built[key] = value;
   }
   return built;

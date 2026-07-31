@@ -258,18 +258,25 @@ function authorizationFromLedgerEntry(entry: {
  * When `shippedAnchorHead` is set, only entries after the latest matching
  * `shipped` marker for that head are considered — prior-cycle thread bindings
  * must not seed a re-shipped head that has no current-cycle pending cargo.
+ *
+ * When `currentPr` is set, only markers whose `pr` canonical-equals this id
+ * count — replacement PR at identical SHA must not inherit prior ticket auth.
+ * Missing marker pr = fail-closed skip (same contract as pending cargo).
  */
 export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
     readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   }>,
   opts?: {
     /** Current matching shipped anchor head — cycle window lower bound. */
     readonly shippedAnchorHead?: string;
+    /** Current bound PR identity — replacement PR must not inherit prior auth. */
+    readonly currentPr?: string;
   },
 ): {
   readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
@@ -279,6 +286,10 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
     entries,
     opts?.shippedAnchorHead,
   );
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
   for (let i = entries.length - 1; i >= cycleStart; i--) {
     const entry = entries[i]!;
     const live =
@@ -289,6 +300,14 @@ export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
       (entry.status === "online_review_fix_committed" &&
         entry.event === "online_review_fix_committed");
     if (!live) continue;
+    if (currentPr !== undefined) {
+      const storedPr =
+        typeof entry.pr === "string" && entry.pr.trim().length > 0
+          ? entry.pr.trim()
+          : undefined;
+      // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+      if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
+    }
     return authorizationFromLedgerEntry(entry);
   }
   return {
@@ -1199,9 +1218,16 @@ export async function runOnlineReviewLoopStage(
       recheckFixMarkedFindingIdentityKeys = fixKeys;
       recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
 
+      // priorRoundFindings is Verify history only — strip before every Fixer
+      // dispatch so Fixer never sees parallel history next to the live packet.
+      const {
+        priorRoundFindings: _priorHistoryForVerifyOnly,
+        ...fixerLanding
+      } = landing;
+
       let fixerOutput: FixerResult | undefined;
       try {
-        fixerOutput = await dispatch.dispatchFixer(landing);
+        fixerOutput = await dispatch.dispatchFixer(fixerLanding);
       } catch (err) {
         if (err instanceof OnlineReviewLoopTerminal) {
           throw err;

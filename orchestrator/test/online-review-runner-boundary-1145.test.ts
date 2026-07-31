@@ -181,11 +181,13 @@ class TracerFamilyBackend implements FamilyBackend {
   constructor(opts?: { readonly seedPriorRound5Keys?: boolean }) {
     if (opts?.seedPriorRound5Keys) {
       // Prior fix at round 1 = history for priorRoundFindings / recheck keys.
+      // Bound PR identity required — recovered auth/history is PR-scoped (#1145).
       this.ledger.push({
         status: "online_review_fix_committed",
         event: "online_review_fix_committed",
         familyHeadAfter: "prior-fix-sha",
         onlineReviewRound: 1,
+        pr: offlineShip.pr,
         fixMarkedFindingIdentityKeys: [...PRIOR_ROUND_5_KEYS],
         fixMarkedFindingThreads: PRIOR_ROUND_5_KEYS.map((identityKey, i) => ({
           identityKey,
@@ -200,6 +202,7 @@ class TracerFamilyBackend implements FamilyBackend {
         status: "online_review_collector_completed",
         event: "online_review_collector_completed",
         onlineReviewRound: 2,
+        pr: offlineShip.pr,
         collectorEvidenceCargo: stubCollectorEvidence({
           prUrl: offlineShip.pr,
           headOid: offlineShip.prHead,
@@ -489,6 +492,8 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ...PRIOR_ROUND_5_KEYS,
     ]);
     expect(fixerLanding!.fixMarkedFindingIdentityKeys).toHaveLength(6);
+    // priorRoundFindings is Verify history only — stripped before Fixer dispatch.
+    expect(fixerLanding!.priorRoundFindings).toBeUndefined();
   });
 
   it("sparse Verify cargo must not backfill prior-round recheck keys into Fixer packet", async () => {
@@ -4409,5 +4414,329 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBeUndefined();
     });
 
+  });
+
+  describe("#1145 production-entry regressions — isolation + empty packet", () => {
+    it("production tracer: old-5 prior history + current-6 Fixer packet isolation", async () => {
+      const backend = new TracerFamilyBackend({ seedPriorRound5Keys: true });
+      const verifyLandings: WorkerLandingPayload[] = [];
+      const fixerLandings: WorkerLandingPayload[] = [];
+      let verifyCalls = 0;
+
+      backend.verifyImpl = async (_spec, _ctx, landing) => {
+        verifyCalls += 1;
+        if (landing !== undefined) verifyLandings.push(landing);
+        if (verifyCalls === 1) {
+          // Verify history may carry old-round 5 keys.
+          expect(
+            landing?.priorRoundFindings?.find((s) => s.round === 1)
+              ?.fixMarkedFindingIdentityKeys,
+          ).toEqual([...PRIOR_ROUND_5_KEYS]);
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              isRecheck: false,
+              fixMarkedFindingIdentityKeys: [...CURRENT_ROUND_6_KEYS],
+              fixMarkedFindingThreads: CURRENT_ROUND_6_THREADS,
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true, isRecheck: true },
+        };
+      };
+
+      backend.fixerImpl = async (_spec, _ctx, landing) => {
+        if (landing !== undefined) fixerLandings.push(landing);
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "fix-6-packet-only",
+          },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+      expect(fixerLandings).toHaveLength(1);
+      // Fixer: current-6 only — never prior-5, never parallel history.
+      expect(fixerLandings[0]!.fixMarkedFindingIdentityKeys).toEqual([
+        ...CURRENT_ROUND_6_KEYS,
+      ]);
+      expect(fixerLandings[0]!.fixMarkedFindingThreads).toEqual(
+        CURRENT_ROUND_6_THREADS,
+      );
+      expect(fixerLandings[0]!.priorRoundFindings).toBeUndefined();
+      // Verify still received prior history on its own landing.
+      expect(
+        verifyLandings[0]?.priorRoundFindings?.some((s) => s.round === 1),
+      ).toBe(true);
+    });
+
+    it("production tracer: replacement-PR history + auth isolation at identical SHA", async () => {
+      const sharedHead = "same-sha-replacement-history-1145";
+      const oldPr = "https://github.com/Akagilnc/ming-salvage-sim/pull/100";
+      const newPr = "https://github.com/Akagilnc/ming-salvage-sim/pull/200";
+      // One shipped anchor at sharedHead with OLD PR markers after it. Replacement
+      // PR re-enters at the same SHA — cycle window still includes old markers,
+      // so only currentPr scoping can drop them (not the cycle cut alone).
+      const ledger = [
+        {
+          status: "shipped" as const,
+          event: "shipped" as const,
+          phase: "final" as const,
+          pr: oldPr,
+          familyHeadAfter: sharedHead,
+          ts: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          status: "online_review_fix_committed" as const,
+          event: "online_review_fix_committed" as const,
+          phase: "final" as const,
+          onlineReviewRound: 1,
+          pr: oldPr,
+          familyHeadAfter: "fix-old-pr",
+          fixMarkedFindingIdentityKeys: ["old-pr-only-key"],
+          fixMarkedFindingThreads: [
+            { identityKey: "old-pr-only-key", threadId: "t-old" },
+          ],
+          ts: "2026-01-01T00:01:00.000Z",
+        },
+        {
+          status: "online_review_verify_continued" as const,
+          event: "online_review_verify_continued" as const,
+          phase: "final" as const,
+          onlineReviewRound: 1,
+          pr: oldPr,
+          fixMarkedFindingIdentityKeys: ["old-pr-continued"],
+          ts: "2026-01-01T00:02:00.000Z",
+        },
+      ];
+
+      // Cycle-only (no PR): old markers remain visible after sharedHead ship.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(ledger, 2, {
+          shippedAnchorHead: sharedHead,
+        }),
+      ).toEqual([
+        { round: 1, fixMarkedFindingIdentityKeys: ["old-pr-continued"] },
+      ]);
+      // Replacement PR at identical SHA must not inherit prior ticket history.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(ledger, 2, {
+          shippedAnchorHead: sharedHead,
+          currentPr: newPr,
+        }),
+      ).toEqual([]);
+      // Old PR still recovers its own history.
+      expect(
+        priorOnlineReviewFindingsFromFamilyLedger(ledger, 2, {
+          shippedAnchorHead: sharedHead,
+          currentPr: oldPr,
+        }),
+      ).toEqual([
+        { round: 1, fixMarkedFindingIdentityKeys: ["old-pr-continued"] },
+      ]);
+
+      // Authorization recovery is likewise PR-scoped.
+      expect(
+        lastFixMarkedFindingAuthorizationFromFamilyLedger(ledger, {
+          shippedAnchorHead: sharedHead,
+          currentPr: newPr,
+        }),
+      ).toEqual({
+        fixMarkedFindingIdentityKeys: [],
+        fixMarkedFindingThreads: [],
+      });
+      expect(
+        lastFixMarkedFindingAuthorizationFromFamilyLedger(ledger, {
+          shippedAnchorHead: sharedHead,
+          currentPr: oldPr,
+        }).fixMarkedFindingIdentityKeys,
+      ).toEqual(["old-pr-continued"]);
+
+      // Live shared-tail entry with replacement PR must not seed Fixer from old PR.
+      const backend = new TracerFamilyBackend();
+      backend.ledger = [...ledger];
+      let fixerLanding: WorkerLandingPayload | undefined;
+      let verifyCalls = 0;
+      backend.verifyImpl = async (_s, _c, landing) => {
+        verifyCalls += 1;
+        if (verifyCalls === 1) {
+          // Fresh replacement ticket: no old-PR prior history on Verify either.
+          expect(landing?.priorRoundFindings ?? []).toEqual([]);
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              fixMarkedFindingIdentityKeys: ["new-pr-only"],
+              fixMarkedFindingThreads: [
+                { identityKey: "new-pr-only", threadId: "t-new" },
+              ],
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true },
+        };
+      };
+      backend.fixerImpl = async (_s, _c, landing) => {
+        fixerLanding = landing;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false, alreadySatisfied: true },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/1145",
+        ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
+      });
+      expect(result.ok).toBe(true);
+      expect(fixerLanding).toBeDefined();
+      expect(fixerLanding!.fixMarkedFindingIdentityKeys).toEqual(["new-pr-only"]);
+      expect(fixerLanding!.priorRoundFindings).toBeUndefined();
+      expect(
+        (fixerLanding!.fixMarkedFindingIdentityKeys ?? []).includes(
+          "old-pr-only-key",
+        ),
+      ).toBe(false);
+    });
+
+    it("production tracer: explicit-empty packet persists on durable rows + landing file", async () => {
+      const {
+        recordOnlineReviewFixCommitted,
+        recordOnlineReviewFixerCompleted,
+        recordOnlineReviewVerifyContinued,
+      } = await import("../src/family/ledger.js");
+      const backend = new TracerFamilyBackend();
+
+      // Production ledger writers must keep explicit [] (not drop as omitted).
+      await recordOnlineReviewFixCommitted(backend, {
+        familyHeadAfter: "fix-empty-packet",
+        pr: offlineShip.pr,
+        onlineReviewRound: 1,
+        fixMarkedFindingIdentityKeys: [],
+        fixMarkedFindingThreads: [],
+      });
+      await recordOnlineReviewFixerCompleted(backend, {
+        onlineReviewRound: 1,
+        pr: offlineShip.pr,
+        fixerResult: { kind: "fixer", committed: false, alreadySatisfied: true },
+        fixMarkedFindingIdentityKeys: [],
+        fixMarkedFindingThreads: [],
+      });
+      await recordOnlineReviewVerifyContinued(backend, {
+        onlineReviewRound: 1,
+        pr: offlineShip.pr,
+        fixMarkedFindingIdentityKeys: [],
+        fixMarkedFindingThreads: [],
+      });
+
+      const fixCommitted = backend.ledger.find(
+        (e) => e.event === "online_review_fix_committed",
+      )!;
+      const fixerCompleted = backend.ledger.find(
+        (e) => e.event === "online_review_fixer_completed",
+      )!;
+      const verifyContinued = backend.ledger.find(
+        (e) => e.event === "online_review_verify_continued",
+      )!;
+      for (const row of [fixCommitted, fixerCompleted, verifyContinued]) {
+        expect(
+          Object.prototype.hasOwnProperty.call(
+            row,
+            "fixMarkedFindingIdentityKeys",
+          ),
+        ).toBe(true);
+        expect(
+          Object.prototype.hasOwnProperty.call(row, "fixMarkedFindingThreads"),
+        ).toBe(true);
+        expect(row.fixMarkedFindingIdentityKeys).toEqual([]);
+        expect(row.fixMarkedFindingThreads).toEqual([]);
+      }
+
+      // Shared-tail production path: sparse/empty this-round packet must durable
+      // write [] on fixer_completed + fix_committed (not omit).
+      const liveBackend = new TracerFamilyBackend();
+      let verifyCalls = 0;
+      liveBackend.verifyImpl = async (_s, _c, _landing) => {
+        verifyCalls += 1;
+        if (verifyCalls === 1) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "verify",
+              converged: false,
+              // Explicit empty packet — not omitted.
+              fixMarkedFindingIdentityKeys: [],
+              fixMarkedFindingThreads: [],
+            },
+          };
+        }
+        // Post-fixer recheck converges.
+        return {
+          kind: "completed",
+          output: { kind: "verify", converged: true, isRecheck: true },
+        };
+      };
+      liveBackend.fixerImpl = async (_s, _c, landing) => {
+        expect(landing?.fixMarkedFindingIdentityKeys).toEqual([]);
+        expect(landing?.fixMarkedFindingThreads).toEqual([]);
+        expect(landing?.priorRoundFindings).toBeUndefined();
+        return {
+          kind: "completed",
+          output: {
+            kind: "fixer",
+            committed: true,
+            fixCommitSha: "empty-packet-commit",
+          },
+        };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: liveBackend,
+        familyBase: "family/1145",
+        ship: offlineShip,
+      });
+      expect(result.ok).toBe(true);
+
+      const liveFixerRow = liveBackend.ledger.find(
+        (e) => e.event === "online_review_fixer_completed",
+      );
+      const liveFixCommitted = liveBackend.ledger.find(
+        (e) => e.event === "online_review_fix_committed",
+      );
+      expect(liveFixerRow).toBeDefined();
+      expect(liveFixCommitted).toBeDefined();
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          liveFixerRow!,
+          "fixMarkedFindingIdentityKeys",
+        ),
+      ).toBe(true);
+      expect(liveFixerRow!.fixMarkedFindingIdentityKeys).toEqual([]);
+      expect(liveFixerRow!.fixMarkedFindingThreads).toEqual([]);
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          liveFixCommitted!,
+          "fixMarkedFindingIdentityKeys",
+        ),
+      ).toBe(true);
+      expect(liveFixCommitted!.fixMarkedFindingIdentityKeys).toEqual([]);
+      expect(liveFixCommitted!.fixMarkedFindingThreads).toEqual([]);
+    });
   });
 });
