@@ -1892,11 +1892,13 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       let crashOnNewFixBookkeeping = true;
 
       // Seed round-1 fix already on ledger (previous SHA).
+      // Bound PR required — round/fix-head recovery is PR-scoped (#1145).
       backend.ledger.push({
         status: "online_review_fix_committed",
         event: "online_review_fix_committed",
         phase: "final",
         onlineReviewRound: 1,
+        pr: offlineShip.pr,
         familyHeadAfter: "old-fix-sha-r1",
         fixMarkedFindingIdentityKeys: ["r1:1"],
         ts: "2026-01-01T00:00:00.000Z",
@@ -1906,6 +1908,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         event: "online_review_verify_continued",
         phase: "final",
         onlineReviewRound: 1,
+        pr: offlineShip.pr,
         fixMarkedFindingIdentityKeys: ["r1:1"],
         ts: "2026-01-01T00:01:00.000Z",
       });
@@ -4484,6 +4487,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
 
     it("production tracer: replacement-PR history + auth isolation at identical SHA", async () => {
       const sharedHead = "same-sha-replacement-history-1145";
+      const oldFixHead = "fix-old-pr";
       const oldPr = "https://github.com/Akagilnc/ming-salvage-sim/pull/100";
       const newPr = "https://github.com/Akagilnc/ming-salvage-sim/pull/200";
       // One shipped anchor at sharedHead with OLD PR markers after it. Replacement
@@ -4504,7 +4508,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           phase: "final" as const,
           onlineReviewRound: 1,
           pr: oldPr,
-          familyHeadAfter: "fix-old-pr",
+          familyHeadAfter: oldFixHead,
           fixMarkedFindingIdentityKeys: ["old-pr-only-key"],
           fixMarkedFindingThreads: [
             { identityKey: "old-pr-only-key", threadId: "t-old" },
@@ -4564,13 +4568,78 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         }).fixMarkedFindingIdentityKeys,
       ).toEqual(["old-pr-continued"]);
 
-      // Live shared-tail entry with replacement PR must not seed Fixer from old PR.
+      // Control datums (round / fix head / effective / postFix / known) are
+      // PR-scoped — replacement ticket begins at its own ship head/round.
+      expect(
+        onlineReviewRoundFromFamilyLedger(ledger, { currentPr: newPr }),
+      ).toBe(1);
+      expect(
+        onlineReviewRoundFromFamilyLedger(ledger, { currentPr: oldPr }),
+      ).toBe(2); // verify_continued(1) → next round 2
+      expect(
+        lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(ledger, sharedHead, {
+          currentPr: newPr,
+        }),
+      ).toBeUndefined();
+      expect(
+        lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(ledger, sharedHead, {
+          currentPr: oldPr,
+        }),
+      ).toBe(oldFixHead);
+      expect(
+        effectiveOnlineReviewHeadFromFamilyLedger(ledger, sharedHead, {
+          currentPr: newPr,
+        }),
+      ).toBe(sharedHead);
+      expect(
+        effectiveOnlineReviewHeadFromFamilyLedger(ledger, sharedHead, {
+          currentPr: oldPr,
+        }),
+      ).toBe(oldFixHead);
+      // No committed fix head for newPr → one-shot stays false (empty head).
+      expect(
+        postFixTransitionUnconsumedFromFamilyLedger(ledger, undefined, {
+          currentPr: newPr,
+        }),
+      ).toBe(false);
+      // Old fix head is not a newPr one-shot even if caller passes it.
+      // (No newPr collector at that head either — but head itself is foreign.)
+      expect(
+        lastOnlineReviewFixCommitShaFromFamilyLedger(ledger, {
+          currentPr: newPr,
+        }),
+      ).toBeUndefined();
+      expect(
+        lastOnlineReviewFixCommitShaFromFamilyLedger(ledger, {
+          currentPr: oldPr,
+        }),
+      ).toBe(oldFixHead);
+
+      // Live shared-tail entry with replacement PR must not seed Fixer from old PR,
+      // and must dispatch Collector/Verify/Landing at the ship head (not old fix).
       const backend = new TracerFamilyBackend();
       backend.ledger = [...ledger];
+      const collectorLandings: WorkerLandingPayload[] = [];
+      const verifyLandings: WorkerLandingPayload[] = [];
       let fixerLanding: WorkerLandingPayload | undefined;
       let verifyCalls = 0;
+      backend.collectorImpl = async (_s, _c, landing) => {
+        collectorLandings.push(landing ?? {});
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: stubCollectorEvidence({
+              prUrl: newPr,
+              headOid: sharedHead,
+              marker: "replacement-fresh-collector",
+            }),
+          },
+        };
+      };
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyCalls += 1;
+        verifyLandings.push(landing ?? {});
         if (verifyCalls === 1) {
           // Fresh replacement ticket: no old-PR prior history on Verify either.
           expect(landing?.priorRoundFindings ?? []).toEqual([]);
@@ -4604,7 +4673,25 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         familyBase: "family/1145",
         ship: { ...offlineShip, pr: newPr, prHead: sharedHead },
       });
-      expect(result.ok).toBe(true);
+      expect(result).toMatchObject({
+        ok: true,
+        terminalState: "mergeable",
+        round: 1,
+        binding: "bound",
+        reviewedPr: newPr,
+      });
+
+      // Collector starts at ship head/round 1 — never old fix head or round water.
+      expect(collectorLandings.length).toBeGreaterThanOrEqual(1);
+      expect(collectorLandings[0]?.shipDelivery?.prHead).toBe(sharedHead);
+      expect(collectorLandings[0]?.shipDelivery?.prHead).not.toBe(oldFixHead);
+      expect(collectorLandings[0]?.onlineReviewRound).toBe(1);
+      expect(collectorLandings[0]?.postFixTransition).toBeUndefined();
+
+      // First Verify binds the same ship head/round.
+      expect(verifyLandings[0]?.shipDelivery?.prHead).toBe(sharedHead);
+      expect(verifyLandings[0]?.onlineReviewRound).toBe(1);
+
       expect(fixerLanding).toBeDefined();
       expect(fixerLanding!.fixMarkedFindingIdentityKeys).toEqual(["new-pr-only"]);
       expect(fixerLanding!.priorRoundFindings).toBeUndefined();
@@ -4613,6 +4700,70 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           "old-pr-only-key",
         ),
       ).toBe(false);
+
+      // Mergeable marker for the replacement PR binds ship head, not old fix.
+      const newPrMergeable = backend.ledger.find(
+        (e) =>
+          e.event === "online_review_mergeable" &&
+          typeof e.pr === "string" &&
+          e.pr.includes("/200"),
+      );
+      expect(newPrMergeable).toBeDefined();
+      expect(newPrMergeable!.familyHeadAfter).toBe(sharedHead);
+      expect(newPrMergeable!.familyHeadAfter).not.toBe(oldFixHead);
+      expect(newPrMergeable!.onlineReviewRound).toBe(1);
+    });
+
+    it("helper path: onlineReviewDispatch passes opaque key arrays unchanged", async () => {
+      // Mixed elements must ride through the test helper the same way production
+      // parseVerifyOutcome preserves the whole array (no string-only filter).
+      const mixedKeys: ReadonlyArray<unknown> = [
+        "ok-key",
+        42,
+        { nested: true },
+        null,
+      ];
+      const mixedThreads: ReadonlyArray<unknown> = [
+        { identityKey: "ok-key", threadId: "t1" },
+        "bare-string-thread",
+        7,
+      ];
+      let sawKeys: ReadonlyArray<unknown> | undefined;
+      let sawThreads: ReadonlyArray<unknown> | undefined;
+      let verifyCalls = 0;
+      const result = await runOnlineReviewLoopStage(
+        { ...offlineShip, pr: "https://github.com/test/repo/pull/1145" },
+        onlineReviewDispatch({
+          dispatchVerify: () => {
+            verifyCalls += 1;
+            if (verifyCalls === 1) {
+              return {
+                kind: "verify",
+                converged: false,
+                fixMarkedFindingIdentityKeys: mixedKeys,
+                fixMarkedFindingThreads: mixedThreads,
+              };
+            }
+            return { kind: "verify", converged: true };
+          },
+          dispatchFixer: (landing) => {
+            sawKeys = landing.fixMarkedFindingIdentityKeys;
+            sawThreads = landing.fixMarkedFindingThreads;
+            return {
+              kind: "fixer",
+              committed: false,
+              alreadySatisfied: true,
+            };
+          },
+        }),
+      );
+      expect(sawKeys).toEqual(mixedKeys);
+      expect(sawThreads).toEqual(mixedThreads);
+      expect(result).toMatchObject({
+        ok: true,
+        terminalState: "mergeable",
+        binding: "bound",
+      });
     });
 
     it("production tracer: explicit-empty packet persists on durable rows + landing file", async () => {

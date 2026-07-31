@@ -91,21 +91,15 @@ function asBareVerifyResult(raw: unknown): VerifyResult | undefined {
             raw.findingDispositions as VerifyResult["findingDispositions"],
         }
       : {}),
+    // Opaque fixer packet — transport arrays as-is (production parseVerifyOutcome).
     ...(Array.isArray(raw.fixMarkedFindingIdentityKeys)
       ? {
-          fixMarkedFindingIdentityKeys:
-            raw.fixMarkedFindingIdentityKeys.filter(
-              (k): k is string => typeof k === "string",
-            ),
+          fixMarkedFindingIdentityKeys: raw.fixMarkedFindingIdentityKeys,
         }
       : {}),
-    // Opaque fixer packet — transport array as-is (production parseVerifyOutcome).
     ...(Array.isArray(raw.fixMarkedFindingThreads)
       ? {
-          fixMarkedFindingThreads:
-            raw.fixMarkedFindingThreads as NonNullable<
-              VerifyResult["fixMarkedFindingThreads"]
-            >,
+          fixMarkedFindingThreads: raw.fixMarkedFindingThreads,
         }
       : {}),
     ...(typeof raw.terminalState === "string"

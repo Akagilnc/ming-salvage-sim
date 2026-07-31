@@ -1977,11 +1977,16 @@ export async function runFamilyOnlineReviewLoop(input: {
   const shipHead =
     typeof ship.prHead === "string" ? ship.prHead : "";
   const loopState = {
-    round: onlineReviewRoundFromFamilyLedger(familyLedger),
-    // #1145 F1: cycle-scoped fix SHA — prior cycle must not override new ship head.
+    // #1145: round + fix head are PR-scoped — replacement PR at identical
+    // shipped head starts at its own ship head/round, never inherits prior ticket.
+    round: onlineReviewRoundFromFamilyLedger(familyLedger, {
+      currentPr: reviewedPr,
+    }),
+    // #1145 F1: cycle+PR-scoped fix SHA — prior cycle/PR must not override new ship head.
     lastFixSha: lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
       familyLedger,
       shipHead,
+      { currentPr: reviewedPr },
     ),
   };
   // #1145: Action-owned mergeable recovery — side effects already done.
@@ -1991,6 +1996,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     const effectiveHead = effectiveOnlineReviewHeadFromFamilyLedger(
       familyLedger,
       shipHead,
+      { currentPr: reviewedPr },
     );
     const alreadyMergeable = lastOnlineReviewMergeableFromFamilyLedger(
       familyLedger,
@@ -2039,6 +2045,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   const initialPostFixTransition = postFixTransitionUnconsumedFromFamilyLedger(
     familyLedger,
     resumePostFixHead,
+    { currentPr: reviewedPr },
   );
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
@@ -2074,7 +2081,9 @@ export async function runFamilyOnlineReviewLoop(input: {
               : loopState.lastFixSha !== undefined &&
                   loopState.lastFixSha.length > 0
                 ? loopState.lastFixSha
-                : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead);
+                : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead, {
+                    currentPr: reviewedPr,
+                  });
           const checkpoint = lastCollectorCheckpointFromFamilyLedger(
             ledgerNow,
             round,
@@ -4220,6 +4229,9 @@ export async function runVerifyCmr(
     lastInCycleOnlineReviewFixCommitShaFromFamilyLedger(
       familyLedgerForHead,
       exactPostShipFamilyHead,
+      reviewLoop.binding === "bound"
+        ? { currentPr: reviewLoop.reviewedPr }
+        : undefined,
     );
   // #1145: post-loop uses loop-bound reviewedPr only — never re-resolve.
   // Unbound (no PR identity) cannot enter converged/Landing.
