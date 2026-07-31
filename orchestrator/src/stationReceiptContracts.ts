@@ -1121,9 +1121,9 @@ export function onlineReviewStationReceiptSchema(): z.ZodType {
  * cargoPointer body — never a typed traffic field, and never a process-fate
  * signal (ADR 0131 cargo ≠ fate / J1).
  */
-export function collectorOnlineReviewStationReceiptSchema(): z.ZodType {
-  return onlineReviewStationReceiptSchema();
-}
+/** Collector uses the same thin onlineReview completed|escalate envelope. */
+export const collectorOnlineReviewStationReceiptSchema =
+  onlineReviewStationReceiptSchema;
 
 /** Encode a validated merger envelope into its canonical JSON shape. */
 export function encodeMergerEnvelope(

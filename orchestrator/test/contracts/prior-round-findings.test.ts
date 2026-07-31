@@ -193,7 +193,12 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
       { round: 2, fixMarkedFindingIdentityKeys: ["keep:r2"] },
     ]);
 
-    const omitted = [
+    const omitted: Array<{
+      event: string;
+      onlineReviewRound?: number;
+      familyHeadAfter?: string;
+      fixMarkedFindingIdentityKeys?: unknown;
+    }> = [
       {
         event: "online_review_fix_committed",
         onlineReviewRound: 1,
@@ -205,15 +210,11 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
         event: "online_review_verify_continued",
         onlineReviewRound: 1,
       },
-      // Malformed must not clear either.
+      // Malformed must not clear either (field present but not an array).
       {
         event: "online_review_verify_continued",
         onlineReviewRound: 1,
         fixMarkedFindingIdentityKeys: "not-an-array",
-      } as unknown as {
-        event: string;
-        onlineReviewRound: number;
-        fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
       },
     ];
     expect(priorOnlineReviewFindingsFromFamilyLedger(omitted, 2)).toEqual([
@@ -311,8 +312,10 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
       converged: false,
       fixMarkedFindingIdentityKeys: ["t:1"],
     });
+    // #1145 A3: residual business fields stay opaque cargo (not stripped);
+    // fate does not route on them — only converged + envelope.
     expect(Object.prototype.hasOwnProperty.call(parsed, residualKey)).toBe(
-      false,
+      true,
     );
   });
 });
@@ -363,7 +366,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     familyLedger: ReadonlyArray<{
       readonly event: string;
       readonly onlineReviewRound?: number;
-      readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
     }>,
   ) {
     return async (
@@ -390,7 +393,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     const familyLedger: Array<{
       event: string;
       onlineReviewRound?: number;
-      fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
       familyHeadAfter?: string;
     }> = [];
 
@@ -503,7 +506,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     const familyLedger: Array<{
       event: string;
       onlineReviewRound?: number;
-      fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
       familyHeadAfter?: string;
     }> = [];
 
@@ -608,7 +611,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
     const familyLedger: Array<{
       event: string;
       onlineReviewRound?: number;
-      fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+      fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
       familyHeadAfter?: string;
     }> = [
       {

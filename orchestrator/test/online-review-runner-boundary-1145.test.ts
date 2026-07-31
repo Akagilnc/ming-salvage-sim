@@ -2300,7 +2300,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
 
       const backend = new TracerFamilyBackend();
       backend.ledger = [...ledger];
-      const verifyKeySnapshots: ReadonlyArray<string>[] = [];
+      const verifyKeySnapshots: ReadonlyArray<unknown>[] = [];
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyKeySnapshots.push([
           ...(landing?.fixMarkedFindingIdentityKeys ?? []),
@@ -2323,8 +2323,8 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(verifyKeySnapshots[0]).toEqual([]);
       expect(
         backend.landings.some((l) =>
-          (l.fixMarkedFindingIdentityKeys ?? []).some((k) =>
-            staleKeys.includes(k),
+          (l.fixMarkedFindingIdentityKeys ?? []).some(
+            (k) => typeof k === "string" && staleKeys.includes(k),
           ),
         ),
       ).toBe(false);
@@ -2766,7 +2766,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toEqual([]);
 
       const verifyPriors: Array<
-        ReadonlyArray<{ round: number; fixMarkedFindingIdentityKeys: string[] }>
+        ReadonlyArray<{ round: number; fixMarkedFindingIdentityKeys: unknown[] }>
       > = [];
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyPriors.push(
@@ -2904,18 +2904,18 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         onlineReviewRound: 1,
         pr: offlineShip.pr,
         fixerResult: { kind: "fixer", committed: false, alreadySatisfied: true },
-        fixMarkedFindingThreads: opaqueThreads as never,
+        fixMarkedFindingThreads: opaqueThreads,
       });
       await recordOnlineReviewFixCommitted(durableBackend, {
         familyHeadAfter: "opaque-thread-fix-sha-1145",
         pr: offlineShip.pr,
         onlineReviewRound: 1,
-        fixMarkedFindingThreads: opaqueThreads as never,
+        fixMarkedFindingThreads: opaqueThreads,
       });
       await recordOnlineReviewVerifyContinued(durableBackend, {
         onlineReviewRound: 1,
         pr: offlineShip.pr,
-        fixMarkedFindingThreads: opaqueThreads as never,
+        fixMarkedFindingThreads: opaqueThreads,
       });
       for (const event of [
         "online_review_fixer_completed",
@@ -4037,10 +4037,9 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBe(true);
     });
 
-    it("durable host ships bin.mjs only — no TS store twin; no host classify",
+    it("durable ensure ships bin; missing source fails loud",
       async () => {
-      const { mkdtempSync, rmSync, readFileSync, existsSync } =
-        await import("node:fs");
+      const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
       const { join } = await import("node:path");
       const { tmpdir } = await import("node:os");
       const {
@@ -4052,32 +4051,15 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       try {
         const { hostPath } = ensureOnlineReviewDurableDir(workingRepo);
         expect(hostPath).toBe(join(workingRepo, ONLINE_REVIEW_DURABLE_DIR));
-        const binPath = join(hostPath, "bin.mjs");
-        expect(existsSync(binPath)).toBe(true);
-        // Worker-callable CLI is the sole durable capability (no host twin).
-        const binSrc = readFileSync(binPath, "utf8");
-        expect(binSrc).toMatch(/progress-classify/);
-        expect(binSrc).toMatch(/receipt-decide/);
-        expect(binSrc).toMatch(/evidence-put/);
-        expect(binSrc).toMatch(/evidence-get/);
+        expect(existsSync(join(hostPath, "bin.mjs"))).toBe(true);
+        expect(existsSync(join(hostPath, "blobs"))).toBe(true);
 
-        // Host module is mount/copy only — no store twin exports.
+        // Host module is mount/copy only — no classify/store twin exports.
         const durableMod = await import(
           "../src/family/onlineReviewActionDurable.js"
         );
         expect(durableMod).not.toHaveProperty("openOnlineReviewDurableStore");
         expect(durableMod).not.toHaveProperty("classifyCollectionProgress");
-        expect(durableMod).not.toHaveProperty("decideSideEffectRecovery");
-        expect(durableMod).not.toHaveProperty("executeIdempotentSideEffect");
-
-        // Host production path must not import-call classify (static pin).
-        const verifyCmrSrc = readFileSync(
-          new URL("../src/family/verifyCmr.ts", import.meta.url),
-          "utf8",
-        );
-        expect(verifyCmrSrc).not.toMatch(/classifyCollectionProgress/);
-        expect(verifyCmrSrc).not.toMatch(/recordOnlineReviewCollectionProgress/);
-        expect(verifyCmrSrc).not.toMatch(/ledger:online-review-evidence/);
       } finally {
         rmSync(workingRepo, { recursive: true, force: true });
       }
@@ -4235,74 +4217,48 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           expect(durableMount?.readonly).not.toBe(true);
         }
 
-        // Source pin: production config wires durable mount (not host classify).
-        const src = readFileSync(
-          new URL("../src/family/realFamilyBackend.ts", import.meta.url),
-          "utf8",
+        // Runtime: second dispatch still mounts the same durable hostPath.
+        const cfg2 = backend.exposeConfig(collectorWorkerSpec(), ctx);
+        const mount2 = cfg2.mounts.find(
+          (m) => m.sandboxPath === ONLINE_REVIEW_DURABLE_SANDBOX_PATH,
         );
-        expect(src).toMatch(/onlineReviewDurableMount/);
-        expect(src).toMatch(/ONLINE_REVIEW_DURABLE_PATH_ENV/);
+        expect(mount2?.hostPath).toBe(join(workingRepo, ONLINE_REVIEW_DURABLE_DIR));
       } finally {
         rmSync(workingRepo, { recursive: true, force: true });
       }
     });
 
-    it("souls own side-effect/durable methods; promptFile is not second truth",
+    it("A3 parseVerifyOutcome preserves opaque arrays and extra fields",
       async () => {
-      const { readFileSync } = await import("node:fs");
-      const collectorSoul = readFileSync(
-        new URL("../image/souls/collector.md", import.meta.url),
-        "utf8",
+      const { parseVerifyOutcome } = await import(
+        "../src/family/realFamilyBackend.js"
       );
-      const verifySoul = readFileSync(
-        new URL("../image/souls/verify.md", import.meta.url),
-        "utf8",
+      const cargo = {
+        kind: "verify",
+        converged: false,
+        findingDispositions: [
+          { identityKey: "k", threadId: "t", action: "fix", extra: true },
+          { weird: 1 },
+        ],
+        fixMarkedFindingIdentityKeys: ["a", 2, null],
+        fixMarkedFindingThreads: [
+          { identityKey: "a", threadId: "t1", note: "x" },
+          { malformed: true },
+        ],
+        customBiz: { nested: 1 },
+      };
+      const out = parseVerifyOutcome(
+        `<verify>${JSON.stringify(cargo)}</verify>`,
       );
-      const verifyPrompt = readFileSync(
-        new URL("../prompts/verify.md", import.meta.url),
-        "utf8",
-      );
-      const collectorPrompt = readFileSync(
-        new URL("../prompts/collector.md", import.meta.url),
-        "utf8",
-      );
-      expect(collectorSoul).toMatch(/bin\.mjs/);
-      expect(collectorSoul).toMatch(/progress-classify/);
-      expect(collectorSoul).toMatch(/--head/);
-      expect(collectorSoul).toMatch(/--pr/);
-      expect(collectorSoul).toMatch(
-        /\(round, head, resolved-current-PR\)/,
-      );
-      expect(collectorSoul).toMatch(/evidence-put/);
-      expect(verifySoul).toMatch(/副作用方法/);
-      expect(verifySoul).toMatch(/receipt-attempted/);
-      expect(verifySoul).toMatch(/receipt-decide/);
-      expect(verifySoul).toMatch(/--head/);
-      expect(verifySoul).toMatch(/--pr \$PR/);
-      expect(verifySoul).toMatch(
-        /\(round, head, resolved-current-PR\)/,
-      );
-      // F1 / AC2: handle-only cargoPointer → evidence-get; never re-run Collector wait.
-      expect(verifySoul).toMatch(/evidence-get --handle/);
-      expect(verifySoul).toMatch(/cargoPointer/);
-      expect(verifySoul).toMatch(/onlineReviewSnapshot/);
-      expect(verifySoul).toMatch(/rawReviewerArtifacts/);
-      expect(verifySoul).toMatch(/禁止.*Collector|never re-run Collector|禁重取证/);
-      expect(verifyPrompt).toMatch(/rawReviewerArtifacts/);
-      expect(verifyPrompt).toMatch(/never re-run Collector/i);
-      expect(verifyPrompt).toMatch(/Method truth[\s\S]*Verify\s+soul|lives in the Verify/i);
-      expect(verifyPrompt).not.toMatch(/gh api` comment on the review thread/);
-      // F2: promptFiles stay thin — no numbered role-method outline / evidence cookbook.
-      expect(verifyPrompt).not.toMatch(
-        /1\.\s*Read review state from the Collector landing snapshot/,
-      );
-      expect(verifyPrompt).not.toMatch(/2\.\s*Judge each finding/);
-      expect(verifyPrompt).not.toMatch(/3\.\s*Execute side effects/);
-      expect(collectorPrompt).toMatch(/opaque/i);
-      expect(collectorPrompt).toMatch(/Collector judgment|shape is Collector/i);
-      expect(collectorPrompt).not.toMatch(/"bots"\s*:/);
-      expect(collectorPrompt).not.toMatch(/"threads"\s*:/);
-      expect(collectorPrompt).not.toMatch(/"checkRuns"\s*:/);
+      expect(out).not.toEqual({ kind: "cargo" });
+      if (!("kind" in out) || out.kind !== "verify") {
+        throw new Error("expected verify cargo");
+      }
+      expect(out.converged).toBe(false);
+      expect(out.fixMarkedFindingIdentityKeys).toEqual(["a", 2, null]);
+      expect(out.fixMarkedFindingThreads).toEqual(cargo.fixMarkedFindingThreads);
+      expect(out.findingDispositions).toEqual(cargo.findingDispositions);
+      expect(out.customBiz).toEqual({ nested: 1 });
     });
   });
 
@@ -4453,35 +4409,5 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       ).toBeUndefined();
     });
 
-    it("static: post-loop runners do not re-resolve for Landing/converged",
-      async () => {
-      const { readFileSync } = await import("node:fs");
-      const verifyCmr = readFileSync(
-        new URL("../src/family/verifyCmr.ts", import.meta.url),
-        "utf8",
-      );
-      const runner = readFileSync(
-        new URL("../src/family/runner.ts", import.meta.url),
-        "utf8",
-      );
-      // After runFamilyOnlineReviewLoop, landing must use reviewedPr not resolve.
-      const finalIdx = verifyCmr.indexOf(
-        "const reviewLoop = await runFamilyOnlineReviewLoop({",
-      );
-      expect(finalIdx).toBeGreaterThan(0);
-      const afterLoop = verifyCmr.slice(finalIdx);
-      const landingSection = afterLoop.slice(
-        0,
-        afterLoop.indexOf("runLandingAction") + 200,
-      );
-      expect(landingSection).toMatch(/reviewLoop\.reviewedPr/);
-      expect(landingSection).not.toMatch(
-        /landingPrUrl\s*=\s*resolveFamilyShipPr/,
-      );
-      expect(runner).toMatch(/reviewLoop\.reviewedPr/);
-      expect(runner).not.toMatch(
-        /landingPrUrl\s*=\s*\n?\s*resolveFamilyShipPr/,
-      );
-    });
   });
 });

@@ -11,7 +11,6 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,16 +50,12 @@ export function ensureOnlineReviewDurableDir(workingRepo: string): {
   mkdirSync(join(hostPath, BLOBS_DIR), { recursive: true });
   const binSrc = bundledBinSourcePath();
   const binDest = join(hostPath, BIN_NAME);
-  if (existsSync(binSrc)) {
-    copyFileSync(binSrc, binDest);
-  } else {
-    // Fallback stub so mount always has a bin (tests may inject full script).
-    writeFileSync(
-      binDest,
-      `#!/usr/bin/env node\nconsole.error("online-review durable bin missing source");\nprocess.exit(2);\n`,
-      "utf8",
+  if (!existsSync(binSrc)) {
+    throw new Error(
+      `online-review durable bin source missing: ${binSrc}`,
     );
   }
+  copyFileSync(binSrc, binDest);
   ensureGitInfoExclude(workingRepo, ONLINE_REVIEW_DURABLE_DIR);
   ensureGitInfoExclude(workingRepo, `${ONLINE_REVIEW_DURABLE_DIR}/`);
   return {

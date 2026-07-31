@@ -873,9 +873,9 @@ export interface WorkerSpec {
 /** Prior-round finding snapshot forwarded to judge workers (#711). */
 export interface PriorRoundFindingSnapshot {
   readonly round: number;
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+  readonly findingDispositions?: ReadonlyArray<unknown>;
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<unknown>;
 }
 
 /** Bot snapshot landing content for online review verify/fixer workers (#600). */
@@ -905,14 +905,18 @@ export type OnlineReviewTerminalState =
 
 /**
  * Collector opaque evidence cargo (#1145 / ADR 0131).
- *
- * Name is historical (`onlineReviewSnapshot` landing field); the value is an
- * entirely opaque business blob transported as-is — Runner never expands a
- * schema, never invents defaults, never filters keys, never admits on field shape.
+ * Entirely opaque business blob — Runner never expands schema, invents defaults,
+ * or filters keys. Landing JSON key remains `onlineReviewSnapshot` (stable wire).
  */
-export type OnlineReviewLandingSnapshot = {
+export type OnlineReviewEvidenceCargo = {
   readonly [key: string]: unknown;
 };
+
+/**
+ * @deprecated Prefer {@link OnlineReviewEvidenceCargo}. Historical alias for the
+ * same opaque blob type (landing field name `onlineReviewSnapshot` unchanged).
+ */
+export type OnlineReviewLandingSnapshot = OnlineReviewEvidenceCargo;
 
 export interface WorkerLandingPayload {
   /**
@@ -1001,17 +1005,10 @@ export interface WorkerLandingPayload {
    * SHA presence alone, evidence body, or disposition cargo.
    */
   readonly postFixTransition?: boolean;
-  /** Family fixer: fix-marked finding identity keys from verify worker. */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
-   * Original review thread bound to each fixer-approved identity.
-   * A key alone is not authority to close another thread that happens to claim
-   * the same identity.
-   */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
+  /** Opaque fixer packet keys — whole-array passthrough (#1145 A3). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
+  /** Opaque fixer packet threads — whole-array passthrough (#1145 A3). */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** Family cleanup: host-computed close set + durable pr_merged record. */
@@ -1346,32 +1343,26 @@ export interface CollectorResult {
 export interface VerifyResult {
   readonly kind: "verify";
   /**
-   * Judge green (converged). Combined with Action-returned CI check-runs for
-   * mergeability; `false` is the continue disposition unless
-   * {@link terminalState} escalates. Worker must not set this until
-   * reply/resolve/deferred side effects succeed — unfinished effects without
-   * completion require escalate, not host replay (#1145).
+   * ADR 0131 judge traffic used for routing (`onlineReviewJudgeDisposition`).
+   * Required thin signal — not business cargo.
    */
   readonly converged: boolean;
-  /** Per-finding dispositions judged by the verify worker (opaque cargo). */
-  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
+  /** Opaque business cargo — host preserves as-is, never whitelists elements. */
+  readonly findingDispositions?: ReadonlyArray<unknown>;
   /**
-   * Opaque fixer packet — identity keys self-reported by Verify for fixer
-   * landing. Runner copies as-is; never derives from findingDispositions.
+   * Opaque fixer packet keys — whole-array passthrough, no element filter (#1145 A3).
    */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
   /**
-   * Opaque fixer packet — identity→thread bindings self-reported by Verify.
-   * Runner copies as-is; never filters dispositions to synthesize threads.
+   * Opaque fixer packet threads — whole-array passthrough, no element filter (#1145 A3).
    */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
+  readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
   readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
+  /** Extra opaque role fields preserved end-to-end (ADR 0131 cargo ≠ fate). */
+  readonly [key: string]: unknown;
   /**
    * #1002 — optional roster suggestion on continue: runner rewrites the online
    * review **fixer** repair seat via executeAdvanceCoderSuggestion (same

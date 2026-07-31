@@ -4719,17 +4719,18 @@ export function parseCollectorOutcome(
   if (Object.keys(parsed).length === 0) {
     return RECEIPT_CARGO;
   }
+  // OnlineReviewEvidenceCargo is `{ readonly [key: string]: unknown }` — assignable.
+  const evidence: OnlineReviewLandingSnapshot = parsed;
   return {
     kind: "collector",
-    evidence: parsed as OnlineReviewLandingSnapshot,
+    evidence,
   };
 }
 
 /**
- * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
- * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
- * Side-effect plan fields (threadReplies / threadsToResolve / deferredIssueUrls)
- * are not host-typed — raw sidecar may keep them opaque for audit only (#1145).
+ * #919 / #1145 A3: cargo-only decode. Fate = typed onlineReview envelope + exit.
+ * Required role gate: object + converged:boolean (+ kind "verify" when present).
+ * Every other enumerable field is preserved unchanged (opaque arrays included).
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4738,52 +4739,18 @@ export function parseVerifyOutcome(
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = payload.parsed;
+  if (parsed.kind !== undefined && parsed.kind !== "verify") return RECEIPT_CARGO;
   if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
-  const stringArray = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.every((item) => typeof item === "string");
-  const findingDispositions = Array.isArray(parsed.findingDispositions)
-    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
-        if (!isJsonRecord(item)) return false;
-        return (
-          typeof item.identityKey === "string" &&
-          typeof item.threadId === "string" &&
-          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
-          (item.reason === undefined || typeof item.reason === "string")
-        );
-      })
-    : undefined;
-  const terminalState: VerifyWorkerTerminalState | undefined =
-    parsed.terminalState === "mergeable" ||
-    parsed.terminalState === "decision_gate_raised"
-      ? parsed.terminalState
-      : undefined;
-  const advanceCoder =
-    typeof parsed.advanceCoder === "string" && parsed.advanceCoder.trim().length > 0
-      ? parsed.advanceCoder.trim()
-      : undefined;
-  const candidate: VerifyResult = {
+  // Build verify cargo: force kind/converged; copy every other own key as-is.
+  const built: { kind: "verify"; converged: boolean; [key: string]: unknown } = {
     kind: "verify",
     converged: parsed.converged,
-    ...(findingDispositions !== undefined ? { findingDispositions } : {}),
-    ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
-      ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
-      : {}),
-    // Opaque fixer packet — transport array byte-for-byte / shape-for-shape.
-    // Never reconstruct bindings or drop extended/malformed items to empty work
-    // (#1145 / ADR 0131). Downstream agents judge or raise.
-    ...(Array.isArray(parsed.fixMarkedFindingThreads)
-      ? {
-          fixMarkedFindingThreads:
-            parsed.fixMarkedFindingThreads as NonNullable<
-              VerifyResult["fixMarkedFindingThreads"]
-            >,
-        }
-      : {}),
-    ...(terminalState !== undefined ? { terminalState } : {}),
-    ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
-    ...(advanceCoder !== undefined ? { advanceCoder } : {}),
   };
-  return candidate;
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === "kind" || key === "converged") continue;
+    built[key] = value;
+  }
+  return built;
 }
 
 export function parseFixerOutcome(

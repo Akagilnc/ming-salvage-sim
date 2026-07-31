@@ -58,7 +58,7 @@ import {
 } from "./ledger.js";
 import { billingPoolForFamilyWorker } from "./familyWorkerSlots.js";
 import { dispatchFamilyWorkerOrAbort } from "./familyProcessRootDispatch.js";
-import { sleepPendingCiPollInterval } from "./onlineReviewLoop.js";
+import { sleepPendingCiPollInterval } from "./pollClock.js";
 import type { FamilyBackend } from "./types.js";
 import { shouldReclaimFamilyHost } from "../hostReclaim.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
