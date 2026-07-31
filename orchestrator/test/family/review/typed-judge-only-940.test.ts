@@ -77,10 +77,11 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       },
 
     }));
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 1,
+      binding: "bound" as const,
     });
   });
 
@@ -120,10 +121,11 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
 
       resolveFixCommitSha: async (sha) => sha,
     }));
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 5,
+      binding: "bound" as const,
     });
     expect(fixerCalls).toBe(4);
     // #1145: each fixer returns to the same-round Verify (opaque cargo) before

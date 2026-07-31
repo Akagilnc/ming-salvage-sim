@@ -155,7 +155,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     });
 
     // #1145: fixer cargo returns to same-round Verify — converge without round++.
-    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
     expect(backend.fixerModels[0]).toBe("gpt-5.6-sol");
     expect(
       backend.ledger.some(
@@ -221,7 +221,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     });
 
     // V1 continue+advance → F → V1b continue → round2 V converge.
-    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 2, binding: "bound" });
     expect(backend.fixerModels.length).toBeGreaterThanOrEqual(1);
     expect(backend.fixerModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
   });
@@ -265,7 +265,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
       ship: OFFLINE_SHIP,
     });
 
-    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
     expect(backend.fixerModels[0]).toBe("gpt-5.6-sol");
     expect(backend.fixerModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
   });
@@ -310,7 +310,7 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
       ship: OFFLINE_SHIP,
     });
 
-    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
+    expect(result).toMatchObject({ ok: true, terminalState: "mergeable", round: 1, binding: "bound" });
     expect(backend.fixerModels[0]).toBe(defaultFixer);
     expect(backend.fixerModels.every((m) => m === defaultFixer)).toBe(true);
   });

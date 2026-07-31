@@ -409,8 +409,8 @@ export function lastCollectorCheckpointFromFamilyLedger(
         typeof entry.pr === "string" && entry.pr.trim().length > 0
           ? entry.pr.trim()
           : undefined;
-      // Marker without PR is not safe against a known current PR identity.
-      if (storedPr === undefined || storedPr !== currentPr) continue;
+      // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+      if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) continue;
     }
     const cargoPointer =
       typeof entry.cargoPointer === "string" && entry.cargoPointer.length > 0
@@ -529,8 +529,8 @@ export function lastOnlineReviewMergeableFromFamilyLedger(
         typeof entry.pr === "string" && entry.pr.trim().length > 0
           ? entry.pr.trim()
           : undefined;
-      // Marker without PR is not safe against a known current PR identity.
-      if (storedPr === undefined || storedPr !== currentPr) {
+      // Marker without PR / non-canonical mismatch — fail-closed (#1145).
+      if (!onlineReviewPrIdentityEquals(storedPr, currentPr)) {
         continue;
       }
     }
@@ -561,6 +561,7 @@ export function lastPendingFixerCargoFromFamilyLedger(
     readonly event?: string;
     readonly onlineReviewRound?: number;
     readonly familyHeadAfter?: string;
+    readonly pr?: string;
     readonly fixerResultCargo?: FixerResult;
     readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly fixMarkedFindingThreads?: ReadonlyArray<{
@@ -572,6 +573,12 @@ export function lastPendingFixerCargoFromFamilyLedger(
   opts?: {
     /** Current matching shipped anchor head — cycle window lower bound. */
     readonly shippedAnchorHead?: string;
+    /**
+     * Current bound PR identity (#1145 P2). When set, only markers whose `pr`
+     * canonical-equals this id count — replacement PR must not resume prior
+     * ticket's fixer cargo. Missing marker pr = fail-closed skip.
+     */
+    readonly currentPr?: string;
   },
 ):
   | {
@@ -605,6 +612,20 @@ export function lastPendingFixerCargoFromFamilyLedger(
     }
   }
 
+  const currentPr =
+    typeof opts?.currentPr === "string" && opts.currentPr.trim().length > 0
+      ? opts.currentPr.trim()
+      : undefined;
+
+  const prMatches = (entry: { readonly pr?: string }): boolean => {
+    if (currentPr === undefined) return true;
+    const storedPr =
+      typeof entry.pr === "string" && entry.pr.trim().length > 0
+        ? entry.pr.trim()
+        : undefined;
+    return onlineReviewPrIdentityEquals(storedPr, currentPr);
+  };
+
   let pendingIdx = -1;
   let pending: FixerResult | undefined;
   let pendingAuth:
@@ -625,18 +646,20 @@ export function lastPendingFixerCargoFromFamilyLedger(
       entry.fixerResultCargo !== undefined &&
       entry.fixerResultCargo.kind === "fixer"
     ) {
+      if (!prMatches(entry)) continue;
       pendingIdx = i;
       pending = entry.fixerResultCargo;
       pendingAuth = authorizationFromLedgerEntry(entry);
       continue;
     }
     if (pendingIdx < 0) continue;
-    // Later same-round consumption of the fixer cargo.
+    // Later same-round consumption of the fixer cargo (same PR only).
     if (
-      (entry.status === "online_review_mergeable" &&
+      ((entry.status === "online_review_mergeable" &&
         entry.event === "online_review_mergeable") ||
-      (entry.status === "online_review_verify_continued" &&
-        entry.event === "online_review_verify_continued")
+        (entry.status === "online_review_verify_continued" &&
+          entry.event === "online_review_verify_continued")) &&
+      prMatches(entry)
     ) {
       pendingIdx = -1;
       pending = undefined;
@@ -684,16 +707,17 @@ export function onlineReviewDispatchFailureStopSummary(
 }
 
 function decisionGateFromDispatchInfra(
+  reviewedPr: string,
   round: number,
   phase: OnlineReviewDispatchPhase,
   err: unknown,
 ): OnlineReviewLoopStageResult {
-  return {
+  return boundOnlineReviewLoopResult(reviewedPr, {
     ok: false,
     terminalState: "decision_gate_raised",
     round,
     stopSummary: onlineReviewDispatchFailureStopSummary(phase, err),
-  };
+  });
 }
 
 /** In-band terminal for family review-loop dispatch failures. */
@@ -902,12 +926,111 @@ export interface OnlineReviewLoopDispatch {
   ) => string | Promise<string>;
 }
 
-export interface OnlineReviewLoopStageResult {
-  readonly ok: boolean;
-  readonly terminalState: OnlineReviewTerminalState;
-  readonly round: number;
-  /** Optional stop summary for non-success terminals. */
-  readonly stopSummary?: StopSummary;
+/**
+ * #1145 thin PR identity for ledger write/read (sole normalize).
+ * GitHub PR URL → `owner/repo#n` (owner/repo lowercased); `owner/repo#n` same;
+ * other non-empty handles (e.g. `pr://…`) kept trimmed verbatim; empty → undefined.
+ */
+export function canonicalOnlineReviewPrId(pr: string): string | undefined {
+  const raw = typeof pr === "string" ? pr.trim() : "";
+  if (raw.length === 0) return undefined;
+  const urlMatch = raw.match(
+    /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/i,
+  );
+  if (urlMatch !== null) {
+    const owner = urlMatch[1]!.toLowerCase();
+    const repo = urlMatch[2]!.toLowerCase();
+    const n = String(Number(urlMatch[3]));
+    if (!Number.isSafeInteger(Number(urlMatch[3])) || Number(urlMatch[3]) < 1) {
+      return undefined;
+    }
+    return `${owner}/${repo}#${n}`;
+  }
+  const shortMatch = raw.match(/^([^/#\s]+)\/([^/#\s]+)#(\d+)$/);
+  if (shortMatch !== null) {
+    const owner = shortMatch[1]!.toLowerCase();
+    const repo = shortMatch[2]!.toLowerCase();
+    const num = Number(shortMatch[3]);
+    if (!Number.isSafeInteger(num) || num < 1) return undefined;
+    return `${owner}/${repo}#${String(num)}`;
+  }
+  // Non-GH thin handles (offline pr://… etc.) — exact trimmed identity.
+  return raw;
+}
+
+/** Fail-closed PR identity equality via {@link canonicalOnlineReviewPrId}. */
+export function onlineReviewPrIdentityEquals(
+  a: string | undefined,
+  b: string | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return false;
+  const ca = canonicalOnlineReviewPrId(a);
+  const cb = canonicalOnlineReviewPrId(b);
+  return ca !== undefined && cb !== undefined && ca === cb;
+}
+
+/**
+ * Family online-review loop result (#1145 bound/unbound).
+ * Bound variants always carry non-empty {@link reviewedPr} from loop entry.
+ * Unbound = no PR identity — post-loop must not Landing/converged.
+ */
+export type OnlineReviewLoopStageResult =
+  | {
+      readonly binding: "bound";
+      /** Non-empty thin PR identity bound at loop entry (never post-loop re-resolve). */
+      readonly reviewedPr: string;
+      readonly ok: boolean;
+      readonly terminalState: OnlineReviewTerminalState;
+      readonly round: number;
+      readonly stopSummary?: StopSummary;
+    }
+  | {
+      readonly binding: "unbound";
+      readonly ok: false;
+      readonly terminalState: "decision_gate_raised";
+      readonly round: 1;
+      readonly stopSummary?: StopSummary;
+    };
+
+/** Bound result helper — reviewedPr must be non-empty. */
+export function boundOnlineReviewLoopResult(
+  reviewedPr: string,
+  result: {
+    readonly ok: boolean;
+    readonly terminalState: OnlineReviewTerminalState;
+    readonly round: number;
+    readonly stopSummary?: StopSummary;
+  },
+): Extract<OnlineReviewLoopStageResult, { readonly binding: "bound" }> {
+  const pr = reviewedPr.trim();
+  if (pr.length === 0) {
+    throw new Error(
+      "boundOnlineReviewLoopResult requires non-empty reviewedPr",
+    );
+  }
+  return {
+    binding: "bound",
+    reviewedPr: pr,
+    ok: result.ok,
+    terminalState: result.terminalState,
+    round: result.round,
+    ...(result.stopSummary !== undefined
+      ? { stopSummary: result.stopSummary }
+      : {}),
+  };
+}
+
+/** Early terminal when live+shipped PR handles are both absent. */
+export function unboundOnlineReviewLoopResult(
+  stopSummary?: StopSummary,
+): Extract<OnlineReviewLoopStageResult, { readonly binding: "unbound" }> {
+  return {
+    binding: "unbound",
+    ok: false,
+    terminalState: "decision_gate_raised",
+    round: 1,
+    ...(stopSummary !== undefined ? { stopSummary } : {}),
+  };
 }
 
 /**
@@ -929,23 +1052,28 @@ function fixerPacketFromVerify(verify: VerifyResult | undefined): {
 }
 
 function applyVerifyDisposition(
+  reviewedPr: string,
   verify: VerifyResult | undefined,
   round: number,
 ): OnlineReviewLoopStageResult | "continue" {
   if (verify === undefined) return "continue";
   const disposition = onlineReviewJudgeDisposition(verify);
   if (disposition === "escalate") {
-    return {
+    return boundOnlineReviewLoopResult(reviewedPr, {
       ok: false,
       terminalState: "decision_gate_raised",
       round,
       stopSummary: onlineReviewDecisionGateStopSummary(),
-    };
+    });
   }
   if (disposition === "converged") {
     // #941 / ID-013: online-review ends at mergeable. Landing Action owns
     // docs release, merge, MERGED confirm, close, and cleanup.
-    return { ok: true, terminalState: "mergeable", round };
+    return boundOnlineReviewLoopResult(reviewedPr, {
+      ok: true,
+      terminalState: "mergeable",
+      round,
+    });
   }
   return "continue";
 }
@@ -988,6 +1116,22 @@ export async function runOnlineReviewLoopStage(
     ) => WorkerLandingPayload | Promise<WorkerLandingPayload>;
   },
 ): Promise<OnlineReviewLoopStageResult> {
+  // Stage is only entered when family loop already bound a non-empty PR.
+  const reviewedPr =
+    typeof ship.pr === "string" && ship.pr.trim().length > 0
+      ? ship.pr.trim()
+      : "";
+  if (reviewedPr.length === 0) {
+    return unboundOnlineReviewLoopResult(
+      stageFailureStopSummary({
+        status: "online_review_failed",
+        summary:
+          "online review stage entered without a bound PR identity",
+        repairHint:
+          "bind a live or shipped PR handle before dispatching the online review loop",
+      }),
+    );
+  }
   let round = opts?.initialRound ?? 1;
   /** Last known fix head for Collector post-fix landing (opaque transport). */
   let lastFixCommitSha = opts?.initialFixCommitSha;
@@ -1110,7 +1254,7 @@ export async function runOnlineReviewLoopStage(
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
       }
-      return decisionGateFromDispatchInfra(round, "collector", err);
+      return decisionGateFromDispatchInfra(reviewedPr, round, "collector", err);
     }
 
     let verify: VerifyResult | undefined;
@@ -1135,11 +1279,11 @@ export async function runOnlineReviewLoopStage(
         if (err instanceof OnlineReviewLoopTerminal) {
           throw err;
         }
-        return decisionGateFromDispatchInfra(round, "verify", err);
+        return decisionGateFromDispatchInfra(reviewedPr, round, "verify", err);
       }
 
       {
-        const terminal = applyVerifyDisposition(verify, round);
+        const terminal = applyVerifyDisposition(reviewedPr, verify, round);
         if (terminal !== "continue") return terminal;
       }
       // Sparse / unusable verify cargo (no typed disposition) continues to fixer
@@ -1167,7 +1311,7 @@ export async function runOnlineReviewLoopStage(
         if (err instanceof OnlineReviewLoopTerminal) {
           throw err;
         }
-        return decisionGateFromDispatchInfra(round, "fixer", err);
+        return decisionGateFromDispatchInfra(reviewedPr, round, "fixer", err);
       }
       pendingFixerResult = fixerOutput;
 
@@ -1194,7 +1338,7 @@ export async function runOnlineReviewLoopStage(
             if (err instanceof OnlineReviewLoopTerminal) {
               throw err;
             }
-            return decisionGateFromDispatchInfra(round, "fixer", err);
+            return decisionGateFromDispatchInfra(reviewedPr, round, "fixer", err);
           }
         }
         if (
@@ -1222,7 +1366,7 @@ export async function runOnlineReviewLoopStage(
         if (err instanceof OnlineReviewLoopTerminal) {
           throw err;
         }
-        return decisionGateFromDispatchInfra(round, "fixer", err);
+        return decisionGateFromDispatchInfra(reviewedPr, round, "fixer", err);
       }
     } else {
       resumeNeedsFixShaBookkeeping = false;
@@ -1288,11 +1432,11 @@ export async function runOnlineReviewLoopStage(
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
       }
-      return decisionGateFromDispatchInfra(round, "verify", err);
+      return decisionGateFromDispatchInfra(reviewedPr, round, "verify", err);
     }
 
     {
-      const terminal = applyVerifyDisposition(verify, round);
+      const terminal = applyVerifyDisposition(reviewedPr, verify, round);
       if (terminal !== "continue") return terminal;
     }
 

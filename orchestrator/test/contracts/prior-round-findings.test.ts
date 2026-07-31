@@ -452,10 +452,11 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
       },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 4,
+      binding: "bound" as const,
     });
     // #1145: primary Verify seats (no fixer cargo) + same-round return-to-judge
     // seats (with fixerResult). Prior-round history is asserted on primary only.
@@ -568,10 +569,11 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
       },
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 2,
+      binding: "bound" as const,
     });
 
     const primaryR2 = verifyLandings.find(
