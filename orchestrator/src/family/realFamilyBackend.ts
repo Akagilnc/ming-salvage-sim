@@ -84,6 +84,7 @@ import {
   ONLINE_REVIEW_RECEIPT_TAG,
   SHIP_RECEIPT_TAG,
   coderStationReceiptSchema,
+  collectorOnlineReviewStationReceiptSchema,
   decodeJudgeVerdict,
   decodeMergerEnvelope,
   decodeOnlineReviewEnvelope,
@@ -167,6 +168,10 @@ import {
   RAW_REVIEWER_STDOUT_SANDBOX_FILE,
 } from "../rawReviewerArtifacts.js";
 import {
+  ONLINE_REVIEW_DURABLE_PATH_ENV,
+  onlineReviewDurableMount,
+} from "./onlineReviewActionDurable.js";
+import {
   ONLINE_REVIEW_LANDING_FILE,
   OnlineReviewLoopTerminal,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
@@ -200,6 +205,7 @@ import {
   isSandcastleAgentError,
 } from "../sandcastleAgentError.js";
 import {
+  COLLECTOR_PROMPT_FILE,
   LANDING_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
@@ -219,14 +225,14 @@ import {
 import type {
   CleanupResult,
   CliMonitorSpawnSpec,
+  CollectorResult,
   DispatchContext,
   LandingResult,
   Escalation,
   WorkerMonitorHandle,
   Finding,
   FixerResult,
-  OnlineReviewFindingDisposition,
-  OnlineReviewThreadReply,
+  OnlineReviewLandingSnapshot,
   PriorFindingDisposition,
   VerifyResult,
   VerifyWorkerTerminalState,
@@ -385,6 +391,9 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "coder_fix.md",
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
+    // #1145 Collector is family-dispatched (S13); fail closed at construction
+    // when an external/incomplete promptsDir lacks collector.md.
+    COLLECTOR_PROMPT_FILE,
     VERIFY_PROMPT_FILE,
     FIXER_PROMPT_FILE,
     LANDING_PROMPT_FILE,
@@ -1474,7 +1483,12 @@ export class RealFamilyBackend implements FamilyBackend {
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
-    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "landing") {
+    if (
+      spec.kind === "collector" ||
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "landing"
+    ) {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -2587,17 +2601,23 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.checkoutSharedRepo(ctx.familyBase);
-      // verify/fixer need the bot-evidence landing; landing only invokes
-      // /gstack-document-release and does not read the online-review snapshot.
+      // Sparse / missing snapshot is legal cargo (ADR 0131). Collector assembles
+      // it; Verify may receive sparse cargo and typed-escalate (#1145).
       const onlineReviewLanding =
         spec.kind === "landing"
           ? undefined
-          : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
+          : this.writeFamilyOnlineReviewLandingFile(ctx, landing, spec.kind);
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
-        // (completed|escalate). Role cargo (verify/fixer/cleanup/landing)
-        // rides opaque sidecar only — never dual decision-gate tag.
+        // (completed|escalate). Collector evidence is opaque sidecar cargo
+        // (#1145 / ADR 0131 cargo ≠ fate) — never a typed traffic field.
+        const agent = this.agentForSpec(spec, ctx);
+        const resumeSession = await this.resolveSandcastleResumeSessionId(
+          spec,
+          ctx,
+          agent,
+        );
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2609,12 +2629,15 @@ export class RealFamilyBackend implements FamilyBackend {
             onlineReviewLanding,
             outcomeLanding,
           ),
-          agent: this.agentForSpec(spec, ctx),
+          agent,
+          ...(resumeSession !== undefined ? { resumeSession } : {}),
           maxIterations: spec.maxIter,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
           output: onlineReviewReceiptOutput(
-            onlineReviewStationReceiptSchema(),
+            spec.kind === "collector"
+              ? collectorOnlineReviewStationReceiptSchema()
+              : onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
             this.resumeCapableForSpec(spec, ctx),
           ),
@@ -2634,28 +2657,51 @@ export class RealFamilyBackend implements FamilyBackend {
   protected writeFamilyOnlineReviewLandingFile(
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
+    /** Seat kind — priorRoundFindings is Verify history only (#1145). */
+    kind?: WorkerSpec["kind"],
   ): { path: string; sandboxPath: string } {
-    if (landing?.onlineReviewSnapshot === undefined) {
-      throw new Error(
-        "writeFamilyOnlineReviewLandingFile: online review landing requires onlineReviewSnapshot",
-      );
-    }
+    // Sparse landing is the only path — missing snapshot is legal cargo.
     ensureGitInfoExclude(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    ensureGitInfoExclude(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, ONLINE_REVIEW_LANDING_FILE);
+    // Host monitor paths are not visible inside the Verify container. Copy
+    // readable Collector raw products into the sandbox cwd and rewrite pointers
+    // (#1145 / #899) — same opaque transport as coder-fix landing.
+    const rawReviewerArtifacts =
+      landing?.rawReviewerArtifacts !== undefined
+        ? materializeRawReviewerArtifactsForSandbox(
+            landing.rawReviewerArtifacts,
+            this.opts.workingRepo,
+          )
+        : undefined;
     writeFileSync(
       path,
       `${JSON.stringify(
         {
-          onlineReviewSnapshot: landing.onlineReviewSnapshot,
-          shipDelivery: landing.shipDelivery,
-          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
-          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          ...(landing?.onlineReviewSnapshot !== undefined
+            ? { onlineReviewSnapshot: landing.onlineReviewSnapshot }
+            : {}),
+          // Opaque durable handle — never inspect body, never mint (#1145).
+          ...(landing?.cargoPointer !== undefined &&
+          landing.cargoPointer.length > 0
+            ? { cargoPointer: landing.cargoPointer }
+            : {}),
+          // Opaque raw paper when body/handle cargo is absent (#1145).
+          ...(rawReviewerArtifacts !== undefined
+            ? { rawReviewerArtifacts }
+            : {}),
+          shipDelivery: landing?.shipDelivery,
+          onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,
+          ...(landing?.onlineReviewFixPacket !== undefined
+            ? { onlineReviewFixPacket: landing.onlineReviewFixPacket }
+            : {}),
+          // Opaque fixer cargo back to the same Verify judge (#1145).
+          ...(landing?.fixerResult !== undefined
+            ? { fixerResult: landing.fixerResult }
+            : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
-            : {}),
-          ...(landing.priorRoundFindings !== undefined &&
-          landing.priorRoundFindings.length > 0
-            ? { priorRoundFindings: landing.priorRoundFindings }
             : {}),
         },
         null,
@@ -2706,6 +2752,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
+    // #1145 DecisionGate A: worker-owned durable store (progress/receipts/blobs).
+    // Host mounts RW only — never parses state.jsonl.
+    const durable = onlineReviewDurableMount(this.opts.workingRepo);
+    env[ONLINE_REVIEW_DURABLE_PATH_ENV] = durable.sandboxPath;
     if (ctx.familyIssue !== undefined) {
       const issue = String(ctx.familyIssue);
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
@@ -2727,6 +2777,10 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    mounts.push({
+      hostPath: durable.hostPath,
+      sandboxPath: durable.sandboxPath,
+    });
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
@@ -2778,7 +2832,42 @@ export class RealFamilyBackend implements FamilyBackend {
     // completed: sidecar/stdout enrich role cargo only — never escalate.
     // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
     // cargo shape is never a #598 process failure (#899 / ADR 0131).
-    return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
+    const cargoResult = reviewLoopCargoResult(
+      result.stdout,
+      spec.kind,
+      sessionId,
+      outcomePath,
+    );
+    // Transport handle only via typed station envelope — never from opaque
+    // sidecar body extraction (#1145). Envelope cargoPointer is the sole
+    // non-opaque pointer merge into Collector completed output.
+    if (spec.kind === "collector" && cargoResult.kind === "completed") {
+      const envelopePointer =
+        typeof decoded.value.cargoPointer === "string" &&
+        decoded.value.cargoPointer.trim().length > 0
+          ? decoded.value.cargoPointer.trim()
+          : undefined;
+      if (envelopePointer !== undefined) {
+        if (cargoResult.output.kind === "collector") {
+          return {
+            ...cargoResult,
+            output: {
+              ...cargoResult.output,
+              cargoPointer: envelopePointer,
+            },
+          };
+        }
+        // Completed wrong-shape cargo + envelope handle → empty collector transport.
+        return {
+          ...cargoResult,
+          output: {
+            kind: "collector",
+            cargoPointer: envelopePointer,
+          },
+        };
+      }
+    }
+    return cargoResult;
   }
 
   /**
@@ -4543,23 +4632,29 @@ function sparseReviewLoopCompleted(
   sessionId: string | undefined,
 ): WorkerResult {
   const output: WorkerOutput =
-    kind === "verify"
-      ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
-        { kind: "verify", converged: false }
-      : kind === "fixer"
-        ? { kind: "fixer", committed: false }
-        : kind === "cleanup"
-          ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
-            { kind: "cleanup", terminal: true, ok: true }
-          : // Empty-run success is legal for 文档发布 (process success, cargo miss).
-            { kind: "landing", released: true };
+    kind === "collector"
+      ? // Opaque-miss collector: completed Action, no evidence body (ADR 0131).
+        { kind: "collector" }
+      : kind === "verify"
+        ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
+          { kind: "verify", status: "continue" }
+        : kind === "fixer"
+          ? { kind: "fixer", committed: false }
+          : kind === "cleanup"
+            ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
+              { kind: "cleanup", terminal: true, ok: true }
+            : // Empty-run success is legal for 文档发布 (process success, cargo miss).
+              { kind: "landing", released: true };
   return { kind: "completed", output, sessionId };
 }
 
 /**
- * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
- * — those transports enrich delivery cargo only (#899). Fate comes solely from
- * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
+ * Cargo-only review-loop result. Fate comes solely from the T2 onlineReview
+ * station receipt handled by the caller (#919 CR N1 / #899).
+ * Collector evidence is fully opaque sidecar/`<collector>` cargo — including a
+ * business key named `escalate` — never typed SO (#1145). Other review-loop
+ * roles still strip escalate so a spoofed sidecar bell cannot ride into their
+ * fielded cargo before role decode.
  */
 function reviewLoopCargoResult(
   stdout: string,
@@ -4568,30 +4663,34 @@ function reviewLoopCargoResult(
   outcomePath?: string,
 ): WorkerResult {
   const tag =
+    kind === "collector" ||
     kind === "verify" ||
     kind === "fixer" ||
     kind === "cleanup" ||
     kind === "landing"
       ? kind
       : "verify";
-  // Read cargo, strip fate keys, re-decode without escalate so a spoofed
-  // sidecar bell cannot mask legitimate delivery cargo.
   const raw = parseOutcomePayload(stdout, tag, outcomePath);
   if ("error" in raw || !isJsonRecord(raw.parsed)) {
     // Sparse / unreadable cargo: process success + opaque miss (not #598).
     return sparseReviewLoopCompleted(kind, sessionId);
   }
   const cargo: Record<string, unknown> = { ...raw.parsed };
-  delete cargo.escalate;
+  // Collector body is opaque evidence end-to-end — do not strip business keys.
+  if (kind !== "collector" && kind !== "fixer") {
+    delete cargo.escalate;
+  }
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
   const parsed =
-    kind === "verify"
-      ? parseVerifyOutcome(cargoStdout)
-      : kind === "fixer"
-        ? parseFixerOutcome(cargoStdout)
-        : kind === "cleanup"
-          ? parseCleanupOutcome(cargoStdout)
-          : parseLandingOutcome(cargoStdout);
+    kind === "collector"
+      ? parseCollectorOutcome(cargoStdout)
+      : kind === "verify"
+        ? parseVerifyOutcome(cargoStdout)
+        : kind === "fixer"
+          ? parseFixerOutcome(cargoStdout)
+          : kind === "cleanup"
+            ? parseCleanupOutcome(cargoStdout)
+            : parseLandingOutcome(cargoStdout);
   if (parsed.kind === "cargo") {
     // Off-shape paper is opaque miss cargo — complete the Action; do not
     // re-open cargo shape as a #598 channel.
@@ -4601,10 +4700,40 @@ function reviewLoopCargoResult(
 }
 
 /**
- * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
- * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
- * Host fail-safe applicator (correctness K1) needs threadReplies /
- * threadsToResolve / deferredIssueUrls decoded when well-typed.
+ * #1145 Collector cargo-only decode. Entire sidecar body is opaque evidence
+ * — including a body shaped `{ cargoPointer: ... }`. No generic sidecar
+ * cargoPointer extraction: transport handles arrive only via the typed
+ * station envelope merge (ADR 0131 / DecisionGate A). Empty body is never fate.
+ */
+export function parseCollectorOutcome(
+  stdout: string,
+  outcomePath?: string,
+): CollectorResult | ReceiptCargo {
+  const payload = parseOutcomePayload(stdout, "collector", outcomePath);
+  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
+  const parsed = payload.parsed;
+  // Full body opaque — do not strip or promote cargoPointer from sidecar.
+  if (Object.keys(parsed).length === 0) {
+    return RECEIPT_CARGO;
+  }
+  // OnlineReviewEvidenceCargo is `{ readonly [key: string]: unknown }` — assignable.
+  const evidence: OnlineReviewLandingSnapshot = parsed;
+  const recoveredFixerResult = parsed.recoveredFixerResult as
+    | FixerResult
+    | undefined;
+  return {
+    kind: "collector",
+    evidence,
+    // Optional Action-owned recovery body is transported whole. Its presence
+    // does not change Collector process fate and no Fixer business field is read.
+    ...(recoveredFixerResult !== undefined ? { recoveredFixerResult } : {}),
+  };
+}
+
+/**
+ * #919 / #1145 A3: cargo-only decode. Fate = typed onlineReview envelope + exit.
+ * Required role gate: object + typed judge status (+ kind "verify" when present).
+ * The sole optional business field is one opaque onlineReviewFixPacket.
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4613,55 +4742,21 @@ export function parseVerifyOutcome(
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
-  const stringArray = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.every((item) => typeof item === "string");
-  const findingDispositions = Array.isArray(parsed.findingDispositions)
-    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
-        if (!isJsonRecord(item)) return false;
-        return (
-          typeof item.identityKey === "string" &&
-          typeof item.threadId === "string" &&
-          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
-          (item.reason === undefined || typeof item.reason === "string")
-        );
-      })
-    : undefined;
-  const threadReplies = Array.isArray(parsed.threadReplies)
-    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
-        isJsonRecord(item) &&
-        typeof item.threadId === "string" &&
-        typeof item.body === "string",
-      )
-    : undefined;
-  const terminalState: VerifyWorkerTerminalState | undefined =
-    parsed.terminalState === "mergeable" ||
-    parsed.terminalState === "decision_gate_raised"
-      ? parsed.terminalState
-      : undefined;
-  const advanceCoder =
-    typeof parsed.advanceCoder === "string" && parsed.advanceCoder.trim().length > 0
-      ? parsed.advanceCoder.trim()
-      : undefined;
-  const candidate: VerifyResult = {
+  if (parsed.kind !== undefined && parsed.kind !== "verify") return RECEIPT_CARGO;
+  if (
+    parsed.status !== "converged" &&
+    parsed.status !== "continue" &&
+    parsed.status !== "escalate"
+  ) {
+    return RECEIPT_CARGO;
+  }
+  return {
     kind: "verify",
-    converged: parsed.converged,
-    ...(findingDispositions !== undefined ? { findingDispositions } : {}),
-    ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
-      ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
+    status: parsed.status,
+    ...(Object.prototype.hasOwnProperty.call(parsed, "onlineReviewFixPacket")
+      ? { onlineReviewFixPacket: parsed.onlineReviewFixPacket }
       : {}),
-    ...(threadReplies !== undefined ? { threadReplies } : {}),
-    ...(stringArray(parsed.threadsToResolve)
-      ? { threadsToResolve: parsed.threadsToResolve }
-      : {}),
-    ...(stringArray(parsed.deferredIssueUrls)
-      ? { deferredIssueUrls: parsed.deferredIssueUrls }
-      : {}),
-    ...(terminalState !== undefined ? { terminalState } : {}),
-    ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
-    ...(advanceCoder !== undefined ? { advanceCoder } : {}),
   };
-  return candidate;
 }
 
 export function parseFixerOutcome(
@@ -4672,18 +4767,9 @@ export function parseFixerOutcome(
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
-  const candidate: FixerResult = {
-    kind: "fixer",
-    committed: parsed.committed,
-    ...(typeof parsed.alreadySatisfied === "boolean"
-      ? { alreadySatisfied: parsed.alreadySatisfied }
-      : {}),
-    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
-      ? { fixCommitSha: parsed.fixCommitSha }
-      : {}),
-  };
-  return candidate;
+  // Canonicalize only the role tag. Every business field remains opaque cargo.
+  const { kind: _ignoredKind, ...rest } = parsed;
+  return { ...rest, kind: "fixer" };
 }
 
 export function parseCleanupOutcome(

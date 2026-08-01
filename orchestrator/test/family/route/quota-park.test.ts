@@ -101,6 +101,9 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(
       familyRelaySlotsForWall({ phase: "online_review", wallStep: "S12" }),
     ).toEqual(["landing"]);
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep: "S13" }),
+    ).toEqual(["collector"]);
     expect(familyRelaySlotsForWall({ phase: "merge", wallStep: "S1" })).toEqual(
       ["merger"],
     );
@@ -111,6 +114,51 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         wallStep: "S0",
       }),
     ).toEqual(["verify"]);
+  });
+
+  it("#1145 F4: serialized Collector quota wall relays collector (not Verify)", async () => {
+    const { familyWallStepFromQuotaWait } = await import(
+      "../../../src/family/runner.js"
+    );
+    const {
+      serializeQuotaWaitForResetBridge,
+      tryParseQuotaWaitForResetBridge,
+      QuotaWaitForResetError,
+    } = await import("../../../src/quotaProbe.js");
+    const resetAt = new Date("2026-07-14T14:00:00.000Z");
+    const err = new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "zai",
+        resetAt,
+        reason: "collector quota wall",
+      },
+      applied: {
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "collector quota wall",
+          step: "S13",
+          ts: resetAt.toISOString(),
+        },
+      },
+      pool: "zai",
+    });
+    // Bridge child → parent round-trip must keep S13 (whitelist used to drop it).
+    const restored = tryParseQuotaWaitForResetBridge(
+      serializeQuotaWaitForResetBridge(err),
+    );
+    expect(restored?.applied.ledgerEntry?.step).toBe("S13");
+    const wallStep = familyWallStepFromQuotaWait({
+      err: restored!,
+      phase: "online_review",
+    });
+    expect(wallStep).toBe("S13");
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep }),
+    ).toEqual(["collector"]);
+    expect(wallStep).not.toBe("S9");
   });
 
   it("C1 pure: familyWallStepFromQuotaWait keeps S9 (isStepId alone would drop it)", async () => {

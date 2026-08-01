@@ -30,6 +30,9 @@ export function familyWorkerSlotForDispatch(
       return "coderFix";
     case "verify":
       return "verify";
+    case "collector":
+      // #1145: Collector has its own route slot (independent of verify).
+      return "collector";
     case "fixer":
       return "fixer";
     case "landing":

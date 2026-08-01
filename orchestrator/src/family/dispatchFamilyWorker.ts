@@ -524,6 +524,7 @@ export async function legacyDispatchFamilyWorker(
   }
 
   if (
+    spec.kind === "collector" ||
     spec.kind === "verify" ||
     spec.kind === "fixer" ||
     spec.kind === "landing"

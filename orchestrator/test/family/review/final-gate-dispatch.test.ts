@@ -234,6 +234,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         };
       }
       if (
+        spec.kind === "collector" ||
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
         spec.kind === "landing"
@@ -241,8 +242,23 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         return {
           kind: "completed",
           output:
-            spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+            spec.kind === "collector"
+              ? {
+                  kind: "collector",
+                  evidence: {
+                    prUrl: "pr://offline",
+                    headOid: "offline-head",
+                    totalFindingCount: 0,
+                    quiescent: true,
+                    bots: {},
+                    droppedBots: [],
+                    threads: [],
+                    checkRuns: [],
+                    checkRunsEmptyMeans: "converged",
+                  },
+                }
+              : spec.kind === "verify"
+              ? { kind: "verify", status: "converged" }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",
@@ -276,6 +292,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         cmrPass: "correctness",
       },
       { kind: "ship", promptFile: "family_ship.md" },
+      { kind: "collector", promptFile: "collector.md" },
       { kind: "verify", promptFile: "verify.md" },
       { kind: "landing", promptFile: "landing.md" },
     ]);
@@ -310,6 +327,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         escalationAnswer,
       },
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
+      { kind: "collector", promptFile: "collector.md" },
       { kind: "verify", promptFile: "verify.md" },
       { kind: "landing", promptFile: "landing.md" },
     ]);
@@ -435,6 +453,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         return completedJudgeGreen();
       }
       if (
+        spec.kind === "collector" ||
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
         spec.kind === "cleanup" ||
@@ -443,8 +462,23 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         return {
           kind: "completed",
           output:
-            spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+            spec.kind === "collector"
+              ? {
+                  kind: "collector",
+                  evidence: {
+                    prUrl: "pr://offline",
+                    headOid: "offline-head",
+                    totalFindingCount: 0,
+                    quiescent: true,
+                    bots: {},
+                    droppedBots: [],
+                    threads: [],
+                    checkRuns: [],
+                    checkRunsEmptyMeans: "converged",
+                  },
+                }
+              : spec.kind === "verify"
+              ? { kind: "verify", status: "converged" }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",

@@ -8,32 +8,15 @@
 
 import type {
   CleanupResult,
+  CollectorResult,
   LandingResult,
   FixerResult,
+  OnlineReviewLandingSnapshot,
   StepOutput,
   VerifyResult,
   WorkerKind,
   WorkerResult,
 } from "./types.js";
-
-/** Every well-shaped fixer envelope returns to fresh S9 verification. */
-export function fixerProceedsToVerify(_output: FixerResult): boolean {
-  return true;
-}
-
-/**
- * Optional fix SHA from the fixer envelope. A no-fix envelope has no SHA and
- * proceeds through the verify findings channel.
- */
-export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
-  return output.fixCommitSha;
-}
-
-/** Whether the fixer envelope carries a commit that permits commit side effects. */
-export function fixerHasFixCommit(output: FixerResult): boolean {
-  const fixCommitSha = fixerEnvelopeFixCommitSha(output);
-  return fixCommitSha !== undefined && fixCommitSha.length > 0;
-}
 
 export function isValidCleanupResult(
   o: StepOutput | undefined,
@@ -47,9 +30,33 @@ export function isValidCleanupResult(
   return !(obj.terminal === false && obj.ok === true);
 }
 
+/** Deterministic collector evidence for explicit offline/test injection only. */
+export function stubCollectorEvidence(
+  overrides?: {
+    readonly prUrl?: string;
+    readonly headOid?: string;
+    readonly [key: string]: unknown;
+  },
+): OnlineReviewLandingSnapshot {
+  // Convenience defaults for fixtures that still want PR/head bookkeeping keys.
+  // Production transport admits any object body — these keys are not required.
+  return {
+    ...overrides,
+    prUrl: overrides?.prUrl ?? "pr://offline",
+    headOid: overrides?.headOid ?? "offline-head",
+  };
+}
+
+/** Deterministic collector verdict for explicit offline/test injection only. */
+export function stubCollectorResult(
+  evidence?: OnlineReviewLandingSnapshot,
+): CollectorResult {
+  return { kind: "collector", evidence: evidence ?? stubCollectorEvidence() };
+}
+
 /** Deterministic verify verdict for explicit offline/test injection only. */
 export function stubVerifyResult(): VerifyResult {
-  return { kind: "verify", converged: true };
+  return { kind: "verify", status: "converged" };
 }
 
 /** Deterministic fixer verdict for explicit offline/test injection only. */
@@ -83,6 +90,8 @@ export function skeletonReviewLoopWorkerResult(
   kind: WorkerKind,
 ): WorkerResult | undefined {
   switch (kind) {
+    case "collector":
+      return { kind: "completed", output: stubCollectorResult() };
     case "verify":
       return { kind: "completed", output: stubVerifyResult() };
     case "fixer":

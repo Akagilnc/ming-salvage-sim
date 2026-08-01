@@ -194,100 +194,85 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ).toBe(false);
   });
 
-  it("pin r28: familyShippedRecordForReviewLoopResume crash-point matrix (family)", () => {
-    const shipHead = "head-ship";
-    const postFixHead = "head-postfix";
-    const pr = "https://github.com/test/repo/pull/352";
-    const shipped = {
-      status: "shipped" as const,
-      event: "shipped" as const,
-      phase: "final" as const,
-      pr,
-      familyHeadAfter: shipHead,
+  it("familyShippedRecordForReviewLoopResume accepts an exact shipped head without typed cycle traffic", () => {
+    const shipped: FamilyLedgerEntry = {
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: "https://github.com/test/repo/pull/352",
+      familyHeadAfter: "head-ship",
     };
-    const fixCommitted = {
-      status: "online_review_fix_committed" as const,
-      event: "online_review_fix_committed" as const,
-      phase: "final" as const,
-      familyHeadAfter: postFixHead,
-      pr,
-    };
-    const retrigger = {
-      status: "online_review_round_retrigger" as const,
-      event: "online_review_round_retrigger" as const,
-      phase: "final" as const,
-      roundTriggerHeadOid: postFixHead,
-      roundTriggerAt: "2026-07-08T13:00:00.000Z",
-      onlineReviewRound: 2,
-      pr,
-    };
-    const mergedOnly = [{ childIssue: 1, status: "merged" as const }];
-    // crash before shipped → no resume anchor
     expect(
-      familyShippedRecordForReviewLoopResume(
-        [...mergedOnly, fixCommitted],
-        postFixHead,
-      ),
+      familyShippedRecordForReviewLoopResume([shipped], "head-ship"),
+    ).toMatchObject({ familyHeadAfter: "head-ship" });
+    expect(
+      familyShippedRecordForReviewLoopResume([shipped], "head-postfix"),
     ).toBeUndefined();
-    // shipped only at ancestor, current head advanced, no markers → no loop resume
-    expect(
-      familyShippedRecordForReviewLoopResume(
-        [...mergedOnly, shipped],
-        postFixHead,
-      ),
-    ).toBeUndefined();
-    // crash after fix_committed only → ancestor shipped + markers resume
-    expect(
-      familyShippedRecordForReviewLoopResume(
-        [...mergedOnly, shipped, fixCommitted],
-        postFixHead,
-      ),
-    ).toEqual({ pr, familyHeadAfter: shipHead });
-    // legacy r29 / old ordering: retrigger-only without fix_committed → still resume
-    expect(
-      familyShippedRecordForReviewLoopResume(
-        [...mergedOnly, shipped, retrigger],
-        postFixHead,
-      ),
-    ).toEqual({ pr, familyHeadAfter: shipHead });
-    // exact head match unchanged
-    expect(
-      familyShippedRecordForReviewLoopResume(
-        [...mergedOnly, shipped],
-        shipHead,
-      )?.familyHeadAfter,
-    ).toBe(shipHead);
   });
 
-  it("familyShippedRecordForReviewLoopResume accepts ancestor shipped + in-loop markers (#600 r28)", () => {
-    const shipHead = "head-ship";
-    const postFixHead = "head-postfix";
+  it("familyShippedRecordForReviewLoopResume uses only active typed cycle traffic after HEAD advances", () => {
     const pr = "https://github.com/test/repo/pull/352";
-    const ledger: FamilyLedgerEntry[] = [
-      { childIssue: 1, status: "merged" },
-      {
-        status: "shipped",
-        event: "shipped",
-        phase: "final",
-        pr,
-        familyHeadAfter: shipHead,
-      },
-      {
-        status: "online_review_fix_committed",
-        event: "online_review_fix_committed",
-        phase: "final",
-        familyHeadAfter: postFixHead,
-        pr,
-      },
-    ];
-    expect(familyShippedRecordForReviewLoopResume(ledger, postFixHead)).toEqual({
+    const shipped: FamilyLedgerEntry = {
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
       pr,
-      familyHeadAfter: shipHead,
-    });
-    expect(familyShippedRecordForReviewLoopResume(ledger, shipHead)?.familyHeadAfter).toBe(
-      shipHead,
-    );
-    expect(familyShippedRecordForReviewLoopResume(ledger, "other-head")).toBeUndefined();
+      familyHeadAfter: "opaque-cycle-a",
+    };
+    const opened: FamilyLedgerEntry = {
+      status: "online_review_judge_opened",
+      event: "online_review_judge_opened",
+      pr,
+      onlineReviewCycle: "opaque-cycle-a",
+      onlineReviewRound: 1,
+      sessionId: "resident-judge",
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, opened],
+        "unread-post-fix-head",
+      ),
+    ).toMatchObject({ pr, familyHeadAfter: "opaque-cycle-a" });
+
+    const converged: FamilyLedgerEntry = {
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr,
+      familyHeadAfter: "unread-post-fix-head",
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, opened, converged],
+        "later-unrelated-head",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not resume a typed review cycle opened for a different PR", () => {
+    const shippedPr = "https://github.com/test/repo/pull/352";
+    const shipped: FamilyLedgerEntry = {
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: shippedPr,
+      familyHeadAfter: "opaque-cycle-a",
+    };
+    const openedForDifferentPr: FamilyLedgerEntry = {
+      status: "online_review_judge_opened",
+      event: "online_review_judge_opened",
+      pr: "https://github.com/test/repo/pull/353",
+      onlineReviewCycle: "opaque-cycle-a",
+      onlineReviewRound: 1,
+      sessionId: "resident-judge",
+    };
+
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, openedForDifferentPr],
+        "unread-post-fix-head",
+      ),
+    ).toBeUndefined();
   });
 
   it("familyAlreadyShipped is FALSE for a ledger with only merged/aborted entries", () => {

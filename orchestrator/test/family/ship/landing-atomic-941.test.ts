@@ -76,6 +76,7 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../../src/types.js";
+import { onlineReviewDispatch } from "../../helpers/online-review-dispatch.js";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -268,16 +269,15 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
   });
 
   it("POSITIVE: online review converge stops at mergeable; no host landing hook", async () => {
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async () => BASE_SNAPSHOT,
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
-        ({ kind: "verify", converged: true }) satisfies VerifyResult,
+        ({ kind: "verify", status: "converged" }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run on green converge");
       },
-      applySideEffects: (_landing, verify) => verify,
-      retriggerAfterFix: () => {},
-    });
+
+    }));
     expect(result.ok).toBe(true);
     expect(result.terminalState).toBe("mergeable");
   });

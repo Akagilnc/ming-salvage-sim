@@ -33,6 +33,7 @@ export async function dispatchReviewLoopThroughAdmission(
   if (panelLeg !== undefined) return panelLeg;
 
   if (
+    spec.kind !== "collector" &&
     spec.kind !== "verify" &&
     spec.kind !== "fixer" &&
     spec.kind !== "landing"

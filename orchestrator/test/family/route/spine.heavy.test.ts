@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -20,6 +20,7 @@ import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
   DispatchContext,
+  FixerResult,
   IssueMeta,
   PersistentLedgerEntry,
   StepOutput,
@@ -245,9 +246,28 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
     let verifyDispatches = 0;
     familyBackend.dispatchWorker = async (spec: WorkerSpec) => {
+            if (spec.kind === "collector") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: {
+              prUrl: "pr://offline",
+              headOid: "offline-head",
+              totalFindingCount: 0,
+              quiescent: true,
+              bots: {},
+              droppedBots: [],
+              threads: [],
+              checkRuns: [],
+              checkRunsEmptyMeans: "converged",
+            },
+          },
+        };
+      }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
-        return { kind: "completed", output: { kind: "verify", converged: true } };
+        return { kind: "completed", output: { kind: "verify", status: "converged" } };
       }
       if (spec.kind === "landing") {
         return { kind: "completed", output: { kind: "landing", released: true } };
@@ -286,14 +306,32 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
     let verifyDispatches = 0;
     familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "collector") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: {
+              prUrl: "pr://offline",
+              headOid: "offline-head",
+              totalFindingCount: 0,
+              quiescent: true,
+              bots: {},
+              droppedBots: [],
+              threads: [],
+              checkRuns: [],
+              checkRunsEmptyMeans: "converged",
+            },
+          },
+        };
+      }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
-            terminalState: "decision_gate_raised",
+            status: "escalate",
           },
         };
       }
@@ -523,6 +561,225 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     });
   });
 
+  it("post-Fixer crash re-enters the shared-tail Online Review cycle without re-shipping or re-dispatching Fixer", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const pr = "https://github.com/test/repo/pull/293";
+    const shippedHead = "family-base-0";
+    const postFixHead = "family-base-post-fix";
+    const residentJudgeSession = "resident-judge-before-crash";
+    const recoveredFixerCargo: FixerResult = new Proxy<FixerResult>(
+      { kind: "fixer", committed: true },
+      {
+        get(target, key, receiver) {
+          if (key === "kind") return Reflect.get(target, key, receiver);
+          throw new Error(`shared-tail host read recovered Fixer cargo field ${String(key)}`);
+        },
+      },
+    );
+    const recoveredEvidence = new Proxy(
+      { checkpoint: "already-collected" },
+      { get: () => { throw new Error("shared-tail host read recovered evidence"); } },
+    );
+    familyBackend.head = postFixHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shippedHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr,
+        familyHeadAfter: shippedHead,
+      },
+      {
+        status: "online_review_judge_opened",
+        event: "online_review_judge_opened",
+        pr,
+        onlineReviewRound: 1,
+        onlineReviewCycle: shippedHead,
+        sessionId: residentJudgeSession,
+      },
+    );
+
+    let shippingSideEffects = 0;
+    let collectorDispatches = 0;
+    let fixerDispatches = 0;
+    let verifyDispatches = 0;
+    let collectorLanding: WorkerLandingPayload | undefined;
+    let verifySession: string | undefined;
+    let verifyResumeSessionId: string | undefined;
+    let fixerCargoReturnedToJudge: unknown;
+    let evidenceReturnedToJudge: unknown;
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
+      if (spec.kind === "collector") {
+        collectorDispatches += 1;
+        collectorLanding = landing;
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: recoveredEvidence,
+            recoveredFixerResult: recoveredFixerCargo,
+          },
+        };
+      }
+      if (spec.kind === "fixer") {
+        fixerDispatches += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: true },
+        };
+      }
+      if (spec.kind === "verify") {
+        verifyDispatches += 1;
+        verifySession = spec.session;
+        verifyResumeSessionId = ctx.resumeSessionId;
+        fixerCargoReturnedToJudge = landing?.fixerResult;
+        evidenceReturnedToJudge = landing?.onlineReviewSnapshot;
+        return {
+          kind: "completed",
+          output: { kind: "verify", status: "converged" },
+          sessionId: residentJudgeSession,
+        };
+      }
+      if (spec.kind === "landing") {
+        return { kind: "completed", output: { kind: "landing", released: true } };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async (input) => {
+        if (input.phase === "final") shippingSideEffects += 1;
+        return { ok: false, ran: true, failedStatus: "ship_failed" };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(shippingSideEffects).toBe(0);
+    expect(collectorDispatches).toBe(1);
+    expect(fixerDispatches).toBe(0);
+    expect(verifyDispatches).toBe(1);
+    expect(collectorLanding?.shipDelivery).toMatchObject({ pr, prHead: shippedHead });
+    expect(verifySession).toBe("resume");
+    expect(verifyResumeSessionId).toBe(residentJudgeSession);
+    expect(fixerCargoReturnedToJudge).toBe(recoveredFixerCargo);
+    expect(evidenceReturnedToJudge).toBe(recoveredEvidence);
+  });
+
+  it("replays the equivalent frozen #1117 scene through the real shared tail", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("../../fixtures/online-review-1117-equivalent.json", import.meta.url),
+        "utf8",
+      ),
+    ) as {
+      oldRoundKeys: string[];
+      currentRoundKeys: string[];
+      pr: string;
+      head: string;
+    };
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.runFamilyVerify = async () => ({ ok: true });
+    const resolvedRoute = resolveActiveModelRoute();
+    const declared = resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug);
+    let verifyCalls = 0;
+    let collectorCalls = 0;
+    const verifySessions: Array<{ mode: string; resume?: string }> = [];
+    let fixerPacket: unknown;
+    let fixerReturnedToJudge: unknown;
+    const packet = new Proxy(
+      { currentRoundKeys: fixture.currentRoundKeys },
+      { get: () => { throw new Error("shared-tail host read opaque judge packet"); } },
+    );
+    const evidence = new Proxy(
+      { oldRoundKeys: fixture.oldRoundKeys, currentRoundKeys: fixture.currentRoundKeys },
+      { get: () => { throw new Error("shared-tail host read Collector evidence"); } },
+    );
+
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
+      const panelLeg = completeReviewPanelLegWorker(spec);
+      if (panelLeg !== undefined) return panelLeg;
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "judge",
+            status: "converged",
+            successfulLegs: declared.length > 0 ? declared : ["opus"],
+          },
+        };
+      }
+      if (spec.kind === "ship") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "family/293-base",
+            status: "pr_opened",
+            pr: fixture.pr,
+            prHead: fixture.head,
+          },
+        };
+      }
+      if (spec.kind === "collector") {
+        collectorCalls += 1;
+        return { kind: "completed", output: { kind: "collector", evidence } };
+      }
+      if (spec.kind === "verify") {
+        verifyCalls += 1;
+        verifySessions.push({
+          mode: spec.session,
+          ...(ctx.resumeSessionId !== undefined ? { resume: ctx.resumeSessionId } : {}),
+        });
+        if (landing?.fixerResult !== undefined) fixerReturnedToJudge = landing.fixerResult;
+        return {
+          kind: "completed",
+          output:
+            verifyCalls === 1
+              ? { kind: "verify", status: "continue", onlineReviewFixPacket: packet }
+              : verifyCalls === 2
+                ? { kind: "verify", status: "continue" }
+                : { kind: "verify", status: "converged" },
+          sessionId: "fixture-resident-judge",
+        };
+      }
+      if (spec.kind === "fixer") {
+        fixerPacket = landing?.onlineReviewFixPacket;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false, alreadySatisfied: true },
+        };
+      }
+      if (spec.kind === "landing") {
+        return { kind: "completed", output: { kind: "landing", released: true } };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(collectorCalls).toBe(2);
+    expect(fixerPacket).toBe(packet);
+    expect(fixerReturnedToJudge).toMatchObject({ alreadySatisfied: true });
+    expect(verifySessions).toEqual([
+      { mode: "fresh" },
+      { mode: "resume", resume: "fixture-resident-judge" },
+      { mode: "resume", resume: "fixture-resident-judge" },
+    ]);
+  });
+
   it("fresh-ship path (no pre-seeded shipped row) lets runVerifyCmr run the write at verifyCmr.ts and produces review_loop_converged carrying metadata.heads.verifiedCmrHead + material stopSummary (pins the actual fixed path, not resume copy)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
@@ -562,16 +819,30 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           },
         };
       }
-      const skeletonKinds = new Set(["verify", "fixer", "landing"]);
+      const skeletonKinds = new Set(["collector", "verify", "fixer", "landing"]);
       if (skeletonKinds.has(spec.kind)) {
         return {
           kind: "completed",
           output:
-            spec.kind === "verify"
+            spec.kind === "collector"
+              ? {
+                  kind: "collector",
+                  evidence: {
+                    prUrl: "pr://offline",
+                    headOid: "offline-head",
+                    totalFindingCount: 0,
+                    quiescent: true,
+                    bots: {},
+                    droppedBots: [],
+                    threads: [],
+                    checkRuns: [],
+                    checkRunsEmptyMeans: "converged",
+                  },
+                }
+              : spec.kind === "verify"
               ? {
                   kind: "verify",
-                  converged: true,
-                  fixMarkedFindingIdentityKeys: [],
+                  status: "converged",
                 }
               : spec.kind === "fixer"
                 ? {

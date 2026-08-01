@@ -39,44 +39,6 @@ export function mergePriorRoundFindings(
   return [...byRound.values()].sort((a, b) => a.round - b.round);
 }
 
-type FamilyOnlineReviewLedgerEntry = {
-  readonly event?: string;
-  readonly onlineReviewRound?: number;
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-};
-
-/**
- * Prior online-review rounds from the family ledger.
- *
- * Family loop persists fix/retrigger markers rather than verify output rows.
- * Prefer `online_review_fix_committed` rows that carry
- * `fixMarkedFindingIdentityKeys` + `onlineReviewRound`.
- */
-export function priorOnlineReviewFindingsFromFamilyLedger(
-  ledger: ReadonlyArray<FamilyOnlineReviewLedgerEntry>,
-  currentRound: number,
-): ReadonlyArray<PriorRoundFindingSnapshot> {
-  if (currentRound <= 1) return [];
-  const byRound = new Map<number, PriorRoundFindingSnapshot>();
-  for (const entry of ledger) {
-    if (entry.event !== "online_review_fix_committed") continue;
-    const keys = entry.fixMarkedFindingIdentityKeys;
-    if (!Array.isArray(keys) || keys.length === 0) continue;
-    const round =
-      typeof entry.onlineReviewRound === "number" &&
-      Number.isSafeInteger(entry.onlineReviewRound) &&
-      entry.onlineReviewRound >= 1
-        ? entry.onlineReviewRound
-        : undefined;
-    if (round === undefined || round >= currentRound) continue;
-    byRound.set(round, {
-      round,
-      fixMarkedFindingIdentityKeys: [...keys],
-    });
-  }
-  return [...byRound.values()].sort((a, b) => a.round - b.round);
-}
-
 type CmrLedgerEntry = {
   readonly event?: string;
   readonly cmrPass?: string;

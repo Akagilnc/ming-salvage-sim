@@ -60,7 +60,9 @@ export type FamilyEndgameWorkerId =
   | "S9"
   | "S10"
   | "S11"
-  | "S12";
+  | "S12"
+  /** Online Review Collector — evidence only (#1145). */
+  | "S13";
 
 /** Any durable worker/ledger label across the child and family machines. */
 export type StepId = SliceStepId | FamilyEndgameWorkerId;
@@ -97,7 +99,8 @@ export function isAnyStepId(step: unknown): step is StepId {
     step === "S9" ||
     step === "S10" ||
     step === "S11" ||
-    step === "S12"
+    step === "S12" ||
+    step === "S13"
   );
 }
 
@@ -108,7 +111,8 @@ export type StepRole =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "landing";
+  | "landing"
+  | "collector";
 
 /** Public handoff: completed | parked | failed (#942 / ID-001). */
 export type HandoffStatus = "completed" | "parked" | "failed";
@@ -137,7 +141,8 @@ export type WorkerSoul =
   | "verify"
   | "fixer"
   | "landing"
-  | "merger";
+  | "merger"
+  | "collector";
 export type StepSoul = WorkerSoul;
 
 /**
@@ -756,7 +761,8 @@ export type WorkerKind =
   | "verify"
   | "fixer"
   | "cleanup"
-  | "landing";
+  | "landing"
+  | "collector";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
 export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
@@ -867,9 +873,9 @@ export interface WorkerSpec {
 /** Prior-round finding snapshot forwarded to judge workers (#711). */
 export interface PriorRoundFindingSnapshot {
   readonly round: number;
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
+  readonly findingDispositions?: ReadonlyArray<unknown>;
+  readonly blockingFindingIdentityKeys?: ReadonlyArray<unknown>;
 }
 
 /** Bot snapshot landing content for online review verify/fixer workers (#600). */
@@ -881,12 +887,6 @@ export interface OnlineReviewFindingDisposition {
   readonly threadId: string;
   readonly action: OnlineReviewFindingAction;
   readonly reason?: string;
-}
-
-/** Evidence-bearing thread reply authored by the verify worker (#600 AC6). */
-export interface OnlineReviewThreadReply {
-  readonly threadId: string;
-  readonly body: string;
 }
 
 /**
@@ -903,47 +903,20 @@ export type OnlineReviewTerminalState =
   | VerifyWorkerTerminalState
   | "contract_drift";
 
-export type OnlineReviewBotLegLanding =
-  | { readonly state: "pending" }
-  | { readonly state: "complete"; readonly findingCount: number }
-  | { readonly state: "dropped"; readonly reason: string };
+/**
+ * Collector opaque evidence cargo (#1145 / ADR 0131).
+ * Entirely opaque business blob — Runner never expands schema, invents defaults,
+ * or filters keys. Landing JSON key remains `onlineReviewSnapshot` (stable wire).
+ */
+export type OnlineReviewEvidenceCargo = {
+  readonly [key: string]: unknown;
+};
 
-export interface OnlineReviewLandingSnapshot {
-  readonly prUrl: string;
-  readonly headOid: string;
-  readonly totalFindingCount: number;
-  readonly quiescent: boolean;
-  /** Per-bot terminal/pending legs — dropped bots are not clean-silence evidence (#600). */
-  readonly bots: Readonly<Record<string, OnlineReviewBotLegLanding>>;
-  /** Convenience list of bot ids dropped after the overdue window. */
-  readonly droppedBots: ReadonlyArray<string>;
-  readonly threads: ReadonlyArray<{
-    /** Top-level review-comment databaseId — REST reply parent. */
-    readonly id: string;
-    /** GraphQL reviewThread node id — resolution target. */
-    readonly threadNodeId?: string;
-    readonly path?: string;
-    readonly line?: number;
-    readonly body: string;
-    readonly isResolved: boolean;
-    /** Native commit_id when GitHub exposes it; undefined for artifact bots. */
-    readonly headOid?: string;
-    readonly authorLogin?: string;
-  }>;
-  /** Head-correlated CI check-runs for verify default-deny (#600 / ADR 0061). */
-  readonly checkRuns: ReadonlyArray<{
-    readonly id: number;
-    readonly name: string;
-    readonly headSha: string;
-    readonly status: string;
-    readonly conclusion?: string;
-  }>;
-  /**
-   * How empty checkRuns is classified: offline="converged", live="pending"
-   * (post-push race before checks appear — Cursor medium, verified).
-   */
-  readonly checkRunsEmptyMeans?: "converged" | "pending";
-}
+/**
+ * @deprecated Prefer {@link OnlineReviewEvidenceCargo}. Historical alias for the
+ * same opaque blob type (landing field name `onlineReviewSnapshot` unchanged).
+ */
+export type OnlineReviewLandingSnapshot = OnlineReviewEvidenceCargo;
 
 export interface WorkerLandingPayload {
   /**
@@ -1003,6 +976,20 @@ export interface WorkerLandingPayload {
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
+  /**
+   * #1145 opaque durable evidence handle from Collector (worker cargoPointer).
+   * Runner transports as-is to Verify landing / landing file; never inspects
+   * the pointed body and never mints a replacement handle.
+   */
+  readonly cargoPointer?: string;
+  /**
+   * Opaque packet authored by the online-review judge for the Fixer. Runner
+   * transports the value by reference and never reads findings, keys, threads,
+   * or any other business datum from it (#1145).
+   */
+  readonly onlineReviewFixPacket?: unknown;
+  /** Opaque fixer envelope returned whole to the same Verify judge (#1145). */
+  readonly fixerResult?: FixerResult;
   /** Family PR delivery metadata threaded into the review loop. */
   readonly shipDelivery?: {
     readonly branch: string;
@@ -1013,17 +1000,6 @@ export interface WorkerLandingPayload {
   };
   /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
-  /** Family fixer: fix-marked finding identity keys from verify worker. */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
-   * Original review thread bound to each fixer-approved identity.
-   * A key alone is not authority to close another thread that happens to claim
-   * the same identity.
-   */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
   /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** Family cleanup: host-computed close set + durable pr_merged record. */
@@ -1327,70 +1303,58 @@ export interface MergeWorkerResult {
 }
 
 /**
- * Online review verify worker output (#600 / #940).
+ * Online Review Collector worker output (#1145).
  *
- * The worker owns per-finding judgment and should execute GitHub side effects
- * (reply / resolve / deferred) before self-reporting. The host still applies
- * cargo plan fields as a fail-safe applicator ({@link threadReplies} /
- * {@link threadsToResolve} / {@link deferredIssueUrls}) before accepting a
- * disposition as mergeable — effects must land even when the worker only emits
- * the plan. Host routes on three-state disposition + CI, never on findings
- * counts (#934 ID-012).
+ * Collector owns GitHub query / wait / retrigger / evidence assembly only.
+ * Cargo is opaque evidence for Verify — Collector never emits judge enum.
+ * Runner transports evidence without interpreting bot/CI/finding semantics.
+ * Sparse / missing evidence does not change Action fate (ADR 0131 cargo ≠ fate).
  */
-export interface VerifyResult {
-  readonly kind: "verify";
+export interface CollectorResult {
+  readonly kind: "collector";
   /**
-   * Judge green (converged). Combined with host CI check-runs for mergeability;
-   * `false` is the continue disposition unless {@link terminalState} escalates.
-   * Worker must not set this until reply/resolve/deferred side effects succeed
-   * (or the host fail-safe applicator will apply remaining plan cargo).
+   * Opaque evidence cargo for Verify (#1145). Optional — missing/sparse cargo
+   * completes the Action; Runner never synthesizes a substitute snapshot and
+   * never fails the process on cargo shape.
    */
-  readonly converged: boolean;
-  /** Per-finding dispositions judged by the verify worker (opaque cargo). */
-  readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  /**
-   * Identity keys carried through as data for the verify worker to use when
-   * reporting which fix-marked findings it evaluated (fixer landing).
-   */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
-  readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
-  /** Thread IDs to resolve only after a fresh re-check confirms the fix. */
-  readonly threadsToResolve?: ReadonlyArray<string>;
-  /** Tracked issue URLs created for deferred findings (runner-populated). */
-  readonly deferredIssueUrls?: ReadonlyArray<string>;
-  /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
-  readonly terminalState?: VerifyWorkerTerminalState;
-  /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
-  readonly isRecheck?: boolean;
-  /**
-   * #1002 — optional roster suggestion on continue: runner rewrites the online
-   * review **fixer** repair seat via executeAdvanceCoderSuggestion (same
-   * advanced/stay_put/noop topology as single-slice/family coderFix). Never a
-   * terminal fate signal.
-   */
-  readonly advanceCoder?: string;
+  readonly evidence?: OnlineReviewLandingSnapshot;
+  /** Optional durable pointer to the opaque evidence body. */
+  readonly cargoPointer?: string;
+  /** Opaque Fixer cargo recovered by this Action's durable capability. */
+  readonly recoveredFixerResult?: FixerResult;
 }
 
 /**
- * Family post-review fixer worker output (#596).
+ * Online review verify worker output (#600 / #940 / #1145).
+ *
+ * Verify owns per-finding judgment **and** GitHub side effects (reply /
+ * resolve / deferred) before self-reporting. Collector owns query/wait.
+ * Runner never replays residual plan cargo after the Action returns. Runner
+ * routes on three-state disposition only — never on findings counts
+ * (#934 ID-012 / #1145).
+ */
+export interface VerifyResult {
+  readonly kind: "verify";
+  /** ADR 0131 sole online-review traffic signal (no fourth state). */
+  readonly status: "converged" | "continue" | "escalate";
+  /** Sole judge-authored Fixer packet; Runner transports it without inspection. */
+  readonly onlineReviewFixPacket?: unknown;
+  /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
+  readonly isRecheck?: boolean;
+  /** Extra opaque role fields preserved end-to-end (ADR 0131 cargo ≠ fate). */
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Family post-review fixer worker output (#596 / #1145).
+ *
+ * Entire envelope is opaque cargo back to the same Verify judge. Runner never
+ * reads business fields; only the judge three-state disposition decides next.
  */
 export interface FixerResult {
   readonly kind: "fixer";
-  /** Whether the fixer produced commits for the requested repairs. */
-  readonly committed: boolean;
-  /**
-   * When `committed` is false: assigned fix-marked findings are already resolved
-   * on the current branch (e.g. a prior crashed attempt landed the fix).
-   * The stage proceeds to verify using {@link fixCommitSha}, not decision_gate.
-   */
-  readonly alreadySatisfied?: boolean;
-  /**
-   * Fixing commit SHA from the fixer envelope. Required when {@link committed} is
-   * true (new fix this turn) or when {@link alreadySatisfied} is true. Runner/stage
-   * never re-read live git for this value (ADR 0030).
-   */
-  readonly fixCommitSha?: string;
+  /** Entire role body is opaque; only the judge reads business fields. */
+  readonly [key: string]: unknown;
 }
 
 /** Per-step branch-delete outcome recorded by the #603 cleanup worker. */
@@ -1441,6 +1405,7 @@ export type WorkerOutput =
   | CmrResult
   | ShipResult
   | MergeWorkerResult
+  | CollectorResult
   | VerifyResult
   | FixerResult
   | CleanupResult

@@ -22,6 +22,8 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  FixerResult,
+  OnlineReviewLandingSnapshot,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -120,8 +122,10 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "child_decision_parked",
   "escalation_answered",
   "admission_skipped",
-  "online_review_fix_committed",
-  "online_review_round_retrigger",
+  /** #1145 — resident online-review Verify session established. */
+  "online_review_judge_opened",
+  /** #1145 — Verify converged / side effects done; re-entry must not re-dispatch. */
+  "online_review_mergeable",
   "worker_dispatched",
   "route_degraded",
   /** #919 / #1002 — judge advanceCoder executed on a repair seat (coderFix / fixer). */
@@ -213,7 +217,7 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
-   *   - `"online_review_fix_committed"` / `"online_review_round_retrigger"` /
+   *   - `"online_review_judge_opened"` / `"online_review_mergeable"` /
    *     `"worker_dispatched"` / `"route_degraded"` — phase/worker audit markers
    *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
    *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
@@ -275,8 +279,8 @@ export interface FamilyLedgerEntry {
     | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped"
-    | "online_review_fix_committed"
-    | "online_review_round_retrigger"
+    | "online_review_judge_opened"
+    | "online_review_mergeable"
     | "worker_dispatched"
     | "route_degraded"
     /** #919 — paired with status coder_advance. */
@@ -441,24 +445,10 @@ export interface FamilyLedgerEntry {
   readonly terminalCause?: PublicFailedCause;
   /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
   readonly ts?: string;
-  /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
-  readonly roundTriggerHeadOid?: string;
-  /** Online review round re-trigger marker (#600 r26): ISO instant the round began. */
-  readonly roundTriggerAt?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
-  /**
-   * Fix-marked finding identity keys from the verify that drove an
-   * `online_review_fix_committed` marker (#711 prior-round synthesis source).
-   * Family online-review does not persist S9 verify rows; these keys on fix
-   * markers are the durable prior-round data for resume.
-   */
-  readonly fixMarkedFindingIdentityKeys?: readonly string[];
-  /** Original thread binding for each fix-marked identity (#743 resume authority). */
-  readonly fixMarkedFindingThreads?: readonly {
-    readonly identityKey: string;
-    readonly threadId: string;
-  }[];
+  /** Opaque Action-owned cycle identity for the resident online-review court. */
+  readonly onlineReviewCycle?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

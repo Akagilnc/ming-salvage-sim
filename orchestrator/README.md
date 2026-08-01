@@ -50,10 +50,11 @@ reads worker prose or completion evidence**:
 Commits, HEAD, diffs, PRs, tests, findings, report shape and external-effect
 evidence are never runner inputs. Each Action performs and verifies its own
 side effects; the next professional worker judges empty work or a false fix.
-Online-review verify should own GitHub reply/resolve/deferred side effects and
-only then self-report judge three-state. Until workers fully own `gh`, the host
-loop still applies residual cargo as fail-safe via `onlineReviewSideEffects.ts`
-(K1 dual-owner interim). There is no mechanical round cap (#940 / #934 ID-012).
+Online Review splits across two seats (#1145): **Collector** owns GH
+query/wait/retrigger/evidence; **Verify** owns finding judgment plus GitHub
+reply/resolve/deferred side effects, then self-reports judge three-state.
+Runner never replays residual cargo after either Action returns. There is no
+mechanical round cap (#940 / #934 ID-012).
 Detailed operational rules live in `orchestrator/CLAUDE.md`; professional
 methods live in versioned souls/skills/actions. Read live #869 for the target
 delivery topology; its Testing Decisions identify the implementation tickets

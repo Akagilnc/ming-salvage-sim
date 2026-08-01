@@ -2139,6 +2139,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           };
         }
         if (
+          spec.kind === "collector" ||
           spec.kind === "verify" ||
           spec.kind === "fixer" ||
           spec.kind === "cleanup" ||
@@ -2147,8 +2148,23 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output:
-              spec.kind === "verify"
-                ? { kind: "verify", converged: true }
+              spec.kind === "collector"
+                ? {
+                  kind: "collector",
+                  evidence: {
+                    prUrl: "pr://offline",
+                    headOid: "offline-head",
+                    totalFindingCount: 0,
+                    quiescent: true,
+                    bots: {},
+                    droppedBots: [],
+                    threads: [],
+                    checkRuns: [],
+                    checkRunsEmptyMeans: "converged",
+                  },
+                }
+                : spec.kind === "verify"
+                ? { kind: "verify", status: "converged" }
                 : spec.kind === "fixer"
                   ? {
                     kind: "fixer",

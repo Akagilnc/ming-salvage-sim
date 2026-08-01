@@ -583,6 +583,7 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "coder_fix.md",
         "family_ship.md",
         "merger_resolve_conflict.md",
+        "collector.md",
         "verify.md",
         "fixer.md",
         "landing.md",
@@ -599,6 +600,17 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
     );
     expect(() => new RealFamilyBackend(opts("/clone/root", { promptsDir: dir }))).toThrow(
       /wave_verify_judge\.md/,
+    );
+  });
+
+  it("construction throws when collector.md is missing from promptsDir (#1145)", () => {
+    // Collector is family-dispatched (S13); missing prompt must fail at
+    // construction, not after ship on the first Collector dispatch.
+    const dir = promptsDirWith(
+      REFERENCED_FAMILY_PROMPT_FILES.filter((f) => f !== "collector.md"),
+    );
+    expect(() => new RealFamilyBackend(opts("/clone/root", { promptsDir: dir }))).toThrow(
+      /collector\.md/,
     );
   });
 
@@ -737,15 +749,15 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
   it("feeds RAW valid verify tag through real parseVerifyOutcome (family seam)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const raw = `<verify>{"converged": true}</verify>`;
+    const raw = `<verify>{"status": "converged"}</verify>`;
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: true });
+    expect(out).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("feeds RAW valid-but-false verify through real parse (AC2: false flag passes shape)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseVerifyOutcome(`<verify>{"converged": false}</verify>`);
-    expect(out).toEqual({ kind: "verify", converged: false });
+    const out = mod.parseVerifyOutcome(`<verify>{"status": "continue"}</verify>`);
+    expect(out).toEqual({ kind: "verify", status: "continue" });
   });
 
   it("unreadable verify bytes remain cargo instead of becoming a process failure", async () => {
@@ -753,6 +765,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(mod.parseVerifyOutcome("no tag here").kind).toBe("cargo");
     expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("cargo");
     expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome(`<verify>{"status": "maybe"}</verify>`).kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome(`<verify>{"detail": "missing status"}</verify>`).kind).toBe("cargo");
   });
 
   it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
@@ -771,8 +785,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     writeFileSync(outcomePath, "{not json", "utf8");
     const sha = "a".repeat(40);
 
-    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath))
-      .toEqual({ kind: "verify", converged: true });
+    expect(mod.parseVerifyOutcome('<verify>{"status": "converged"}</verify>', outcomePath))
+      .toEqual({ kind: "verify", status: "converged" });
     expect(
       mod.parseFixerOutcome(
         `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
@@ -793,12 +807,12 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-bell-");
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ status: "converged" }), "utf8");
 
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
       outcomePath,
-    )).toEqual({ kind: "verify", converged: true });
+    )).toEqual({ kind: "verify", status: "converged" });
   });
 
   class FamilyCoderDecodeHarness extends RealFamilyBackend {
@@ -1051,14 +1065,24 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("RAW extra keys on verify remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseVerifyOutcome(`<verify>{"converged": true, "extra": "nope"}</verify>`);
+    const out = mod.parseVerifyOutcome(`<verify>{"status": "converged", "extra": "nope"}</verify>`);
     expect(out.kind).toBe("verify");
   });
 
   it("RAW extra keys on fixer remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseFixerOutcome(`<fixer>{"committed": false, "foo": 1, "bar": {}}</fixer>`);
-    expect(out.kind).toBe("fixer");
+    const out = mod.parseFixerOutcome(
+      `<fixer>{"committed": false, "foo": 1, "bar": {}, "notes": "opaque"}</fixer>`,
+    );
+    // #1145: after minimal object/committed check, preserve all fields with
+    // canonical kind:"fixer" — typed envelope retains sole fate authority.
+    expect(out).toEqual({
+      kind: "fixer",
+      committed: false,
+      foo: 1,
+      bar: {},
+      notes: "opaque",
+    });
   });
 
   it("RAW extra keys on cleanup remain cargo", async () => {
@@ -1069,14 +1093,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("decodes well-typed host side-effect plan fields; drops malformed optional cargo", async () => {
+  it("drops side-effect plan fields from verify host typing; keeps opaque audit-only (#1145)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    // Correctness K1: host fail-safe applicator needs plan cargo decoded when
-    // well-typed; malformed values stay dropped (not crash).
+    // #1145: threadReplies / threadsToResolve / deferredIssueUrls are no longer
+    // host-typed plan cargo — decoder ignores them whether well-formed or not.
     expect(
       mod.parseVerifyOutcome(
         `<verify>${JSON.stringify({
-          converged: true,
+          status: "converged",
           threadReplies: [{ threadId: "t1", body: "fixed" }],
           threadsToResolve: ["t1"],
           deferredIssueUrls: ["https://github.com/o/r/issues/1"],
@@ -1084,16 +1108,13 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       ),
     ).toEqual({
       kind: "verify",
-      converged: true,
-      threadReplies: [{ threadId: "t1", body: "fixed" }],
-      threadsToResolve: ["t1"],
-      deferredIssueUrls: ["https://github.com/o/r/issues/1"],
+      status: "converged",
     });
     expect(
       mod.parseVerifyOutcome(
-        `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
+        `<verify>{"status": "converged", "threadReplies": "chatty"}</verify>`,
       ),
-    ).toEqual({ kind: "verify", converged: true });
+    ).toEqual({ kind: "verify", status: "converged" });
     expect(
       mod.parseCleanupOutcome(
         `<cleanup>{"terminal": true, "ok": true, "issuesClosed": ["chatty"]}</cleanup>`,
@@ -1114,30 +1135,30 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     // prose mention of <verify> (as in real model chatter) must not poison extraction
     const raw =
       '我会把最终结果放在 <verify> 里。\n' +
-      '<verify>{"converged": true}</verify>\n' +
+      '<verify>{"status": "converged"}</verify>\n' +
       'done';
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: true });
+    expect(out).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("multiple complete tag blocks → the family parser takes the last one", async () => {
     const fam = await import("../../../src/family/realFamilyBackend.js");
     const raw =
-      '<verify>{"converged": false}</verify>\n' +
+      '<verify>{"status": "continue"}</verify>\n' +
       'chatter between\n' +
-      '<verify>{"converged": true}</verify>';
+      '<verify>{"status": "converged"}</verify>';
     const outFam = fam.parseVerifyOutcome(raw);
-    expect(outFam).toEqual({ kind: "verify", converged: true });
+    expect(outFam).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("unclosed trailing tag mention after a complete block → last complete wins (actual observed behavior)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     // trailing open-mention with no close must be ignored; we take the prior complete
     const raw =
-      '<verify>{"converged": false}</verify>\n' +
+      '<verify>{"status": "continue"}</verify>\n' +
       'later mention without close: see <verify> for details';
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: false });
+    expect(out).toEqual({ kind: "verify", status: "continue" });
   });
 });
 

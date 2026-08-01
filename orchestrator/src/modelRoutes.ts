@@ -64,6 +64,7 @@ export const MODEL_ROUTE_SLOTS = [
   "merger",
   "cmrCompleteness",
   "cmrCorrectness",
+  "collector",
   "verify",
   "fixer",
   "cleanup",
@@ -264,24 +265,110 @@ function parseRoutePreset(
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * One-time on-disk migration for external route presets missing `collector`.
+ *
+ * Production docs point `ORCHESTRATOR_ROUTE_PRESETS_PATH` at an owner-edited
+ * external file. When `collector` became a required slot, existing custom files
+ * without that key would fail strict parse before worksite creation. Materialize
+ * `collector` into the file once only when the key is absent (prefer same-named
+ * factory preset, else factory `normal`, else shipped default slug) — never
+ * rewrite explicit values (`null`, `""`, whitespace, numbers, …) and never
+ * default/alias at runtime inside `parseRoutePreset`.
+ */
+function materializeCollectorSlotInExternalPresetsFile(path: string): unknown {
+  if (!existsSync(path)) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    // The caller wraps this with the configured path for an actionable error.
+    throw error;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  let factoryCollectorByRoute = new Map<string, string>();
+  let factoryNormalCollector: string | undefined;
+  try {
+    if (existsSync(DEFAULT_ROUTE_PRESETS_PATH)) {
+      const factoryRaw = JSON.parse(
+        readFileSync(DEFAULT_ROUTE_PRESETS_PATH, "utf8"),
+      ) as unknown;
+      if (
+        typeof factoryRaw === "object" &&
+        factoryRaw !== null &&
+        !Array.isArray(factoryRaw)
+      ) {
+        for (const [name, value] of Object.entries(
+          factoryRaw as Record<string, unknown>,
+        )) {
+          if (typeof value !== "object" || value === null) continue;
+          const slots = (value as Record<string, unknown>).slots;
+          if (typeof slots !== "object" || slots === null) continue;
+          const collector = (slots as Record<string, unknown>).collector;
+          if (typeof collector === "string" && collector.trim() !== "") {
+            const trimmed = collector.trim();
+            factoryCollectorByRoute.set(name, trimmed);
+            if (name === "normal") factoryNormalCollector = trimmed;
+          }
+        }
+      }
+    }
+  } catch {
+    // Factory unreadable — fall through to shipped default slug.
+  }
+  const fallbackCollector = factoryNormalCollector ?? "grok-4.5";
+
+  const root = parsed as Record<string, unknown>;
+  for (const [name, value] of Object.entries(root)) {
+    if (typeof value !== "object" || value === null) continue;
+    const preset = value as Record<string, unknown>;
+    if (typeof preset.slots !== "object" || preset.slots === null) continue;
+    const slots = preset.slots as Record<string, unknown>;
+    // Only absent-key is omission. Explicit null/""/whitespace/number stay so
+    // parseRoutePreset's strict slot validation rejects them unchanged.
+    if (Object.prototype.hasOwnProperty.call(slots, "collector")) {
+      continue;
+    }
+    slots.collector = factoryCollectorByRoute.get(name) ?? fallbackCollector;
+  }
+  return root;
+}
+
+/**
+ * Load route presets. External custom files get absent-key-only collector
+ * materialization before strict parse — never a runtime alias (#1145).
+ * Explicit invalid collector values remain errors under parseRoutePreset.
+ */
 function loadRoutePresetsFromFile(
   path: string,
 ): Readonly<Record<string, ModelRoutePreset>> {
   if (!existsSync(path)) {
     throw new Error(`route presets file not found: ${path}`);
   }
+  // External custom files are migrated in memory; loading never writes them.
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    parsed =
+      path === DEFAULT_ROUTE_PRESETS_PATH
+        ? JSON.parse(readFileSync(path, "utf8"))
+        : materializeCollectorSlotInExternalPresetsFile(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`failed to parse route presets at ${path}: ${detail}`);
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  if (!isPlainObject(parsed)) {
     throw new Error(`route presets file must be a JSON object: ${path}`);
   }
   const out: Record<string, ModelRoutePreset> = {};
-  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+  for (const [name, value] of Object.entries(parsed)) {
     out[name] = parseRoutePreset(name, value);
   }
   return out;
@@ -616,6 +703,7 @@ export function familyRelaySlotsForWall(opts: {
   }
   if (step === "S10") return ["fixer"];
   if (step === "S12") return ["landing"];
+  if (step === "S13") return ["collector"]; // #1145 Collector has its own route slot
   // Explicit wall roles above. Phase fallbacks never rewrite ship for
   // online-review / wave verify barriers (C1: online-review must not touch ship).
   if (opts.phase === "online_review") return ["verify"];
