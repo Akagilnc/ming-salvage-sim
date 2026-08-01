@@ -175,7 +175,9 @@ export function onlineReviewDispatch(input: {
       if (bare !== undefined) return { verify: bare };
       const wrapped = asVerifyDispatchResult(raw);
       if (wrapped !== undefined) return wrapped;
-      return {};
+      throw new Error(
+        `invalid verify fixture at round ${round}: ${JSON.stringify(raw)}`,
+      );
     },
     dispatchFixer: async (landing) => {
       if (input.dispatchFixer === undefined) return undefined;
