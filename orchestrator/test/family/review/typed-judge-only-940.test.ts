@@ -85,6 +85,17 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
     });
   });
 
+  it("NEGATIVE: malformed verify fixture throws instead of impersonating no verify", async () => {
+    const dispatch = onlineReviewDispatch({
+      dispatchVerify: async () =>
+        ({ kind: "verify", state: "converged" }) as unknown as VerifyResult,
+    });
+
+    await expect(
+      dispatch.dispatchVerify({} as WorkerLandingPayload, 1),
+    ).rejects.toThrow(/invalid verify fixture.*state.*converged/i);
+  });
+
   it("POSITIVE: continue disposition past former 3-round cap still routes until worker converges", async () => {
     let verifyCalls = 0;
     let fixerCalls = 0;
