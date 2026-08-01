@@ -42,6 +42,21 @@ describe("online review typed topology and opaque transport (#1145)", () => {
     ).toBeUndefined();
   });
 
+  it("transports the Action session cargo without validating its contents", () => {
+    const opaqueEmptyHandle = "";
+    expect(
+      onlineReviewJudgeSessionIdFromFamilyLedger(
+        [{
+          status: "online_review_judge_opened",
+          event: "online_review_judge_opened",
+          pr: ship.pr,
+          sessionId: opaqueEmptyHandle,
+        }],
+        ship.pr,
+      ),
+    ).toBe(opaqueEmptyHandle);
+  });
+
   it.each([
     ["converged", "mergeable", 0],
     ["escalate", "decision_gate_raised", 0],
