@@ -1199,12 +1199,60 @@ export function familyAlreadyShipped(
   return familyShippedRecordForHead(entries, familyHeadAfter) !== undefined;
 }
 
-/** Exact shipped anchor only; Online Review owns all later PR/head recovery. */
+/**
+ * Shipped anchor for Online Review re-entry.
+ *
+ * The exact current-head row handles a crash before Online Review opens. Once
+ * its typed court-open traffic exists, that traffic's opaque cycle identity may
+ * recover the original ship anchor after Fixer has advanced the worktree HEAD.
+ * No Fixer result, fix SHA, evidence body, or other professional cargo is read.
+ */
 export function familyShippedRecordForReviewLoopResume(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
 ): ShippedRecord | undefined {
-  return familyShippedRecordForHead(entries, familyHeadAfter);
+  const exact = familyShippedRecordForHead(entries, familyHeadAfter);
+  if (exact !== undefined) return exact;
+
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const opened = entries[i]!;
+    if (
+      opened.status !== "online_review_judge_opened" ||
+      opened.event !== "online_review_judge_opened" ||
+      typeof opened.onlineReviewCycle !== "string" ||
+      opened.onlineReviewCycle.trim().length === 0 ||
+      typeof opened.pr !== "string" ||
+      opened.pr.trim().length === 0
+    ) {
+      continue;
+    }
+    const cycle = opened.onlineReviewCycle.trim();
+    const pr = opened.pr.trim();
+    const cycleAlreadyConverged = entries.slice(i + 1).some(
+      (entry) =>
+        isValidReviewLoopConverged(entry) && entry.pr.trim() === pr,
+    );
+    if (cycleAlreadyConverged) return undefined;
+
+    for (let j = i - 1; j >= 0; j--) {
+      const shipped = entries[j]!;
+      if (
+        isValidFamilyShipped(shipped) &&
+        shipped.familyHeadAfter === cycle &&
+        shipped.pr.trim() === pr
+      ) {
+        return {
+          pr: shipped.pr,
+          familyHeadAfter: shipped.familyHeadAfter,
+          ...(shipped.stopSummary !== undefined
+            ? { stopSummary: shipped.stopSummary }
+            : {}),
+        };
+      }
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 /**
