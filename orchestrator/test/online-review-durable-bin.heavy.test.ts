@@ -84,6 +84,31 @@ function processStarttime(pid: number): string | undefined {
 }
 
 describe("#1145 durable bin.mjs CLI (sole capability)", () => {
+  it("reports the latest Collector head per resolved PR for worker-owned retrigger", () => {
+    const dir = mkdtempSync(join(tmpdir(), "or-online-review-latest-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(dir);
+      expect(runBin(hostPath, ["progress-init", ...ns(1, HEAD_A, PR_A)]).status).toBe(0);
+      expect(runBin(hostPath, ["progress-init", ...ns(2, HEAD_B, PR_A)]).status).toBe(0);
+      expect(runBin(hostPath, ["progress-init", ...ns(1, HEAD_A, PR_B)]).status).toBe(0);
+
+      const current = runBin(hostPath, ["progress-latest", "--pr", PR_A]);
+      const replacement = runBin(hostPath, ["progress-latest", "--pr", PR_B]);
+      expect(JSON.parse(current.stdout)).toMatchObject({
+        round: 2,
+        head: HEAD_B,
+        pr: PR_A,
+      });
+      expect(JSON.parse(replacement.stdout)).toMatchObject({
+        round: 1,
+        head: HEAD_A,
+        pr: PR_B,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("evidence-put → progress-classify resume → evidence-get same handle (no re-wait)", () => {
     const workingRepo = mkdtempSync(join(tmpdir(), "or-bin-1145-"));
     try {

@@ -25,7 +25,6 @@ import type {
   VerifyResult,
   WorkerLandingPayload,
 } from "../types.js";
-import { fixerEnvelopeFixCommitSha } from "../reviewLoopOutcome.js";
 import type { StopSummary } from "../stopSummary.js";
 import { decisionGateParkStopSummary } from "../stopSummary.js";
 import { stageFailureStopSummary } from "./familyTerminal.js";
@@ -831,26 +830,17 @@ export function postFixTransitionUnconsumedFromFamilyLedger(
 export function buildOnlineReviewBaseLanding(
   ship: ShipResult,
   round: number,
-  postFixCommitSha?: string,
-  /**
-   * One-shot stage fact: true only for the Collector that immediately follows
-   * an effective-head move. Caller clears after that dispatch.
-   */
-  postFixTransition?: boolean,
 ): WorkerLandingPayload {
-  const prHead = convergenceHeadForLanding({
-    shipPrHead: ship.prHead,
-    postFixCommitSha,
-  });
   return {
     shipDelivery: {
       branch: ship.branch,
       pr: ship.pr,
-      ...(prHead !== undefined && prHead.length > 0 ? { prHead } : {}),
+      ...(ship.prHead !== undefined && ship.prHead.length > 0
+        ? { prHead: ship.prHead }
+        : {}),
       ...(ship.status !== undefined ? { status: ship.status } : {}),
     },
     onlineReviewRound: round,
-    ...(postFixTransition === true ? { postFixTransition: true } : {}),
   };
 }
 
@@ -908,15 +898,6 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  /**
-   * Record/persist the fixing commit SHA after fixer success.
-   * Receives the envelope {@link fixCommitSha} only — never re-read live git
-   * (ADR 0030 envelope-only). Post-fix retrigger/wait is Collector's job on
-   * the next loop iteration — no host retriggerAfterFix seam.
-   */
-  readonly resolveFixCommitSha?: (
-    envelopeFixSha: string,
-  ) => string | Promise<string>;
 }
 
 /**
@@ -1089,20 +1070,12 @@ export async function runOnlineReviewLoopStage(
   dispatch: OnlineReviewLoopDispatch,
   opts?: {
     readonly initialRound?: number;
-    /** Prior fixing commit SHA — surfaces post-fix head to Collector landing. */
-    readonly initialFixCommitSha?: string;
     /**
      * #1145 post-fixer crash resume: opaque fixer cargo already durable.
      * When set, this round skips first Verify + Fixer and goes to same-round
      * Verify with the cargo (Collector still runs — checkpoint short-circuit).
      */
     readonly initialPendingFixerResult?: FixerResult;
-    /**
-     * #1145: reconstructed unconsumed post-fix one-shot. True when a committed
-     * fix head has no Collector checkpoint yet (crash after fix_committed).
-     * Live head-move during this process still sets the flag independently.
-     */
-    readonly initialPostFixTransition?: boolean;
     /** Optional runner-owned landing enrichment (#711 prior-round data). */
     readonly enrichVerifyLanding?: (
       landing: WorkerLandingPayload,
@@ -1127,64 +1100,17 @@ export async function runOnlineReviewLoopStage(
     );
   }
   let round = opts?.initialRound ?? 1;
-  /** Last known fix head for Collector post-fix landing (opaque transport). */
-  let lastFixCommitSha = opts?.initialFixCommitSha;
-  /**
-   * One-shot stage fact for the next Collector only. Set when pending
-   * committed-fixer resume or current fixer envelope moves the effective head;
-   * cleared immediately after that Collector dispatch. Legal no-op retaining
-   * the prior fix SHA must not set it (#1145).
-   *
-   * May also be reconstructed from ledger when fix_committed already advanced
-   * lastFixSha to the new head but no Collector checkpoint exists yet.
-   */
-  let postFixTransition = opts?.initialPostFixTransition === true;
   let recheckOnlineReviewFixPacket: unknown;
   /**
    * When set, skip first Verify + Fixer and feed this cargo to same-round Verify.
    * Cleared after the post-fixer Verify seat consumes it (or attempts to).
    */
   let pendingFixerResult: FixerResult | undefined = opts?.initialPendingFixerResult;
-  /**
-   * Crash between Fixer return and resolveFixCommitSha left envelope SHA without
-   * fix_committed — call the callback once on resume whenever the pending SHA
-   * differs from the ledger's previous head (incl. second-round old→new).
-   */
-  let resumeNeedsFixShaBookkeeping = false;
-  if (pendingFixerResult !== undefined) {
-    const resumedSha = fixerEnvelopeFixCommitSha(pendingFixerResult);
-    if (resumedSha !== undefined && resumedSha.length > 0) {
-      const previousEffectiveHead =
-        lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
-          ? lastFixCommitSha
-          : ship.prHead;
-      if (
-        postFixTransitionFromCommittedFixerResumeMarker({
-          previousEffectiveHead,
-          committedFixerHead: resumedSha,
-        })
-      ) {
-        lastFixCommitSha = resumedSha;
-        resumeNeedsFixShaBookkeeping = true;
-        postFixTransition = true;
-      } else if (postFixTransition) {
-        // fix_committed already booked the new head (SHA equality); keep the
-        // reconstructed one-shot until Collector checkpoint consumes it.
-        lastFixCommitSha = resumedSha;
-      }
-    }
-  }
-
   // #940 / ID-012: no mechanical round cap — persistent verify judge owns
   // continue vs escalate. Runner only routes the three-state disposition.
   for (;;) {
     // Base landing only — Collector owns GH evidence (#1145).
-    let landing = buildOnlineReviewBaseLanding(
-      ship,
-      round,
-      lastFixCommitSha,
-      postFixTransition,
-    );
+    let landing = buildOnlineReviewBaseLanding(ship, round);
     if (opts?.enrichVerifyLanding !== undefined) {
       landing = await opts.enrichVerifyLanding(landing, round);
     }
@@ -1197,15 +1123,10 @@ export async function runOnlineReviewLoopStage(
     > | undefined;
     try {
       const collected = await dispatch.dispatchCollector(landing, round);
-      // One-shot: consume after the immediately following Collector dispatch.
-      postFixTransition = false;
       // Opaque evidence transport — stage copies handle/blob by reference and
       // never inspects body fields to drive scheduling (#1145 / ADR 0131).
       // prHead bookkeeping = ship/fix SHA only. Sparse cargo ≠ fate.
-      const baseHead =
-        lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
-          ? lastFixCommitSha
-          : ship.prHead;
+      const baseHead = ship.prHead;
       // Any object body copied verbatim; pointer-only remains legal.
       landing = {
         ...landing,
@@ -1298,90 +1219,10 @@ export async function runOnlineReviewLoopStage(
       }
       pendingFixerResult = fixerOutput;
 
-      // Envelope SHA bookkeeping only — presence does not fork the next seat.
-      // Always adopt envelope SHA first; resolveFixCommitSha may override only.
-      // postFixTransition is set only when the effective head actually moves.
-      const envelopeFixSha =
-        fixerOutput !== undefined
-          ? fixerEnvelopeFixCommitSha(fixerOutput)
-          : undefined;
-      if (envelopeFixSha !== undefined && envelopeFixSha.length > 0) {
-        const previousEffectiveHead =
-          lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
-            ? lastFixCommitSha
-            : ship.prHead;
-        lastFixCommitSha = envelopeFixSha;
-        if (dispatch.resolveFixCommitSha) {
-          try {
-            const resolved = await dispatch.resolveFixCommitSha(envelopeFixSha);
-            if (typeof resolved === "string" && resolved.length > 0) {
-              lastFixCommitSha = resolved;
-            }
-          } catch (err) {
-            if (err instanceof OnlineReviewLoopTerminal) {
-              throw err;
-            }
-            return decisionGateFromDispatchInfra(reviewedPr, round, "fixer", err);
-          }
-        }
-        if (
-          postFixTransitionFromCommittedFixerResumeMarker({
-            previousEffectiveHead,
-            committedFixerHead: lastFixCommitSha,
-          })
-        ) {
-          postFixTransition = true;
-        }
-      }
-    } else if (
-      resumeNeedsFixShaBookkeeping &&
-      lastFixCommitSha !== undefined &&
-      lastFixCommitSha.length > 0 &&
-      dispatch.resolveFixCommitSha
-    ) {
-      resumeNeedsFixShaBookkeeping = false;
-      try {
-        const resolved = await dispatch.resolveFixCommitSha(lastFixCommitSha);
-        if (typeof resolved === "string" && resolved.length > 0) {
-          lastFixCommitSha = resolved;
-        }
-      } catch (err) {
-        if (err instanceof OnlineReviewLoopTerminal) {
-          throw err;
-        }
-        return decisionGateFromDispatchInfra(reviewedPr, round, "fixer", err);
-      }
-    } else {
-      resumeNeedsFixShaBookkeeping = false;
     }
 
-    // #1145: EVERY fixer result is opaque cargo back to the SAME Verify judge.
-    // Do not branch topology on committed / alreadySatisfied / fixCommitSha
-    // (no fourth state, no isFixerLegalNoOp control-flow fork).
-    // After accepting/resolving the Fixer envelope SHA, pin shipDelivery.prHead
-    // to the already-established effective head before same-round recheck
-    // Verify — retain Collector evidence + opaque fixer cargo so the durable
-    // (round, head, PR) receipt namespace stays stable across crash/resume.
-    const effectiveHead =
-      lastFixCommitSha !== undefined && lastFixCommitSha.length > 0
-        ? lastFixCommitSha
-        : ship.prHead;
-    const shipDeliveryForRecheck =
-      landing.shipDelivery !== undefined
-        ? {
-            ...landing.shipDelivery,
-            ...(effectiveHead !== undefined && effectiveHead.length > 0
-              ? { prHead: effectiveHead }
-              : {}),
-          }
-        : {
-            branch: ship.branch,
-            pr: ship.pr,
-            ...(effectiveHead !== undefined && effectiveHead.length > 0
-              ? { prHead: effectiveHead }
-              : {}),
-            ...(ship.status !== undefined ? { status: ship.status } : {}),
-          };
+    // Fixer cargo returns whole to the resident judge. The Collector resolves
+    // any resulting PR/head transition on its next beat.
     landing = {
       ...landing,
       ...(recheckOnlineReviewFixPacket !== undefined
@@ -1390,7 +1231,6 @@ export async function runOnlineReviewLoopStage(
       ...(pendingFixerResult !== undefined
         ? { fixerResult: pendingFixerResult }
         : {}),
-      shipDelivery: shipDeliveryForRecheck,
     };
     // Cargo handed to same-round Verify — clear so a later continue iteration
     // does not skip first Verify + Fixer again.

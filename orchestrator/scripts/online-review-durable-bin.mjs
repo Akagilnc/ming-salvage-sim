@@ -361,6 +361,14 @@ function lastProgress(events, round, head, pr) {
   return undefined;
 }
 
+function latestProgressForPr(events, pr) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.kind === "collection_progress" && e.pr === pr) return e;
+  }
+  return undefined;
+}
+
 function receiptsForRound(events, round, head, pr) {
   const map = new Map();
   for (const e of events) {
@@ -580,6 +588,22 @@ function main() {
       const head = requireHead(args);
       const pr = requirePr(args);
       out(classify(root, round, head, pr));
+      break;
+    }
+    case "progress-latest": {
+      const pr = requirePr(args);
+      const progress = latestProgressForPr(requireEvents(root), pr);
+      out(
+        progress === undefined
+          ? null
+          : {
+              round: progress.round,
+              head: progress.head,
+              pr: progress.pr,
+              phase: progress.phase,
+              evidenceHandle: progress.evidenceHandle,
+            },
+      );
       break;
     }
     case "receipt-attempted":
