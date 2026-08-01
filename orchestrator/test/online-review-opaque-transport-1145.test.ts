@@ -3,6 +3,7 @@ import {
   onlineReviewJudgeSessionIdFromFamilyLedger,
   runOnlineReviewLoopStage,
 } from "../src/family/onlineReviewLoop.js";
+import type { FamilyLedgerEntry } from "../src/family/types.js";
 import type {
   FixerResult,
   WorkerLandingPayload,
@@ -19,7 +20,7 @@ describe("online review typed topology and opaque transport (#1145)", () => {
   it("restores the resident judge session only for the bound PR", () => {
     const oldPr = "https://github.com/test/repo/pull/5";
     const currentPr = "https://github.com/test/repo/pull/6";
-    const ledger = [
+    const ledger: FamilyLedgerEntry[] = [
       {
         status: "online_review_judge_opened",
         event: "online_review_judge_opened",
@@ -62,7 +63,7 @@ describe("online review typed topology and opaque transport (#1145)", () => {
           pr: ship.pr,
           onlineReviewCycle: ship.prHead,
           sessionId: opaqueEmptyHandle,
-        }],
+        } satisfies FamilyLedgerEntry],
         ship.pr,
         ship.prHead,
       ),
@@ -70,7 +71,7 @@ describe("online review typed topology and opaque transport (#1145)", () => {
   });
 
   it("does not resume the first resident judge in a later cycle on the same PR", () => {
-    const ledger = [
+    const ledger: FamilyLedgerEntry[] = [
       {
         status: "online_review_judge_opened",
         event: "online_review_judge_opened",
