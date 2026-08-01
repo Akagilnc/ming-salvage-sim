@@ -2612,6 +2612,12 @@ export class RealFamilyBackend implements FamilyBackend {
         // #919 CR T2 / ADR 0132: thin onlineReview station receipt
         // (completed|escalate). Collector evidence is opaque sidecar cargo
         // (#1145 / ADR 0131 cargo ≠ fate) — never a typed traffic field.
+        const agent = this.agentForSpec(spec, ctx);
+        const resumeSession = await this.resolveSandcastleResumeSessionId(
+          spec,
+          ctx,
+          agent,
+        );
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2623,7 +2629,8 @@ export class RealFamilyBackend implements FamilyBackend {
             onlineReviewLanding,
             outcomeLanding,
           ),
-          agent: this.agentForSpec(spec, ctx),
+          agent,
+          ...(resumeSession !== undefined ? { resumeSession } : {}),
           maxIterations: spec.maxIter,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
@@ -4670,7 +4677,7 @@ function reviewLoopCargoResult(
   }
   const cargo: Record<string, unknown> = { ...raw.parsed };
   // Collector body is opaque evidence end-to-end — do not strip business keys.
-  if (kind !== "collector") {
+  if (kind !== "collector" && kind !== "fixer") {
     delete cargo.escalate;
   }
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
