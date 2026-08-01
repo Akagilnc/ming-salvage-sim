@@ -605,12 +605,15 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     let collectorDispatches = 0;
     let fixerDispatches = 0;
     let verifyDispatches = 0;
+    let collectorLanding: WorkerLandingPayload | undefined;
+    let verifySession: string | undefined;
+    let verifyResumeSessionId: string | undefined;
     let fixerCargoReturnedToJudge: unknown;
     let evidenceReturnedToJudge: unknown;
     familyBackend.dispatchWorker = async (spec, ctx, landing) => {
       if (spec.kind === "collector") {
         collectorDispatches += 1;
-        expect(landing?.shipDelivery).toMatchObject({ pr, prHead: shippedHead });
+        collectorLanding = landing;
         return {
           kind: "completed",
           output: {
@@ -629,8 +632,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
-        expect(spec.session).toBe("resume");
-        expect(ctx.resumeSessionId).toBe(residentJudgeSession);
+        verifySession = spec.session;
+        verifyResumeSessionId = ctx.resumeSessionId;
         fixerCargoReturnedToJudge = landing?.fixerResult;
         evidenceReturnedToJudge = landing?.onlineReviewSnapshot;
         return {
@@ -661,6 +664,9 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     expect(collectorDispatches).toBe(1);
     expect(fixerDispatches).toBe(0);
     expect(verifyDispatches).toBe(1);
+    expect(collectorLanding?.shipDelivery).toMatchObject({ pr, prHead: shippedHead });
+    expect(verifySession).toBe("resume");
+    expect(verifyResumeSessionId).toBe(residentJudgeSession);
     expect(fixerCargoReturnedToJudge).toBe(recoveredFixerCargo);
     expect(evidenceReturnedToJudge).toBe(recoveredEvidence);
   });
