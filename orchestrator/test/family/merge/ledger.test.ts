@@ -249,6 +249,32 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ).toBeUndefined();
   });
 
+  it("does not resume a typed review cycle opened for a different PR", () => {
+    const shippedPr = "https://github.com/test/repo/pull/352";
+    const shipped: FamilyLedgerEntry = {
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr: shippedPr,
+      familyHeadAfter: "opaque-cycle-a",
+    };
+    const openedForDifferentPr: FamilyLedgerEntry = {
+      status: "online_review_judge_opened",
+      event: "online_review_judge_opened",
+      pr: "https://github.com/test/repo/pull/353",
+      onlineReviewCycle: "opaque-cycle-a",
+      onlineReviewRound: 1,
+      sessionId: "resident-judge",
+    };
+
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, openedForDifferentPr],
+        "unread-post-fix-head",
+      ),
+    ).toBeUndefined();
+  });
+
   it("familyAlreadyShipped is FALSE for a ledger with only merged/aborted entries", () => {
     expect(
       familyAlreadyShipped([
