@@ -301,7 +301,7 @@ describe("#916 route presets config load + priority", () => {
 
   // #1145: existing custom external file missing collector is migrated on disk
   // once before strict parse — not runtime-defaulted inside parseRoutePreset.
-  it("one-time migrates external custom presets missing collector onto disk", () => {
+  it("defaults collector in memory without writing external custom presets", () => {
     const slotsWithoutCollector = fullSlots();
     delete (slotsWithoutCollector as { collector?: string }).collector;
     expect(slotsWithoutCollector.collector).toBeUndefined();
@@ -334,7 +334,7 @@ describe("#916 route presets config load + priority", () => {
 
     const normal = resolveRouteModels("normal", {});
     const custom = resolveRouteModels("custom-only", {});
-    // Factory normal.collector (grok-4.5) materializes for same-named route;
+    // Factory normal.collector (grok-4.5) defaults the same-named route;
     // unknown route names fall back to factory normal / shipped default.
     expect(normal.slots.collector).toBe("grok-4.5");
     expect(custom.slots.collector).toBe("grok-4.5");
@@ -345,8 +345,8 @@ describe("#916 route presets config load + priority", () => {
       normal: { slots: Record<string, string> };
       "custom-only": { slots: Record<string, string> };
     };
-    expect(after.normal.slots.collector).toBe("grok-4.5");
-    expect(after["custom-only"].slots.collector).toBe("grok-4.5");
+    expect(after.normal.slots.collector).toBeUndefined();
+    expect(after["custom-only"].slots.collector).toBeUndefined();
   });
 
   // #1145: explicit invalid collector is owner intent — migrate only absent key,
