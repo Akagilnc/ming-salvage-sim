@@ -765,6 +765,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(mod.parseVerifyOutcome("no tag here").kind).toBe("cargo");
     expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("cargo");
     expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome(`<verify>{"status": "maybe"}</verify>`).kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome(`<verify>{"detail": "missing status"}</verify>`).kind).toBe("cargo");
   });
 
   it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
