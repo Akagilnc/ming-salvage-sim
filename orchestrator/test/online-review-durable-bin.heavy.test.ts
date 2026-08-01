@@ -84,6 +84,48 @@ function processStarttime(pid: number): string | undefined {
 }
 
 describe("#1145 durable bin.mjs CLI (sole capability)", () => {
+  it("persists and restores the complete opaque Fixer cargo within its review cycle", () => {
+    const dir = mkdtempSync(join(tmpdir(), "or-online-review-fixer-"));
+    try {
+      const { hostPath } = ensureOnlineReviewDurableDir(dir);
+      const body = JSON.stringify({
+        kind: "fixer",
+        committed: true,
+        alreadySatisfied: false,
+        opaque: { untouched: [1, 2, 3] },
+      });
+
+      expect(
+        runBin(hostPath, ["fixer-put", ...ns(1, HEAD_A, PR_A), "--file", "-"], {
+          stdin: body,
+        }).status,
+      ).toBe(0);
+      const recovered = runBin(hostPath, ["fixer-get", ...ns(1, HEAD_A, PR_A)]);
+      expect(recovered.status).toBe(0);
+      expect(recovered.stdout).toBe(body);
+      expect(runBin(hostPath, ["fixer-get", ...ns(1, HEAD_B, PR_A)]).status).toBe(3);
+      expect(runBin(hostPath, ["fixer-get", ...ns(1, HEAD_A, PR_B)]).status).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("transports Collector-recovered Fixer cargo as one opaque body", () => {
+    const recovered = Object.freeze({
+      kind: "fixer",
+      committed: true,
+      alreadySatisfied: false,
+      nested: { exact: "cargo" },
+    });
+    const parsed = parseCollectorOutcome(
+      `<collector>${JSON.stringify({ recoveredFixerResult: recovered })}</collector>`,
+    );
+    expect(parsed).toMatchObject({
+      kind: "collector",
+      recoveredFixerResult: recovered,
+    });
+  });
+
   it("reports the latest Collector head per resolved PR for worker-owned retrigger", () => {
     const dir = mkdtempSync(join(tmpdir(), "or-online-review-latest-"));
     try {

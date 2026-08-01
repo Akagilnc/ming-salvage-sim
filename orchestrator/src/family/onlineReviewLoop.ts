@@ -133,6 +133,8 @@ export interface OnlineReviewCollectorDispatchResult {
    */
   readonly evidence?: OnlineReviewLandingSnapshot;
   readonly cargoPointer?: string;
+  /** Opaque Fixer cargo recovered by the Collector's durable capability. */
+  readonly recoveredFixerResult?: FixerResult;
   readonly artifacts?: NonNullable<
     WorkerLandingPayload["rawReviewerArtifacts"]
   >;
@@ -208,22 +210,27 @@ export function canonicalOnlineReviewPrId(pr: string): string | undefined {
   return raw;
 }
 
-/** Latest resident Verify session for this exact PR. */
+/** Latest resident Verify session for this exact Action-owned review cycle. */
 export function onlineReviewJudgeSessionIdFromFamilyLedger(
   entries: ReadonlyArray<{
     readonly status?: string;
     readonly event?: string;
     readonly pr?: string;
+    readonly onlineReviewCycle?: string;
     readonly sessionId?: string;
   }>,
   currentPr: string,
+  currentCycle?: string,
 ): string | undefined {
+  // An absent cycle token cannot prove resident-seat identity, so open fresh.
+  if (currentCycle === undefined) return undefined;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
     if (
       entry.status !== "online_review_judge_opened" ||
       entry.event !== "online_review_judge_opened" ||
-      !onlineReviewPrIdentityEquals(entry.pr, currentPr)
+      !onlineReviewPrIdentityEquals(entry.pr, currentPr) ||
+      entry.onlineReviewCycle !== currentCycle
     ) {
       continue;
     }
@@ -428,6 +435,12 @@ export async function runOnlineReviewLoopStage(
           : {}),
       };
       collectorArtifacts = collected.artifacts;
+      // Recovery is decided by the professional Collector Action. Runner only
+      // moves the returned opaque body to the resident judge and never reads
+      // Fixer business fields.
+      if (pendingFixerResult === undefined) {
+        pendingFixerResult = collected.recoveredFixerResult;
+      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;

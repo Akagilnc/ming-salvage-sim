@@ -686,6 +686,51 @@ function main() {
       out(receipt ?? null);
       break;
     }
+    case "fixer-put": {
+      const round = requireRound(args);
+      const head = requireHead(args);
+      const pr = requirePr(args);
+      const body =
+        args.file === "-" || args.file === undefined
+          ? readFileSync(0)
+          : readFileSync(String(args.file));
+      const id = `fixer-r${round}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const handle = `${BLOBS_DIR}/${id}`;
+      const dest = blobAbs(root, handle);
+      const tmp = `${dest}.tmp`;
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(tmp, body);
+      renameSync(tmp, dest);
+      appendEvent(root, {
+        v: 1,
+        kind: "fixer_completed",
+        round,
+        head,
+        pr,
+        ts: nowIso(),
+        handle,
+      });
+      out({ handle });
+      break;
+    }
+    case "fixer-get": {
+      const round = requireRound(args);
+      const head = requireHead(args);
+      const pr = requirePr(args);
+      const event = requireEvents(root)
+        .slice()
+        .reverse()
+        .find(
+          (candidate) =>
+            candidate.kind === "fixer_completed" &&
+            sameNamespace(candidate, round, head, pr),
+        );
+      if (event === undefined) process.exit(3);
+      const path = blobAbs(root, event.handle);
+      if (!existsSync(path)) die(`fixer handle unreadable: ${event.handle}`, 2);
+      process.stdout.write(readFileSync(path));
+      break;
+    }
     case "evidence-put": {
       const round = requireRound(args);
       const head = requireHead(args);

@@ -14,6 +14,22 @@
 **修法形状同受 authority 红线管：红线拒收的形态不得交卷，
 宁可驳回或上抛。**
 
+## Online Review durable 交卷（#1145）
+
+线上评审 Fixer 在 emit typed completion **之前**，必须把将要交给同一判官的
+完整 Fixer JSON 原样写入 Action-owned durable capability：
+
+```text
+DURABLE="$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH"
+CLI="node $DURABLE/bin.mjs"
+$CLI fixer-put --round <landing onlineReviewRound> \
+  --head <landing shipDelivery.prHead> --pr <landing shipDelivery.pr> --file <完整交卷文件>
+```
+
+`fixer-put` 成功后才能完成 Action；失败则本 Action 非零退出。禁止让 host
+补写、解析 `committed` / `alreadySatisfied` 等业务字段。这样进程在交卷后崩溃
+重入时，Collector 可取回同一 opaque body，零第二次 Fixer 外部副作用。
+
 **出拍一律过堂（ADR 0147 / #1083）**。计划拍或施工拍不分——交卷后 runner
 哑搬常驻判官；你不直连 fresh reviewer。施工前先交拟刀口散文（无模板，
 厚薄=笔法）；判官收货后才放行 fresh 复审。

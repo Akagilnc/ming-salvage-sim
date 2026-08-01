@@ -24,21 +24,31 @@ describe("online review typed topology and opaque transport (#1145)", () => {
         status: "online_review_judge_opened",
         event: "online_review_judge_opened",
         pr: oldPr,
+        onlineReviewCycle: "cycle-old-5",
         sessionId: "judge-old-5",
       },
       {
         status: "online_review_judge_opened",
         event: "online_review_judge_opened",
         pr: currentPr,
+        onlineReviewCycle: "cycle-current-6",
         sessionId: "judge-current-6",
       },
     ];
 
-    expect(onlineReviewJudgeSessionIdFromFamilyLedger(ledger, currentPr)).toBe(
-      "judge-current-6",
-    );
     expect(
-      onlineReviewJudgeSessionIdFromFamilyLedger(ledger, "https://github.com/test/repo/pull/7"),
+      onlineReviewJudgeSessionIdFromFamilyLedger(
+        ledger,
+        currentPr,
+        "cycle-current-6",
+      ),
+    ).toBe("judge-current-6");
+    expect(
+      onlineReviewJudgeSessionIdFromFamilyLedger(
+        ledger,
+        "https://github.com/test/repo/pull/7",
+        "cycle-current-7",
+      ),
     ).toBeUndefined();
   });
 
@@ -50,11 +60,33 @@ describe("online review typed topology and opaque transport (#1145)", () => {
           status: "online_review_judge_opened",
           event: "online_review_judge_opened",
           pr: ship.pr,
+          onlineReviewCycle: ship.prHead,
           sessionId: opaqueEmptyHandle,
         }],
         ship.pr,
+        ship.prHead,
       ),
     ).toBe(opaqueEmptyHandle);
+  });
+
+  it("does not resume the first resident judge in a later cycle on the same PR", () => {
+    const ledger = [
+      {
+        status: "online_review_judge_opened",
+        event: "online_review_judge_opened",
+        pr: ship.pr,
+        onlineReviewCycle: "head-cycle-1",
+        sessionId: "judge-cycle-1",
+      },
+    ];
+
+    expect(
+      onlineReviewJudgeSessionIdFromFamilyLedger(
+        ledger,
+        ship.pr,
+        "head-cycle-2",
+      ),
+    ).toBeUndefined();
   });
 
   it.each([
@@ -73,6 +105,32 @@ describe("online review typed topology and opaque transport (#1145)", () => {
 
     expect(result.terminalState).toBe(terminalState);
     expect(fixerCalls).toBe(expectedFixers);
+  });
+
+  it("returns Action-recovered Fixer cargo to the judge without a second Fixer dispatch", async () => {
+    const recovered: FixerResult = Object.freeze({
+      kind: "fixer",
+      committed: true,
+      opaque: "original-cargo",
+    });
+    let fixerCalls = 0;
+    let judgeLanding: WorkerLandingPayload | undefined;
+
+    const result = await runOnlineReviewLoopStage(ship, {
+      dispatchCollector: async () => ({ recoveredFixerResult: recovered }),
+      dispatchVerify: async (landing) => {
+        judgeLanding = landing;
+        return { verify: { kind: "verify", status: "converged" } };
+      },
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return { kind: "fixer", committed: false };
+      },
+    });
+
+    expect(fixerCalls).toBe(0);
+    expect(judgeLanding?.fixerResult).toBe(recovered);
+    expect(result.terminalState).toBe("mergeable");
   });
 
   it("moves the judge packet to Fixer and the whole Fixer result back without reading business cargo", async () => {

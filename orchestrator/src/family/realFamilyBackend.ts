@@ -4711,9 +4711,15 @@ export function parseCollectorOutcome(
   }
   // OnlineReviewEvidenceCargo is `{ readonly [key: string]: unknown }` — assignable.
   const evidence: OnlineReviewLandingSnapshot = parsed;
+  const recoveredFixerResult = parsed.recoveredFixerResult as
+    | FixerResult
+    | undefined;
   return {
     kind: "collector",
     evidence,
+    // Optional Action-owned recovery body is transported whole. Its presence
+    // does not change Collector process fate and no Fixer business field is read.
+    ...(recoveredFixerResult !== undefined ? { recoveredFixerResult } : {}),
   };
 }
 

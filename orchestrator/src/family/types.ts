@@ -447,6 +447,8 @@ export interface FamilyLedgerEntry {
   readonly ts?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
+  /** Opaque Action-owned cycle identity for the resident online-review court. */
+  readonly onlineReviewCycle?: string;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────
