@@ -536,8 +536,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
-              terminalState: "decision_gate_raised",
+              status: "escalate",
             },
           };
         }
