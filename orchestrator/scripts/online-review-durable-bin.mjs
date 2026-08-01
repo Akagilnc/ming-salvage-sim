@@ -127,7 +127,11 @@ function readLockOwner(lockPath) {
   return undefined;
 }
 
-function unlinkLock(lockPath) {
+function unlinkLock(lockPath, expectedToken) {
+  if (expectedToken !== undefined) {
+    const current = readLockOwner(lockPath);
+    if (current?.token !== expectedToken) return false;
+  }
   try {
     unlinkSync(lockPath);
     return true;
@@ -160,7 +164,7 @@ function tryReclaimStaleLock(lockPath) {
       if (owner.ts !== undefined) {
         const age = now - owner.ts;
         if (Number.isFinite(age) && age >= LOCK_STALE_MS) {
-          return unlinkLock(lockPath);
+          return unlinkLock(lockPath, owner.token);
         }
       }
       // Fresh foreign/unknown lease — wait out the budget.
@@ -168,7 +172,7 @@ function tryReclaimStaleLock(lockPath) {
     }
 
     // Dead or missing pid → reclaim (token-checked write happens on re-acquire).
-    return unlinkLock(lockPath);
+    return unlinkLock(lockPath, owner.token);
   }
 
   // No owner token/ts: reclaim only when mtime is stale (half-created wreckage).
@@ -185,7 +189,7 @@ function tryReclaimStaleLock(lockPath) {
 function releaseLockIfOwner(lockPath, token) {
   const owner = readLockOwner(lockPath);
   if (owner === undefined || owner.token !== token) return;
-  unlinkLock(lockPath);
+  unlinkLock(lockPath, token);
 }
 
 function withLock(root, fn) {
