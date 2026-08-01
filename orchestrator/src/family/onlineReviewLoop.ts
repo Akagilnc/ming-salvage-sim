@@ -507,6 +507,11 @@ export async function runOnlineReviewLoopStage(
 
     // Fixer cargo returns whole to the resident judge. The Collector resolves
     // any resulting PR/head transition on its next beat.
+    const effectiveHead =
+      typeof pendingFixerResult?.fixCommitSha === "string" &&
+      pendingFixerResult.fixCommitSha.trim().length > 0
+        ? pendingFixerResult.fixCommitSha.trim()
+        : landing.shipDelivery?.prHead;
     landing = {
       ...landing,
       ...(recheckOnlineReviewFixPacket !== undefined
@@ -514,6 +519,14 @@ export async function runOnlineReviewLoopStage(
         : {}),
       ...(pendingFixerResult !== undefined
         ? { fixerResult: pendingFixerResult }
+        : {}),
+      ...(landing.shipDelivery !== undefined
+        ? {
+            shipDelivery: {
+              ...landing.shipDelivery,
+              ...(effectiveHead !== undefined ? { prHead: effectiveHead } : {}),
+            },
+          }
         : {}),
     };
     // Cargo handed to same-round Verify — clear so a later continue iteration
