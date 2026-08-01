@@ -937,6 +937,6 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(coder?.model).not.toBe("gpt-5.6-sol-high");
     // CMR courts themselves must not have failed before ship/online-review.
     expect(result.ran).toBe(true);
-    expect(result.failedStatus).not.toMatch(/cmr_|coder_fix|verify_/);
+    expect(result.failedStatus ?? "").not.toMatch(/cmr_|coder_fix|verify_/);
   });
 });

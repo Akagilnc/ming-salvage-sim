@@ -2668,11 +2668,6 @@ export class RealFamilyBackend implements FamilyBackend {
             this.opts.workingRepo,
           )
         : undefined;
-    // priorRoundFindings stays on Verify history only — never Fixer landing.
-    const writePriorHistory =
-      kind !== "fixer" &&
-      landing?.priorRoundFindings !== undefined &&
-      landing.priorRoundFindings.length > 0;
     writeFileSync(
       path,
       `${JSON.stringify(
@@ -2691,15 +2686,8 @@ export class RealFamilyBackend implements FamilyBackend {
             : {}),
           shipDelivery: landing?.shipDelivery,
           onlineReviewRound: landing?.onlineReviewRound ?? ctx.onlineReviewRound,
-          // One-shot stage fact — transport verbatim; never re-derive in worker.
-          ...(landing?.postFixTransition === true
-            ? { postFixTransition: true }
-            : {}),
-          // Opaque arrays — preserve exactly, including explicit [] (#1145).
-          fixMarkedFindingIdentityKeys:
-            landing?.fixMarkedFindingIdentityKeys ?? [],
-          ...(landing?.fixMarkedFindingThreads !== undefined
-            ? { fixMarkedFindingThreads: landing.fixMarkedFindingThreads }
+          ...(landing?.onlineReviewFixPacket !== undefined
+            ? { onlineReviewFixPacket: landing.onlineReviewFixPacket }
             : {}),
           // Opaque fixer cargo back to the same Verify judge (#1145).
           ...(landing?.fixerResult !== undefined
@@ -2707,9 +2695,6 @@ export class RealFamilyBackend implements FamilyBackend {
             : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
-            : {}),
-          ...(writePriorHistory
-            ? { priorRoundFindings: landing!.priorRoundFindings }
             : {}),
         },
         null,
@@ -4769,17 +4754,9 @@ export function parseFixerOutcome(
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  // Minimal role check only — object + committed:boolean. Every other field is
-  // opaque cargo through landing + durable fixer row (#1145). Canonical kind is
-  // always "fixer"; typed onlineReview envelope retains sole fate authority.
-  if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
+  // Canonicalize only the role tag. Every business field remains opaque cargo.
   const { kind: _ignoredKind, ...rest } = parsed;
-  const candidate: FixerResult = {
-    ...rest,
-    kind: "fixer",
-    committed: parsed.committed,
-  };
-  return candidate;
+  return { ...rest, kind: "fixer" };
 }
 
 export function parseCleanupOutcome(

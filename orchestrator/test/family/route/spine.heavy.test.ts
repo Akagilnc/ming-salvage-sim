@@ -330,8 +330,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
-            terminalState: "decision_gate_raised",
+            status: "escalate",
           },
         };
       }
@@ -623,8 +622,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
               : spec.kind === "verify"
               ? {
                   kind: "verify",
-                  converged: true,
-                  fixMarkedFindingIdentityKeys: [],
+                  status: "converged",
                 }
               : spec.kind === "fixer"
                 ? {

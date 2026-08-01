@@ -18,21 +18,6 @@ import type {
   WorkerResult,
 } from "./types.js";
 
-/**
- * Optional fix SHA from the fixer envelope. A no-fix envelope has no SHA and
- * proceeds through the verify findings channel.
- *
- * #1145 — only a validated non-empty string SHA is extracted for bookkeeping;
- * the rest of the opaque fixer body is never interpreted here. Fate stays on
- * the typed onlineReview envelope.
- */
-export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
-  const sha = output.fixCommitSha;
-  if (typeof sha !== "string") return undefined;
-  const trimmed = sha.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 export function isValidCleanupResult(
   o: StepOutput | undefined,
 ): o is CleanupResult {
