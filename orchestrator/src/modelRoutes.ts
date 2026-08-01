@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -280,19 +280,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * rewrite explicit values (`null`, `""`, whitespace, numbers, …) and never
  * default/alias at runtime inside `parseRoutePreset`.
  */
-function materializeCollectorSlotInExternalPresetsFile(path: string): void {
-  if (path === DEFAULT_ROUTE_PRESETS_PATH) return;
-  if (!existsSync(path)) return;
+function materializeCollectorSlotInExternalPresetsFile(path: string): unknown {
+  if (!existsSync(path)) return undefined;
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
   } catch {
     // Let loadRoutePresetsFromFile fail-loud on unreadable JSON.
-    return;
+    return undefined;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return;
+    return parsed;
   }
 
   let factoryCollectorByRoute = new Map<string, string>();
@@ -328,7 +327,6 @@ function materializeCollectorSlotInExternalPresetsFile(path: string): void {
   const fallbackCollector = factoryNormalCollector ?? "grok-4.5";
 
   const root = parsed as Record<string, unknown>;
-  let changed = false;
   for (const [name, value] of Object.entries(root)) {
     if (typeof value !== "object" || value === null) continue;
     const preset = value as Record<string, unknown>;
@@ -339,12 +337,9 @@ function materializeCollectorSlotInExternalPresetsFile(path: string): void {
     if (Object.prototype.hasOwnProperty.call(slots, "collector")) {
       continue;
     }
-    slots.collector =
-      factoryCollectorByRoute.get(name) ?? fallbackCollector;
-    changed = true;
+    slots.collector = factoryCollectorByRoute.get(name) ?? fallbackCollector;
   }
-  if (!changed) return;
-  writeFileSync(path, `${JSON.stringify(root, null, 2)}\n`, "utf8");
+  return root;
 }
 
 /**
@@ -358,11 +353,13 @@ function loadRoutePresetsFromFile(
   if (!existsSync(path)) {
     throw new Error(`route presets file not found: ${path}`);
   }
-  // External custom file only — factory JSON is already current.
-  materializeCollectorSlotInExternalPresetsFile(path);
+  // External custom files are migrated in memory; loading never writes them.
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    parsed =
+      path === DEFAULT_ROUTE_PRESETS_PATH
+        ? JSON.parse(readFileSync(path, "utf8"))
+        : materializeCollectorSlotInExternalPresetsFile(path);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`failed to parse route presets at ${path}: ${detail}`);
