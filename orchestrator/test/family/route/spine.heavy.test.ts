@@ -20,6 +20,7 @@ import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
   DispatchContext,
+  FixerResult,
   IssueMeta,
   PersistentLedgerEntry,
   StepOutput,
@@ -558,6 +559,110 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         ok: true,
       }),
     });
+  });
+
+  it("post-Fixer crash re-enters the shared-tail Online Review cycle without re-shipping or re-dispatching Fixer", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    const pr = "https://github.com/test/repo/pull/293";
+    const shippedHead = "family-base-0";
+    const postFixHead = "family-base-post-fix";
+    const residentJudgeSession = "resident-judge-before-crash";
+    const recoveredFixerCargo: FixerResult = new Proxy<FixerResult>(
+      { kind: "fixer", committed: true },
+      {
+        get(target, key, receiver) {
+          if (key === "kind") return Reflect.get(target, key, receiver);
+          throw new Error(`shared-tail host read recovered Fixer cargo field ${String(key)}`);
+        },
+      },
+    );
+    const recoveredEvidence = new Proxy(
+      { checkpoint: "already-collected" },
+      { get: () => { throw new Error("shared-tail host read recovered evidence"); } },
+    );
+    familyBackend.head = postFixHead;
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: shippedHead },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr,
+        familyHeadAfter: shippedHead,
+      },
+      {
+        status: "online_review_judge_opened",
+        event: "online_review_judge_opened",
+        pr,
+        onlineReviewRound: 1,
+        onlineReviewCycle: shippedHead,
+        sessionId: residentJudgeSession,
+      },
+    );
+
+    let shippingSideEffects = 0;
+    let collectorDispatches = 0;
+    let fixerDispatches = 0;
+    let verifyDispatches = 0;
+    let fixerCargoReturnedToJudge: unknown;
+    let evidenceReturnedToJudge: unknown;
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
+      if (spec.kind === "collector") {
+        collectorDispatches += 1;
+        expect(landing?.shipDelivery).toMatchObject({ pr, prHead: shippedHead });
+        return {
+          kind: "completed",
+          output: {
+            kind: "collector",
+            evidence: recoveredEvidence,
+            recoveredFixerResult: recoveredFixerCargo,
+          },
+        };
+      }
+      if (spec.kind === "fixer") {
+        fixerDispatches += 1;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: true },
+        };
+      }
+      if (spec.kind === "verify") {
+        verifyDispatches += 1;
+        expect(spec.session).toBe("resume");
+        expect(ctx.resumeSessionId).toBe(residentJudgeSession);
+        fixerCargoReturnedToJudge = landing?.fixerResult;
+        evidenceReturnedToJudge = landing?.onlineReviewSnapshot;
+        return {
+          kind: "completed",
+          output: { kind: "verify", status: "converged" },
+          sessionId: residentJudgeSession,
+        };
+      }
+      if (spec.kind === "landing") {
+        return { kind: "completed", output: { kind: "landing", released: true } };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async (input) => {
+        if (input.phase === "final") shippingSideEffects += 1;
+        return { ok: false, ran: true, failedStatus: "ship_failed" };
+      },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(shippingSideEffects).toBe(0);
+    expect(collectorDispatches).toBe(1);
+    expect(fixerDispatches).toBe(0);
+    expect(verifyDispatches).toBe(1);
+    expect(fixerCargoReturnedToJudge).toBe(recoveredFixerCargo);
+    expect(evidenceReturnedToJudge).toBe(recoveredEvidence);
   });
 
   it("replays the equivalent frozen #1117 scene through the real shared tail", async () => {

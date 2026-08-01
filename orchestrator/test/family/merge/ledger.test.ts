@@ -194,7 +194,7 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ).toBe(false);
   });
 
-  it("familyShippedRecordForReviewLoopResume accepts exact shipped head only", () => {
+  it("familyShippedRecordForReviewLoopResume accepts an exact shipped head without typed cycle traffic", () => {
     const shipped: FamilyLedgerEntry = {
       status: "shipped",
       event: "shipped",
@@ -207,6 +207,45 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     ).toMatchObject({ familyHeadAfter: "head-ship" });
     expect(
       familyShippedRecordForReviewLoopResume([shipped], "head-postfix"),
+    ).toBeUndefined();
+  });
+
+  it("familyShippedRecordForReviewLoopResume uses only active typed cycle traffic after HEAD advances", () => {
+    const pr = "https://github.com/test/repo/pull/352";
+    const shipped: FamilyLedgerEntry = {
+      status: "shipped",
+      event: "shipped",
+      phase: "final",
+      pr,
+      familyHeadAfter: "opaque-cycle-a",
+    };
+    const opened: FamilyLedgerEntry = {
+      status: "online_review_judge_opened",
+      event: "online_review_judge_opened",
+      pr,
+      onlineReviewCycle: "opaque-cycle-a",
+      onlineReviewRound: 1,
+      sessionId: "resident-judge",
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, opened],
+        "unread-post-fix-head",
+      ),
+    ).toMatchObject({ pr, familyHeadAfter: "opaque-cycle-a" });
+
+    const converged: FamilyLedgerEntry = {
+      status: "review_loop_converged",
+      event: "review_loop_converged",
+      phase: "final",
+      pr,
+      familyHeadAfter: "unread-post-fix-head",
+    };
+    expect(
+      familyShippedRecordForReviewLoopResume(
+        [shipped, opened, converged],
+        "later-unrelated-head",
+      ),
     ).toBeUndefined();
   });
 
