@@ -227,9 +227,9 @@ export function onlineReviewJudgeSessionIdFromFamilyLedger(
     ) {
       continue;
     }
-    const sessionId =
-      typeof entry.sessionId === "string" ? entry.sessionId.trim() : "";
-    return sessionId.length > 0 ? sessionId : undefined;
+    // The professional Action owns session capability validity. Runner only
+    // transports the typed handle and must not inspect its contents.
+    return entry.sessionId;
   }
   return undefined;
 }

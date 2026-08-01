@@ -2075,29 +2075,16 @@ export async function runFamilyOnlineReviewLoop(input: {
             verifyOut.status !== "converged" &&
             onlineReviewJudgeSessionId === undefined
           ) {
-            const openedSessionId =
-              typeof result.sessionId === "string" ? result.sessionId.trim() : "";
-            if (openedSessionId.length === 0) {
-              throw new OnlineReviewLoopTerminal(
-                boundOnlineReviewLoopResult(reviewedPr, {
-                  ok: false,
-                  terminalState: "decision_gate_raised",
-                  round,
-                  stopSummary: decisionGateParkStopSummary({
-                    summary: "online review Verify did not return a resident session handle",
-                    repairHint:
-                      "restore the Verify Action session capability, then resume this judge seat",
-                  }),
-                }),
-              );
-            }
-            onlineReviewJudgeSessionId = openedSessionId;
+            // Session capability validity belongs to the Verify Action. The
+            // host transports its typed handle without inspecting contents or
+            // fabricating a decision gate on the Action's behalf.
+            onlineReviewJudgeSessionId = result.sessionId;
             await input.familyBackend.appendFamilyLedger({
               status: "online_review_judge_opened",
               event: "online_review_judge_opened",
               pr: prUrl,
               onlineReviewRound: round,
-              sessionId: openedSessionId,
+              sessionId: result.sessionId,
             });
           }
           // Worker owns side effects (#1145). Residual plan cargo is never
