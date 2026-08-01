@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { runOnlineReviewLoopStage } from "../src/family/onlineReviewLoop.js";
+import {
+  onlineReviewJudgeSessionIdFromFamilyLedger,
+  runOnlineReviewLoopStage,
+} from "../src/family/onlineReviewLoop.js";
 import type {
   FixerResult,
   WorkerLandingPayload,
@@ -13,6 +16,32 @@ const ship = {
 };
 
 describe("online review typed topology and opaque transport (#1145)", () => {
+  it("restores the resident judge session only for the bound PR", () => {
+    const oldPr = "https://github.com/test/repo/pull/5";
+    const currentPr = "https://github.com/test/repo/pull/6";
+    const ledger = [
+      {
+        status: "online_review_judge_opened",
+        event: "online_review_judge_opened",
+        pr: oldPr,
+        sessionId: "judge-old-5",
+      },
+      {
+        status: "online_review_judge_opened",
+        event: "online_review_judge_opened",
+        pr: currentPr,
+        sessionId: "judge-current-6",
+      },
+    ];
+
+    expect(onlineReviewJudgeSessionIdFromFamilyLedger(ledger, currentPr)).toBe(
+      "judge-current-6",
+    );
+    expect(
+      onlineReviewJudgeSessionIdFromFamilyLedger(ledger, "https://github.com/test/repo/pull/7"),
+    ).toBeUndefined();
+  });
+
   it.each([
     ["converged", "mergeable", 0],
     ["escalate", "decision_gate_raised", 0],

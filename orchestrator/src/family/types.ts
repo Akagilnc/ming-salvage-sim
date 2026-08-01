@@ -136,6 +136,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
    * durable so crash before same-round Verify still returns the same packet.
    */
   "online_review_fixer_completed",
+  /** #1145 — resident online-review Verify session established. */
+  "online_review_judge_opened",
   /**
    * #1145 — Post-fixer Verify returned continue. Durable proof side effects for
    * that seat are done; re-entry advances to the next Collector without replay.
@@ -300,6 +302,7 @@ export interface FamilyLedgerEntry {
     | "online_review_round_retrigger"
     | "online_review_collector_completed"
     | "online_review_fixer_completed"
+    | "online_review_judge_opened"
     | "online_review_verify_continued"
     | "online_review_mergeable"
     | "worker_dispatched"
