@@ -951,6 +951,32 @@ export function canonicalOnlineReviewPrId(pr: string): string | undefined {
   return raw;
 }
 
+/** Latest resident Verify session for this exact PR. */
+export function onlineReviewJudgeSessionIdFromFamilyLedger(
+  entries: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly pr?: string;
+    readonly sessionId?: string;
+  }>,
+  currentPr: string,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status !== "online_review_judge_opened" ||
+      entry.event !== "online_review_judge_opened" ||
+      !onlineReviewPrIdentityEquals(entry.pr, currentPr)
+    ) {
+      continue;
+    }
+    const sessionId =
+      typeof entry.sessionId === "string" ? entry.sessionId.trim() : "";
+    return sessionId.length > 0 ? sessionId : undefined;
+  }
+  return undefined;
+}
+
 /** Fail-closed PR identity equality via {@link canonicalOnlineReviewPrId}. */
 export function onlineReviewPrIdentityEquals(
   a: string | undefined,

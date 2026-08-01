@@ -49,6 +49,7 @@ import {
   lastOnlineReviewMergeableFromFamilyLedger,
   lastPendingFixerCargoFromFamilyLedger,
   onlineReviewJudgeDisposition,
+  onlineReviewJudgeSessionIdFromFamilyLedger,
   onlineReviewRoundFromFamilyLedger,
   postFixTransitionUnconsumedFromFamilyLedger,
   runOnlineReviewLoopStage,
@@ -2048,6 +2049,8 @@ export async function runFamilyOnlineReviewLoop(input: {
     { currentPr: reviewedPr },
   );
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
+  let onlineReviewJudgeSessionId =
+    onlineReviewJudgeSessionIdFromFamilyLedger(familyLedger, reviewedPr);
   /** #711: last fixer landing's fix-marked keys for durable family ledger prior rounds. */
   let lastFixMarkedFindingIdentityKeys: ReadonlyArray<unknown> =
     resumedFixAuthorization.fixMarkedFindingIdentityKeys;
@@ -2207,13 +2210,22 @@ export async function runFamilyOnlineReviewLoop(input: {
           // Landing already carries Collector evidence — Verify judges only.
           let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
           const verifyPool = poolForKind("verify");
+          const verifySpec = verifyWorkerSpec(modelRoute);
           const result = await dispatchOrAbort(
             input.familyBackend,
-            verifyWorkerSpec(modelRoute),
+            {
+              ...verifySpec,
+              session:
+                onlineReviewJudgeSessionId !== undefined ? "resume" : "fresh",
+              contextRetention: "retain",
+            },
             {
               ...baseCtx,
               modelRoute,
               onlineReviewRound: round,
+              ...(onlineReviewJudgeSessionId !== undefined
+                ? { resumeSessionId: onlineReviewJudgeSessionId }
+                : {}),
               ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
             },
             landing,
@@ -2272,6 +2284,32 @@ export async function runFamilyOnlineReviewLoop(input: {
             reviewerMonitorHandle,
             result.sessionId,
           );
+          if (onlineReviewJudgeSessionId === undefined) {
+            const openedSessionId =
+              typeof result.sessionId === "string" ? result.sessionId.trim() : "";
+            if (openedSessionId.length === 0) {
+              throw new OnlineReviewLoopTerminal(
+                boundOnlineReviewLoopResult(reviewedPr, {
+                  ok: false,
+                  terminalState: "decision_gate_raised",
+                  round,
+                  stopSummary: decisionGateParkStopSummary({
+                    summary: "online review Verify did not return a resident session handle",
+                    repairHint:
+                      "restore the Verify Action session capability, then resume this judge seat",
+                  }),
+                }),
+              );
+            }
+            onlineReviewJudgeSessionId = openedSessionId;
+            await input.familyBackend.appendFamilyLedger({
+              status: "online_review_judge_opened",
+              event: "online_review_judge_opened",
+              pr: prUrl,
+              onlineReviewRound: round,
+              sessionId: openedSessionId,
+            });
+          }
           if (result.output.kind !== "verify") {
             return { artifacts };
           }

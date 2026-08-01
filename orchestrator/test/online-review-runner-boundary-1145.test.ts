@@ -148,6 +148,10 @@ class TracerFamilyBackend implements FamilyBackend {
   verifyStartedAt: number | undefined;
   collectorDispatchCount = 0;
   verifyDispatchCount = 0;
+  readonly verifySessions: Array<{
+    readonly mode: WorkerSpec["session"];
+    readonly resumeSessionId?: string;
+  }> = [];
   /**
    * Crash window: Collector may complete + write checkpoint, but every Verify
    * dispatch fails for this run (mechanical retry must not "self-heal" mid-run).
@@ -267,6 +271,12 @@ class TracerFamilyBackend implements FamilyBackend {
     if (spec.kind === "verify") {
       this.verifyDispatchCount += 1;
       this.verifyStartedAt = Date.now();
+      this.verifySessions.push({
+        mode: spec.session,
+        ...(ctx.resumeSessionId !== undefined
+          ? { resumeSessionId: ctx.resumeSessionId }
+          : {}),
+      });
       if (this.blockVerify) {
         // EISDIR-class fails closed without burning the full mechanical-retry
         // budget — models a hard crash after Collector checkpoint, not a
@@ -277,13 +287,19 @@ class TracerFamilyBackend implements FamilyBackend {
             "simulated crash after collector checkpoint: EISDIR: illegal operation on a directory",
         };
       }
-      if (this.verifyImpl) return this.verifyImpl(spec, ctx, landing);
+      if (this.verifyImpl) {
+        const result = await this.verifyImpl(spec, ctx, landing);
+        return result.kind === "completed" && result.sessionId === undefined
+          ? { ...result, sessionId: "online-review-judge-1145" }
+          : result;
+      }
       return {
         kind: "completed",
         output: {
           kind: "verify",
           status: "converged",
         },
+        sessionId: "online-review-judge-1145",
       };
     }
 
@@ -324,6 +340,44 @@ describe("#1145 production shared-tail Online Review boundary", () => {
     expect(collectorWorkerSpec(route).model).not.toBe(
       verifyWorkerSpec(route).model,
     );
+  });
+
+  it("keeps Fixer no-op and recheck at the resident Verify session", async () => {
+    const backend = new TracerFamilyBackend();
+    let verifyCalls = 0;
+    backend.verifyImpl = async () => {
+      verifyCalls += 1;
+      return {
+        kind: "completed",
+        output: {
+          kind: "verify",
+          status: verifyCalls === 1 ? "continue" : "converged",
+          ...(verifyCalls === 1
+            ? { onlineReviewFixPacket: { fixture: "current-6" } }
+            : {}),
+        },
+      };
+    };
+    backend.fixerImpl = async () => ({
+      kind: "completed",
+      output: { kind: "fixer", committed: false, alreadySatisfied: true },
+    });
+
+    const result = await runFamilyOnlineReviewLoop({
+      familyBackend: backend,
+      familyBase: "family/1145",
+      ship: offlineShip,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(backend.verifySessions).toEqual([
+      { mode: "fresh" },
+      { mode: "resume", resumeSessionId: "online-review-judge-1145" },
+    ]);
+    expect(
+      backend.ledger.find((entry) => entry.event === "online_review_judge_opened")
+        ?.sessionId,
+    ).toBe("online-review-judge-1145");
   });
 
   it("tracer: collector then verify; evidence passthrough; verify after collector; no host GH", async () => {
