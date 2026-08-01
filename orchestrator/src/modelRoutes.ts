@@ -286,9 +286,9 @@ function materializeCollectorSlotInExternalPresetsFile(path: string): unknown {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    // Let loadRoutePresetsFromFile fail-loud on unreadable JSON.
-    return undefined;
+  } catch (error) {
+    // The caller wraps this with the configured path for an actionable error.
+    throw error;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return parsed;
