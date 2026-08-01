@@ -1,11 +1,16 @@
 /**
- * Host-side deterministic PR bot polling (#600).
+ * Shared GitHub PR review polling primitives (#600 / #1145).
  *
- * Polls GitHub for the four online review bots (CodeRabbit auto-updates on push;
- * Sourcery / Codex / Gemini need a manual R2/R3 re-trigger comment after a fix
- * push). No LLM calls — runner scheduling only. Every `gh api` list is paginated
- * with `per_page=100` (wiki pr-review-loop cadence); GraphQL `reviewThreads`
- * uses cursor pagination via `pageInfo { endCursor hasNextPage }`.
+ * Two consumers, one file:
+ * - **Landing / autoMerge / evidence admissibility** — host-deterministic
+ *   `pollPrReviewState`, bot reaction/login matching, CI classification.
+ * - **Online Review Collector** — constants + `collectorPostFixRetriggerPlan`
+ *   / comment body for the worker-owned wait/retrigger path. Runner never
+ *   host-polls Online Review bots (#1145); `waitForBotQuiescence` is deleted.
+ *
+ * Every `gh api` list is paginated with `per_page=100` (wiki pr-review-loop
+ * cadence); GraphQL `reviewThreads` uses cursor pagination via
+ * `pageInfo { endCursor hasNextPage }`.
  */
 
 import type { Sh } from "./familyDriver.js";
@@ -29,11 +34,10 @@ export type OnlineReviewBotId = (typeof ONLINE_REVIEW_BOT_IDS)[number];
 /**
  * Bot-poll cadence and overdue window (R15–R16 Codex P1 — do not hand-count).
  *
- * `waitForBotQuiescence` does:
- *   for poll = 1..N: pollOnce(); if poll < N: sleep(INTERVAL)
- * so wall-clock sleeps = N − 1 (first poll is immediate).
- *
- * Codex body often lands 9–13+ min after `eyes`; require ≥15 min of sleeps:
+ * Host `waitForBotQuiescence` was deleted in #1145 (Collector owns wait).
+ * These constants remain for Landing CI sleep cadence and any worker-side
+ * poll budget math that still references the overdue window:
+ *   sleeps = N − 1 (first poll immediate)
  *   N = ceil(MIN_WALL / INTERVAL) + 1
  *   e.g. 15 min / 2 min → 8 sleeps → N = 9 → 16 min wall clock.
  */
@@ -57,8 +61,11 @@ export function botOverdueWallClockMs(pollCount: number): number {
  * Manual re-trigger comment posted for Sourcery / Codex / Gemini after a fix push.
  * Wiki contract (ADR 0061): three @mentions. Also post `/gemini review` — current
  * Gemini Code Assist docs accept the slash form; @-only can miss the leg (Codex R12 P2).
+ *
+ * #1145: exported as Collector-owned capability (worker/soul executes via `gh`);
+ * host no longer posts this. Recognition during poll still uses the same body.
  */
-export const BOT_RETRIGGER_COMMENT =
+export const ONLINE_REVIEW_BOT_RETRIGGER_COMMENT =
   "@sourcery-ai review\n@codex review\n@gemini-code-assist please review\n/gemini review";
 
 /** Core wiki lines that identify a re-trigger (old 3-line + new 4-line bodies). */
@@ -168,21 +175,6 @@ export function isPollableGithubPrUrl(prUrl: string, defaultRepo: string): boole
     /^https?:\/\/github\.com\//i.test(trimmed) ||
     /^[^/]+\/[^#]+#\d+$/.test(trimmed) ||
     /^\d+$/.test(trimmed)
-  );
-}
-
-/**
- * True when the host may issue live `gh` calls for online review (poll, side
- * effects, re-trigger). Unit tests set `ORCHESTRATOR_OFFLINE_REVIEW_POLL=1` so
- * synthetic `pr://` handles and fake GitHub URLs stay deterministic.
- */
-export function isLiveGithubReviewPollEnabled(
-  prUrl: string,
-  defaultRepo: string,
-): boolean {
-  return (
-    isPollableGithubPrUrl(prUrl, defaultRepo) &&
-    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1"
   );
 }
 
@@ -940,141 +932,15 @@ export function pollPrReviewState(
   };
 }
 
-type RetriggerIssueComment = {
-  readonly body?: string;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-};
-
 /** True when an issue-comment body matches the manual R2/R3 re-trigger contract. */
-export function isBotRetriggerCommentBody(body: string): boolean {
+function isBotRetriggerCommentBody(body: string): boolean {
   const trimmed = body.trim();
-  if (trimmed === BOT_RETRIGGER_COMMENT.trim()) return true;
+  if (trimmed === ONLINE_REVIEW_BOT_RETRIGGER_COMMENT.trim()) return true;
   // Accept wiki 3-line bodies and 4-line bodies that add `/gemini review`.
   return BOT_RETRIGGER_REQUIRED_LINES.every((line) => trimmed.includes(line));
-}
-
-/**
- * Find an admissible R2/R3 re-trigger comment already on the PR (#600 r34 gap-resume).
- * Uses the same issue-comment evidence collection as pollPrReviewState.
- *
- * Invariant (head-drift fail-closed, deep self-check of online R2–R6 Codex chain):
- * - If live PR head !== gapTrigger.headOid → **never** reuse an existing re-trigger
- *   comment (timestamp-only comments from the prior head would otherwise look
- *   "fresh" after re-anchor). Caller must post a new re-trigger for the new head.
- * - If heads match → admit comments by gapTrigger timestamp window only.
- */
-export function findAdmissibleRetriggerComment(
-  sh: Sh,
-  repo: string,
-  prUrl: string,
-  gapTrigger: RoundTrigger,
-): RoundTrigger | undefined {
-  const headProbe = pollPrReviewState(sh, {
-    repo,
-    prUrl,
-    pollCount: 0,
-    roundTrigger: gapTrigger,
-  });
-  // Live head left the gap fix SHA → force a fresh re-trigger (do not search).
-  if (headProbe.headOid !== gapTrigger.headOid) {
-    return undefined;
-  }
-  const evidenceTrigger = gapTrigger;
-  const { prNumber } = parsePrRef(prUrl, repo);
-  const issueComments = paginateGhApi(
-    sh,
-    `repos/${repo}/issues/${prNumber}/comments`,
-  ) as RetriggerIssueComment[];
-  // Prefer the chronologically latest admissible re-trigger (Cursor R12 medium) —
-  // API order is not guaranteed newest-first; first-match can pin a stale window.
-  let latest: { readonly headOid: string; readonly timestamp: string } | undefined;
-  for (const comment of issueComments) {
-    const body = comment.body ?? "";
-    if (!isBotRetriggerCommentBody(body)) continue;
-    const timestamp = artifactTimestamp(comment);
-    if (timestamp === undefined || timestamp.length === 0) continue;
-    if (
-      !evidenceAdmissible(
-        liveArtifactEvidenceRecord({
-          timestamp,
-          head: headProbe.headOid,
-          roundTrigger: evidenceTrigger,
-        }),
-        headProbe.headOid,
-        evidenceTrigger,
-      )
-    ) {
-      continue;
-    }
-    if (latest === undefined) {
-      latest = { headOid: headProbe.headOid, timestamp };
-      continue;
-    }
-    const candMs = Date.parse(timestamp);
-    const latestMs = Date.parse(latest.timestamp);
-    if (
-      Number.isFinite(candMs) &&
-      Number.isFinite(latestMs) &&
-      candMs >= latestMs
-    ) {
-      latest = { headOid: headProbe.headOid, timestamp };
-    } else if (Number.isFinite(candMs) && !Number.isFinite(latestMs)) {
-      latest = { headOid: headProbe.headOid, timestamp };
-    }
-  }
-  if (latest === undefined) return undefined;
-  return buildRoundTrigger(latest.headOid, latest.timestamp);
-}
-
-/** Post the manual R2/R3 re-trigger comment for Sourcery / Codex / Gemini. */
-export function postBotRetriggerComment(
-  sh: Sh,
-  repo: string,
-  prNumber: number,
-  body: string = BOT_RETRIGGER_COMMENT,
-): void {
-  sh("gh", [
-    "api",
-    `repos/${repo}/issues/${prNumber}/comments`,
-    "-f",
-    `body=${body}`,
-  ]);
-}
-
-/** Bot ids explicitly dropped after the overdue window (not convergence evidence). */
-export function droppedBotIds(snapshot: PrReviewSnapshot): OnlineReviewBotId[] {
-  return ONLINE_REVIEW_BOT_IDS.filter((bot) => snapshot.bots[bot].state === "dropped");
-}
-
-/** True when every bot leg is complete or explicitly dropped (polling may stop). */
-export function isBotQuiescent(snapshot: PrReviewSnapshot): boolean {
-  return snapshot.quiescent;
-}
-
-/** True when any bot was dropped — verify must judge, never treat as clean silence. */
-export function hasDroppedBots(snapshot: PrReviewSnapshot): boolean {
-  return droppedBotIds(snapshot).length > 0;
 }
 
 /** Count open (unresolved) review threads on the current head. */
 export function unresolvedThreadCount(snapshot: PrReviewSnapshot): number {
   return snapshot.threads.filter((t) => !t.isResolved).length;
-}
-
-/** True only when a thread's native head matches the current PR head (#600 AC3). */
-export function isThreadEvidenceFresh(
-  thread: ReviewThreadSnapshot,
-  currentHead: string,
-  roundTrigger: RoundTrigger = buildRoundTrigger(currentHead, "1970-01-01T00:00:00.000Z"),
-): boolean {
-  return evidenceAdmissible(
-    liveArtifactEvidenceRecord({
-      headOid: thread.headOid,
-      head: currentHead,
-      roundTrigger,
-    }),
-    currentHead,
-    roundTrigger,
-  );
 }

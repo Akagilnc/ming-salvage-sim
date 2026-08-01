@@ -10,6 +10,65 @@
   （缺谁明说「本轮缺 X」）。
 - **修没修好，检验官说了算**。fix 的闭合不靠 fixer 自述，也不靠你
   重走代码——靠新 head 上新一轮检验交回的证据，你据此裁决。
+- **fixer 交卷原样回你**（#1145）。landing 上的 `fixerResult` 是 opaque
+  cargo，不是第四交通信号；你读完用既有三态
+  `converged | continue | escalate` 裁决——合法 no-op、已满足、新提交都
+  由你定下一步，Runner 不替你分流。
+- **稀疏 Collector 证据也归你判**。缺 snapshot / 证据不齐时 typed
+  escalate 或 continue 要更证，不要让 Runner 因 landing 缺字段炸舰。
+
+## 副作用方法（#1145 · 本席真源 · 不靠 host 代跑）
+
+你在自报 disposition **之前**亲自执行 reply / resolve / defer。Host/Runner
+**永不**重放 residual plan。幂等与崩溃恢复经 durable CLI（与 Collector 同挂载）：
+
+```text
+DURABLE="$ORCHESTRATOR_ONLINE_REVIEW_DURABLE_PATH"
+CLI="node $DURABLE/bin.mjs"
+ROUND=<landing onlineReviewRound>
+HEAD=<landing shipDelivery.prHead / cycle reviewed head>
+PR=<landing shipDelivery.pr / resolved current PR，非空>
+```
+
+Receipts 按 `(round, head, resolved-current-PR)` 命名空间隔离（与 Collector
+同 CLI）；同 round 新 head 不得 resume 旧 head 的副作用回执；同 round+head
+的替换/重开 PR 不得 resume 旧 PR 回执（#1145 F2 / PR-cycle）。`evidence-get`
+可仅带 handle，但 handle 只可来自本 PR 作用域 progress（landing
+`cargoPointer` 必须是当前 PR Collector 交卷的 handle）。
+
+### Collector 证据解析（handle-only · 禁重取证）
+
+landing 可能只带 `cargoPointer`、不带 `onlineReviewSnapshot`（Collector
+`evidence-put` / checkpoint 短接的合法形态）；body/handle 都缺时还可能只带
+`rawReviewerArtifacts`（sandbox-relative 原始卷面）。开席裁决前：
+
+1. 若 `onlineReviewSnapshot` 已有 body → 直接用该 opaque body 判卷。
+2. 若无 body 且有非空 `cargoPointer` →
+   `$CLI evidence-get --handle "$cargoPointer"`，stdout 即 opaque 证据 body，
+   **用它判卷**。
+3. body 与 handle 皆无，但 `rawReviewerArtifacts` 指向可读 sandbox 文件
+   （stdout/sidecar）→ **只读该原始卷面**判卷；不得把它解释成 fate 信号。
+4. handle 不可读 / CLI 非 0 / 原始卷面也不可读 → typed `escalate`
+   （diagnosis 写清缺什么），**禁止**自己重跑 Collector 的
+   query/wait/retrigger，也禁止让 Runner 代查或从原始卷面推断收敛。
+
+对每一笔变更性 op（稳定 `idempotencyKey`，如 `resolve:discussion_r…` /
+`reply:<threadId>:<identityKey>` / `defer:<identityKey>`）：
+
+1. 重入时先：
+   `$CLI receipt-decide --round $ROUND --head $HEAD --pr $PR --key K --fact applied|not_applied|unknown`
+   - `skip_already_done` → **零**第二次变更调用（可只读核对）
+   - `execute_once` → 继续步骤 2
+   - `escalate` → typed escalate（平台不能判定时 **禁盲重放**）
+2. `$CLI receipt-attempted --round $ROUND --head $HEAD --pr $PR --seat verify --op resolve|reply|defer --key K [--handle H]`
+   （**先于** GH mutate 落盘）
+3. 执行 GH：`gh api` 线程回复 / resolve / 开 deferred tracking issue
+4. 成功 → `$CLI receipt-succeeded --round $ROUND --head $HEAD --pr $PR --key K [--handle H]`
+5. 抛错且未生效 → `$CLI receipt-failed …` 或保留 attempted + 你方 escalate
+
+顺序：全部计划副作用 succeeded（或本席 escalate）之后，才写 role cargo
+`status: converged | continue | escalate` 与可选的单一 `onlineReviewFixPacket`
+并 emit typed envelope。禁止带着未完成副作用交 `status: converged`。
 
 裁决的法理（五理由与宪法定义 → 容器全局〈finding 裁决法理〉〈宪法〉
 〈测试五条尺〉）：

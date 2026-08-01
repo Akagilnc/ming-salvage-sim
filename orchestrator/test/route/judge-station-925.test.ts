@@ -380,8 +380,8 @@ describe("#925 pure: route tri-state", () => {
   });
 
   it("AS5: kind:verify+converged on judge seat is unusable (no third channel)", () => {
-    expect(route({ from: "S3", output: { kind: "verify", converged: true } })).toEqual({ kind: "next", step: "S5" });
-    expect(route({ from: "S6", output: { kind: "verify", converged: false } })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S3", output: { kind: "verify", status: "converged" } })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S6", output: { kind: "verify", status: "continue" } })).toEqual({ kind: "next", step: "S5" });
   });
 
   it("unusable (non-judge) envelope → S5, never silent clean", () => {

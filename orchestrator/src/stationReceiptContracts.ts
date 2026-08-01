@@ -1115,6 +1115,16 @@ export function onlineReviewStationReceiptSchema(): z.ZodType {
   return z.union([completed, escalate]);
 }
 
+/**
+ * #1145 Collector seat SO: thin onlineReview fate only (completed|escalate +
+ * optional cargoPointer). Business evidence is opaque cargo on the sidecar /
+ * cargoPointer body — never a typed traffic field, and never a process-fate
+ * signal (ADR 0131 cargo ≠ fate / J1).
+ */
+/** Collector uses the same thin onlineReview completed|escalate envelope. */
+export const collectorOnlineReviewStationReceiptSchema =
+  onlineReviewStationReceiptSchema;
+
 /** Encode a validated merger envelope into its canonical JSON shape. */
 export function encodeMergerEnvelope(
   envelope: MergerStationEnvelope,

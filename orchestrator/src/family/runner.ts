@@ -2300,7 +2300,8 @@ export async function runFamily(
       runRelayBilling = reviewBarrier.relayBilling;
     }
     const reviewLoop = reviewBarrier.value;
-    if (!reviewLoop.ok) {
+    // #1145: unbound / failed never re-resolve for Landing; bound uses reviewedPr only.
+    if (reviewLoop.binding !== "bound" || !reviewLoop.ok) {
       const rawStop =
         reviewLoop.stopSummary ??
         stageFailureStopSummary({
@@ -2366,8 +2367,10 @@ export async function runFamily(
       (await readCurrentFamilyHead(familyBackend, familyBase)) ??
       preFinalFamilyHead ??
       shippedRecord.familyHeadAfter;
+    // #1145: Landing + converged bind loop-entry reviewedPr — never post-loop re-resolve.
+    const landingPrUrl = reviewLoop.reviewedPr;
     await recordReviewLoopConverged(familyBackend, {
-      pr: shippedRecord.pr,
+      pr: landingPrUrl,
       familyHeadAfter: convergedHead,
       ...(shippedRecord.stopSummary !== undefined
         ? { stopSummary: shippedRecord.stopSummary }
@@ -2386,7 +2389,7 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
-      prUrl: shippedRecord.pr,
+      prUrl: landingPrUrl,
       children,
       ...(runRelayBilling !== undefined
         ? { runRelayBilling }
@@ -2493,7 +2496,8 @@ export async function runFamily(
             : {}),
           ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         });
-        if (!reviewLoop.ok) {
+        // #1145: unbound / failed never re-resolve for Landing; bound uses reviewedPr.
+        if (reviewLoop.binding !== "bound" || !reviewLoop.ok) {
           const rawStop =
             reviewLoop.stopSummary ??
             stageFailureStopSummary({
@@ -2562,8 +2566,10 @@ export async function runFamily(
         const convergedHead =
           (await readCurrentFamilyHead(familyBackend, familyBase)) ??
           openShipped.familyHeadAfter;
+        // #1145: loop-entry reviewedPr only — never post-loop re-resolve.
+        const landingPrUrl = reviewLoop.reviewedPr;
         await recordReviewLoopConverged(familyBackend, {
-          pr: openShipped.pr,
+          pr: landingPrUrl,
           familyHeadAfter: convergedHead,
           ...(openShipped.stopSummary !== undefined
             ? { stopSummary: openShipped.stopSummary }
@@ -2574,7 +2580,7 @@ export async function runFamily(
           familyBase,
           runId,
           familyHeadAfter: convergedHead,
-          prUrl: openShipped.pr,
+          prUrl: landingPrUrl,
           familyIssue: epic.issue,
           resolvedRoute: route,
           children: openChildren,

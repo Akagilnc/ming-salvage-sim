@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   LEGAL_REFUSE_REASONS,
+  collectorOnlineReviewStationReceiptSchema,
   decodeCoderEnvelope,
   decodeJudgeVerdict,
   decodeMergerEnvelope,
@@ -21,6 +22,7 @@ import {
   encodeOnlineReviewEnvelope,
   encodeShipEnvelope,
   judgeStationReceiptSchema,
+  onlineReviewStationReceiptSchema,
   parseFindingDisposition,
   parseLegalRefuseReason,
   type CoderStationEnvelope,
@@ -1004,5 +1006,58 @@ describe("#921 full-wave station thin envelopes", () => {
         ["refusedFindingIdentityKeys", "station", "status"].sort(),
       );
     }
+  });
+});
+
+// ─── #1145 Collector SO: thin envelope only (evidence is opaque cargo) ───────
+
+describe("#1145 collector onlineReview station receipt schema", () => {
+  const schema = collectorOnlineReviewStationReceiptSchema();
+
+  it("is the same thin onlineReview envelope as other seats", () => {
+    // Identity with the shared thin schema — evidence is not a traffic field.
+    expect(schema).toBeDefined();
+    const thin = onlineReviewStationReceiptSchema();
+    const completed = { station: "onlineReview", status: "completed" };
+    expect(schema.safeParse(completed).success).toBe(true);
+    expect(thin.safeParse(completed).success).toBe(true);
+  });
+
+  it("accepts completed without evidence (positive — cargo ≠ fate)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts completed with optional cargoPointer (positive)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+      cargoPointer: "ledger:collector:round=1",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("ignores evidence if present on traffic (passthrough, not required)", () => {
+    // Evidence on the envelope is not schema-required; workers should put it on
+    // sidecar. Passthrough schemas may still accept extra keys.
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "completed",
+      evidence: { prUrl: "https://example.test/pr/1", headOid: "abc" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts escalate without evidence (positive)", () => {
+    const parsed = schema.safeParse({
+      station: "onlineReview",
+      status: "escalate",
+      reason: "auth",
+      diagnosis: "gh token expired",
+    });
+    expect(parsed.success).toBe(true);
   });
 });

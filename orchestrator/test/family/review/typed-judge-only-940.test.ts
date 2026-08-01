@@ -36,6 +36,8 @@ import {
   completedShip,
   DispatchCapableBackend,
 } from "./typed-judge-only-940.shared.js";
+import { onlineReviewDispatch } from "../../helpers/online-review-dispatch.js";
+import type { WorkerLandingPayload } from "../../../src/types.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -44,68 +46,72 @@ afterEach(() => {
 });
 
 describe("#940 public driver — ID-012 online review typed judge only", () => {
-  it("POSITIVE: host loop has applySideEffects seam and no mechanical round cap export", async () => {
-    // Correctness K1: host fail-safe applicator restored; mechanical cap stays gone.
+  it("POSITIVE: host loop has no applySideEffects/poll seams and no mechanical round cap", async () => {
+    // #1145: Runner stage only routes; Online Review Action owns GH + effects.
     const loopMod = await import("../../../src/family/onlineReviewLoop.js");
     expect("MAX_ONLINE_REVIEW_ROUNDS" in loopMod).toBe(false);
-    const srcDir = join(
-      dirname(fileURLToPath(import.meta.url)),
-      "../../../src",
+    const stageSrc = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        "../../../src/family/onlineReviewLoop.ts",
+      ),
+      "utf8",
     );
-    expect(existsSync(join(srcDir, "onlineReviewSideEffects.ts"))).toBe(true);
-    const sideFx = await import("../../../src/onlineReviewSideEffects.js");
-    expect(typeof sideFx.applyVerifySideEffects).toBe("function");
+    expect(stageSrc).not.toMatch(/readonly poll\s*:/);
+    expect(stageSrc).not.toMatch(/readonly applySideEffects\s*:/);
+    expect(stageSrc).not.toMatch(/dispatch\.applySideEffects/);
+    expect(stageSrc).not.toMatch(/dispatch\.poll/);
   });
 
-  it("POSITIVE: host invokes applySideEffects before accepting mergeable (K1 fail-safe)", async () => {
-    // Worker may report bare converged; host must still call applySideEffects
-    // before mergeable — never green solely on disposition without the seam.
-    let applyCalls = 0;
-    let applySawCargo = false;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async () => BASE_SNAPSHOT,
+  it("POSITIVE: mergeable accepts converged verify without host side-effect replay (#1145)", async () => {
+    // Worker reports converged after executing its own side effects; stage must
+    // NOT require a host applySideEffects seam — sole owner is the Action.
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
         ({
           kind: "verify",
-          converged: true,
-          threadReplies: [{ threadId: "1", body: "fixed: evidence" }],
+          status: "converged",
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run on converged");
       },
-      applySideEffects: (_landing, verify) => {
-        applyCalls += 1;
-        applySawCargo = (verify.threadReplies?.length ?? 0) > 0;
-        return verify;
-      },
-      retriggerAfterFix: () => {
-        throw new Error("retrigger must not run on converged");
-      },
-    });
-    expect(result).toEqual({
+
+    }));
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 1,
+      binding: "bound" as const,
     });
-    expect(applyCalls).toBe(1);
-    expect(applySawCargo).toBe(true);
+  });
+
+  it("NEGATIVE: malformed verify fixture throws instead of impersonating no verify", async () => {
+    const dispatch = onlineReviewDispatch({
+      dispatchVerify: async () =>
+        ({ kind: "verify", state: "converged" }) as unknown as VerifyResult,
+    });
+
+    await expect(
+      dispatch.dispatchVerify({} as WorkerLandingPayload, 1),
+    ).rejects.toThrow(/invalid verify fixture.*state.*converged/i);
   });
 
   it("POSITIVE: continue disposition past former 3-round cap still routes until worker converges", async () => {
     let verifyCalls = 0;
     let fixerCalls = 0;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async (round) => ({ ...BASE_SNAPSHOT, pollCount: round }),
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: async (round) => ({ ...BASE_SNAPSHOT, pollCount: round }),
       dispatchVerify: async (_landing, round) => {
         verifyCalls += 1;
         // Former host cap was 3 fixer rounds / 4th verify-only. Round 5 still
         // continues under judge ownership and finally converges.
         if (round >= 5) {
-          return { kind: "verify", converged: true } satisfies VerifyResult;
+          return { kind: "verify", status: "converged" } satisfies VerifyResult;
         }
         return {
           kind: "verify",
-          converged: false,
+          status: "continue",
           findingDispositions: [
             {
               identityKey: `live:${round}`,
@@ -124,42 +130,41 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
           fixCommitSha: `fix-${fixerCalls}`,
         };
       },
-      applySideEffects: (_landing, verify) => verify,
-      retriggerAfterFix: () => {},
-      resolveFixCommitSha: async (sha) => sha,
-    });
-    expect(result).toEqual({
+
+    }));
+    expect(result).toMatchObject({
       ok: true,
       terminalState: "mergeable",
       round: 5,
+      binding: "bound" as const,
     });
     expect(fixerCalls).toBe(4);
-    expect(verifyCalls).toBe(5);
+    // #1145: each fixer returns to the same-round Verify (opaque cargo) before
+    // three-state continue opens the next Collector — 4×(V+F+V) + final V.
+    expect(verifyCalls).toBe(9);
   });
 
   it("POSITIVE: worker escalate (decision_gate) ends the loop without host empty-success", async () => {
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async () => BASE_SNAPSHOT,
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
         ({
           kind: "verify",
-          converged: false,
-          terminalState: "decision_gate_raised",
+          status: "escalate",
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
       },
-      applySideEffects: (_landing, verify) => verify,
-      retriggerAfterFix: () => {},
-    });
+
+    }));
     expect(result.ok).toBe(false);
     expect(result.terminalState).toBe("decision_gate_raised");
   });
 
   it("NEGATIVE: host never mints round_budget_exhausted (deleted mechanical cap)", async () => {
     let rounds = 0;
-    const result = await runOnlineReviewLoopStage(STAGE_SHIP, {
-      poll: async (round) => {
+    const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
+      snapshot: async (round) => {
         rounds = round;
         return { ...BASE_SNAPSHOT, pollCount: round };
       },
@@ -168,21 +173,18 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         if (round >= 6) {
           return {
             kind: "verify",
-            converged: false,
-            terminalState: "decision_gate_raised",
+            status: "escalate",
           } satisfies VerifyResult;
         }
-        return { kind: "verify", converged: false } satisfies VerifyResult;
+        return { kind: "verify", status: "continue" } satisfies VerifyResult;
       },
       dispatchFixer: async () => ({
         kind: "fixer",
         committed: true,
         fixCommitSha: "fix-sha",
       }),
-      applySideEffects: (_landing, verify) => verify,
-      retriggerAfterFix: () => {},
-      resolveFixCommitSha: async () => "fix-sha",
-    });
+
+    }));
     expect(result.terminalState).not.toBe("round_budget_exhausted");
     expect(result.terminalState).toBe("decision_gate_raised");
     expect(rounds).toBeGreaterThanOrEqual(6);

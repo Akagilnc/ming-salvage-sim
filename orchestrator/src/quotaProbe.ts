@@ -39,6 +39,7 @@ const BRIDGE_STEP_IDS: ReadonlySet<string> = new Set<StepId>([
   "S10",
   "S11",
   "S12",
+  "S13", // #1145 Collector seat — must survive quota bridge round-trip
 ]);
 
 function isBridgeStepId(value: unknown): value is StepId {

@@ -3,7 +3,7 @@
  * lineup + gpt-5.6-sol-low registry row; env > config file (sole table;
  * missing custom path falls back to shipped factory JSON only).
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +63,7 @@ function fullSlots(
     merger: "gpt-5.6-sol-low",
     cmrCompleteness: "gpt-5.6-sol",
     cmrCorrectness: "gpt-5.6-sol",
+    collector: "grok-4.5",
     verify: "gpt-5.6-sol",
     fixer: "gpt-5.6-sol-low",
     cleanup: "gpt-5.6-sol-low",
@@ -127,6 +128,7 @@ describe("#916 claude-tight factory lineup", () => {
       merger: "gpt-5.6-sol-low",
       cmrCompleteness: "gpt-5.6-sol",
       cmrCorrectness: "gpt-5.6-sol",
+      collector: "grok-4.5",
       verify: "gpt-5.6-sol",
       fixer: "gpt-5.6-sol-low",
       cleanup: "gpt-5.6-sol-low",
@@ -296,6 +298,91 @@ describe("#916 route presets config load + priority", () => {
     expect(second).toBe(first);
     expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
   });
+
+  // #1145: existing custom external file missing collector is migrated on disk
+  // once before strict parse — not runtime-defaulted inside parseRoutePreset.
+  it("defaults collector in memory without writing external custom presets", () => {
+    const slotsWithoutCollector = fullSlots();
+    delete (slotsWithoutCollector as { collector?: string }).collector;
+    expect(slotsWithoutCollector.collector).toBeUndefined();
+
+    const path = writePresetsFile({
+      normal: {
+        slots: slotsWithoutCollector,
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+      "custom-only": {
+        slots: { ...slotsWithoutCollector, coder: "gpt-5.6-terra" },
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    });
+
+    // Pre-condition: on-disk file has no collector key.
+    const before = JSON.parse(readFileSync(path, "utf8")) as {
+      normal: { slots: Record<string, string> };
+      "custom-only": { slots: Record<string, string> };
+    };
+    expect(before.normal.slots.collector).toBeUndefined();
+    expect(before["custom-only"].slots.collector).toBeUndefined();
+
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    const normal = resolveRouteModels("normal", {});
+    const custom = resolveRouteModels("custom-only", {});
+    // Factory normal.collector (grok-4.5) defaults the same-named route;
+    // unknown route names fall back to factory normal / shipped default.
+    expect(normal.slots.collector).toBe("grok-4.5");
+    expect(custom.slots.collector).toBe("grok-4.5");
+    // Custom coder preserved — migration only fills missing collector.
+    expect(custom.slots.coder).toBe("gpt-5.6-terra");
+
+    const after = JSON.parse(readFileSync(path, "utf8")) as {
+      normal: { slots: Record<string, string> };
+      "custom-only": { slots: Record<string, string> };
+    };
+    expect(after.normal.slots.collector).toBeUndefined();
+    expect(after["custom-only"].slots.collector).toBeUndefined();
+  });
+
+  // #1145: explicit invalid collector is owner intent — migrate only absent key,
+  // leave the value untouched so parseRoutePreset rejects under strict slots.
+  it.each([123, null, "", "   "] as const)(
+    "does not rewrite explicit invalid collector %j on external presets",
+    (invalidCollector) => {
+      const slots = fullSlots();
+      (slots as Record<string, unknown>).collector = invalidCollector;
+
+      const path = writePresetsFile({
+        broken: {
+          slots,
+          legCollections: {
+            cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+          },
+        },
+      });
+
+      const beforeRaw = readFileSync(path, "utf8");
+      const before = JSON.parse(beforeRaw) as {
+        broken: { slots: Record<string, unknown> };
+      };
+      expect(before.broken.slots).toHaveProperty("collector", invalidCollector);
+
+      vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+      resetRoutePresetsCacheForTests();
+
+      expect(() => resolveRouteModels("broken", {})).toThrow(
+        /route preset "broken" missing slot "collector"/,
+      );
+
+      // Disk must stay byte-stable — migration must not rewrite explicit values.
+      expect(readFileSync(path, "utf8")).toBe(beforeRaw);
+    },
+  );
 });
 
 describe("#914 C1 custom tightFamilies survive route mutations", () => {

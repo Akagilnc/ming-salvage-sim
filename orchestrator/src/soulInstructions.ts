@@ -17,6 +17,7 @@ const SOUL_FILE: Readonly<Record<WorkerSoul, string>> = {
   fixer: "fixer.md",
   landing: "landing.md",
   merger: "merger.md",
+  collector: "collector.md",
 };
 export const EXECUTABLE_SOUL_FILES: ReadonlyArray<string> = Object.freeze([
   ...new Set(Object.values(SOUL_FILE)),

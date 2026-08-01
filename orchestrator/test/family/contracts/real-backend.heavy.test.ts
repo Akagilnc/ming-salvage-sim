@@ -747,7 +747,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         })}</${tag}>`,
       );
       // #919 CR N1: receiptDecisionBell DELETED — escalate-only/off-shape is cargo.
-      expect(out).toMatchObject({ kind: "cargo" });
+      expect(out).toMatchObject({ kind: tag === "fixer" ? "fixer" : "cargo" });
     },
   );
 

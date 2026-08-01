@@ -123,6 +123,8 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   cleanup: undefined,
   // #735: real 文档发布 — invoke /gstack-document-release (not a path-allowlist gate).
   landing: "/gstack-document-release",
+  // #1145: Collector is prompt+soul+gh tools only — no judge skill.
+  collector: undefined,
 };
 
 /**
@@ -157,7 +159,7 @@ function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   // clean in stepSpecToWorkerSpec (session continuity is resumeSessionId).
   return kind === "coder" || kind === "fixer" || kind === "verify"
     ? "retain"
-    : "clean";
+    : "clean"; // collector is clean-eyes evidence each seat
 }
 
 function writeFixFindingsLandingFile(
@@ -353,11 +355,39 @@ export function stepSpecToWorkerSpec(
 
 // Prompt status: verify.md / fixer.md real paths shipped in #600;
 // landing.md real path shipped in #735. Cleanup is host-deterministic (#603).
+// collector.md shipped in #1145 (evidence-only Online Review Collector).
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
 export const LANDING_PROMPT_FILE = "landing.md";
+export const COLLECTOR_PROMPT_FILE = "collector.md";
 
-/** Family S9 online-review / PR-check worker spec (#600 real prompt). */
+/**
+ * Family S13 Online Review Collector (#1145).
+ * Query / wait / retrigger / evidence only — never judge enum. Model comes from
+ * the independent `collector` route slot (not hardcoded; not shared with verify).
+ */
+export function collectorWorkerSpec(
+  route?: ResolvedModelRoute,
+  billingPool?: BillingPoolId,
+): WorkerSpec {
+  const model = route?.slots.collector ?? modelForSlot("collector");
+  return {
+    id: "S13",
+    kind: "collector",
+    role: "collector",
+    host: workerHostForModel(model, billingPool),
+    session: "fresh",
+    contextRetention: "clean",
+    skill: SKILL_FOR_KIND.collector,
+    promptFile: COLLECTOR_PROMPT_FILE,
+    maxIter: 1,
+    model,
+    soul: "collector",
+    toolchain: [],
+  };
+}
+
+/** Family S9 online-review verify / judgment worker spec (#600 / #1145). */
 export function verifyWorkerSpec(
   route?: ResolvedModelRoute,
   billingPool?: BillingPoolId,
