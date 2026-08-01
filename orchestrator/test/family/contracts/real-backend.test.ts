@@ -749,14 +749,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
   it("feeds RAW valid verify tag through real parseVerifyOutcome (family seam)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const raw = `<verify>{"converged": true}</verify>`;
+    const raw = `<verify>{"status": "converged"}</verify>`;
     const out = mod.parseVerifyOutcome(raw);
     expect(out).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("feeds RAW valid-but-false verify through real parse (AC2: false flag passes shape)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseVerifyOutcome(`<verify>{"converged": false}</verify>`);
+    const out = mod.parseVerifyOutcome(`<verify>{"status": "continue"}</verify>`);
     expect(out).toEqual({ kind: "verify", status: "continue" });
   });
 
@@ -783,7 +783,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     writeFileSync(outcomePath, "{not json", "utf8");
     const sha = "a".repeat(40);
 
-    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath))
+    expect(mod.parseVerifyOutcome('<verify>{"status": "converged"}</verify>', outcomePath))
       .toEqual({ kind: "verify", status: "converged" });
     expect(
       mod.parseFixerOutcome(
@@ -805,7 +805,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-bell-");
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ status: "converged" }), "utf8");
 
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
@@ -1063,7 +1063,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 
   it("RAW extra keys on verify remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseVerifyOutcome(`<verify>{"converged": true, "extra": "nope"}</verify>`);
+    const out = mod.parseVerifyOutcome(`<verify>{"status": "converged", "extra": "nope"}</verify>`);
     expect(out.kind).toBe("verify");
   });
 
@@ -1098,7 +1098,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(
       mod.parseVerifyOutcome(
         `<verify>${JSON.stringify({
-          converged: true,
+          status: "converged",
           threadReplies: [{ threadId: "t1", body: "fixed" }],
           threadsToResolve: ["t1"],
           deferredIssueUrls: ["https://github.com/o/r/issues/1"],
@@ -1106,11 +1106,11 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       ),
     ).toEqual({
       kind: "verify",
-      converged: true,
+      status: "converged",
     });
     expect(
       mod.parseVerifyOutcome(
-        `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
+        `<verify>{"status": "converged", "threadReplies": "chatty"}</verify>`,
       ),
     ).toEqual({ kind: "verify", status: "converged" });
     expect(
@@ -1133,7 +1133,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     // prose mention of <verify> (as in real model chatter) must not poison extraction
     const raw =
       '我会把最终结果放在 <verify> 里。\n' +
-      '<verify>{"converged": true}</verify>\n' +
+      '<verify>{"status": "converged"}</verify>\n' +
       'done';
     const out = mod.parseVerifyOutcome(raw);
     expect(out).toEqual({ kind: "verify", status: "converged" });
@@ -1142,9 +1142,9 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   it("multiple complete tag blocks → the family parser takes the last one", async () => {
     const fam = await import("../../../src/family/realFamilyBackend.js");
     const raw =
-      '<verify>{"converged": false}</verify>\n' +
+      '<verify>{"status": "continue"}</verify>\n' +
       'chatter between\n' +
-      '<verify>{"converged": true}</verify>';
+      '<verify>{"status": "converged"}</verify>';
     const outFam = fam.parseVerifyOutcome(raw);
     expect(outFam).toEqual({ kind: "verify", status: "converged" });
   });
@@ -1153,7 +1153,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const mod = await import("../../../src/family/realFamilyBackend.js");
     // trailing open-mention with no close must be ignored; we take the prior complete
     const raw =
-      '<verify>{"converged": false}</verify>\n' +
+      '<verify>{"status": "continue"}</verify>\n' +
       'later mention without close: see <verify> for details';
     const out = mod.parseVerifyOutcome(raw);
     expect(out).toEqual({ kind: "verify", status: "continue" });

@@ -122,27 +122,8 @@ export const FAMILY_LEDGER_STATUS_VALUES = [
   "child_decision_parked",
   "escalation_answered",
   "admission_skipped",
-  "online_review_fix_committed",
-  /**
-   * Legacy ledger status only (#1145) — writer deleted; keep enum member for
-   * historical jsonl decode. Live resume truth is fix_committed +
-   * collector_completed (+ mergeable completion).
-   */
-  "online_review_round_retrigger",
-  /** #1145 — Collector completed wait/evidence checkpoint for durable resume. */
-  "online_review_collector_completed",
-  /**
-   * #1145 — Fixer completed (commit or legal no-op). Opaque fixerResult cargo is
-   * durable so crash before same-round Verify still returns the same packet.
-   */
-  "online_review_fixer_completed",
   /** #1145 — resident online-review Verify session established. */
   "online_review_judge_opened",
-  /**
-   * #1145 — Post-fixer Verify returned continue. Durable proof side effects for
-   * that seat are done; re-entry advances to the next Collector without replay.
-   */
-  "online_review_verify_continued",
   /** #1145 — Verify converged / side effects done; re-entry must not re-dispatch. */
   "online_review_mergeable",
   "worker_dispatched",
@@ -236,7 +217,7 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
-   *   - `"online_review_fix_committed"` / `"online_review_round_retrigger"` /
+   *   - `"online_review_judge_opened"` / `"online_review_mergeable"` /
    *     `"worker_dispatched"` / `"route_degraded"` — phase/worker audit markers
    *     (not unblock facts); see {@link FAMILY_LEDGER_STATUS_VALUES}.
    *   - `"coder_advance"` / `"coder_advance_stay_put"` — #919 judge advanceCoder
@@ -298,12 +279,7 @@ export interface FamilyLedgerEntry {
     | "child_decision_parked"
     | "escalation_answered"
     | "admission_skipped"
-    | "online_review_fix_committed"
-    | "online_review_round_retrigger"
-    | "online_review_collector_completed"
-    | "online_review_fixer_completed"
     | "online_review_judge_opened"
-    | "online_review_verify_continued"
     | "online_review_mergeable"
     | "worker_dispatched"
     | "route_degraded"
@@ -469,50 +445,8 @@ export interface FamilyLedgerEntry {
   readonly terminalCause?: PublicFailedCause;
   /** ISO-8601 instant when this ledger row was written (#600 r9 round-1 trigger truth). */
   readonly ts?: string;
-  /** Online review round re-trigger marker (#600 r26): anchored PR head OID. */
-  readonly roundTriggerHeadOid?: string;
-  /** Online review round re-trigger marker (#600 r26): ISO instant the round began. */
-  readonly roundTriggerAt?: string;
   /** Online review loop round (#600 r26): 1-based round at fix/retrigger time. */
   readonly onlineReviewRound?: number;
-  /**
-   * Fix-marked finding identity keys from the verify that drove an
-   * `online_review_fix_committed` marker (#711 prior-round synthesis source).
-   * Family online-review does not persist S9 verify rows; these keys on fix
-   * markers are the durable prior-round data for resume.
-   */
-  readonly fixMarkedFindingIdentityKeys?: readonly unknown[];
-  /** Opaque thread bindings — whole-array passthrough (#1145 A3). */
-  readonly fixMarkedFindingThreads?: readonly unknown[];
-  /**
-   * #1145 — optional pointer to Action-owned opaque cargo (Collector evidence).
-   * Runner transports the pointer; never interprets the body.
-   */
-  readonly cargoPointer?: string;
-  /**
-   * #1145 — opaque Collector evidence body for durable resume. Action-owned;
-   * Runner does not read bot/CI/finding semantics from this field.
-   * Sparse body is legal (ADR 0131 cargo≠fate).
-   */
-  readonly collectorEvidenceCargo?: OnlineReviewLandingSnapshot;
-  /**
-   * #1145 — opaque Collector raw-artifact pointers on
-   * `online_review_collector_completed`. Host-side resume transport only;
-   * materialised to sandbox-relative paths when writing Verify landing.
-   * Verify reads them only when body/handle cargo is absent.
-   */
-  readonly rawReviewerArtifacts?: {
-    readonly stdoutPath?: string;
-    readonly sidecarPath?: string;
-    readonly reviewerSessionId?: string;
-    readonly statement: "the previous reviewer raw artifacts are here";
-  };
-  /**
-   * #1145 — opaque Fixer envelope on `online_review_fixer_completed`. Includes
-   * legal no-op (no SHA). Runner transports as-is to same-round Verify; never
-   * branches topology on committed / alreadySatisfied.
-   */
-  readonly fixerResultCargo?: FixerResult;
 }
 
 // ─────────────────────────── reconcile git seam ───────────────────────────

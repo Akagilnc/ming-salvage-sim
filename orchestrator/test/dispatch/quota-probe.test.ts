@@ -309,7 +309,7 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           kind: "completed",
           output: {
             kind: "verify",
-            converged: true,
+            status: "converged",
             findings: [],
             isRecheck: false,
           } as StepOutput,

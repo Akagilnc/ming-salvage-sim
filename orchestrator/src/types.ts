@@ -1000,17 +1000,6 @@ export interface WorkerLandingPayload {
   };
   /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
-  /**
-   * #1145 Collector post-fix transition fact — one-shot stage fact true only
-   * for the Collector immediately after an effective-head move (resume or
-   * current fixer envelope). Worker-owned retrigger input; never derived from
-   * SHA presence alone, evidence body, or disposition cargo.
-   */
-  readonly postFixTransition?: boolean;
-  /** Opaque fixer packet keys — whole-array passthrough (#1145 A3). */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
-  /** Opaque fixer packet threads — whole-array passthrough (#1145 A3). */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
   /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** Family cleanup: host-computed close set + durable pr_merged record. */
@@ -1358,26 +1347,11 @@ export interface VerifyResult {
  * Family post-review fixer worker output (#596 / #1145).
  *
  * Entire envelope is opaque cargo back to the same Verify judge. Runner never
- * branches topology on `committed` / `alreadySatisfied` / `fixCommitSha` —
- * only the judge three-state disposition decides next. `fixCommitSha` may be
- * bookkept for Collector post-fix landing head, without forking control flow.
+ * reads business fields; only the judge three-state disposition decides next.
  */
 export interface FixerResult {
   readonly kind: "fixer";
-  /** Opaque cargo: whether this turn produced commits. Not a runner fate signal. */
-  readonly committed: boolean;
-  /** Opaque cargo: assigned work already satisfied on branch. Not a runner fate signal. */
-  readonly alreadySatisfied?: boolean;
-  /**
-   * Opaque cargo: fixing commit SHA when the worker reports one. Bookkeeping
-   * only (ADR 0030 envelope-only); never a fourth traffic signal (#1145).
-   */
-  readonly fixCommitSha?: string;
-  /**
-   * #1145 — entire fixer role body is opaque end-to-end after the minimal
-   * object/`committed:boolean` role check. Extra fields ride landing + durable
-   * fixer row unchanged; typed onlineReview envelope retains sole fate authority.
-   */
+  /** Entire role body is opaque; only the judge reads business fields. */
   readonly [key: string]: unknown;
 }
 

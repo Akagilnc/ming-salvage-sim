@@ -119,7 +119,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         };
       },
 
-      resolveFixCommitSha: async (sha) => sha,
     }));
     expect(result).toMatchObject({
       ok: true,
@@ -173,7 +172,6 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         fixCommitSha: "fix-sha",
       }),
 
-      resolveFixCommitSha: async () => "fix-sha",
     }));
     expect(result.terminalState).not.toBe("round_budget_exhausted");
     expect(result.terminalState).toBe("decision_gate_raised");
