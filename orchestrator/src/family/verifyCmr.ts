@@ -1895,8 +1895,14 @@ export async function runFamilyOnlineReviewLoop(input: {
 
   const shipHead = typeof ship.prHead === "string" ? ship.prHead : "";
   const familyLedger = await input.familyBackend.readFamilyLedger();
-  let onlineReviewJudgeSessionId =
-    onlineReviewJudgeSessionIdFromFamilyLedger(familyLedger, reviewedPr);
+  // Opaque Action-cycle token: host only uses exact identity to keep resident
+  // court cargo from crossing review cycles on the same PR.
+  const onlineReviewCycle = shipHead.length > 0 ? shipHead : undefined;
+  let onlineReviewJudgeSessionId = onlineReviewJudgeSessionIdFromFamilyLedger(
+    familyLedger,
+    reviewedPr,
+    onlineReviewCycle,
+  );
 
   try {
     return await runOnlineReviewLoopStage(
@@ -1983,9 +1989,13 @@ export async function runFamilyOnlineReviewLoop(input: {
             result.output.kind === "collector" ? result.output : undefined;
           const evidence = collectorOutput?.evidence;
           const cargoPointer = collectorOutput?.cargoPointer;
+          const recoveredFixerResult = collectorOutput?.recoveredFixerResult;
           return {
             ...(evidence !== undefined ? { evidence } : {}),
             ...(cargoPointer !== undefined ? { cargoPointer } : {}),
+            ...(recoveredFixerResult !== undefined
+              ? { recoveredFixerResult }
+              : {}),
             ...(artifacts !== undefined ? { artifacts } : {}),
           };
         },
@@ -2084,6 +2094,7 @@ export async function runFamilyOnlineReviewLoop(input: {
               event: "online_review_judge_opened",
               pr: prUrl,
               onlineReviewRound: round,
+              onlineReviewCycle,
               sessionId: result.sessionId,
             });
           }

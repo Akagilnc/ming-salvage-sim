@@ -1320,6 +1320,8 @@ export interface CollectorResult {
   readonly evidence?: OnlineReviewLandingSnapshot;
   /** Optional durable pointer to the opaque evidence body. */
   readonly cargoPointer?: string;
+  /** Opaque Fixer cargo recovered by this Action's durable capability. */
+  readonly recoveredFixerResult?: FixerResult;
 }
 
 /**

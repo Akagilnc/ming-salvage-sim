@@ -58,6 +58,12 @@ handle **必须**来自本 PR 作用域 progress 记录（classify/resume 返回
 
 **开席规程**
 
+0. 先以 landing 的 shipped-cycle `(onlineReviewRound, shipDelivery.prHead,
+   shipDelivery.pr)` 调 `$CLI fixer-get --round N --head H --pr P`。若 exit 0，
+   stdout 是 Fixer 已完成的 opaque 原交卷：本席以 `recoveredFixerResult` 原样
+   搬出，且可继续恢复本轮证据；exit 3 表示无 cargo，正常继续；其它非零
+   typed escalate。**不得**读取 `committed` / `alreadySatisfied` 或 body 内任何
+   业务字段。
 1. `progress-classify --round N --head H --pr P`。
 2. **pristine** → `progress-init --round N --head H --pr P`，再做 wait/GH/组装。
 3. **resume** 且有 `evidenceHandle` → **零** sleep / retrigger / 重取证；
