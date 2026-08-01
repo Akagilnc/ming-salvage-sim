@@ -37,6 +37,7 @@ import {
   DispatchCapableBackend,
 } from "./typed-judge-only-940.shared.js";
 import { onlineReviewDispatch } from "../../helpers/online-review-dispatch.js";
+import type { WorkerLandingPayload } from "../../../src/types.js";
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
