@@ -1028,21 +1028,6 @@ export function unboundOnlineReviewLoopResult(
   };
 }
 
-/**
- * Passthrough Verify → Fixer opaque packet (#1145).
- * Single transport of this-round self-reported keys/threads only — no secondary
- * filtering, no disposition derivation, no history backfill when sparse/missing.
- */
-function fixerPacketFromVerify(verify: VerifyResult | undefined): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<unknown>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<unknown>;
-} {
-  return {
-    fixMarkedFindingIdentityKeys: verify?.fixMarkedFindingIdentityKeys ?? [],
-    fixMarkedFindingThreads: verify?.fixMarkedFindingThreads ?? [],
-  };
-}
-
 function applyVerifyDisposition(
   reviewedPr: string,
   verify: VerifyResult | undefined,
@@ -1139,6 +1124,7 @@ export async function runOnlineReviewLoopStage(
     opts?.initialFixMarkedFindingIdentityKeys;
   let recheckFixMarkedFindingThreads: ReadonlyArray<unknown> | undefined =
     opts?.initialFixMarkedFindingThreads;
+  let recheckOnlineReviewFixPacket: unknown;
   /**
    * When set, skip first Verify + Fixer and feed this cargo to same-round Verify.
    * Cleared after the post-fixer Verify seat consumes it (or attempts to).
@@ -1277,20 +1263,15 @@ export async function runOnlineReviewLoopStage(
       // Sparse / unusable verify cargo (no typed disposition) continues to fixer
       // with raw artifacts — never host empty-success (#940 / ID-012).
 
-      // Opaque fixer packet = THIS round's Verify cargo only. Missing/sparse must
-      // not fall back to prior-round recheck keys seeded on the Verify landing.
-      const packet = fixerPacketFromVerify(verify);
-      const fixKeys = packet.fixMarkedFindingIdentityKeys;
-      const fixMarkedFindingThreads = packet.fixMarkedFindingThreads;
+      // The judge's packet is one opaque value. In particular, do not touch the
+      // retired parallel finding/key/thread fields even when accessors exist.
+      recheckOnlineReviewFixPacket = verify?.onlineReviewFixPacket;
       landing = {
         ...landing,
-        fixMarkedFindingIdentityKeys: fixKeys,
-        fixMarkedFindingThreads,
+        ...(recheckOnlineReviewFixPacket !== undefined
+          ? { onlineReviewFixPacket: recheckOnlineReviewFixPacket }
+          : {}),
       };
-
-      // continue disposition: fixer path (no mechanical round cap).
-      recheckFixMarkedFindingIdentityKeys = fixKeys;
-      recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
 
       // priorRoundFindings is Verify history only — strip before every Fixer
       // dispatch so Fixer never sees parallel history next to the live packet.
@@ -1404,6 +1385,9 @@ export async function runOnlineReviewLoopStage(
         recheckFixMarkedFindingThreads ??
         landing.fixMarkedFindingThreads ??
         [],
+      ...(recheckOnlineReviewFixPacket !== undefined
+        ? { onlineReviewFixPacket: recheckOnlineReviewFixPacket }
+        : {}),
       ...(pendingFixerResult !== undefined
         ? { fixerResult: pendingFixerResult }
         : {}),
@@ -1438,9 +1422,7 @@ export async function runOnlineReviewLoopStage(
     // Judge said continue after seeing fixer cargo → next Collector cycle
     // (post-fix retrigger/wait owned by Collector). Round advances only on
     // three-state continue, never on fixer envelope fields.
-    const nextPacket = fixerPacketFromVerify(verify);
-    recheckFixMarkedFindingIdentityKeys = nextPacket.fixMarkedFindingIdentityKeys;
-    recheckFixMarkedFindingThreads = nextPacket.fixMarkedFindingThreads;
+    recheckOnlineReviewFixPacket = verify?.onlineReviewFixPacket;
     round += 1;
   }
 }

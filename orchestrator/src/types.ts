@@ -983,10 +983,12 @@ export interface WorkerLandingPayload {
    */
   readonly cargoPointer?: string;
   /**
-   * Opaque fixer envelope cargo returned to the same Verify judge (#1145).
-   * Runner transports as-is; does not branch topology on committed /
-   * alreadySatisfied / fixCommitSha. Three-state disposition decides next.
+   * Opaque packet authored by the online-review judge for the Fixer. Runner
+   * transports the value by reference and never reads findings, keys, threads,
+   * or any other business datum from it (#1145).
    */
+  readonly onlineReviewFixPacket?: unknown;
+  /** Opaque fixer envelope returned whole to the same Verify judge (#1145). */
   readonly fixerResult?: FixerResult;
   /** Family PR delivery metadata threaded into the review loop. */
   readonly shipDelivery?: {
@@ -1349,6 +1351,8 @@ export interface VerifyResult {
   readonly converged: boolean;
   /** Opaque business cargo — host preserves as-is, never whitelists elements. */
   readonly findingDispositions?: ReadonlyArray<unknown>;
+  /** Sole judge-authored Fixer packet; Runner transports it without inspection. */
+  readonly onlineReviewFixPacket?: unknown;
   /**
    * Opaque fixer packet keys — whole-array passthrough, no element filter (#1145 A3).
    */
