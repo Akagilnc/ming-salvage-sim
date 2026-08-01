@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -558,6 +558,115 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         ok: true,
       }),
     });
+  });
+
+  it("replays the equivalent frozen #1117 scene through the real shared tail", async () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("../../fixtures/online-review-1117-equivalent.json", import.meta.url),
+        "utf8",
+      ),
+    ) as {
+      oldRoundKeys: string[];
+      currentRoundKeys: string[];
+      pr: string;
+      head: string;
+    };
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.runFamilyVerify = async () => ({ ok: true });
+    const resolvedRoute = resolveActiveModelRoute();
+    const declared = resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug);
+    let verifyCalls = 0;
+    let collectorCalls = 0;
+    const verifySessions: Array<{ mode: string; resume?: string }> = [];
+    let fixerPacket: unknown;
+    let fixerReturnedToJudge: unknown;
+    const packet = new Proxy(
+      { currentRoundKeys: fixture.currentRoundKeys },
+      { get: () => { throw new Error("shared-tail host read opaque judge packet"); } },
+    );
+    const evidence = new Proxy(
+      { oldRoundKeys: fixture.oldRoundKeys, currentRoundKeys: fixture.currentRoundKeys },
+      { get: () => { throw new Error("shared-tail host read Collector evidence"); } },
+    );
+
+    familyBackend.dispatchWorker = async (spec, ctx, landing) => {
+      const panelLeg = completeReviewPanelLegWorker(spec);
+      if (panelLeg !== undefined) return panelLeg;
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "judge",
+            status: "converged",
+            successfulLegs: declared.length > 0 ? declared : ["opus"],
+          },
+        };
+      }
+      if (spec.kind === "ship") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "family/293-base",
+            status: "pr_opened",
+            pr: fixture.pr,
+            prHead: fixture.head,
+          },
+        };
+      }
+      if (spec.kind === "collector") {
+        collectorCalls += 1;
+        return { kind: "completed", output: { kind: "collector", evidence } };
+      }
+      if (spec.kind === "verify") {
+        verifyCalls += 1;
+        verifySessions.push({
+          mode: spec.session,
+          ...(ctx.resumeSessionId !== undefined ? { resume: ctx.resumeSessionId } : {}),
+        });
+        if (landing?.fixerResult !== undefined) fixerReturnedToJudge = landing.fixerResult;
+        return {
+          kind: "completed",
+          output:
+            verifyCalls === 1
+              ? { kind: "verify", status: "continue", onlineReviewFixPacket: packet }
+              : verifyCalls === 2
+                ? { kind: "verify", status: "continue" }
+                : { kind: "verify", status: "converged" },
+          sessionId: "fixture-resident-judge",
+        };
+      }
+      if (spec.kind === "fixer") {
+        fixerPacket = landing?.onlineReviewFixPacket;
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false, alreadySatisfied: true },
+        };
+      }
+      if (spec.kind === "landing") {
+        return { kind: "completed", output: { kind: "landing", released: true } };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(collectorCalls).toBe(2);
+    expect(fixerPacket).toBe(packet);
+    expect(fixerReturnedToJudge).toMatchObject({ alreadySatisfied: true });
+    expect(verifySessions).toEqual([
+      { mode: "fresh" },
+      { mode: "resume", resume: "fixture-resident-judge" },
+      { mode: "resume", resume: "fixture-resident-judge" },
+    ]);
   });
 
   it("fresh-ship path (no pre-seeded shipped row) lets runVerifyCmr run the write at verifyCmr.ts and produces review_loop_converged carrying metadata.heads.verifiedCmrHead + material stopSummary (pins the actual fixed path, not resume copy)", async () => {
