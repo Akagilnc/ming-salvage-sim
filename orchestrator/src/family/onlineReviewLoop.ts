@@ -76,9 +76,7 @@ export type OnlineReviewJudgeDisposition =
 export function onlineReviewJudgeDisposition(
   verify: VerifyResult,
 ): OnlineReviewJudgeDisposition {
-  if (verify.terminalState === "decision_gate_raised") return "escalate";
-  if (verify.converged) return "converged";
-  return "continue";
+  return verify.status;
 }
 
 export type { OnlineReviewTerminalState } from "../types.js";
@@ -1067,10 +1065,6 @@ export async function runOnlineReviewLoopStage(
     readonly initialRound?: number;
     /** Prior fixing commit SHA — surfaces post-fix head to Collector landing. */
     readonly initialFixCommitSha?: string;
-    /** Durable fixer authorization reconstructed for a post-crash recheck. */
-    readonly initialFixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
-    /** Durable identity-to-thread bindings reconstructed for fixer landing. */
-    readonly initialFixMarkedFindingThreads?: ReadonlyArray<unknown>;
     /**
      * #1145 post-fixer crash resume: opaque fixer cargo already durable.
      * When set, this round skips first Verify + Fixer and goes to same-round
@@ -1119,11 +1113,6 @@ export async function runOnlineReviewLoopStage(
    * lastFixSha to the new head but no Collector checkpoint exists yet.
    */
   let postFixTransition = opts?.initialPostFixTransition === true;
-  /** The previous fixer assignment, required as the next verify's recheck contract. */
-  let recheckFixMarkedFindingIdentityKeys: ReadonlyArray<unknown> | undefined =
-    opts?.initialFixMarkedFindingIdentityKeys;
-  let recheckFixMarkedFindingThreads: ReadonlyArray<unknown> | undefined =
-    opts?.initialFixMarkedFindingThreads;
   let recheckOnlineReviewFixPacket: unknown;
   /**
    * When set, skip first Verify + Fixer and feed this cargo to same-round Verify.
@@ -1170,14 +1159,6 @@ export async function runOnlineReviewLoopStage(
       lastFixCommitSha,
       postFixTransition,
     );
-    if (round > 1 || pendingFixerResult !== undefined) {
-      landing = {
-        ...landing,
-        fixMarkedFindingIdentityKeys:
-          recheckFixMarkedFindingIdentityKeys ?? [],
-        fixMarkedFindingThreads: recheckFixMarkedFindingThreads ?? [],
-      };
-    }
     if (opts?.enrichVerifyLanding !== undefined) {
       landing = await opts.enrichVerifyLanding(landing, round);
     }
@@ -1377,14 +1358,6 @@ export async function runOnlineReviewLoopStage(
           };
     landing = {
       ...landing,
-      fixMarkedFindingIdentityKeys:
-        recheckFixMarkedFindingIdentityKeys ??
-        landing.fixMarkedFindingIdentityKeys ??
-        [],
-      fixMarkedFindingThreads:
-        recheckFixMarkedFindingThreads ??
-        landing.fixMarkedFindingThreads ??
-        [],
       ...(recheckOnlineReviewFixPacket !== undefined
         ? { onlineReviewFixPacket: recheckOnlineReviewFixPacket }
         : {}),

@@ -70,7 +70,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchVerify: async () =>
         ({
           kind: "verify",
-          converged: true,
+          status: "converged",
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run on converged");
@@ -95,11 +95,11 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         // Former host cap was 3 fixer rounds / 4th verify-only. Round 5 still
         // continues under judge ownership and finally converges.
         if (round >= 5) {
-          return { kind: "verify", converged: true } satisfies VerifyResult;
+          return { kind: "verify", status: "converged" } satisfies VerifyResult;
         }
         return {
           kind: "verify",
-          converged: false,
+          status: "continue",
           findingDispositions: [
             {
               identityKey: `live:${round}`,
@@ -139,8 +139,7 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
       dispatchVerify: async () =>
         ({
           kind: "verify",
-          converged: false,
-          terminalState: "decision_gate_raised",
+          status: "escalate",
         }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run after escalate disposition");
@@ -163,11 +162,10 @@ describe("#940 public driver — ID-012 online review typed judge only", () => {
         if (round >= 6) {
           return {
             kind: "verify",
-            converged: false,
-            terminalState: "decision_gate_raised",
+            status: "escalate",
           } satisfies VerifyResult;
         }
-        return { kind: "verify", converged: false } satisfies VerifyResult;
+        return { kind: "verify", status: "continue" } satisfies VerifyResult;
       },
       dispatchFixer: async () => ({
         kind: "fixer",

@@ -4645,7 +4645,7 @@ function sparseReviewLoopCompleted(
         { kind: "collector" }
       : kind === "verify"
         ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
-          { kind: "verify", converged: false }
+          { kind: "verify", status: "continue" }
         : kind === "fixer"
           ? { kind: "fixer", committed: false }
           : kind === "cleanup"
@@ -4734,10 +4734,8 @@ export function parseCollectorOutcome(
 
 /**
  * #919 / #1145 A3: cargo-only decode. Fate = typed onlineReview envelope + exit.
- * Required role gate: object + converged:boolean (+ kind "verify" when present).
- * Every other enumerable field is preserved unchanged (opaque arrays included),
- * except retired host-typed plan fields which stay audit-only on the raw
- * sidecar and must not re-enter host-decoded VerifyResult (#1145).
+ * Required role gate: object + typed judge status (+ kind "verify" when present).
+ * The sole optional business field is one opaque onlineReviewFixPacket.
  */
 export function parseVerifyOutcome(
   stdout: string,
@@ -4747,25 +4745,20 @@ export function parseVerifyOutcome(
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (parsed.kind !== undefined && parsed.kind !== "verify") return RECEIPT_CARGO;
-  if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
-  // Retired dual-owner plan fields — drop from host typing only.
-  // Raw sidecar cargo is untouched; never re-bless as host-typed plan.
-  const RETIRED_HOST_PLAN_KEYS = new Set([
-    "threadReplies",
-    "threadsToResolve",
-    "deferredIssueUrls",
-  ]);
-  // Build verify cargo: force kind/converged; copy every other own key as-is.
-  const built: { kind: "verify"; converged: boolean; [key: string]: unknown } = {
-    kind: "verify",
-    converged: parsed.converged,
-  };
-  for (const [key, value] of Object.entries(parsed)) {
-    if (key === "kind" || key === "converged") continue;
-    if (RETIRED_HOST_PLAN_KEYS.has(key)) continue;
-    built[key] = value;
+  if (
+    parsed.status !== "converged" &&
+    parsed.status !== "continue" &&
+    parsed.status !== "escalate"
+  ) {
+    return RECEIPT_CARGO;
   }
-  return built;
+  return {
+    kind: "verify",
+    status: parsed.status,
+    ...(Object.prototype.hasOwnProperty.call(parsed, "onlineReviewFixPacket")
+      ? { onlineReviewFixPacket: parsed.onlineReviewFixPacket }
+      : {}),
+  };
 }
 
 export function parseFixerOutcome(

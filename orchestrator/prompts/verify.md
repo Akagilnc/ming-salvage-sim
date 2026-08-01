@@ -19,7 +19,8 @@ Emit **one** typed `<onlineReview>` station-receipt envelope (tag `onlineReview`
 | `cargoPointer` | optional non-empty path/URI to opaque cargo |
 | `reason` / `diagnosis` | required when `status:"escalate"` |
 
-Completed (role cargo carries `converged` / fixer packet on sidecar):
+Completed (role cargo carries typed `status: converged | continue | escalate`
+and optional single opaque `onlineReviewFixPacket` on sidecar):
 
 ```text
 <onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>

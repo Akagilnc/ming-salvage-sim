@@ -89,12 +89,12 @@ class OnlineReviewAdvanceBackend implements FamilyBackend {
   ): Promise<WorkerResult> {
     this.specs.push(spec);
     if (spec.kind === "verify") {
-      const script = this.scripts[this.verifyRound] ?? { converged: true };
+      const script = this.scripts[this.verifyRound] ?? { status: "converged" };
       this.verifyRound += 1;
       if (script.converged) {
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
           sessionId: `verify-1002-${this.verifyRound}`,
         };
       }
@@ -102,7 +102,7 @@ class OnlineReviewAdvanceBackend implements FamilyBackend {
         kind: "completed",
         output: {
           kind: "verify",
-          converged: false,
+          status: "continue",
           findingDispositions: [
             {
               identityKey: "correctness|src/a.ts:1|needs-fix",
@@ -145,8 +145,8 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     expect(defaultFixer).not.toBe("gpt-5.6-sol");
 
     const backend = new OnlineReviewAdvanceBackend([
-      { converged: false, advanceCoder: "sol@med" },
-      { converged: true },
+      { status: "continue", advanceCoder: "sol@med" },
+      { status: "converged" },
     ]);
     const result = await runFamilyOnlineReviewLoop({
       familyBackend: backend,
@@ -177,10 +177,10 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
 
     const backend = new OnlineReviewAdvanceBackend([
       {
-        converged: false,
+        status: "continue",
         advanceCoder: "claude-opus-not-on-roster",
       },
-      { converged: true },
+      { status: "converged" },
     ]);
     const result = await runFamilyOnlineReviewLoop({
       familyBackend: backend,
@@ -210,9 +210,9 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
 
   it("advanced fixer seat is sticky across a later continue without advanceCoder", async () => {
     const backend = new OnlineReviewAdvanceBackend([
-      { converged: false, advanceCoder: "sol@med" },
-      { converged: false },
-      { converged: true },
+      { status: "continue", advanceCoder: "sol@med" },
+      { status: "continue" },
+      { status: "converged" },
     ]);
     const result = await runFamilyOnlineReviewLoop({
       familyBackend: backend,
@@ -234,8 +234,8 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
 
     const backend = new OnlineReviewAdvanceBackend([
       // No advanceCoder in this invocation — stickiness must come from ledger.
-      { converged: false },
-      { converged: true },
+      { status: "continue" },
+      { status: "converged" },
     ]);
     await backend.appendFamilyLedger({
       status: "coder_advance",
@@ -277,8 +277,8 @@ describe("#1002 online review advanceCoder → fixer seat", () => {
     expect(defaultFixer).not.toBe("gpt-5.6-sol");
 
     const backend = new OnlineReviewAdvanceBackend([
-      { converged: false },
-      { converged: true },
+      { status: "continue" },
+      { status: "converged" },
     ]);
     // Latest advance is CMR coderFix — must be ignored by fixer re-hold.
     await backend.appendFamilyLedger({

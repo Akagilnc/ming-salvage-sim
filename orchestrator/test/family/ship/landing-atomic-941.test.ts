@@ -272,7 +272,7 @@ describe("#941 public driver — ID-013 landing owns merge close cleanup", () =>
     const result = await runOnlineReviewLoopStage(STAGE_SHIP, onlineReviewDispatch({
       snapshot: BASE_SNAPSHOT,
       dispatchVerify: async () =>
-        ({ kind: "verify", converged: true }) satisfies VerifyResult,
+        ({ kind: "verify", status: "converged" }) satisfies VerifyResult,
       dispatchFixer: async () => {
         throw new Error("fixer must not run on green converge");
       },

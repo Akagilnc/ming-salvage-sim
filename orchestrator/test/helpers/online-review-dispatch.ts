@@ -79,38 +79,19 @@ function asBareEvidence(raw: unknown): OnlineReviewLandingSnapshot | undefined {
 function asBareVerifyResult(raw: unknown): VerifyResult | undefined {
   if (!isRecord(raw)) return undefined;
   if ("verify" in raw) return undefined;
-  if (typeof raw.converged !== "boolean") return undefined;
-  // Prefer explicit kind when present; allow sparse fixtures with only converged.
+  if (
+    raw.status !== "converged" &&
+    raw.status !== "continue" &&
+    raw.status !== "escalate"
+  ) {
+    return undefined;
+  }
   if (raw.kind !== undefined && raw.kind !== "verify") return undefined;
   return {
     kind: "verify",
-    converged: raw.converged,
-    ...(raw.findingDispositions !== undefined
-      ? {
-          findingDispositions:
-            raw.findingDispositions as VerifyResult["findingDispositions"],
-        }
-      : {}),
-    // Opaque fixer packet — transport arrays as-is (production parseVerifyOutcome).
-    ...(Array.isArray(raw.fixMarkedFindingIdentityKeys)
-      ? {
-          fixMarkedFindingIdentityKeys: raw.fixMarkedFindingIdentityKeys,
-        }
-      : {}),
-    ...(Array.isArray(raw.fixMarkedFindingThreads)
-      ? {
-          fixMarkedFindingThreads: raw.fixMarkedFindingThreads,
-        }
-      : {}),
-    ...(typeof raw.terminalState === "string"
-      ? {
-          terminalState:
-            raw.terminalState as NonNullable<VerifyResult["terminalState"]>,
-        }
-      : {}),
-    ...(typeof raw.isRecheck === "boolean" ? { isRecheck: raw.isRecheck } : {}),
-    ...(typeof raw.advanceCoder === "string"
-      ? { advanceCoder: raw.advanceCoder }
+    status: raw.status,
+    ...(Object.prototype.hasOwnProperty.call(raw, "onlineReviewFixPacket")
+      ? { onlineReviewFixPacket: raw.onlineReviewFixPacket }
       : {}),
   };
 }
@@ -189,7 +170,7 @@ export function onlineReviewDispatch(input: {
     },
     dispatchVerify: async (landing, round) => {
       if (input.dispatchVerify === undefined) {
-        return { verify: { kind: "verify", converged: true } };
+        return { verify: { kind: "verify", status: "converged" } };
       }
       const raw = await input.dispatchVerify(landing, round);
       if (raw === undefined) return {};

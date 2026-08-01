@@ -2,7 +2,7 @@
 
 ## Params
 
-- `.orchestrator-online-review.json` — bot snapshot + `fixMarkedFindingIdentityKeys` from the prior verify worker.
+- `.orchestrator-online-review.json` — Collector evidence plus the judge's single opaque `onlineReviewFixPacket`.
 
 After the fixing commit lands, push it to the PR branch for bot re-review —
 this loop's submission transport (the worker performs the push).

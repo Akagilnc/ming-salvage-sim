@@ -2275,17 +2275,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           if (result.output.kind !== "verify") {
             return { artifacts };
           }
-          // #1002: continue disposition + advanceCoder rewrites fixer before fix
-          // dispatch (same never-terminal contract as CMR/single-slice courts).
           const verifyOut = result.output;
-          if (
-            !verifyOut.converged &&
-            verifyOut.terminalState !== "decision_gate_raised" &&
-            typeof verifyOut.advanceCoder === "string" &&
-            verifyOut.advanceCoder.trim().length > 0
-          ) {
-            await applyOnlineReviewAdvanceCoder(verifyOut.advanceCoder);
-          }
           // Worker owns side effects (#1145). Residual plan cargo is never
           // host-replayed after the Action returns. Mergeable proof uses the
           // SAME channel-(b) disposition machine as stage routing — never a
@@ -2331,18 +2321,6 @@ export async function runFamilyOnlineReviewLoop(input: {
             await recordOnlineReviewVerifyContinued(input.familyBackend, {
               onlineReviewRound: round,
               pr: prUrl,
-              ...(verifyOut.fixMarkedFindingIdentityKeys !== undefined
-                ? {
-                    fixMarkedFindingIdentityKeys:
-                      verifyOut.fixMarkedFindingIdentityKeys,
-                  }
-                : {}),
-              ...(verifyOut.fixMarkedFindingThreads !== undefined
-                ? {
-                    fixMarkedFindingThreads:
-                      verifyOut.fixMarkedFindingThreads,
-                  }
-                : {}),
             });
             loopState.round = Math.max(loopState.round, round + 1);
           }
@@ -2467,10 +2445,6 @@ export async function runFamilyOnlineReviewLoop(input: {
         ...(loopState.lastFixSha !== undefined
           ? { initialFixCommitSha: loopState.lastFixSha }
           : {}),
-        initialFixMarkedFindingIdentityKeys:
-          resumedFixAuthorization.fixMarkedFindingIdentityKeys,
-        initialFixMarkedFindingThreads:
-          resumedFixAuthorization.fixMarkedFindingThreads,
         ...(pendingFixerCargo !== undefined
           ? { initialPendingFixerResult: pendingFixerCargo.fixerResult }
           : {}),

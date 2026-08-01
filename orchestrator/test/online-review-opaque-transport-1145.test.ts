@@ -12,7 +12,25 @@ const ship = {
   prHead: "head-6",
 };
 
-describe("online review opaque transport (#1145 slice 1)", () => {
+describe("online review typed topology and opaque transport (#1145)", () => {
+  it.each([
+    ["converged", "mergeable", 0],
+    ["escalate", "decision_gate_raised", 0],
+  ] as const)("routes %s without consulting cargo", async (status, terminalState, expectedFixers) => {
+    let fixerCalls = 0;
+    const result = await runOnlineReviewLoopStage(ship, {
+      dispatchCollector: async () => ({ evidence: { sparse: true } }),
+      dispatchVerify: async () => ({ verify: { kind: "verify", status } }),
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return { kind: "fixer", committed: false };
+      },
+    });
+
+    expect(result.terminalState).toBe(terminalState);
+    expect(fixerCalls).toBe(expectedFixers);
+  });
+
   it("moves the judge packet to Fixer and the whole Fixer result back without reading business cargo", async () => {
     const packetBody = new Proxy(
       { scene: "current-6-only" },
@@ -42,7 +60,7 @@ describe("online review opaque transport (#1145 slice 1)", () => {
           return {
             verify: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               onlineReviewFixPacket: packetBody,
               get fixMarkedFindingIdentityKeys(): never {
                 throw new Error("runner read legacy finding keys");
@@ -54,7 +72,7 @@ describe("online review opaque transport (#1145 slice 1)", () => {
           };
         }
         judgeRecheckLanding = landing;
-        return { verify: { kind: "verify", converged: true } };
+        return { verify: { kind: "verify", status: "converged" } };
       },
       dispatchFixer: async (landing) => {
         fixerLanding = landing;
