@@ -1853,29 +1853,18 @@ export async function runFamilyOnlineReviewLoop(input: {
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
-  // #1145: resolve the currently open PR for the family branch BEFORE any
-  // mergeable / Collector-checkpoint short-circuit. Shipped-ledger PR may be
-  // stale after replacement/re-open at the same SHA — short-circuits and the
-  // worker durable namespace must bind the actual open PR, not the frozen ship
-  // handle. Live resolve is thin identity only (not host review polling);
-  // offline / empty list falls back to the ship handle.
-  const liveOpenPr = resolveFamilyShipPr(input.familyBase);
-  const shippedPrHandle =
+  // Ship hands over one opaque PR handle. Collector resolves the current PR and
+  // head inside its capability; host never queries GitHub to reinterpret it.
+  const prUrl =
     typeof input.ship.pr === "string" && input.ship.pr.trim().length > 0
       ? input.ship.pr.trim()
       : undefined;
-  const prUrl = liveOpenPr ?? shippedPrHandle;
   if (prUrl === undefined || prUrl.length === 0) {
     // #1145: unbound — no reviewedPr; post-loop must not Landing/converged.
     return unboundOnlineReviewLoopResult();
   }
   const reviewedPr = prUrl;
-  // Effective ship identity for landing / stage / ledger — resolved PR rides as
-  // thin typed transport only (never decoded from evidence cargo).
-  const ship: ShipResult = {
-    ...input.ship,
-    pr: prUrl,
-  };
+  const ship: ShipResult = { ...input.ship, pr: prUrl };
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute =
@@ -1990,31 +1979,6 @@ export async function runFamilyOnlineReviewLoop(input: {
       { currentPr: reviewedPr },
     ),
   };
-  // #1145: Action-owned mergeable recovery — side effects already done.
-  // Bound to cycle-effective reviewed head; short-circuit only on exact match.
-  // Prior-cycle fixer SHA cannot override a newly shipped head.
-  {
-    const effectiveHead = effectiveOnlineReviewHeadFromFamilyLedger(
-      familyLedger,
-      shipHead,
-      { currentPr: reviewedPr },
-    );
-    const alreadyMergeable = lastOnlineReviewMergeableFromFamilyLedger(
-      familyLedger,
-      effectiveHead,
-      {
-        currentPr: prUrl,
-        shippedAnchorHead: shipHead,
-      },
-    );
-    if (alreadyMergeable !== undefined) {
-      return boundOnlineReviewLoopResult(reviewedPr, {
-        ok: true,
-        terminalState: "mergeable",
-        round: alreadyMergeable.round,
-      });
-    }
-  }
   // #1145 post-fixer seam: opaque fixer cargo may already be durable (incl. no-op).
   // Cycle-bound: prior-cycle unconsumed same-round cargo cannot override a re-ship.
   const pendingFixerCargo = lastPendingFixerCargoFromFamilyLedger(
@@ -2070,45 +2034,11 @@ export async function runFamilyOnlineReviewLoop(input: {
           // thin marker and transports opaque pointer/body. Durability
           // (progress/receipts/blobs) is worker-owned via mounted durable dir +
           // bin.mjs — host never classify/progress-write/mint pointer.
-          const ledgerNow = await input.familyBackend.readFamilyLedger();
-          // Prefer landing reviewed head (includes pending committed-fixer resume
-          // SHA) so same-round first-fixer crash re-dispatches Collector at the
-          // new head instead of short-circuiting on the prior ship-head checkpoint.
           const landingHead =
             typeof landing.shipDelivery?.prHead === "string"
               ? landing.shipDelivery.prHead.trim()
               : "";
-          const bookkeepingHead =
-            landingHead.length > 0
-              ? landingHead
-              : loopState.lastFixSha !== undefined &&
-                  loopState.lastFixSha.length > 0
-                ? loopState.lastFixSha
-                : effectiveOnlineReviewHeadFromFamilyLedger(ledgerNow, shipHead, {
-                    currentPr: reviewedPr,
-                  });
-          const checkpoint = lastCollectorCheckpointFromFamilyLedger(
-            ledgerNow,
-            round,
-            bookkeepingHead,
-            {
-              currentPr: prUrl,
-              shippedAnchorHead: shipHead,
-            },
-          );
-          if (checkpoint !== undefined) {
-            return {
-              ...(checkpoint.evidence !== undefined
-                ? { evidence: checkpoint.evidence }
-                : {}),
-              ...(checkpoint.cargoPointer !== undefined
-                ? { cargoPointer: checkpoint.cargoPointer }
-                : {}),
-              ...(checkpoint.artifacts !== undefined
-                ? { artifacts: checkpoint.artifacts }
-                : {}),
-            };
-          }
+          const bookkeepingHead = landingHead.length > 0 ? landingHead : shipHead;
 
           let collectorMonitorHandle: WorkerMonitorHandle | undefined;
           const collectorPool = poolForKind("collector");
@@ -2442,52 +2372,20 @@ export async function runFamilyOnlineReviewLoop(input: {
           // Always durable the opaque envelope (commit OR legal no-op).
           // Not a host gate on committed/alreadySatisfied — pure cargo.
           if (output !== undefined) {
-            // #1145 F5: committed envelope SHA on fixer_completed admits top-level
-            // shipped resume when crash precedes fix_committed bookkeeping.
-            const committedHead = fixerEnvelopeFixCommitSha(output);
             await recordOnlineReviewFixerCompleted(input.familyBackend, {
               onlineReviewRound: round,
               fixerResult: output,
               pr: prUrl,
-              ...(committedHead !== undefined && committedHead.length > 0
-                ? { familyHeadAfter: committedHead }
-                : {}),
-              // Preserve arrays exactly, including explicit [] (#1145).
-              fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys,
-              fixMarkedFindingThreads: lastFixMarkedFindingThreads,
             });
             loopState.round = Math.max(loopState.round, round);
           }
           return output;
         },
-        // #941: landing Action owns docs/merge/close/cleanup after this loop.
-        // #1145: post-fix retrigger/wait is the next Collector seat — no host
-        // post-fix poll/retrigger seam.
-        resolveFixCommitSha: async (envelopeFixSha: string) => {
-          const sha = envelopeFixSha;
-          familyLastFixCommitSha = sha;
-          loopState.lastFixSha = sha;
-          await recordOnlineReviewFixCommitted(input.familyBackend, {
-            familyHeadAfter: sha,
-            pr: prUrl,
-            onlineReviewRound: lastFixerOnlineReviewRound,
-            // Preserve arrays exactly, including explicit [] (#1145).
-            fixMarkedFindingIdentityKeys: lastFixMarkedFindingIdentityKeys,
-            fixMarkedFindingThreads: lastFixMarkedFindingThreads,
-          });
-          return sha;
-        },
       },
       {
         initialRound: loopState.round,
-        ...(loopState.lastFixSha !== undefined
-          ? { initialFixCommitSha: loopState.lastFixSha }
-          : {}),
         ...(pendingFixerCargo !== undefined
           ? { initialPendingFixerResult: pendingFixerCargo.fixerResult }
-          : {}),
-        ...(initialPostFixTransition
-          ? { initialPostFixTransition: true }
           : {}),
         enrichVerifyLanding: async (landing, round) => {
           // Ledger prior-round keys from durable fix_committed markers only

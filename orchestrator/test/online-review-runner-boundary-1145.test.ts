@@ -2551,10 +2551,9 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       expect(verifySawSnapshot).not.toEqual(staleEvidence);
     });
 
-    it("production tracer: resume resolves live open PR — stale shipped-ledger PR does not short-circuit", async () => {
-      // ship.pr stays on the closed/replaced PR while gh pr list yields the
-      // currently open replacement. Host must not mergeable/Collector-skip on
-      // the stale handle; durable namespace + landing identity use actual-PR.
+    it("production tracer: host never resolves a replacement PR and always hands the opaque Ship handle to Collector", async () => {
+      // The Collector worker owns live PR/head resolution. Host neither calls
+      // gh nor trusts an old mergeable/checkpoint row to skip the Action.
       const sharedHead = "same-sha-live-resolve-1145";
       // Canonical https PR URLs require a numeric /pull/<n> (#1090).
       const staleShippedPr = "https://github.com/test/repo/pull/11450";
@@ -2650,17 +2649,23 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         // Must NOT short-circuit on stale-PR mergeable/collector markers.
         expect(backend.collectorDispatchCount).toBe(collectorsBefore + 1);
         expect(backend.verifyDispatchCount).toBe(verifiesBefore + 1);
-        // Thin typed identity to Collector ctx + Verify landing is the live PR.
-        expect(collectorCtxPr).toBe(liveOpenPr);
-        expect(verifyLandingPr).toBe(liveOpenPr);
+        expect(
+          shSpy.mock.calls.some(
+            ([file, args]) =>
+              file === "gh" && args[0] === "pr" && args[1] === "list",
+          ),
+        ).toBe(false);
+        // Ship's handle is opaque transport; only Collector interprets it.
+        expect(collectorCtxPr).toBe(staleShippedPr);
+        expect(verifyLandingPr).toBe(staleShippedPr);
         const mergeablePrs = backend.ledger
           .filter((e) => e.event === "online_review_mergeable")
           .map((e) => e.pr);
-        expect(mergeablePrs).toEqual([staleShippedPr, liveOpenPr]);
+        expect(mergeablePrs).toEqual([staleShippedPr, staleShippedPr]);
         const collectorPrs = backend.ledger
           .filter((e) => e.event === "online_review_collector_completed")
           .map((e) => e.pr);
-        expect(collectorPrs).toContain(liveOpenPr);
+        expect(collectorPrs).toEqual([staleShippedPr, staleShippedPr]);
       } finally {
         shSpy.mockRestore();
       }

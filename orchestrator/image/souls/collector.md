@@ -21,12 +21,10 @@ judge enum**。判官（Verify）是下一棒。
 
 - `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`
 - `BOT_POLL_INTERVAL_MS` / `BOT_OVERDUE_MIN_WALL_MS` / `BOT_OVERDUE_POLL_COUNT`
-- `collectorPostFixRetriggerPlan({ headOid, postFixTransition })`
-  — `postFixTransition` 是 landing 上的显式 worker-owned **one-shot** 事实
-  （仅当 pending committed-fixer resume 或当前 fixer envelope 真正推进了
-  effective head 时置位，紧随其后的 Collector 消费后清除；同 head 合法
-  no-op 不置位），**不是** `Boolean(lastFixCommitSha)` / round>1 算术，
-  也不是 evidence body / disposition cargo。
+- Collector 开席自行用 `gh` 从 Ship 交来的 opaque PR handle 解析当前 open PR
+  与 head；Runner 不解析 replacement PR，也不从 Fixer cargo 推 head。
+- 当前解析 head 与本 PR durable progress 的最近 head 不同，才是 post-fix
+  retrigger；同 head 合法 no-op 不 retrigger。这个判断完全住在本席 capability。
 
 ### Durable capability（#1145 DecisionGate A · 本席唯一进度真源）
 
@@ -50,9 +48,8 @@ CLI="node $DURABLE/bin.mjs"
 | `$CLI evidence-put --round N --head H --pr P --file -` | 证据 bytes 原子写入；stdout `{handle}` |
 | `$CLI evidence-get --handle H` | 校验 handle 可读（handle 只可来自本 PR 命名空间的 progress） |
 
-`N` = landing `onlineReviewRound`；`H` = 本轮 reviewed head
-（`shipDelivery.prHead` / 当前 cycle head）；`P` = landing
-`shipDelivery.pr`（resolved current PR，非空）。进度、receipt、evidence 按
+`N` = landing `onlineReviewRound`；`H` / `P` = 本席从 GitHub 解析的当前
+reviewed head / resolved current PR（Ship handle 仅作起点）。进度、receipt、evidence 按
 `(round, head, resolved-current-PR)` 命名空间隔离——同 round 新 head **不得**
 resume 旧 head 证据；同 round+head 的替换/重开 PR **不得** resume 旧 PR
 证据或 receipt（#1145 F2 / PR-cycle）。`evidence-get` 可仅带 handle，但
@@ -82,14 +79,11 @@ handle **必须**来自本 PR 作用域 progress 记录（classify/resume 返回
    deadline 先 `progress-set-deadline`。
 5. 超时仍不齐 → evidence 如实标记 dropped / pending，或 typed `escalate`。
 
-### post-fix 重触发（landing.`postFixTransition` === true）
+### post-fix 重触发（本席解析到新 head）
 
 1. 开席 classify；已有 handle 则跳过重触发（receipt 幂等）。
-2. `collectorPostFixRetriggerPlan({ headOid: H, postFixTransition: landing.postFixTransition })`
-   — 仅当 one-shot fact 为 true 且 H 非空才 shouldRetrigger。**round-1 无
-   head-move 不触发**；同轮 first-fixer crash 恢复且 head 真推进时，在新 head
-   上恰好重触发一次；之后同 head 的 no-op / continue 再入 Collector 时 fact
-   已清除，不再计划 retrigger。
+2. 仅当当前解析 head 与本 PR 最近 durable head 不同才 retrigger；同 head
+   no-op 不触发，新 head 只触发一次。
 3. retrigger：`receipt-attempted` → `gh pr comment`（body =
    `ONLINE_REVIEW_BOT_RETRIGGER_COMMENT`，至多一条）→ `receipt-succeeded`。
    重入先 `receipt-decide` + 核外事实。

@@ -148,9 +148,6 @@ export function onlineReviewDispatch(input: {
   readonly dispatchFixer?: (
     landing: WorkerLandingPayload,
   ) => FixerResult | undefined | Promise<FixerResult | undefined>;
-  readonly resolveFixCommitSha?: (
-    envelopeFixSha: string,
-  ) => string | Promise<string>;
 }): OnlineReviewLoopDispatch {
   const defaultEvidence = (): OnlineReviewLandingSnapshot =>
     stubCollectorEvidence();
@@ -184,8 +181,5 @@ export function onlineReviewDispatch(input: {
       if (input.dispatchFixer === undefined) return undefined;
       return input.dispatchFixer(landing);
     },
-    ...(input.resolveFixCommitSha !== undefined
-      ? { resolveFixCommitSha: input.resolveFixCommitSha }
-      : {}),
   };
 }
