@@ -1344,36 +1344,14 @@ export interface CollectorResult {
  */
 export interface VerifyResult {
   readonly kind: "verify";
-  /**
-   * ADR 0131 judge traffic used for routing (`onlineReviewJudgeDisposition`).
-   * Required thin signal — not business cargo.
-   */
-  readonly converged: boolean;
-  /** Opaque business cargo — host preserves as-is, never whitelists elements. */
-  readonly findingDispositions?: ReadonlyArray<unknown>;
+  /** ADR 0131 sole online-review traffic signal (no fourth state). */
+  readonly status: "converged" | "continue" | "escalate";
   /** Sole judge-authored Fixer packet; Runner transports it without inspection. */
   readonly onlineReviewFixPacket?: unknown;
-  /**
-   * Opaque fixer packet keys — whole-array passthrough, no element filter (#1145 A3).
-   */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<unknown>;
-  /**
-   * Opaque fixer packet threads — whole-array passthrough, no element filter (#1145 A3).
-   */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<unknown>;
-  /** Escalate terminal when the worker raises a decision gate (#600 AC1/AC5). */
-  readonly terminalState?: VerifyWorkerTerminalState;
   /** True when this verify dispatch is a post-fixer fresh re-check (ADR 0061). */
   readonly isRecheck?: boolean;
   /** Extra opaque role fields preserved end-to-end (ADR 0131 cargo ≠ fate). */
   readonly [key: string]: unknown;
-  /**
-   * #1002 — optional roster suggestion on continue: runner rewrites the online
-   * review **fixer** repair seat via executeAdvanceCoderSuggestion (same
-   * advanced/stay_put/noop topology as single-slice/family coderFix). Never a
-   * terminal fate signal.
-   */
-  readonly advanceCoder?: string;
 }
 
 /**

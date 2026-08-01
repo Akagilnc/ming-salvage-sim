@@ -287,7 +287,7 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
   it("parseVerifyOutcome ignores residual pattern-brief cargo (opaque miss)", () => {
     const residualKey = "finding" + "Families";
     const raw: Record<string, unknown> = {
-      converged: false,
+      status: "continue",
       findingDispositions: [
         {
           identityKey: "t:1",
@@ -309,7 +309,7 @@ describe("#711 prior round findings (ledger half retained after ADR 0137)", () =
     const parsed = parseVerifyOutcome(`<verify>${JSON.stringify(raw)}</verify>`);
     expect(parsed).toMatchObject({
       kind: "verify",
-      converged: false,
+      status: "continue",
       fixMarkedFindingIdentityKeys: ["t:1"],
     });
     // #1145 A3: residual business fields stay opaque cargo (not stripped);
@@ -406,7 +406,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           if (round >= 4) {
             return {
               kind: "verify",
-              converged: true,
+              status: "converged",
               isRecheck: true,
               fixMarkedFindingIdentityKeys:
                 landing.fixMarkedFindingIdentityKeys ?? [],
@@ -415,7 +415,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           const key = `silence:r${round}`;
           return {
             kind: "verify",
-            converged: false,
+            status: "continue",
             isRecheck: round > 1,
             fixMarkedFindingIdentityKeys: [key],
             findingDispositions: [
@@ -527,14 +527,14 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
               });
               return {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 isRecheck: true,
                 fixMarkedFindingIdentityKeys: keys,
               } satisfies VerifyResult;
             }
             return {
               kind: "verify",
-              converged: true,
+              status: "converged",
               isRecheck: true,
             } satisfies VerifyResult;
           }
@@ -542,7 +542,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           if (round === 1) {
             return {
               kind: "verify",
-              converged: false,
+              status: "continue",
               fixMarkedFindingIdentityKeys: ["primary:r1"],
               findingDispositions: [
                 {
@@ -555,7 +555,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           }
           return {
             kind: "verify",
-            converged: true,
+            status: "converged",
             isRecheck: true,
             // This-round packet only — prior history must not rewrite Fixer keys.
             fixMarkedFindingIdentityKeys: ["primary:r2-only"],
@@ -633,7 +633,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           if (round >= 4) {
             return {
               kind: "verify",
-              converged: true,
+              status: "converged",
               isRecheck: true,
               fixMarkedFindingIdentityKeys:
                 landing.fixMarkedFindingIdentityKeys ?? [],
@@ -642,7 +642,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
           const key = `silence:r${round}`;
           return {
             kind: "verify",
-            converged: false,
+            status: "continue",
             isRecheck: true,
             fixMarkedFindingIdentityKeys: [key],
             findingDispositions: [
@@ -707,7 +707,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
         if (round >= 2) {
           return {
             kind: "verify",
-            converged: true,
+            status: "converged",
             isRecheck: true,
             fixMarkedFindingIdentityKeys:
               landing.fixMarkedFindingIdentityKeys ?? [],
@@ -715,7 +715,7 @@ describe("#711 three-round priorRoundFindings path (no pattern-brief channel)", 
         }
         return {
           kind: "verify",
-          converged: false,
+          status: "continue",
           fixMarkedFindingIdentityKeys: ["silence:site-a"],
           findingDispositions: [
             {

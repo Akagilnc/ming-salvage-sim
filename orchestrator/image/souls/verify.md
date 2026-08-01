@@ -67,8 +67,8 @@ landing 可能只带 `cargoPointer`、不带 `onlineReviewSnapshot`（Collector
 5. 抛错且未生效 → `$CLI receipt-failed …` 或保留 attempted + 你方 escalate
 
 顺序：全部计划副作用 succeeded（或本席 escalate）之后，才写 role cargo
-`converged` / fixer packet 并 emit typed envelope。`converged:true` 禁止带着
-未完成副作用交卷。
+`status: converged | continue | escalate` 与可选的单一 `onlineReviewFixPacket`
+并 emit typed envelope。禁止带着未完成副作用交 `status: converged`。
 
 裁决的法理（五理由与宪法定义 → 容器全局〈finding 裁决法理〉〈宪法〉
 〈测试五条尺〉）：

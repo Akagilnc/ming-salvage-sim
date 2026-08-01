@@ -258,7 +258,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
                   },
                 }
               : spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+              ? { kind: "verify", status: "converged" }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",
@@ -478,7 +478,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
                   },
                 }
               : spec.kind === "verify"
-              ? { kind: "verify", converged: true }
+              ? { kind: "verify", status: "converged" }
               : spec.kind === "fixer"
                 ? {
                   kind: "fixer",

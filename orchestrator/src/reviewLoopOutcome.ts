@@ -71,7 +71,7 @@ export function stubCollectorResult(
 
 /** Deterministic verify verdict for explicit offline/test injection only. */
 export function stubVerifyResult(): VerifyResult {
-  return { kind: "verify", converged: true };
+  return { kind: "verify", status: "converged" };
 }
 
 /** Deterministic fixer verdict for explicit offline/test injection only. */

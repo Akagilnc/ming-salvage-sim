@@ -266,7 +266,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       }
       if (spec.kind === "verify") {
         verifyDispatches += 1;
-        return { kind: "completed", output: { kind: "verify", converged: true } };
+        return { kind: "completed", output: { kind: "verify", status: "converged" } };
       }
       if (spec.kind === "landing") {
         return { kind: "completed", output: { kind: "landing", released: true } };

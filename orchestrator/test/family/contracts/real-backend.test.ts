@@ -751,13 +751,13 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const raw = `<verify>{"converged": true}</verify>`;
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: true });
+    expect(out).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("feeds RAW valid-but-false verify through real parse (AC2: false flag passes shape)", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const out = mod.parseVerifyOutcome(`<verify>{"converged": false}</verify>`);
-    expect(out).toEqual({ kind: "verify", converged: false });
+    expect(out).toEqual({ kind: "verify", status: "continue" });
   });
 
   it("unreadable verify bytes remain cargo instead of becoming a process failure", async () => {
@@ -784,7 +784,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     const sha = "a".repeat(40);
 
     expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath))
-      .toEqual({ kind: "verify", converged: true });
+      .toEqual({ kind: "verify", status: "converged" });
     expect(
       mod.parseFixerOutcome(
         `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
@@ -810,7 +810,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
       outcomePath,
-    )).toEqual({ kind: "verify", converged: true });
+    )).toEqual({ kind: "verify", status: "converged" });
   });
 
   class FamilyCoderDecodeHarness extends RealFamilyBackend {
@@ -1112,7 +1112,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       mod.parseVerifyOutcome(
         `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
       ),
-    ).toEqual({ kind: "verify", converged: true });
+    ).toEqual({ kind: "verify", status: "converged" });
     expect(
       mod.parseCleanupOutcome(
         `<cleanup>{"terminal": true, "ok": true, "issuesClosed": ["chatty"]}</cleanup>`,
@@ -1136,7 +1136,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       '<verify>{"converged": true}</verify>\n' +
       'done';
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: true });
+    expect(out).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("multiple complete tag blocks → the family parser takes the last one", async () => {
@@ -1146,7 +1146,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       'chatter between\n' +
       '<verify>{"converged": true}</verify>';
     const outFam = fam.parseVerifyOutcome(raw);
-    expect(outFam).toEqual({ kind: "verify", converged: true });
+    expect(outFam).toEqual({ kind: "verify", status: "converged" });
   });
 
   it("unclosed trailing tag mention after a complete block → last complete wins (actual observed behavior)", async () => {
@@ -1156,7 +1156,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       '<verify>{"converged": false}</verify>\n' +
       'later mention without close: see <verify> for details';
     const out = mod.parseVerifyOutcome(raw);
-    expect(out).toEqual({ kind: "verify", converged: false });
+    expect(out).toEqual({ kind: "verify", status: "continue" });
   });
 });
 

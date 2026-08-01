@@ -282,7 +282,7 @@ class TracerFamilyBackend implements FamilyBackend {
         kind: "completed",
         output: {
           kind: "verify",
-          converged: true,
+          status: "converged",
         },
       };
     }
@@ -426,7 +426,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         kind: "completed",
         output: {
           kind: "verify",
-          converged: false,
+          status: "continue",
           isRecheck: false, // Verify-owned; Runner must transport as-is
           // Opaque fixer packet — 6 current items, distinct from prior 5.
           fixMarkedFindingIdentityKeys: [...CURRENT_ROUND_6_KEYS],
@@ -468,7 +468,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       if (verifyCalls === 1) return firstVerify!(spec, ctx, landing);
       return {
         kind: "completed",
-        output: { kind: "verify", converged: true, isRecheck: false },
+        output: { kind: "verify", status: "converged", isRecheck: false },
       };
     };
 
@@ -513,7 +513,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             isRecheck: false,
             // Sparse: no fixMarkedFindingIdentityKeys / threads this round.
           },
@@ -521,7 +521,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       }
       return {
         kind: "completed",
-        output: { kind: "verify", converged: true, isRecheck: false },
+        output: { kind: "verify", status: "converged", isRecheck: false },
       };
     };
 
@@ -613,7 +613,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               isRecheck: false,
               fixMarkedFindingIdentityKeys: ["live:1"],
               fixMarkedFindingThreads: [
@@ -629,7 +629,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         });
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true, isRecheck: false },
+          output: { kind: "verify", status: "converged", isRecheck: false },
         };
       };
 
@@ -675,8 +675,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             return {
               verify: {
                 kind: "verify",
-                converged: false,
-                terminalState: "decision_gate_raised",
+                status: "escalate",
               },
             };
           },
@@ -717,7 +716,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: ["k-env"],
                   fixMarkedFindingThreads: [
                     { identityKey: "k-env", threadId: "t-env" },
@@ -730,12 +729,12 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   isRecheck: true,
                 },
               };
             }
-            return { verify: { kind: "verify", converged: true, isRecheck: true } };
+            return { verify: { kind: "verify", status: "converged", isRecheck: true } };
           },
           dispatchFixer: async () => ({
             kind: "fixer",
@@ -778,7 +777,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: ["k1"],
                   fixMarkedFindingThreads: [
                     { identityKey: "k1", threadId: "t1" },
@@ -797,7 +796,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   isRecheck: true,
                   fixMarkedFindingIdentityKeys: ["k1"],
                   fixMarkedFindingThreads: [
@@ -806,7 +805,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
                 },
               };
             }
-            return { verify: { kind: "verify", converged: true, isRecheck: true } };
+            return { verify: { kind: "verify", status: "converged", isRecheck: true } };
           },
           dispatchFixer: async () => {
             fixerCalls += 1;
@@ -855,7 +854,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: ["k1"],
                   fixMarkedFindingThreads: [
                     { identityKey: "k1", threadId: "t1" },
@@ -865,7 +864,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             }
             // Same-round recheck after fixer commit.
             return {
-              verify: { kind: "verify", converged: true, isRecheck: true },
+              verify: { kind: "verify", status: "converged", isRecheck: true },
             };
           },
           dispatchFixer: async () => ({
@@ -970,7 +969,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           kind: "verify",
           // Contradictory: green flag + escalate terminal. Disposition machine
           // is escalate-first; mergeable checkpoint must NOT swallow the gate.
-          converged: true,
+          status: "converged",
           terminalState: "decision_gate_raised",
         },
       });
@@ -1016,7 +1015,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               kind: "verify",
               // Contradictory: not green, but terminalState says mergeable.
               // Disposition = continue (only converged===true converges).
-              converged: false,
+              status: "continue",
               terminalState: "mergeable",
               fixMarkedFindingIdentityKeys: ["live:contradict"],
               fixMarkedFindingThreads: [
@@ -1032,7 +1031,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         });
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true, isRecheck: false },
+          output: { kind: "verify", status: "converged", isRecheck: false },
         };
       };
 
@@ -1100,14 +1099,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           });
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: true },
+            output: { kind: "verify", status: "converged", isRecheck: true },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["noop:1"],
             fixMarkedFindingThreads: [
               { identityKey: "noop:1", threadId: "t-noop" },
@@ -1207,14 +1206,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           });
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: true },
+            output: { kind: "verify", status: "converged", isRecheck: true },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["commit:1"],
             fixMarkedFindingThreads: [
               { identityKey: "commit:1", threadId: "t-commit" },
@@ -1330,7 +1329,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             // Next-round seat after durable continue — converge, no new Fixer.
             return {
               kind: "completed",
-              output: { kind: "verify", converged: true, isRecheck: false },
+              output: { kind: "verify", status: "converged", isRecheck: false },
             };
           }
 
@@ -1339,7 +1338,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               kind: "completed",
               output: {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 fixMarkedFindingIdentityKeys: [`r${round}:k`],
                 fixMarkedFindingThreads: [
                   { identityKey: `r${round}:k`, threadId: `t-r${round}` },
@@ -1353,7 +1352,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               isRecheck: true,
               fixMarkedFindingIdentityKeys: ["r1:next"],
               fixMarkedFindingThreads: [
@@ -1479,7 +1478,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               kind: "completed",
               output: {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 fixMarkedFindingIdentityKeys: ["live-packet-r1"],
                 fixMarkedFindingThreads: [
                   { identityKey: "live-packet-r1", threadId: "t-live-r1" },
@@ -1494,7 +1493,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               kind: "completed",
               output: {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 isRecheck: true,
                 fixMarkedFindingIdentityKeys: [],
               },
@@ -1506,7 +1505,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: true,
+              status: "converged",
               isRecheck: false,
               // This-round packet only — history must not rewrite Fixer keys.
               fixMarkedFindingIdentityKeys: ["live-packet-r2"],
@@ -1659,7 +1658,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
                 kind: "completed",
                 output: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: [`r${round}:k`],
                   fixMarkedFindingThreads: [
                     { identityKey: `r${round}:k`, threadId: `t-r${round}` },
@@ -1672,7 +1671,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               kind: "completed",
               output: {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 isRecheck: true,
                 fixMarkedFindingIdentityKeys: [`r${round}:k`],
                 fixMarkedFindingThreads: [
@@ -1685,7 +1684,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           // Round 3: converge (re-entry after crash).
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: false },
+            output: { kind: "verify", status: "converged", isRecheck: false },
           };
         }
 
@@ -1939,14 +1938,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           });
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: true },
+            output: { kind: "verify", status: "converged", isRecheck: true },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["r2:1"],
             fixMarkedFindingThreads: [
               { identityKey: "r2:1", threadId: "t-r2" },
@@ -2098,14 +2097,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           });
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: true },
+            output: { kind: "verify", status: "converged", isRecheck: true },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["f5:1"],
           },
         };
@@ -2315,7 +2314,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ]);
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -2481,7 +2480,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         verifySawSnapshot = landing?.onlineReviewSnapshot;
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -2577,7 +2576,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           verifyLandingPr = landing?.shipDelivery?.pr;
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true },
+            output: { kind: "verify", status: "converged" },
           };
         };
 
@@ -2633,14 +2632,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           verifySawFixer = landing.fixerResult;
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true },
+            output: { kind: "verify", status: "converged" },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["ext-key-1"],
             fixMarkedFindingThreads: [
               { identityKey: "ext-key-1", threadId: "thr-ext-1" },
@@ -2785,7 +2784,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         );
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -2831,7 +2830,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
 
       const parsed = parseVerifyOutcome(
         `<verify>${JSON.stringify({
-          converged: false,
+          status: "continue",
           fixMarkedFindingIdentityKeys: ["ext:1", "malformed-no-thread"],
           fixMarkedFindingThreads: opaqueThreads,
         })}</verify>`,
@@ -2867,14 +2866,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           if (landing?.fixerResult !== undefined) {
             return {
               kind: "completed",
-              output: { kind: "verify", converged: true },
+              output: { kind: "verify", status: "converged" },
             };
           }
           return {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               fixMarkedFindingIdentityKeys: ["ext:1", "malformed-no-thread"],
               fixMarkedFindingThreads: opaqueThreads as VerifyResult["fixMarkedFindingThreads"],
             },
@@ -3051,7 +3050,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
           verifySawArtifacts = landing?.rawReviewerArtifacts;
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true },
+            output: { kind: "verify", status: "converged" },
           };
         };
         const resumed = await runFamilyOnlineReviewLoop({
@@ -3235,14 +3234,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         if (landing?.fixerResult !== undefined) {
           return {
             kind: "completed",
-            output: { kind: "verify", converged: true, isRecheck: true },
+            output: { kind: "verify", status: "converged", isRecheck: true },
           };
         }
         return {
           kind: "completed",
           output: {
             kind: "verify",
-            converged: false,
+            status: "continue",
             fixMarkedFindingIdentityKeys: ["crash:1"],
           },
         };
@@ -3306,7 +3305,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: ["once:1"],
                   fixMarkedFindingThreads: [
                     { identityKey: "once:1", threadId: "t-once" },
@@ -3320,7 +3319,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   isRecheck: true,
                   fixMarkedFindingIdentityKeys: ["once:2"],
                   fixMarkedFindingThreads: [
@@ -3334,7 +3333,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   fixMarkedFindingIdentityKeys: ["once:2"],
                   fixMarkedFindingThreads: [
                     { identityKey: "once:2", threadId: "t-once-2" },
@@ -3348,7 +3347,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
               return {
                 verify: {
                   kind: "verify",
-                  converged: false,
+                  status: "continue",
                   isRecheck: true,
                   fixMarkedFindingIdentityKeys: ["once:2"],
                 },
@@ -3356,7 +3355,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             }
             // Round 3 first seat → converge (observe third Collector landing).
             return {
-              verify: { kind: "verify", converged: true, isRecheck: false },
+              verify: { kind: "verify", status: "converged", isRecheck: false },
             };
           },
           dispatchFixer: async () => {
@@ -3458,14 +3457,14 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       backend.collectorImpl = async () => ({
         kind: "completed",
         // Wrong role kind on completed process — must not raise decision gate.
-        output: { kind: "verify", converged: false },
+        output: { kind: "verify", status: "continue" },
       });
       let verifyLanding: WorkerLandingPayload | undefined;
       backend.verifyImpl = async (_s, _c, landing) => {
         verifyLanding = landing;
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -3574,7 +3573,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         expect(landing?.fixerResult).toBeDefined();
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -3701,7 +3700,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         );
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -3743,7 +3742,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         expect(landing?.onlineReviewSnapshot).toBeUndefined();
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -3775,7 +3774,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         expect(landing?.cargoPointer).toBe(HANDLE);
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
       const second = await runFamilyOnlineReviewLoop({
@@ -3814,7 +3813,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               fixMarkedFindingIdentityKeys: ["k1"],
               fixMarkedFindingThreads: [
                 { identityKey: "k1", threadId: "t1" },
@@ -3827,7 +3826,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               fixMarkedFindingIdentityKeys: ["k2"],
               fixMarkedFindingThreads: [
                 { identityKey: "k2", threadId: "t2" },
@@ -3837,7 +3836,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
       backend2.fixerImpl = async () => ({
@@ -3873,7 +3872,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         verifyLanding = landing;
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
       const result = await runFamilyOnlineReviewLoop({
@@ -4017,7 +4016,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         ).toBeUndefined();
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
 
@@ -4243,7 +4242,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
       );
       const cargo = {
         kind: "verify",
-        converged: false,
+        status: "continue",
         findingDispositions: [
           { identityKey: "k", threadId: "t", action: "fix", extra: true },
           { weird: 1 },
@@ -4439,7 +4438,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               isRecheck: false,
               fixMarkedFindingIdentityKeys: [...CURRENT_ROUND_6_KEYS],
               fixMarkedFindingThreads: CURRENT_ROUND_6_THREADS,
@@ -4448,7 +4447,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true, isRecheck: true },
+          output: { kind: "verify", status: "converged", isRecheck: true },
         };
       };
 
@@ -4647,7 +4646,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               fixMarkedFindingIdentityKeys: ["new-pr-only"],
               fixMarkedFindingThreads: [
                 { identityKey: "new-pr-only", threadId: "t-new" },
@@ -4657,7 +4656,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true },
+          output: { kind: "verify", status: "converged" },
         };
       };
       backend.fixerImpl = async (_s, _c, landing) => {
@@ -4739,12 +4738,12 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             if (verifyCalls === 1) {
               return {
                 kind: "verify",
-                converged: false,
+                status: "continue",
                 fixMarkedFindingIdentityKeys: mixedKeys,
                 fixMarkedFindingThreads: mixedThreads,
               };
             }
-            return { kind: "verify", converged: true };
+            return { kind: "verify", status: "converged" };
           },
           dispatchFixer: (landing) => {
             sawKeys = landing.fixMarkedFindingIdentityKeys;
@@ -4830,7 +4829,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
             kind: "completed",
             output: {
               kind: "verify",
-              converged: false,
+              status: "continue",
               // Explicit empty packet — not omitted.
               fixMarkedFindingIdentityKeys: [],
               fixMarkedFindingThreads: [],
@@ -4840,7 +4839,7 @@ describe("#1145 production shared-tail Online Review boundary", () => {
         // Post-fixer recheck converges.
         return {
           kind: "completed",
-          output: { kind: "verify", converged: true, isRecheck: true },
+          output: { kind: "verify", status: "converged", isRecheck: true },
         };
       };
       liveBackend.fixerImpl = async (_s, _c, landing) => {

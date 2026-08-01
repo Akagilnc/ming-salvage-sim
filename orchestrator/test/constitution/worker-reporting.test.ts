@@ -267,7 +267,7 @@ describe("#825 Group A family roles", () => {
         // #940: offline skeleton / explicit role cargo — do not return ship
         // envelopes for verify/fixer (would hang the uncapped continue loop).
         if (spec.kind === "verify") {
-          return { kind: "completed", output: { kind: "verify", converged: true } };
+          return { kind: "completed", output: { kind: "verify", status: "converged" } };
         }
         if (spec.kind === "fixer") {
           return { kind: "completed", output: { kind: "fixer", committed: false } };
@@ -303,8 +303,8 @@ describe("#825 Group A family roles", () => {
       onlineReviewDispatch({
       snapshot: snapshot,
         dispatchVerify: async () => (++verifyCalls === 1
-          ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
-          : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
+          ? { kind: "verify", status: "continue", findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
+          : { kind: "verify", status: "converged", isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
 
       }),
@@ -330,8 +330,8 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           checkRunsEmptyMeans: "converged" as const,
         },
         dispatchVerify: async () => (++verifyCalls === 1
-          ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
-          : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
+          ? { kind: "verify", status: "continue", findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
+          : { kind: "verify", status: "converged", isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
 
       }),

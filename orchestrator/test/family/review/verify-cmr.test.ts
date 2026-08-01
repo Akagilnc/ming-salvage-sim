@@ -2164,7 +2164,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                   },
                 }
                 : spec.kind === "verify"
-                ? { kind: "verify", converged: true }
+                ? { kind: "verify", status: "converged" }
                 : spec.kind === "fixer"
                   ? {
                     kind: "fixer",
