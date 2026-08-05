@@ -4,6 +4,9 @@
 >
 > **追踪方式（2026-06-08 起，渐进迁移）**：主用 GitHub issue 记问题/讨论/状态；本文件**逐步舍弃**，只留「需要做、但不值得单开 issue 的小事」+ 已上 issue 项的指针索引。新发现的实质 bug/架构项直接开 issue，不再在此写长条目。
 
+## 🟣 远景素材（随想勿当定案，2026-08-05 owner 口谕留痕）
+- **分发阶段候选：CF Worker 托管**——Worker 托前端 + D1 存档 + Worker 转发 LLM，玩家零配置开链接即玩；`wrangler deploy --temporary`（60 分钟自毁试玩链）可做限量试玩分发。对应 CLAUDE.md 形态(2)「搁置到分发阶段」那条路。owner 并提**手游版**远景——前提「帐要算得过来」（单局 LLM 成本×模型档位是唯一变量）。探针铁律不变：先验证好不好玩（M11），分发是之后的仗。
+
 ## 🔵 E2E 验证总台 → [issue #92](https://github.com/Akagilnc/ming-salvage-sim/issues/92)
 - 已修待实玩验证的 issue 全挂那里（checklist + 验证剧本）；**merge 不关的 issue，merge 当时就往 #92 加条目 + 源 issue 回贴互链**。当前待验：#3（v0.8.0.0 结算事务，5 步剧本）+ CA3（大臣领命 prompt）。
 
