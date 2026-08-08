@@ -1,6 +1,6 @@
-# 明末力挽狂澜 · 微硬核分支
+# 残明朱批：崇祯
 
-![明末力挽狂澜主页](docs/screenshots/home.png)
+![残明朱批：崇祯主页](docs/screenshots/home.png)
 
 你是崇祯。
 
