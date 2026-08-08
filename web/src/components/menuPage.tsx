@@ -76,7 +76,7 @@ export function MenuPage({
       </h1>
 
       <div className="menu-panel">
-        <p className="menu-subtitle">圣旨不是按钮</p>
+        <p className="menu-subtitle">朕已知悉</p>
 
         {!llmReady && (
           <div className="menu-notice">尚未配置 LLM 后端。请先「设置 API」。</div>
