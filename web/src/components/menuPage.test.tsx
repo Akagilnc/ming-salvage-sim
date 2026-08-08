@@ -37,7 +37,7 @@ describe("MenuPage subtitle", () => {
         setError={() => {}}
       />
     );
-    const subtitle = document.querySelector(".menu-subtitle");
+    const subtitle = document.querySelector(".menu-tagline");
     expect(subtitle?.textContent).not.toContain("崇祯元年");
     cleanup();
   });
