@@ -3855,7 +3855,7 @@ button:disabled {
 
 /* 加载页背景 */
 .loading-screen {
-  background-image: url("/bg_loading.png");
+  background-image: url("/bg_loading.jpg");
   background-size: cover;
   background-position: center;
 }
