@@ -68,11 +68,11 @@ export function MenuPage({
   return (
     <div className="menu-screen">
       <div className="menu-poster">
-        <img src="/steam_assets/主宣传图.jpg" alt="明末：力挽狂澜" />
+        <img src="/steam_assets/主宣传图.jpg" alt="残明朱批：崇祯" />
       </div>
 
       <h1 className="menu-title">
-        <img className="menu-logo" src="/steam_assets/game-logo.png" alt="明末：力挽狂澜" />
+        <img className="menu-logo" src="/steam_assets/game-logo.png" alt="残明朱批：崇祯" />
       </h1>
 
       <div className="menu-panel">
