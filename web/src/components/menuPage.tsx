@@ -71,13 +71,14 @@ export function MenuPage({
         <img src="/steam_assets/主宣传图.jpg" alt="残明朱批：崇祯" />
       </div>
 
-      <h1 className="menu-title">
-        <img className="menu-logo" src="/steam_assets/game-logo.png" alt="残明朱批：崇祯" />
-      </h1>
+      <header className="menu-header">
+        <h1 className="menu-title">
+          <img className="menu-logo" src="/steam_assets/game-logo.png" alt="残明朱批：崇祯" />
+        </h1>
+        <p className="menu-tagline">「朕已知悉」</p>
+      </header>
 
       <div className="menu-panel">
-        <p className="menu-subtitle">朕已知悉</p>
-
         {!llmReady && (
           <div className="menu-notice">尚未配置 LLM 后端。请先「设置 API」。</div>
         )}

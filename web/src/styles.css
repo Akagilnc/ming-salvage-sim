@@ -5263,12 +5263,16 @@ button:disabled {
 }
 
 /* 顶部居中标题：书法 logo 图 */
-.menu-title {
+.menu-header {
   position: absolute;
-  top: clamp(28px, 7vh, 72px);
+  top: clamp(24px, 6vh, 64px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 2;
+  text-align: center;
+}
+
+.menu-title {
   margin: 0;
 }
 
@@ -5276,6 +5280,19 @@ button:disabled {
   height: clamp(72px, 13vh, 128px);
   width: auto;
   filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.8));
+}
+
+/* 副题：朱批批注，悬在 logo 下方 */
+.menu-tagline {
+  margin: clamp(6px, 1.5vh, 14px) 0 0;
+  color: #e0503a;
+  font-size: clamp(1rem, 2.2vh, 1.35rem);
+  font-weight: 700;
+  letter-spacing: 0.45em;
+  text-indent: 0.45em;
+  text-shadow:
+    0 0 14px rgba(224, 80, 58, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
 /* 菜单：左侧偏下，无面板框，裸文字列表 */
@@ -5287,14 +5304,6 @@ button:disabled {
   width: min(320px, 80vw);
   color: #f3e6c4;
   text-align: left;
-}
-
-.menu-subtitle {
-  margin: 0 0 24px;
-  color: #d6c590;
-  font-size: 0.95rem;
-  letter-spacing: 0.05em;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
 }
 
 .menu-notice {
