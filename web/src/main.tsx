@@ -344,7 +344,7 @@ export function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeModal, drawerOpen, haremDrawerOpen, mapIntelOpen]);
+  }, [activeModal, drawerOpen, haremDrawerOpen, armyDrawerOpen, regionDrawerOpen, buildingDrawerOpen, economyDrawerOpen, appointmentDrawerOpen, mapIntelOpen]);
 
   // 作弊控制台：Ctrl+~（或 Ctrl+`）切换显隐。强制结算唯一入口。
   React.useEffect(() => {
