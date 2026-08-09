@@ -547,11 +547,10 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     )
     assert db.get_decree_dossier(secret_dossier_id)["status"] == "executing"
     assert seen["payload"]["decree_text"] == "本月已颁之旨"
-    assert [
-        row["settlement_verdict"]
+    assert all(
+        "settlement_verdict" not in row
         for row in seen["payload"]["decree_dossiers"]
-        if "settlement_verdict" in row
-    ] == ["promulgated"]
+    )
     assert db.get_decree_dossier(staged["id"])["status"] == "executing"
     assert db.conn.execute(
         "SELECT delta FROM economy_ledger WHERE dossier_id=?",

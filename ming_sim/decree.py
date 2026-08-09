@@ -500,7 +500,11 @@ def resolve_directives(
                 )["external_review"] else exempt).append(dossier)
             provider = promulgation_verdict_provider or stub_promulgation_verdicts
             generated = provider(reviewed, state) if reviewed else []
-            generated = list(generated) + stub_promulgation_verdicts(exempt, state)
+            if not isinstance(generated, list):
+                raise LLMContractError("颁布判官 verdicts 必须为列表")
+            generated = generated + (
+                stub_promulgation_verdicts(exempt, state) if exempt else []
+            )
             verdict_rows = validate_promulgation_verdicts(
                 generated, proposed_dossiers, db,
             )
