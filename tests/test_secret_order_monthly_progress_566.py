@@ -77,6 +77,55 @@ def test_only_private_extractor_context_reads_canonical_history(game):
     assert pushed["progress"] == db.list_dossier_progress(dossier_id)
 
 
+def test_emperor_and_assignee_private_presentations_show_monthly_report(game):
+    from ming_sim.registry import CourtContext, build_secret_order_brief
+
+    db, state, content = game
+    order_id, dossier_id = _order(db, state)
+    marker = "首批饷车已验山海关关防566"
+    _settle(db, state, content, progress={
+        "dossier_id": dossier_id, "progress_band": "在途核验",
+        "memorial_text": marker,
+    })
+
+    # Emperor-facing secret-order product payload reads the canonical rail.
+    emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
+    assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
+
+    # The assignee receives the same report in their private audience context.
+    assignee = content.characters[emperor_order["minister_name"]]
+    private_brief = build_secret_order_brief(
+        assignee, CourtContext(db=db, state=state),
+    )
+    assert "在途核验" in private_brief
+    assert marker in private_brief
+
+
+def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
+    from ming_sim.issues import apply_score_extraction
+
+    db, state, content = game
+    order_id, dossier_id = _order(db, state, title="稽核辽饷", tags=["稽核"])
+    marker = "密奏查得辽饷兑付名册有重名566"
+    _settle(db, state, content, progress={
+        "dossier_id": dossier_id, "progress_band": "核账",
+        "memorial_text": marker,
+    })
+    assert marker not in str(db._character_knowledge_events(""))
+
+    apply_score_extraction(db, state, {"secret_order_updates": [{
+        "order_id": order_id, "sim_note": "该案已经明发廷议", "disclosed": True,
+    }]}, content=content)
+    public = db._character_knowledge_events("")
+    disclosure = next(
+        item for item in public
+        if str(item.get("source_id") or "").startswith(
+            f"secret_order_disclosure:{order_id}:"
+        )
+    )
+    assert marker in disclosure["body"]
+
+
 def test_titles_do_not_classify_long_orders_and_short_orders_do_not_report(game):
     db, state, content = game
     _, title_only = _order(db, state, title="保护堤岸", tags=["河工"])

@@ -1506,6 +1506,13 @@ def _settle_after_extract_body(
     """
     tlog("结算 4/4 落库 + inertia/ongoing")
     _stage("落库与事项推进")
+    # Persist private monthly reports before applying disclosure updates from
+    # the same extraction, so the one authorized promotion event can project
+    # the complete canonical history.  The enclosing atomic transaction keeps
+    # this ordering all-or-nothing.
+    db.record_monthly_dossier_progress(
+        before_turn, extracted.get("dossier_progress_reports"),
+    )
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
@@ -1561,11 +1568,6 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
-    # #566/#883: persist extractor-authored monthly briefs transactionally, but
-    # never splice restricted prose into the public gazette/report/source rail.
-    db.record_monthly_dossier_progress(
-        before_turn, extracted.get("dossier_progress_reports"),
-    )
     # #976: release held pure-public audience chat (non-withheld) before
     # archive materialization so 参与即知 lands without secret-origin rows.
     db.release_held_audience_knowledge(commit=False)
