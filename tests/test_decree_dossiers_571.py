@@ -220,6 +220,36 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
     }
 
 
+@pytest.mark.parametrize("bad_patch", [
+    {"character_id": "", "tier": "协办", "delegator_id": "lead"},
+    {"character_id": "worker", "tier": "", "delegator_id": "lead"},
+    {"character_id": "worker", "tier": "旁听", "delegator_id": "lead"},
+    {"character_id": "worker", "tier": "协办", "delegator_id": ""},
+])
+def test_month_end_participant_batch_rejects_each_malformed_item(game, bad_patch):
+    db, state, _content = game
+    lead, worker, good = _active_people(db, 3)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    bad = {key: ({"lead": lead, "worker": worker}.get(value, value))
+           for key, value in bad_patch.items()}
+    bad["dossier_id"] = dossier_id
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_participants": [bad, {
+            "dossier_id": dossier_id, "character_id": good,
+            "tier": "协办", "delegator_id": lead,
+        }],
+    }, dossier_ids_at_input={dossier_id})
+
+    assert result["dossier_participants"][0]["rejected"] is True
+    assert result["dossier_participants"][1]["character_id"] == good
+    roster = db.get_decree_dossier(dossier_id)["participant_roster"]
+    assert [item["character_id"] for item in roster] == [lead, good]
+
+
 def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypatch):
     import driver
 
@@ -1454,7 +1484,15 @@ def test_manual_directive_capture_reaches_structured_dossier(
 
     db, state, content = game
     actor = _active_minister(db)
-    response = {"拟旨意图": "拟旨", **model_fields}
+    active = {row["name"] for row in db.conn.execute(
+        "SELECT name FROM characters WHERE status='active'"
+    ).fetchall()}
+    aliased = next(ch for ch in content.characters.values()
+                   if ch.name in active and ch.aliases)
+    response = {
+        "拟旨意图": "拟旨", **model_fields,
+        "参与人": [{"character_id": aliased.aliases[0], "tier": "主办"}],
+    }
     if case == "authorization":
         response.update({"目标ID": actor, "承办人": actor})
     elif case == "dismiss":
@@ -1467,11 +1505,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
     session.db = db
     session.state = state
     session.llm_config = None
+    session.content = content
     if entry == "web":
         import web_app
 
         web_game = types.SimpleNamespace(
-            db=db, state=state, session=session,
+            db=db, state=state, content=content, session=session,
             directive_rows=lambda: db.list_directives(
                 state, statuses=("pending", "draft"),
             ),
@@ -1483,7 +1522,9 @@ def test_manual_directive_capture_reaches_structured_dossier(
         ))
         directive_id = int(result["directive"]["id"])
     else:
-        payload = cli_backend.capture_manual_directive_payload("手工旨意", None)
+        payload = cli_backend.capture_manual_directive_payload(
+            "手工旨意", None, db=db, content=content,
+        )
         directive_id = session.add_directive(
             "手工旨意", dossier_payload=payload,
         ).id
@@ -1492,6 +1533,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
     assert dossier["target_id"]
+    assert dossier["participant_roster"][0]["character_id"] == aliased.name
     if case == "controlled_verb":
         assert dossier["action_type"] == "secret_investigation"
         assert dossier["target_id"] == "granary-corruption"
