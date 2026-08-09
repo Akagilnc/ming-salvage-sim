@@ -2180,7 +2180,10 @@ class GameSession:
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
         directives = self.db.list_directives(self.state, statuses=("draft",))
-        dossier_only = bool(self.db.list_decree_dossiers(status="proposed"))
+        dossier_only = bool(
+            self.db.list_decree_dossiers(status="proposed")
+            or self.db.list_decree_dossiers(status="executing")
+        )
         if not directives and not dossier_only:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
@@ -2329,7 +2332,10 @@ class GameSession:
         ) or any(
             row.get("kind") == "directive"
             for row in self.db.list_pending_actions(self.state.turn)
-        ) or bool(self.db.list_decree_dossiers(status="proposed"))
+        ) or bool(
+            self.db.list_decree_dossiers(status="proposed")
+            or self.db.list_decree_dossiers(status="executing")
+        )
         if has_default_approved_work:
             return self.resolve_turn()
         advanced = advance_without_edict(

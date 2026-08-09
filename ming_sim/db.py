@@ -27,12 +27,15 @@ from ming_sim.constants import (
     DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
-from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES
+from ming_sim.decree_vocabulary import (
+    DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
+)
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.participant_roster import participant_roster_names
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
@@ -1400,11 +1403,20 @@ class GameDB:
                 primary_opponents_json TEXT NOT NULL DEFAULT '[]',
                 gatekeeper_id TEXT,
                 criteria_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                affected_parties_json TEXT NOT NULL DEFAULT '[]',
+                midzhi_unpromulgatable INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
+            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
+                turn INTEGER NOT NULL,
+                dossier_id INTEGER NOT NULL,
+                verdict_json TEXT NOT NULL,
+                PRIMARY KEY(turn, dossier_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
 
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1841,6 +1853,10 @@ class GameDB:
         self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
         self.ensure_column(
             "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
+        self.ensure_column(
+            "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column(
+            "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_secret_order_dossiers()
@@ -9634,18 +9650,13 @@ class GameDB:
     _DOSSIER_EXECUTION_OUTCOMES = frozenset({
         "executing", "fulfilled", "degraded", "failed", "transformed",
     })
-    _DOSSIER_IMMEDIATE_TERMINAL_ACTIONS = frozenset({
-        "authorization", "dismiss_assignment",
-    })
-
     @classmethod
     def _dossier_has_execution_surface(
         cls, action_type: object, payload: Optional[Dict[str, object]] = None,
     ) -> bool:
-        action = str(action_type or "")
-        if action == "grant_allocation":
-            return str((payload or {}).get("execution_surface") or "") != "immediate"
-        return action not in cls._DOSSIER_IMMEDIATE_TERMINAL_ACTIONS
+        return dossier_action_policy(action_type, payload)["execution_surface"] not in {
+            "terminal", "immediate",
+        }
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -9696,7 +9707,9 @@ class GameDB:
                 else:
                     normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
-        elif action in {"assignment", "authorization", "military_order"}:
+        elif action in {
+            "assignment", "authorization", "secret_authorization", "military_order",
+        }:
             assignee = str(
                 normalized.get("assignee_id") or normalized.get("assignee") or ""
             ).strip()
@@ -9706,14 +9719,17 @@ class GameDB:
             authorization_id = str(
                 normalized.get("authorization_id") or ""
             ).strip()
+            authorization_action = action in {
+                "authorization", "secret_authorization",
+            }
             complete = bool(assignee) and (
-                action != "authorization" or bool(authorization_id)
+                not authorization_action or bool(authorization_id)
             )
             if not complete:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
             normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
-            if action == "authorization":
+            if authorization_action:
                 normalized["authorization_id"] = authorization_id
         if action == "military_order":
             try:
@@ -9801,8 +9817,28 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        canonical_payload = normalized_payload
+        # Staging validates against the same policy later consumed by review,
+        # simulation and materialization.  In particular, callers cannot invent
+        # a terminal/immediate surface for an action whose canonical surface is
+        # in-transit (grant_allocation is the sole payload-selected surface).
+        policy = dossier_action_policy(action, canonical_payload)
+        supplied_surface = str(canonical_payload.get("execution_surface") or "").strip()
+        if action != "grant_allocation" and supplied_surface and supplied_surface != policy["execution_surface"]:
+            raise ValueError(f"{action} execution_surface 与案卷动作策略不符")
         canonical_target_kind = str(target_kind or "").strip()
         canonical_target_id = str(target_id or "").strip()
+        immediate_allocation = (
+            action == "grant_allocation" and policy["effect_owner"] == "immediate"
+        )
+        allocation_amount = 0
+        if immediate_allocation:
+            allocation_amount = strict_int(
+                canonical_payload.get("amount"), accept_numeric_strings=False,
+            )
+            account = str(canonical_payload.get("account") or "").strip()
+            if allocation_amount <= 0 or account != "内库":
+                raise ValueError("内批拨帑案卷须含正数 amount 与内库 account")
         if not canonical_target_kind or not canonical_target_id:
             raise ValueError("案卷 target_kind/target_id 必须完整")
         if status not in self._DOSSIER_STATUSES:
@@ -9852,14 +9888,24 @@ class GameDB:
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
-                text, json.dumps(normalized_payload, ensure_ascii=False), status,
+                text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
+        dossier_id = int(cur.lastrowid)
+        if immediate_allocation:
+            self.record_issue_economy_move(
+                state, "内库", -allocation_amount,
+                str(canonical_payload.get("category") or "奉旨拨帑"),
+                str(canonical_payload.get("reason") or text),
+                purpose=str(canonical_payload.get("purpose") or "") or None,
+                target_kind=canonical_target_kind, target_id=canonical_target_id,
+                dossier_id=dossier_id, commit=False,
+            )
         self._commit_dossier_write(commit)
-        return int(cur.lastrowid)
+        return dossier_id
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -10106,6 +10152,12 @@ class GameDB:
             item["criteria_snapshot"] = json.loads(
                 str(item.pop("criteria_snapshot_json") or "{}")
             )
+            item["affected_parties"] = json.loads(
+                str(item.pop("affected_parties_json") or "[]")
+            )
+            item["midzhi_unpromulgatable"] = bool(
+                item["midzhi_unpromulgatable"]
+            )
             decisions.append(item)
         return decisions
 
@@ -10153,10 +10205,21 @@ class GameDB:
                 int(turn), int(turn), int(turn), int(turn), int(turn),
             ),
         ).fetchall()
-        return [
-            self._dossier_row(row) for row in rows
-            if str(row["action_type"]) != "secret_order"
-        ]
+        visible = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            policy = dossier_action_policy(row["action_type"], payload)
+            # Admission-owned effects never run through the simulator again.
+            # An in-transit dossier remains visible as execution context until
+            # its execution verdict closes it, however.
+            if str(row["action_type"]) == "secret_order":
+                continue
+            if (
+                policy["effect_owner"] != "immediate"
+                or str(row["status"]) == "executing"
+            ):
+                visible.append(self._dossier_row(row))
+        return visible
 
     @staticmethod
     def executable_decree_dossier_ids(
@@ -10440,6 +10503,44 @@ class GameDB:
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
                 raise ValueError("案卷 payload 非对象")
+            policy = dossier_action_policy(row["action_type"], payload)
+            # Narrative-owned effects are deliberately left to the
+            # simulator/extractor; immediate-owned effects were staged before
+            # this gate.  Only payload-owned actions enter this dispatcher.
+            if policy["effect_owner"] != "payload":
+                if policy["effect_owner"] == "narrative":
+                    self.transition_decree_dossier(
+                        dossier_id, "executing", commit=False,
+                    )
+                elif row["action_type"] == "grant_allocation":
+                    amount = int(payload.get("amount") or 0)
+                    moves = self.list_economy_moves_for_dossier(dossier_id)
+                    actual = int(moves[0]["delta"]) if moves else 0
+                    if actual != -amount:
+                        if policy["execution_surface"] == "in_transit":
+                            self.transition_decree_dossier(
+                                dossier_id, "executing", commit=False,
+                            )
+                        self.record_dossier_execution(
+                            dossier_id, "failed",
+                            f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                            state.turn, close=True, commit=False,
+                        )
+                    elif policy["execution_surface"] == "in_transit":
+                        self.transition_decree_dossier(
+                            dossier_id, "executing", commit=False,
+                        )
+                    else:
+                        self.record_dossier_execution(
+                            dossier_id, "fulfilled", "成案时足额拨付",
+                            state.turn, close=True, commit=False,
+                        )
+                else:
+                    self.record_dossier_execution(
+                        dossier_id, "fulfilled", "成案时即生效",
+                        state.turn, close=True, commit=False,
+                    )
+                return
             if row["action_type"] in {"appointment", "dismiss_assignment"}:
                 pa = {
                     "id": int(row["pending_action_id"]),
@@ -10488,11 +10589,24 @@ class GameDB:
                         state.turn, close=True, commit=False,
                     )
                     return
-            elif row["action_type"] == "authorization":
+            elif row["action_type"] in {"authorization", "secret_authorization"}:
+                character_id = str(
+                    payload.get("character_id") or payload.get("assignee_id") or ""
+                ).strip()
+                skill_id = str(
+                    payload.get("skill_id") or payload.get("authorization_id") or ""
+                ).strip()
+                if not character_id or not skill_id:
+                    raise ValueError("授权案卷缺少 canonical assignee 或授权字段")
+                character_exists = self.conn.execute(
+                    "SELECT 1 FROM characters WHERE name=?", (character_id,),
+                ).fetchone()
+                if not character_exists:
+                    raise ValueError("授权案卷引用未知人物")
                 if not self.grant_skill(
                     state,
-                    str(payload.get("character_id") or payload.get("assignee_id") or ""),
-                    str(payload.get("skill_id") or payload.get("authorization_id") or ""),
+                    character_id,
+                    skill_id,
                     granted_by=str(payload.get("granted_by") or "皇帝"),
                     dossier_id=int(dossier_id),
                     commit=False,
@@ -10505,7 +10619,7 @@ class GameDB:
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
-            if not self._dossier_has_execution_surface(row["action_type"], payload):
+            if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
@@ -10515,12 +10629,51 @@ class GameDB:
                     dossier_id, "executing", commit=False,
                 )
 
+    def save_pending_promulgation_verdicts(
+        self, turn: int, verdicts: Iterable[Dict[str, object]],
+    ) -> None:
+        """Persist one complete turn-scoped batch before simulation starts."""
+        rows = list(verdicts)
+        with atomic(self):
+            self.conn.execute(
+                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
+            )
+            for verdict in rows:
+                self.conn.execute(
+                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
+                    (int(turn), strict_int(verdict.get("dossier_id")),
+                     safe_json_dumps(verdict, ensure_ascii=False)),
+                )
+
+    def get_pending_promulgation_verdicts(
+        self, turn: int,
+    ) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
+            (int(turn),),
+        ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                value = json.loads(row["verdict_json"])
+                if not isinstance(value, dict):
+                    raise ValueError("待应用颁布判决须为对象")
+            except ValueError as exc:
+                raise LLMContractError(f"待应用颁布判决读取失败：{exc}") from exc
+            result.append(value)
+        return result
+
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
         content=None, registry=None,
     ) -> None:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
-        with atomic(self):
+        # This public seam is also used outside resolve_directives.  Reuse the
+        # settlement rollback primitive so failed later verdicts restore both
+        # SQLite and the caller's in-memory GameState.
+        from ming_sim.decree import atomic_and_reload
+
+        with atomic_and_reload(self, state, content=content, registry=registry):
             for verdict in verdicts:
                 if not isinstance(verdict, dict):
                     raise ValueError("案卷 verdict 须为对象")
@@ -10550,6 +10703,19 @@ class GameDB:
                     criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
                     content=content, registry=registry,
                 )
+                self.conn.execute(
+                    """UPDATE decree_dossier_decisions
+                       SET affected_parties_json=?, midzhi_unpromulgatable=?
+                       WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+                    (safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False),
+                     1 if verdict.get("midzhi_unpromulgatable") is True else 0,
+                     strict_int(verdict.get("dossier_id"))),
+                )
+            # Consumption belongs to the same atomic unit as effect application;
+            # an outer settlement rollback restores both effects and this batch.
+            self.conn.execute(
+                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
+            )
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
@@ -11710,6 +11876,7 @@ class GameDB:
 
     def clear_resolve_context(self, turn: int) -> None:
         self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
+        self.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn = ?", (int(turn),))
         self.conn.commit()
 
     def get_turn_extraction(self, turn: int) -> Optional[Dict[str, object]]:
