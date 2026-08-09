@@ -3243,6 +3243,7 @@ def _apply_issue_entities(
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
     commit: bool = True,
+    origin_ref: str = "盘面自发",
 ) -> List[Dict[str, object]]:
     """国策结案的实体后果：建军 / 补兵改属性 / 人物状态(死/流放/下狱/罢/致仕)。
     全局严格、不静默——非法 delta 直接抛错中断当回合，绝不无声丢失。
@@ -3277,18 +3278,21 @@ def _apply_issue_entities(
     if isinstance(region_delta, dict) and region_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
-            db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=commit), "地区变化"
+            db.apply_region_deltas(state, pseudo, None, label, region_delta, commit=commit,
+                                   origin_ref=origin_ref, require_origin=True), "地区变化"
         )
     new_armies = effect.get("new_armies")
     if isinstance(new_armies, list) and new_armies:
         _raise_on_rejected(
-            db.create_armies_from_extraction(state, new_armies, actor=label, commit=commit), "建军"
+            db.create_armies_from_extraction(state, new_armies, actor=label, commit=commit,
+                                              origin_ref=origin_ref, require_origin=True), "建军"
         )
     army_delta = effect.get("army_delta")
     if isinstance(army_delta, dict) and army_delta:
         pseudo = type("E", (), {"id": "issue", "title": label})()
         _raise_on_rejected(
-            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit), "补兵/改属性"
+            db.apply_army_deltas(state, pseudo, None, label, army_delta, commit=commit,
+                                 origin_ref=origin_ref, require_origin=True), "补兵/改属性"
         )
     power_renames = effect.get("power_renames")
     if power_renames is not None:
@@ -3341,6 +3345,8 @@ def _apply_issue_entities(
             source="system_simulation",
             derived_from=label,
             external_transaction=not commit,
+            origin_ref=origin_ref,
+            require_origin=True,
         )
         _raise_on_rejected(results, "character_status_changes")
         if applied_person_changes is not None:
@@ -3356,6 +3362,8 @@ def _apply_issue_entities(
             source="system_simulation",
             derived_from=label,
             external_transaction=not commit,
+            origin_ref=origin_ref,
+            require_origin=True,
         )
         _raise_on_rejected(results, "人物变更")
         if applied_person_changes is not None:
@@ -4664,6 +4672,7 @@ def apply_issue_tracker_output(
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
+                    origin_ref=str(new_row["origin_ref"] or "盘面自发"),
                 ))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         elif new_row["status"] == "failed":
@@ -4682,6 +4691,7 @@ def apply_issue_tracker_output(
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
+                    origin_ref=str(new_row["origin_ref"] or "盘面自发"),
                 ))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         applied_advances.append({
@@ -4977,7 +4987,12 @@ def apply_issue_tracker_output(
             from ming_sim.cli_backend import cli_backend_active, enrich_initiative_effects
             if cli_backend_active(llm_config):
                 try:
-                    enr = enrich_initiative_effects(title, str(ni.get("stage_text") or ""), llm_config=llm_config)
+                    enr = enrich_initiative_effects(
+                        title,
+                        str(ni.get("stage_text") or ""),
+                        llm_config=llm_config,
+                        origin_ref=origin_ref,
+                    )
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
                     fail_eff = enr.get("effect_on_fail") or fail_eff
@@ -6718,7 +6733,11 @@ def apply_score_extraction(
             economy_moves.append(move)
             continue
         dossier = db.get_decree_dossier(dossier_id)
-        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
+        if (
+            dossier is None
+            or str(dossier.get("action_type") or "") != "grant_allocation"
+            or not db.dossier_authorizes_effects(dossier_id)
+        ):
             economy_moves.append(move)
             continue
         # ADR 0055: structured allocation effects are materialized from the
@@ -7147,6 +7166,17 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
+        if key not in db.get_fiscal_config() and f"{db._stem_of(key)}_base" not in db.get_fiscal_config():
+            applied_fiscal_removes.append({
+                "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
+                "category": "missing_ref", "item": remove,
+            })
+            continue
+        origin_ref = str(remove.get("origin_ref") or "").strip()
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            applied_fiscal_removes.append({**origin_error, "item": remove})
+            continue
         removed_key = db.remove_fiscal_item(key, commit=commit_now)
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
@@ -7302,6 +7332,11 @@ def apply_score_extraction(
                 "category": "missing_ref", "item": change,
             })
             continue
+        origin_ref = str(change.get("origin_ref") or "").strip()
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            applied_fiscal.append({**origin_error, "item": change})
+            continue
         loss_pair = db.fiscal_config_loss_rate_pair(key)
         if loss_pair is not None:
             current = loss_pair_running.get(key, fiscal_config_snapshot.get(key, current))
@@ -7324,6 +7359,7 @@ def apply_score_extraction(
                 "new": new_val,
                 "delta": delta,
                 "reason": str(change.get("reason") or ""),
+                "origin_ref": origin_ref,
                 "item": change,
             })
             continue
@@ -7338,6 +7374,7 @@ def apply_score_extraction(
             })
             continue
         db.set_fiscal_config(key, new_val, commit=commit_now)
+        db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
         stem = db._stem_of(key)
@@ -7368,6 +7405,10 @@ def apply_score_extraction(
                 })
             continue
         for change in pair_changes:
+            db.conn.execute(
+                "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
+                (change["origin_ref"], change["key"]),
+            )
             applied_fiscal.append({
                 "key": change["key"],
                 "old": change["old"],
