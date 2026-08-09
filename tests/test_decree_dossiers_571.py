@@ -1740,6 +1740,30 @@ def test_allocation_rejects_unknown_economy_account_before_dossier_birth(game):
     assert db.get_dossier_for_directive(directive_id) is None
 
 
+def test_underfunded_in_transit_allocation_closes_from_execution_state(game):
+    db, state, _content = game
+    state.metrics["国库"] = 5
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="拨银十两押解赴陕",
+        target_kind="region",
+        target_id="shaanxi",
+        payload={
+            "account": "国库", "amount": 10,
+            "execution_surface": "in_transit",
+        },
+    )
+
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert state.metrics["国库"] == 0
+    assert dossier["status"] == "closed"
+    assert dossier["execution_outcome"] == "failed"
+    assert "不足额" in dossier["execution_note"]
+
+
 def test_underfunded_immediate_allocation_is_not_recorded_as_fulfilled(game):
     db, state, _content = game
     state.metrics["国库"] = 5
@@ -1816,6 +1840,26 @@ def test_secret_order_commitment_origin_maps_to_its_own_dossier(game):
     assert db.resolve_commitment_origin_ref(
         state, f"secret_order:{order_id}", origin_kind="decree",
     ) == f"dossier:{dossier['id']}"
+
+
+def test_military_directive_projects_normalized_due_turn_to_dossier(game):
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "命洪承畴四月内出师", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "military_order",
+            "target_kind": "region", "target_id": "shaanxi",
+            "assignee": _active_minister(db),
+            "deadline_months": 4,
+        },
+    )
+
+    db.ensure_dossiers_for_draft_directives(state)
+
+    dossier = db.get_dossier_for_directive(directive_id)
+    payload = json.loads(dossier["payload_json"])
+    assert payload["due_turn"] == state.turn + 4
+    assert dossier["due_turn"] == state.turn + 4
 
 
 def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
