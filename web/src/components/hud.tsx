@@ -642,6 +642,7 @@ export function FullscreenModal({
   onClose,
   children,
   headerExtra,
+  hideTitle,
 }: {
   title: string;
   subtitle: string;
@@ -649,18 +650,21 @@ export function FullscreenModal({
   onClose: () => void;
   children: React.ReactNode;
   headerExtra?: React.ReactNode;
+  hideTitle?: boolean;
 }) {
   return (
     <section className="fullscreen-layer" role="dialog" aria-modal="true" aria-label={title}>
       <div className="fullscreen-scrim" onClick={onClose} />
       <div className={`fullscreen-modal ${bgClass || ""}`}>
-        <header className="modal-header">
-          <div className="modal-title">
-            <div>
-              <h1>{title}</h1>
-              <span>{subtitle}</span>
+        <header className={`modal-header ${hideTitle ? "modal-header-bare" : ""}`}>
+          {!hideTitle && (
+            <div className="modal-title">
+              <div>
+                <h1>{title}</h1>
+                <span>{subtitle}</span>
+              </div>
             </div>
-          </div>
+          )}
           <div className="modal-header-actions">
             {headerExtra}
             <button className="icon-button" aria-label="关闭弹窗" onClick={onClose}>
