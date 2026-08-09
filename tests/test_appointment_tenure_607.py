@@ -86,6 +86,40 @@ def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(game):
     ).fetchone()["office"] == before
 
 
+def test_failed_reappointment_restores_tenure_and_audit_records(game, monkeypatch):
+    db, state, content = game
+    name = _active_minister(db)
+    _promulgate_appointment(db, state, content, name, "失败回滚原官", "署理")
+    before_office = dict(db.conn.execute(
+        "SELECT * FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone())
+    before_records = [
+        dict(row) for row in db.conn.execute(
+            "SELECT * FROM office_change_records ORDER BY id"
+        ).fetchall()
+    ]
+
+    def fail_after_office_write(*_args, **_kwargs):
+        raise RuntimeError("simulated post-office-write failure")
+
+    monkeypatch.setattr(
+        issue_engine, "_displace_duplicate_offices", fail_after_office_write
+    )
+    result = issue_engine.apply_score_extraction(db, state, {"人物变更": [{
+        "name": name, "动作": "任命", "office": "失败回滚新官", "任别": "兼署",
+    }]}, content=content)
+
+    assert result["applied_person_changes"][0]["rejected"] is True
+    assert dict(db.conn.execute(
+        "SELECT * FROM character_offices WHERE character_name=?", (name,)
+    ).fetchone()) == before_office
+    assert [
+        dict(row) for row in db.conn.execute(
+            "SELECT * FROM office_change_records ORDER BY id"
+        ).fetchall()
+    ] == before_records
+
+
 def test_appointment_tenure_survives_restore(game):
     from ming_sim.content import GameContent
     from ming_sim.db import GameDB
