@@ -9805,6 +9805,7 @@ class GameDB:
                 "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
             }]
         roster = self._normalize_participant_roster(roster_source)
+        self._validate_participant_roster_references(roster)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
@@ -9849,6 +9850,7 @@ class GameDB:
         for item in self._normalize_participant_roster(participants):
             if item not in existing:
                 existing.append(item)
+        self._validate_participant_roster_references(existing)
         self.conn.execute(
             "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (json.dumps(existing, ensure_ascii=False), int(dossier_id)),
@@ -12613,6 +12615,35 @@ class GameDB:
             if item not in roster:
                 roster.append(item)
         return roster
+
+    def _validate_participant_roster_references(
+        self, roster: Iterable[Mapping[str, object]],
+    ) -> None:
+        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        entries = list(roster)
+        referenced = {
+            str(value).strip()
+            for item in entries
+            for value in (item.get("character_id"), item.get("delegator_id"))
+            if str(value or "").strip()
+        }
+        if not referenced:
+            return
+        placeholders = ",".join("?" for _ in referenced)
+        known = {
+            str(row["name"])
+            for row in self.conn.execute(
+                f"SELECT name FROM characters WHERE name IN ({placeholders})",
+                tuple(referenced),
+            ).fetchall()
+        }
+        for item in entries:
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            if character_id not in known:
+                raise ValueError(f"参与人物不存在：{character_id}")
+            if delegator_id and delegator_id not in known:
+                raise ValueError(f"委派人不存在：{delegator_id}")
 
     def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
         rows = self.conn.execute(

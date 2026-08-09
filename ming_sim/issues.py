@@ -6456,16 +6456,6 @@ def apply_score_extraction(
                 raise ValueError("案卷不存在")
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
-            known_names = {
-                str(row["name"]) for row in db.conn.execute(
-                    "SELECT name FROM characters WHERE name IN (?,?)",
-                    (character_id, delegator_id),
-                ).fetchall()
-            }
-            if not character_id or character_id not in known_names:
-                raise ValueError("参与人物不存在")
-            if delegator_id and delegator_id not in known_names:
-                raise ValueError("委派人不存在")
             tier = str(item.get("tier") or "").strip()
             db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
