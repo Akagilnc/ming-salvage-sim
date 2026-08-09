@@ -115,6 +115,7 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
                     "init_value": 50,
                     "display": "西学经费",
                     "reason": "同批 extractor 误产的重复月支",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },

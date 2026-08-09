@@ -156,17 +156,9 @@ def _apply_issue_buildings(
             continue
         action = str(op.get("action") or "").lower()
         origin_ref = str(op.get("origin_ref") or "").strip()
-        valid_origin = origin_ref == "盘面自发"
-        if origin_ref.startswith("dossier:"):
-            try:
-                origin_dossier_id = _parse_sqlite_id(origin_ref.split(":", 1)[1])
-                valid_origin = db.dossier_authorizes_effects(origin_dossier_id)
-            except (TypeError, ValueError):
-                valid_origin = False
-        if not valid_origin:
-            applied.append({"action": action, "rejected": True,
-                            "category": "missing_origin_ref" if not origin_ref else "invalid_origin_ref",
-                            "reason": "building effect 必须带 canonical origin_ref", "item": op})
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            applied.append({**origin_error, "action": action, "item": op})
             continue
         try:
             if action == "create":
@@ -7204,30 +7196,6 @@ def apply_score_extraction(
         from ming_sim.simulation import _DIRECTION_NORMALIZE
         direction_raw = str(create.get("direction") or "").strip()
         direction = _DIRECTION_NORMALIZE.get(direction_raw, direction_raw)
-        if direction == "expense":
-            dedup_reason = _commitment_fiscal_create_duplicate_reason(create, commitment_economy_carriers, db)
-            if dedup_reason:
-                applied_fiscal_creates.append({
-                    "rejected": True,
-                    "reason": dedup_reason,
-                    "category": "deduped_commitment_carrier",
-                    "item": create,
-                })
-                continue
-            # ADR0027 残留观测兜底：同批、同账户、有 decree 承诺月支却未按科目名匹配上的
-            # fiscal_create = 疑似异名漏匹（不改落库、照常落账，只打日志当试玩信号；真在
-            # 试玩看到漏再升级到精确 provenance）。
-            residual_account = _commitment_carrier_same_account_unmatched(create, commitment_economy_carriers)
-            if residual_account:
-                residual_display = (
-                    str(create.get("display") or "").strip()
-                    or (db._stem_of(str(create.get("key") or "")) or str(create.get("key") or "")).strip()
-                    or "无名月支"
-                )
-                tlog(
-                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
-                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
-                )
         key = str(create.get("key") or "").strip()
         account = str(create.get("account") or "").strip()
         # key 空 / account / direction 非法 = 脏枚举,原先纯静默 continue,改记拒留痕
@@ -7262,6 +7230,31 @@ def apply_score_extraction(
         if origin_error:
             applied_fiscal_creates.append({**origin_error, "item": create})
             continue
+        # Dedup is a business rule, not an authorization gate.  It must only see
+        # a shape-valid, canonically authorized carrier; otherwise it can hide a
+        # missing/forged origin behind deduped_commitment_carrier.
+        if direction == "expense":
+            dedup_reason = _commitment_fiscal_create_duplicate_reason(
+                create, commitment_economy_carriers, db
+            )
+            if dedup_reason:
+                applied_fiscal_creates.append({
+                    "rejected": True, "reason": dedup_reason,
+                    "category": "deduped_commitment_carrier", "item": create,
+                })
+                continue
+            residual_account = _commitment_carrier_same_account_unmatched(
+                create, commitment_economy_carriers
+            )
+            if residual_account:
+                residual_display = (
+                    str(create.get("display") or "").strip()
+                    or (db._stem_of(key) or key) or "无名月支"
+                )
+                tlog(
+                    f"[commitment-dedup] ADR0027 残留观测：同批{residual_account}已有 decree 承诺月支，"
+                    f"但 fiscal_create「{residual_display}」未按科目名匹配上、照常落账——疑似异名漏匹，试玩留意。"
+                )
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
@@ -7378,6 +7371,10 @@ def apply_score_extraction(
             continue
         db.set_fiscal_config(key, new_val, commit=commit_now)
         db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
+        db.record_fiscal_config_change(
+            turn=state.turn, key=key, old_value=current, new_value=new_val,
+            origin_ref=origin_ref, reason=str(change.get("reason") or ""),
+        )
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
         stem = db._stem_of(key)
@@ -7411,6 +7408,11 @@ def apply_score_extraction(
             db.conn.execute(
                 "UPDATE fiscal_config SET origin_ref=? WHERE key=?",
                 (change["origin_ref"], change["key"]),
+            )
+            db.record_fiscal_config_change(
+                turn=state.turn, key=str(change["key"]),
+                old_value=int(change["old"]), new_value=int(change["new"]),
+                origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
             )
             applied_fiscal.append({
                 "key": change["key"],

@@ -33,6 +33,7 @@ from ming_sim.db import GameDB
 from ming_sim.error_pack import (
     _next_attempt,
     clear_for_resimulation,
+    complete_error_packs_for_ready,
     rejections_jsonl_path,
     settlement_abort_message,
     write_error_pack,
@@ -732,12 +733,8 @@ def resolve_settling_recovery(
         # A repeated failure of that same ready payload may downgrade only after
         # both attempts have produced ADR0008 error packs.  If pack creation
         # failed, no matching directories exist and the evidence is preserved.
-        from ming_sim.error_pack import error_packs_root
-        prefix = f"turn{before_turn}_attempt"
-        packed_attempts = sum(
-            1 for path in error_packs_root().glob(f"{prefix}*") if path.is_dir()
-        )
-        if packed_attempts >= 2:
+        packed_attempts = complete_error_packs_for_ready(before_turn, extracted)
+        if len(packed_attempts) >= 2:
             try:
                 clear_for_resimulation(db, before_turn)
             except Exception as clear_exc:
