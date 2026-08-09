@@ -13,6 +13,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.applier import atomic
+from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
@@ -5592,6 +5593,7 @@ def apply_office_appointment(
     reason: str = "",
     new_office_type: str = "",
     faction: str = "中立",
+    appointment_tenure: str = "真除",
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
@@ -5601,6 +5603,7 @@ def apply_office_appointment(
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
+    appointment_tenure = appointment_tenure_from({"任别": appointment_tenure})
     if not name or not new_office:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
     # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅…），解析到在册大臣的规范 key，
@@ -5635,11 +5638,16 @@ def apply_office_appointment(
                     reason[:200] or "诏书任命",
                     commit=commit,
                 )
-            db.set_character_office(
-                name, new_office, new_office_type,
-                source=reason[:60] or "诏书调任", llm_config=llm_config,
-                commit=commit,
-            )
+            previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+            db.conn._appointment_tenure = appointment_tenure
+            try:
+                db.set_character_office(
+                    name, new_office, new_office_type,
+                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    commit=commit,
+                )
+            finally:
+                db.conn._appointment_tenure = previous_tenure
             if cur_status == "active":
                 db.conn.execute(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
@@ -5697,15 +5705,20 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        appointed, _ = apply_appointment(
-            db,
-            state,
-            content,
-            registry,
-            appt,
-            llm_config=llm_config,
-            commit=commit,
-        )
+        previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+        db.conn._appointment_tenure = appointment_tenure
+        try:
+            appointed, _ = apply_appointment(
+                db,
+                state,
+                content,
+                registry,
+                appt,
+                llm_config=llm_config,
+                commit=commit,
+            )
+        finally:
+            db.conn._appointment_tenure = previous_tenure
         if appointed:
             # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
@@ -5991,6 +6004,11 @@ def _apply_person_changes(
 
         if action in {"任命", "调任"}:
             # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
+            try:
+                appointment_tenure = appointment_tenure_from(item)
+            except ValueError:
+                applied.append(rejected(item, "任别非白名单", "invalid_enum"))
+                continue
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6045,6 +6063,7 @@ def _apply_person_changes(
                         reason=str(item.get("reason") or ""),
                         new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                         faction=str(item.get("faction") or "中立"),
+                        appointment_tenure=appointment_tenure,
                         llm_config=llm_config,
                         commit=commit_person_change,
                     ),
@@ -6105,6 +6124,7 @@ def _apply_person_changes(
                 reason=str(item.get("reason") or ""),
                 new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                 faction=str(item.get("faction") or "中立"),
+                appointment_tenure=appointment_tenure,
                 llm_config=llm_config,
                 commit=commit_person_change,
             )
