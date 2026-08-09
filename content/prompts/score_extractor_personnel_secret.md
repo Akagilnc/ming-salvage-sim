@@ -120,12 +120,12 @@
 ```json
 {
   "人物变更": [
-    {"name": "孙传庭", "动作": "任命", "office": "陕西总督", "office_type": "督抚", "reason": "陕西事急"},
-    {"name": "魏忠贤", "动作": "处置", "status": "exiled", "reason": "发配凤阳"},
-    {"name": "祖大寿", "动作": "易主", "new_power": "houjin", "方式": "被俘而降", "反噬": {}, "reason": "大凌河降清"},
-    {"name": "田氏", "动作": "册封", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封"},
-    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽"},
-    {"name": "毛文龙", "动作": "评定", "loyalty": 8, "reason": "奉旨安抚，软判其观望稍解"}
+    {"name": "孙传庭", "动作": "任命", "office": "陕西总督", "office_type": "督抚", "reason": "陕西事急", "来源引用": "盘面自发"},
+    {"name": "魏忠贤", "动作": "处置", "status": "exiled", "reason": "发配凤阳", "来源引用": "盘面自发"},
+    {"name": "祖大寿", "动作": "易主", "new_power": "houjin", "方式": "被俘而降", "反噬": {}, "reason": "大凌河降清", "来源引用": "盘面自发"},
+    {"name": "田氏", "动作": "册封", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "来源引用": "盘面自发"},
+    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽", "来源引用": "盘面自发"},
+    {"name": "毛文龙", "动作": "评定", "loyalty": 8, "reason": "奉旨安抚，软判其观望稍解", "来源引用": "盘面自发"}
   ],
   "new_issues": [
     {"origin_kind": "decree", "origin_ref": "secret_order:5", "kind": "initiative", "title": "内库月拨安抚诸将", "ongoing_effects": {"economy": [{"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给诸将"}]}, "commitment_kind": "until_stop"}

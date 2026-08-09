@@ -4641,6 +4641,7 @@ class GameDB:
         normalized: str | Dict[str, object] = "",
         source: str = "",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> None:
         if isinstance(normalized, dict):
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -4649,8 +4650,8 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO person_logs
-            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.turn,
@@ -4662,6 +4663,7 @@ class GameDB:
                 str(derived_from or "")[:120],
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
                 str(source or "")[:80],
+                str(origin_ref or ""),
             ),
         )
         if commit:
@@ -5416,6 +5418,7 @@ class GameDB:
         state: GameState,
         updates: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -5496,8 +5499,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO power_logs
-                    (turn, year, period, power_id, field, old_value, new_value, delta, reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, power_id, field, old_value, new_value, delta, reason, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn,
@@ -5509,6 +5512,7 @@ class GameDB:
                         str(stored_new),
                         log_delta,
                         reason,
+                        origin_ref,
                     ),
                 )
                 changes.append({
@@ -5746,6 +5750,7 @@ class GameDB:
         actor: str,
         region_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -5812,12 +5817,12 @@ class GameDB:
                             self.conn.execute(
                                 """
                                 INSERT INTO region_logs
-                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 (state.turn, state.year, state.period, region_id,
                                  field, str(old_value), str(new_value), 0,
-                                 _clamp_reason, event.id, edict_id, actor),
+                                 _clamp_reason, event.id, edict_id, actor, origin_ref),
                             )
                             changes.append({
                                 "region": row["name"], "field": field,
@@ -5829,12 +5834,12 @@ class GameDB:
                     self.conn.execute(
                         """
                         INSERT INTO region_logs
-                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (state.turn, state.year, state.period, region_id,
                          field, str(old_value), str(new_value), actual_delta,
-                         reason, event.id, edict_id, actor),
+                         reason, event.id, edict_id, actor, origin_ref),
                     )
                     changes.append({
                         "region": row["name"], "field": field,
@@ -5901,12 +5906,12 @@ class GameDB:
                     self.conn.execute(
                         """
                         INSERT INTO region_logs
-                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (state.turn, state.year, state.period, region_id,
                          field, str(old_value), str(new_value), actual_delta,
-                         reason, event.id, edict_id, actor),
+                         reason, event.id, edict_id, actor, origin_ref),
                     )
                     changes.append({
                         "region": row["name"], "field": field,
@@ -5972,13 +5977,13 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO region_logs
-                    (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn, state.year, state.period, region_id,
                         field, str(old_value), str(stored_new), log_delta,
-                        reason, event.id, edict_id, actor,
+                        reason, event.id, edict_id, actor, origin_ref,
                     ),
                 )
                 changes.append(
@@ -6306,6 +6311,7 @@ class GameDB:
         actor: str,
         army_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -6430,13 +6436,13 @@ class GameDB:
                         self.conn.execute(
                             """
                             INSERT INTO army_logs
-                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                            VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?)
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                            VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 state.turn, state.year, state.period, army_id,
                                 str(old_value), str(new_value), delta,
-                                reason, event.id, edict_id, actor,
+                                reason, event.id, edict_id, actor, origin_ref,
                             ),
                         )
                         self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
@@ -6497,14 +6503,14 @@ class GameDB:
                         self.conn.execute(
                             """
                             INSERT INTO army_logs
-                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                            VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?)
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                            VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 state.turn, state.year, state.period, army_id,
                                 str(old_arrears), -old_arrears,
                                 f"兵力归零核销：{reason}",
-                                event.id, edict_id, actor,
+                                event.id, edict_id, actor, origin_ref,
                             ),
                         )
                         self.conn.execute(
@@ -6528,12 +6534,12 @@ class GameDB:
                             self.conn.execute(
                                 """
                                 INSERT INTO army_logs
-                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?)
+                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?, ?)
                                 """,
                                 (state.turn, state.year, state.period, army_id,
                                  str(old_value), str(new_value),
-                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor),
+                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor, origin_ref),
                             )
                         continue
                     stored_new = new_value
@@ -6558,8 +6564,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO army_logs
-                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn,
@@ -6574,6 +6580,7 @@ class GameDB:
                         event.id,
                         edict_id,
                         actor,
+                        origin_ref,
                     ),
                 )
                 changes.append(
@@ -6597,6 +6604,7 @@ class GameDB:
         new_armies: List[Dict[str, object]],
         actor: str = "档房",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -6672,7 +6680,7 @@ class GameDB:
                     None,
                     actor,
                     {existing["id"]: {"manpower": delta, "reason": reason}},
-                    commit=False,
+                    commit=False, origin_ref=origin_ref,
                 )
                 created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
@@ -6837,10 +6845,10 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, 'created', '', ?, ?, ?, 'season', NULL, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, 'created', '', ?, ?, ?, 'season', NULL, ?, ?)
                 """,
-                (state.turn, state.year, state.period, aid, str(manpower), manpower, reason, actor),
+                (state.turn, state.year, state.period, aid, str(manpower), manpower, reason, actor, origin_ref),
             )
             created.append({
                 "army": name,
@@ -6872,6 +6880,7 @@ class GameDB:
         status: str = "",
         origin: str = "decree",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> str:
         """运行时新立建筑（玩家诏书）。category / output_metric 走白名单硬校验，违规 ValueError。"""
         if category not in BUILDING_CATEGORIES:
@@ -6914,10 +6923,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor)
-            VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房')
+            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
+            VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑"),
+            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -6929,6 +6938,7 @@ class GameDB:
         building_id: str,
         reason: str = "",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
         row = self.conn.execute("SELECT name FROM buildings WHERE id = ?", (building_id,)).fetchone()
@@ -6937,11 +6947,11 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor)
-            VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房')
+            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
+            VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房', ?)
             """,
             (state.turn, state.year, state.period, building_id,
-             str(row["name"]), (reason or "建筑废止").strip()[:80]),
+             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
         if commit:
@@ -6956,6 +6966,7 @@ class GameDB:
         actor: str,
         building_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         """改既有建筑。仿 apply_army_deltas。供 issue effect 落地复用。"""
         changes: List[Dict[str, object]] = []
@@ -7019,13 +7030,13 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO building_logs
-                    (turn, year, period, building_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, building_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn, state.year, state.period, building_id, field,
                         str(old_value), str(stored_new), log_delta, reason,
-                        event.id, edict_id, actor,
+                        event.id, edict_id, actor, origin_ref,
                     ),
                 )
                 changes.append({
@@ -10294,7 +10305,7 @@ class GameDB:
                     purpose=str(payload.get("purpose") or "") or None,
                     target_kind=str(payload.get("target_kind") or "") or None,
                     target_id=str(payload.get("target_id") or "") or None,
-                    dossier_id=int(dossier_id),
+                    origin_ref=f"dossier:{dossier_id}",
                     commit=False,
                 )
                 if actual != -amount:

@@ -154,9 +154,9 @@ def test_create_duplicate_key_rejected_good_create_lands(game):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": dup_stem, "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": dup_stem, "account": "国库", "direction": "income",
              "display": "撞名项", "init_value": 100, "reason": "重复"},
-            {"key": "haiguan_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "haiguan_s3", "account": "国库", "direction": "income",
              "display": "海关税", "init_value": 50, "reason": "新立"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -178,9 +178,9 @@ def test_create_illegal_account_rejected_sibling_lands(game, bad_account):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "badacct_s3", "account": bad_account, "direction": "income",
+            {"origin_ref": "盘面自发", "key": "badacct_s3", "account": bad_account, "direction": "income",
              "display": "脏账户项", "init_value": 10, "reason": "脏"},
-            {"key": "goodacct_s3", "account": "内库", "direction": "expense",
+            {"origin_ref": "盘面自发", "key": "goodacct_s3", "account": "内库", "direction": "expense",
              "display": "内库支项", "init_value": 5, "reason": "好"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -205,9 +205,9 @@ def test_create_dirty_init_value_rejected_not_silent_zero(game, bad_init):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "dirtyinit_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "dirtyinit_s3", "account": "国库", "direction": "income",
              "display": "脏初值项", "init_value": bad_init, "reason": "脏"},
-            {"key": "cleaninit_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "cleaninit_s3", "account": "国库", "direction": "income",
              "display": "净初值项", "init_value": 20, "reason": "好"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -229,7 +229,7 @@ def test_create_absent_init_value_defaults_zero(game):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "defaultinit_s3", "account": "内库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "defaultinit_s3", "account": "内库", "direction": "income",
              "display": "默认初值项", "reason": "缺省"}],
     }, narrative="x", decree_text="y")
 
@@ -487,7 +487,7 @@ def test_create_rate_only_sibling_collision_rejected_not_abort(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "田赋_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "田赋_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")  # 不抛 = 没崩
 
@@ -532,7 +532,7 @@ def test_create_with_rate_suffix_key_rejected(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "田赋_rate", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "田赋_rate", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")
 
@@ -550,7 +550,7 @@ def test_negative_init_value_rejected_not_clamped(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "负值测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "负值测试_base", "account": "国库",
                             "direction": "income", "init_value": -5}],
     }, narrative="x", decree_text="y")
 
@@ -569,7 +569,7 @@ def test_double_suffix_key_rejected_no_phantom(game, bad_key):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": bad_key, "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": bad_key, "account": "国库",
                             "direction": "income", "init_value": 100}],
     }, narrative="x", decree_text="y")
 
@@ -624,7 +624,7 @@ def test_chinese_direction_alias_accepted_on_driver_path(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "别名测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "别名测试_base", "account": "国库",
                             "direction": "收", "init_value": 5}],
     }, narrative="x", decree_text="y")
 
@@ -661,7 +661,7 @@ def test_lossless_int_string_same_verdict_both_paths(game):
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": key, "delta": "5"}],
-        "fiscal_creates": [{"key": "整串测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "整串测试_base", "account": "国库",
                             "direction": "income", "init_value": "300"}],
     }, narrative="x", decree_text="y")
 
@@ -677,7 +677,7 @@ def test_driver_path_display_defaults_from_key(game):
     db, state, content = game
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "显名测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "显名测试_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")
 
@@ -693,7 +693,7 @@ def test_garbage_key_category_consistent_across_sections(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "辽饷_base_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "辽饷_base_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
         "fiscal_removes": [{"key": "盐税_rate_rate", "reason": "垃圾"}],
         "fiscal_changes": [{"key": "商税_base_base", "delta": 3}],
