@@ -626,18 +626,28 @@ export function ChatModal({
       : `${message.role}:${chatTurnId}`;
   };
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
+  const currentChatIdentities = new Set(chat.map(chatIdentity).filter((identity): identity is string => identity !== null));
+  const previousChatRef = React.useRef({
+    ministerName: minister.name,
+    nightId: currentNightId,
+    identities: currentChatIdentities,
+  });
+  const previousChat = previousChatRef.current;
+  const snapshotInvalidatedByWithdrawal = previousChat.ministerName === minister.name
+    && previousChat.nightId === currentNightId
+    && [...previousChat.identities].some((identity) => !currentChatIdentities.has(identity));
+  previousChatRef.current = { ministerName: minister.name, nightId: currentNightId, identities: currentChatIdentities };
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
-    state.kind !== "night" || state.nightId === currentNightId;
+    !snapshotInvalidatedByWithdrawal && (state.kind !== "night" || state.nightId === currentNightId);
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
     if (scrollMode === "legacy") return [...chat];
     if (effectiveScrollState.kind !== "night") return effectiveScrollState.kind === "none" ? [...chat] : [];
     const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...effectiveScrollState.messages];
-    const currentTurnIds = new Set(effectiveScrollState.messages.map((message) => message.chat_turn_id).filter((id): id is number => !!id));
     const present = new Set(merged.map(messageIdentity).filter((identity): identity is string => identity !== null));
     for (const message of chat) {
       const identity = chatIdentity(message);
-      if (!identity || !message.chatTurnId || !currentTurnIds.has(message.chatTurnId) || present.has(identity)) continue;
+      if (!identity || present.has(identity)) continue;
       let insertion = merged.length;
       for (let index = merged.length - 1; index >= 0; index -= 1) {
         const candidate = merged[index];
