@@ -12,6 +12,7 @@ from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import GameState
+from ming_sim.strict_types import strict_int as _strict_int
 from ming_sim.token_stats import tlog
 
 
@@ -1609,15 +1610,6 @@ def _value_reject(key: str, raw: object, item: object, field: str = "") -> Dict[
     if field:
         out["field"] = field
     return out
-
-
-def _strict_int(raw: object) -> int:
-    """严格整数转换：bool/float 一律视为非整数（仿 region/army/power section，
-    bool 是 int 子类、float 静默截断都非合法 delta）。返回 int 或抛 ValueError。
-    （注：仍接受可解析整数串如 "5"，与 region/army/power 的 int() 容忍一致。）"""
-    if isinstance(raw, bool) or isinstance(raw, float):
-        raise ValueError("非整数 delta")
-    return int(raw)  # type: ignore[arg-type]
 
 
 def _apply_faction_dict(

@@ -6,6 +6,18 @@ import pytest
 import ming_sim.issues as issue_engine
 
 
+def _rejected_verdict(dossier_id):
+    return {
+        "dossier_id": dossier_id, "decision": "rejected",
+        "blocked_layer": "six_offices", "primary_opponents": ["donglin"],
+        "gatekeeper_id": None, "reason": "科臣封驳。",
+        "criteria_snapshot": {
+            "imperial_authority_band": "low", "involved_offices": ["六科"],
+            "authorization_ids": [], "endorsement_entry_ids": [],
+        },
+    }
+
+
 def _active_minister(db):
     row = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
@@ -315,15 +327,12 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
         },
     )
     db.apply_dossier_verdicts(
-        state, [{
-            "dossier_id": dossier_id, "decision": "rejected",
-            "blocked_layer": "six_offices", "reason": "科臣封驳",
-        }]
+        state, [_rejected_verdict(dossier_id)]
     )
     assert state.metrics["国库"] == before
     rejected = db.get_decree_dossier(dossier_id)
     assert rejected["promulgation_blocked_layer"] == "six_offices"
-    assert rejected["promulgation_reason"] == "科臣封驳"
+    assert rejected["promulgation_reason"] == "科臣封驳。"
 
     db.apply_dossier_verdicts(
         state, [{"dossier_id": dossier_id, "decision": "force_promulgated"}]
@@ -486,12 +495,9 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         "run_agent_text",
         lambda *a, **k: json.dumps({
             "verdicts": [
-                {
-                    "dossier_id": row["id"],
-                    "decision": (
-                        "promulgated" if row["target_id"] == "relief" else "rejected"
-                    ),
-                }
+                ({"dossier_id": row["id"], "decision": "promulgated"}
+                 if row["target_id"] == "relief" else
+                 _rejected_verdict(row["id"]))
                 for row in db.list_decree_dossiers()
                 if row["pending_action_id"] > 0
             ],
@@ -620,10 +626,11 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     monkeypatch.setattr(
         decree_mod, "run_agent_text",
         lambda *a, **k: json.dumps({
-            "verdicts": [{
-                "dossier_id": dossier["id"],
-                "decision": "rejected" if state.turn == 1 else "promulgated",
-            }],
+            "verdicts": [
+                _rejected_verdict(dossier["id"])
+                if state.turn == 1 else
+                {"dossier_id": dossier["id"], "decision": "promulgated"}
+            ],
         }),
     )
     monkeypatch.setattr(
@@ -707,10 +714,7 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     monkeypatch.setattr(
         decree_mod, "run_agent_text",
         lambda *a, **k: json.dumps({
-            "verdicts": [{
-                "dossier_id": dossier["id"],
-                "decision": "rejected",
-            }],
+            "verdicts": [_rejected_verdict(dossier["id"])],
         }),
     )
 
@@ -800,7 +804,7 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
         "run_agent_text",
         lambda *a, **k: json.dumps({
             "verdicts": [
-                {"dossier_id": rejected["id"], "decision": "rejected"},
+                _rejected_verdict(rejected["id"]),
                 {"dossier_id": promulgated["id"], "decision": "promulgated"},
             ],
         }),
@@ -2050,3 +2054,62 @@ def test_in_transit_allocation_requires_execution_verdict(game):
     assert dossier["status"] == "closed"
     assert dossier["execution_note"] == "押解到陕"
     assert dossier["interruption_reason"] == ""
+
+
+@pytest.mark.parametrize("value", [True, 1.5, 2.9, "3"])
+def test_draft_mechanical_integers_do_not_coerce_non_integer_types(value):
+    from ming_sim.cli_backend import _normalize_draft_mechanics
+
+    action, _ = _normalize_draft_mechanics("grant_allocation", {
+        "amount": value, "account": "国库", "execution_surface": "immediate",
+    })
+    assert action == "special_decree"
+
+
+def test_military_order_without_assignee_downgrades_before_commit():
+    from ming_sim.cli_backend import _normalize_draft_mechanics
+
+    action, _ = _normalize_draft_mechanics(
+        "military_order", {"deadline_months": 3, "assignee": ""},
+    )
+    assert action == "special_decree"
+
+
+def test_complete_rejection_verdict_is_restoreable_audit_record(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    db.apply_dossier_verdicts(state, [verdict])
+
+    restored = GameDB(db.path, content=content)
+    try:
+        row = restored.conn.execute(
+            "SELECT * FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
+            (dossier_id,),
+        ).fetchone()
+        assert json.loads(row["primary_opponents_json"]) == verdict["primary_opponents"]
+        assert row["gatekeeper_id"] is None
+        assert json.loads(row["criteria_snapshot_json"]) == verdict["criteria_snapshot"]
+        assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("missing", [
+    "blocked_layer", "primary_opponents", "reason", "criteria_snapshot",
+])
+def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.pop(missing)
+    with pytest.raises(ValueError, match="打回判决缺少"):
+        db.apply_dossier_verdicts(state, [verdict])

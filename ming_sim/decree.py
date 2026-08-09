@@ -419,6 +419,33 @@ def resolve_directives(
             for row in generated
         ):
             raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+        required_snapshot_keys = {
+            "imperial_authority_band", "involved_offices",
+            "authorization_ids", "endorsement_entry_ids",
+        }
+        if any(
+            row.get("decision") == "rejected" and (
+                str(row.get("blocked_layer") or "") not in {
+                    "cabinet_drafting", "palace_rescript", "six_offices",
+                }
+                or not isinstance(row.get("primary_opponents"), list)
+                or not row["primary_opponents"]
+                or any(not isinstance(item, str) or not item.strip()
+                       for item in row["primary_opponents"])
+                or (row.get("gatekeeper_id") is not None
+                    and (not isinstance(row["gatekeeper_id"], str)
+                         or not row["gatekeeper_id"].strip()))
+                or not isinstance(row.get("reason"), str)
+                or not row["reason"].strip()
+                or not isinstance(row.get("criteria_snapshot"), dict)
+                or set(row["criteria_snapshot"]) != required_snapshot_keys
+                or not isinstance(row["criteria_snapshot"].get("involved_offices"), list)
+                or not isinstance(row["criteria_snapshot"].get("authorization_ids"), list)
+                or not isinstance(row["criteria_snapshot"].get("endorsement_entry_ids"), list)
+            )
+            for row in generated
+        ):
+            raise LLMContractError("打回判决缺少关口、主否决方、缘由或完整判据快照")
         if any(
             isinstance(row.get("dossier_id"), bool)
             or not isinstance(row.get("dossier_id"), int)

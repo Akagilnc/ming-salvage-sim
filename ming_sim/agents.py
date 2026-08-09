@@ -465,7 +465,12 @@ def create_promulgation_judge_agent(
             _ctx().game_world_prompt,
             "你是月末颁布判官。逐案判断顺颁或打回，不得遗漏。"
             "只返回 JSON object：{\"verdicts\":[{\"dossier_id\":整数,"
-            "\"decision\":\"promulgated|rejected\"}]}。不得添加散文。",
+            "\"decision\":\"promulgated|rejected\"}]}。顺颁只需这两字段；"
+            "打回还必须给 blocked_layer（cabinet_drafting|palace_rescript|six_offices）、"
+            "primary_opponents（非空 faction key 清单）、gatekeeper_id（人物 id 或 null）、"
+            "reason（非空一句）及 criteria_snapshot，其键必须且只能为 "
+            "imperial_authority_band、involved_offices、authorization_ids、"
+            "endorsement_entry_ids，后三项均为清单。不得添加散文。",
         ],
         add_history_to_context=False,
         markdown=False,
