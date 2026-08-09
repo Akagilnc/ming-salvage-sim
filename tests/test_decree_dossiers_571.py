@@ -2114,13 +2114,13 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
 
-@pytest.mark.parametrize(("balance", "expected_actual", "outcome"), [
-    (20, -10, "executing"),
-    (4, -4, "failed"),
-    (0, 0, "failed"),
+@pytest.mark.parametrize(("balance", "expected_actual", "status", "outcome"), [
+    (20, -10, "executing", ""),
+    (4, -4, "closed", "failed"),
+    (0, 0, "closed", "failed"),
 ])
 def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
-    game, balance, expected_actual, outcome,
+    game, balance, expected_actual, status, outcome,
 ):
     db, state, _content = game
     state.metrics["内库"] = balance
@@ -2142,7 +2142,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
-    assert dossier["status"] == ("executing" if outcome == "executing" else "closed")
+    assert dossier["status"] == status
     assert dossier["execution_outcome"] == outcome
     assert state.metrics["内库"] == max(0, balance - 10)
     assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
@@ -2150,6 +2150,7 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
         assert "应拨10两" in dossier["execution_note"]
         assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
     else:
+        assert status == "executing"
         assert dossier_id in {
             row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
         }
@@ -2183,11 +2184,13 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     session.state = state
     session.llm_config = None
     web_game = types.SimpleNamespace(
-        db=db, state=state, session=session,
+        db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
             state, statuses=("pending", "draft"),
         ),
         directive_payload=lambda row: dict(row),
+        refresh_turn=lambda: None,
+        state_payload=lambda: {},
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
@@ -2229,19 +2232,21 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
-    resolved = decree_mod.resolve_directives(
+    session.resolve_turn = lambda **_kwargs: decree_mod.resolve_directives(
         state, db, None, None, [], "", content=content,
     )
+    result = web_app.api_advance_without_edict()
 
-    assert resolved.awaiting is False
+    assert result["awaiting_decision"] is False
     projected = seen["dossiers"]
     assert [row["id"] for row in projected] == [dossier["id"]]
     assert projected[0]["status"] == "executing"
     assert "decree_text" not in projected[0]
     assert "payload" not in projected[0]
     assert "payload_json" not in projected[0]
-    assert state.metrics["内库"] == 10
-    assert len(db.list_economy_moves_for_dossier(dossier["id"])) == 1
+    assert [
+        row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])
+    ] == [-10]
     closed = db.get_decree_dossier(dossier["id"])
     assert closed["status"] == "closed"
     assert closed["execution_outcome"] == "fulfilled"
@@ -2293,7 +2298,12 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
-    decree_mod.resolve_directives(state, db, None, None, [], "", content=content)
+    session.content = content
+    session.registry = None
+    session.resolve_turn = lambda: decree_mod.resolve_directives(
+        state, db, None, None, [], "", content=content,
+    )
+    session.advance_without_decree()
 
     closed = db.get_decree_dossier(dossier["id"])
     assert closed["status"] == "closed"

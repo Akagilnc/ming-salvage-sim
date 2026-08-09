@@ -2309,7 +2309,10 @@ class GameSession:
         ) or any(
             row.get("kind") == "directive"
             for row in self.db.list_pending_actions(self.state.turn)
-        ) or bool(self.db.list_decree_dossiers(status="proposed"))
+        ) or bool(
+            self.db.list_decree_dossiers(status="proposed")
+            or self.db.list_decree_dossiers(status="executing")
+        )
         if has_default_approved_work:
             return self.resolve_turn()
         advanced = advance_without_edict(

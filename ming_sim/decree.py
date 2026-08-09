@@ -443,7 +443,10 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    pending_dossier_work = bool(db.list_decree_dossiers(status="proposed")) or any(
+    pending_dossier_work = bool(
+        db.list_decree_dossiers(status="proposed")
+        or db.list_decree_dossiers(status="executing")
+    ) or any(
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
