@@ -20,22 +20,24 @@ def _rejected_verdict(dossier_id):
     }
 
 
+def _active_people(db, count):
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT ?",
+            (count,),
+        ).fetchall()
+    ]
+    assert len(people) == count
+    return people
+
+
 def _active_minister(db):
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    return str(row["name"])
+    return _active_people(db, 1)[0]
 
 
 def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game):
     db, state, _content = game
-    people = [
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 4"
-        ).fetchall()
-    ]
-    assert len(people) == 4
+    people = _active_people(db, 4)
     dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="倪黄合力，杨某接应。",
         target_kind="issue", target_id="land-survey",
@@ -84,11 +86,7 @@ def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(g
 
 def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     db, state, content = game
-    people = [
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 3"
-        ).fetchall()
-    ]
+    people = _active_people(db, 3)
     minister = people[0]
     character = next(ch for ch in content.characters.values() if ch.name == minister)
     roster = [
@@ -127,11 +125,7 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
 
 def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
     db, state, _content = game
-    people = [
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 3"
-        ).fetchall()
-    ]
+    people = _active_people(db, 3)
     dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命办西法历书。",
         target_kind="issue", target_id="calendar",
@@ -156,11 +150,7 @@ def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
 
 def test_month_end_extractor_appends_self_dispatched_participant(game):
     db, state, _content = game
-    people = [
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
-        ).fetchall()
-    ]
+    people = _active_people(db, 2)
     dossier_id = db.create_decree_dossier(
         state, action_type="assignment", decree_text="命修历。",
         target_kind="issue", target_id="calendar",
@@ -338,12 +328,7 @@ def test_secret_pending_action_carries_chat_turn_and_pending_provenance(game):
 
 def test_terminal_target_does_not_interrupt_another_executor(game):
     db, state, _content = game
-    people = [
-        str(row["name"]) for row in db.conn.execute(
-            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
-        ).fetchall()
-    ]
-    assert len(people) == 2
+    people = _active_people(db, 2)
     target, executor = people
     dossier_id = db.create_decree_dossier(
         state, action_type="punishment", decree_text="命查其罪",
@@ -355,7 +340,9 @@ def test_terminal_target_does_not_interrupt_another_executor(game):
 
     db.set_character_status(state, target, "imprisoned", reason="下狱")
 
-    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["participant_roster"] == []
 
 
 def test_office_action_waits_for_verdict_then_materializes_from_same_payload(game):
