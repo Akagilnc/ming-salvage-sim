@@ -562,8 +562,8 @@ export function ChatModal({
   minister: Minister;
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
-  /** Persisted open-night identity received through the player chat entry. */
-  currentNightId?: number;
+  /** Persisted open-night identity received through the player chat entry; 0 means no open night. */
+  currentNightId: number;
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
@@ -626,16 +626,8 @@ export function ChatModal({
       : `${message.role}:${chatTurnId}`;
   };
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
-  const snapshotStillCurrent = (state: typeof scrollState): boolean => {
-    if (state.kind !== "night") return true;
-    if (currentNightId !== undefined) return state.nightId === currentNightId;
-    // Compatibility for isolated/legacy callers that have not entered through the
-    // persisted player projection. Production audience chat always supplies identity.
-    const chatTurnIds = new Set(chat.map((message) => message.chatTurnId).filter((id): id is number => !!id));
-    return !state.messages.some((message) =>
-      message.speaker === minister.name && message.role !== "scene" &&
-      !!message.chat_turn_id && !chatTurnIds.has(message.chat_turn_id));
-  };
+  const snapshotStillCurrent = (state: typeof scrollState): boolean =>
+    state.kind !== "night" || state.nightId === currentNightId;
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
     if (scrollMode === "legacy") return [...chat];

@@ -1188,7 +1188,7 @@ export function App() {
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
-            currentNightId={currentNightId || undefined}
+            currentNightId={currentNightId}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}

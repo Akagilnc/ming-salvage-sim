@@ -61,7 +61,7 @@ function mount() {
     return (
       <ChatModal
         minister={MINISTER} portraitPrefix="minister_"
-        currentNightId={hook.currentNightId || undefined}
+        currentNightId={hook.currentNightId}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
         streamingMinisterMessage={hook.streamingMinisterMessage}
@@ -89,7 +89,7 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
-  it("真实 send 入口一开新夜即淘汰旧卷，回话随后失败也不回闪", async () => {
+  it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
     let call = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       call += 1;
@@ -104,7 +104,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     }));
     const { hookRef, rows } = mount();
     await tick();
-    expect(rows()).toContain("minister:旧夜他臣");
+    expect(hookRef.current!.currentNightId).toBe(0);
+    expect(rows()).not.toContain("minister:旧夜他臣");
 
     await act(async () => {
       await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
@@ -136,7 +137,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       if (call === 1) {
         // 流 1：done1 后门控挂起；mind1 尾巴延迟到流 2 完成之后才到
         return gatedSse(
-          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
+          [{ event: "accepted", data: { night_id: 23 } },
+           { event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
           gate1,
           [{ event: "mindreading", data: { mindreading: { id: 1, narration: "近臣低声。" }, chat_turn_id: 10 } },
            { event: "end", data: {} }],
@@ -144,6 +146,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       }
       // 流 2：陈旧 done2（无 a1）后立即结束
       return sse([
+        { event: "accepted", data: { night_id: 23 } },
         { event: "done", data: { history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], directives: [] } },
         { event: "end", data: {} },
       ]);
