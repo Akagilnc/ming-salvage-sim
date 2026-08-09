@@ -9883,7 +9883,12 @@ class GameDB:
                 known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
             """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title
+                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title,
+                      EXISTS(
+                          SELECT 1 FROM decree_dossier_decisions h
+                          WHERE h.dossier_id=d.id
+                            AND h.rescript_action='force_promulgated'
+                      ) AS was_force_promulgated
                FROM decree_dossiers d
                LEFT JOIN secret_orders s ON s.id=d.secret_order_id
                WHERE d.created_turn <= ?
@@ -9894,7 +9899,10 @@ class GameDB:
             dict(row) for row in rows
             if (
                 row["secret_order_id"] is None
-                and str(row["promulgation_decision"] or "") == "promulgated"
+                and (
+                    str(row["promulgation_decision"] or "") == "promulgated"
+                    or bool(row["was_force_promulgated"])
+                )
             ) or (
                 row["secret_order_id"] is not None
                 and int(row["secret_order_id"]) in known_secret_ids
