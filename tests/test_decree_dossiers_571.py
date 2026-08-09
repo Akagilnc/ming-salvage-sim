@@ -366,6 +366,47 @@ def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
     assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 
+@pytest.mark.parametrize("entry", ("pending_commit", "confirm"))
+@pytest.mark.parametrize(
+    ("action_type", "expected_executor_kind"),
+    (("military_order", "character"), ("policy", "")),
+)
+def test_directive_assignee_projects_to_executor_only_for_executable_types(
+    game, entry, action_type, expected_executor_kind,
+):
+    db, state, content = game
+    assignee = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(
+        state.turn,
+        assignee,
+        {
+            "text": "命兵部整饬边备",
+            "actor": assignee,
+            "dossier_action_type": action_type,
+            "target_kind": "issue",
+            "target_id": f"executor-{entry}-{action_type}",
+            "assignee": assignee,
+            "deadline_months": 3,
+        },
+    )
+    db.commit_pending_actions(
+        state,
+        content=content,
+        action_ids=[candidate_id],
+        directive_status="pending" if entry == "confirm" else "draft",
+    )
+    directive_id = int(db.conn.execute(
+        "SELECT committed_directive_id FROM pending_actions WHERE id=?",
+        (candidate_id,),
+    ).fetchone()["committed_directive_id"])
+    if entry == "confirm":
+        db.confirm_directive(directive_id, state)
+
+    dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier["executor_kind"] == expected_executor_kind
+    assert dossier["executor_id"] == (assignee if expected_executor_kind else "")
+
+
 def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     game, monkeypatch,
 ):
