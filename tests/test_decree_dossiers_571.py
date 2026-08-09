@@ -26,6 +26,95 @@ def _active_minister(db):
     return str(row["name"])
 
 
+def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game):
+    db, state, _content = game
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 4"
+        ).fetchall()
+    ]
+    assert len(people) == 4
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="倪黄合力，杨某接应。",
+        target_kind="issue", target_id="land-survey",
+        participants=[
+            {"character_id": people[0], "tier": "主办", "role": "主持清丈"},
+            {"character_id": people[1], "tier": "主办", "role": "会同清丈"},
+            {"character_id": people[2], "tier": "协办", "role": "接应钱粮"},
+            {"character_id": people[3], "tier": "知情", "role": "备悉"},
+        ],
+    )
+
+    restored = db.get_decree_dossier(dossier_id)
+    assert restored["participant_roster"] == [
+        {"character_id": people[0], "tier": "主办", "role": "主持清丈", "delegator_id": None},
+        {"character_id": people[1], "tier": "主办", "role": "会同清丈", "delegator_id": None},
+        {"character_id": people[2], "tier": "协办", "role": "接应钱粮", "delegator_id": None},
+        {"character_id": people[3], "tier": "知情", "role": "备悉", "delegator_id": None},
+    ]
+
+
+def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
+    db, state, _content = game
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 3"
+        ).fetchall()
+    ]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命办西法历书。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": people[0], "tier": "主办", "role": "总理"}],
+    )
+
+    db.append_decree_dossier_participants(
+        dossier_id,
+        [{"character_id": people[1], "tier": "协办", "role": "推算", "delegator_id": people[0]}],
+    )
+    db.append_decree_dossier_participants(
+        dossier_id,
+        [{"character_id": people[2], "tier": "知情", "role": "知会"}],
+    )
+
+    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [
+        {"character_id": people[0], "tier": "主办", "role": "总理", "delegator_id": None},
+        {"character_id": people[1], "tier": "协办", "role": "推算", "delegator_id": people[0]},
+        {"character_id": people[2], "tier": "知情", "role": "知会", "delegator_id": None},
+    ]
+
+
+def test_month_end_extractor_appends_self_dispatched_participant(game):
+    db, state, _content = game
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 2"
+        ).fetchall()
+    ]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": people[0], "tier": "主办", "role": "总理"}],
+    )
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_participants": [{
+            "dossier_id": dossier_id,
+            "character_id": people[1],
+            "tier": "协办",
+            "role": "推算历法",
+            "delegator_id": people[0],
+        }],
+    })
+
+    assert result["dossier_participants"] == [{
+        "dossier_id": dossier_id, "character_id": people[1], "tier": "协办",
+    }]
+    assert db.get_decree_dossier(dossier_id)["participant_roster"][-1] == {
+        "character_id": people[1], "tier": "协办", "role": "推算历法",
+        "delegator_id": people[0],
+    }
+
+
 def test_committing_each_directive_creates_independent_restoreable_dossier(game):
     db, state, _content = game
     minister = _active_minister(db)

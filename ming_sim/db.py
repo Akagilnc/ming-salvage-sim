@@ -1334,6 +1334,7 @@ class GameDB:
                 legal_reason_code TEXT NOT NULL DEFAULT '',
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
+                participant_roster TEXT NOT NULL DEFAULT '[]',
                 due_turn INTEGER NOT NULL DEFAULT 0,
                 execution_outcome TEXT NOT NULL DEFAULT '',
                 execution_note TEXT NOT NULL DEFAULT '',
@@ -1804,6 +1805,9 @@ class GameDB:
             "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -9721,6 +9725,11 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
+        try:
+            roster = json.loads(out.get("participant_roster") or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        out["participant_roster"] = roster if isinstance(roster, list) else []
         return out
 
     def create_decree_dossier(
@@ -9741,6 +9750,7 @@ class GameDB:
         status: str = "proposed",
         due_turn: int = 0,
         extension: Optional[Dict[str, object]] = None,
+        participants: Optional[Iterable[object]] = None,
         commit: bool = True,
         _issued_secret_order: bool = False,
     ) -> int:
@@ -9787,14 +9797,22 @@ class GameDB:
             ).fetchone()
             if origin is not None:
                 source_turn_id = int(origin["chat_turn_id"])
+        roster_source = participants
+        if roster_source is None and isinstance(payload, dict):
+            roster_source = payload.get("participant_roster") or payload.get("participants")
+        if roster_source is None and str(executor_kind or "") == "character" and str(executor_id or "").strip():
+            roster_source = [{
+                "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
+            }]
+        roster = self._normalize_participant_roster(roster_source)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
-                 extension_json,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,created_turn,created_year,created_period)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -9805,11 +9823,38 @@ class GameDB:
                 text, json.dumps(payload or {}, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
+                json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
         self._commit_dossier_write(commit)
         return int(cur.lastrowid)
+
+    def append_decree_dossier_participants(
+        self, dossier_id: int, participants: Iterable[object], *, commit: bool = True,
+    ) -> List[Dict[str, object]]:
+        """Append ADR 0053 roster entries without replacing durable members."""
+        row = self.conn.execute(
+            "SELECT participant_roster FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        try:
+            existing_raw = json.loads(row["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            existing_raw = []
+        existing = self._normalize_participant_roster(
+            existing_raw if isinstance(existing_raw, list) else []
+        )
+        for item in self._normalize_participant_roster(participants):
+            if item not in existing:
+                existing.append(item)
+        self.conn.execute(
+            "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(existing, ensure_ascii=False), int(dossier_id)),
+        )
+        self._commit_dossier_write(commit)
+        return existing
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
