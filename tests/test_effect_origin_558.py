@@ -98,6 +98,34 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
         assert row is not None and row["origin_ref"] == SPONTANEOUS
 
 
+def test_power_backlash_from_allegiance_change_inherits_canonical_origin(game):
+    db, state, content = game
+    dossier_id = _promulgated_policy(db, state)
+    origin_ref = f"dossier:{dossier_id}"
+    person_row = db.conn.execute(
+        "SELECT name, power_id FROM characters "
+        "WHERE power_id <> 'ming' AND status='active' LIMIT 1"
+    ).fetchone()
+    assert person_row is not None
+    person, old_power = person_row["name"], person_row["power_id"]
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [{
+            "name": person, "动作": "易主", "new_power": "ming",
+            "方式": "主动归附", "反噬": {old_power: {"leverage": -1}},
+            "reason": "奉旨招抚后归附", "origin_ref": origin_ref,
+        }],
+    }, content=content)
+
+    assert result["applied_person_changes"][0]["origin_ref"] == origin_ref
+    power_log = db.conn.execute(
+        "SELECT origin_ref FROM power_logs WHERE power_id=? ORDER BY id DESC LIMIT 1",
+        (old_power,),
+    ).fetchone()
+    assert power_log is not None
+    assert power_log["origin_ref"] == origin_ref
+
+
 def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
     db, state, content = game
     region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]

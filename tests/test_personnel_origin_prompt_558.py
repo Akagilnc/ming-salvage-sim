@@ -17,3 +17,8 @@ def test_decree_driven_personnel_examples_reference_promulgated_dossier():
     assert decree_items
     assert all(item["来源引用"] == "dossier:17" for item in decree_items)
     assert "dossier:17" in text[: match.start()]
+
+    inline = re.search(r"奉旨安抚毛文龙.*?可写 `(\{.*?\})`", text)
+    assert inline is not None
+    inline_item = json.loads(inline.group(1))
+    assert inline_item["来源引用"] == "dossier:17"

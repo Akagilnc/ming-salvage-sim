@@ -14,6 +14,16 @@ from ming_sim import issues
 from ming_sim.models import Event
 
 
+def _promulgated_dossier(db, state, decree_text):
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=decree_text,
+        target_kind="army", target_id="guanning",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+    return f"dossier:{dossier_id}"
+
+
 def _hist_event(eid, gate):
     return Event(
         id=eid, title="测试门控历史事件", kind="situation",
@@ -1329,11 +1339,12 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     before = db.conn.execute(
         "SELECT training FROM armies WHERE id = ?", ("guanning",)
     ).fetchone()["training"]
+    origin_ref = _promulgated_dossier(db, state, "整饬锦州战备")
 
     out = issues.apply_score_extraction(
         db,
         state,
-        {"army_delta": {"guanning": {"origin_ref": "盘面自发", "training": 5, "reason": "奉旨整饬锦州战备"}}},
+        {"army_delta": {"guanning": {"origin_ref": origin_ref, "training": 5, "reason": "奉旨整饬锦州战备"}}},
         content=content,
     )
 
@@ -1453,13 +1464,14 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
     """ship-pre CMR：普通调防只含战略地名，不得被误当成未触发战役战果。"""
     db, state, content = game
     issues.bind_content(content)
+    origin_ref = _promulgated_dossier(db, state, "移镇锦州前屯")
 
     out = issues.apply_score_extraction(
         db,
         state,
         {
             "army_delta": {
-                "guanning": {"origin_ref": "盘面自发", "驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
+                "guanning": {"origin_ref": origin_ref, "驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
             }
         },
         content=content,
