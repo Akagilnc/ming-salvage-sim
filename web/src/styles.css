@@ -1836,6 +1836,24 @@ select:focus-visible {
     linear-gradient(180deg, rgba(69, 55, 38, 0.96), rgba(33, 28, 21, 0.96));
 }
 
+/* 无标题栏模式（如邸报，正文自带报头）：只留悬浮关闭钮，不占横条 */
+.modal-header-bare {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
+  min-height: 0;
+  padding: 10px 14px;
+  border-bottom: none;
+  background: none;
+  pointer-events: none;
+}
+.modal-header-bare .modal-header-actions {
+  margin-left: auto;
+  pointer-events: auto;
+}
+
 .modal-title {
   display: flex;
   align-items: center;
