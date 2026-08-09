@@ -10,6 +10,7 @@ import json
 import math
 import re
 import sqlite3
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.applier import atomic
@@ -5407,8 +5408,15 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     office_rows = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT character_name, office_title, office_type, source, dossier_id, updated_at "
-            "FROM character_offices"
+            "SELECT character_name, office_title, office_type, source, dossier_id, "
+            "appointment_tenure, updated_at FROM character_offices"
+        ).fetchall()
+    ]
+    office_change_rows = [
+        dict(row)
+        for row in db.conn.execute(
+            "SELECT id, character_name, office_title, office_type, source, dossier_id, "
+            "appointment_tenure, created_at FROM office_change_records"
         ).fetchall()
     ]
     # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
@@ -5422,7 +5430,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         ).fetchall()
     ]
     content_rows = _snapshot_content_character_rows(content)
-    return character_rows, office_rows, faction_rows, content_rows
+    return character_rows, office_rows, faction_rows, content_rows, office_change_rows
 
 
 def _snapshot_content_character_rows(content: Optional[GameContent]) -> Dict[str, Dict[str, object]]:
@@ -5461,8 +5469,9 @@ def _restore_person_write_state(
     *,
     commit: bool = True,
 ) -> None:
-    character_rows, office_rows, faction_rows, content_rows = snapshot
+    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
+    db.conn.execute("DELETE FROM office_change_records")
     snapshot_names = {str(row["name"]) for row in character_rows}
     for row in db.conn.execute("SELECT name FROM characters").fetchall():
         name = str(row["name"])
@@ -5488,8 +5497,8 @@ def _restore_person_write_state(
     )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, dossier_id, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(character_name, office_title, office_type, source, dossier_id, "
+        "appointment_tenure, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
@@ -5497,9 +5506,23 @@ def _restore_person_write_state(
                 row["office_type"],
                 row["source"],
                 row.get("dossier_id"),
+                row["appointment_tenure"],
                 row["updated_at"],
             )
             for row in office_rows
+        ],
+    )
+    db.conn.executemany(
+        "INSERT INTO office_change_records "
+        "(id, character_name, office_title, office_type, source, dossier_id, "
+        "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                row["id"], row["character_name"], row["office_title"],
+                row["office_type"], row["source"], row.get("dossier_id"),
+                row["appointment_tenure"], row["created_at"],
+            )
+            for row in office_change_rows
         ],
     )
     # #9：还原 factions.leverage + leverage_offset（起复路中途的全重算回滚，与 character 状态一并
@@ -5582,6 +5605,16 @@ def validate_delta_shape(extracted: dict) -> None:
     sanitize_delta_shape(extracted)
 
 
+@contextmanager
+def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
+    previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+    db.conn._appointment_tenure = appointment_tenure
+    try:
+        yield
+    finally:
+        db.conn._appointment_tenure = previous_tenure
+
+
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -5638,16 +5671,12 @@ def apply_office_appointment(
                     reason[:200] or "诏书任命",
                     commit=commit,
                 )
-            previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
-            db.conn._appointment_tenure = appointment_tenure
-            try:
+            with _appointment_tenure_scope(db, appointment_tenure):
                 db.set_character_office(
                     name, new_office, new_office_type,
                     source=reason[:60] or "诏书调任", llm_config=llm_config,
                     commit=commit,
                 )
-            finally:
-                db.conn._appointment_tenure = previous_tenure
             if cur_status == "active":
                 db.conn.execute(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
@@ -5705,9 +5734,7 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
-        db.conn._appointment_tenure = appointment_tenure
-        try:
+        with _appointment_tenure_scope(db, appointment_tenure):
             appointed, _ = apply_appointment(
                 db,
                 state,
@@ -5717,8 +5744,6 @@ def apply_office_appointment(
                 llm_config=llm_config,
                 commit=commit,
             )
-        finally:
-            db.conn._appointment_tenure = previous_tenure
         if appointed:
             # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
