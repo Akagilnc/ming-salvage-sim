@@ -828,6 +828,12 @@ def test_web_advance_without_edict_default_approves_into_one_dossier(game, monke
     )
 
     def settle(st, game_db, *_args, **_kwargs):
+        # resolve_turn only builds a read-only candidate view; the settlement owner
+        # receives the durable pending row and materializes it.
+        assert game_db.list_pending_actions(st.turn)[0]["status"] == "pending"
+        assert game_db.list_directives(st, statuses=("draft",)) == []
+        assert game_db.list_decree_dossiers() == []
+        game_db.commit_pending_actions(st, content=content, registry=None)
         st.next_period()
         game_db.save_state(st)
         return ResolveResult(awaiting=False, report="本月已结")
