@@ -22,8 +22,15 @@ def _chat(db, state, night_id, minister, user_text, answer, seq):
     return int(cur.lastrowid)
 
 
-def test_real_player_stream_replaces_closed_same_turn_night_and_publishes_persisted_identity(game):
+def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
+    import json
+    import web_app
     from tests.test_audience_background import _FakeAgent, _web_game
+
+    class _FailingAgent(_FakeAgent):
+        def run(self, *_args, **_kwargs):
+            raise RuntimeError("reply failed")
+            yield  # pragma: no cover - make this the agent's streaming generator
 
     db, state, content = game
     old_night_id = _night(db, state)
@@ -32,15 +39,25 @@ def test_real_player_stream_replaces_closed_same_turn_night_and_publishes_persis
         (old_night_id,),
     )
     db.conn.commit()
-    runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣谨奏。"] ))
+    runtime = _web_game(db, state, content, _FailingAgent())
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
-    stream = runtime.chat_stream("温体仁", "新场问话")
-    accepted = next(stream)
+    response = TestClient(web_app.app).post(
+        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        json={"message": "新场问话"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
     persisted = an.get_open_night(db)
-    stream.close()
 
-    assert accepted == {"type": "accepted", "night_id": int(persisted["id"])}
-    assert accepted["night_id"] != old_night_id
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert events == [
+        ("accepted", {"night_id": int(persisted["id"])}),
+        ("error", {"message": "reply failed"}),
+    ]
+    assert int(persisted["id"]) != old_night_id
     assert int(persisted["turn"]) == int(state.turn)
 
 
