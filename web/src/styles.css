@@ -6799,10 +6799,10 @@ button:disabled {
   background: rgba(155, 44, 44, 0.12);
 }
 
-/* ===== 邸报弹窗：案头烛光底 + 文书卡（夜·烛·墨·朱 基调） ===== */
+/* ===== 邸报弹窗：案头烛光底 + 无卡羽化（夜·烛·墨·朱 基调） ===== */
 .modal-bg-gazette {
   background-image:
-    linear-gradient(180deg, rgba(8, 9, 12, 0.5), rgba(8, 9, 12, 0.78)),
+    radial-gradient(ellipse 78% 92% at 50% 46%, rgba(6, 6, 9, 0.82) 32%, rgba(6, 6, 9, 0.38) 62%, rgba(6, 6, 9, 0) 92%),
     url("/bg_desk_candle.jpg");
   background-size: cover;
   background-position: center;
@@ -6846,44 +6846,41 @@ button:disabled {
   color: #ffe4b0 !important;
 }
 
-/* 文书卡：烛光下的邸报纸面 */
+/* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边 */
 .gazette-document {
-  margin: clamp(10px, 2.5vh, 28px) auto;
-  width: min(720px, 88%);
-  background: linear-gradient(175deg, rgba(243, 232, 200, 0.97), rgba(233, 217, 174, 0.97)) !important;
-  border: 1px solid #b99b5e;
-  border-radius: 3px;
-  padding: 34px clamp(28px, 4vw, 48px) 40px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.85) !important;
-  color: #3a2c18;
+  margin: 0 auto;
+  width: min(1180px, 92%);
+  padding: 26px clamp(20px, 5vw, 90px) 40px;
+  color: #efe3c2;
   overflow-y: auto;
 }
 
 .gazette-masthead {
   text-align: center;
-  margin-bottom: 20px;
-  padding-bottom: 14px;
-  border-bottom: 2px solid #9a2a2b;
+  margin-bottom: 26px;
 }
 
 .gazette-masthead b {
-  font-size: 2rem;
+  font-size: 2.4rem;
   font-weight: 900;
-  letter-spacing: 0.8em;
-  text-indent: 0.8em;
-  color: #9a2a2b;
+  letter-spacing: 0.9em;
+  text-indent: 0.9em;
+  color: #d8453a !important;
+  text-shadow: 0 0 18px rgba(180, 40, 30, 0.45), 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
 .gazette-masthead span {
   display: block;
-  margin-top: 6px;
-  font-size: 0.8rem;
-  letter-spacing: 0.3em;
-  color: #6d5326;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  letter-spacing: 0.32em;
+  color: rgba(232, 213, 168, 0.72) !important;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 }
 
 .gazette-document .memorial-text {
-  color: #2e2416;
-  font-size: 1.08rem;
-  line-height: 2.1;
+  color: #efe3c2 !important;
+  font-size: 1.12rem;
+  line-height: 2.05;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 24px rgba(0, 0, 0, 0.8);
 }
