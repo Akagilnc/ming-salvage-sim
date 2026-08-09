@@ -6456,8 +6456,10 @@ def apply_score_extraction(
             if dossier is None or dossier["status"] != "executing":
                 raise ValueError("案卷不存在或不在 executing")
             outcome = str(item.get("outcome") or "").strip()
-            if outcome not in {"fulfilled", "degraded", "failed"}:
-                raise ValueError("执行结果必须为 fulfilled/degraded/failed")
+            if outcome not in {"fulfilled", "degraded", "failed", "transformed"}:
+                raise ValueError(
+                    "执行结果必须为 fulfilled/degraded/failed/transformed"
+                )
             note = str(item.get("note") or "").strip()
             if not note:
                 raise ValueError("执行说明不能为空")
@@ -6506,13 +6508,7 @@ def apply_score_extraction(
                     (section, item, f"origin_ref 指向不存在案卷：{origin_ref}")
                 )
                 continue
-            if (
-                str(dossier.get("status") or "") in {"promulgated", "executing"}
-                or (
-                    str(dossier.get("status") or "") == "closed"
-                    and str(dossier.get("promulgation_decision") or "") == "promulgated"
-                )
-            ):
+            if db.dossier_authorizes_effects(dossier_id):
                 authorized.append(item)
             else:
                 dossier_origin_rejections.append(

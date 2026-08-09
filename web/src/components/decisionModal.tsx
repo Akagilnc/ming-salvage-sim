@@ -1,7 +1,13 @@
 import React from "react";
 import type { PendingActionFailure, PendingDecision } from "../types";
 
-type Choice = { label?: string; hint?: string; note?: string };
+type Choice = {
+  label?: string;
+  hint?: string;
+  note?: string;
+  dossier_id?: number;
+  dossier_decision?: string;
+};
 
 function isCheatConsoleTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(".cheat-console") !== null;
@@ -22,7 +28,10 @@ export function DecisionModal({
 
   const cur = decisions[cursor];
   const pick = picks[cursor] || {};
-  const decided = !!(pick.label || (pick.note || "").trim());
+  const requiresListedChoice = (cur?.event_id || "").startsWith("dossier:");
+  const decided = requiresListedChoice
+    ? !!pick.label
+    : !!(pick.label || (pick.note || "").trim());
   const last = cursor >= decisions.length - 1;
   const setPick = (choice: Choice) => setPicks((all) => all.map((item, i) => i === cursor ? { ...item, ...choice } : item));
 
@@ -144,7 +153,7 @@ export function DecisionModal({
           <div className="decision-seal" aria-label="批红落印">批红落印</div>
         </section>
         <div className="decision-actions">
-          <span className="decision-hint-line">{decided ? "" : "请择一票拟，或亲笔批示。"}</span>
+          <span className="decision-hint-line">{decided ? "" : requiresListedChoice ? "此疏须择一票拟。" : "请择一票拟，或亲笔批示。"}</span>
           <button className="decision-confirm" disabled={!decided} onClick={next}>{last ? "批红落印，续推时局" : "批下一疏"}</button>
         </div>
       </article>

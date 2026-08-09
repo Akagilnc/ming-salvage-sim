@@ -9601,6 +9601,17 @@ class GameDB:
             raise ValueError(f"旨意 action_type 非法：{explicit}")
         return explicit
 
+    @staticmethod
+    def _directive_executor(
+        action_type: str, payload: Dict[str, object],
+    ) -> Tuple[str, object]:
+        if action_type not in {"assignment", "military_order"}:
+            return "", ""
+        return (
+            "character",
+            payload.get("assignee_id") or payload.get("assignee") or "",
+        )
+
     def _normalize_directive_dossier_payload(
         self, payload: Dict[str, object], *, content=None, current_turn: int = 0,
     ) -> Dict[str, object]:
@@ -10044,6 +10055,28 @@ class GameDB:
             (str(reason or ""), int(dossier_id)),
         )
         self._commit_dossier_write(commit)
+
+    def dossier_authorizes_effects(self, dossier_id: int) -> bool:
+        """Return whether a dossier crossed either lawful promulgation path."""
+        row = self.conn.execute(
+            """
+            SELECT d.status,d.promulgation_decision,
+                   EXISTS(
+                       SELECT 1 FROM decree_dossier_decisions h
+                       WHERE h.dossier_id=d.id
+                         AND h.rescript_action='force_promulgated'
+                   ) AS was_force_promulgated
+            FROM decree_dossiers d WHERE d.id=?
+            """,
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        return (
+            str(row["status"] or "") in {"promulgated", "executing"}
+            or str(row["promulgation_decision"] or "") == "promulgated"
+            or bool(row["was_force_promulgated"])
+        )
 
     def record_dossier_execution(
         self, dossier_id: int, outcome: str, note: str, turn: int, *,
@@ -11103,22 +11136,16 @@ class GameDB:
             # pending 只是皇帝核定前的候选，不是 ADR 0051 的成案点；默认同意进入
             # draft 时则已越过最终提交边界，应当立即取得案卷身份。
             if status == "draft":
+                action_type = self._directive_dossier_action_type(payload)
+                executor_kind, executor_id = self._directive_executor(action_type, payload)
                 self.create_decree_dossier(
                     state,
-                    action_type=self._directive_dossier_action_type(payload),
+                    action_type=action_type,
                     decree_text=text,
                     target_kind=str(payload.get("target_kind") or ""),
                     target_id=payload.get("target_id") or "",
-                    executor_kind=(
-                        "character"
-                        if self._directive_dossier_action_type(payload) == "assignment"
-                        else ""
-                    ),
-                    executor_id=(
-                        payload.get("assignee_id") or payload.get("assignee") or ""
-                        if self._directive_dossier_action_type(payload) == "assignment"
-                        else ""
-                    ),
+                    executor_kind=executor_kind,
+                    executor_id=executor_id,
                     source_chat_turn_id=int(payload.get("source_chat_turn_id") or 0),
                     pending_action_id=int(pa["id"]),
                     directive_id=did,
@@ -11547,6 +11574,7 @@ class GameDB:
         target_id = str(structured.get("target_id") or "").strip()
         if not target_kind or not target_id:
             raise ValueError("普通旨意缺少受控目标，拒绝成案")
+        executor_kind, executor_id = self._directive_executor(action_type, structured)
         pending = self.conn.execute(
             """
             SELECT id FROM pending_actions
@@ -11561,11 +11589,8 @@ class GameDB:
             decree_text=text,
             target_kind=target_kind,
             target_id=target_id,
-            executor_kind="character" if action_type == "assignment" else "",
-            executor_id=(
-                structured.get("assignee_id") or structured.get("assignee") or ""
-                if action_type == "assignment" else ""
-            ),
+            executor_kind=executor_kind,
+            executor_id=executor_id,
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,

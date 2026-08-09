@@ -878,6 +878,57 @@ def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     assert dossier["closed_turn"] == 0
 
 
+def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_close(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="强颁赈济",
+        target_kind="issue", target_id="forced-relief",
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    before = state.metrics["国库"]
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_executions": [{
+            "dossier_id": dossier_id, "outcome": "fulfilled", "note": "赈济已毕",
+        }],
+        "economy_moves": [{
+            "account": "国库", "delta": -3, "category": "强颁赈济",
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content=content)
+
+    assert result["dossier_executions"] == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+    }]
+    assert state.metrics["国库"] == before - 3
+
+
+def test_extractor_accepts_transformed_execution_outcome(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="奉旨办理而借题行私",
+        target_kind="issue", target_id="transformed-policy",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    result = issue_engine.apply_score_extraction(
+        db, state, {"dossier_executions": [{
+            "dossier_id": dossier_id,
+            "outcome": "transformed",
+            "note": "名义奉行，实则借旨行私",
+        }]}, content=content,
+    )
+
+    assert result["dossier_executions"] == [{
+        "dossier_id": dossier_id, "outcome": "transformed",
+    }]
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "closed"
+    assert dossier["execution_outcome"] == "transformed"
+
+
 def test_appointment_alias_uses_canonical_dossier_identity(game):
     db, state, content = game
     target = next(
