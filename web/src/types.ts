@@ -553,6 +553,9 @@ export type HistoryTurnItem = {
   night_id?: number;
   time_of_day?: string;
   location?: string;
+  /** Stable sequence among same-turn, same-place, same-time closed scenes. */
+  scene_number?: number;
+  scene_count?: number;
 };
 
 export type HistoryDirective = {

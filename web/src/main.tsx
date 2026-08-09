@@ -107,6 +107,7 @@ export function App() {
     currentNightId,
     pendingUserMessage,
     pendingIdentity,
+    failedIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
@@ -1205,6 +1206,7 @@ export function App() {
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
+            failedIdentity={failedIdentity}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
             chatFailures={activeChatFailures}

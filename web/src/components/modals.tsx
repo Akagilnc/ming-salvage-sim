@@ -330,6 +330,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
     let alive = true;
     setDetailLoading(true);
     setDetailError("");
+    setDetail(null);
     setArchivedScroll(null);
     setScrollError("");
     setScrollLoading(!!selectedArchive.night_id);
@@ -381,7 +382,9 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
                     className={`history-turn-item ${active ? "active" : ""}`}
                     onClick={() => setSelectedArchive(t)}
                   >
-                    <b>{t.kind === "night" ? `${t.location || "召对"}${t.time_of_day || "场"}` : `${t.year} 年 ${t.period} 月`}</b>
+                    <b>{t.kind === "night"
+                      ? `${t.location || "召对"}${t.time_of_day || "场"}${(t.scene_count || 0) > 1 ? ` · 第 ${t.scene_number} 场` : ""}`
+                      : `${t.year} 年 ${t.period} 月`}</b>
                     <small>第 {t.turn} 回合 · {t.kind === "night" ? "场档" : (tags.join(" / ") || "月档")}</small>
                   </button>
                 </li>
@@ -423,12 +426,14 @@ export function HistoryDetailView({
   scrollError?: string;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
-  if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
-  if (error) return <div className="document-section"><p className="long-copy">加载失败：{error}</p></div>;
-  if ((!detail || !detail.exists) && !archivedScroll) return <div className="document-section"><p className="long-copy">该回合无存档。</p></div>;
 
   return (
     <>
+      {loading ? <section className="document-section"><p className="long-copy">月档加载中…</p></section> : null}
+      {error ? <section className="document-section"><p className="long-copy">月档加载失败：{error}</p></section> : null}
+      {!loading && !error && (!detail || !detail.exists) && !archivedScroll && !scrollLoading && !scrollError
+        ? <section className="document-section"><p className="long-copy">该回合无存档。</p></section>
+        : null}
       {scrollLoading ? <section className="document-section"><p className="long-copy">场档加载中…</p></section> : null}
       {scrollError ? <section className="document-section"><p className="long-copy">场档加载失败：{scrollError}</p></section> : null}
       {archivedScroll ? (
@@ -553,6 +558,7 @@ export function ChatModal({
   suggestions,
   pendingUserMessage,
   pendingIdentity,
+  failedIdentity,
   streamingMinisterMessage,
   chatNotice,
   chatFailures,
@@ -588,6 +594,8 @@ export function ChatModal({
   suggestions: Suggestion[];
   pendingUserMessage: string;
   pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
+  /** Provider-failed persisted turn whose generating snapshot must be retired. */
+  failedIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   streamingMinisterMessage: string;
   chatNotice: string;
   chatFailures: PendingActionFailure[];
@@ -639,6 +647,12 @@ export function ChatModal({
     && undoneChatIdentity.night_id === currentNightId
     && message.chat_turn_id === undoneChatIdentity.chat_turn_id
   );
+  const failedInThisScroll = (message: AudienceScrollMessage): boolean => !!(
+    failedIdentity
+    && failedIdentity.campaign_id === currentCampaignId
+    && failedIdentity.night_id === currentNightId
+    && message.chat_turn_id === failedIdentity.chat_turn_id
+  );
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
     state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
@@ -646,7 +660,7 @@ export function ChatModal({
   // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
     ? [...chat]
-    : effectiveScrollState.kind === "night" ? [...effectiveScrollState.messages] : [];
+    : effectiveScrollState.kind === "night" ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)) : [];
 
   React.useEffect(() => {
     let alive = true;
@@ -674,7 +688,7 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity]);
+  }, [minister.name, chat, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity]);
 
   const pendingAlreadyPersisted = !!pendingIdentity
     && pendingIdentity.campaign_id === currentCampaignId

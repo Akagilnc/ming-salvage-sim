@@ -281,6 +281,8 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     assert [(item["kind"], item["time_of_day"], item["location"]) for item in entries] == [
         ("night", "戌时", "乾清宫"), ("night", "戌时", "乾清宫"),
     ]
+    assert [(item["scene_number"], item["scene_count"]) for item in entries] == [(1, 2), (2, 2)]
+    assert len([item for item in payload["turns"] if item["turn"] == state.turn and item["kind"] == "month"]) <= 1
     assert all(not item["has_report"] and not item["has_directive"] for item in entries)
     assert all("has_extraction" not in item for item in entries)
 
