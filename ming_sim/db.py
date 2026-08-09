@@ -9829,27 +9829,29 @@ class GameDB:
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
-        """Persist extractor-generated reports for every eligible active dossier."""
+        """Persist valid extractor-authored briefs; never invent missing facts."""
+        if not isinstance(generated, list):
+            return []
         candidates = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_dossier_progress_nudges()
         }
-        supplied = {
-            int(item.get("dossier_id", 0)): item
-            for item in (generated if isinstance(generated, list) else [])
-            if isinstance(item, dict)
-        }
         reports: List[Dict[str, object]] = []
-        for dossier_id, candidate in candidates.items():
-            item = supplied.get(dossier_id, {})
-            month = 1 + sum(
-                not row["is_terminal"] for row in candidate["progress"]
-                if int(row["turn"]) < int(turn)
-            )
-            band = str(item.get("progress_band") or f"第{month}月在办").strip()
+        seen: set[int] = set()
+        for item in generated:
+            if not isinstance(item, dict):
+                continue
+            try:
+                dossier_id = int(item.get("dossier_id", 0))
+            except (TypeError, ValueError):
+                continue
+            band = str(item.get("progress_band") or "").strip()
             text = str(item.get("memorial_text") or "").strip()
-            if not text:
-                text = f"{candidate['title']}按月具奏：仍在承办。"
+            # Unknown/ineligible dossiers, malformed prose, and duplicate entries
+            # are rejected rather than converted into a plausible-sounding fact.
+            if dossier_id not in candidates or dossier_id in seen or not band or not text:
+                continue
+            seen.add(dossier_id)
             self.record_dossier_progress(
                 dossier_id, int(turn), band, text, commit=False,
             )
