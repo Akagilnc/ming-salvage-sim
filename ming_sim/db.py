@@ -13684,6 +13684,14 @@ class GameDB:
                 "status": r["status"],
                 "result": r["result"] or "",
                 "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                # Emperor-facing secret-order payload is an authorized private
+                # product seam; expose the same canonical monthly rail used by
+                # the personnel extractor and future dossier inquiry.
+                "dossier_progress": (
+                    self.list_dossier_progress(int(dossier["id"]))
+                    if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
+                    else []
+                ),
                 "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
                 "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
                 "turn_closed": r["turn_closed"],
