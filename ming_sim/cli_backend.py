@@ -48,6 +48,10 @@ from pydantic import BaseModel
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+
+# #529 owns interim-office capture/materialization.  Keep the #471 dossier
+# vocabulary compatible, but do not let manual/draft extraction create it yet.
+DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
 from ming_sim.strict_types import strict_int
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
@@ -1079,7 +1083,7 @@ def extract_draft_intent(
             action = str(value.get("动作类型") or "").strip()
             target_kind = str(value.get("目标类型") or "").strip()
             target_id = str(value.get("目标ID") or "").strip()
-            if not text or action not in DIRECTIVE_ACTION_TYPES or not target_kind or not target_id:
+            if not text or action not in DRAFT_ACTION_TYPES or not target_kind or not target_id:
                 continue
             raw_mechanical = {
                 target: value.get(source)
@@ -1120,7 +1124,7 @@ def extract_draft_intent(
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
         '  "拟旨意图": "无|拟旨",\n'
-        '  "动作类型": "policy|approve_reject|acting_appointment|assignment|'
+        '  "动作类型": "policy|approve_reject|assignment|'
         'grant_allocation|authorization|secret_authorization|secret_investigation|'
         'protection|strategy_selection|punishment|pacification|referral|'
         'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
@@ -1185,7 +1189,7 @@ def extract_draft_intent(
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
     dossier_action = str(obj.get("动作类型") or "special_decree").strip()
-    if dossier_action not in DIRECTIVE_ACTION_TYPES:
+    if dossier_action not in DRAFT_ACTION_TYPES:
         dossier_action = "special_decree"
     target_kind = str(obj.get("目标类型") or "policy").strip()
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
