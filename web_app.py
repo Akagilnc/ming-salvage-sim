@@ -3481,7 +3481,9 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             if item is None:
                 break
             item_type = str(item.get("type", "message"))
-            if item_type == "delta":
+            if item_type == "accepted":
+                yield sse_event("accepted", {"night_id": item.get("night_id", 0)})
+            elif item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
