@@ -8311,9 +8311,9 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
-        # write_decree() 的 commit_pending_actions(kind_filter="directive") 可能在召对
-        # diff 已记录之后才生成 turn_directives(status='draft')，因此那类行不会进入
-        # rollback_items（召对期直接更新的 turn_directives 仍会被快照捕获并还原）。
+        # 颁诏 owning transaction 的 commit_pending_actions 可能在召对 diff 已记录之后
+        # 才生成 turn_directives(status='draft')，因此那类行不会进入 rollback_items
+        # （召对期直接更新的 turn_directives 仍会被快照捕获并还原）。
         # 删除前，从本召对触碰过的 pending_actions(kind='directive') 行读取
         # committed_directive_id，并且只删除那条 draft 行（BUG 3：旧实现按
         # (turn,actor) 删除，会连同同 actor 同回合的无关 draft 一起删掉）。

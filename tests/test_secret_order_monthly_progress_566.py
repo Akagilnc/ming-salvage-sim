@@ -439,67 +439,117 @@ def test_web_short_order_fast_path_never_calls_extractor(game, monkeypatch, acti
     assert db.list_dossier_progress(dossier_id) == []
 
 
-@pytest.mark.parametrize("deadline,with_non_secret", [(1, False), (3, True)])
-def test_fast_and_full_advance_failure_roll_back_actions_side_effects_fiscal_and_turn(
-    game, monkeypatch, deadline, with_non_secret,
+def _rows(db, table, where="", params=()):
+    import math
+
+    sql = f'SELECT * FROM "{table}"'
+    if where:
+        sql += " WHERE " + where
+    sql += " ORDER BY rowid"
+    return [{
+        key: ("<NaN>" if isinstance(value, float) and math.isnan(value) else value)
+        for key, value in dict(row).items()
+    } for row in db.conn.execute(sql, params).fetchall()]
+
+
+def _rollback_snapshot(db, state, pending_ids):
+    fiscal_tables = [row["name"] for row in db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND "
+        "(name LIKE '%fiscal%' OR name LIKE '%economy%' OR name LIKE '%ledger%') "
+        "ORDER BY name"
+    ).fetchall()]
+    fiscal = {name: _rows(db, name) for name in fiscal_tables}
+    # load_state refreshes this cache's bookkeeping timestamp even after rollback;
+    # account identity/balance are the external fiscal state under test.
+    for row in fiscal.get("economy_accounts", []):
+        row.pop("updated_at", None)
+    return {
+        "pending": [_rows(db, "pending_actions", "id=?", (pid,))[0] for pid in pending_ids],
+        "directives": _rows(db, "turn_directives"),
+        "dossiers": _rows(db, "decree_dossiers", "status='proposed'"),
+        "orders": _rows(db, "secret_orders"),
+        "knowledge": _rows(db, "character_knowledge_sources"),
+        "fiscal": fiscal,
+        "metrics": dict(state.metrics),
+        "clock": (state.turn, state.year, state.period, state.turn_phase),
+    }
+
+
+@pytest.mark.parametrize("entry", ["cli", "web"])
+def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write(
+    game, monkeypatch, entry,
 ):
-    """Late deterministic failure leaves both routing rails wholly retryable."""
-    import copy
+    """A post-fiscal fault cannot expose preview-time directive materialization."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
     import ming_sim.decree as decree
+    import ming_sim.session as session_mod
+    import web_app
 
     db, state, content = game
     turn = state.turn
-    secret_pending, _target_id = _stage_routed_secret_order(
-        db, state, "新建", deadline=deadline,
+    secret_id, _ = _stage_routed_secret_order(db, state, "新建", deadline=3)
+    directive_id = db.stage_pending_action(
+        turn, "directive", "拟旨", _actor(db), {
+            "text": "着户部清核辽饷。", "actor": _actor(db),
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "liao-pay-audit-566",
+        },
     )
-    pending_ids = [secret_pending]
-    if with_non_secret:
-        pending_ids.append(db.stage_pending_action(
-            turn, "directive", "拟旨", _actor(db), {
-                "text": "着户部清核辽饷。", "actor": _actor(db),
-                "dossier_action_type": "policy",
-                "target_kind": "issue", "target_id": "liao-pay-audit-566",
-            },
-        ))
+    pending_ids = [secret_id, directive_id]
+    before = _rollback_snapshot(db, state, pending_ids)
+    observed = {"fiscal_written": False, "metrics_written": False}
+    original_flows = decree.apply_fixed_period_flows
 
-    before_metrics = copy.deepcopy(state.metrics)
-    before_orders = db.conn.execute("SELECT COUNT(*) AS n FROM secret_orders").fetchone()["n"]
-    before_sources = db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources"
-    ).fetchone()["n"]
-    fiscal_tables = [row["name"] for row in db.conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND (name LIKE '%fiscal%' OR name LIKE '%economy%' OR name LIKE '%ledger%')"
-    ).fetchall()]
-    before_fiscal = {name: db.conn.execute(
-        f'SELECT COUNT(*) AS n FROM "{name}"'
-    ).fetchone()["n"] for name in fiscal_tables}
+    def fail_after_real_flows(flow_db, flow_state):
+        ledger_before = _rows(flow_db, "economy_ledger")
+        metrics_before = dict(flow_state.metrics)
+        result = original_flows(flow_db, flow_state)
+        observed["fiscal_written"] = _rows(flow_db, "economy_ledger") != ledger_before
+        observed["metrics_written"] = dict(flow_state.metrics) != metrics_before
+        assert observed == {"fiscal_written": True, "metrics_written": True}
+        raise RuntimeError("post-fiscal failure 566")
 
+    monkeypatch.setattr(decree, "apply_fixed_period_flows", fail_after_real_flows)
     monkeypatch.setattr(
-        decree, "apply_fixed_period_flows",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("late fiscal failure 566")),
+        session_mod, "write_decree_with_agno",
+        lambda _config, _agno, _state, directives, db=None: "\n".join(
+            str(item["text"]) for item in directives
+        ),
     )
+    session = _production_session(db, state, content)
 
-    with pytest.raises(RuntimeError, match="late fiscal failure 566"):
-        advanced = decree.advance_without_edict(state, db, content=content)
-        assert advanced is False  # long/full tracer only
-        decree.resolve_directives(
-            state, db, None, None, [], "", content=content, registry=None,
+    if entry == "web":
+        web_game = SimpleNamespace(
+            db=db, state=state, content=content, session=session,
+            directive_rows=lambda: [], refresh_turn=lambda: None,
+            state_payload=lambda: {"turn": state.turn},
         )
 
-    assert state.turn == turn == db.load_state().turn
-    assert state.metrics == before_metrics
-    assert db.conn.execute("SELECT COUNT(*) AS n FROM secret_orders").fetchone()["n"] == before_orders
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM character_knowledge_sources"
-    ).fetchone()["n"] == before_sources
-    assert {name: db.conn.execute(
-        f'SELECT COUNT(*) AS n FROM "{name}"'
-    ).fetchone()["n"] for name in fiscal_tables} == before_fiscal
-    statuses = [db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
-    ).fetchone()["status"] for pending_id in pending_ids]
-    assert statuses == ["pending"] * len(pending_ids)
+        @contextmanager
+        def unlocked(_game):
+            yield
+
+        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+        monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
+        monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
+        invoke = web_app.api_advance_without_edict
+    else:
+        invoke = session.advance_without_decree
+
+    # RuntimeError is intentionally not translated by the endpoint (HTTP layer maps it to 500).
+    with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
+        invoke()
+
+    assert observed == {"fiscal_written": True, "metrics_written": True}
+    after = _rollback_snapshot(db, state, pending_ids)
+    for key in ("pending", "directives", "dossiers", "orders", "knowledge", "metrics", "clock"):
+        assert after[key] == before[key], key
+    for table, rows in before["fiscal"].items():
+        assert after["fiscal"][table] == rows, table
+    reloaded = db.load_state()
+    assert (reloaded.turn, reloaded.year, reloaded.period, reloaded.turn_phase) == before["clock"]
+    assert reloaded.metrics == before["metrics"]
 
 
 def test_simulator_fallback_missing_private_report_aborts_without_advancing(game, monkeypatch):
