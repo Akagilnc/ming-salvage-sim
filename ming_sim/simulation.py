@@ -547,8 +547,6 @@ def build_simulator_payload(
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
-        # #566: prompt and future inquiry consume the same canonical history.
-        "dossier_progress_nudge": db.list_monthly_dossier_progress_nudges(),
         "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
     }
 
@@ -884,6 +882,9 @@ def build_extractor_shared_context(
     ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
+        # #566/#883: monthly briefs travel only on the authorized secret rail.
+        # This is also the canonical history read seam used after restore.
+        slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
