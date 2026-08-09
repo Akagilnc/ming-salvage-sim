@@ -2072,8 +2072,12 @@ def confirm_dossier_links(
     except Exception as exc:
         _log(f"案卷关联确认失败：{exc}")
         return []
+    if not isinstance(verdict, dict):
+        return []
     ids = verdict.get("confirmed_ids")
-    confirmed = set(ids) if isinstance(ids, list) else set()
+    if not isinstance(ids, list) or any(type(value) is not int for value in ids):
+        return []
+    confirmed = set(ids)
     return [item for target, item in proposals.items() if target in confirmed]
 
 
