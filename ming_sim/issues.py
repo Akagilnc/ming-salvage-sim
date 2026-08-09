@@ -4235,7 +4235,10 @@ def _strategic_event_result_preflight_error(
                 target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
                 if target_office:
                     row = db.conn.execute(
-                        "SELECT office, office_type FROM characters WHERE name = ?",
+                        "SELECT c.office, c.office_type, "
+                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
+                        "FROM characters c LEFT JOIN character_offices co "
+                        "ON co.character_name = c.name WHERE c.name = ?",
                         (name,),
                     ).fetchone()
                     if row is not None:
@@ -4250,12 +4253,22 @@ def _strategic_event_result_preflight_error(
                             current_type,
                             llm_config or db.llm_config,
                         )
-                        if target_office == current_office and target_type == current_type:
+                        current_tenure = str(row["appointment_tenure"] or "真除")
+                        target_tenure = appointment_tenure_from(item)
+                        if (
+                            target_office == current_office
+                            and target_type == current_type
+                            and target_tenure == current_tenure
+                        ):
                             return _noop_error(
                                 "person",
                                 name,
                                 action,
-                                {"office": target_office, "office_type": target_type},
+                                {
+                                    "office": target_office,
+                                    "office_type": target_type,
+                                    "appointment_tenure": target_tenure,
+                                },
                             )
             if action != "行止":
                 continue
