@@ -445,27 +445,37 @@ export function LegacyBar({ legacies }: { legacies: Legacy[] }) {
 export function BudgetHover({ accountName, budget }: { accountName: "国库" | "内库"; budget: BudgetAccount }) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const hideTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const cancelHide = () => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+  };
   const show = () => {
+    cancelHide();
     const r = triggerRef.current?.getBoundingClientRect();
     if (r) setPos({ left: r.left, top: r.bottom + 6 });
     setOpen(true);
   };
-  const hide = () => setOpen(false);
+  // 宽限延迟：鼠标从触发器挪向浮层（portal 到 body，非 DOM 子级）时给 300ms 缓冲
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimer.current = setTimeout(() => setOpen(false), 300);
+  };
+  React.useEffect(() => cancelHide, []);
   return (
     <span
       className={`budget-hover ${open ? "open" : ""}`}
       onMouseEnter={show}
-      onMouseLeave={hide}
+      onMouseLeave={scheduleHide}
       onFocus={show}
-      onBlur={hide}
+      onBlur={scheduleHide}
     >
       <button
         ref={triggerRef}
         className="status-money budget-trigger"
         type="button"
         aria-label={`查看${accountName}固定收支`}
-        onClick={() => (open ? hide() : show())}
+        onClick={() => (open ? setOpen(false) : show())}
       >
         <span className="hud2-lab">{accountName}</span>
         <span className="hud2-val"><b>{formatMoney(budget.balance)}</b></span>
@@ -473,7 +483,9 @@ export function BudgetHover({ accountName, budget }: { accountName: "国库" | "
       </button>
       {open && pos && createPortal(
         <span className="budget-popover budget-popover-portal" role="tooltip"
-          style={{ left: pos.left, top: pos.top }}>
+          style={{ left: pos.left, top: pos.top, maxHeight: `calc(100vh - ${pos.top + 12}px)` }}
+          onMouseEnter={cancelHide}
+          onMouseLeave={scheduleHide}>
           <span className="budget-popover-head">
             <b>{accountName}月度定额</b>
             <span className="budget-summary">

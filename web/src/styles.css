@@ -6499,11 +6499,11 @@ button:disabled {
 }
 /* 底图局势区：行背景透明、字体缩小（底图已有标题/纹理）*/
 .hud2-issue-quad .situation-row {
-  background: transparent !important;
+  background: rgba(240, 224, 184, 0.78) !important;
   border-color: rgba(60, 30, 10, 0.25);
   padding: 3px 4px;
 }
-.hud2-issue-quad .situation-row:hover { background: rgba(255, 250, 235, 0.25) !important; }
+.hud2-issue-quad .situation-row:hover { background: rgba(246, 234, 200, 0.94) !important; }
 .hud2-issue-quad .situation-name { font-size: 1.6cqh; color: #3a2410; }
 .hud2-issue-quad .situation-row-head b { font-size: 1.6cqh; color: #3a2410; }
 .hud2-issue-quad .situation-group-title { font-size: 1.4cqh; }
