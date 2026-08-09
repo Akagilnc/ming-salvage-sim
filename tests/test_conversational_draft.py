@@ -283,7 +283,7 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
 
     monkeypatch.setattr(db, "_apply_pending_action", _boom_after_draft)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="directive commit boom"):
         with atomic(db):
             db.commit_pending_actions(state, kind_filter="directive")
 
@@ -1333,7 +1333,7 @@ def test_commit_pending_actions_rejects_conflicting_kind_filters(game):
     db.upsert_pending_directive(
         state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：清查钱粮", "actor": name})
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="kind_filter.*kind_filter_exclude"):
         db.commit_pending_actions(
             state, kind_filter="directive", kind_filter_exclude="secret_order")
 
@@ -1382,7 +1382,7 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
     )
     db.conn.commit()
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError, match="simulated committed_directive_id failure"):
         db.commit_pending_actions(state, kind_filter="directive")
 
     assert db.conn.execute(
