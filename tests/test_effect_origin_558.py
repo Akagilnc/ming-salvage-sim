@@ -103,6 +103,38 @@ def test_issue_close_effects_inherit_parent_canonical_origin(game):
     ).fetchone()["origin_ref"] == origin
 
 
+def test_same_issue_row_inertia_and_ongoing_reuse_parent_canonical_origin(game):
+    db, state, content = game
+    dossier_id = _promulgated_policy(db, state)
+    origin = f"dossier:{dossier_id}"
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    issue_id = db.insert_issue(
+        state,
+        kind="situation",
+        title="惯性与持续效果同月落账",
+        origin_kind="decree",
+        origin_ref=origin,
+        bar_value=50,
+        inertia=1,
+        ongoing_effects={
+            "economy": [{"account": "国库", "delta": -2, "category": "同月持续支出"}],
+            "region_delta": {region_id: {"public_support": 1}},
+        },
+    )
+
+    issue_engine.apply_issue_inertia_and_ongoing(db, state)
+
+    row = db.conn.execute("SELECT bar_value, status FROM issues WHERE id=?", (issue_id,)).fetchone()
+    assert (row["bar_value"], row["status"]) == (51, "active")
+    assert db.conn.execute(
+        "SELECT origin_ref FROM economy_ledger WHERE category='同月持续支出' ORDER BY id DESC LIMIT 1"
+    ).fetchone()["origin_ref"] == origin
+    assert db.conn.execute(
+        "SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1",
+        (region_id,),
+    ).fetchone()["origin_ref"] == origin
+
+
 def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)
