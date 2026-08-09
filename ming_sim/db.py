@@ -10313,8 +10313,6 @@ class GameDB:
                 elif row["action_type"] == "grant_allocation":
                     amount = int(payload.get("amount") or 0)
                     moves = self.list_economy_moves_for_dossier(dossier_id)
-                    if len(moves) > 1:
-                        raise ValueError("内批拨帑案卷存在重复经济流水")
                     actual = int(moves[0]["delta"]) if moves else 0
                     if actual != -amount:
                         if policy["execution_surface"] == "in_transit":
