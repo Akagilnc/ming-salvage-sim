@@ -1,13 +1,7 @@
 import React from "react";
-import type { PendingActionFailure, PendingDecision } from "../types";
-
-type Choice = {
-  label?: string;
-  hint?: string;
-  note?: string;
-  dossier_id?: number;
-  dossier_decision?: string;
-};
+import type {
+  DecisionChoice, PendingActionFailure, PendingDecision,
+} from "../types";
 
 function isCheatConsoleTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(".cheat-console") !== null;
@@ -20,10 +14,10 @@ export function DecisionModal({
 }: {
   decisions: PendingDecision[];
   failures?: PendingActionFailure[];
-  onResolve: (choices: Choice[]) => void;
+  onResolve: (choices: DecisionChoice[]) => void;
 }) {
   const [cursor, setCursor] = React.useState(0);
-  const [picks, setPicks] = React.useState<Choice[]>(() => decisions.map(() => ({})));
+  const [picks, setPicks] = React.useState<DecisionChoice[]>(() => decisions.map(() => ({})));
   const pageRef = React.useRef<HTMLElement>(null);
 
   const cur = decisions[cursor];

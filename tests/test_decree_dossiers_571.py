@@ -376,6 +376,19 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
 ):
     db, state, content = game
     assignee = _active_minister(db)
+    assignee_input = assignee
+    if action_type == "military_order":
+        active_names = {
+            str(row["name"]) for row in db.conn.execute(
+                "SELECT name FROM characters WHERE status='active'"
+            ).fetchall()
+        }
+        character = next(
+            character for character in content.characters
+            if character.name in active_names and character.aliases
+        )
+        assignee = character.name
+        assignee_input = character.aliases[0]
     candidate_id = db.stage_directive_candidate(
         state.turn,
         assignee,
@@ -385,7 +398,7 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
             "dossier_action_type": action_type,
             "target_kind": "issue",
             "target_id": f"executor-{entry}-{action_type}",
-            "assignee": assignee,
+            "assignee": assignee_input,
             "deadline_months": 3,
         },
     )
@@ -405,6 +418,16 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
     dossier = db.get_dossier_for_directive(directive_id)
     assert dossier["executor_kind"] == expected_executor_kind
     assert dossier["executor_id"] == (assignee if expected_executor_kind else "")
+
+    if action_type == "military_order":
+        db.apply_dossier_verdicts(
+            state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+        assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+        terminal_status = "dead" if entry == "pending_commit" else "dismissed"
+        db.set_character_status(state, assignee, terminal_status, reason="人物终态")
+        assert db.get_decree_dossier(dossier["id"])["status"] == "closed"
 
 
 def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(

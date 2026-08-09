@@ -2048,7 +2048,7 @@ class GameSession:
         return decree
 
     def set_decree(self, text: str) -> str:
-        """兼容入口：仅无逐道草案时可设正文；有草案必须逐道修改以保持案卷同源。"""
+        """兼容入口：非空最终正文一律拒绝；须由逐道旨意入口新增或修改旨稿。"""
         self._refuse_if_settling()
         text = (text or "").strip()
         if not text:
