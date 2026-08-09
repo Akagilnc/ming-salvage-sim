@@ -24,7 +24,7 @@ from ming_sim.constants import (
     ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
-    SALARY_RATE_ANCHOR, TURN_UNIT,
+    DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES
@@ -1361,6 +1361,33 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
+            -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
+            CREATE TABLE IF NOT EXISTS decree_dossier_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_dossier_id INTEGER NOT NULL,
+                target_dossier_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL
+                    CHECK(relation_type IN ('护卫','稽核','接应')),
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source_dossier_id, target_dossier_id, relation_type),
+                FOREIGN KEY(source_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
+                ON decree_dossier_links(target_dossier_id, id);
+            CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_dossier_id INTEGER NOT NULL,
+                pending_action_id INTEGER,
+                target_dossier_id INTEGER NOT NULL DEFAULT 0,
+                relation_type TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
+                ON decree_dossier_link_rejections(source_dossier_id, id);
             CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
@@ -1749,6 +1776,9 @@ class GameDB:
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
+        self.ensure_column(
+            "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
+        )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -9853,6 +9883,145 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
+    def list_referenceable_dossiers(
+        self, character_name: str, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """Project candidates from the same durable character-knowledge truth."""
+        from ming_sim.knowledge import knowledge_row_visible_to
+
+        name = str(character_name or "")
+        known_secret_ids: set[int] = set()
+        knowledge_events = self._character_knowledge_events(name, include_exclusions=True)
+        if name:
+            knowledge_events += self._character_knowledge_events("", include_exclusions=True)
+        for event in knowledge_events:
+            if not knowledge_row_visible_to(self, event, name):
+                continue
+            source_id = str(event.get("source_id") or "")
+            match = re.match(r"secret_order_(?:brief|disclosure):(\d+)(?::|$)", source_id)
+            if match:
+                known_secret_ids.add(int(match.group(1)))
+        rows = self.conn.execute(
+            """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
+                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title,
+                      EXISTS(
+                          SELECT 1 FROM decree_dossier_decisions h
+                          WHERE h.dossier_id=d.id
+                            AND h.rescript_action='force_promulgated'
+                      ) AS was_force_promulgated
+               FROM decree_dossiers d
+               LEFT JOIN secret_orders s ON s.id=d.secret_order_id
+               WHERE d.created_turn <= ?
+               ORDER BY d.id DESC""",
+            (int(current_turn),),
+        ).fetchall()
+        return [
+            dict(row) for row in rows
+            if (
+                row["secret_order_id"] is None
+                and (
+                    str(row["promulgation_decision"] or "") == "promulgated"
+                    or bool(row["was_force_promulgated"])
+                )
+            ) or (
+                row["secret_order_id"] is not None
+                and int(row["secret_order_id"]) in known_secret_ids
+            )
+        ]
+
+    def _record_dossier_link_rejection(
+        self, source_id: int, target_id: int, relation: str, note: str,
+        reason: str, *, pending_action_id: Optional[int] = None,
+    ) -> None:
+        self.conn.execute(
+            """INSERT INTO decree_dossier_link_rejections
+               (source_dossier_id,pending_action_id,target_dossier_id,relation_type,note,reason)
+               VALUES (?,?,?,?,?,?)""",
+            (source_id, pending_action_id, target_id, relation, note, reason),
+        )
+
+    def add_dossier_links(
+        self, source_dossier_id: int, links: Iterable[Dict[str, object]], *,
+        commit: bool = True,
+    ) -> None:
+        """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
+        source = self.get_decree_dossier(source_id)
+        if source is None:
+            raise ValueError("关联来源指向不存在案卷")
+        normalized: List[Tuple[int, str, str]] = []
+        rejection: Optional[Tuple[int, str, str, str]] = None
+        for item in links:
+            try:
+                target_id = strict_int(
+                    item.get("target_dossier_id"), accept_numeric_strings=False
+                )
+            except (AttributeError, ValueError):
+                target_id = 0
+            relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
+            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            if self.get_decree_dossier(target_id) is None:
+                rejection = (target_id, relation, note, "关联指向不存在案卷")
+            elif target_id >= source_id:
+                rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
+            elif relation not in DOSSIER_LINK_TYPES:
+                rejection = (target_id, relation, note, "案卷关联类型非法")
+            elif not note:
+                rejection = (target_id, relation, note, "案卷关联说明不能为空")
+            if rejection is not None:
+                break
+            normalized.append((target_id, relation, note))
+        if rejection is not None:
+            target_id, relation, note, reason = rejection
+            self._record_dossier_link_rejection(
+                source_id, target_id, relation, note, reason,
+            )
+            self._commit_dossier_write(commit)
+            exc = ValueError(reason)
+            # commit_pending_actions rolls its business savepoint back.  Carry the
+            # rejected item across that boundary so its outer failure path can
+            # persist the audit without retaining the incomplete secret order.
+            # source_id belongs to the savepoint and may be reused after rollback.
+            exc.dossier_link_rejection = (0, target_id, relation, note, reason)
+            raise exc
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO decree_dossier_links
+               (source_dossier_id,target_dossier_id,relation_type,note)
+               VALUES (?,?,?,?)""",
+            [(source_id, target_id, relation, note)
+             for target_id, relation, note in normalized],
+        )
+        self._commit_dossier_write(commit)
+
+    def list_dossier_links(
+        self, dossier_id: int, *, direction: str = "outgoing",
+    ) -> List[Dict[str, object]]:
+        """从任一端查询同一份单向关联真源。"""
+        if direction not in {"outgoing", "incoming"}:
+            raise ValueError("案卷关联查询方向非法")
+        column = "source_dossier_id" if direction == "outgoing" else "target_dossier_id"
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
+            (strict_int(dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_dossier_link_rejections(
+        self, source_dossier_id: Optional[int] = None, *,
+        pending_action_id: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        if (source_dossier_id is None) == (pending_action_id is None):
+            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
+        if pending_action_id is not None:
+            column, value = "pending_action_id", pending_action_id
+        else:
+            column, value = "source_dossier_id", source_dossier_id
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
+            (strict_int(value, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_commitments_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         """承诺只从 issue.origin_ref 反查；案卷表不复制 commitment id。"""
         rows = self.conn.execute(
@@ -10918,6 +11087,11 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    rejection = getattr(exc, "dossier_link_rejection", None)
+                    if rejection is not None:
+                        self._record_dossier_link_rejection(
+                            *rejection, pending_action_id=int(pa["id"]),
+                        )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     ok = False
                     self.conn.execute(
@@ -11138,6 +11312,16 @@ class GameDB:
                     origin_chat_message_id=origin_mid,
                     pending_action_id=int(pa["id"]),
                 )
+                if order_id is not None and payload.get("dossier_links") is not None:
+                    links = payload.get("dossier_links")
+                    if not isinstance(links, list):
+                        raise ValueError("密令案卷关联必须为列表")
+                    dossier = self.get_dossier_for_secret_order(int(order_id))
+                    if dossier is None:
+                        raise ValueError("密令成案后未找到案卷")
+                    self.add_dossier_links(
+                        int(dossier["id"]), links, commit=False,
+                    )
                 if registry is not None:
                     try:
                         registry.refresh(assignee)
@@ -12632,7 +12816,9 @@ class GameDB:
                     "turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": "secret_order_brief",
                     "title": row["title"], "body": row["body"], "source_id": source_id,
-                    **({"excluded_names": "[]"} if include_exclusions else {}),
+                    **({"excluded_names": json.dumps(
+                        self.knowledge_exclusions_for_source(source_id), ensure_ascii=False,
+                    )} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
         for row in self.conn.execute(
@@ -12733,11 +12919,9 @@ class GameDB:
         # test_minister_context / test_web_chat_serialization_393). Without
         # this branch those writes lose the blacklist. session.py only DELETEs
         # legacy sources with this prefix; no live production producer.
-        if source.startswith("secret_order:"):
-            try:
-                order_id = int(source.split(":", 1)[1])
-            except (TypeError, ValueError):
-                return []
+        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        if match:
+            order_id = int(match.group(1))
             order = self.conn.execute(
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
@@ -12759,17 +12943,11 @@ class GameDB:
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
         order_id = None
-        # #883 CR R1 S2: same retention as knowledge_exclusions_for_source —
-        # no production shared-source producer for bare ``secret_order:``, but
-        # the reader still serves exclusion-target inheritance for that prefix
-        # (AC harness + any residual event rows). See comment there.
-        if source.startswith("secret_order:"):
-            try:
-                order_id = int(source.split(":", 1)[1])
-            except (TypeError, ValueError):
-                # ``secret_order:...`` is also a valid producer-defined source
-                # id for records that are not rows in secret_orders.
-                order_id = None
+        # Private briefs and retained bare secret-order sources share the
+        # canonical exclusions persisted on secret_orders.
+        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        if match:
+            order_id = int(match.group(1))
         if order_id is None:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)
