@@ -568,10 +568,10 @@ export function ChatModal({
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const [scrollState, setScrollState] = React.useState<
-    { kind: "loading" } | { kind: "none" } | { kind: "night"; messages: AudienceScrollMessage[] } | { kind: "error" }
+    { kind: "loading" } | { kind: "none" } | { kind: "night"; nightId: number; messages: AudienceScrollMessage[] } | { kind: "error" }
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
-  const restoredNightRef = React.useRef(false);
+  const restoredNightRef = React.useRef<number | false>(false);
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> =
     scrollState.kind === "night" ? [...scrollState.messages] : scrollState.kind === "none" ? [...chat] : [];
 
@@ -583,7 +583,7 @@ export function ChatModal({
     api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
-        setScrollState(data.night_id ? { kind: "night", messages: data.messages || [] } : { kind: "none" });
+        setScrollState(data.night_id ? { kind: "night", nightId: data.night_id, messages: data.messages || [] } : { kind: "none" });
       })
       .catch(() => { if (alive) setScrollState({ kind: "error" }); });
     return () => { alive = false; };
@@ -617,9 +617,10 @@ export function ChatModal({
   React.useEffect(() => {
     const node = chatLogRef.current;
     if (!node) return;
-    const firstNightRestore = scrollState.kind === "night" && !restoredNightRef.current;
+    const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
+    const firstNightRestore = !!nightId && restoredNightRef.current !== nightId;
     if (firstNightRestore || followsTailRef.current) node.scrollTop = node.scrollHeight;
-    if (firstNightRestore) restoredNightRef.current = true;
+    if (firstNightRestore) restoredNightRef.current = nightId;
   }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
 
   const handleScroll = () => {
