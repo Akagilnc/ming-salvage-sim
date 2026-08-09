@@ -138,6 +138,8 @@ def validate_promulgation_verdicts(
             marker = row.get("midzhi_unpromulgatable", False)
             if not isinstance(marker, bool):
                 raise ValueError("中旨亦不可颁标记必须为 bool")
+            if row.get("decision") == "rejected" and "affected_parties" not in row:
+                raise ValueError("打回判决必须携带受损方 typed 清单")
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")

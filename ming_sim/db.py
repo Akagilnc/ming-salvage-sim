@@ -9952,6 +9952,12 @@ class GameDB:
             item["criteria_snapshot"] = json.loads(
                 str(item.pop("criteria_snapshot_json") or "{}")
             )
+            item["affected_parties"] = json.loads(
+                str(item.pop("affected_parties_json") or "[]")
+            )
+            item["midzhi_unpromulgatable"] = bool(
+                item["midzhi_unpromulgatable"]
+            )
             decisions.append(item)
         return decisions
 
