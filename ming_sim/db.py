@@ -9800,10 +9800,6 @@ class GameDB:
         roster_source = participants
         if roster_source is None and isinstance(payload, dict):
             roster_source = payload.get("participant_roster") or payload.get("participants")
-        if roster_source is None and str(executor_kind or "") == "character" and str(executor_id or "").strip():
-            roster_source = [{
-                "character_id": str(executor_id).strip(), "tier": "主办", "role": "",
-            }]
         roster = self._normalize_participant_roster(roster_source)
         self._validate_participant_roster_references(roster)
         cur = self.conn.execute(
