@@ -86,6 +86,57 @@ def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
     assert db.get_pending_promulgation_verdicts(state.turn) == []
 
 
+def test_public_resolve_seam_rejects_incomplete_persisted_batch(game):
+    db, state, content = game
+    first_id = _stage_policy_dossier(db, state)
+    second_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬漕运",
+        target_kind="issue", target_id="canal",
+    )
+    db.save_pending_promulgation_verdicts(
+        state.turn, [{"dossier_id": first_id, "decision": "promulgated"}],
+    )
+
+    with pytest.raises(LLMContractError, match="逐案覆盖"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+            promulgation_verdict_provider=lambda *_: pytest.fail(
+                "残缺持久批次必须 fail-loud，不得重跑 provider"
+            ),
+        )
+    assert {first_id, second_id} == {
+        row["id"] for row in db.list_decree_dossiers(status="proposed")
+    }
+
+
+def test_public_resolve_seam_rolls_back_partial_batch_persistence(
+    game, monkeypatch,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    original_save = db.save_pending_promulgation_verdicts
+
+    def fail_during_atomic_replace(turn, verdicts):
+        valid = list(verdicts)[0]
+        return original_save(turn, [
+            valid, {"dossier_id": "not-an-int", "decision": "rejected"},
+        ])
+
+    monkeypatch.setattr(
+        db, "save_pending_promulgation_verdicts", fail_during_atomic_replace,
+    )
+    with pytest.raises((TypeError, ValueError)):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [
+                {"dossier_id": dossier_id, "decision": "promulgated"},
+            ],
+        )
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
 def test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row(game):
     db, state, _content = game
     dossier_id = _stage_policy_dossier(db, state)
