@@ -209,6 +209,7 @@ afterEach(() => {
   }
   mountedRoots.length = 0;
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
 });
 
 describe("EdictModal — hidden secret-order default approval", () => {
@@ -425,6 +426,10 @@ describe("ChatModal — placeholder switches on character type", () => {
 
 describe("ChatModal — organic markdown display cleanup", () => {
   it("strips markdown from minister replies while preserving the emperor's text", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 0, status: "", messages: [] }),
+    }));
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
@@ -438,6 +443,38 @@ describe("ChatModal — organic markdown display cleanup", () => {
     const messages = Array.from(document.querySelectorAll(".chat-message p"));
     expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
     expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
+  });
+});
+
+describe("ChatModal — single night-scroll authority (#539)", () => {
+  it("does not flash old minister chat while the night scroll is loading or failed", async () => {
+    let reject!: (reason?: unknown) => void;
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; })));
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "minister", content: "旧分线程不应闪回" }],
+    });
+
+    expect(document.body.textContent).not.toContain("旧分线程不应闪回");
+    await act(async () => { reject(new Error("卷轴读取失败")); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧分线程不应闪回");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+  });
+
+  it("keeps ordinary no-night chat on the legacy projection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 0, status: "", messages: [] }),
+    }));
+    renderModal({
+      minister: CONSORT_MOCK,
+      portraitPrefix: "consort_",
+      chat: [{ role: "minister", content: "宫中旧话照常" }],
+    });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(document.body.textContent).toContain("宫中旧话照常");
   });
 });
 
