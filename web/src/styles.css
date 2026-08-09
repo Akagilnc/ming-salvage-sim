@@ -6940,3 +6940,56 @@ button:disabled {
 .gazette-document::-webkit-scrollbar-thumb:hover {
   background: rgba(216, 185, 106, 0.65);
 }
+
+
+/* ===== 国库/内库账册浮框 + 帝国修正折子：旧纸账册样式（夜烛基调配套） ===== */
+.budget-popover {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68);
+  color: #2e2110;
+}
+.budget-popover-portal {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c) !important;
+  border: 1px solid #9e783a !important;
+  border-radius: 3px !important;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68) !important;
+}
+.budget-popover-head {
+  border-bottom: 1px solid rgba(154, 42, 43, 0.4);
+}
+.budget-popover-head b {
+  color: #8a2a22;
+  letter-spacing: 0.08em;
+}
+
+.legacy-modal-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+.legacy-modal {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+  color: #2e2110;
+}
+.legacy-modal-head {
+  border-bottom: 1px solid rgba(154, 42, 43, 0.4);
+}
+.legacy-modal-head h3 {
+  color: #8a2a22;
+  letter-spacing: 0.15em;
+}
+.legacy-modal-close {
+  color: #6b4c24;
+}
+.legacy-modal-close:hover {
+  color: #8a2a22;
+}
+.legacy-item {
+  border-left: 3px solid #a03232;
+}
+.legacy-item + .legacy-item {
+  border-top: 1px solid rgba(107, 76, 36, 0.18);
+}
