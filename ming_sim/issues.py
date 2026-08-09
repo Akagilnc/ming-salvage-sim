@@ -156,9 +156,7 @@ def _apply_issue_buildings(
             continue
         action = str(op.get("action") or "").lower()
         origin_ref = str(op.get("origin_ref") or "").strip()
-        # Empty is retained only for historical issue effects created before
-        # #558; extractor-authored effects use the canonical values below.
-        valid_origin = not origin_ref or origin_ref == "盘面自发"
+        valid_origin = origin_ref == "盘面自发"
         if origin_ref.startswith("dossier:"):
             try:
                 origin_dossier_id = _parse_sqlite_id(origin_ref.split(":", 1)[1])
@@ -6752,21 +6750,6 @@ def apply_score_extraction(
         # only structurally plausible items reach provenance authorization.
         return bool(item)
 
-    # Legacy programmatic callers predate #558 and often submit an entirely
-    # origin-less envelope. Keep that historical API shape working; canonical
-    # extractor output opts into the contract as soon as any origin is present,
-    # and an existing dossier always makes omission ambiguous enough to reject.
-    has_any_effect_origin = any(
-        isinstance(item, dict) and bool(str(item.get("origin_ref") or "").strip())
-        for section in origin_sections
-        for item in (extracted.get(section) or [])
-    ) or any(
-        isinstance(item, dict) and bool(str(item.get("origin_ref") or "").strip())
-        for section in origin_dict_sections
-        for item in (extracted.get(section) or {}).values()
-    )
-    enforce_origin_contract = has_any_effect_origin or bool(db.list_decree_dossiers())
-
     for section in origin_sections:
         retained: List[object] = []
         for item in extracted.get(section) or []:
@@ -6774,7 +6757,7 @@ def apply_score_extraction(
                 retained.append(item)
                 continue
             value = str(item.get("origin_ref") or "").strip()
-            if not enforce_origin_contract or not _requires_origin(section, item) or _valid_origin(value):
+            if not _requires_origin(section, item) or _valid_origin(value):
                 retained.append(item)
             else:
                 _origin_rejection(section, item, value)
@@ -6786,7 +6769,7 @@ def apply_score_extraction(
                 retained_dict[target_id] = item
                 continue
             value = str(item.get("origin_ref") or "").strip()
-            if not enforce_origin_contract or _valid_origin(value):
+            if _valid_origin(value):
                 retained_dict[target_id] = item
             else:
                 _origin_rejection(section, {target_id: item}, value)
