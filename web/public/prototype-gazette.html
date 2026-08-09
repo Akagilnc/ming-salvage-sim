@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>邸报融合方案 prototype — 按 1/2/3 切换</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Songti SC", "Noto Serif SC", serif;
+    background: #08090c;
+    overflow: hidden;
+    color: #e8d5a8;
+  }
+
+  .stage {
+    position: fixed; inset: 0;
+    background-image: url("/bg_desk_candle.jpg");
+    background-size: cover;
+    background-position: center;
+    display: flex; flex-direction: column;
+  }
+
+  /* 顶栏：三案共用 */
+  .header {
+    position: relative;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 72px;
+    border-bottom: 1px solid rgba(216, 185, 106, 0.18);
+    text-align: center;
+    z-index: 2;
+  }
+  .header h1 { font-size: 1.5rem; letter-spacing: 0.4em; color: #e8d5a8; text-shadow: 0 2px 10px rgba(0,0,0,.9); }
+  .header span { display: block; font-size: .8rem; letter-spacing: .3em; color: rgba(232,213,168,.78); margin-top: 4px; }
+  .header .close {
+    position: absolute; right: 18px; top: 50%; transform: translateY(-50%);
+    width: 34px; height: 34px; border: 1px solid rgba(216,185,106,.35); border-radius: 4px;
+    display: flex; align-items: center; justify-content: center; color: #e8d5a8; font-size: 18px;
+  }
+  .hint {
+    position: fixed; left: 14px; bottom: 12px; z-index: 5;
+    font-size: 12px; color: rgba(232,213,168,.6); letter-spacing: .1em;
+    background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 4px;
+  }
+
+  .body { flex: 1; overflow-y: auto; position: relative; z-index: 1; }
+
+  /* ============ 案 1：无卡 · 羽化暗晕 ============ */
+  .v1 .stage::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(ellipse 78% 92% at 50% 46%, rgba(6,6,9,.82) 32%, rgba(6,6,9,.38) 62%, rgba(6,6,9,0) 92%);
+  }
+  .v1 .body { padding: 8px 0 60px; }
+  .v1 .doc {
+    width: min(1180px, 92%); margin: 0 auto;
+    padding: 26px clamp(20px, 5vw, 90px) 40px;
+    color: #efe3c2; font-size: 1.12rem; line-height: 2.05;
+    text-shadow: 0 1px 6px rgba(0,0,0,.95), 0 0 24px rgba(0,0,0,.8);
+  }
+  .v1 .masthead { text-align: center; margin-bottom: 26px; }
+  .v1 .masthead b {
+    font-size: 2.4rem; font-weight: 900; letter-spacing: .9em; text-indent: .9em;
+    color: #d8453a; text-shadow: 0 0 18px rgba(180,40,30,.45), 0 2px 8px rgba(0,0,0,.9);
+  }
+  .v1 .masthead span { display: block; margin-top: 8px; font-size: .82rem; letter-spacing: .32em; color: rgba(232,213,168,.72); }
+
+  /* ============ 案 2：墨纱 · 半透明墨层吃进去 ============ */
+  .v2 .body { padding: 20px 0 60px; }
+  .v2 .doc {
+    width: min(1240px, 94%); margin: 0 auto;
+    padding: 30px clamp(24px, 5vw, 90px) 44px;
+    background: rgba(12, 10, 8, 0.58);
+    backdrop-filter: blur(6px);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent),
+                        linear-gradient(180deg, transparent, #000 4%, #000 96%, transparent);
+    -webkit-mask-composite: source-in;
+    mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent),
+                linear-gradient(180deg, transparent, #000 4%, #000 96%, transparent);
+    mask-composite: intersect;
+    color: #eadfc0; font-size: 1.12rem; line-height: 2.05;
+    text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  }
+  .v2 .masthead { text-align: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid rgba(216,60,50,.5); }
+  .v2 .masthead b { font-size: 2rem; font-weight: 900; letter-spacing: .85em; text-indent: .85em; color: #d8453a; }
+  .v2 .masthead span { display: block; margin-top: 8px; font-size: .8rem; letter-spacing: .3em; color: rgba(232,213,168,.65); }
+
+  /* ============ 案 3：满幅 · 上下渐隐长卷 ============ */
+  .v3 .stage::before {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(6,6,9,.55) 0%, rgba(6,6,9,.86) 18%, rgba(6,6,9,.86) 82%, rgba(6,6,9,.55) 100%);
+  }
+  .v3 .body { padding: 4vh 0 10vh; }
+  .v3 .doc {
+    width: min(1360px, 96%); margin: 0 auto;
+    padding: 10px clamp(16px, 6vw, 140px) 30px;
+    color: #efe3c2; font-size: 1.14rem; line-height: 2.1;
+    text-shadow: 0 1px 6px rgba(0,0,0,.95);
+  }
+  .v3 .masthead { display: flex; align-items: baseline; justify-content: center; gap: 22px; margin-bottom: 28px; }
+  .v3 .masthead b { font-size: 1.9rem; font-weight: 900; letter-spacing: .6em; color: #d8453a; text-shadow: 0 2px 8px rgba(0,0,0,.9); }
+  .v3 .masthead span { font-size: .82rem; letter-spacing: .28em; color: rgba(232,213,168,.72); }
+
+  .doc p { margin-bottom: 1.1em; white-space: pre-wrap; }
+</style>
+</head>
+<body class="v1">
+  <div class="stage">
+    <div class="header">
+      <div>
+        <h1>邸 报</h1>
+        <span>本月故事</span>
+      </div>
+      <div class="close">✕</div>
+    </div>
+    <div class="body">
+      <div class="doc">
+        <div class="masthead">
+          <b>邸报</b>
+          <span>崇祯二年十月 · 通政使司发抄</span>
+        </div>
+        <p>【辽东军情】军前缺饷已三月，宁远士卒哗变于城楼，巡抚毕自肃自缢。袁崇焕单骑入营，以甘言抚之，暂解。然饷银不至，终非久计。</p>
+        <p>【陕西民变】澄城民王二聚数百人，杀知县张斗耀，据山为寨。饥民从者日众，府县告急文书迭至。三边总督杨鹤主抚，廷议未决。</p>
+        <p>【京师】户部会计算，太仓现存银不足二十万两。加派辽饷之议再起，给事中刘懋上疏请裁驿递，岁可省六十余万，上心动。</p>
+        <p>【山东】登莱蝗蝻蔽天，秋稼尽毁，灾民流徙入京畿者以万计。顺天府尹请发内帑赈济，未报。</p>
+        <p>【朝政】周延儒入阁办事，温体仁协理京营。东林诸人侧目，科道交章论劾，留中不发。上批「知道了」三字，群臣莫测圣意。</p>
+      </div>
+    </div>
+  </div>
+  <div class="hint">按 1 无卡羽化 · 2 墨纱半透 · 3 满幅渐隐（当前：<b id="cur">1</b>）</div>
+<script>
+  const names = { "1": "v1", "2": "v2", "3": "v3" };
+  document.addEventListener("keydown", (e) => {
+    const v = names[e.key];
+    if (!v) return;
+    document.body.className = v;
+    document.getElementById("cur").textContent = e.key;
+  });
+</script>
+</body>
+</html>
