@@ -2032,6 +2032,7 @@ def _extract_secret_order(
     default_assignee: str,
     llm_config: Any = None,
     force_default_assignee: bool = False,
+    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
@@ -2050,7 +2051,11 @@ def _extract_secret_order(
         "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
         "\"说明\": \"一句说明\"}]\n"
         "}\n"
-        "案卷关联只能填写大臣回话中已明确复述确认的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n\n"
+        "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
+        "【可引用旧案卷】\n" + "\n".join(
+            f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
+            for row in (dossier_candidates or [])
+        ) + "\n\n"
         "【皇帝密令】" + (player_command or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
@@ -2130,6 +2135,10 @@ def _extract_secret_order(
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
     dossier_links: List[Dict[str, Any]] = []
+    candidate_ids = {int(row["id"]) for row in (dossier_candidates or [])}
+    # The minister's own reply is the confirmation boundary.  A model-emitted
+    # integer cannot create authority unless that exact ID occurs in the reply.
+    confirmed_ids = {int(value) for value in re.findall(r"(?<!\d)(\d+)(?!\d)", minister_reply or "")}
     raw_links = obj.get("案卷关联")
     if isinstance(raw_links, list):
         for link in raw_links:
@@ -2138,7 +2147,8 @@ def _extract_secret_order(
             target = link.get("目标案卷ID")
             # IDs are intentionally not guessed from prose: only the structured
             # confirmation output can cross this boundary; DB validates existence/age.
-            if isinstance(target, bool) or not isinstance(target, int):
+            if (isinstance(target, bool) or not isinstance(target, int)
+                    or target not in candidate_ids or target not in confirmed_ids):
                 continue
             dossier_links.append({
                 "target_dossier_id": target,
@@ -2153,6 +2163,7 @@ def _extract_secret_order(
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
     secret_context: str = "",
+    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时生成候选。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -2184,6 +2195,7 @@ def resolve_minister_actions(
         out["secret_order"] = _extract_secret_order(
             secret_command, reply, default_assignee, llm_config,
             force_default_assignee=force_default_assignee,
+            dossier_candidates=dossier_candidates,
         )
 
     return out

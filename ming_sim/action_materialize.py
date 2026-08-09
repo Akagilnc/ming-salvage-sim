@@ -124,6 +124,8 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
             minister_name,
             ctx.llm_config,
             force_default_assignee=False,
+            dossier_candidates=session.db.list_referenceable_dossiers(
+                minister_name, session.state.turn),
         )
         ctx.conversation_intent_handled = True
         ctx.out["pending_action_id"] = session.db.stage_pending_action(

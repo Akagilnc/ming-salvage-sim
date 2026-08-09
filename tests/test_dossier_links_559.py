@@ -68,9 +68,40 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
 
     result = cli_backend._extract_secret_order(
         "护卫边军饷银", "臣复述：只护案卷 11、12。", "孙承宗",
+        dossier_candidates=[{"id": 11}, {"id": 12}, {"id": 13}],
     )
 
     assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
+
+
+def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monkeypatch):
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({
+            "内容": "护送旧案", "案卷关联": [
+                {"目标案卷ID": 99, "类型": "护卫", "说明": "模型臆造"}
+            ]
+        }, ensure_ascii=False), 1),
+    )
+
+    result = cli_backend._extract_secret_order(
+        "护送旧案", "臣领命，护卫案卷 99。", "孙承宗",
+        dossier_candidates=[{"id": 11}],
+    )
+
+    assert result["dossier_links"] == []
+
+
+def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
+    db, state, _ = game
+    public_id = _make_dossier(db, state, "公开饷案")
+    other_order = db.create_secret_order(state, "卢象升", "密查", "不可外泄", [])
+    other_secret = db.get_dossier_for_secret_order(other_order)
+
+    visible = db.list_referenceable_dossiers("孙承宗", state.turn)
+
+    assert public_id in {row["id"] for row in visible}
+    assert other_secret["id"] not in {row["id"] for row in visible}
 
 
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
