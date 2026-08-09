@@ -837,6 +837,7 @@ class GameDB:
                 derived_from TEXT NOT NULL DEFAULT '',
                 normalized TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT '',
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(person_name) REFERENCES characters(name)
             );
@@ -877,6 +878,7 @@ class GameDB:
                 new_value TEXT NOT NULL,
                 delta INTEGER,
                 reason TEXT NOT NULL,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(power_id) REFERENCES powers(id)
             );
@@ -934,6 +936,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(region_id) REFERENCES regions(id)
             );
@@ -985,6 +988,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(army_id) REFERENCES armies(id)
             );
@@ -1021,6 +1025,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1049,6 +1054,7 @@ class GameDB:
                 target_kind TEXT,
                 target_id TEXT,
                 dossier_id INTEGER,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -1849,6 +1855,10 @@ class GameDB:
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
         self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
+        self.ensure_column("economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
+        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
+            self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
@@ -2212,6 +2222,7 @@ class GameDB:
         display: str,
         init_value: int,
         note: str = "",
+        origin_ref: str = "",
         commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
@@ -2242,15 +2253,15 @@ class GameDB:
         ).fetchone()[0]
         self.conn.execute(
             "INSERT INTO fiscal_config "
-            "(key, value, kind, budget_role, account, direction, display, sort_order, note) "
-            "VALUES (?, ?, 'base', 'fixed', ?, ?, ?, ?, ?)",
-            (base_key, max(0, init_value), account, direction, display, sort_order, note),
+            "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
+            "VALUES (?, ?, 'base', 'fixed', ?, ?, ?, ?, ?, ?)",
+            (base_key, max(0, init_value), account, direction, display, sort_order, note, origin_ref),
         )
         self.conn.execute(
             "INSERT INTO fiscal_config "
-            "(key, value, kind, budget_role, account, direction, display, sort_order, note) "
-            "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?)",
-            (rate_key, account, direction, display, sort_order, f"{display}实收率%"),
+            "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
+            "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?, ?)",
+            (rate_key, account, direction, display, sort_order, f"{display}实收率%", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -12482,7 +12493,7 @@ class GameDB:
         purpose: str | None = None,
         target_kind: str | None = None,
         target_id: str | None = None,
-        dossier_id: int | None = None,
+        origin_ref: str = "",
         commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
@@ -12513,22 +12524,30 @@ class GameDB:
             """
             INSERT INTO economy_ledger
             (turn, year, period, account, delta, balance_after, category, reason,
-             event_id, edict_id, actor, purpose, target_kind, target_id,dossier_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, ?)
+             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?)
             """,
             (state.turn, state.year, state.period, account, actual, after,
-             category, reason, purpose, target_kind, target_id, dossier_id),
+             category, reason, purpose, target_kind, target_id, origin_ref),
         )
         self.sync_economy_accounts(state)
         if commit:
             self.conn.commit()
         return actual
 
+    def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        return [
+            dict(row) for row in self.conn.execute(
+                "SELECT * FROM fiscal_config WHERE origin_ref=? ORDER BY key",
+                (f"dossier:{int(dossier_id)}",),
+            ).fetchall()
+        ]
+
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         return [
             dict(row) for row in self.conn.execute(
-                "SELECT * FROM economy_ledger WHERE dossier_id=? ORDER BY id",
-                (int(dossier_id),),
+                "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
+                (f"dossier:{int(dossier_id)}",),
             ).fetchall()
         ]
 

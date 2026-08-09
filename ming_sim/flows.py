@@ -796,6 +796,7 @@ def _auto_pay_arrears_by_priority(
     *,
     commit: bool = True,
     allowed_army_ids: Optional[List[str]] = None,
+    origin_ref: str = "",
 ) -> int:
     """按 ARMY_SALARY_PRIORITY 顺序分配一笔已明确允许非定向的补饷。
 
@@ -839,7 +840,7 @@ def _auto_pay_arrears_by_priority(
         spent_now = _pay_single_army_arrears(
             db, state, row, account, pay_cap, category,
             f"{reason}（按优先级分给{name}{pay_cap}万两）",
-            "诏拨补饷", "按优先级",
+            "诏拨补饷", "按优先级", origin_ref=origin_ref,
         )
         spent += spent_now
         remaining -= spent_now
@@ -888,6 +889,7 @@ def _pay_single_army_arrears(
     log_suffix: str = "",
     *,
     commit: bool = True,
+    origin_ref: str = "",
 ) -> int:
     _ = commit  # transaction ownership belongs to the caller/batch boundary.
     current_arrears = float(row["arrears"] or 0)
@@ -909,7 +911,7 @@ def _pay_single_army_arrears(
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
         purpose="补饷", target_kind="army", target_id=str(row["id"]),
-        commit=False,
+        origin_ref=origin_ref, commit=False,
     )
     if not actual:
         return 0
@@ -941,6 +943,8 @@ def _pay_single_army_arrears(
          str(current_arrears), str(new_arrears), new_arrears - current_arrears,
          f"诏拨补饷{paid:g}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
     )
+    if origin_ref:
+        db.conn.execute("UPDATE army_logs SET origin_ref=? WHERE id=last_insert_rowid()", (origin_ref,))
     return int(round(paid))
 
 
@@ -999,6 +1003,7 @@ def _apply_economy_list(
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
         reason = str(move.get("reason") or "")[:80]
+        origin_ref = str(move.get("origin_ref") or "").strip()
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
@@ -1032,6 +1037,7 @@ def _apply_economy_list(
                     reason,
                     commit=commit,
                     allowed_army_ids=allowed_pool_ids,
+                    origin_ref=origin_ref,
                 )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
@@ -1076,7 +1082,7 @@ def _apply_economy_list(
                 continue
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
-                reason, "诏拨补饷",
+                reason, "诏拨补饷", origin_ref=origin_ref,
             )
             if spent:
                 if pay_source_cutover:
@@ -1091,7 +1097,7 @@ def _apply_economy_list(
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,
-            target_kind=None, target_id=None,
+            target_kind=None, target_id=None, origin_ref=origin_ref,
             commit=commit,
         )
         if actual:
