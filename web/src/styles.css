@@ -6846,9 +6846,9 @@ button:disabled {
   color: #ffe4b0 !important;
 }
 
-/* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边 */
+/* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
 .gazette-document {
-  margin: 0 auto;
+  margin: 0 auto clamp(24px, 5vh, 56px);
   width: min(1180px, 92%);
   padding: 26px clamp(20px, 5vw, 90px) 40px;
   color: #efe3c2;
