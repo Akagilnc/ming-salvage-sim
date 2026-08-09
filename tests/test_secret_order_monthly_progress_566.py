@@ -312,8 +312,12 @@ def test_simulator_fallback_missing_private_report_aborts_without_advancing(game
     assert db.list_dossier_progress(dossier_id) == []
 
 
-def test_no_eligible_dossier_rejects_hallucinated_reports_and_advances(game):
-    """Production settle keeps per-item evidence instead of swallowing unknown reports."""
+def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
+    """The production settlement seam delegates eligibility to the DB contract."""
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.exceptions import SettlementAbort
+    import pytest
+
     db, state, content = game
     turn = state.turn
     hallucinated = {
@@ -322,30 +326,24 @@ def test_no_eligible_dossier_rejects_hallucinated_reports_and_advances(game):
         "memorial_text": "并不存在的案卷已有回报",
     }
 
-    from ming_sim.decree import settle_with_delta
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": [hallucinated]},
-        before_turn=turn, content=content, narrative="本月其余结算照常",
-    )
+    with pytest.raises(SettlementAbort, match="本月结算失败"):
+        settle_with_delta(
+            state, db, {"dossier_progress_reports": [hallucinated]},
+            before_turn=turn, content=content, narrative="不得推进",
+        )
 
-    row = db.conn.execute(
-        """
-        SELECT section,item_json,reason,category FROM rejection_reports
-        WHERE turn=? AND section='dossier_progress_reports'
-        """,
-        (turn,),
-    ).fetchone()
-    assert row is not None
-    assert json.loads(row["item_json"]) == hallucinated
-    assert row["reason"]
-    assert row["category"] == "hallucinated_id"
-    assert state.turn == turn + 1
+    assert state.turn == turn
+    assert db.load_state().turn == turn
     assert db.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE dossier_progress_json != '[]'"
     ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM rejection_reports WHERE turn=? AND section='dossier_progress_reports'",
+        (turn,),
+    ).fetchone() is None
 
 
-def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_list_advances(game):
+def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_values_advance(game):
     from ming_sim.decree import settle_with_delta
     from ming_sim.exceptions import SettlementAbort
     import pytest
@@ -360,11 +358,14 @@ def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_list_advances(gam
     assert state.turn == turn
     assert db.load_state().turn == turn
 
-    settle_with_delta(
-        state, db, {"dossier_progress_reports": []},
-        before_turn=turn, content=content, narrative="合法空月",
-    )
-    assert state.turn == turn + 1
+    for extracted in ({}, {"dossier_progress_reports": None}, {"dossier_progress_reports": []}):
+        turn = state.turn
+        settle_with_delta(
+            state, db, extracted,
+            before_turn=turn, content=content, narrative="合法空月",
+        )
+        assert state.turn == turn + 1
+        assert db.load_state().turn == turn + 1
 
 
 def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game):
