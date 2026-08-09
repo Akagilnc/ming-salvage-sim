@@ -200,3 +200,51 @@ def test_scroll_without_next_entrance_has_unnamed_boundary(game):
 
     divider = next(m for m in scroll if m["beat"] == "divider")
     assert divider["speaker"] == ""
+
+
+def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game):
+    db, state, _ = game
+    night_id = _night(db, state)
+    first_turn = _chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
+    an.append_ledger_entry(
+        db, night_id, body="杨嗣昌退下。", tags=[an.TAG_EXIT],
+        person_names=["杨嗣昌"], order_key=10,
+    )
+    an.append_ledger_entry(
+        db, night_id, body="杨嗣昌告退。", tags=[], person_names=["杨嗣昌"],
+        presence_effect=an.PRESENCE_EXIT, source_chat_turn_id=first_turn, order_key=10,
+    )
+    an.append_ledger_entry(
+        db, night_id, body="杨嗣昌再度告退。", tags=[an.TAG_EXIT],
+        person_names=["杨嗣昌"], order_key=20,
+    )
+
+    dividers = [message for message in an.read_night_scroll(db, night_id) if message["beat"] == "divider"]
+
+    assert len(dividers) == 2
+
+
+def test_history_turns_exposes_persisted_closed_night_id(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = _night(db, state)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
+    db.conn.commit()
+    monkeypatch.setattr(db, "list_archived_turns", lambda: [{
+        "turn": state.turn, "year": state.year, "period": state.period,
+        "has_report": True, "has_directive": False, "has_extraction": False,
+    }])
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+
+    payload = TestClient(web_app.app).get("/api/history/turns").json()
+
+    assert payload["turns"][0]["night_id"] == night_id
+    assert "has_extraction" not in payload["turns"][0]
+
+
+def test_audience_scroll_handler_is_sync_for_sqlite_projection():
+    import inspect
+    import web_app
+
+    assert not inspect.iscoroutinefunction(web_app.api_audience_scroll)

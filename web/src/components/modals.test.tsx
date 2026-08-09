@@ -41,6 +41,7 @@ const CONSORT_MOCK: Minister = {
 function renderModal(props: {
   minister: Minister;
   portraitPrefix: string;
+  scrollMode?: "audience" | "legacy";
   chat?: ChatMessage[];
   busy?: string;
   onCancel?: () => void;
@@ -79,6 +80,7 @@ function renderModal(props: {
       <ChatModal
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
+        scrollMode={props.scrollMode}
         busy={props.busy ?? ""}
         chat={chat}
         suggestions={props.suggestions ?? []}
@@ -749,5 +751,21 @@ describe("ReportModal — narrative settlement bulletin", () => {
 
     expect(document.body.textContent).not.toContain("实账");
     expect(document.body.textContent).not.toContain("账目明细");
+  });
+});
+
+describe("ChatModal — explicit legacy authority", () => {
+  it("does not request or consume an open-night scroll for a consort", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderModal({
+      minister: CONSORT_MOCK,
+      portraitPrefix: "consort_",
+      scrollMode: "legacy",
+      chat: [{ role: "minister", content: "宫中旧话照常", chatTurnId: 99 }],
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(document.body.textContent?.match(/宫中旧话照常/g)).toHaveLength(1);
   });
 });
