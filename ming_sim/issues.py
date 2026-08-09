@@ -156,7 +156,9 @@ def _apply_issue_buildings(
             continue
         action = str(op.get("action") or "").lower()
         origin_ref = str(op.get("origin_ref") or "").strip()
-        valid_origin = origin_ref == "盘面自发"
+        # Empty is retained only for historical issue effects created before
+        # #558; extractor-authored effects use the canonical values below.
+        valid_origin = not origin_ref or origin_ref == "盘面自发"
         if origin_ref.startswith("dossier:"):
             try:
                 origin_dossier_id = _parse_sqlite_id(origin_ref.split(":", 1)[1])
@@ -168,9 +170,6 @@ def _apply_issue_buildings(
                             "category": "missing_origin_ref" if not origin_ref else "invalid_origin_ref",
                             "reason": "building effect 必须带 canonical origin_ref", "item": op})
             continue
-        before_log_id = int(db.conn.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM building_logs"
-        ).fetchone()[0])
         try:
             if action == "create":
                 bid = db.add_building(
@@ -187,6 +186,7 @@ def _apply_issue_buildings(
                     status=str(op.get("status") or ""),
                     origin="issue",
                     commit=commit,
+                    origin_ref=origin_ref,
                 )
                 applied.append({"action": "create", "building_id": bid,
                                  "name": str(op.get("name") or "")})
@@ -195,18 +195,20 @@ def _apply_issue_buildings(
                 fields = {k: v for k, v in op.items()
                           if k not in ("action", "building_id", "origin_ref")}
                 fields.setdefault("reason", reason)
-                ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields}, commit=commit)
+                ch = db.apply_building_deltas(
+                    state, pseudo_event, None, "档房", {bid: fields},
+                    commit=commit, origin_ref=origin_ref,
+                )
                 applied.append({"action": "modify", "building_id": bid, "changes": ch})
             elif action == "remove":
                 bid = str(op.get("building_id") or "")
-                ok = db.remove_building(state, bid, reason=reason, commit=commit)
+                ok = db.remove_building(
+                    state, bid, reason=reason, commit=commit,
+                    origin_ref=origin_ref,
+                )
                 applied.append({"action": "remove", "building_id": bid, "removed": ok})
             else:
                 print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
-            db.conn.execute(
-                "UPDATE building_logs SET origin_ref=? WHERE id>? AND origin_ref=''",
-                (origin_ref, before_log_id),
-            )
         except Exception as exc:
             print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
             raise
@@ -5762,6 +5764,7 @@ def _apply_person_changes(
     derived_from: str = "",
     allow_legacy_partial_power: bool = False,
     external_transaction: bool | None = None,
+    origin_ref: str = "",
 ) -> List[Dict[str, object]]:
     if external_transaction is None:
         external_transaction = db.conn.in_transaction
@@ -5827,6 +5830,7 @@ def _apply_person_changes(
             normalized=normalized,
             source=source,
             commit=commit_person_change if commit is None else commit,
+            origin_ref=origin_ref,
         )
 
     def identity_title_for_allegiance(item: Dict[str, object], new_power: str) -> str:
@@ -6670,6 +6674,7 @@ def apply_score_extraction(
         changes: List[Dict[str, object]],
         *,
         legacy: bool,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         if not changes:
             return []
@@ -6682,6 +6687,7 @@ def apply_score_extraction(
             llm_config=llm_config,
             allow_legacy_partial_power=legacy,
             external_transaction=caller_transaction,
+            origin_ref=origin_ref,
         )
         if legacy:
             _annotate_legacy_person_rejections(results)
@@ -6718,6 +6724,49 @@ def apply_score_extraction(
             return False
         return db.get_decree_dossier(dossier_id) is not None and db.dossier_authorizes_effects(dossier_id)
 
+    def _requires_origin(section: str, item: Dict[str, object]) -> bool:
+        """来源闸只裁本来会落 durable record 的合法效果，不抢既有拒收分类。"""
+        if section == "economy_moves":
+            raw_delta = item.get("delta")
+            return (
+                str(item.get("account") or "").strip() in {"国库", "内库"}
+                and isinstance(raw_delta, int)
+                and not isinstance(raw_delta, bool)
+                and raw_delta != 0
+            )
+        if section == "fiscal_creates":
+            from ming_sim.simulation import _DIRECTION_NORMALIZE
+            direction = _DIRECTION_NORMALIZE.get(
+                str(item.get("direction") or "").strip(),
+                str(item.get("direction") or "").strip(),
+            )
+            raw_value = item.get("init_value")
+            return (
+                bool(str(item.get("key") or "").strip())
+                and str(item.get("account") or "").strip() in {"国库", "内库"}
+                and direction in {"income", "expense"}
+                and isinstance(raw_value, int)
+                and not isinstance(raw_value, bool)
+            )
+        # Remaining entity adapters perform shape/id/value validation themselves;
+        # only structurally plausible items reach provenance authorization.
+        return bool(item)
+
+    # Legacy programmatic callers predate #558 and often submit an entirely
+    # origin-less envelope. Keep that historical API shape working; canonical
+    # extractor output opts into the contract as soon as any origin is present,
+    # and an existing dossier always makes omission ambiguous enough to reject.
+    has_any_effect_origin = any(
+        isinstance(item, dict) and bool(str(item.get("origin_ref") or "").strip())
+        for section in origin_sections
+        for item in (extracted.get(section) or [])
+    ) or any(
+        isinstance(item, dict) and bool(str(item.get("origin_ref") or "").strip())
+        for section in origin_dict_sections
+        for item in (extracted.get(section) or {}).values()
+    )
+    enforce_origin_contract = has_any_effect_origin or bool(db.list_decree_dossiers())
+
     for section in origin_sections:
         retained: List[object] = []
         for item in extracted.get(section) or []:
@@ -6725,7 +6774,7 @@ def apply_score_extraction(
                 retained.append(item)
                 continue
             value = str(item.get("origin_ref") or "").strip()
-            if _valid_origin(value):
+            if not enforce_origin_contract or not _requires_origin(section, item) or _valid_origin(value):
                 retained.append(item)
             else:
                 _origin_rejection(section, item, value)
@@ -6737,7 +6786,7 @@ def apply_score_extraction(
                 retained_dict[target_id] = item
                 continue
             value = str(item.get("origin_ref") or "").strip()
-            if _valid_origin(value):
+            if not enforce_origin_contract or _valid_origin(value):
                 retained_dict[target_id] = item
             else:
                 _origin_rejection(section, {target_id: item}, value)
@@ -6842,40 +6891,22 @@ def apply_score_extraction(
     # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-    def _apply_with_log_origin(table: str, origin_ref: str, apply_fn):
-        before_id = int(db.conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0])
-        result = apply_fn()
-        db.conn.execute(
-            f"UPDATE {table} SET origin_ref=? WHERE id>? AND origin_ref=''",
-            (origin_ref, before_id),
-        )
-        return result
-
     for army_item in ordinary_new_armies_raw:
         origin_ref = str(army_item.get("origin_ref") or "").strip()
-        created_armies.extend(_apply_with_log_origin(
-            "army_logs", origin_ref,
-            lambda item=army_item: db.create_armies_from_extraction(
-                state, [item], actor="档房", commit=commit_now,
-            ),
+        created_armies.extend(db.create_armies_from_extraction(
+            state, [army_item], actor="档房", commit=commit_now, origin_ref=origin_ref,
         ))
     for region_id, raw_changes in ordinary_region_deltas_raw.items():
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        region_changes.extend(_apply_with_log_origin(
-            "region_logs", origin_ref,
-            lambda rid=region_id, changes=payload: db.apply_region_deltas(
-                state, pseudo_event, None, "档房", {rid: changes}, commit=commit_now,
-            ),
+        region_changes.extend(db.apply_region_deltas(
+            state, pseudo_event, None, "档房", {region_id: payload}, commit=commit_now, origin_ref=origin_ref,
         ))
     for army_id, raw_changes in ordinary_army_deltas_raw.items():
         origin_ref = str(raw_changes.get("origin_ref") or "").strip()
         payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-        army_changes.extend(_apply_with_log_origin(
-            "army_logs", origin_ref,
-            lambda aid=army_id, changes=payload: db.apply_army_deltas(
-                state, pseudo_event, None, "档房", {aid: changes}, commit=commit_now,
-            ),
+        army_changes.extend(db.apply_army_deltas(
+            state, pseudo_event, None, "档房", {army_id: payload}, commit=commit_now, origin_ref=origin_ref,
         ))
 
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
@@ -6900,20 +6931,14 @@ def apply_score_extraction(
         for power_id, raw_changes in power_updates_to_apply.items():
             origin_ref = str(raw_changes.get("origin_ref") or "").strip()
             payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
-            power_changes.extend(_apply_with_log_origin(
-                "power_logs", origin_ref,
-                lambda pid=power_id, changes=payload: db.apply_power_deltas(
-                    state, {pid: changes}, commit=commit_now,
-                ),
+            power_changes.extend(db.apply_power_deltas(
+                state, {power_id: payload}, commit=commit_now, origin_ref=origin_ref,
             ))
 
     for person_change in pre_issue_person_changes:
         origin_ref = str(person_change.get("origin_ref") or "").strip()
         clean_change = {k: v for k, v in person_change.items() if k != "origin_ref"}
-        _apply_with_log_origin(
-            "person_logs", origin_ref,
-            lambda item=clean_change: _apply_normalized_person_changes([item], legacy=legacy_person_mode),
-        )
+        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -7113,46 +7138,43 @@ def apply_score_extraction(
         event_person_results: List[Dict[str, object]] = []
         event_created_armies: List[Dict[str, object]] = []
         event_power_changes: List[Dict[str, object]] = []
-        if event_new_armies:
-            event_created_armies = db.create_armies_from_extraction(
-                state,
-                event_new_armies,
-                actor="档房",
-                commit=commit_now,
-            )
-            created_armies.extend(event_created_armies)
-        if event_region_deltas:
-            event_region_changes = db.apply_region_deltas(
-                state,
-                pseudo_event,
-                None,
-                "档房",
-                event_region_deltas,
-                commit=commit_now,
-            )
-            region_changes.extend(event_region_changes)
-        if event_army_deltas:
-            event_army_changes = db.apply_army_deltas(
-                state,
-                pseudo_event,
-                None,
-                "档房",
-                event_army_deltas,
-                commit=commit_now,
-            )
-            army_changes.extend(event_army_changes)
-        if event_person_changes:
-            event_person_results = _apply_normalized_person_changes(
-                event_person_changes,
-                legacy=legacy_person_mode,
-        )
-        if event_power_updates:
-            event_power_changes = db.apply_power_deltas(
-                state,
-                event_power_updates,
-                commit=commit_now,
-            )
-            power_changes.extend(event_power_changes)
+        for item in event_new_armies:
+            origin_ref = str(item.get("origin_ref") or "").strip()
+            event_created_armies.extend(db.create_armies_from_extraction(
+                state, [item], actor="档房", commit=commit_now,
+                origin_ref=origin_ref,
+            ))
+        created_armies.extend(event_created_armies)
+        for region_id, raw_changes in event_region_deltas.items():
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            event_region_changes.extend(db.apply_region_deltas(
+                state, pseudo_event, None, "档房", {region_id: payload},
+                commit=commit_now, origin_ref=origin_ref,
+            ))
+        region_changes.extend(event_region_changes)
+        for army_id, raw_changes in event_army_deltas.items():
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            event_army_changes.extend(db.apply_army_deltas(
+                state, pseudo_event, None, "档房", {army_id: payload},
+                commit=commit_now, origin_ref=origin_ref,
+            ))
+        army_changes.extend(event_army_changes)
+        for item in event_person_changes:
+            origin_ref = str(item.get("origin_ref") or "").strip()
+            clean_item = {k: v for k, v in item.items() if k != "origin_ref"}
+            event_person_results.extend(_apply_normalized_person_changes(
+                [clean_item], legacy=legacy_person_mode, origin_ref=origin_ref,
+            ))
+        for power_id, raw_changes in event_power_updates.items():
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            event_power_changes.extend(db.apply_power_deltas(
+                state, {power_id: payload}, commit=commit_now,
+                origin_ref=origin_ref,
+            ))
+        power_changes.extend(event_power_changes)
         result_items = (
             event_created_armies
             + event_region_changes
@@ -7172,10 +7194,7 @@ def apply_score_extraction(
     for person_change in post_issue_person_changes:
         origin_ref = str(person_change.get("origin_ref") or "").strip()
         clean_change = {k: v for k, v in person_change.items() if k != "origin_ref"}
-        _apply_with_log_origin(
-            "person_logs", origin_ref,
-            lambda item=clean_change: _apply_normalized_person_changes([item], legacy=legacy_person_mode),
-        )
+        _apply_normalized_person_changes([clean_change], legacy=legacy_person_mode, origin_ref=origin_ref)
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,

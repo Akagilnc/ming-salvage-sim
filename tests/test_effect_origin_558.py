@@ -76,3 +76,23 @@ def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
     assert result["economy_moves_rejections"][0]["category"] == "invalid_origin_ref"
     assert result["fiscal_creates"][0]["category"] == "invalid_origin_ref"
     assert db.conn.execute("SELECT 1 FROM fiscal_config WHERE key LIKE '伪科目%'").fetchone() is None
+
+
+def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
+    db, state, content = game
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    army_id = db.conn.execute("SELECT id FROM armies WHERE manpower > 0 LIMIT 1").fetchone()[0]
+    power_id = db.conn.execute("SELECT id FROM powers WHERE id <> 'ming' LIMIT 1").fetchone()[0]
+    person = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()[0]
+
+    issue_engine.apply_score_extraction(db, state, {
+        "region_delta": {region_id: {"public_support": 1, "origin_ref": SPONTANEOUS}},
+        "army_delta": {army_id: {"morale": 1, "origin_ref": SPONTANEOUS}},
+        "power_updates": {power_id: {"leverage": 1, "origin_ref": SPONTANEOUS}},
+        "人物变更": [{"name": person, "动作": "评定", "loyalty": 1,
+                    "origin_ref": SPONTANEOUS}],
+    }, content=content)
+
+    for table in ("region_logs", "army_logs", "power_logs", "person_logs"):
+        row = db.conn.execute(f"SELECT origin_ref FROM {table} ORDER BY id DESC LIMIT 1").fetchone()
+        assert row is not None and row["origin_ref"] == SPONTANEOUS

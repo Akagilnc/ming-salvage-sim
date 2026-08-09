@@ -343,7 +343,8 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert dossier["promulgation_decision"] == "rejected"
     moves = db.list_economy_moves_for_dossier(dossier_id)
     assert len(moves) == 1
-    assert moves[0]["dossier_id"] == dossier_id
+    assert moves[0]["dossier_id"] is None
+    assert moves[0]["origin_ref"] == f"dossier:{dossier_id}"
 
 
 def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
@@ -559,8 +560,8 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     ] == ["promulgated"]
     assert db.get_decree_dossier(staged["id"])["status"] == "executing"
     assert db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE dossier_id=?",
-        (staged["id"],),
+        "SELECT delta FROM economy_ledger WHERE origin_ref=?",
+        (f"dossier:{staged['id']}",),
     ).fetchone()["delta"] == -10
     assert db.get_decree_dossier(rejected["id"])["status"] == "closed"
     assert db.get_decree_dossier(rejected["id"])["promulgation_decision"] == "rejected"
