@@ -224,27 +224,28 @@ def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game
     assert len(dividers) == 2
 
 
-def test_history_turns_exposes_persisted_closed_night_id(game, monkeypatch):
+def test_history_turns_lists_every_closed_night_including_night_only_turns(game, monkeypatch):
     import web_app
 
     db, state, _ = game
-    night_id = _night(db, state)
-    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
+    first = _night(db, state)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first,))
+    second = _night(db, state)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
     db.conn.commit()
-    monkeypatch.setattr(db, "list_archived_turns", lambda: [{
-        "turn": state.turn, "year": state.year, "period": state.period,
-        "has_report": True, "has_directive": False, "has_extraction": False,
-    }])
     monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
 
     payload = TestClient(web_app.app).get("/api/history/turns").json()
+    entries = [item for item in payload["turns"] if item["turn"] == state.turn]
 
-    assert payload["turns"][0]["night_id"] == night_id
-    assert "has_extraction" not in payload["turns"][0]
+    assert [item["night_id"] for item in entries] == [first, second]
+    assert all(not item["has_report"] and not item["has_directive"] for item in entries)
+    assert all("has_extraction" not in item for item in entries)
 
 
-def test_audience_scroll_handler_is_sync_for_sqlite_projection():
+def test_history_projection_handlers_are_sync_for_sqlite_access():
     import inspect
     import web_app
 
     assert not inspect.iscoroutinefunction(web_app.api_audience_scroll)
+    assert not inspect.iscoroutinefunction(web_app.api_history_turns)

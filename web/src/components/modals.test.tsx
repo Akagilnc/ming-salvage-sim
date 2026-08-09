@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, EdictModal, ReportModal } from "./modals";
+import { ChatModal, EdictModal, HistoryModal, ReportModal } from "./modals";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -464,6 +464,29 @@ describe("ChatModal — organic markdown display cleanup", () => {
 });
 
 describe("ChatModal — single night-scroll authority (#539)", () => {
+  it("drops a withdrawn or replaced-night snapshot before a failed refresh", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+        { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
+        { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
+      ] }) })
+      .mockRejectedValueOnce(new Error("refresh failed"));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateChat!: (chat: ChatMessage[]) => void;
+    renderModal({
+      minister: MINISTER_MOCK, portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "旧夜问话", chatTurnId: 1 }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("同夜他臣");
+
+    await act(async () => { updateChat([]); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧夜问话");
+    expect(document.body.textContent).not.toContain("旧夜答复");
+    expect(document.body.textContent).not.toContain("同夜他臣");
+  });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; })));
@@ -654,6 +677,29 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
     await act(async () => { await Promise.resolve(); });
     expect(document.body.textContent).toContain("宫中旧话照常");
+  });
+});
+
+describe("HistoryModal — scene-level closed-night archive", () => {
+  it("selects both nights in one turn through the shared scroll endpoint", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
+        { turn: 7, year: 1, period: 11, has_report: false, has_directive: false, night_id: 31 },
+        { turn: 7, year: 1, period: 11, has_report: false, has_directive: false, night_id: 32 },
+      ] }) });
+      if (url === "/api/history/turn/7") return Promise.resolve({ ok: true, json: async () => ({ turn: 7, exists: false }) });
+      const id = url.endsWith("31") ? 31 : 32;
+      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "user", content: `场次${id}` }] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("场次32");
+    const buttons = Array.from(document.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
+    await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
+    expect(document.body.textContent).toContain("场次31");
   });
 });
 
