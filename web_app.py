@@ -2265,6 +2265,12 @@ class WebGame:
             write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        # The night is durable before LLM work starts. Publish its identity immediately
+        # so a failed/delayed reply cannot leave the player looking at the prior scroll.
+        if chat_turn_id and hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
+            ev_queue.put({"type": "accepted", "night_id": int(open_night["id"]) if open_night else 0})
 
         def emit_delta(delta: str) -> None:
             ev_queue.put({"type": "delta", "content": delta})
