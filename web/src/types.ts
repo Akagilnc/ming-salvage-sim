@@ -313,6 +313,18 @@ export type ChatMessage = {
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 
+export type AudienceScrollMessage = {
+  role: "user" | "minister" | "attendant" | "scene";
+  speaker: string;
+  audibility: string;
+  time: string | null;
+  content: string;
+  soft_boundary: boolean;
+  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda";
+  highlights: string[];
+  container: { time_of_day: string; location: string; audience_type: string };
+};
+
 /** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，
  *  attendant 递话额外带 record_id；前端映射为 ChatMessage 后渲染。 */
 export type ServerChatMessage = {

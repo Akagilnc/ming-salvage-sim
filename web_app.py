@@ -3339,6 +3339,22 @@ def _require_active_minister(minister_name: str) -> None:
         raise HTTPException(status_code=409, detail=detail.strip())
 
 
+@app.get("/api/audience/scroll")
+async def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
+    """Shared live/read-only projection of one persisted audience scroll."""
+    from ming_sim.audience_night import get_night, get_open_night, read_night_scroll
+
+    game = get_game()
+    night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
+    if night is None:
+        return {"night_id": 0, "status": "", "messages": []}
+    return {
+        "night_id": int(night["id"]),
+        "status": night["status"],
+        "messages": read_night_scroll(game.db, int(night["id"])),
+    }
+
+
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)

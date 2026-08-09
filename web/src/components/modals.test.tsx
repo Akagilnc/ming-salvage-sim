@@ -424,7 +424,7 @@ describe("ChatModal — placeholder switches on character type", () => {
 });
 
 describe("ChatModal — organic markdown display cleanup", () => {
-  it("strips markdown from minister replies while preserving the emperor's text", () => {
+  it("strips markdown from minister replies while preserving the emperor's text", async () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
@@ -434,6 +434,7 @@ describe("ChatModal — organic markdown display cleanup", () => {
       ],
     });
 
+    await act(async () => { await Promise.resolve(); });
     const messages = Array.from(document.querySelectorAll(".chat-message p"));
     expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
     expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");

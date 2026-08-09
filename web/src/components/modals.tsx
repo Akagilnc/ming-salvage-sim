@@ -3,7 +3,7 @@ import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw,
 import { api } from "../api";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect, stripOrganicMarkdown } from "../format";
-import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
+import type { AudienceScrollMessage, ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
   report,
@@ -567,7 +567,29 @@ export function ChatModal({
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
-  const displayMessages: ChatDisplayMessage[] = [...chat];
+  const [scrollState, setScrollState] = React.useState<
+    { kind: "loading" } | { kind: "none" } | { kind: "night"; messages: AudienceScrollMessage[] } | { kind: "error" }
+  >({ kind: "loading" });
+  const followsTailRef = React.useRef(true);
+  const restoredNightRef = React.useRef(false);
+  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> =
+    scrollState.kind === "night" ? [...scrollState.messages] : scrollState.kind === "none" ? [...chat] : [];
+
+  React.useEffect(() => {
+    let alive = true;
+    // Once an open night is known, refreshes retain that single authority while loading;
+    // first load/minister switches never flash the old per-minister projection.
+    setScrollState((current) => current.kind === "night" ? current : { kind: "loading" });
+    api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
+      .then((data) => {
+        if (!alive) return;
+        setScrollState(data.night_id ? { kind: "night", messages: data.messages || [] } : { kind: "none" });
+      })
+      .catch(() => {
+        if (alive) setScrollState((current) => current.kind === "night" ? { kind: "error" } : { kind: "none" });
+      });
+    return () => { alive = false; };
+  }, [minister.name, chat]);
 
   if (pendingUserMessage) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
@@ -596,10 +618,16 @@ export function ChatModal({
 
   React.useEffect(() => {
     const node = chatLogRef.current;
-    if (node) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+    if (!node) return;
+    const firstNightRestore = scrollState.kind === "night" && !restoredNightRef.current;
+    if (firstNightRestore || followsTailRef.current) node.scrollTop = node.scrollHeight;
+    if (firstNightRestore) restoredNightRef.current = true;
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+
+  const handleScroll = () => {
+    const node = chatLogRef.current;
+    if (node) followsTailRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+  };
 
   const handleSend = () => {
     onSend(input);
@@ -663,19 +691,30 @@ export function ChatModal({
       </aside>
 
       <section className="modal-pane chat-main">
-        <div className="chat-log" ref={chatLogRef}>
-          {displayMessages.map((message, index) => (
-            <div className={`chat-message ${message.role} ${message.pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
-              <span>
-                {message.role === "user"
-                  ? "朕"
-                  : message.role === "attendant"
-                    ? "近臣"
-                    : minister.name}
-              </span>
-              <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
-            </div>
-          ))}
+        <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
+          {displayMessages.map((message, index) => {
+            const pending = "pending" in message && message.pending;
+            const speaker = "speaker" in message
+              ? message.speaker
+              : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : minister.name;
+            const beat = "beat" in message ? message.beat : "dialogue";
+            if (message.role === "scene") {
+              return (
+                <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
+                  {message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}
+                </div>
+              );
+            }
+            return (
+              <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
+                <span>{speaker}</span>
+                <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
+              </div>
+            );
+          })}
+          {scrollState.kind === "error" && (
+            <div className="chat-system-note danger" role="alert">夜卷轴读取失败，请稍后重试。</div>
+          )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
               <span>{minister.name}</span>
