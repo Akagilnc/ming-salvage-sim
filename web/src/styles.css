@@ -6884,3 +6884,31 @@ button:disabled {
   line-height: 2.05;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 24px rgba(0, 0, 0, 0.8);
 }
+
+
+/* ===== 主界面：地图暖黄昏调 + 暗角（盖在交互地图上的纯装饰层，夜·烛基调） ===== */
+.hud2-map-grade-frame {
+  z-index: 4;
+  pointer-events: none;
+}
+.hud2-map-grade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 34% 42% at 7% 64%, rgba(255, 176, 80, 0.15), rgba(255, 176, 80, 0) 70%),
+    radial-gradient(ellipse 62% 58% at 47% 44%, rgba(0, 0, 0, 0) 42%, rgba(10, 6, 2, 0.38) 82%, rgba(8, 5, 2, 0.58) 100%),
+    linear-gradient(160deg, rgba(148, 88, 22, 0.28), rgba(96, 52, 14, 0.36));
+}
+
+/* ===== 菜单钮：木底金字，与主界面实物语言一致 ===== */
+.hud2-menu-btn {
+  background: linear-gradient(180deg, #3d2a13, #241808);
+  border: 1px solid rgba(216, 185, 106, 0.45);
+  border-radius: 3px;
+  color: #e8d5a8;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+.hud2-menu-btn:hover {
+  background: linear-gradient(180deg, #4a3319, #2e1f0e);
+}
