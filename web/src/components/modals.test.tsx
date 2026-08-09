@@ -501,6 +501,60 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps the completed tail visible while the canonical scroll refresh is delayed", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷" }] }) })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveRefresh = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateChat!: (chat: Array<{ role: "user" | "minister"; content: string }>) => void;
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "旧卷" }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await act(async () => {
+      updateChat([{ role: "user", content: "旧卷" }, { role: "minister", content: "刚完成的答复" }]);
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("旧卷");
+    expect(document.body.textContent).toContain("刚完成的答复");
+
+    await act(async () => {
+      resolveRefresh({ ok: true, json: async () => ({ night_id: 23, messages: [
+        { role: "user", content: "旧卷" }, { role: "minister", content: "刚完成的答复" },
+      ] }) });
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
+  });
+
+  it("keeps the last-known scroll and completed tail when a refresh fails", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷" }] }) })
+      .mockRejectedValueOnce(new Error("refresh failed"));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateChat!: (chat: Array<{ role: "user" | "minister"; content: string }>) => void;
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "旧卷" }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => {
+      updateChat([{ role: "user", content: "旧卷" }, { role: "minister", content: "失败前已完成" }]);
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("旧卷");
+    expect(document.body.textContent).toContain("失败前已完成");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+  });
+
   it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
     const replies = [
       { night_id: 23, messages: [{ role: "user", content: "旧卷" }] },

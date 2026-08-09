@@ -568,12 +568,19 @@ export function ChatModal({
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const [scrollState, setScrollState] = React.useState<
-    { kind: "loading" } | { kind: "none" } | { kind: "night"; nightId: number; messages: AudienceScrollMessage[] } | { kind: "error" }
+    { kind: "loading" } | { kind: "none" } | {
+      kind: "night";
+      nightId: number;
+      messages: AudienceScrollMessage[];
+      chatLengthAtRead: number;
+      refreshError: boolean;
+    } | { kind: "error" }
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
-  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> =
-    scrollState.kind === "night" ? [...scrollState.messages] : scrollState.kind === "none" ? [...chat] : [];
+  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollState.kind === "night"
+    ? [...scrollState.messages, ...chat.slice(scrollState.chatLengthAtRead)]
+    : scrollState.kind === "none" ? [...chat] : [];
 
   React.useEffect(() => {
     let alive = true;
@@ -583,9 +590,20 @@ export function ChatModal({
     api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
-        setScrollState(data.night_id ? { kind: "night", nightId: data.night_id, messages: data.messages || [] } : { kind: "none" });
+        setScrollState(data.night_id ? {
+          kind: "night",
+          nightId: data.night_id,
+          messages: data.messages || [],
+          chatLengthAtRead: chat.length,
+          refreshError: false,
+        } : { kind: "none" });
       })
-      .catch(() => { if (alive) setScrollState({ kind: "error" }); });
+      .catch(() => {
+        if (!alive) return;
+        setScrollState((current) => current.kind === "night"
+          ? { ...current, refreshError: true }
+          : { kind: "error" });
+      });
     return () => { alive = false; };
   }, [minister.name, chat]);
 
@@ -711,7 +729,7 @@ export function ChatModal({
               </div>
             );
           })}
-          {scrollState.kind === "error" && (
+          {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">夜卷轴读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
