@@ -27,7 +27,7 @@ export function DecisionModal({
     ? !!pick.label
     : !!(pick.label || (pick.note || "").trim());
   const last = cursor >= decisions.length - 1;
-  const setPick = (choice: Choice) => setPicks((all) => all.map((item, i) => i === cursor ? { ...item, ...choice } : item));
+  const setPick = (choice: DecisionChoice) => setPicks((all) => all.map((item, i) => i === cursor ? { ...item, ...choice } : item));
 
   const next = () => {
     if (!decided) return;
