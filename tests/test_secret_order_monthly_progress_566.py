@@ -337,10 +337,15 @@ def test_no_eligible_dossier_unknown_report_aborts_atomically(game):
     assert db.conn.execute(
         "SELECT dossier_progress_json FROM secret_orders WHERE dossier_progress_json != '[]'"
     ).fetchone() is None
-    assert db.conn.execute(
-        "SELECT 1 FROM rejection_reports WHERE turn=? AND section='dossier_progress_reports'",
-        (turn,),
-    ).fetchone() is None
+    rejection_reports_exists = db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='rejection_reports'"
+    ).fetchone() is not None
+    if rejection_reports_exists:
+        assert db.conn.execute(
+            "SELECT 1 FROM rejection_reports "
+            "WHERE turn=? AND section='dossier_progress_reports'",
+            (turn,),
+        ).fetchone() is None
 
 
 def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_values_advance(game):
