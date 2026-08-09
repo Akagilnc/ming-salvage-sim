@@ -44,7 +44,7 @@ const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => 
 
 type HookApi = ReturnType<typeof useAudienceChat>;
 
-function mount() {
+function mount(scrollMode: "audience" | "legacy" = "legacy") {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
   const setModalRef = { current: (_m: string) => {} };
@@ -60,13 +60,14 @@ function mount() {
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} portraitPrefix="minister_" scrollMode="legacy"
+        minister={MINISTER} portraitPrefix="minister_" scrollMode={scrollMode}
         currentCampaignId={hook.currentCampaignId}
         currentNightId={hook.currentNightId}
         undoneChatIdentity={null}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
         pendingIdentity={hook.pendingIdentity}
+        failedIdentity={hook.failedIdentity}
         streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
@@ -92,29 +93,35 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
-  it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
-    let call = 0;
+  it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
+    let scrollCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      call += 1;
-      if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
-        night_id: 23,
-        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
-      });
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
+          night_id: 24,
+          messages: [
+            { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
+            { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
+            { role: "minister", speaker: "温体仁", content: "保留答复", chat_turn_id: 7 },
+          ],
+        });
+      }
       return sse([
-        { event: "accepted", data: { night_id: 24 } },
-        { event: "error", data: { message: "回话失败" } },
+        { event: "accepted", data: { campaign_id: "camp", night_id: 24, chat_turn_id: 8 } },
+        { event: "error", data: { message: "回话失败", campaign_id: "camp", night_id: 24, chat_turn_id: 8 } },
       ]);
     }));
-    const { hookRef, rows } = mount();
+    const { hookRef, rows } = mount("audience");
     await tick();
-    expect(hookRef.current!.currentNightId).toBe(0);
-    expect(rows()).not.toContain("minister:旧夜他臣");
 
-    await act(async () => {
-      await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
-    });
-    expect(hookRef.current!.currentNightId).toBe(24);
-    expect(rows()).not.toContain("minister:旧夜他臣");
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
+    await tick();
+
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "camp", night_id: 24, chat_turn_id: 8 });
+    expect(rows()).not.toContain("user:失败问话");
+    expect(rows()).toContain("user:保留问话");
+    expect(rows()).toContain("minister:保留答复");
   });
 
   it("迟到的旧流读心：新 send 作废 token 后，旧流 mind1 仍归其轮浮现（不按 token 门控）", async () => {

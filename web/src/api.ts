@@ -5,12 +5,18 @@ import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
   detail: ApiErrorDetail;
+  chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number };
 
-  constructor(detail: ApiErrorDetail, fallback: string) {
+  constructor(
+    detail: ApiErrorDetail,
+    fallback: string,
+    chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
+  ) {
     const message = detail.message || fallback;
     super(detail.code ? `[${detail.code}] ${message}` : message);
     this.name = "ApiRequestError";
     this.detail = detail;
+    this.chatIdentity = chatIdentity;
   }
 }
 
@@ -140,7 +146,16 @@ export const streamChat = async (
         }
         return donePayload;
       } else if (parsed.event === "error") {
-        throw new ApiRequestError(normalizeApiError(payload, "流式回复失败。"), "流式回复失败。");
+        const identity = {
+          campaign_id: String(payload.campaign_id || ""),
+          night_id: Number(payload.night_id || 0),
+          chat_turn_id: Number(payload.chat_turn_id || 0),
+        };
+        throw new ApiRequestError(
+          normalizeApiError(payload, "流式回复失败。"),
+          "流式回复失败。",
+          identity.campaign_id && identity.night_id && identity.chat_turn_id ? identity : undefined,
+        );
       }
     }
 

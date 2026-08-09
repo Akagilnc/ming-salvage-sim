@@ -9191,13 +9191,22 @@ class GameDB:
     def list_closed_night_archives(self) -> List[Dict[str, object]]:
         """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
         rows = self.conn.execute(
-            "SELECT id,turn,year,period,time_of_day,location FROM audience_nights "
-            "WHERE status='closed' ORDER BY turn,id"
+            """
+            SELECT id,turn,year,period,time_of_day,location,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY turn, location, time_of_day ORDER BY id
+                   ) AS scene_number,
+                   COUNT(*) OVER (
+                       PARTITION BY turn, location, time_of_day
+                   ) AS scene_count
+            FROM audience_nights WHERE status='closed' ORDER BY turn,id
+            """
         ).fetchall()
         return [{
             "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
             "year": int(r["year"]), "period": int(r["period"]),
             "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+            "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
         } for r in rows]
 
     def list_archived_turns(self) -> List[Dict[str, object]]:

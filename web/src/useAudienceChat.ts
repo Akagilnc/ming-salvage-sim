@@ -1,5 +1,5 @@
 import React from "react";
-import { api, pollMindreadingUntilReady, streamChat } from "./api";
+import { ApiRequestError, api, pollMindreadingUntilReady, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
 import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
 
@@ -54,6 +54,7 @@ export function useAudienceChat(
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [pendingIdentity, setPendingIdentity] = React.useState<ChatIdentity | null>(null);
+  const [failedIdentity, setFailedIdentity] = React.useState<ChatIdentity | null>(null);
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
   const [currentCampaignId, setCurrentCampaignId] = React.useState("");
   const [currentNightId, setCurrentNightId] = React.useState<number>(0);
@@ -88,6 +89,7 @@ export function useAudienceChat(
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
     setPendingIdentity(null);
+    setFailedIdentity(null);
     setStreamingMinisterMessage("");
     setCurrentCampaignId("");
     setCurrentNightId(0);
@@ -149,6 +151,7 @@ export function useAudienceChat(
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
       setPendingUserMessage(message);
       setPendingIdentity(null);
+      setFailedIdentity(null);
       setStreamingMinisterMessage("");
       setBusy("大臣思索中");
       try {
@@ -201,7 +204,10 @@ export function useAudienceChat(
         setPendingIdentity(null);
         setStreamingMinisterMessage("");
         if (err instanceof Error && err.name === "AbortError") cb.onLeave?.();
-        else cb.onError?.(err);
+        else {
+          if (err instanceof ApiRequestError && err.chatIdentity) setFailedIdentity(err.chatIdentity);
+          cb.onError?.(err);
+        }
       } finally {
         if (ownsEphemeral()) setBusy("");
         activeAbortsRef.current.delete(abort);
@@ -220,6 +226,7 @@ export function useAudienceChat(
     currentNightId,
     pendingUserMessage,
     pendingIdentity,
+    failedIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
