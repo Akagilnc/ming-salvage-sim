@@ -327,12 +327,18 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     }
 
     def message(*, role: str, speaker: str, audibility: str, time: Any,
-                content: str, beat: str, soft_boundary: bool = False) -> Dict[str, Any]:
-        return {
+                content: str, beat: str, soft_boundary: bool = False,
+                chat_turn_id: int = 0, record_id: int = 0) -> Dict[str, Any]:
+        result = {
             "role": role, "speaker": speaker, "audibility": audibility,
             "time": time, "content": content, "soft_boundary": soft_boundary,
             "beat": beat, "highlights": [], "container": dict(container),
         }
+        if chat_turn_id:
+            result["chat_turn_id"] = int(chat_turn_id)
+        if record_id:
+            result["record_id"] = int(record_id)
+        return result
 
     turns = list_chat_turns_for_night(db, night_id)
     dialogue_by_turn: Dict[int, set[str]] = {}
@@ -356,7 +362,8 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             events.append((
                 float(int(turn.get("night_seq") or 0)), 20 + rank,
                 message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
-                        time=row["created_at"], content=content, beat="dialogue"),
+                        time=row["created_at"], content=content, beat="dialogue",
+                        chat_turn_id=int(turn["id"])),
             ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):
@@ -367,7 +374,8 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                         float(int(turn.get("night_seq") or 0)), 30 + record_index,
                         message(role="attendant", speaker=str(record.get("reader") or "近臣"),
                                 audibility=AUDIBILITY_PRIVATE, time=None,
-                                content=narration, beat="aside"),
+                                content=narration, beat="aside", chat_turn_id=int(turn["id"]),
+                                record_id=int(record.get("id") or 0)),
                     ))
         dialogue_by_turn[int(turn["id"])] = texts
 

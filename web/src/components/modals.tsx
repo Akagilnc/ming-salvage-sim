@@ -572,27 +572,41 @@ export function ChatModal({
       kind: "night";
       nightId: number;
       messages: AudienceScrollMessage[];
-      chatIdentitiesAtRead: ReadonlySet<string>;
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
-  const chatIdentity = (message: ChatMessage): string | null => {
-    if (!message.chatTurnId) return null;
+  const messageIdentity = (message: ChatMessage | AudienceScrollMessage): string | null => {
+    const isChatMessage = "chatTurnId" in message || "recordId" in message;
+    const chatTurnId = isChatMessage
+      ? (message as ChatMessage).chatTurnId
+      : (message as AudienceScrollMessage).chat_turn_id;
+    const recordId = isChatMessage
+      ? (message as ChatMessage).recordId
+      : (message as AudienceScrollMessage).record_id;
+    if (!chatTurnId || message.role === "scene") return null;
     return message.role === "attendant"
-      ? (message.recordId ? `${message.role}:${message.chatTurnId}:${message.recordId}` : null)
-      : `${message.role}:${message.chatTurnId}`;
+      ? (recordId ? `${message.role}:${chatTurnId}:${recordId}` : null)
+      : `${message.role}:${chatTurnId}`;
   };
-  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollState.kind === "night"
-    ? [
-        ...scrollState.messages,
-        ...chat.filter((message) => {
-          const identity = chatIdentity(message);
-          return identity !== null && !scrollState.chatIdentitiesAtRead.has(identity);
-        }),
-      ]
-    : scrollState.kind === "none" ? [...chat] : [];
+  const chatIdentity = (message: ChatMessage) => messageIdentity(message);
+  const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
+    if (scrollState.kind !== "night") return scrollState.kind === "none" ? [...chat] : [];
+    const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...scrollState.messages];
+    const present = new Set(merged.map(messageIdentity).filter((identity): identity is string => identity !== null));
+    for (let index = 0; index < chat.length; index += 1) {
+      const message = chat[index];
+      const identity = chatIdentity(message);
+      if (!identity || present.has(identity)) continue;
+      const following = chat.slice(index + 1).map(chatIdentity).find((candidate) => candidate && present.has(candidate));
+      const insertion = following ? merged.findIndex((candidate) => messageIdentity(candidate) === following) : merged.length;
+      merged.splice(insertion < 0 ? merged.length : insertion, 0, message);
+      present.add(identity);
+    }
+    return merged;
+  };
+  const displayMessages = mergeScrollWithChat();
 
   React.useEffect(() => {
     let alive = true;
@@ -606,7 +620,6 @@ export function ChatModal({
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
-          chatIdentitiesAtRead: new Set(chat.map(chatIdentity).filter((identity): identity is string => identity !== null)),
           refreshError: false,
         } : { kind: "none" });
       })

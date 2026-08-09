@@ -516,7 +516,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   it("keeps the completed tail visible while the canonical scroll refresh is delayed", async () => {
     let resolveRefresh!: (value: unknown) => void;
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷" }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷", chat_turn_id: 1 }] }) })
       .mockReturnValueOnce(new Promise((resolve) => { resolveRefresh = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
     let updateChat!: (chat: ChatMessage[]) => void;
@@ -540,7 +540,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
     await act(async () => {
       resolveRefresh({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", content: "旧卷" }, { role: "minister", content: "刚完成的答复" },
+        { role: "user", content: "旧卷", chat_turn_id: 1 }, { role: "minister", content: "刚完成的答复", chat_turn_id: 1 },
       ] }) });
       await Promise.resolve(); await Promise.resolve();
     });
@@ -551,15 +551,15 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", content: "初问" }, { role: "minister", content: "初答" },
-        { role: "user", content: "再问" }, { role: "minister", content: "已完成尾答" },
+        { role: "user", content: "初问", chat_turn_id: 1 }, { role: "minister", content: "初答", chat_turn_id: 1 },
+        { role: "user", content: "再问", chat_turn_id: 2 }, { role: "minister", content: "已完成尾答", chat_turn_id: 2 },
       ] }) })
       .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }))
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", content: "初问" }, { role: "minister", content: "初答" },
-        { role: "attendant", content: "旧轮迟到递话" },
-        { role: "user", content: "再问" }, { role: "minister", content: "已完成尾答" },
-        { role: "attendant", content: "刷新触发递话" },
+        { role: "user", content: "初问", chat_turn_id: 1 }, { role: "minister", content: "初答", chat_turn_id: 1 },
+        { role: "attendant", content: "旧轮迟到递话", chat_turn_id: 1, record_id: 91 },
+        { role: "user", content: "再问", chat_turn_id: 2 }, { role: "minister", content: "已完成尾答", chat_turn_id: 2 },
+        { role: "attendant", content: "刷新触发递话", chat_turn_id: 2, record_id: 92 },
       ] }) });
     vi.stubGlobal("fetch", fetchMock);
     let dispatchChat!: React.Dispatch<ChatAction>;
