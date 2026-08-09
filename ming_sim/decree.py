@@ -532,14 +532,17 @@ def resolve_directives(
         if not isinstance(payload, dict):
             payload = json.loads(str(row.get("payload_json") or "{}"))
         policy = dossier_action_policy(row.get("action_type"), payload)
-        # Only narrative-owned effects are simulator material.  Payload-owned
-        # actions are applied by the deterministic post-verdict dispatcher;
-        # feeding them to both lanes permits duplicate effects.
-        if policy["effect_owner"] == "narrative" and (
+        # Narrative-owned effects are simulator material.  Deterministically
+        # materialized in-transit dossiers remain visible only as execution
+        # context: their decree text and mechanical payload must not be replayed.
+        admitted = (
             str(row.get("status") or "") != "proposed"
             or str(row.get("settlement_verdict") or "") == "promulgated"
-        ):
+        )
+        if policy["effect_owner"] == "narrative" and admitted:
             dossier_payload.append(row)
+        elif admitted and str(row.get("status") or "") == "executing":
+            dossier_payload.append({**row, "decree_text": "", "payload": {}})
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)
