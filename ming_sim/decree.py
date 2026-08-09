@@ -488,32 +488,45 @@ def resolve_directives(
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
-    if proposed_dossiers:
-        # A validated batch is durable before any simulator work.  Recovery is
-        # turn-scoped: an old hold verdict can never suppress this month's call.
-        stored = db.get_pending_promulgation_verdicts(state.turn)
-        if stored:
-            verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
-        else:
-            reviewed, exempt = [], []
-            for dossier in proposed_dossiers:
-                payload = dossier.get("payload")
-                if not isinstance(payload, dict):
-                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                (reviewed if dossier_action_policy(
-                    dossier.get("action_type"), payload,
-                )["external_review"] else exempt).append(dossier)
-            provider = promulgation_verdict_provider or stub_promulgation_verdicts
-            generated = provider(reviewed, state) if reviewed else []
-            if not isinstance(generated, list):
-                raise LLMContractError("颁布判官 verdicts 必须为列表")
-            generated = generated + (
-                stub_promulgation_verdicts(exempt, state) if exempt else []
+    try:
+        if proposed_dossiers:
+            # A validated batch is durable before any simulator work.  Recovery is
+            # turn-scoped: an old hold verdict can never suppress this month's call.
+            stored = db.get_pending_promulgation_verdicts(state.turn)
+            if stored:
+                verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
+            else:
+                reviewed, exempt = [], []
+                for dossier in proposed_dossiers:
+                    payload = dossier.get("payload")
+                    if not isinstance(payload, dict):
+                        payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                    (reviewed if dossier_action_policy(
+                        dossier.get("action_type"), payload,
+                    )["external_review"] else exempt).append(dossier)
+                provider = promulgation_verdict_provider or stub_promulgation_verdicts
+                generated = provider(reviewed, state) if reviewed else []
+                if not isinstance(generated, list):
+                    raise LLMContractError("颁布判官 verdicts 必须为列表")
+                generated = generated + (
+                    stub_promulgation_verdicts(exempt, state) if exempt else []
+                )
+                verdict_rows = validate_promulgation_verdicts(
+                    generated, proposed_dossiers, db,
+                )
+                db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+    except LLMContractError as exc:
+        try:
+            pack_path = write_error_pack(
+                db, state, exc=exc, extracted=None,
+                resolve_ctx=db.get_resolve_context(state.turn),
             )
-            verdict_rows = validate_promulgation_verdicts(
-                generated, proposed_dossiers, db,
-            )
-            db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
+        except Exception as pack_exc:
+            raise exc from pack_exc
+        raise SettlementAbort(
+            settlement_abort_message(pack_path), turn=state.turn,
+            stage="promulgation", error_pack_path=pack_path,
+        ) from exc
 
     verdict_by_id = {
         int(row["dossier_id"]): str(row.get("decision") or "")

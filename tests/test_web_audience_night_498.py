@@ -3,7 +3,7 @@
 真实 WebGame + 真实 FastAPI 路由（httpx.ASGITransport），只把 LLM 边界换成 canned：
 - 大臣对话 = 假 agent.run 的 canned 流；
 - 月末推演 = 只假 simulator/extractor 这层 LLM 种子，resolve_directives 的 pre-settle /
-  结算核 / 推进回合全部真跑。
+  结算核 / 推进回合全部真跑；判官 verdict 仍固定为逐案 promulgated，非真实判官行为。
 
 外部行为断言（HTTP/SSE + DB 末态），不钉内部 helper 结构。
 

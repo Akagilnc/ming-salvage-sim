@@ -9797,6 +9797,17 @@ class GameDB:
             raise ValueError(f"{action} execution_surface 与案卷动作策略不符")
         canonical_target_kind = str(target_kind or "").strip()
         canonical_target_id = str(target_id or "").strip()
+        immediate_allocation = (
+            action == "grant_allocation" and policy["effect_owner"] == "immediate"
+        )
+        allocation_amount = 0
+        if immediate_allocation:
+            allocation_amount = strict_int(
+                canonical_payload.get("amount"), accept_numeric_strings=False,
+            )
+            account = str(canonical_payload.get("account") or "").strip()
+            if allocation_amount <= 0 or account != "内库":
+                raise ValueError("内批拨帑案卷须含正数 amount 与内库 account")
         if not canonical_target_kind or not canonical_target_id:
             raise ValueError("案卷 target_kind/target_id 必须完整")
         if status not in self._DOSSIER_STATUSES:
@@ -9853,15 +9864,9 @@ class GameDB:
             ),
         )
         dossier_id = int(cur.lastrowid)
-        if policy["effect_owner"] == "immediate" and action == "grant_allocation":
-            amount = strict_int(
-                canonical_payload.get("amount"), accept_numeric_strings=False,
-            )
-            account = str(canonical_payload.get("account") or "").strip()
-            if amount <= 0 or account != "内库":
-                raise ValueError("内批拨帑案卷须含正数 amount 与内库 account")
+        if immediate_allocation:
             self.record_issue_economy_move(
-                state, account, -amount,
+                state, "内库", -allocation_amount,
                 str(canonical_payload.get("category") or "奉旨拨帑"),
                 str(canonical_payload.get("reason") or text),
                 purpose=str(canonical_payload.get("purpose") or "") or None,
@@ -10037,6 +10042,8 @@ class GameDB:
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
             # its execution verdict closes it, however.
+            if str(row["action_type"]) == "secret_order":
+                continue
             if (
                 policy["effect_owner"] != "immediate"
                 or str(row["status"]) == "executing"
@@ -10491,7 +10498,12 @@ class GameDB:
         content=None, registry=None,
     ) -> None:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
-        with atomic(self):
+        # This public seam is also used outside resolve_directives.  Reuse the
+        # settlement rollback primitive so failed later verdicts restore both
+        # SQLite and the caller's in-memory GameState.
+        from ming_sim.decree import atomic_and_reload
+
+        with atomic_and_reload(self, state, content=content, registry=registry):
             for verdict in verdicts:
                 if not isinstance(verdict, dict):
                     raise ValueError("案卷 verdict 须为对象")

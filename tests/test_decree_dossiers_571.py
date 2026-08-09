@@ -1944,6 +1944,7 @@ def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
         state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
     )
     state.turn += 1
+    db.save_state(state)
     assert dossier_id in {
         row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
     }
@@ -2245,6 +2246,7 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     )
 
     state.turn += 1
+    db.save_state(state)
     seen = {}
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
@@ -2319,6 +2321,7 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
 
     state.turn += 1
+    db.save_state(state)
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "simulate_season_with_payload",
@@ -2355,14 +2358,26 @@ def test_secret_authorization_uses_canonical_authorization_boundary(game):
             (item.name,),
         ).fetchone()
     )
-    normalized = db._normalize_directive_dossier_payload({
-        "dossier_action_type": "secret_authorization",
-        "target_kind": "character", "target_id": character.aliases[0],
-        "assignee": character.aliases[0], "authorization_id": "理财",
-    }, content=content, current_turn=state.turn)
-    assert normalized["assignee_id"] == character.name
-    assert normalized["target_id"] == character.name
-    assert normalized["authorization_id"] == "理财"
+    directive_id = db.add_directive(
+        state, None, "密授权理财", "player_decree",
+        dossier_payload={
+            "dossier_action_type": "secret_authorization",
+            "target_kind": "character", "target_id": character.aliases[0],
+            "assignee": character.aliases[0], "authorization_id": "理财",
+        },
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier is not None
+    assert dossier["target_id"] == character.name
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    grants = db.list_skill_grants_for_dossier(dossier["id"])
+    assert [(row["character_name"], row["skill_id"]) for row in grants] == [
+        (character.name, "理财"),
+    ]
 
 
 @pytest.mark.parametrize("missing", ("assignee", "authorization_id"))
@@ -2378,10 +2393,12 @@ def test_secret_authorization_rejects_incomplete_payload_without_grant(
     }
     payload.pop(missing)
     before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
+    directive_id = db.add_directive(
+        state, None, "残缺密授权", "player_decree", dossier_payload=payload,
+    )
     with pytest.raises(ValueError, match="canonical assignee 或授权字段"):
-        db._normalize_directive_dossier_payload(
-            payload, content=content, current_turn=state.turn,
-        )
+        db.ensure_dossiers_for_draft_directives(state)
+    assert db.get_dossier_for_directive(directive_id) is None
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
     assert db.conn.execute(
         "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
