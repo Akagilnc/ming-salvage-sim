@@ -1646,6 +1646,39 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     assert result["drafts"][1]["dossier_action_type"] == "military_order"
 
 
+def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
+    from ming_sim.issues import apply_score_extraction
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="military_order", decree_text="三月后出师",
+        target_kind="region", target_id="shaanxi",
+        executor_kind="character", executor_id=_active_minister(db),
+        due_turn=state.turn + 3,
+    )
+    db.apply_dossier_verdicts(
+        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    )
+    state.turn += 1
+    assert dossier_id in {
+        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+    }
+    result = apply_score_extraction(
+        db, state, {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "fulfilled",
+                "note": "奉旨出师，军令已毕",
+            }],
+        },
+        content=content,
+    )
+    assert result["dossier_executions"] == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+    }]
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+
+
 @pytest.mark.parametrize("origin_ref", (
     "dossier:not-a-number", "dossier:1:extra", f"dossier:{2 ** 63}",
 ))
