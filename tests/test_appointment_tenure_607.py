@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from ming_sim import issues as issue_engine
 
 
@@ -66,21 +68,36 @@ def test_legacy_appointment_defaults_to_permanent_without_rejudging(game):
     assert row["appointment_tenure"] == "真除"
 
 
-def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(game):
+@pytest.mark.parametrize("tenure_fields", [
+    {"任别": "试署"},
+    {"任别": None},
+    {"任别": ""},
+    {"任别": False},
+    {"任别": 0},
+    {"任别": " 真除 "},
+    {"appointment_tenure": None},
+    {"任别": "真除", "appointment_tenure": None},
+])
+def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(
+    game, tenure_fields,
+):
     db, state, content = game
     name = _active_minister(db)
     before = db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name,)
     ).fetchone()["office"]
+    item = {
+        "name": name, "动作": "任命", "office": "非法任别官", **tenure_fields,
+    }
 
-    result = issue_engine.apply_score_extraction(db, state, {"人物变更": [{
-        "name": name, "动作": "任命", "office": "非法任别官", "任别": "试署",
-    }]}, content=content)
+    result = issue_engine.apply_score_extraction(
+        db, state, {"人物变更": [item]}, content=content,
+    )
 
     rejected = result["applied_person_changes"][0]
     assert rejected["rejected"] is True
     assert rejected["category"] == "invalid_enum"
-    assert rejected["item"]["任别"] == "试署"
+    assert rejected["item"] == item
     assert db.conn.execute(
         "SELECT office FROM characters WHERE name=?", (name,)
     ).fetchone()["office"] == before
