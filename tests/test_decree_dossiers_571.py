@@ -3,7 +3,9 @@ import json
 import types
 
 import pytest
+import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
+from ming_sim.session import GameSession
 
 
 def _rejected_verdict(dossier_id):
@@ -51,6 +53,75 @@ def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game)
         {"character_id": people[1], "tier": "主办", "role": "会同清丈", "delegator_id": None},
         {"character_id": people[2], "tier": "协办", "role": "接应钱粮", "delegator_id": None},
         {"character_id": people[3], "tier": "知情", "role": "备悉", "delegator_id": None},
+    ]
+
+
+def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
+    db, state, _content = game
+    person = _active_minister(db)
+
+    with pytest.raises(ValueError, match="参与人物不存在"):
+        db.create_decree_dossier(
+            state, action_type="assignment", decree_text="命查仓储。",
+            target_kind="issue", target_id="granary",
+            participants=[{"character_id": "不存在的人", "tier": "主办"}],
+        )
+    assert db.list_decree_dossiers() == []
+
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命查仓储。",
+        target_kind="issue", target_id="granary",
+        participants=[{"character_id": person, "tier": "主办"}],
+    )
+    with pytest.raises(ValueError, match="委派人不存在"):
+        db.append_decree_dossier_participants(dossier_id, [{
+            "character_id": person, "tier": "协办", "delegator_id": "不存在的委派人",
+        }])
+    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+        "character_id": person, "tier": "主办", "role": "", "delegator_id": None,
+    }]
+
+
+def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
+    db, state, content = game
+    people = [
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 3"
+        ).fetchall()
+    ]
+    minister = people[0]
+    character = next(ch for ch in content.characters.values() if ch.name == minister)
+    roster = [
+        {"character_id": people[0], "tier": "主办", "role": "总理"},
+        {"character_id": people[1], "tier": "主办", "role": "会办"},
+        {"character_id": people[2], "tier": "协办", "role": "核账"},
+    ]
+    canned = {
+        "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
+        "目标ID": "granary-audit", "参与人": roster,
+    }
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *args, **kwargs: (json.dumps(canned, ensure_ascii=False), 1),
+    )
+    session = types.SimpleNamespace(
+        db=db, state=state, content=content, registry=None,
+        llm_config=types.SimpleNamespace(channel="cli"),
+    )
+
+    out = GameSession.apply_cli_conversation_actions(
+        session, character, player_message="拟旨查仓。", answer="着会同清查仓储。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
+    )
+    db.commit_pending_actions(
+        state, content=content, action_ids=[out["pending_action_id"]],
+        directive_status="draft",
+    )
+
+    dossier = db.list_decree_dossiers()[-1]
+    assert dossier["participant_roster"] == [
+        {**item, "delegator_id": None} for item in roster
     ]
 
 

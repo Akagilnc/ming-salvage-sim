@@ -327,7 +327,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "text": draft_res["draft_text"],
             "actor": minister_name,
         }
-        for field_name in ("dossier_action_type", "target_kind", "target_id"):
+        for field_name in (
+            "dossier_action_type", "target_kind", "target_id", "participant_roster",
+        ):
             if draft_res.get(field_name) not in (None, ""):
                 semantic_payload[field_name] = draft_res[field_name]
         for field_name in (
