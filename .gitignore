@@ -52,7 +52,6 @@ web/tsconfig.tsbuildinfo
 web/public/portraits/_backup_rgb/
 output/imagegen/bg_ending.png
 output/imagegen/ending_timeline_scroll.png
-web/public/bg_ending.webp
 web/public/ending_timeline_scroll.webp
 
 # CLI 后端探针运行时产物

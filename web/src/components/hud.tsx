@@ -1,6 +1,6 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Menu, Upload, X } from "lucide-react";
+import { Menu, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { formatLegacyEffect, formatMoney, formatSignedMoney, scoreTone } from "../format";
 import type { BudgetAccount, BudgetItem, BudgetMovement, GameState, Legacy } from "../types";
@@ -172,7 +172,6 @@ export function RightNavBar({
   onToggleBuilding,
   onToggleEconomy,
   onToggleAppointment,
-  onOpenLongGoals,
   activeDrawer,
 }: {
   onToggleCourt: () => void;
@@ -182,7 +181,6 @@ export function RightNavBar({
   onToggleBuilding: () => void;
   onToggleEconomy: () => void;
   onToggleAppointment: () => void;
-  onOpenLongGoals: () => void;
   activeDrawer: string;
 }) {
   const items = [
@@ -207,14 +205,6 @@ export function RightNavBar({
           {item.label}
         </button>
       ))}
-      <button
-        className="right-nav-btn right-nav-btn-goal"
-        title="长期目标"
-        aria-label="大明长期目标"
-        onClick={onOpenLongGoals}
-      >
-        目
-      </button>
     </nav>
   );
 }
@@ -274,7 +264,6 @@ export const HUD_SLOTS = {
     工部: { left: "94.13%", top: "51.64%" },
     礼部: { left: "94.22%", top: "60.33%" },
     后宫: { left: "94.36%", top: "68.81%" },
-    目标: { left: "94.56%", top: "76.32%" },
   },
   命令: {
     奏疏: { left: "12.02%", top: "75.57%", width: "11.8%", height: "11.13%" },
@@ -407,60 +396,6 @@ export function TopStatusBar({
     </header>
     <LegacyBar legacies={state.legacies} />
     </>
-  );
-}
-
-export const LONG_GOAL_POSTERS = [
-  { src: "/long_goal_ming.jpg", alt: "长期目标：让大明再续二百年" },
-  { src: "/long_goal_tech.jpg", alt: "长期目标：科技树与文明延续" },
-  { src: "/long_goal_modernity.jpg", alt: "长期目标：从王朝危机到现代文明" },
-];
-
-export function LongGoalsModal({ onClose }: { onClose: () => void }) {
-  const [index, setIndex] = React.useState(0);
-  const goPrev = React.useCallback(() => {
-    setIndex((current) => (current + LONG_GOAL_POSTERS.length - 1) % LONG_GOAL_POSTERS.length);
-  }, []);
-  const goNext = React.useCallback(() => {
-    setIndex((current) => (current + 1) % LONG_GOAL_POSTERS.length);
-  }, []);
-
-  React.useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") goPrev();
-      if (event.key === "ArrowRight") goNext();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [goPrev, goNext]);
-
-  const poster = LONG_GOAL_POSTERS[index];
-  return (
-    <section className="long-goal-layer" role="dialog" aria-modal="true" aria-label="大明长期目标">
-      <div className="long-goal-scrim" onClick={onClose} />
-      <button className="long-goal-close" aria-label="关闭弹窗" onClick={onClose}>
-        <X size={30} />
-      </button>
-      <button className="long-goal-nav long-goal-nav-prev" aria-label="上一张长期目标图" onClick={goPrev}>
-        <ChevronLeft size={34} />
-      </button>
-      <figure className="long-goal-poster">
-        <img src={poster.src} alt={poster.alt} />
-      </figure>
-      <button className="long-goal-nav long-goal-nav-next" aria-label="下一张长期目标图" onClick={goNext}>
-        <ChevronRight size={34} />
-      </button>
-      <div className="long-goal-dots" aria-label="长期目标图切换">
-        {LONG_GOAL_POSTERS.map((item, itemIndex) => (
-          <button
-            key={item.src}
-            className={itemIndex === index ? "active" : ""}
-            aria-label={`切换到第 ${itemIndex + 1} 张长期目标图`}
-            onClick={() => setIndex(itemIndex)}
-          />
-        ))}
-      </div>
-    </section>
   );
 }
 

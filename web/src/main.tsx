@@ -7,7 +7,7 @@ import { useDurableProjection } from "./useDurableProjection";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
-import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, LongGoalsModal, QuadFrame } from "./components/hud";
+import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, QuadFrame } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
@@ -321,7 +321,7 @@ export function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -1013,7 +1013,6 @@ export function App() {
     building: () => setBuildingDrawerOpen((v) => !v),
     economy: () => setEconomyDrawerOpen((v) => !v),
     appointment: () => setAppointmentDrawerOpen((v) => !v),
-    goal: () => setActiveModal("long_goals"),
   };
   const sz = hudStageSize;
   const ready = sz.w > 0 && sz.h > 0;
@@ -1092,9 +1091,8 @@ export function App() {
           ["工", "building", "建筑列表"],
           ["礼", "court", "礼部"],
           ["后", "harem", "后宫"],
-          ["目", "goal", "长期目标"],
         ] as const).map(([label, key, title], idx) => {
-          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫","目标"] as const)[idx];
+          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫"] as const)[idx];
           return (
             <button key={slotKey} className={`hud2-slot hud2-nav${activeDrawerKey === key ? " active" : ""}`}
               style={HUD_SLOTS.导航[slotKey]} title={title} aria-label={title}
@@ -1191,10 +1189,6 @@ export function App() {
         <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={guardClose(() => setActiveModal("none"))}>
           <StateModal state={state} />
         </FullscreenModal>
-      ) : null}
-
-      {activeModal === "long_goals" ? (
-        <LongGoalsModal onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "chat" && activeMinister ? (
