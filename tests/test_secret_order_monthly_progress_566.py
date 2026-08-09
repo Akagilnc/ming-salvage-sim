@@ -104,6 +104,40 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     assert db.list_dossier_progress(ordinary) == []
 
 
+def test_personnel_secret_module_contract_traces_context_sanitize_merge_to_db(game):
+    """Production module ownership path, rather than settlement field injection."""
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.simulation import (
+        _merge_module_outputs, _sanitize_module_output,
+        build_extractor_shared_context,
+    )
+
+    db, state, content = game
+    _, dossier_id = _order(db, state)
+    context = build_extractor_shared_context(
+        db, state, "本月邸报", "", module="personnel_secret",
+    )
+    assert context["monthly_dossier_reports"][0]["dossier_id"] == dossier_id
+    raw_module_output = {
+        "dossier_progress_reports": [{
+            "dossier_id": dossier_id,
+            "progress_band": "启程核验",
+            "memorial_text": "首批出京，已验关防",
+        }],
+        "metric_delta": {"民心": 99},  # wrong module: must not survive sanitize
+    }
+    sanitized = _sanitize_module_output("personnel_secret", raw_module_output)
+    extracted = _merge_module_outputs({"personnel_secret": sanitized})
+    assert extracted["dossier_progress_reports"] == raw_module_output["dossier_progress_reports"]
+    assert extracted.get("metric_delta", {}) == {}
+
+    settle_with_delta(
+        state, db, extracted, before_turn=state.turn,
+        content=content, narrative="本月邸报",
+    )
+    assert db.list_dossier_progress(dossier_id)[0]["memorial_text"] == "首批出京，已验关防"
+
+
 def test_missing_bad_unknown_and_duplicate_reports_do_not_invent_progress(game):
     db, state, _content = game
     _, dossier_id = _order(db, state)
