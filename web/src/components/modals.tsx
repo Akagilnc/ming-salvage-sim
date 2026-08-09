@@ -628,15 +628,13 @@ export function ChatModal({
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
   const currentChatIdentities = new Set(chat.map(chatIdentity).filter((identity): identity is string => identity !== null));
   const previousChatRef = React.useRef({
-    ministerName: minister.name,
     nightId: currentNightId,
     identities: currentChatIdentities,
   });
   const previousChat = previousChatRef.current;
-  const snapshotInvalidatedByWithdrawal = previousChat.ministerName === minister.name
-    && previousChat.nightId === currentNightId
+  const snapshotInvalidatedByWithdrawal = previousChat.nightId === currentNightId
     && [...previousChat.identities].some((identity) => !currentChatIdentities.has(identity));
-  previousChatRef.current = { ministerName: minister.name, nightId: currentNightId, identities: currentChatIdentities };
+  previousChatRef.current = { nightId: currentNightId, identities: currentChatIdentities };
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
     !snapshotInvalidatedByWithdrawal && (state.kind !== "night" || state.nightId === currentNightId);
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
