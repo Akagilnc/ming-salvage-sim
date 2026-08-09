@@ -86,6 +86,33 @@ def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
     assert db.get_pending_promulgation_verdicts(state.turn) == []
 
 
+def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(game):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+
+    with pytest.raises(LLMContractError, match="必须携带受损方"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [{
+                "dossier_id": dossier_id,
+                "decision": "rejected",
+                "blocked_layer": "six_offices",
+                "primary_opponents": ["东林"],
+                "gatekeeper_id": None,
+                "reason": "科臣封驳。",
+                "criteria_snapshot": {
+                    "imperial_authority_band": "偏弱",
+                    "involved_office_types": ["言官"],
+                    "authorization_ids": [],
+                    "endorsement_entry_ids": [],
+                },
+            }],
+        )
+
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
 def test_public_resolve_seam_rejects_incomplete_persisted_batch(game):
     db, state, content = game
     first_id = _stage_policy_dossier(db, state)

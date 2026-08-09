@@ -11,6 +11,10 @@ def _rejected_verdict(dossier_id):
         "dossier_id": dossier_id, "decision": "rejected",
         "blocked_layer": "six_offices", "primary_opponents": ["东林"],
         "gatekeeper_id": None, "reason": "科臣封驳。",
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "severity": "不满"},
+        ],
+        "midzhi_unpromulgatable": False,
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
             "authorization_ids": [], "endorsement_entry_ids": [],
@@ -574,6 +578,8 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         assert audit["primary_opponents"] == expected["primary_opponents"]
         assert audit["gatekeeper_id"] is None
         assert audit["criteria_snapshot"] == expected["criteria_snapshot"]
+        assert audit["affected_parties"] == expected["affected_parties"]
+        assert audit["midzhi_unpromulgatable"] is False
     finally:
         reopened.close()
 
@@ -2165,6 +2171,8 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         assert row["primary_opponents"] == verdict["primary_opponents"]
         assert row["gatekeeper_id"] is None
         assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
+        assert row["affected_parties"] == verdict["affected_parties"]
+        assert row["midzhi_unpromulgatable"] is False
         assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
         restored.close()
