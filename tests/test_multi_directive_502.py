@@ -88,6 +88,53 @@ def _pending_directives(db, turn):
     return [p for p in db.list_pending_actions(turn) if p["kind"] == "directive"]
 
 
+def test_mixed_batch_stages_supported_decree_without_capturing_acting_appointment(
+    game, monkeypatch,
+):
+    """同批暂缓的署理项不应连带吞掉已支持的独立旨稿。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    sess = _fake_session(db, state)
+    supported_text = "着户部清查三边粮饷，限三月完报。"
+    acting_text = "命洪承畴暂署兵部尚书。"
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "draft_intent": {
+            "成品旨稿": [
+                {
+                    "正文": supported_text,
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "three-borders-pay",
+                },
+                {
+                    "正文": acting_text,
+                    "动作类型": "acting_appointment",
+                    "目标类型": "office",
+                    "目标ID": "兵部尚书",
+                },
+            ],
+        },
+    }))
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="分别拟旨清查三边粮饷，并命洪承畴暂署兵部尚书",
+        answer="臣已分别拟妥。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}, {"kind": "draft"}],
+    )
+
+    pending = _pending_directives(db, state.turn)
+    assert len(pending) == 1
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["text"] == supported_text
+    assert payload["dossier_action_type"] == "policy"
+    assert acting_text not in payload["text"]
+
+
 def test_two_new_decrees_stage_as_independent_candidates(game, monkeypatch):
     """一夜拟两道各自独立的旨 → 两条独立 pending directive 候选，各自正文；
     不被并进同一条（AC1「不出现全部内容卡进一道圣旨」）。"""

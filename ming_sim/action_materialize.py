@@ -295,7 +295,10 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         drafts = ctx.batch_state["drafts"]
         if ctx.candidate_kind_index >= len(drafts):
             return
-        draft_res = dict(drafts[ctx.candidate_kind_index])
+        batch_draft = drafts[ctx.candidate_kind_index]
+        if not isinstance(batch_draft, dict):
+            return
+        draft_res = dict(batch_draft)
     else:
         draft_res = extract_draft_intent(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
