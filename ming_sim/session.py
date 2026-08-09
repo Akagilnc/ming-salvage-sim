@@ -2053,12 +2053,7 @@ class GameSession:
         text = (text or "").strip()
         if not text:
             raise ValueError("诏书正文不能为空。")
-        directives = self.db.list_directives(self.state, statuses=("draft",))
-        if directives:
-            raise ValueError("请逐道旨稿修改；最终诏书正文不能覆盖将要成案的可执行旨意。")
-        self.last_decree = text
-        self._decree_draft_fingerprint = self._draft_fingerprint(directives)
-        return self.last_decree
+        raise ValueError("最终诏书正文不可单独设置；请使用逐道旨意入口新增或修改旨稿。")
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None) -> ResolveResult:
@@ -2165,7 +2160,8 @@ class GameSession:
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
         directives = self.db.list_directives(self.state, statuses=("draft",))
-        if not directives:
+        dossier_only = bool(self.db.list_decree_dossiers(status="proposed"))
+        if not directives and not dossier_only:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
@@ -2188,9 +2184,11 @@ class GameSession:
         # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨
         # 提交为 draft；下方 resolve_directives 内的 commit_pending_actions 再次调用时
         # 对已 committed 行是幂等 no-op，不重复落库。
-        decree_text = decree or self.last_decree or write_decree_with_agno(
-            self.llm_config, self.agno_db, self.state, directives, db=self.db
-        )
+        decree_text = decree or self.last_decree
+        if not decree_text and directives:
+            decree_text = write_decree_with_agno(
+                self.llm_config, self.agno_db, self.state, directives, db=self.db
+            )
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。
@@ -2256,6 +2254,24 @@ class GameSession:
                 stored, ctx_for_event_binding.get("simulator_payload")
             )
         if not ready_replay:
+            # Dossier rescript choices are capability-bearing options.  Validate the
+            # complete batch before persisting any decision so malformed/cross-dossier
+            # payloads leave the retry state untouched.
+            for d in stored:
+                if not str(d.get("event_id") or "").startswith("dossier:"):
+                    continue
+                idx = int(d["idx"])
+                choice = choices[idx] if idx < len(choices) else None
+                options = d.get("options") or []
+                allowed = {
+                    (option.get("dossier_id"), option.get("dossier_decision"))
+                    for option in options if isinstance(option, dict)
+                }
+                selected = (
+                    choice.get("dossier_id"), choice.get("dossier_decision")
+                ) if isinstance(choice, dict) else (None, None)
+                if selected not in allowed:
+                    raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
             import json as _json
             for d in stored:
                 idx = int(d["idx"])

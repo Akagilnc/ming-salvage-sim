@@ -1357,9 +1357,6 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
-            CREATE INDEX IF NOT EXISTS idx_decree_dossiers_executor
-                ON decree_dossiers(executor_kind, executor_id, status);
-
             CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,

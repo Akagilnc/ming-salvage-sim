@@ -988,6 +988,40 @@ def classify_cli_action_intent(
     return candidates_from_classifier_payload(obj, soft=True)
 
 
+def _normalize_draft_mechanics(action: str, values: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    """Single/multi draft shared mechanical completeness boundary."""
+    mechanical = {
+        "amount": values.get("amount"),
+        "account": str(values.get("account") or "").strip(),
+        "execution_surface": str(values.get("execution_surface") or "").strip(),
+        "assignee": str(values.get("assignee") or "").strip(),
+        "authorization_id": str(values.get("authorization_id") or "").strip(),
+        "deadline_months": values.get("deadline_months"),
+    }
+    for key in ("amount", "deadline_months"):
+        try:
+            mechanical[key] = int(mechanical[key]) if mechanical[key] is not None else None
+        except (TypeError, ValueError):
+            mechanical[key] = None
+    if action == "grant_allocation" and not (
+        mechanical["amount"] is not None and mechanical["amount"] > 0
+        and mechanical["account"]
+        and mechanical["execution_surface"] in {"immediate", "in_transit"}
+    ):
+        action = "special_decree"
+    elif action == "assignment" and not mechanical["assignee"]:
+        action = "special_decree"
+    elif action == "authorization" and not (
+        mechanical["authorization_id"] and mechanical["assignee"]
+    ):
+        action = "special_decree"
+    elif action == "military_order" and not (
+        mechanical["deadline_months"] is not None and mechanical["deadline_months"] > 0
+    ):
+        action = "special_decree"
+    return action, mechanical
+
+
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
@@ -1019,7 +1053,8 @@ def extract_draft_intent(
             '{"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"..."},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
-            '"目标ID":"...","承办人":"...","期限月数":3}]}\n'
+            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"承办人":"...","授权ID":"","期限月数":3}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             "【皇帝】" + (player_message or "（无）") + "\n"
             "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
@@ -1041,22 +1076,20 @@ def extract_draft_intent(
             target_id = str(value.get("目标ID") or "").strip()
             if not text or action not in DIRECTIVE_ACTION_TYPES or not target_kind or not target_id:
                 continue
-            item = {
-                "draft_action": "拟旨",
-                "draft_text": text,
-                "dossier_action_type": action,
-                "target_kind": target_kind,
-                "target_id": target_id,
-                "target_candidate": "",
+            raw_mechanical = {
+                target: value.get(source)
+                for source, target in (
+                    ("金额", "amount"), ("账户", "account"),
+                    ("执行面", "execution_surface"), ("承办人", "assignee"),
+                    ("授权ID", "authorization_id"), ("期限月数", "deadline_months"),
+                )
             }
-            for source, target in (
-                ("金额", "amount"), ("账户", "account"), ("执行面", "execution_surface"),
-                ("承办人", "assignee"), ("授权ID", "authorization_id"),
-                ("期限月数", "deadline_months"),
-            ):
-                if value.get(source) not in (None, ""):
-                    item[target] = value[source]
-            drafts.append(item)
+            action, mechanical = _normalize_draft_mechanics(action, raw_mechanical)
+            drafts.append({
+                "draft_action": "拟旨", "draft_text": text,
+                "dossier_action_type": action, "target_kind": target_kind,
+                "target_id": target_id, "target_candidate": "", **mechanical,
+            })
         if len(drafts) != draft_count or len({d["draft_text"] for d in drafts}) != draft_count:
             drafts = []
         return {
@@ -1153,48 +1186,15 @@ def extract_draft_intent(
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "").strip()
-    mechanical = {
-        "amount": obj.get("金额"),
-        "account": str(obj.get("账户") or "").strip(),
+    dossier_action, mechanical = _normalize_draft_mechanics(dossier_action, {
+        "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": (
-            str(obj.get("执行面") or "in_transit").strip()
+            str(obj.get("执行面") or "in_transit")
             if dossier_action == "grant_allocation" else ""
         ),
-        "assignee": str(obj.get("承办人") or "").strip(),
-        "authorization_id": str(obj.get("授权ID") or "").strip(),
+        "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
         "deadline_months": obj.get("期限月数"),
-    }
-    try:
-        mechanical["amount"] = (
-            int(mechanical["amount"]) if mechanical["amount"] is not None else None
-        )
-    except (TypeError, ValueError):
-        mechanical["amount"] = None
-    try:
-        mechanical["deadline_months"] = (
-            int(mechanical["deadline_months"])
-            if mechanical["deadline_months"] is not None else None
-        )
-    except (TypeError, ValueError):
-        mechanical["deadline_months"] = None
-    complete = {
-        "grant_allocation": (
-            mechanical["amount"] is not None
-            and mechanical["amount"] > 0
-            and bool(mechanical["account"])
-            and mechanical["execution_surface"] in {"immediate", "in_transit"}
-        ),
-        "assignment": bool(mechanical["assignee"]),
-        "authorization": bool(
-            mechanical["authorization_id"] and mechanical["assignee"]
-        ),
-        "military_order": bool(
-            mechanical["deadline_months"] is not None
-            and mechanical["deadline_months"] > 0
-        ),
-    }
-    if dossier_action in complete and not complete[dossier_action]:
-        dossier_action = "special_decree"
+    })
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
