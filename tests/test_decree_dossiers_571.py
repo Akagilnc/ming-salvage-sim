@@ -1872,9 +1872,15 @@ def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft
         "目标类型": "office",
         "目标ID": "兵部尚书",
     }
+    second_acting = {
+        "正文": "命卢象升暂署五军都督府都督同知",
+        "动作类型": "acting_appointment",
+        "目标类型": "office",
+        "目标ID": "五军都督府都督同知",
+    }
     raw = (
         {"拟旨意图": "拟旨", **acting}
-        if draft_count == 1 else {"成品旨稿": [acting, acting]}
+        if draft_count == 1 else {"成品旨稿": [acting, second_acting]}
     )
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
