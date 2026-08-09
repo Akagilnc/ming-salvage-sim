@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 
 def _actor(db):
     return str(db.conn.execute(
@@ -241,13 +243,36 @@ def test_real_module_extractor_traces_private_context_through_settlement(game, m
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db, state, content = game
-    order_id, dossier_id = _order(db, state, deadline=1)
-    assert db.list_monthly_dossier_progress_nudges() == []
+    order_id, dossier_id = _order(db, state, deadline=4)
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
 
-    # rush/update changes the current order deadline; the dossier's copied deadline is stale.
-    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn + 3, order_id))
+    # The current deadline span is authoritative; issuance age and the dossier copy are not.
+    state.turn += 5
+    db.rush_secret_order(order_id, state, 1)
+    assert db.list_monthly_dossier_progress_nudges() == []
+    db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
     assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
+
+
+@pytest.mark.parametrize("action", ["新建", "更新"])
+def test_pending_long_secret_order_routes_cli_no_edict_to_full_settlement(game, monkeypatch, action):
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    target_id = None
+    if action == "更新":
+        target_id, _ = _order(db, state, deadline=1)
+    db.stage_pending_action(state.turn, "secret_order", action, _actor(db), {
+        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"], "deadline_months": 3,
+    }, target_id=target_id)
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content, session.registry = db, state, content, None
+    calls = []
+    monkeypatch.setattr(session, "resolve_turn", lambda: calls.append("full") or "settled")
+
+    assert session.advance_without_decree() == "settled"
+    assert calls == ["full"]
 
 
 def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game, monkeypatch):
@@ -256,7 +281,9 @@ def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game
     import web_app
 
     db, state, content = game
-    _order(db, state)
+    db.stage_pending_action(state.turn, "secret_order", "新建", _actor(db), {
+        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"], "deadline_months": 3,
+    })
     calls = []
 
     class Session:
@@ -404,4 +431,11 @@ def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
         {"dossier_id": dossier_id, "progress_band": "启程", "memorial_text": "首批出京"},
             {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
         ])
+    for invalid_id in (True, 1.0, 0, -1):
+        with pytest.raises(ValueError, match="案卷编号无效"):
+            db.record_monthly_dossier_progress(state.turn, [{
+                "dossier_id": invalid_id,
+                "progress_band": "伪进展",
+                "memorial_text": "不得命中真实案卷",
+            }])
     assert db.list_dossier_progress(dossier_id) == []

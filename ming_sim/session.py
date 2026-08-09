@@ -36,6 +36,7 @@ from ming_sim.db import (
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
+    _requires_full_settlement,
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
@@ -2307,12 +2308,7 @@ class GameSession:
         """CLI 退朝无草案：仅财政 tick + 推进。"""
         has_default_approved_work = bool(
             self.db.list_directives(self.state, statuses=("pending", "draft"))
-        ) or any(
-            row.get("kind") == "directive"
-            for row in self.db.list_pending_actions(self.state.turn)
-        ) or bool(self.db.list_decree_dossiers(status="proposed")) or bool(
-            self.db.list_monthly_dossier_progress_nudges()
-        )
+        ) or _requires_full_settlement(self.state, self.db)
         if has_default_approved_work:
             return self.resolve_turn()
         advanced = advance_without_edict(
