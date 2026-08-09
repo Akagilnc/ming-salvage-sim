@@ -440,6 +440,7 @@ export type ExtractionPendingStatus = {
 
 export type ChatResponse = {
   answer: string;
+  night_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];

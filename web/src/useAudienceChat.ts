@@ -27,6 +27,8 @@ export type AudienceHistoryData = {
   mindreading_pending?: boolean;
   /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
   pending_turn_ids?: number[];
+  /** Persisted current open-night identity; 0 means no open audience night. */
+  night_id: number;
   /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
   reply_retry?: ReplyRetry | null;
 };
@@ -51,6 +53,7 @@ export function useAudienceChat(
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
+  const [currentNightId, setCurrentNightId] = React.useState<number>(0);
   // 短暂请求归属：每次 sendChat 自增。
   const requestTokenRef = React.useRef(0);
   // 全部在飞流的取消句柄：sendChat 每次登记自己的 controller、结束即摘除。close/cancel 须
@@ -82,6 +85,7 @@ export function useAudienceChat(
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
     setStreamingMinisterMessage("");
+    setCurrentNightId(0);
   }, []);
 
   const clearPendingText = React.useCallback(() => {
@@ -106,6 +110,7 @@ export function useAudienceChat(
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
+      setCurrentNightId(Number(data.night_id || 0));
       // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
       const batch = ++pollBatchRef.current;
       const batchAlive = () =>
@@ -155,7 +160,10 @@ export function useAudienceChat(
                 setBusy("");
               }
               // 历史快照：generation + 面板守卫（幂等 turn-identified，仍不越面板）
-              if (historyFresh()) dispatchChat({ type: "history", history: doneData.history });
+              if (historyFresh()) {
+                dispatchChat({ type: "history", history: doneData.history });
+                if (typeof doneData.night_id === "number") setCurrentNightId(doneData.night_id);
+              }
               // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
               cb.onDone?.(doneData);
             },
@@ -191,6 +199,7 @@ export function useAudienceChat(
 
   return {
     chat,
+    currentNightId,
     pendingUserMessage,
     streamingMinisterMessage,
     resetPanel,

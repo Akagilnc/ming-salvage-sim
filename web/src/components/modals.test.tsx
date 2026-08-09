@@ -42,6 +42,7 @@ function renderModal(props: {
   minister: Minister;
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
+  currentNightId?: number;
   chat?: ChatMessage[];
   busy?: string;
   onCancel?: () => void;
@@ -54,6 +55,7 @@ function renderModal(props: {
   suggestions?: Suggestion[];
   onSend?: (text?: string) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
+  registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerChatDispatch?: (dispatch: React.Dispatch<ChatAction>) => void;
 }) {
   const host = document.createElement("div");
@@ -64,6 +66,7 @@ function renderModal(props: {
   // (ChatModal is a controlled component; frozen input="" would hide real fill).
   function Harness() {
     const [input, setInput] = React.useState("");
+    const [currentNightId, setCurrentNightId] = React.useState(props.currentNightId);
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
@@ -75,12 +78,14 @@ function renderModal(props: {
       })),
     }), []);
     React.useEffect(() => props.registerChatUpdate?.(setChat), [setChat]);
+    React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
     return (
       <ChatModal
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
+        currentNightId={currentNightId}
         busy={props.busy ?? ""}
         chat={chat}
         suggestions={props.suggestions ?? []}
@@ -464,7 +469,36 @@ describe("ChatModal — organic markdown display cleanup", () => {
 });
 
 describe("ChatModal — single night-scroll authority (#539)", () => {
-  it("drops a withdrawn or replaced-night snapshot before a failed refresh", async () => {
+  it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
+    let rejectRefresh!: (reason?: unknown) => void;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+        { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
+        { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
+        { role: "attendant", speaker: "王承恩", content: "旧轮迟到递话", chat_turn_id: 1, record_id: 91 },
+      ] }) })
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateNight!: (nightId: number) => void;
+    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
+      chat: [{ role: "user", content: "旧夜问话", chatTurnId: 1 }],
+      registerNightUpdate: (update) => { updateNight = update; } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("同夜他臣");
+    expect(document.body.textContent).toContain("旧轮迟到递话");
+
+    await act(async () => { updateNight(24); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧夜问话");
+    expect(document.body.textContent).not.toContain("旧夜答复");
+    expect(document.body.textContent).not.toContain("同夜他臣");
+    expect(document.body.textContent).not.toContain("旧轮迟到递话");
+
+    await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("旧夜问话");
+  });
+
+  it("drops a withdrawn snapshot before a failed refresh", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
         { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },

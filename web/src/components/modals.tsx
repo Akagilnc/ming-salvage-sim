@@ -532,6 +532,7 @@ export function ChatModal({
   minister,
   portraitPrefix,
   scrollMode = "audience",
+  currentNightId,
   chat,
   suggestions,
   pendingUserMessage,
@@ -561,6 +562,8 @@ export function ChatModal({
   minister: Minister;
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
+  /** Persisted open-night identity received through the player chat entry. */
+  currentNightId?: number;
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
@@ -625,12 +628,13 @@ export function ChatModal({
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
   const snapshotStillCurrent = (state: typeof scrollState): boolean => {
     if (state.kind !== "night") return true;
+    if (currentNightId !== undefined) return state.nightId === currentNightId;
+    // Compatibility for isolated/legacy callers that have not entered through the
+    // persisted player projection. Production audience chat always supplies identity.
     const chatTurnIds = new Set(chat.map((message) => message.chatTurnId).filter((id): id is number => !!id));
-    const ministerSnapshotIds = new Set(state.messages
-      .filter((message) => message.speaker === minister.name && message.role !== "scene")
-      .map((message) => message.chat_turn_id)
-      .filter((id): id is number => !!id));
-    return ![...ministerSnapshotIds].some((id) => !chatTurnIds.has(id));
+    return !state.messages.some((message) =>
+      message.speaker === minister.name && message.role !== "scene" &&
+      !!message.chat_turn_id && !chatTurnIds.has(message.chat_turn_id));
   };
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
@@ -684,7 +688,7 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat, scrollMode]);
+  }, [minister.name, chat, scrollMode, currentNightId]);
 
   if (pendingUserMessage) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });

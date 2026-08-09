@@ -1525,9 +1525,16 @@ class WebGame:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
                 self.db.append_chat_message(minister_name, turn, "minister", answer)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        open_night = None
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
         return {
             "minister": minister_name,
             "answer": answer,
+            # Persisted identity travels with the real player response; the web client
+            # never infers night ownership from cross-night personal chat history.
+            "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
             # 前端 setChat 不再抹掉先前浮现的读心递话。
             "history": self.chat_projection(minister_name),
@@ -3364,8 +3371,11 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     game = get_game()
     character = game.session._character(minister_name)
     mind = game.mindreading_for_minister(minister_name)
+    from ming_sim.audience_night import get_open_night
+    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
     return {
         "minister": game.public_character(character),
+        "night_id": int(open_night["id"]) if open_night else 0,
         # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
         "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
