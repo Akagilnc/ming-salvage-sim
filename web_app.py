@@ -3256,8 +3256,19 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
 @app.get("/api/history/turns")
 async def api_history_turns() -> Dict[str, Any]:
     """已存档回合列表（turn_reports / turn_extractions / 已颁诏 turn_directives 并集）。"""
-    turns = get_game().db.list_archived_turns()
-    return {"turns": [{k: v for k, v in item.items() if k != "has_extraction"} for item in turns]}
+    db = get_game().db
+    turns = db.list_archived_turns()
+    closed_nights = {
+        int(row["turn"]): int(row["night_id"])
+        for row in db.conn.execute(
+            "SELECT turn, MAX(id) AS night_id FROM audience_nights WHERE status='closed' GROUP BY turn"
+        ).fetchall()
+    }
+    return {"turns": [
+        {**{k: v for k, v in item.items() if k != "has_extraction"},
+         **({"night_id": closed_nights[int(item["turn"])]} if int(item["turn"]) in closed_nights else {})}
+        for item in turns
+    ]}
 
 
 @app.get("/api/history/turn/{turn}")
@@ -3340,7 +3351,7 @@ def _require_active_minister(minister_name: str) -> None:
 
 
 @app.get("/api/audience/scroll")
-async def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
+def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
     """Shared live/read-only projection of one persisted audience scroll."""
     from ming_sim.audience_night import get_night, get_open_night, read_night_scroll
 

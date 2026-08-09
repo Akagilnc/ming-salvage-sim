@@ -300,6 +300,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
+  const [archivedScroll, setArchivedScroll] = React.useState<AudienceScrollMessage[] | null>(null);
 
   React.useEffect(() => {
     let alive = true;
@@ -326,12 +327,22 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
     let alive = true;
     setDetailLoading(true);
     setDetailError("");
+    setArchivedScroll(null);
     (async () => {
       try {
-        const resp = await fetch(`/api/history/turn/${selectedTurn}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        if (alive) setDetail(data);
+        const selected = turns.find((item) => item.turn === selectedTurn);
+        const [detailResp, scrollResp] = await Promise.all([
+          fetch(`/api/history/turn/${selectedTurn}`),
+          selected?.night_id ? fetch(`/api/audience/scroll?night_id=${selected.night_id}`) : Promise.resolve(null),
+        ]);
+        if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
+        if (scrollResp && !scrollResp.ok) throw new Error(`HTTP ${scrollResp.status}`);
+        const data = await detailResp.json();
+        const scrollData = scrollResp ? await scrollResp.json() : null;
+        if (alive) {
+          setDetail(data);
+          setArchivedScroll(scrollData?.messages || null);
+        }
       } catch (e: any) {
         if (alive) setDetailError(e?.message || "加载失败");
       } finally {
@@ -339,7 +350,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
       }
     })();
     return () => { alive = false; };
-  }, [selectedTurn]);
+  }, [selectedTurn, turns]);
 
   const subtitle = turns.length ? `共 ${turns.length} 月存档` : "尚无存档";
 
@@ -378,6 +389,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             error={detailError}
             detail={detail}
             selectedTurn={selectedTurn}
+            archivedScroll={archivedScroll}
           />
         </article>
       </div>
@@ -390,11 +402,13 @@ export function HistoryDetailView({
   error,
   detail,
   selectedTurn,
+  archivedScroll = null,
 }: {
   loading: boolean;
   error: string;
   detail: HistoryDetail | null;
   selectedTurn: number | null;
+  archivedScroll?: AudienceScrollMessage[] | null;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
   if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
@@ -403,6 +417,12 @@ export function HistoryDetailView({
 
   return (
     <>
+      {archivedScroll ? (
+        <section className="document-section modal-bg-chat">
+          <h3 className="extraction-section-title">召对记录</h3>
+          <ScrollMessages messages={archivedScroll} ministerName="" />
+        </section>
+      ) : null}
       {detail.decree_text ? (
         <section className="document-section">
           <h3 className="extraction-section-title">本月诏书</h3>
@@ -498,9 +518,20 @@ export function BriefReport({ title, items }: { title: string; items: string[] }
 }
 
 
+function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string }) {
+  return <>{messages.map((message, index) => {
+    const pending = "pending" in message && message.pending;
+    const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
+    const beat = "beat" in message ? message.beat : "dialogue";
+    if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
+    return <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}><span>{speaker}</span><p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p></div>;
+  })}</>;
+}
+
 export function ChatModal({
   minister,
   portraitPrefix,
+  scrollMode = "audience",
   chat,
   suggestions,
   pendingUserMessage,
@@ -529,6 +560,7 @@ export function ChatModal({
 }: {
   minister: Minister;
   portraitPrefix: string;
+  scrollMode?: "audience" | "legacy";
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
@@ -592,16 +624,24 @@ export function ChatModal({
   };
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
+    if (scrollMode === "legacy") return [...chat];
     if (scrollState.kind !== "night") return scrollState.kind === "none" ? [...chat] : [];
     const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...scrollState.messages];
+    const currentTurnIds = new Set(scrollState.messages.map((message) => message.chat_turn_id).filter((id): id is number => !!id));
     const present = new Set(merged.map(messageIdentity).filter((identity): identity is string => identity !== null));
-    for (let index = 0; index < chat.length; index += 1) {
-      const message = chat[index];
+    for (const message of chat) {
       const identity = chatIdentity(message);
-      if (!identity || present.has(identity)) continue;
-      const following = chat.slice(index + 1).map(chatIdentity).find((candidate) => candidate && present.has(candidate));
-      const insertion = following ? merged.findIndex((candidate) => messageIdentity(candidate) === following) : merged.length;
-      merged.splice(insertion < 0 ? merged.length : insertion, 0, message);
+      if (!identity || !message.chatTurnId || !currentTurnIds.has(message.chatTurnId) || present.has(identity)) continue;
+      let insertion = merged.length;
+      for (let index = merged.length - 1; index >= 0; index -= 1) {
+        const candidate = merged[index];
+        const turnId = "chatTurnId" in candidate ? candidate.chatTurnId : ("chat_turn_id" in candidate ? candidate.chat_turn_id : undefined);
+        if (turnId === message.chatTurnId) {
+          insertion = index + 1;
+          break;
+        }
+      }
+      merged.splice(insertion, 0, message);
       present.add(identity);
     }
     return merged;
@@ -613,6 +653,10 @@ export function ChatModal({
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
     setScrollState((current) => current.kind === "night" ? current : { kind: "loading" });
+    if (scrollMode === "legacy") {
+      setScrollState({ kind: "none" });
+      return () => { alive = false; };
+    }
     api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
       .then((data) => {
         if (!alive) return;
@@ -630,7 +674,7 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat]);
+  }, [minister.name, chat, scrollMode]);
 
   if (pendingUserMessage) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
@@ -734,28 +778,9 @@ export function ChatModal({
 
       <section className="modal-pane chat-main">
         <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
-          {displayMessages.map((message, index) => {
-            const pending = "pending" in message && message.pending;
-            const speaker = "speaker" in message
-              ? message.speaker
-              : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : minister.name;
-            const beat = "beat" in message ? message.beat : "dialogue";
-            if (message.role === "scene") {
-              return (
-                <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
-                  {message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}
-                </div>
-              );
-            }
-            return (
-              <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
-                <span>{speaker}</span>
-                <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
-              </div>
-            );
-          })}
+          <ScrollMessages messages={displayMessages} ministerName={minister.name} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
-            <div className="chat-system-note danger" role="alert">夜卷轴读取失败，请稍后重试。</div>
+            <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
