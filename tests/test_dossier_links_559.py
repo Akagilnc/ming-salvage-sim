@@ -67,8 +67,12 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
     )
 
     result = cli_backend._extract_secret_order(
-        "护卫边军饷银", "臣复述：只护案卷 11、12。", "孙承宗",
-        dossier_candidates=[{"id": 11}, {"id": 12}, {"id": 13}],
+        "护卫边军饷银", "臣领命：只护辽东补饷、宣大补饷。", "孙承宗",
+        dossier_candidates=[
+            {"id": 11, "decree_text": "辽东补饷"},
+            {"id": 12, "decree_text": "宣大补饷"},
+            {"id": 13, "decree_text": "东江补饷"},
+        ],
     )
 
     assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
@@ -85,8 +89,8 @@ def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monk
     )
 
     result = cli_backend._extract_secret_order(
-        "护送旧案", "臣领命，护卫案卷 99。", "孙承宗",
-        dossier_candidates=[{"id": 11}],
+        "护送旧案", "臣领命，护卫虚构旧旨。", "孙承宗",
+        dossier_candidates=[{"id": 11, "decree_text": "辽东补饷"}],
     )
 
     assert result["dossier_links"] == []
@@ -94,14 +98,22 @@ def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monk
 
 def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     db, state, _ = game
+    draft_id = _make_dossier(db, state, "尚未明发饷案")
     public_id = _make_dossier(db, state, "公开饷案")
+    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (public_id,))
+    db.conn.commit()
     other_order = db.create_secret_order(state, "卢象升", "密查", "不可外泄", [])
     other_secret = db.get_dossier_for_secret_order(other_order)
 
     visible = db.list_referenceable_dossiers("孙承宗", state.turn)
 
-    assert public_id in {row["id"] for row in visible}
-    assert other_secret["id"] not in {row["id"] for row in visible}
+    visible_ids = {row["id"] for row in visible}
+    assert public_id in visible_ids
+    assert draft_id not in visible_ids
+    assert other_secret["id"] not in visible_ids
+    assert other_secret["id"] in {
+        row["id"] for row in db.list_referenceable_dossiers("卢象升", state.turn)
+    }
 
 
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):

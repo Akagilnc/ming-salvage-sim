@@ -1175,7 +1175,13 @@ class GameSession:
                                 "deadline_months": payload.get("deadline_months") or 0,
                                 "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                 "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
-                                "dossier_links": payload.get("dossier_links") if isinstance(payload.get("dossier_links"), list) else [],
+                                "dossier_links": __import__(
+                                    "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
+                                ).confirm_dossier_links(
+                                    answer,
+                                    self.db.list_referenceable_dossiers(character.name, self.state.turn),
+                                    payload.get("dossier_links"),
+                                ),
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1233,8 +1239,8 @@ class GameSession:
             augmented = brief + "\n\n" + augmented
         candidates = self.db.list_referenceable_dossiers(character.name, self.state.turn)
         if candidates:
-            dossier_brief = "【可引用旧案卷（密令关联须由大臣复述具体编号）】\n" + "\n".join(
-                f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
+            dossier_brief = "【可参考既有旨意（若有关联，请按标题或事项复述；勿向陛下念内部编号）】\n" + "\n".join(
+                f"- [内部键 {int(row['id'])}] {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
                 for row in candidates
             )
             augmented = dossier_brief + "\n\n" + augmented
