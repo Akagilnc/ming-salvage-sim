@@ -559,6 +559,7 @@ export function ChatModal({
   pendingUserMessage,
   pendingIdentity,
   failedIdentity,
+  scrollGeneration,
   streamingMinisterMessage,
   chatNotice,
   chatFailures,
@@ -596,6 +597,8 @@ export function ChatModal({
   pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   /** Provider-failed persisted turn whose generating snapshot must be retired. */
   failedIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
+  /** 成功落账代次；变化时重读公共卷轴。 */
+  scrollGeneration?: number;
   streamingMinisterMessage: string;
   chatNotice: string;
   chatFailures: PendingActionFailure[];
@@ -688,7 +691,10 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity]);
+  }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
+    // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
+    // retain the historical chat-driven refresh contract until they adopt that signal.
+    scrollGeneration === undefined ? chat : scrollGeneration]);
 
   const pendingAlreadyPersisted = !!pendingIdentity
     && pendingIdentity.campaign_id === currentCampaignId

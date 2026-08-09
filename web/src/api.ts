@@ -82,6 +82,8 @@ export type StreamChatOptions = {
   onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
   onDone?: (payload: ChatResponse) => void;
+  /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
+  onEnd?: () => void;
 };
 
 export const streamChat = async (
@@ -144,6 +146,7 @@ export const streamChat = async (
         if (!donePayload) {
           throw new Error("流式回复中断，未收到完成事件。");
         }
+        options.onEnd?.();
         return donePayload;
       } else if (parsed.event === "error") {
         const identity = {

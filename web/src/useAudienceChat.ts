@@ -50,6 +50,8 @@ export function useAudienceChat(
   // 面板一关（任何 departure：关闭/Escape/转诏书/切模态/退菜单都令其为 false）即取消实时流
   // 观察者 + 作废重开 poll-batch。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
   chatOpen: boolean,
+  /** 公共卷轴尾随写入落账后的唯一失效出口。 */
+  onScrollSettled?: () => void,
 ) {
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
@@ -196,6 +198,7 @@ export function useAudienceChat(
                 });
               }
             },
+            onEnd: onScrollSettled,
           },
         );
       } catch (err) {
@@ -213,7 +216,7 @@ export function useAudienceChat(
         activeAbortsRef.current.delete(abort);
       }
     },
-    [setBusy, selectedMinisterRef],
+    [setBusy, selectedMinisterRef, onScrollSettled],
   );
 
   const cancelChat = React.useCallback(() => {
