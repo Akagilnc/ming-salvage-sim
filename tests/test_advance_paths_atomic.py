@@ -447,11 +447,16 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         sess.resolve_turn()
+    # 首败只回滚并保留 ready 真源，允许原子重放；第二次同 payload 失败且两份
+    # ADR0008 错误包都落成后才降级，避免一次偶发代码错误毁掉可重放产物。
+    assert db.get_resolve_context(turn)["extracted"] is not None
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn()
 
     ctx_after = db.get_resolve_context(turn)
-    assert ctx_after is not None and ctx_after["extracted"] is None  # 降级非 ready：软死锁不可达，phase1 字段保留
+    assert ctx_after is not None and ctx_after["extracted"] is None
 
-    # 第二次重试：apply 恢复正常，无 ready context → 走重新推演（fallthrough）。
+    # 第三次重试：apply 恢复正常，无 ready context → 走重新推演（fallthrough）。
     monkeypatch.undo()
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
@@ -873,10 +878,13 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         sess.submit_decisions([{"label": "战"}])
+    assert db.get_resolve_context(turn)["extracted"] is not None  # 首败仍可原子重放
+    with pytest.raises(SettlementAbort):
+        sess.submit_decisions([{"label": "战"}])
 
     ctx = db.get_resolve_context(turn)
     assert ctx is not None  # 行没被删（phase1 字段是重抽的数据依赖）
-    assert ctx["extracted"] is None  # 降级非 ready
+    assert ctx["extracted"] is None  # 重复失败且两份错误包后降级非 ready
     assert ctx["narrative"] == "裁断后邸报"
 
     # 重试：apply 恢复 + stub 重抽成功 → phase2 走非 ready 分支重抽并完整结算。
@@ -1002,11 +1010,13 @@ def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
 
     def _clear_boom(*a, **k):
         raise RuntimeError("clear boom")
-    monkeypatch.setattr(dm, "clear_for_resimulation", _clear_boom)
-
     sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn()  # 首败不调用逃生口
+
+    monkeypatch.setattr(dm, "clear_for_resimulation", _clear_boom)
     with pytest.raises(SettlementAbort) as ei:
-        sess.resolve_turn()
+        sess.resolve_turn()  # 重复失败才尝试降级
     assert isinstance(ei.value.__cause__, RuntimeError)
     assert "clear boom" in str(ei.value.__cause__)
 

@@ -1,4 +1,8 @@
+import shutil
+import sqlite3
+
 from ming_sim import issues as issue_engine
+from ming_sim.db import GameDB
 
 
 SPONTANEOUS = "盘面自发"
@@ -55,6 +59,62 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     assert {row["key"] for row in fiscal} == {"河工月费_base", "河工月费_rate"}
     assert {row["origin_ref"] for row in fiscal} == {f"dossier:{dossier_id}"}
     assert all(row["dossier_id"] is None for row in db.list_economy_moves_for_dossier(dossier_id))
+
+
+def test_fiscal_remove_keeps_durable_origin_tombstone(game):
+    db, state, content = game
+    dossier_id = _promulgated_policy(db, state)
+    origin = f"dossier:{dossier_id}"
+    db.create_fiscal_item("待裁月费", "国库", "expense", "待裁月费", 4,
+                          origin_ref=origin)
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "fiscal_removes": [{"key": "待裁月费", "reason": "奉旨裁撤", "origin_ref": origin}],
+    }, content=content)
+
+    assert result["fiscal_removes"][0]["key"] == "待裁月费_base"
+    assert db.conn.execute("SELECT 1 FROM fiscal_config WHERE key LIKE '待裁月费%'").fetchone() is None
+    rows = db.conn.execute(
+        "SELECT key, origin_ref, reason FROM fiscal_config_tombstones WHERE origin_ref=? ORDER BY key",
+        (origin,),
+    ).fetchall()
+    assert [(r["key"], r["origin_ref"], r["reason"]) for r in rows] == [
+        ("待裁月费_base", origin, "奉旨裁撤"),
+        ("待裁月费_rate", origin, "奉旨裁撤"),
+    ]
+
+
+def test_legacy_economy_ledger_origin_backfill_uses_real_dossier_only(game, tmp_path):
+    db, state, content = game
+    valid_id = _promulgated_policy(db, state)
+    legacy_path = tmp_path / "legacy-origin.db"
+    db.conn.commit()
+    shutil.copy2(db.path, legacy_path)
+    conn = sqlite3.connect(legacy_path)
+    conn.execute("ALTER TABLE economy_ledger DROP COLUMN origin_ref")
+    conn.execute(
+        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "有效案卷", valid_id),
+    )
+    conn.execute(
+        "INSERT INTO economy_ledger (turn,year,period,account,delta,balance_after,category,reason,dossier_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (state.turn, state.year, state.period, "国库", -1, 0, "旧账", "悬空案卷", valid_id + 9999),
+    )
+    conn.commit()
+    conn.close()
+
+    migrated = GameDB(str(legacy_path), content)
+    try:
+        rows = migrated.conn.execute(
+            "SELECT reason, origin_ref FROM economy_ledger WHERE reason IN ('有效案卷','悬空案卷') ORDER BY reason"
+        ).fetchall()
+        assert {r["reason"]: r["origin_ref"] for r in rows} == {
+            "有效案卷": f"dossier:{valid_id}", "悬空案卷": "",
+        }
+    finally:
+        migrated.close()
 
 
 def test_fabricated_origin_is_rejected_even_without_a_dossier(game):
