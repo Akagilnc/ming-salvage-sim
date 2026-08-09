@@ -6993,3 +6993,27 @@ button:disabled {
 .legacy-item + .legacy-item {
   border-top: 1px solid rgba(107, 76, 36, 0.18);
 }
+
+
+/* ===== 顶栏五匾：统一左对齐排版；修余额金字被旧规则压成黑字 ===== */
+.hud2-stage .hud2-year,
+.hud2-stage .hud2-metric-pair,
+.hud2-stage .hud2-legacy-slot,
+.hud2-stage .hud2-slot:has(.budget-hover) {
+  width: 9.6%;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+}
+.hud2-slot .status-money {
+  align-items: flex-start;
+  text-align: left;
+}
+.hud2-slot .status-money b {
+  color: #f6eccf;
+}
+
+/* 导航挂牌：显式居中保险（防任何覆盖吃掉 translate） */
+.hud2-nav {
+  transform: translate(-50%, -50%);
+}
