@@ -10413,6 +10413,11 @@ class GameDB:
                      1 if verdict.get("midzhi_unpromulgatable") is True else 0,
                      strict_int(verdict.get("dossier_id"))),
                 )
+            # Consumption belongs to the same atomic unit as effect application;
+            # an outer settlement rollback restores both effects and this batch.
+            self.conn.execute(
+                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(state.turn),)
+            )
 
     def interrupt_dossiers_for_character(
         self, state: GameState, character_name: str, reason: str, *,
