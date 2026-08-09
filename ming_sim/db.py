@@ -9866,27 +9866,39 @@ class GameDB:
     def list_referenceable_dossiers(
         self, character_name: str, current_turn: int,
     ) -> List[Dict[str, object]]:
-        """Project reference candidates from durable publication/knowledge truth."""
+        """Project candidates from the same durable character-knowledge truth."""
+        from ming_sim.knowledge import knowledge_row_visible_to
+
         name = str(character_name or "")
+        known_secret_ids: set[int] = set()
+        knowledge_events = self._character_knowledge_events(name, include_exclusions=True)
+        if name:
+            knowledge_events += self._character_knowledge_events("", include_exclusions=True)
+        for event in knowledge_events:
+            if not knowledge_row_visible_to(self, event, name):
+                continue
+            source_id = str(event.get("source_id") or "")
+            match = re.match(r"secret_order_(?:brief|disclosure):(\d+)(?::|$)", source_id)
+            if match:
+                known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
             """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      s.title AS secret_title
+                      d.secret_order_id,s.title AS secret_title
                FROM decree_dossiers d
                LEFT JOIN secret_orders s ON s.id=d.secret_order_id
-               WHERE d.created_turn <= ? AND (
-                    (d.secret_order_id IS NULL AND d.status <> 'proposed')
-                    OR (d.secret_order_id IS NOT NULL AND (
-                        EXISTS (SELECT 1 FROM secret_order_briefs b
-                                WHERE b.order_id=d.secret_order_id AND b.minister_name=?)
-                        OR EXISTS (SELECT 1 FROM character_knowledge_events k
-                                   WHERE k.character_name IN ('', ?) AND
-                                         k.source_id LIKE ('secret_order_disclosure:' || d.secret_order_id || ':%'))
-                    ))
-               )
+               WHERE d.created_turn <= ?
                ORDER BY d.id DESC""",
-            (int(current_turn), name, name),
+            (int(current_turn),),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [
+            dict(row) for row in rows
+            if (
+                row["secret_order_id"] is None and str(row["status"]) != "proposed"
+            ) or (
+                row["secret_order_id"] is not None
+                and int(row["secret_order_id"]) in known_secret_ids
+            )
+        ]
 
     _DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 

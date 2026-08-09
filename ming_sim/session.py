@@ -1181,6 +1181,7 @@ class GameSession:
                                     answer,
                                     self.db.list_referenceable_dossiers(character.name, self.state.turn),
                                     payload.get("dossier_links"),
+                                    llm_config=self.llm_config,
                                 ),
                             },
                         )

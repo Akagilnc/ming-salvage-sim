@@ -61,10 +61,12 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
             {"目标案卷ID": "模糊的东江案", "类型": "护卫", "说明": "未钉死"},
         ],
     }
-    monkeypatch.setattr(
-        cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps(extracted, ensure_ascii=False), 1),
-    )
+    def run_extractor(*args, **kwargs):
+        value = ({"confirmed_ids": [11, 12]}
+                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
+        return json.dumps(value, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", run_extractor)
 
     result = cli_backend._extract_secret_order(
         "护卫边军饷银", "臣领命：只护辽东补饷、宣大补饷。", "孙承宗",
@@ -76,6 +78,42 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
     )
 
     assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
+
+
+@pytest.mark.parametrize("reply", [
+    "臣不能确认护卫辽东补饷。",
+    "臣只是引述旧案辽东补饷，并未承诺关联。",
+    "臣会照看那份饷案。",
+    "臣确认护卫辽东补饷补充。",
+])
+def test_semantic_verdict_rejects_negative_quote_vague_and_containment(monkeypatch, reply):
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_ids": []}), 1),
+    )
+    links = cli_backend.confirm_dossier_links(
+        reply,
+        [{"id": 11, "decree_text": "辽东补饷"},
+         {"id": 12, "decree_text": "辽东补饷补充"}],
+        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
+         {"target_dossier_id": 12, "relation_type": "护卫", "note": "护送补充案"}],
+    )
+    assert links == []
+
+
+def test_semantic_verdict_can_narrow_to_exactly_one_proposed_candidate(monkeypatch):
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_ids": [12, 999]}), 1),
+    )
+    links = cli_backend.confirm_dossier_links(
+        "臣明确确认接应辽东补饷补充案。",
+        [{"id": 11, "decree_text": "辽东补饷"},
+         {"id": 12, "decree_text": "辽东补饷补充"}],
+        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
+         {"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}],
+    )
+    assert links == [{"target_dossier_id": 12, "relation_type": "接应", "note": "接应补充案"}]
 
 
 def test_secret_order_extractor_rejects_model_id_outside_visible_candidates(monkeypatch):
@@ -113,6 +151,25 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     assert other_secret["id"] not in visible_ids
     assert other_secret["id"] in {
         row["id"] for row in db.list_referenceable_dossiers("卢象升", state.turn)
+    }
+
+
+def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
+    from ming_sim.knowledge import knowledge_row_visible_to
+
+    db, state, _ = game
+    order_id = db.create_secret_order(state, "卢象升", "密查辽饷", "不可外泄", [])
+    dossier = db.get_dossier_for_secret_order(order_id)
+    source_id = f"secret_order_disclosure:{order_id}:test"
+    db.record_public_knowledge_event(
+        state, "密查辽饷已披露", source_id=source_id, excluded_names=["孙承宗"])
+    event = db.conn.execute(
+        "SELECT * FROM character_knowledge_events WHERE source_id=?", (source_id,)
+    ).fetchone()
+
+    assert knowledge_row_visible_to(db, event, "孙承宗") is False
+    assert dossier["id"] not in {
+        row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }
 
 
