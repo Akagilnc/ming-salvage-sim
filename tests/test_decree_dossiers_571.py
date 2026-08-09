@@ -12,7 +12,7 @@ def _rejected_verdict(dossier_id):
         "blocked_layer": "six_offices", "primary_opponents": ["donglin"],
         "gatekeeper_id": None, "reason": "科臣封驳。",
         "criteria_snapshot": {
-            "imperial_authority_band": "low", "involved_offices": ["六科"],
+            "imperial_authority_band": "偏弱", "involved_offices": ["六科"],
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
     }
@@ -2088,13 +2088,10 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
 
     restored = GameDB(db.path, content=content)
     try:
-        row = restored.conn.execute(
-            "SELECT * FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
-            (dossier_id,),
-        ).fetchone()
-        assert json.loads(row["primary_opponents_json"]) == verdict["primary_opponents"]
+        row = restored.list_decree_dossier_decisions(dossier_id)[-1]
+        assert row["primary_opponents"] == verdict["primary_opponents"]
         assert row["gatekeeper_id"] is None
-        assert json.loads(row["criteria_snapshot_json"]) == verdict["criteria_snapshot"]
+        assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
         assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
         restored.close()
@@ -2112,4 +2109,23 @@ def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
     verdict = _rejected_verdict(dossier_id)
     verdict.pop(missing)
     with pytest.raises(ValueError, match="打回判决缺少"):
+        db.apply_dossier_verdicts(state, [verdict])
+
+
+@pytest.mark.parametrize(("field", "bad_value"), [
+    ("imperial_authority_band", "low"),
+    ("involved_offices", [1]),
+    ("authorization_ids", [{}]),
+    ("endorsement_entry_ids", [True]),
+    ("endorsement_entry_ids", ["1"]),
+])
+def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_value):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict["criteria_snapshot"][field] = bad_value
+    with pytest.raises(ValueError, match="typed 判据快照"):
         db.apply_dossier_verdicts(state, [verdict])
