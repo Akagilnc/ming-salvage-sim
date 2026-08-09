@@ -48,6 +48,7 @@ from pydantic import BaseModel
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+from ming_sim.strict_types import strict_int
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
@@ -1000,8 +1001,10 @@ def _normalize_draft_mechanics(action: str, values: Dict[str, Any]) -> tuple[str
     }
     for key in ("amount", "deadline_months"):
         try:
-            mechanical[key] = int(mechanical[key]) if mechanical[key] is not None else None
-        except (TypeError, ValueError):
+            mechanical[key] = strict_int(
+                mechanical[key], accept_numeric_strings=False
+            ) if mechanical[key] is not None else None
+        except ValueError:
             mechanical[key] = None
     if action == "grant_allocation" and not (
         mechanical["amount"] is not None and mechanical["amount"] > 0
@@ -1016,7 +1019,9 @@ def _normalize_draft_mechanics(action: str, values: Dict[str, Any]) -> tuple[str
     ):
         action = "special_decree"
     elif action == "military_order" and not (
-        mechanical["deadline_months"] is not None and mechanical["deadline_months"] > 0
+        mechanical["assignee"]
+        and mechanical["deadline_months"] is not None
+        and mechanical["deadline_months"] > 0
     ):
         action = "special_decree"
     return action, mechanical

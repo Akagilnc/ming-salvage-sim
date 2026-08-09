@@ -47,6 +47,7 @@ from ming_sim.relations import (
     normalize_evidence,
     validate_edge_kind,
 )
+from ming_sim.strict_types import strict_int
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -1366,6 +1367,9 @@ class GameDB:
                 rescript_action TEXT NOT NULL DEFAULT '',
                 reason TEXT NOT NULL DEFAULT '',
                 legal_reason_code TEXT NOT NULL DEFAULT '',
+                primary_opponents_json TEXT NOT NULL DEFAULT '[]',
+                gatekeeper_id TEXT,
+                criteria_snapshot_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
@@ -1793,6 +1797,11 @@ class GameDB:
             "decree_dossier_decisions", "blocked_layer", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
             "decree_dossier_decisions", "legal_reason_code", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossier_decisions", "primary_opponents_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
+        self.ensure_column(
+            "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_secret_order_dossiers()
@@ -9620,8 +9629,10 @@ class GameDB:
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
             try:
-                amount = int(normalized.get("amount"))
-            except (TypeError, ValueError):
+                amount = strict_int(
+                    normalized.get("amount"), accept_numeric_strings=False
+                )
+            except ValueError:
                 amount = 0
             account = str(normalized.get("account") or "").strip()
             if amount <= 0 or not account:
@@ -9660,9 +9671,15 @@ class GameDB:
                 normalized["authorization_id"] = authorization_id
         if action == "military_order":
             try:
-                due_turn = int(normalized.get("due_turn") or 0)
-                deadline = int(normalized.get("deadline_months") or 0)
-            except (TypeError, ValueError):
+                raw_due_turn = normalized.get("due_turn")
+                raw_deadline = normalized.get("deadline_months")
+                due_turn = strict_int(
+                    raw_due_turn, accept_numeric_strings=False
+                ) if raw_due_turn is not None else 0
+                deadline = strict_int(
+                    raw_deadline, accept_numeric_strings=False
+                ) if raw_deadline is not None else 0
+            except ValueError:
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
@@ -9969,7 +9986,11 @@ class GameDB:
 
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
-        blocked_layer: str = "", legal_reason_code: str = "", commit: bool = True,
+        blocked_layer: str = "", legal_reason_code: str = "",
+        primary_opponents: Optional[List[str]] = None,
+        gatekeeper_id: Optional[str] = None,
+        criteria_snapshot: Optional[Dict[str, object]] = None,
+        commit: bool = True,
     ) -> None:
         """颁布/批红组合态。rejected 与 hold 永不成为主链 status。"""
         if str(legal_reason_code or "").strip():
@@ -10038,8 +10059,9 @@ class GameDB:
             """
             INSERT INTO decree_dossier_decisions
                 (dossier_id,turn,decision,blocked_layer,rescript_action,reason,
-                 legal_reason_code)
-            VALUES (?,?,?,?,?,?,?)
+                 legal_reason_code,primary_opponents_json,gatekeeper_id,
+                 criteria_snapshot_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 int(dossier_id), current_turn,
@@ -10048,6 +10070,9 @@ class GameDB:
                 decision if decision in {"hold", "withdrawn"} else "",
                 str(reason or ""),
                 slot_legal_reason,
+                safe_json_dumps(primary_opponents or []),
+                str(gatekeeper_id).strip() if gatekeeper_id is not None else None,
+                safe_json_dumps(criteria_snapshot or {}),
             ),
         )
         self._commit_dossier_write(commit)
@@ -10141,6 +10166,9 @@ class GameDB:
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
         blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
+        primary_opponents: Optional[List[str]] = None,
+        gatekeeper_id: Optional[str] = None,
+        criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
     ) -> None:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
@@ -10148,7 +10176,10 @@ class GameDB:
             if decision not in {"promulgated", "force_promulgated"}:
                 self.record_dossier_decision(
                     dossier_id, decision, blocked_layer=blocked_layer,
-                    reason=reason, legal_reason_code=legal_reason_code, commit=False,
+                    reason=reason, legal_reason_code=legal_reason_code,
+                    primary_opponents=primary_opponents,
+                    gatekeeper_id=gatekeeper_id,
+                    criteria_snapshot=criteria_snapshot, commit=False,
                 )
                 return
             row = self.get_decree_dossier(dossier_id)
@@ -10275,15 +10306,35 @@ class GameDB:
             for verdict in verdicts:
                 if not isinstance(verdict, dict):
                     raise ValueError("案卷 verdict 须为对象")
+                decision = str(verdict.get("decision") or "")
+                opponents = verdict.get("primary_opponents")
+                snapshot = verdict.get("criteria_snapshot")
+                if decision == "rejected" and (
+                    str(verdict.get("blocked_layer") or "") not in
+                    (self._PROMULGATION_BLOCKED_LAYERS - {""})
+                    or not isinstance(opponents, list) or not opponents
+                    or any(not isinstance(item, str) or not item.strip() for item in opponents)
+                    or not str(verdict.get("reason") or "").strip()
+                    or not isinstance(snapshot, dict)
+                    or set(snapshot) != {
+                        "imperial_authority_band", "involved_offices",
+                        "authorization_ids", "endorsement_entry_ids",
+                    }
+                    or not isinstance(snapshot.get("involved_offices"), list)
+                    or not isinstance(snapshot.get("authorization_ids"), list)
+                    or not isinstance(snapshot.get("endorsement_entry_ids"), list)
+                ):
+                    raise ValueError("打回判决缺少关口、主否决方、缘由或完整判据快照")
                 self.apply_dossier_promulgation(
-                    state,
-                    int(verdict.get("dossier_id") or 0),
-                    str(verdict.get("decision") or ""),
+                    state, strict_int(verdict.get("dossier_id")), decision,
                     blocked_layer=str(verdict.get("blocked_layer") or ""),
                     reason=str(verdict.get("reason") or ""),
                     legal_reason_code=str(verdict.get("legal_reason_code") or ""),
-                    content=content,
-                    registry=registry,
+                    primary_opponents=opponents if isinstance(opponents, list) else None,
+                    gatekeeper_id=(str(verdict["gatekeeper_id"]).strip()
+                                   if verdict.get("gatekeeper_id") is not None else None),
+                    criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
+                    content=content, registry=registry,
                 )
 
     def interrupt_dossiers_for_character(
