@@ -6912,3 +6912,23 @@ button:disabled {
 .hud2-menu-btn:hover {
   background: linear-gradient(180deg, #4a3319, #2e1f0e);
 }
+
+
+/* ===== 邸报滚动条：细金半透明，融进羽化暗晕 ===== */
+.gazette-document {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 185, 106, 0.45) transparent;
+}
+.gazette-document::-webkit-scrollbar {
+  width: 6px;
+}
+.gazette-document::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gazette-document::-webkit-scrollbar-thumb {
+  background: rgba(216, 185, 106, 0.4);
+  border-radius: 3px;
+}
+.gazette-document::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 185, 106, 0.65);
+}
