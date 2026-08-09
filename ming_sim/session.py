@@ -2145,24 +2145,12 @@ class GameSession:
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
             self.db.confirm_directive(int(pending["id"]), self.state)
         directives = list(self.db.list_directives(self.state, statuses=("draft",)))
-        pending_directives = []
-        for pending in self.db.list_pending_actions(self.state.turn):
-            if pending.get("kind") != "directive":
-                continue
-            try:
-                payload = json.loads(str(pending.get("payload_json") or "{}"))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            text = str(payload.get("text") or "").strip()
-            if text:
-                # Negative ids make the read-only candidate participate in stale-decree
-                # fingerprinting without colliding with durable turn_directives ids.
-                pending_directives.append({
-                    "id": -int(pending["id"]), "text": text, "status": "pending",
-                    "source": "pending_action", "actor": str(payload.get("actor") or ""),
-                })
+        # DB owner supplies the canonical read-only default-approval projection.
+        # Negative preview ids participate in stale-decree fingerprinting without
+        # colliding with durable turn_directives ids.
+        pending_directives = self.db.preview_pending_directives(
+            self.state, content=getattr(self, "content", None),
+        )
         directives.extend(pending_directives)
         if pending_directives and recovered_source is None and (decree or "").strip():
             # The supplied decree predates these durable candidates; regenerate from

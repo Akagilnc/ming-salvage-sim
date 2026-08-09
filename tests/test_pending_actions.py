@@ -859,6 +859,83 @@ def test_web_advance_without_edict_default_approves_into_one_dossier(game, monke
     assert state.turn == turn_before + 1
 
 
+def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, monkeypatch):
+    """真实结算入口只把 DB owner 判定合法的候选送入拟诏与结算。"""
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession, ResolveResult
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    legal_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着户部清核辽饷。", "actor": "",
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "liao-pay-audit",
+        },
+    )
+    unclear_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着兵部再议边防。", "_needs_clarification": True,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "border-defense",
+        },
+    )
+    invalid_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着内库拨银。", "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "invalid-allocation",
+        },
+    )
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = session.llm_config = session.agno_db = None
+    session.last_decree = session.last_report = ""
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.auto_save = lambda _tag: None
+    seen = {}
+
+    def write_decree(_config, _agno, _state, directives, **_kwargs):
+        seen["write"] = list(directives)
+        return "奉旨清核辽饷"
+
+    def settle(st, game_db, _agno, _config, directives, decree_text, **_kwargs):
+        seen["settle"] = list(directives)
+        assert decree_text == "奉旨清核辽饷"
+        game_db.commit_pending_actions(st, content=content, registry=None)
+        st.next_period()
+        game_db.save_state(st)
+        return ResolveResult(awaiting=False, report="本月已结")
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", write_decree)
+    monkeypatch.setattr(session_mod, "resolve_directives", settle)
+
+    session.resolve_turn(inflight_wait_s=0.0)
+
+    assert [row["text"] for row in seen["write"]] == ["着户部清核辽饷。"]
+    assert seen["settle"] == seen["write"]
+    assert seen["write"][0]["actor"] == name
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (legal_id,)
+    ).fetchone()["status"] == "committed"
+    for rejected_id in (unclear_id, invalid_id):
+        assert db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (rejected_id,)
+        ).fetchone()["status"] == "pending"
+    directive_texts = [
+        row["text"] for row in db.conn.execute(
+            "SELECT text FROM turn_directives WHERE turn=?", (state.turn - 1,)
+        ).fetchall()
+    ]
+    assert directive_texts == ["着户部清核辽饷。"]
+    dossiers = db.list_decree_dossiers()
+    assert [row["pending_action_id"] for row in dossiers] == [legal_id]
+    joined = "".join(row["text"] for row in seen["settle"])
+    assert "兵部再议" not in joined and "内库拨银" not in joined
+
+
 def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
     """已有 draft 时 Web 结束回合走正常结算，而不是无诏快进。"""
     import asyncio
