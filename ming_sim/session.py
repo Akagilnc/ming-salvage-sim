@@ -38,7 +38,6 @@ from ming_sim.decree import (
     _provenance_from_stored,
     _requires_full_settlement,
     advance_without_edict,
-    materialize_pending_actions_for_advance,
     resolve_decisions_phase2,
     resolve_directives,
     resolve_settling_recovery,
@@ -2306,14 +2305,8 @@ class GameSession:
         return report
 
     def advance_without_decree(self):
-        """CLI 退朝：先物化暂存动作，再由持久化真源选择结算链。"""
-        needs_full_settlement = materialize_pending_actions_for_advance(
-            self.state, self.db, content=self.content, registry=self.registry,
-        )
-        has_default_approved_work = bool(
-            self.db.list_directives(self.state, statuses=("pending", "draft"))
-        ) or needs_full_settlement
-        if has_default_approved_work:
+        """CLI 退朝；fast 内核以事务内 DB 真源决定是否转完整结算。"""
+        if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn()
         advanced = advance_without_edict(
             self.state, self.db, content=self.content, registry=self.registry)

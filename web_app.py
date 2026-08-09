@@ -66,7 +66,7 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
-from ming_sim.decree import advance_without_edict, materialize_pending_actions_for_advance
+from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
@@ -3595,22 +3595,18 @@ def api_advance_without_edict() -> Dict[str, Any]:
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
-            needs_full_settlement = materialize_pending_actions_for_advance(
-                game.state,
-                game.db,
-                content=game.content,
-                registry=getattr(game.session, "registry", None),
-            )
-            if game.directive_rows() or needs_full_settlement:
+            if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
-                advance_without_edict(
+                advanced = advance_without_edict(
                     game.state,
                     game.db,
                     content=game.content,
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
                 )
+                if not advanced:
+                    settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
     except ValueError as e:

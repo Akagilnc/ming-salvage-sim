@@ -270,18 +270,8 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     )
 
 
-def materialize_pending_actions_for_advance(
-    state: GameState, db: GameDB, *, content=None, registry=None,
-) -> bool:
-    """Commit default-approved actions, then choose the settlement rail from DB truth.
-
-    In particular, pending secret orders cannot be classified before materialization:
-    their canonical tags and effective deadline live on the order/dossier rows.  Both
-    CLI and Web call this seam before routing; the terminal implementations call it
-    again defensively (``commit_pending_actions`` is idempotent).
-    """
-    db.commit_pending_actions(state, content=content, registry=registry)
-    return _requires_full_settlement(state, db)
+class _NeedsFullSettlement(Exception):
+    """Abort the speculative fast transaction and retry on the full rail."""
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
@@ -308,19 +298,16 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=production_beat_generator)
-    # ADR 0049/0055: an unspoken-on directive is default-approved and must enter
-    # the dossier/judge route.  This deterministic fast path has no judge
-    # dependency, so fail loudly and let the caller route through normal
-    # settlement; never delete the player's directive to manufacture "no edict".
-    if materialize_pending_actions_for_advance(
-        state, db, content=content, registry=registry,
-    ):
-        return False
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
             db.commit_pending_actions(state, content=content, registry=registry)
+            # Classification is only valid after every pending kind has materialized.
+            # If the DB truth requires the expensive rail, abort this transaction so
+            # pre_settle owns materialization and every associated side effect.
+            if _requires_full_settlement(state, db):
+                raise _NeedsFullSettlement
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
                 tlog(
@@ -338,6 +325,8 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
             # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
             state.turn_phase = TurnPhase.SUMMONING.value
             db.save_state(state)
+    except _NeedsFullSettlement:
+        return False
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
