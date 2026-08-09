@@ -889,6 +889,22 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
             "target_kind": "issue", "target_id": "invalid-allocation",
         },
     )
+    malformed_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={"text": "placeholder"},
+    )
+    non_object_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={"text": "placeholder"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        ("{broken", malformed_id),
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        ("[]", non_object_id),
+    )
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content = db, state, content
     session.registry = session.llm_config = session.agno_db = None
@@ -920,10 +936,13 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (legal_id,)
     ).fetchone()["status"] == "committed"
-    for rejected_id in (unclear_id, invalid_id):
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (unclear_id,)
+    ).fetchone()["status"] == "pending"
+    for rejected_id in (invalid_id, malformed_id, non_object_id):
         assert db.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (rejected_id,)
-        ).fetchone()["status"] == "pending"
+        ).fetchone()["status"] == "failed"
     directive_texts = [
         row["text"] for row in db.conn.execute(
             "SELECT text FROM turn_directives WHERE turn=?", (state.turn - 1,)

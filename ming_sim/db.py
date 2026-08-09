@@ -10970,32 +10970,33 @@ class GameDB:
     def _prepare_pending_directive(
         self, state: GameState, pa: Dict[str, object], *, content=None,
         allow_clarification: bool = False,
-    ) -> Optional[Dict[str, object]]:
-        """Canonical read-only eligibility and projection for a staged directive."""
+    ) -> Dict[str, object]:
+        """Classify and, only when valid, project one staged directive."""
         if (
             pa.get("status") != "pending"
             or pa.get("kind") != "directive"
             or pa.get("action") != "拟旨"
         ):
-            return None
+            return {"classification": "invalid"}
         try:
             payload = json.loads(str(pa.get("payload_json") or "{}"))
             if not isinstance(payload, dict):
-                return None
+                return {"classification": "invalid"}
             if payload.get("_needs_clarification") and not allow_clarification:
-                return None
+                return {"classification": "needs_clarification"}
             payload = self._normalize_directive_dossier_payload(
                 payload, content=content, current_turn=int(state.turn),
             )
         except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+            return {"classification": "invalid"}
         text = str(payload.get("text") or "").strip()
         if not text:
-            return None
+            return {"classification": "invalid"}
         actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
         payload["text"] = text
         payload["actor"] = actor
         return {
+            "classification": "valid",
             "id": -int(pa["id"]),
             "text": text,
             "status": "pending",
@@ -11012,8 +11013,9 @@ class GameDB:
         previews = []
         for pa in self.list_pending_actions(int(state.turn)):
             prepared = self._prepare_pending_directive(state, pa, content=content)
-            if prepared is not None:
+            if prepared["classification"] == "valid":
                 preview = dict(prepared)
+                preview.pop("classification", None)
                 preview.pop("payload", None)
                 previews.append(preview)
         return previews
@@ -11062,9 +11064,16 @@ class GameDB:
                     state, pa, content=content,
                     allow_clarification=action_ids is not None,
                 )
-                # Invalid/default-ineligible candidates remain durable pending for
-                # clarification or correction; preview and commit share this decision.
-                if prepared is None:
+                classification = prepared["classification"]
+                if classification == "needs_clarification":
+                    continue
+                if classification == "invalid":
+                    cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+                    with cm:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
                     continue
                 payload = dict(prepared["payload"])
                 payload["_canonical_pending_directive"] = True
