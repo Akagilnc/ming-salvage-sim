@@ -57,7 +57,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+            {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
             content=content,
         )
         row = db.conn.execute(
@@ -86,7 +86,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
             {
                 "economy_moves": [
                     {
-                        "account": "国库",
+                        "origin_ref": "盘面自发", "account": "国库",
                         "delta": -arrears0,
                         "reason": "诏拨关宁补饷，欠饷一次补齐",
                         "purpose": "补饷",
@@ -96,7 +96,7 @@ def test_yuan_arrears_paid_then_arrives_e2e(game):
                 ],
                 "人物变更": [
                     {
-                        "name": name,
+                        "origin_ref": "盘面自发", "name": name,
                         "动作": "行止",
                         "location": DEST,
                         "transit_to": "",
@@ -170,7 +170,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+            {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
             content=content,
         )
         arrears0 = int(
@@ -186,7 +186,7 @@ def test_arrival_clearing_is_not_noop_negative_control(game):
             {
                 "economy_moves": [
                     {
-                        "account": "国库",
+                        "origin_ref": "盘面自发", "account": "国库",
                         "delta": -arrears0,
                         "reason": "补饷",
                         "purpose": "补饷",

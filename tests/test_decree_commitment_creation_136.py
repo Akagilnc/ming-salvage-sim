@@ -168,6 +168,7 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
                     "init_value": 50,
                     "display": "西学经费",
                     "reason": "新设西学专项捐输（收入）",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -220,6 +221,7 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
                     "init_value": 50,
                     "display": "徐光启三务公费",
                     "reason": "月支",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -1193,6 +1195,7 @@ def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game
                     "delta": -20,
                     "category": "一次性赏赐",
                     "reason": "赏毛文龙银二十万安其心",
+                    "origin_ref": "盘面自发",
                 }
             ]
         },

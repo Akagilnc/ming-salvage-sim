@@ -98,6 +98,32 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
         assert row is not None and row["origin_ref"] == SPONTANEOUS
 
 
+def test_missing_origins_are_rejected_at_entity_write_seams_without_logs(game):
+    db, state, content = game
+    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    army = db.conn.execute("SELECT id FROM armies WHERE manpower > 0 LIMIT 1").fetchone()[0]
+    power = db.conn.execute("SELECT id FROM powers WHERE id <> 'ming' LIMIT 1").fetchone()[0]
+    person = db.conn.execute("SELECT name FROM characters LIMIT 1").fetchone()[0]
+    before = {
+        table: db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in ("region_logs", "army_logs", "power_logs", "person_logs")
+    }
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "region_delta": {region: {"public_support": 1}},
+        "army_delta": {army: {"morale": 1}},
+        "power_updates": {power: {"leverage": 1}},
+        "人物变更": [{"name": person, "动作": "评定", "loyalty": 1}],
+    }, content=content)
+
+    assert result["region_changes"][0]["category"] == "missing_origin_ref"
+    assert result["army_changes"][0]["category"] == "missing_origin_ref"
+    assert result["power_changes"][0]["category"] == "missing_origin_ref"
+    assert result["applied_person_changes"][0]["category"] == "missing_origin_ref"
+    for table, count in before.items():
+        assert db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
+
+
 def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classification(game):
     db, state, content = game
     region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
@@ -117,3 +143,31 @@ def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classificat
     assert result["region_changes"][0]["category"] == "missing_ref"
     assert result["created_armies"][0]["category"] == "invalid_enum"
     assert db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0] == before_logs
+
+
+def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
+    db, state, content = game
+    row = db.conn.execute(
+        "SELECT * FROM armies WHERE owner_power='ming' AND is_tusi=0 AND self_funded_pay=0 LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    before = dict(row)
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM army_logs").fetchone()[0]
+
+    invalid = issue_engine.apply_score_extraction(db, state, {
+        "army_delta": {row["id"]: {"pay_source_region": "not-a-region"}},
+    }, content=content)
+    assert invalid["army_changes"][0]["category"] == "invalid_enum"
+
+    proposed_province = 0.6 if float(row["province_pay_share"]) != 0.6 else 0.7
+    missing = issue_engine.apply_score_extraction(db, state, {
+        "army_delta": {row["id"]: {
+            "province_pay_share": proposed_province,
+            "central_pay_share": 1 - proposed_province,
+        }},
+    }, content=content)
+    assert missing["army_changes"][0]["category"] == "missing_origin_ref"
+    after = db.conn.execute("SELECT * FROM armies WHERE id=?", (row["id"],)).fetchone()
+    for field in ("pay_source_region", "province_pay_share", "central_pay_share"):
+        assert after[field] == before[field]
+    assert db.conn.execute("SELECT COUNT(*) FROM army_logs").fetchone()[0] == before_logs

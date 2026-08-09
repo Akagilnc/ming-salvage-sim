@@ -956,6 +956,7 @@ def _apply_economy_list(
     commit: bool = True,
     allow_pay_arrears_pool: bool = False,
     pay_arrears_pool_army_ids: Optional[List[str]] = None,
+    require_origin: bool = False,
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
@@ -1062,6 +1063,10 @@ def _apply_economy_list(
                     "item": move,
                 })
                 continue
+            origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+            if origin_error:
+                applied.append({"account": account, **origin_error, "item": move})
+                continue
             pay_source_cutover = db.is_army_pay_source_cutover_enabled()
             payable_arrears = _payable_army_arrears_cap(
                 float(row["arrears"] or 0), pay_source_cutover
@@ -1094,6 +1099,10 @@ def _apply_economy_list(
             continue
 
         # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
+        origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+        if origin_error:
+            applied.append({"account": account, **origin_error, "item": move})
+            continue
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,

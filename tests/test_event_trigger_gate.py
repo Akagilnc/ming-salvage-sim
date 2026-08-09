@@ -859,12 +859,13 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
     applied = issues.apply_score_extraction(
         db,
         state,
-        {"人物变更": [{"name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
         content=content,
     )
 
     assert applied["applied_person_changes"] == [
-        {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": ""}
+        {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": "",
+         "origin_ref": "盘面自发"}
     ]
     assert db.conn.execute(
         "SELECT location FROM characters WHERE name=?",
@@ -946,8 +947,8 @@ def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(gam
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
+            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
         },
         content=content,
     )
@@ -982,8 +983,8 @@ def test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"不存在字段": 1, "reason": "己巳之变无效战果字段"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+            "army_delta": {"jingying": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "己巳之变无效战果字段"}},
         },
         content=content,
     )
@@ -1018,7 +1019,7 @@ def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "new_armies": [
                 {
-                    "id": army_id,
+                    "origin_ref": "盘面自发", "id": army_id,
                     "name": "己巳入塞偏师",
                     "owner_power": "houjin",
                     "station": "北直隶 / 遵化",
@@ -1065,7 +1066,7 @@ def test_strategic_new_army_result_rejects_existing_army_collision(
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "new_armies": [
                 {
-                    "id": army_id,
+                    "origin_ref": "盘面自发", "id": army_id,
                     "name": army_name,
                     "owner_power": "houjin",
                     "station": "北直隶 / 遵化",
@@ -1104,7 +1105,7 @@ def test_strategic_new_army_result_rejects_nonpositive_manpower(game):
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "new_armies": [
                 {
-                    "id": army_id,
+                    "origin_ref": "盘面自发", "id": army_id,
                     "name": "己巳入塞空营",
                     "owner_power": "houjin",
                     "station": "北直隶 / 遵化",
@@ -1135,7 +1136,7 @@ def test_strategic_event_records_outcome_label_with_world_state_delta(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
         },
         content=content,
     )
@@ -1161,7 +1162,7 @@ def test_strategic_event_outcome_label_normalizes_known_synonym(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞遭遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
         },
         content=content,
     )
@@ -1184,7 +1185,7 @@ def test_event_outcome_retry_ignores_non_landable_event_without_world_state_delt
     extracted = {
         "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
         "事件结局": {"jisi_lubian": "大胜"},
-        "region_delta": {"shandong": {"民心": -1, "reason": " unrelated famine pressure "}},
+        "region_delta": {"shandong": {"origin_ref": "盘面自发", "民心": -1, "reason": " unrelated famine pressure "}},
     }
 
     issues.normalize_event_outcome_labels_or_error(
@@ -1214,7 +1215,7 @@ def test_strategic_event_delta_requires_outcome_label_without_mutation(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
         },
         content=content,
     )
@@ -1249,7 +1250,7 @@ def test_strategic_event_outcome_label_unknown_fails_loud_without_mutation(game)
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
                 "事件结局": {"jisi_lubian": "大胜"},
-                "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+                "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
             },
             content=content,
         )
@@ -1274,7 +1275,7 @@ def test_anchored_strategic_new_army_without_event_trigger_is_rejected(game):
         {
             "new_armies": [
                 {
-                    "id": army_id,
+                    "origin_ref": "盘面自发", "id": army_id,
                     "name": "孤立入塞偏师",
                     "owner_power": "houjin",
                     "station": "北直隶 / 遵化",
@@ -1307,7 +1308,7 @@ def test_anchored_strategic_region_outcome_without_reason_is_rejected(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35}},
         },
         content=content,
     )
@@ -1332,7 +1333,7 @@ def test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome
     out = issues.apply_score_extraction(
         db,
         state,
-        {"army_delta": {"guanning": {"training": 5, "reason": "奉旨整饬锦州战备"}}},
+        {"army_delta": {"guanning": {"origin_ref": "盘面自发", "training": 5, "reason": "奉旨整饬锦州战备"}}},
         content=content,
     )
 
@@ -1362,8 +1363,8 @@ def test_strategic_foreign_event_survives_named_commander_death_with_soft_result
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "region_delta": {"liaodong": {"military_pressure": 18, "reason": "松锦决战软判辽东吃紧"}},
-            "army_delta": {"guanning": {"manpower": -12000, "morale": -12, "reason": "松锦决战关宁主力战损"}},
+            "region_delta": {"liaodong": {"origin_ref": "盘面自发", "military_pressure": 18, "reason": "松锦决战软判辽东吃紧"}},
+            "army_delta": {"guanning": {"origin_ref": "盘面自发", "manpower": -12000, "morale": -12, "reason": "松锦决战关宁主力战损"}},
         },
         content=content,
     )
@@ -1435,7 +1436,7 @@ def test_anchored_strategic_result_delta_without_event_trigger_is_rejected(game)
     out = issues.apply_score_extraction(
         db,
         state,
-        {"region_delta": {"beizhili": {"military_pressure": 20, "reason": "己巳之变软判敌逼京畿"}}},
+        {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变软判敌逼京畿"}}},
         content=content,
     )
 
@@ -1458,7 +1459,7 @@ def test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected
         state,
         {
             "army_delta": {
-                "guanning": {"驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
+                "guanning": {"origin_ref": "盘面自发", "驻扎地": "锦州前屯", "reason": "奉旨移镇锦州前屯"}
             }
         },
         content=content,
@@ -1502,8 +1503,8 @@ def test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "lindan_xiqian"}],
             "power_updates": {
-                "mongol": {"military_strength": -8, "reason": "林丹汗西迁青海，察哈尔诸部离散"},
-                "houjin": {"military_strength": 5, "reason": "林丹汗西迁后后金收拢蒙古右翼"},
+                "mongol": {"origin_ref": "盘面自发", "military_strength": -8, "reason": "林丹汗西迁青海，察哈尔诸部离散"},
+                "houjin": {"origin_ref": "盘面自发", "military_strength": 5, "reason": "林丹汗西迁后后金收拢蒙古右翼"},
             },
         },
         content=content,
@@ -1533,7 +1534,7 @@ def test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta
         {
             "region_delta": {
                 "beizhili": {
-                    "military_pressure": -3,
+                    "origin_ref": "盘面自发", "military_pressure": -3,
                     "reason": "修筑蒙古边墙，北直隶军压下降",
                 }
             }
@@ -1576,7 +1577,7 @@ def test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan(ga
             ],
             "region_delta": {
                 "liaodong": {
-                    "military_pressure": 8,
+                    "origin_ref": "盘面自发", "military_pressure": 8,
                     "reason": "锦州战事软判辽东军压上升",
                 }
             },
@@ -1613,7 +1614,7 @@ def test_henan_place_policy_delta_does_not_capture_untriggered_fall_events(game,
         {
             "region_delta": {
                 "henan": {
-                    "military_pressure": -4,
+                    "origin_ref": "盘面自发", "military_pressure": -4,
                     "reason": reason,
                 }
             }
@@ -1646,7 +1647,7 @@ def test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event(ga
         {
             "power_updates": {
                 "bandit_li_zicheng": {
-                    "military_strength": -3,
+                    "origin_ref": "盘面自发", "military_strength": -3,
                     "reason": "河南流寇被围剿，声势稍挫",
                 }
             }
@@ -1674,7 +1675,7 @@ def test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate(gam
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"shaanxi": {"unrest": 1}},
+            "region_delta": {"shaanxi": {"origin_ref": "盘面自发", "unrest": 1}},
         },
         content=content,
     )
@@ -1700,7 +1701,7 @@ def test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_eve
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
         },
         content=content,
     )
@@ -1727,7 +1728,7 @@ def test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate(gam
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
         },
         content=content,
     )
@@ -1752,7 +1753,7 @@ def test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_eve
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "己巳之变误写无关人物"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "己巳之变误写无关人物"}],
         },
         content=content,
     )
@@ -1777,7 +1778,7 @@ def test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_eve
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{"name": "卢象升", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
         },
         content=content,
     )
@@ -1807,8 +1808,8 @@ def test_rejected_noncandidate_strategic_event_with_unknown_label_preserves_unre
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "大胜"},
             "region_delta": {
-                "beizhili": {"military_pressure": 20, "reason": "己巳之变重复引用战果"},
-                "shaanxi": {"unrest": 1},
+                "beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变重复引用战果"},
+                "shaanxi": {"origin_ref": "盘面自发", "unrest": 1},
             },
         },
         content=content,
@@ -1838,7 +1839,7 @@ def test_rejected_strategic_foreign_event_does_not_land_battle_delta(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 20, "reason": "己巳之变重复引用战果"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 20, "reason": "己巳之变重复引用战果"}},
         },
         content=content,
     )
@@ -1867,7 +1868,7 @@ def test_rejected_strategic_foreign_event_preserves_unrelated_region_delta(game)
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"shaanxi": {"unrest": 1}},
+            "region_delta": {"shaanxi": {"origin_ref": "盘面自发", "unrest": 1}},
         },
         content=content,
     )
@@ -1893,7 +1894,7 @@ def test_rejected_strategic_event_preserves_unanchored_target_region_delta(game)
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "unrest": 1, "reason": "ordinary beizhili unrest unrelated to battle"}},
         },
         content=content,
     )
@@ -1920,7 +1921,7 @@ def test_rejected_strategic_event_preserves_unrelated_person_delta(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "病重卒于任上"}],
         },
         content=content,
     )
@@ -1945,7 +1946,7 @@ def test_previously_triggered_strategic_event_rejects_duplicate_without_landing_
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 10, "reason": "己巳之变重复引用战果"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "reason": "己巳之变重复引用战果"}},
         },
         content=content,
     )
@@ -1971,7 +1972,7 @@ def test_rejected_strategic_event_does_not_land_substitute_commander_person_delt
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "人物变更": [{"name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "孙传庭", "动作": "处置", "status": "dead", "reason": "松锦替补战死"}],
         },
         content=content,
     )
@@ -2001,7 +2002,7 @@ def test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas(game):
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "region_delta": {
                 "beizhili": {
-                    "controlled_by": "not_a_real_power",
+                    "origin_ref": "盘面自发", "controlled_by": "not_a_real_power",
                     "military_pressure": 5,
                     "reason": "戊寅虏变软判北直隶陷落但势力 id 脏",
                 }
@@ -2035,7 +2036,7 @@ def test_invalid_strategic_event_result_delta_does_not_mark_event_triggered(game
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"不存在字段": 1, "reason": "己巳之变无效战果字段"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "己巳之变无效战果字段"}},
         },
         content=content,
     )
@@ -2066,7 +2067,7 @@ def test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered(game):
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "region_delta": {
                 "beizhili": {
-                    "cannon": 1,
+                    "origin_ref": "盘面自发", "cannon": 1,
                     "reason": "己巳之变软判京畿城防炮已满额仍报增炮",
                 }
             },
@@ -2096,7 +2097,7 @@ def test_strategic_event_army_clamp_noop_does_not_mark_event_triggered(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "army_delta": {"jingying": {"manpower": -5000, "reason": "己巳之变勤王战损"}},
+            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "reason": "己巳之变勤王战损"}},
         },
         content=content,
     )
@@ -2130,7 +2131,7 @@ def test_strategic_event_person_travel_noop_does_not_mark_event_triggered(game):
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "人物变更": [
                 {
-                    "name": "卢象升",
+                    "origin_ref": "盘面自发", "name": "卢象升",
                     "动作": "行止",
                     "location": "beizhili",
                     "reason": "戊寅虏变软判主帅行止",
@@ -2212,7 +2213,7 @@ def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(g
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "人物变更": [
                 {
-                    "name": "卢象升",
+                    "origin_ref": "盘面自发", "name": "卢象升",
                     "动作": action,
                     "office": office,
                     "office_type": office_type,
@@ -2248,7 +2249,7 @@ def test_strategic_event_accepts_power_update_as_material_world_state(game):
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
             "power_updates": {
-                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
             },
         },
         content=content,
@@ -2279,7 +2280,7 @@ def test_strategic_event_power_update_requires_event_anchor(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "power_updates": {"houjin": {"military_strength": -3}},
+            "power_updates": {"houjin": {"origin_ref": "盘面自发", "military_strength": -3}},
         },
         content=content,
     )
@@ -2309,9 +2310,9 @@ def test_accepted_strategic_event_applies_power_updates_after_main_result(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 10, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "controlled_by": "ming", "reason": "己巳之变软判敌逼京畿"}},
             "power_updates": {
-                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
             },
         },
         content=content,
@@ -2343,9 +2344,9 @@ def test_invalid_strategic_power_update_blocks_main_result(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 10, "reason": "己巳之变软判敌逼京畿"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 10, "reason": "己巳之变软判敌逼京畿"}},
             "power_updates": {
-                "houjin": {"城防": 3, "reason": "己巳之变后金入塞受挫"}
+                "houjin": {"origin_ref": "盘面自发", "城防": 3, "reason": "己巳之变后金入塞受挫"}
             },
         },
         content=content,
@@ -2377,7 +2378,7 @@ def test_orphan_strategic_power_update_without_event_issue_is_rejected(game):
         state,
         {
             "power_updates": {
-                "houjin": {"military_strength": -3, "reason": "己巳之变后金入塞受挫"}
+                "houjin": {"origin_ref": "盘面自发", "military_strength": -3, "reason": "己巳之变后金入塞受挫"}
             },
         },
         content=content,
@@ -2413,7 +2414,7 @@ def test_jisi_border_contained_outcome_rejects_invasion_world_state(game, contro
             "事件结局": {"jisi_lubian": "挡于边墙"},
             "region_delta": {
                 "beizhili": {
-                    control_field: "houjin",
+                    "origin_ref": "盘面自发", control_field: "houjin",
                     "military_pressure": 40,
                     "reason": "己巳之变软判后金长驱直入兵临京师",
                 }
@@ -2445,8 +2446,8 @@ def test_strategic_event_person_result_rejection_blocks_other_result_deltas(game
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "region_delta": {"beizhili": {"military_pressure": 15, "reason": "戊寅虏变软判畿南受压"}},
-            "人物变更": [{"name": "卢象升", "动作": "处置", "status": "candidate", "reason": "戊寅虏变软判战死"}],
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 15, "reason": "戊寅虏变软判畿南受压"}},
+            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "candidate", "reason": "戊寅虏变软判战死"}],
         },
         content=content,
     )
@@ -2476,8 +2477,8 @@ def test_strategic_person_alias_stays_in_rejected_event_envelope(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "region_delta": {"beizhili": {"不存在字段": 1, "reason": "戊寅虏变无效战果字段"}},
-            "人物变更": [{"name": alias, "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在字段": 1, "reason": "戊寅虏变无效战果字段"}},
+            "人物变更": [{"origin_ref": "盘面自发", "name": alias, "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
         },
         content=content,
     )
@@ -2511,7 +2512,7 @@ def test_rejected_strategic_person_preflight_restores_content_power_id(game):
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
             "人物变更": [
                 {
-                    "name": "洪承畴",
+                    "origin_ref": "盘面自发", "name": "洪承畴",
                     "动作": "易主",
                     "方式": "被俘而降",
                     "new_power": "houjin",
@@ -2522,7 +2523,7 @@ def test_rejected_strategic_person_preflight_restores_content_power_id(game):
             ],
             "new_armies": [
                 {
-                    "id": "__bad_songshan_army__",
+                    "origin_ref": "盘面自发", "id": "__bad_songshan_army__",
                     "name": "无效松山军",
                     "owner_power": "__missing_power__",
                     "station": "松山",
@@ -2557,10 +2558,10 @@ def test_strategic_person_backlash_rejection_blocks_event_result_envelope(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "songshan_battle"}],
-            "region_delta": {"liaodong": {"military_pressure": 5, "reason": "松锦决战软判辽东吃紧"}},
+            "region_delta": {"liaodong": {"origin_ref": "盘面自发", "military_pressure": 5, "reason": "松锦决战软判辽东吃紧"}},
             "人物变更": [
                 {
-                    "name": "洪承畴",
+                    "origin_ref": "盘面自发", "name": "洪承畴",
                     "动作": "易主",
                     "方式": "被俘而降",
                     "new_power": "houjin",
@@ -2600,7 +2601,7 @@ def test_strategic_foreign_event_lands_soft_result_person_delta(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
-            "人物变更": [{"name": "卢象升", "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "卢象升", "动作": "处置", "status": "dead", "reason": "戊寅虏变软判战死"}],
         },
         content=content,
     )
@@ -2865,8 +2866,8 @@ def test_yuan_xialing_event_included_after_jisi_event_issue_triggers(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
             "事件结局": {"jisi_lubian": "入塞被遏"},
-            "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
-            "army_delta": {"jingying": {"manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
+            "region_delta": {"beizhili": {"origin_ref": "盘面自发", "military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}},
+            "army_delta": {"jingying": {"origin_ref": "盘面自发", "manpower": -5000, "morale": -8, "reason": "己巳之变勤王战损"}},
         },
         content=content,
     )
@@ -3282,7 +3283,7 @@ def test_issue_194_dalingghe_requires_world_state_main_ledger_result(game):
             "new_issues": [{"origin_kind": "event_pool", "id": "dalingghe"}],
             "region_delta": {
                 "liaodong": {
-                    "military_pressure": 8,
+                    "origin_ref": "盘面自发", "military_pressure": 8,
                     "reason": "大凌河之围软判：后金围城，辽东军压上升",
                 }
             },
@@ -3777,7 +3778,7 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
         trigger_gate={"民心": ">=0"},
         effect_on_trigger={
             "人物变更": [
-                {"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试撤任"}
+                {"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试撤任"}
             ]
         },
     )
@@ -4039,7 +4040,7 @@ def test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback(g
         effect_on_resolve={
             "new_armies": [
                 {
-                    "id": army_id,
+                    "origin_ref": "盘面自发", "id": army_id,
                     "name": "测试事务营",
                     "manpower": 1200,
                     "owner_power": "ming",
@@ -4130,7 +4131,7 @@ def test_apply_issue_entities_person_changes_respect_commit_false(game):
         state,
         {
             "人物变更": [
-                {"name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
+                {"origin_ref": "盘面自发", "name": "毛文龙", "动作": "处置", "status": "dismissed", "reason": "测试 helper no-commit"}
             ]
         },
         "测试 helper no-commit",
@@ -4156,7 +4157,7 @@ def test_apply_score_extraction_top_level_economy_respects_outer_transaction_rol
     out = issues.apply_score_extraction(
         db,
         state,
-        {"economy_moves": [{"account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
+        {"economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -1, "category": "测试", "reason": reason}]},
         content=content,
     )
     assert out["economy_moves"][0]["reason"] == reason
@@ -4249,13 +4250,13 @@ def test_apply_score_extraction_top_level_entity_deltas_respect_outer_transactio
         db,
         state,
         {
-            "region_delta": {region["id"]: {"unrest": 1, "reason": "测试顶层地区事务R7"}},
-            "army_delta": {army["id"]: {"manpower": 1, "reason": "测试顶层军队事务R7"}},
-            "power_updates": {power["id"]: {"leverage": 1, "reason": "测试顶层势力事务R7"}},
+            "region_delta": {region["id"]: {"origin_ref": "盘面自发", "unrest": 1, "reason": "测试顶层地区事务R7"}},
+            "army_delta": {army["id"]: {"origin_ref": "盘面自发", "manpower": 1, "reason": "测试顶层军队事务R7"}},
+            "power_updates": {power["id"]: {"origin_ref": "盘面自发", "leverage": 1, "reason": "测试顶层势力事务R7"}},
             "faction_delta": {faction["name"]: {"satisfaction": -1}},
             "new_armies": [
                 {
-                    "id": new_army_id,
+                    "origin_ref": "盘面自发", "id": new_army_id,
                     "name": "测试顶层事务营",
                     "owner_power": "ming",
                     "manpower": 100,
@@ -4307,7 +4308,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
             "fiscal_removes": [{"key": remove_key, "reason": "测试顶层财政裁撤事务R7"}],
             "fiscal_creates": [
                 {
-                    "key": created_key,
+                    "origin_ref": "盘面自发", "key": created_key,
                     "account": "国库",
                     "direction": "income",
                     "display": "测试顶层财政",
@@ -4364,7 +4365,7 @@ def test_event_pool_pending_person_location_change_blocks_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "毛文龙", "动作": "行止", "location": "beizhili"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "beizhili"}],
             },
             content=content,
         )
@@ -4413,7 +4414,7 @@ def test_event_pool_pending_invalid_appointment_does_not_block_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -4458,7 +4459,7 @@ def test_event_pool_pending_invalid_allegiance_change_does_not_block_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "袁崇焕", "动作": "易主", "new_power": "houjin"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "易主", "new_power": "houjin"}],
             },
             content=content,
         )
@@ -4510,7 +4511,7 @@ def test_event_pool_pending_disposition_clears_office_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试罢离督师"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "测试罢离督师"}],
             },
             content=content,
         )
@@ -4567,7 +4568,7 @@ def test_event_pool_pending_location_change_clears_transit_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "毛文龙", "动作": "行止", "location": "liaodong"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "liaodong"}],
             },
             content=content,
         )
@@ -4667,7 +4668,7 @@ def test_event_pool_pending_legacy_power_change_blocks_gate(game):
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
                 "character_power_changes": [
-                    {"name": "袁崇焕", "new_power": "houjin", "reason": "测试旧易主"}
+                    {"origin_ref": "盘面自发", "name": "袁崇焕", "new_power": "houjin", "reason": "测试旧易主"}
                 ],
             },
             content=content,
@@ -4726,7 +4727,7 @@ def test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate(game)
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
                 "人物变更": [
                     {
-                        "name": "袁崇焕",
+                        "origin_ref": "盘面自发", "name": "袁崇焕",
                         "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
@@ -4795,7 +4796,7 @@ def test_event_pool_pending_allegiance_backlash_blocks_power_gate(game):
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
                 "人物变更": [
                     {
-                        "name": "袁崇焕",
+                        "origin_ref": "盘面自发", "name": "袁崇焕",
                         "动作": "易主",
                         "new_power": "houjin",
                         "方式": "被俘而降",
@@ -4839,8 +4840,8 @@ def test_event_pool_pending_person_changes_are_simulated_sequentially(game):
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
             "人物变更": [
-                {"name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试先处死"},
-                {"name": "袁崇焕", "动作": "任命", "office": "兵部尚书", "reason": "测试后任命"},
+                {"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dead", "reason": "测试先处死"},
+                {"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书", "reason": "测试后任命"},
             ],
         },
         content=content,
@@ -4889,7 +4890,7 @@ def test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transacti
             issues.apply_score_extraction(
                 db,
                 state,
-                {"人物变更": [{"name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
+                {"人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}]},
                 content=content,
                 registry=registry,
             )
@@ -4940,7 +4941,7 @@ def test_event_pool_pending_alias_appointment_blocks_canonical_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "韩阁老", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "韩阁老", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -4996,7 +4997,7 @@ def test_event_pool_pending_alias_disposition_blocks_canonical_gate(game):
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
                 "人物变更": [
-                    {"name": "韩阁老", "动作": "处置", "status": "dismissed", "reason": "测试别名处置"}
+                    {"origin_ref": "盘面自发", "name": "韩阁老", "动作": "处置", "status": "dismissed", "reason": "测试别名处置"}
                 ],
             },
             content=content,
@@ -5176,7 +5177,7 @@ def test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate(game
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "朱常洵", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "朱常洵", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -5242,7 +5243,7 @@ def test_event_pool_pending_appointment_displacement_blocks_displaced_office_gat
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -5298,7 +5299,7 @@ def test_event_pool_pending_appointment_clears_reason_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "钱谦益", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "钱谦益", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -5351,7 +5352,7 @@ def test_event_pool_pending_appointment_updates_office_type_gate(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "韩爌", "动作": "任命", "office": "兵部尚书"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "韩爌", "动作": "任命", "office": "兵部尚书"}],
             },
             content=content,
         )
@@ -5401,7 +5402,7 @@ def test_event_pool_pending_appointment_normalizes_equivalent_office(game):
             state,
             {
                 "new_issues": [{"origin_kind": "event_pool", "id": ev.id}],
-                "人物变更": [{"name": "袁崇焕", "动作": "任命", "office": "兵部尚书，左都御史"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "任命", "office": "兵部尚书，左都御史"}],
             },
             content=content,
         )
@@ -5509,7 +5510,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment(game
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 10, "reason": "同回合安抚见效"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 10, "reason": "同回合安抚见效"}],
         },
         content=content,
     )
@@ -5535,7 +5536,7 @@ def test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [{"name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "同回合罢离督师"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "dismissed", "reason": "同回合罢离督师"}],
         },
         content=content,
     )
@@ -5561,7 +5562,7 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
         state,
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [{"name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
+            "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
         },
         content=content,
     )
