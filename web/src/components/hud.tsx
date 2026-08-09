@@ -1,9 +1,8 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { Menu, Upload, X } from "lucide-react";
-import { api } from "../api";
-import { formatLegacyEffect, formatMoney, formatSignedMoney, scoreTone } from "../format";
-import type { BudgetAccount, BudgetItem, BudgetMovement, GameState, Legacy } from "../types";
+import { Upload, X } from "lucide-react";
+import { formatLegacyEffect, formatMoney, formatSignedMoney } from "../format";
+import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy } from "../types";
 
 export function MinisterPortrait({ primary, fallback, name }: { primary: string; fallback?: string; name: string }) {
   // 两级 fallback：primary（专属）→ fallback（pool 预设）→ 占位符
@@ -73,21 +72,6 @@ export function snapToSlot(px: number, py: number, occupied: Set<string>, selfKe
   return best ?? { px, py };
 }
 
-
-// 默认坐标：从 near 开始，每人占一格，紧挨着排不留空
-export const COURT_SLOT_STEP = 1 / (COURT_SLOTS_PER_ROW - 1);  // 相邻槽间距（百分比t）
-
-export function defaultCourtPct(index: number, total: number): { px: number; py: number } {
-  const leftCount = Math.ceil(total / 2);
-  const isLeft = index < leftCount;
-  const posInRow = isLeft ? index : index - leftCount;
-  const anchor = isLeft ? LEFT_ANCHOR : RIGHT_ANCHOR;
-  const t = posInRow * COURT_SLOT_STEP;  // 从槽0开始连续，不跳格
-  return {
-    px: anchor.near.px + t * (anchor.far.px - anchor.near.px),
-    py: anchor.near.py + t * (anchor.far.py - anchor.near.py),
-  };
-}
 
 // 坐标存百分比（0-1），持久化到服务端 db（按存档隔离）
 export async function loadCourtPos(): Promise<Record<string, { px: number; py: number }>> {
@@ -164,51 +148,6 @@ export function PortraitUploadButton({
   );
 }
 
-export function RightNavBar({
-  onToggleCourt,
-  onToggleHarem,
-  onToggleArmy,
-  onToggleRegion,
-  onToggleBuilding,
-  onToggleEconomy,
-  onToggleAppointment,
-  activeDrawer,
-}: {
-  onToggleCourt: () => void;
-  onToggleHarem: () => void;
-  onToggleArmy: () => void;
-  onToggleRegion: () => void;
-  onToggleBuilding: () => void;
-  onToggleEconomy: () => void;
-  onToggleAppointment: () => void;
-  activeDrawer: string;
-}) {
-  const items = [
-    { key: "court", label: "政", title: "朝堂·召见大臣", onClick: onToggleCourt },
-    { key: "harem", label: "内", title: "后宫", onClick: onToggleHarem },
-    { key: "army", label: "兵", title: "军队列表", onClick: onToggleArmy },
-    { key: "region", label: "省", title: "省份列表", onClick: onToggleRegion },
-    { key: "building", label: "工", title: "建筑列表", onClick: onToggleBuilding },
-    { key: "economy", label: "户", title: "经济面板", onClick: onToggleEconomy },
-    { key: "appointment", label: "吏", title: "官员任免", onClick: onToggleAppointment },
-  ];
-  return (
-    <nav className="right-nav-bar" aria-label="六部入口">
-      {items.map((item) => (
-        <button
-          key={item.key}
-          className={`right-nav-btn${activeDrawer === item.key ? " active" : ""}`}
-          title={item.title}
-          aria-label={item.title}
-          onClick={item.onClick}
-        >
-          {item.label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 export function RightDrawer({
   open,
   onClose,
@@ -282,45 +221,6 @@ export const HUD_SLOTS = {
   地图框: { left: 22.0, top: 16.8, width: 59.2, height: 53.4 },
   局势框: { left: 8.8, top: 17.0, width: 7.6, height: 46.0 },
 } as const;
-
-export function TopStatusBar({
-  state,
-  onOpenState,
-  onOpenMenu,
-}: {
-  state: GameState;
-  onOpenState: () => void;
-  onOpenMenu: () => void;
-}) {
-  const scoreKeys = ["民心", "皇威"];
-  return (
-    <>
-    <header className="status-bar" aria-label="国势状态栏">
-      <button className="status-emblem" onClick={onOpenState}>
-        <img src="/icon_ming_emblem.png" alt="大明" className="emblem-art" />
-        <span>{state.turn.year} 年 {state.turn.period} 月</span>
-      </button>
-      <i className="hud-divider" aria-hidden="true" />
-      <div className="status-metrics">
-        <BudgetHover accountName="国库" budget={state.budget["国库"]} />
-        <BudgetHover accountName="内库" budget={state.budget["内库"]} />
-        <i className="hud-divider" aria-hidden="true" />
-        {scoreKeys.map((key) => (
-          <span className={`status-pill ${scoreTone(state.metrics[key], false)}`} key={key}>
-            {key} <b>{state.metrics[key]}</b>
-          </span>
-        ))}
-        <i className="hud-divider" aria-hidden="true" />
-        <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
-          <Menu size={16} />
-          <span>菜单</span>
-        </button>
-      </div>
-    </header>
-    <LegacyBar legacies={state.legacies} />
-    </>
-  );
-}
 
 export function LegacyBar({ legacies }: { legacies: Legacy[] }) {
   const [open, setOpen] = React.useState(false);
@@ -496,65 +396,6 @@ export function CommandSlot({
         <b>{caption}</b><small>{sub}</small>
       </button>
     </>
-  );
-}
-
-export function BottomCommandBar({
-  eventsCount,
-  directivesCount,
-  secretOrdersCount,
-  onOpenMemorials,
-  onOpenEdict,
-  onOpenReport,
-  onOpenHistory,
-  onOpenSecretOrders,
-}: {
-  eventsCount: number;
-  directivesCount: number;
-  secretOrdersCount: number;
-  onOpenMemorials: () => void;
-  onOpenEdict: () => void;
-  onOpenReport: () => void;
-  onOpenHistory: () => void;
-  onOpenSecretOrders: () => void;
-}) {
-  return (
-    <div className="ui-stage">
-      {/* 案板 + 图标 + 玉玺一体 */}
-      <div className="anban-wrap">
-        {/* 图标行：底部贴基准线向上生长 */}
-        <nav className="bottom-command-bar" aria-label="朝政辅助操作">
-          <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
-            <img src="/ui/exact/zoushu.png" alt="" className="command-art" />
-            {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
-          </button>
-          <button className="command-icon" onClick={onOpenReport} aria-label="本月邸报">
-            <img src="/ui/exact/mingxi.png" alt="" className="command-art" />
-          </button>
-          <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
-            <img src="/ui/exact/miling.png" alt="" className="command-art command-art-secret" />
-            {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
-          </button>
-          <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
-            <img src="/ui/exact/lishi.png" alt="" className="command-art" />
-          </button>
-          <button className="edict-turn-button" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
-            <span className="edict-turn-art">
-              <img src="/ui/exact/nizhao.png" alt="" />
-              {directivesCount ? <span className="command-badge edict-turn-badge">{directivesCount}</span> : null}
-            </span>
-          </button>
-        </nav>
-        {/* 文字行：贴在 bar 下方 */}
-        <div className="bottom-caption-bar">
-          <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
-          <span className="command-caption"><b>邸报</b><small>本月奏报</small></span>
-          <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
-          <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
-          <span className="command-caption"><b>拟诏/结束回合</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
-        </div>
-      </div>
-    </div>
   );
 }
 
