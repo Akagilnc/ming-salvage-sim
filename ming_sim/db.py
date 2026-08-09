@@ -1358,6 +1358,32 @@ class GameDB:
                 ON decree_dossiers(status, id);
             CREATE INDEX IF NOT EXISTS idx_decree_dossiers_target
                 ON decree_dossiers(target_kind, target_id, status);
+            -- ADR 0054：只存新案卷→旧案卷；关系本身无状态位。
+            CREATE TABLE IF NOT EXISTS decree_dossier_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_dossier_id INTEGER NOT NULL,
+                target_dossier_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL
+                    CHECK(relation_type IN ('护卫','稽核','接应')),
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source_dossier_id, target_dossier_id, relation_type),
+                FOREIGN KEY(source_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
+                ON decree_dossier_links(target_dossier_id, id);
+            CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_dossier_id INTEGER NOT NULL,
+                target_dossier_id INTEGER NOT NULL DEFAULT 0,
+                relation_type TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_link_rejections_source
+                ON decree_dossier_link_rejections(source_dossier_id, id);
             CREATE TABLE IF NOT EXISTS decree_dossier_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 dossier_id INTEGER NOT NULL,
@@ -9833,6 +9859,80 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
+    _DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
+
+    def add_dossier_links(
+        self, source_dossier_id: int, links: Iterable[Dict[str, object]], *,
+        commit: bool = True,
+    ) -> None:
+        """把确认后的新→旧案卷关联整批落账；任一坏引用则整批拒收并留痕。"""
+        source_id = strict_int(source_dossier_id, accept_numeric_strings=False)
+        source = self.get_decree_dossier(source_id)
+        if source is None:
+            raise ValueError("关联来源指向不存在案卷")
+        normalized: List[Tuple[int, str, str]] = []
+        rejection: Optional[Tuple[int, str, str, str]] = None
+        for item in links:
+            try:
+                target_id = strict_int(
+                    item.get("target_dossier_id"), accept_numeric_strings=False
+                )
+            except (AttributeError, ValueError):
+                target_id = 0
+            relation = str(item.get("relation_type") or "") if isinstance(item, dict) else ""
+            note = str(item.get("note") or "").strip() if isinstance(item, dict) else ""
+            if self.get_decree_dossier(target_id) is None:
+                rejection = (target_id, relation, note, "关联指向不存在案卷")
+            elif target_id >= source_id:
+                rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
+            elif relation not in self._DOSSIER_LINK_TYPES:
+                rejection = (target_id, relation, note, "案卷关联类型非法")
+            elif not note:
+                rejection = (target_id, relation, note, "案卷关联说明不能为空")
+            if rejection is not None:
+                break
+            normalized.append((target_id, relation, note))
+        if rejection is not None:
+            target_id, relation, note, reason = rejection
+            self.conn.execute(
+                """INSERT INTO decree_dossier_link_rejections
+                   (source_dossier_id,target_dossier_id,relation_type,note,reason)
+                   VALUES (?,?,?,?,?)""",
+                (source_id, target_id, relation, note, reason),
+            )
+            self._commit_dossier_write(commit)
+            raise ValueError(reason)
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO decree_dossier_links
+               (source_dossier_id,target_dossier_id,relation_type,note)
+               VALUES (?,?,?,?)""",
+            [(source_id, target_id, relation, note)
+             for target_id, relation, note in normalized],
+        )
+        self._commit_dossier_write(commit)
+
+    def list_dossier_links(
+        self, dossier_id: int, *, direction: str = "outgoing",
+    ) -> List[Dict[str, object]]:
+        """从任一端查询同一份单向关联真源。"""
+        if direction not in {"outgoing", "incoming"}:
+            raise ValueError("案卷关联查询方向非法")
+        column = "source_dossier_id" if direction == "outgoing" else "target_dossier_id"
+        rows = self.conn.execute(
+            f"SELECT * FROM decree_dossier_links WHERE {column}=? ORDER BY id",
+            (strict_int(dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_dossier_link_rejections(
+        self, source_dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT * FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
+            (strict_int(source_dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_commitments_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         """承诺只从 issue.origin_ref 反查；案卷表不复制 commitment id。"""
         rows = self.conn.execute(
@@ -11118,6 +11218,16 @@ class GameDB:
                     origin_chat_message_id=origin_mid,
                     pending_action_id=int(pa["id"]),
                 )
+                if order_id is not None and payload.get("dossier_links") is not None:
+                    links = payload.get("dossier_links")
+                    if not isinstance(links, list):
+                        raise ValueError("密令案卷关联必须为列表")
+                    dossier = self.get_dossier_for_secret_order(int(order_id))
+                    if dossier is None:
+                        raise ValueError("密令成案后未找到案卷")
+                    self.add_dossier_links(
+                        int(dossier["id"]), links, commit=False,
+                    )
                 if registry is not None:
                     try:
                         registry.refresh(assignee)
