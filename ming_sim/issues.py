@@ -4254,7 +4254,13 @@ def _strategic_event_result_preflight_error(
                             llm_config or db.llm_config,
                         )
                         current_tenure = str(row["appointment_tenure"] or "真除")
-                        target_tenure = appointment_tenure_from(item)
+                        try:
+                            target_tenure = appointment_tenure_from(item)
+                        except ValueError:
+                            return (
+                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
+                                f"{name}{action} 任别非白名单"
+                            )
                         if (
                             target_office == current_office
                             and target_type == current_type
