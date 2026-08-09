@@ -782,8 +782,8 @@ def play_turn(session: GameSession) -> None:
             try:
                 result = session.advance_without_decree()
                 _submit_first_cli_decisions(session, result)
-            except ValueError as error:
-                # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
+            except (ValueError, SettlementAbort) as error:
+                # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)

@@ -930,6 +930,8 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
         }),
+        ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
+        ("web", "dismiss", {"动作类型": "dismiss_assignment"}),
     ),
 )
 def test_manual_directive_capture_reaches_structured_dossier(
@@ -943,6 +945,8 @@ def test_manual_directive_capture_reaches_structured_dossier(
     response = {"拟旨意图": "拟旨", **model_fields}
     if case == "authorization":
         response.update({"目标ID": actor, "承办人": actor})
+    elif case == "dismiss":
+        response.update({"目标类型": "character", "目标ID": actor})
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
@@ -987,6 +991,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
     if case == "allocation":
         assert state.metrics["国库"] == before - 10
         assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
+    elif case == "dismiss":
+        assert json.loads(dossier["payload_json"])["name"] == actor
+        row = db.conn.execute(
+            "SELECT status,office FROM characters WHERE name=?", (actor,),
+        ).fetchone()
+        assert (row["status"], row["office"]) == ("dismissed", "")
     else:
         assert "理财" in db.active_skill_grants(actor)
         assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
@@ -1636,37 +1646,50 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     assert result["drafts"][1]["dossier_action_type"] == "military_order"
 
 
-def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
+@pytest.mark.parametrize("origin_ref", (
+    "dossier:not-a-number", "dossier:1:extra", f"dossier:{2 ** 63}",
+))
+def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
     from ming_sim.issues import apply_score_extraction
 
     db, state, content = game
+    before = state.metrics["国库"]
+    result = apply_score_extraction(db, state, {
+        "economy_moves": [{
+            "account": "国库", "delta": -9, "category": "伪造案卷",
+            "origin_ref": origin_ref,
+        }],
+    }, content=content)
+
+    assert state.metrics["国库"] == before
+    assert result["economy_moves"] == []
+    assert result["validate_shape_rejections"][0]["category"] == "missing_ref"
+
+
+def test_invalid_promulgation_decision_stops_before_simulation(game, monkeypatch):
+    import ming_sim.decree as decree_mod
+    from ming_sim.exceptions import LLMContractError
+
+    db, state, content = game
     dossier_id = db.create_decree_dossier(
-        state, action_type="military_order", decree_text="三月后出师",
-        target_kind="region", target_id="shaanxi",
-        executor_kind="character", executor_id=_active_minister(db),
-        due_turn=state.turn + 3,
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
     )
-    db.apply_dossier_verdicts(
-        state, [{"dossier_id": dossier_id, "decision": "promulgated"}],
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        decree_mod, "run_agent_text",
+        lambda *_a, **_k: json.dumps({
+            "verdicts": [{"dossier_id": dossier_id, "decision": "approve"}],
+        }),
     )
-    state.turn += 1
-    assert dossier_id in {
-        row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
-    }
-    result = apply_score_extraction(
-        db, state, {
-            "dossier_executions": [{
-                "dossier_id": dossier_id,
-                "outcome": "fulfilled",
-                "note": "奉旨出师，军令已毕",
-            }],
-        },
-        content=content,
-    )
-    assert result["dossier_executions"] == [{
-        "dossier_id": dossier_id, "outcome": "fulfilled",
-    }]
-    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", forbidden)
+    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", forbidden)
+
+    with pytest.raises(LLMContractError, match="decision"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+        )
 
 
 def test_withdrawn_rescript_records_closed_turn(game):
