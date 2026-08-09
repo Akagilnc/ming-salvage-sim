@@ -9829,7 +9829,9 @@ class GameDB:
             for item in self.list_monthly_dossier_progress_nudges()
         }
         if not candidates:
-            return []
+            if generated is None or generated == []:
+                return []
+            raise ValueError("无合资格长差案卷却收到本月密奏")
         if not isinstance(generated, list):
             raise ValueError("合资格长差案卷缺少本月密奏")
         supplied: Dict[int, Dict[str, object]] = {}
