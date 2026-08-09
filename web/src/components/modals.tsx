@@ -296,7 +296,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
-  const [selectedTurn, setSelectedTurn] = React.useState<number | null>(null);
+  const [selectedArchive, setSelectedArchive] = React.useState<HistoryTurnItem | null>(null);
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
@@ -312,7 +312,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
         if (!alive) return;
         const list: HistoryTurnItem[] = data.turns || [];
         setTurns(list);
-        if (list.length) setSelectedTurn(list[list.length - 1].turn);
+        if (list.length) setSelectedArchive(list[list.length - 1]);
       } catch (e: any) {
         if (alive) setListError(e?.message || "加载失败");
       } finally {
@@ -323,17 +323,17 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   React.useEffect(() => {
-    if (selectedTurn == null) return;
+    if (selectedArchive == null) return;
+    const selectedTurn = selectedArchive.turn;
     let alive = true;
     setDetailLoading(true);
     setDetailError("");
     setArchivedScroll(null);
     (async () => {
       try {
-        const selected = turns.find((item) => item.turn === selectedTurn);
         const [detailResp, scrollResp] = await Promise.all([
           fetch(`/api/history/turn/${selectedTurn}`),
-          selected?.night_id ? fetch(`/api/audience/scroll?night_id=${selected.night_id}`) : Promise.resolve(null),
+          selectedArchive.night_id ? fetch(`/api/audience/scroll?night_id=${selectedArchive.night_id}`) : Promise.resolve(null),
         ]);
         if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
         if (scrollResp && !scrollResp.ok) throw new Error(`HTTP ${scrollResp.status}`);
@@ -350,7 +350,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
       }
     })();
     return () => { alive = false; };
-  }, [selectedTurn, turns]);
+  }, [selectedArchive]);
 
   const subtitle = turns.length ? `共 ${turns.length} 月存档` : "尚无存档";
 
@@ -365,15 +365,15 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
           ) : null}
           <ul>
             {turns.slice().reverse().map((t) => {
-              const active = t.turn === selectedTurn;
+              const active = t.turn === selectedArchive?.turn && t.night_id === selectedArchive?.night_id;
               const tags: string[] = [];
               if (t.has_report) tags.push("奏报");
               if (t.has_directive) tags.push("诏");
               return (
-                <li key={t.turn}>
+                <li key={`${t.turn}:${t.night_id ?? "month"}`}>
                   <button
                     className={`history-turn-item ${active ? "active" : ""}`}
-                    onClick={() => setSelectedTurn(t.turn)}
+                    onClick={() => setSelectedArchive(t)}
                   >
                     <b>{t.year} 年 {t.period} 月</b>
                     <small>第 {t.turn} 回合 · {tags.join(" / ") || "—"}</small>
@@ -388,7 +388,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             loading={detailLoading}
             error={detailError}
             detail={detail}
-            selectedTurn={selectedTurn}
+            selectedTurn={selectedArchive?.turn ?? null}
             archivedScroll={archivedScroll}
           />
         </article>
@@ -413,7 +413,7 @@ export function HistoryDetailView({
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
   if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
   if (error) return <div className="document-section"><p className="long-copy">加载失败：{error}</p></div>;
-  if (!detail || !detail.exists) return <div className="document-section"><p className="long-copy">该回合无存档。</p></div>;
+  if ((!detail || !detail.exists) && !archivedScroll) return <div className="document-section"><p className="long-copy">该回合无存档。</p></div>;
 
   return (
     <>
@@ -423,14 +423,14 @@ export function HistoryDetailView({
           <ScrollMessages messages={archivedScroll} ministerName="" />
         </section>
       ) : null}
-      {detail.decree_text ? (
+      {detail?.decree_text ? (
         <section className="document-section">
           <h3 className="extraction-section-title">本月诏书</h3>
           <pre className="memorial-text">{detail.decree_text}</pre>
         </section>
       ) : null}
 
-      {detail.directives.length ? (
+      {detail?.directives?.length ? (
         <section className="document-section">
           <h3 className="extraction-section-title">已颁草案（{detail.directives.length} 道）</h3>
           <ul className="history-directive-list">
@@ -451,7 +451,7 @@ export function HistoryDetailView({
         </section>
       ) : null}
 
-      {detail.report ? (
+      {detail?.report ? (
         <section className="document-section">
           <h3 className="extraction-section-title">月末邸报奏报</h3>
           <pre className="memorial-text">{detail.report}</pre>
@@ -623,11 +623,21 @@ export function ChatModal({
       : `${message.role}:${chatTurnId}`;
   };
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
+  const snapshotStillCurrent = (state: typeof scrollState): boolean => {
+    if (state.kind !== "night") return true;
+    const chatTurnIds = new Set(chat.map((message) => message.chatTurnId).filter((id): id is number => !!id));
+    const ministerSnapshotIds = new Set(state.messages
+      .filter((message) => message.speaker === minister.name && message.role !== "scene")
+      .map((message) => message.chat_turn_id)
+      .filter((id): id is number => !!id));
+    return ![...ministerSnapshotIds].some((id) => !chatTurnIds.has(id));
+  };
+  const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
     if (scrollMode === "legacy") return [...chat];
-    if (scrollState.kind !== "night") return scrollState.kind === "none" ? [...chat] : [];
-    const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...scrollState.messages];
-    const currentTurnIds = new Set(scrollState.messages.map((message) => message.chat_turn_id).filter((id): id is number => !!id));
+    if (effectiveScrollState.kind !== "night") return effectiveScrollState.kind === "none" ? [...chat] : [];
+    const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...effectiveScrollState.messages];
+    const currentTurnIds = new Set(effectiveScrollState.messages.map((message) => message.chat_turn_id).filter((id): id is number => !!id));
     const present = new Set(merged.map(messageIdentity).filter((identity): identity is string => identity !== null));
     for (const message of chat) {
       const identity = chatIdentity(message);
@@ -652,7 +662,7 @@ export function ChatModal({
     let alive = true;
     // Once an open night is known, refreshes retain that single authority while loading;
     // first load/minister switches never flash the old per-minister projection.
-    setScrollState((current) => current.kind === "night" ? current : { kind: "loading" });
+    setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
     if (scrollMode === "legacy") {
       setScrollState({ kind: "none" });
       return () => { alive = false; };
@@ -669,7 +679,7 @@ export function ChatModal({
       })
       .catch(() => {
         if (!alive) return;
-        setScrollState((current) => current.kind === "night"
+        setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
           ? { ...current, refreshError: true }
           : { kind: "error" });
       });

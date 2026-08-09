@@ -3254,19 +3254,11 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
 
 
 @app.get("/api/history/turns")
-async def api_history_turns() -> Dict[str, Any]:
-    """已存档回合列表（turn_reports / turn_extractions / 已颁诏 turn_directives 并集）。"""
-    db = get_game().db
-    turns = db.list_archived_turns()
-    closed_nights = {
-        int(row["turn"]): int(row["night_id"])
-        for row in db.conn.execute(
-            "SELECT turn, MAX(id) AS night_id FROM audience_nights WHERE status='closed' GROUP BY turn"
-        ).fetchall()
-    }
+def api_history_turns() -> Dict[str, Any]:
+    """场级归档列表；同步 handler 由 FastAPI 在线程池中执行 SQLite 投影。"""
+    turns = get_game().db.list_archived_turns()
     return {"turns": [
-        {**{k: v for k, v in item.items() if k != "has_extraction"},
-         **({"night_id": closed_nights[int(item["turn"])]} if int(item["turn"]) in closed_nights else {})}
+        {k: v for k, v in item.items() if k != "has_extraction"}
         for item in turns
     ]}
 

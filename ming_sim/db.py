@@ -9150,27 +9150,38 @@ class GameDB:
         }
 
     def list_archived_turns(self) -> List[Dict[str, object]]:
-        """所有已存档回合（turn_reports/turn_extractions/turn_directives 任一有数据）。
-        返回按 turn 升序的元信息列表，每项含 turn/year/period 与各来源是否存在。"""
+        """列出月档及每一个已关闭召对场次；night_id 是场级归档身份。"""
         rows = self.conn.execute(
             """
-            SELECT t.turn AS turn,
-                   MAX(t.year) AS year,
-                   MAX(t.period) AS period,
-                   MAX(t.has_report) AS has_report,
-                   MAX(t.has_extraction) AS has_extraction,
-                   MAX(t.has_directive) AS has_directive
-            FROM (
-                SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive
-                FROM turn_reports
-                UNION ALL
-                SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
-                UNION ALL
-                SELECT turn, year, period, 0, 0, 1 FROM turn_directives
-                WHERE status = 'issued'
-            ) AS t
-            GROUP BY t.turn
-            ORDER BY t.turn
+            WITH materials AS (
+                SELECT turn, MAX(year) AS year, MAX(period) AS period,
+                       MAX(has_report) AS has_report,
+                       MAX(has_extraction) AS has_extraction,
+                       MAX(has_directive) AS has_directive
+                FROM (
+                    SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive FROM turn_reports
+                    UNION ALL
+                    SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
+                    UNION ALL
+                    SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
+                )
+                GROUP BY turn
+            ), archive_turns AS (
+                SELECT turn FROM materials
+                UNION
+                SELECT turn FROM audience_nights WHERE status = 'closed'
+            )
+            SELECT a.turn,
+                   COALESCE(n.year, m.year) AS year,
+                   COALESCE(n.period, m.period) AS period,
+                   COALESCE(m.has_report, 0) AS has_report,
+                   COALESCE(m.has_extraction, 0) AS has_extraction,
+                   COALESCE(m.has_directive, 0) AS has_directive,
+                   n.id AS night_id
+            FROM archive_turns a
+            LEFT JOIN materials m ON m.turn = a.turn
+            LEFT JOIN audience_nights n ON n.turn = a.turn AND n.status = 'closed'
+            ORDER BY a.turn, n.id
             """
         ).fetchall()
         return [
@@ -9181,6 +9192,7 @@ class GameDB:
                 "has_report": bool(r["has_report"]),
                 "has_extraction": bool(r["has_extraction"]),
                 "has_directive": bool(r["has_directive"]),
+                **({"night_id": int(r["night_id"])} if r["night_id"] is not None else {}),
             }
             for r in rows
         ]
