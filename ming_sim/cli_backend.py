@@ -2028,6 +2028,28 @@ def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
     return tags, deadline
 
 
+def _normalize_dossier_link_proposals(
+    dossier_candidates: Optional[List[Dict[str, Any]]],
+    suggested_links: Any,
+) -> Dict[Tuple[int, str], Dict[str, Any]]:
+    """Return the one canonical, visible set of dossier-link proposals."""
+    candidate_ids = {
+        row["id"] for row in (dossier_candidates or [])
+        if isinstance(row, dict) and type(row.get("id")) is int
+    }
+    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
+    for link in suggested_links if isinstance(suggested_links, list) else []:
+        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
+            continue
+        target = link["target_dossier_id"]
+        relation = str(link.get("relation_type") or "").strip()
+        note = str(link.get("note") or "").strip()
+        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
+            proposals[(target, relation)] = {
+                "target_dossier_id": target, "relation_type": relation, "note": note}
+    return proposals
+
+
 def confirm_dossier_links(
     minister_reply: str,
     dossier_candidates: Optional[List[Dict[str, Any]]],
@@ -2043,21 +2065,9 @@ def confirm_dossier_links(
     candidates = {
         int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
         for row in (dossier_candidates or [])
-        if isinstance(row, dict) and isinstance(row.get("id"), int)
+        if isinstance(row, dict) and type(row.get("id")) is int
     }
-    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
-    for link in suggested_links if isinstance(suggested_links, list) else []:
-        if not isinstance(link, dict) or isinstance(link.get("target_dossier_id"), bool):
-            continue
-        try:
-            target = int(link.get("target_dossier_id"))
-        except (TypeError, ValueError):
-            continue
-        relation = str(link.get("relation_type") or "").strip()
-        note = str(link.get("note") or "").strip()
-        if target in candidates and relation in DOSSIER_LINK_TYPES and note:
-            proposals[(target, relation)] = {
-                "target_dossier_id": target, "relation_type": relation, "note": note}
+    proposals = _normalize_dossier_link_proposals(dossier_candidates, suggested_links)
     if not proposals:
         return []
     prompt = (
@@ -2212,24 +2222,17 @@ def _extract_secret_order(
         tags = fallback_tags
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
-    dossier_links: List[Dict[str, Any]] = []
-    candidate_ids = {int(row["id"]) for row in (dossier_candidates or [])}
     raw_links = obj.get("案卷关联")
-    if isinstance(raw_links, list):
-        for link in raw_links:
-            if not isinstance(link, dict):
-                continue
-            target = link.get("目标案卷ID")
-            # IDs are intentionally not guessed from prose: only the structured
-            # confirmation output can cross this boundary; DB validates existence/age.
-            if (isinstance(target, bool) or not isinstance(target, int)
-                    or target not in candidate_ids):
-                continue
-            dossier_links.append({
-                "target_dossier_id": target,
-                "relation_type": str(link.get("类型") or "").strip(),
-                "note": str(link.get("说明") or "").strip(),
-            })
+    extracted_proposals = [
+        {
+            "target_dossier_id": link.get("目标案卷ID"),
+            "relation_type": link.get("类型"),
+            "note": link.get("说明"),
+        }
+        for link in raw_links if isinstance(link, dict)
+    ] if isinstance(raw_links, list) else []
+    proposals = _normalize_dossier_link_proposals(dossier_candidates, extracted_proposals)
+    dossier_links = list(proposals.values())
     if confirmation_future is not None:
         try:
             confirmed = {
@@ -2242,8 +2245,7 @@ def _extract_secret_order(
         finally:
             confirmation_pool.shutdown(wait=True)
         dossier_links = [
-            item for item in dossier_links
-            if (item["target_dossier_id"], item["relation_type"]) in confirmed
+            item for identity, item in proposals.items() if identity in confirmed
         ]
     else:
         dossier_links = confirm_dossier_links(
