@@ -1862,6 +1862,35 @@ def test_military_directive_projects_normalized_due_turn_to_dossier(game):
     assert dossier["due_turn"] == state.turn + 4
 
 
+@pytest.mark.parametrize("draft_count", (1, 2))
+def test_draft_extraction_does_not_capture_acting_appointment(monkeypatch, draft_count):
+    import ming_sim.cli_backend as cli_backend
+
+    acting = {
+        "正文": "命洪承畴暂署兵部尚书",
+        "动作类型": "acting_appointment",
+        "目标类型": "office",
+        "目标ID": "兵部尚书",
+    }
+    raw = (
+        {"拟旨意图": "拟旨", **acting}
+        if draft_count == 1 else {"成品旨稿": [acting, acting]}
+    )
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_args, **_kwargs: (json.dumps(raw, ensure_ascii=False), {}),
+    )
+
+    result = cli_backend.extract_draft_intent(
+        "命洪承畴暂署兵部尚书", "臣已拟妥", draft_count=draft_count,
+    )
+
+    if draft_count == 1:
+        assert result["dossier_action_type"] != "acting_appointment"
+    else:
+        assert result["drafts"] == []
+
+
 def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     import ming_sim.cli_backend as cli_backend
 
