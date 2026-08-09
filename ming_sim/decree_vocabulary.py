@@ -12,3 +12,46 @@ DOSSIER_ACTION_TYPES = frozenset({
 })
 
 DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
+
+# ADR 0055 / #560: the single policy source for dossier admission and effect
+# timing.  Consumers must not infer these properties from ad-hoc action sets.
+# ``payload`` means a structured effect is materialized after promulgation;
+# ``narrative`` means the simulator/extractor owns the effect; ``immediate``
+# is an exempt palace/private action already materialized at admission.
+_DOSSIER_NARRATIVE_ACTIONS = frozenset({
+    "policy", "strategy_selection", "approve_reject", "special_decree",
+    "punishment", "pacification", "referral", "revoke_decree",
+})
+_DOSSIER_EXEMPT_ACTIONS = frozenset({
+    "secret_order", "secret_authorization", "secret_investigation", "protection",
+})
+_DOSSIER_TERMINAL_ACTIONS = frozenset({"authorization", "dismiss_assignment"})
+
+DOSSIER_ACTION_POLICY = {
+    action: {
+        "external_review": action not in _DOSSIER_EXEMPT_ACTIONS,
+        "effect_owner": (
+            "immediate" if action in _DOSSIER_EXEMPT_ACTIONS
+            else "narrative" if action in _DOSSIER_NARRATIVE_ACTIONS
+            else "payload"
+        ),
+        "execution_surface": (
+            "terminal" if action in _DOSSIER_TERMINAL_ACTIONS else "in_transit"
+        ),
+    }
+    for action in DOSSIER_ACTION_TYPES
+}
+assert frozenset(DOSSIER_ACTION_POLICY) == DOSSIER_ACTION_TYPES
+
+
+def dossier_action_policy(action_type: object, payload=None):
+    """Return canonical policy, including the documented inner-treasury exemption."""
+    action = str(action_type or "")
+    policy = dict(DOSSIER_ACTION_POLICY[action])
+    if action == "grant_allocation":
+        if str((payload or {}).get("account") or "") == "内库":
+            policy.update(external_review=False, effect_owner="immediate")
+        policy["execution_surface"] = str(
+            (payload or {}).get("execution_surface") or "in_transit"
+        )
+    return policy

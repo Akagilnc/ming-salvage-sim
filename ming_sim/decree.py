@@ -126,15 +126,36 @@ def validate_promulgation_verdicts(
         for row in generated
     ):
         raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+    faction_names = {
+        str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
+    }
+    class_names = {
+        str(item["name"]) for item in db.conn.execute("SELECT DISTINCT name FROM classes")
+    }
     try:
         for row in generated:
+            marker = row.get("midzhi_unpromulgatable", False)
+            if not isinstance(marker, bool):
+                raise ValueError("中旨亦不可颁标记必须为 bool")
+            affected = row.get("affected_parties", [])
+            if not isinstance(affected, list):
+                raise ValueError("受损方必须为 typed 清单")
+            for party in affected:
+                if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
+                    raise ValueError("受损方须且仅含 kind/key/severity")
+                kind, key = party.get("kind"), str(party.get("key") or "")
+                if kind not in {"faction", "class"}:
+                    raise ValueError("受损方 kind 只能为 faction 或 class")
+                if party.get("severity") not in {"大怒", "不满"}:
+                    raise ValueError("受损方程度只能为大怒或不满")
+                if key not in (faction_names if kind == "faction" else class_names):
+                    raise ValueError(f"未知受损方：{kind}:{key}")
+            if marker and row.get("decision") != "rejected":
+                raise ValueError("中旨亦不可颁只能标记打回判决")
             if row.get("decision") == "rejected":
                 validate_rejection_verdict(
                     row, {"cabinet_drafting", "palace_rescript", "six_offices"},
-                    faction_names={
-                        str(item["name"])
-                        for item in db.conn.execute("SELECT name FROM factions")
-                    },
+                    faction_names=faction_names,
                     character_ids={
                         str(item["name"])
                         for item in db.conn.execute("SELECT name FROM characters")
@@ -175,12 +196,12 @@ def _rescript_decisions(
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
             "options": [
-                {
+                *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",
                     "note": "以中旨强行颁出",
                     "dossier_id": dossier_id,
                     "dossier_decision": "force_promulgated",
-                },
+                }]),
                 {
                     "label": "收回",
                     "note": "收回此道准旨",
@@ -462,13 +483,18 @@ def resolve_directives(
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
     if proposed_dossiers:
-        # S5 ships a deterministic pass-through judge.  Later slices can inject
-        # the real judge at this public seam without moving persistence/apply.
-        provider = promulgation_verdict_provider or stub_promulgation_verdicts
-        generated = provider(proposed_dossiers, state)
-        verdict_rows = validate_promulgation_verdicts(
-            generated, proposed_dossiers, db,
-        )
+        # A validated batch is durable before any simulator work.  Recovery is
+        # turn-scoped: an old hold verdict can never suppress this month's call.
+        stored = db.get_pending_promulgation_verdicts(state.turn)
+        if stored:
+            verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
+        else:
+            provider = promulgation_verdict_provider or stub_promulgation_verdicts
+            generated = provider(proposed_dossiers, state)
+            verdict_rows = validate_promulgation_verdicts(
+                generated, proposed_dossiers, db,
+            )
+            db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
 
     verdict_by_id = {
         int(row["dossier_id"]): str(row.get("decision") or "")

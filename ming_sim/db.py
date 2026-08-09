@@ -26,7 +26,9 @@ from ming_sim.constants import (
     SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
-from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES
+from ming_sim.decree_vocabulary import (
+    DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES, dossier_action_policy,
+)
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
@@ -1370,11 +1372,20 @@ class GameDB:
                 primary_opponents_json TEXT NOT NULL DEFAULT '[]',
                 gatekeeper_id TEXT,
                 criteria_snapshot_json TEXT NOT NULL DEFAULT '{}',
+                affected_parties_json TEXT NOT NULL DEFAULT '[]',
+                midzhi_unpromulgatable INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
+            CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
+                turn INTEGER NOT NULL,
+                dossier_id INTEGER NOT NULL,
+                verdict_json TEXT NOT NULL,
+                PRIMARY KEY(turn, dossier_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
 
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1802,6 +1813,10 @@ class GameDB:
         self.ensure_column("decree_dossier_decisions", "gatekeeper_id", "TEXT")
         self.ensure_column(
             "decree_dossier_decisions", "criteria_snapshot_json", "TEXT NOT NULL DEFAULT '{}'")
+        self.ensure_column(
+            "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.ensure_column(
+            "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_secret_order_dossiers()
@@ -9588,18 +9603,13 @@ class GameDB:
     _DOSSIER_EXECUTION_OUTCOMES = frozenset({
         "executing", "fulfilled", "degraded", "failed", "transformed",
     })
-    _DOSSIER_IMMEDIATE_TERMINAL_ACTIONS = frozenset({
-        "authorization", "dismiss_assignment",
-    })
-
     @classmethod
     def _dossier_has_execution_surface(
         cls, action_type: object, payload: Optional[Dict[str, object]] = None,
     ) -> bool:
-        action = str(action_type or "")
-        if action == "grant_allocation":
-            return str((payload or {}).get("execution_surface") or "") != "immediate"
-        return action not in cls._DOSSIER_IMMEDIATE_TERMINAL_ACTIONS
+        return dossier_action_policy(action_type, payload)["execution_surface"] not in {
+            "terminal", "immediate",
+        }
 
     @classmethod
     def _directive_dossier_action_type(cls, payload: Dict[str, object]) -> str:
@@ -10326,6 +10336,40 @@ class GameDB:
                     dossier_id, "executing", commit=False,
                 )
 
+    def save_pending_promulgation_verdicts(
+        self, turn: int, verdicts: Iterable[Dict[str, object]],
+    ) -> None:
+        """Persist one complete turn-scoped batch before simulation starts."""
+        rows = list(verdicts)
+        with atomic(self):
+            self.conn.execute(
+                "DELETE FROM pending_promulgation_verdicts WHERE turn=?", (int(turn),)
+            )
+            for verdict in rows:
+                self.conn.execute(
+                    "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
+                    (int(turn), strict_int(verdict.get("dossier_id")),
+                     safe_json_dumps(verdict, ensure_ascii=False)),
+                )
+
+    def get_pending_promulgation_verdicts(
+        self, turn: int,
+    ) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT verdict_json FROM pending_promulgation_verdicts WHERE turn=? ORDER BY dossier_id",
+            (int(turn),),
+        ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                value = json.loads(row["verdict_json"])
+            except Exception as exc:
+                raise ValueError("待应用颁布判决 JSON 损坏") from exc
+            if not isinstance(value, dict):
+                raise ValueError("待应用颁布判决须为对象")
+            result.append(value)
+        return result
+
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
         content=None, registry=None,
@@ -10360,6 +10404,14 @@ class GameDB:
                                    if verdict.get("gatekeeper_id") is not None else None),
                     criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
                     content=content, registry=registry,
+                )
+                self.conn.execute(
+                    """UPDATE decree_dossier_decisions
+                       SET affected_parties_json=?, midzhi_unpromulgatable=?
+                       WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
+                    (safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False),
+                     1 if verdict.get("midzhi_unpromulgatable") is True else 0,
+                     strict_int(verdict.get("dossier_id"))),
                 )
 
     def interrupt_dossiers_for_character(
@@ -11500,6 +11552,7 @@ class GameDB:
 
     def clear_resolve_context(self, turn: int) -> None:
         self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
+        self.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn = ?", (int(turn),))
         self.conn.commit()
 
     def get_turn_extraction(self, turn: int) -> Optional[Dict[str, object]]:
