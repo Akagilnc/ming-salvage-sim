@@ -79,11 +79,22 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     allowed_message_fields = {
         "role", "speaker", "audibility", "time", "content",
         "soft_boundary", "beat", "highlights", "container",
+        "chat_turn_id", "record_id",
     }
     forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
     assert messages
+    base_message_fields = allowed_message_fields - {"chat_turn_id", "record_id"}
+    dialogue_contents = {"辽饷如何？", "臣请据实核账。", "边情如何？", "边关尚稳。"}
     for message in messages:
-        assert set(message) == allowed_message_fields
+        expected_fields = set(base_message_fields)
+        if message["content"] in dialogue_contents:
+            expected_fields.add("chat_turn_id")
+            assert message["chat_turn_id"] > 0
+        if message["role"] == "attendant" and message["content"] == "万岁爷，他尚有保留。":
+            expected_fields.update({"chat_turn_id", "record_id"})
+            assert message["chat_turn_id"] > 0
+            assert message["record_id"] > 0
+        assert set(message) == expected_fields
         assert forbidden_character_stats.isdisjoint(message)
         assert forbidden_character_stats.isdisjoint(message["container"])
         assert set(message["container"]) == {"time_of_day", "location", "audience_type"}

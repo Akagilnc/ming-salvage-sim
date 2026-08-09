@@ -323,6 +323,9 @@ export type AudienceScrollMessage = {
   beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda";
   highlights: string[];
   container: { time_of_day: string; location: string; audience_type: string };
+  /** Internal durable identity used only to merge a refreshing live projection. */
+  chat_turn_id?: number;
+  record_id?: number;
 };
 
 /** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，

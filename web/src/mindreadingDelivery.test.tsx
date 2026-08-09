@@ -102,8 +102,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         return jsonResp({
         night_id: 23,
         messages: [
-          { role: "user", content: "问1" }, { role: "minister", content: "答1" },
-          { role: "user", content: "问2" }, { role: "minister", content: "答2" },
+          { role: "user", content: "问1", chat_turn_id: 10 }, { role: "minister", content: "答1", chat_turn_id: 10 },
+          { role: "user", content: "问2", chat_turn_id: 11 }, { role: "minister", content: "答2", chat_turn_id: 11 },
         ],
       });
       }
@@ -135,7 +135,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await act(async () => { await p1; });
     // hook 的真实 reducer 把 mind1 插回旧轮；ChatModal 与权威卷轴交接按身份差集保住它，
     // 不会因位置水位偏移而漏递话、重复既有尾轮。
-    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2", "attendant:近臣低声。"]);
+    expect(rows()).toEqual(["user:问1", "minister:答1", "attendant:近臣低声。", "user:问2", "minister:答2"]);
   });
 
   it("持久后果在 done 到手即消费：读心延后 end 期间起新轮，旧轮后果不被丢弃", async () => {
