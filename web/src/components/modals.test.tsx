@@ -498,18 +498,15 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("旧夜问话");
   });
 
-  it("keeps a withdrawn turn deleted after a later refresh fails", async () => {
-    let rejectLateRefresh!: (reason?: unknown) => void;
+  it("retires the pre-withdrawal snapshot before the same-night refresh fails", async () => {
+    let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
         { role: "user", speaker: "朕", content: "撤回前问话", chat_turn_id: 1 },
         { role: "minister", speaker: MINISTER_MOCK.name, content: "撤回前答复", chat_turn_id: 1 },
-        { role: "minister", speaker: "洪承畴", content: "仍在卷中", chat_turn_id: 2 },
+        { role: "minister", speaker: "洪承畴", content: "仍在旧 snapshot", chat_turn_id: 2 },
       ] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "minister", speaker: "洪承畴", content: "仍在卷中", chat_turn_id: 2 },
-      ] }) })
-      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectLateRefresh = reject; }));
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }));
     vi.stubGlobal("fetch", fetchMock);
     let updateChat!: (chat: ChatMessage[]) => void;
     renderModal({
@@ -520,16 +517,15 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("撤回前答复");
 
-    await act(async () => { updateChat([]); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).not.toContain("撤回前问话");
-    expect(document.body.textContent).not.toContain("撤回前答复");
-    expect(document.body.textContent).toContain("仍在卷中");
-
     await act(async () => { updateChat([]); await Promise.resolve(); });
-    await act(async () => { rejectLateRefresh(new Error("late refresh failed")); await Promise.resolve(); });
     expect(document.body.textContent).not.toContain("撤回前问话");
     expect(document.body.textContent).not.toContain("撤回前答复");
-    expect(document.body.textContent).toContain("仍在卷中");
+    expect(document.body.textContent).not.toContain("仍在旧 snapshot");
+
+    await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("撤回前问话");
+    expect(document.body.textContent).not.toContain("撤回前答复");
+    expect(document.body.textContent).not.toContain("仍在旧 snapshot");
   });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
@@ -601,19 +597,23 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => {
       updateChat([
         { role: "user", content: "旧卷", chatTurnId: 1 },
-        { role: "minister", content: "刚完成的答复", chatTurnId: 1 },
+        { role: "user", content: "刚完成的新问", chatTurnId: 2 },
+        { role: "minister", content: "刚完成的答复", chatTurnId: 2 },
       ]);
       await Promise.resolve();
     });
     expect(document.body.textContent).toContain("旧卷");
+    expect(document.body.textContent).toContain("刚完成的新问");
     expect(document.body.textContent).toContain("刚完成的答复");
 
     await act(async () => {
       resolveRefresh({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", content: "旧卷", chat_turn_id: 1 }, { role: "minister", content: "刚完成的答复", chat_turn_id: 1 },
+        { role: "user", content: "旧卷", chat_turn_id: 1 },
+        { role: "user", content: "刚完成的新问", chat_turn_id: 2 }, { role: "minister", content: "刚完成的答复", chat_turn_id: 2 },
       ] }) });
       await Promise.resolve(); await Promise.resolve();
     });
+    expect(document.body.textContent?.match(/刚完成的新问/g)).toHaveLength(1);
     expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
   });
 
@@ -686,12 +686,14 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => {
       updateChat([
         { role: "user", content: "旧卷", chatTurnId: 1 },
-        { role: "minister", content: "失败前已完成", chatTurnId: 1 },
+        { role: "user", content: "失败前新问", chatTurnId: 2 },
+        { role: "minister", content: "失败前已完成", chatTurnId: 2 },
       ]);
       await Promise.resolve(); await Promise.resolve();
     });
 
     expect(document.body.textContent).toContain("旧卷");
+    expect(document.body.textContent).toContain("失败前新问");
     expect(document.body.textContent).toContain("失败前已完成");
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
   });
