@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
 import subprocess
@@ -47,6 +48,7 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 
 # #529 owns interim-office capture/materialization.  Keep the #471 dossier
@@ -2043,7 +2045,7 @@ def confirm_dossier_links(
         for row in (dossier_candidates or [])
         if isinstance(row, dict) and isinstance(row.get("id"), int)
     }
-    proposals: Dict[int, Dict[str, Any]] = {}
+    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
     for link in suggested_links if isinstance(suggested_links, list) else []:
         if not isinstance(link, dict) or isinstance(link.get("target_dossier_id"), bool):
             continue
@@ -2053,17 +2055,19 @@ def confirm_dossier_links(
             continue
         relation = str(link.get("relation_type") or "").strip()
         note = str(link.get("note") or "").strip()
-        if target in candidates and relation in {"护卫", "稽核", "接应"} and note:
-            proposals[target] = {"target_dossier_id": target, "relation_type": relation, "note": note}
+        if target in candidates and relation in DOSSIER_LINK_TYPES and note:
+            proposals[(target, relation)] = {
+                "target_dossier_id": target, "relation_type": relation, "note": note}
     if not proposals:
         return []
     prompt = (
         "你是案卷关联确认判词，不是对话角色。只依据【大臣最终可见回话】的完整语义判断；"
         "否定、仅引用旧案、模糊复述、长短标题包含歧义、未明确承诺关联，均不得确认。"
-        "内部ID只用于输出，不是确认依据。只输出合法JSON：{\"confirmed_ids\":[整数]}。\n"
+        "内部ID只用于输出，不是确认依据。只输出合法JSON："
+        "{\"confirmed_links\":[{\"target_dossier_id\":整数,\"relation_type\":\"护卫/稽核/接应\"}]}。\n"
         "【可选提议】\n" + "\n".join(
-            f"- #{target} {candidates[target]}；{item['relation_type']}；{item['note']}"
-            for target, item in proposals.items()
+            f"- #{target} {candidates[target]}；{relation}；{item['note']}"
+            for (target, relation), item in proposals.items()
         ) + "\n【大臣最终可见回话】\n" + (minister_reply or "（空）")
     )
     try:
@@ -2074,11 +2078,18 @@ def confirm_dossier_links(
         return []
     if not isinstance(verdict, dict):
         return []
-    ids = verdict.get("confirmed_ids")
-    if not isinstance(ids, list) or any(type(value) is not int for value in ids):
+    links = verdict.get("confirmed_links")
+    if not isinstance(links, list):
         return []
-    confirmed = set(ids)
-    return [item for target, item in proposals.items() if target in confirmed]
+    confirmed = set()
+    for link in links:
+        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
+            return []
+        relation = link.get("relation_type")
+        if relation not in DOSSIER_LINK_TYPES:
+            return []
+        confirmed.add((link["target_dossier_id"], relation))
+    return [item for identity, item in proposals.items() if identity in confirmed]
 
 
 def _extract_secret_order(
@@ -2115,6 +2126,18 @@ def _extract_secret_order(
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
     raw = ""
+    confirmation_future = None
+    confirmation_pool = None
+    if cli_backend_parallel_safe(llm_config) and dossier_candidates:
+        # Confirmation reads only the already-visible reply/candidate set, so it
+        # can run beside field extraction; extracted proposals are intersected locally below.
+        broad_proposals = [
+            {"target_dossier_id": int(row["id"]), "relation_type": relation, "note": "待抽取后核对"}
+            for row in dossier_candidates for relation in DOSSIER_LINK_TYPES
+        ]
+        confirmation_pool = ThreadPoolExecutor(max_workers=1)
+        confirmation_future = confirmation_pool.submit(
+            confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
@@ -2207,8 +2230,24 @@ def _extract_secret_order(
                 "relation_type": str(link.get("类型") or "").strip(),
                 "note": str(link.get("说明") or "").strip(),
             })
-    dossier_links = confirm_dossier_links(
-        minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
+    if confirmation_future is not None:
+        try:
+            confirmed = {
+                (item["target_dossier_id"], item["relation_type"])
+                for item in confirmation_future.result()
+            }
+        except Exception as exc:
+            _log(f"案卷关联确认失败：{exc}")
+            confirmed = set()
+        finally:
+            confirmation_pool.shutdown(wait=True)
+        dossier_links = [
+            item for item in dossier_links
+            if (item["target_dossier_id"], item["relation_type"]) in confirmed
+        ]
+    else:
+        dossier_links = confirm_dossier_links(
+            minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
