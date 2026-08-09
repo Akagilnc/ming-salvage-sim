@@ -1,10 +1,13 @@
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 from ming_sim import cli_backend
 from ming_sim.session import GameSession
+from ming_sim.skills import bind_content as bind_skills_content
+from web_app import WebGame
 
 
 def _make_dossier(db, state, text):
@@ -271,6 +274,100 @@ def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
     )
     db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
     order = db.list_secret_orders(minister_name="毕自严")[0]
+    source = db.get_dossier_for_secret_order(order["id"])
+    assert bool(db.list_dossier_links(source["id"])) is expected
+
+
+@pytest.mark.parametrize("proposal, verdict, expected", [
+    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "护送"},
+     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], True),
+    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "护送"},
+     lambda _target: [], False),
+    (lambda target: {"target_dossier_id": target, "relation_type": "越权", "note": "坏类型"},
+     lambda target: [{"target_dossier_id": target, "relation_type": "越权"}], False),
+    (lambda _target: {"target_dossier_id": 999999, "relation_type": "护卫", "note": "不可见"},
+     lambda _target: [{"target_dossier_id": 999999, "relation_type": "护卫"}], False),
+    (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "   "},
+     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], False),
+])
+def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
+    game, monkeypatch, proposal, verdict, expected,
+):
+    db, state, content = game
+    target = _make_dossier(db, state, "辽东补饷")
+    db.record_dossier_decision(target, "promulgated")
+    minister = "毕自严"
+    payload = json.dumps({
+        "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
+        "dossier_links": [proposal(target)],
+    }, ensure_ascii=False)
+
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": verdict(target)}, ensure_ascii=False), 1),
+    )
+
+    class RunOutput:
+        def __init__(self):
+            self.content = None
+            self.tools = [
+                SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{payload}")]
+
+    class Agent:
+        def run(self, *_args, **_kwargs):
+            yield SimpleNamespace(event="RunContent", content="臣明确确认护卫辽东补饷。")
+            yield RunOutput()
+
+    class Session:
+        llm_config = SimpleNamespace(channel="api")
+        temporary_characters = set()
+
+        def __init__(self):
+            self.db, self.state, self.content = db, state, content
+            self.registry = SimpleNamespace(
+                get=lambda _character: Agent(), refresh=lambda _name: None, session_ids={})
+
+        def _character(self, name):
+            return self.content.characters[name]
+
+        def _start_cli_action_intent(self, *_args):
+            return None
+
+        def _finish_cli_action_intent(self, *_args):
+            return None
+
+        def _confirmation_intent_for_preexisting_pending(self, *args, **kwargs):
+            return GameSession._confirmation_intent_for_preexisting_pending(self, *args, **kwargs)
+
+        def apply_cli_conversation_actions(self, *_args, **_kwargs):
+            return {"directive": None, "secret_order_id": None, "pending_action_id": 0}
+
+        def _merge_staged_new_secret_order_content(self, *args, **kwargs):
+            return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
+
+        def pending_count(self):
+            return 0
+
+    bind_skills_content(content)
+    runtime = WebGame.__new__(WebGame)
+    runtime.session = Session()
+    runtime.chat_history = {name: [] for name in content.characters}
+    runtime.suggestions_for = lambda _character: []
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
+    runtime._trail_extraction_after_reply = lambda *_args, **_kwargs: None
+    runtime._trail_mindreading_after_reply = lambda *_args, **_kwargs: None
+
+    events = list(runtime.chat_stream(minister, "下密令护行辽饷。"))
+    assert not [event for event in events if event["type"] == "error"], events
+    done = next(event for event in events if event["type"] == "done")
+    pending_id = done["payload"]["pending_action_id"]
+    applied = db.commit_pending_actions(state, action_ids=[pending_id])
+
+    assert [item["id"] for item in applied] == [pending_id]
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    order = db.list_secret_orders(minister_name=minister)[0]
     source = db.get_dossier_for_secret_order(order["id"])
     assert bool(db.list_dossier_links(source["id"])) is expected
 

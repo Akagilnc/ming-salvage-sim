@@ -1968,6 +1968,14 @@ class WebGame:
                         except (ValueError, TypeError):
                             payload = {}
                         if isinstance(payload, dict):
+                            from ming_sim.cli_backend import confirm_dossier_links
+                            dossier_links = confirm_dossier_links(
+                                answer,
+                                self.db.list_referenceable_dossiers(
+                                    character.name, self.state.turn),
+                                payload.get("dossier_links"),
+                                llm_config=getattr(self.session, "llm_config", None),
+                            )
                             pending_action_id = self.db.stage_pending_action(
                                 self.state.turn, kind="secret_order", action="新建",
                                 minister_name=character.name, target_id=None,
@@ -1979,6 +1987,7 @@ class WebGame:
                                     "deadline_months": payload.get("deadline_months") or 0,
                                     "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                     "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                    "dossier_links": dossier_links,
                                 },
                             )
                             tool_pending_action_id = pending_action_id
