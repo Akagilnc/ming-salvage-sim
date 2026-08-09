@@ -1430,6 +1430,21 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
             ON fiscal_config_tombstones(origin_ref, removed_turn);
 
+            CREATE TABLE IF NOT EXISTS fiscal_config_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                old_value INTEGER NOT NULL,
+                new_value INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin
+            ON fiscal_config_changes(origin_ref, turn, id);
+
             CREATE TABLE IF NOT EXISTS fiscal_config (
                 key   TEXT PRIMARY KEY,
                 value INTEGER NOT NULL,
@@ -1869,16 +1884,19 @@ class GameDB:
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
         self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
-        origin_column_added = self.ensure_column(
+        self.ensure_column(
             "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
         )
-        if origin_column_added:
-            self.conn.execute(
-                """UPDATE economy_ledger
-                   SET origin_ref='dossier:' || dossier_id
-                   WHERE dossier_id > 0
-                     AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
-            )
+        # Rolling upgrades may already have the column while interrupted/older
+        # migrations left individual rows blank.  Re-scan idempotently; only a
+        # real dossier is authoritative and an existing origin is never replaced.
+        self.conn.execute(
+            """UPDATE economy_ledger
+               SET origin_ref='dossier:' || dossier_id
+               WHERE origin_ref=''
+                 AND dossier_id > 0
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
+        )
         self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
             self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
@@ -12669,13 +12687,38 @@ class GameDB:
             self.conn.commit()
         return actual
 
+    def record_fiscal_config_change(
+        self, *, turn: int, key: str, old_value: int, new_value: int,
+        origin_ref: str, reason: str = "",
+    ) -> None:
+        """Append immutable provenance for a fiscal value change.
+
+        The caller owns the surrounding transaction so the history row and live
+        configuration can never commit separately.
+        """
+        self.conn.execute(
+            """INSERT INTO fiscal_config_changes
+               (turn, key, old_value, new_value, delta, origin_ref, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (int(turn), key, int(old_value), int(new_value),
+             int(new_value) - int(old_value), origin_ref, reason[:240]),
+        )
+
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM fiscal_config WHERE origin_ref=? ORDER BY key",
-                (f"dossier:{int(dossier_id)}",),
-            ).fetchall()
-        ]
+        origin = f"dossier:{int(dossier_id)}"
+        rows: List[Dict[str, object]] = []
+        for effect_kind, table, order in (
+            ("create", "fiscal_config", "key"),
+            ("change", "fiscal_config_changes", "id"),
+            ("remove", "fiscal_config_tombstones", "id"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY {order}", (origin,)
+            ).fetchall():
+                item = dict(row)
+                item["effect_kind"] = effect_kind
+                rows.append(item)
+        return rows
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         return [

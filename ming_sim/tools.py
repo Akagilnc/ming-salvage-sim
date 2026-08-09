@@ -1027,7 +1027,8 @@ def build_extractor_tools(context: CourtContext):
                             对照resolve_condition/fail_condition判，条件命中即报
                             不可崩坏局势（天灾/大旱等effect_on_fail为空）禁止reason=failed
                             acknowledged仅用于无语义 ongoing 且已到期的圣旨承诺已由皇帝裁决确认
-        fiscal_changes      制度性财政系数变化 [{key,delta,reason}]
+        fiscal_changes      制度性财政系数变化 [{key,delta,reason,origin_ref}]
+                            origin_ref 必填：已颁 dossier:<id> 或精确 盘面自发
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/
                             宗室禄米_base/宗室禄米_rate/官俸_base/官俸_rate/工程_base/工程_rate/
