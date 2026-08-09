@@ -61,6 +61,48 @@ def test_effect_origins_round_trip_and_missing_origin_is_rejected(game):
     assert all(row["dossier_id"] is None for row in db.list_economy_moves_for_dossier(dossier_id))
 
 
+def test_issue_close_effects_inherit_parent_canonical_origin(game):
+    db, state, content = game
+    dossier_id = _promulgated_policy(db, state)
+    origin = f"dossier:{dossier_id}"
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="父案卷来源贯穿",
+        origin_kind="decree",
+        origin_ref=origin,
+        effect_on_resolve={
+            "economy": [{"account": "国库", "delta": -1, "category": "父案卷支出"}],
+            "buildings": [{
+                "action": "create", "region_id": region_id, "name": "父案卷工坊",
+                "category": "科技",
+            }],
+            "region_delta": {region_id: {"public_support": 1}},
+        },
+    )
+
+    result = issue_engine.apply_score_extraction(
+        db, state,
+        {"close_issues": [{"issue_id": issue_id, "reason": "resolved"}]},
+        content=content,
+    )
+
+    close = result["issue_summary"]["closes"][0]
+    assert close["building_ops"][0]["name"] == "父案卷工坊"
+    assert db.conn.execute(
+        "SELECT origin_ref FROM economy_ledger WHERE category='父案卷支出'"
+    ).fetchone()["origin_ref"] == origin
+    assert db.conn.execute(
+        "SELECT origin_ref FROM building_logs WHERE building_id=?",
+        (close["building_ops"][0]["building_id"],),
+    ).fetchone()["origin_ref"] == origin
+    assert db.conn.execute(
+        "SELECT origin_ref FROM region_logs WHERE region_id=? ORDER BY id DESC LIMIT 1",
+        (region_id,),
+    ).fetchone()["origin_ref"] == origin
+
+
 def test_fiscal_remove_keeps_durable_origin_tombstone(game):
     db, state, content = game
     dossier_id = _promulgated_policy(db, state)

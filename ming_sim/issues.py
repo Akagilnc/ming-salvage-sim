@@ -132,6 +132,18 @@ def _ctx() -> GameContent:
     return _content
 
 
+def _canonical_issue_origin(db: GameDB, row: sqlite3.Row) -> str:
+    """Resolve and authorize one parent issue origin before applying its children."""
+    stored_ref = str(row["origin_ref"] or "").strip()
+    # Durable dossier references remain exact; legacy/event issues predate dossier
+    # provenance and canonically represent simulation-originated consequences.
+    origin_ref = stored_ref if stored_ref.startswith("dossier:") else "盘面自发"
+    rejection = db.effect_origin_rejection(origin_ref)
+    if rejection:
+        raise ValueError(f"issue #{row['id']} canonical origin 非法：{rejection['reason']}")
+    return origin_ref
+
+
 def _apply_issue_buildings(
     db: GameDB,
     state: GameState,
@@ -139,6 +151,7 @@ def _apply_issue_buildings(
     pseudo_event: Event,
     reason: str,
     commit: bool = True,
+    origin_ref: str = "盘面自发",
 ) -> List[Dict[str, object]]:
     """落地 issue effect 里的 buildings 段：建筑随局势结案而新建/改数值/废止。
 
@@ -155,11 +168,6 @@ def _apply_issue_buildings(
         if not isinstance(op, dict):
             continue
         action = str(op.get("action") or "").lower()
-        origin_ref = str(op.get("origin_ref") or "").strip()
-        origin_error = db.effect_origin_rejection(origin_ref)
-        if origin_error:
-            applied.append({**origin_error, "action": action, "item": op})
-            continue
         try:
             if action == "create":
                 bid = db.add_building(
@@ -729,6 +737,7 @@ def _apply_monthly_ongoing_entities(
     registry=None,
     llm_config: Any = None,
     applied_person_changes: Optional[List[Dict[str, object]]] = None,
+    origin_ref: str = "盘面自发",
 ) -> tuple[Dict[str, object], List[Dict[str, object]]]:
     applied: Dict[str, object] = {}
     rejections: List[Dict[str, object]] = []
@@ -759,21 +768,25 @@ def _apply_monthly_ongoing_entities(
         rejections.extend(class_result.rejections)
 
     if region_delta:
-        region_changes = db.apply_region_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, region_delta)
+        region_changes = db.apply_region_deltas(
+            state, _ISSUE_PSEUDO_EVENT, None, label, region_delta, origin_ref=origin_ref
+        )
         applied_region = [item for item in region_changes if not item.get("rejected")]
         if applied_region:
             applied["region_delta"] = applied_region
         rejections.extend(item for item in region_changes if item.get("rejected"))
 
     if army_delta:
-        army_changes = db.apply_army_deltas(state, _ISSUE_PSEUDO_EVENT, None, label, army_delta)
+        army_changes = db.apply_army_deltas(
+            state, _ISSUE_PSEUDO_EVENT, None, label, army_delta, origin_ref=origin_ref
+        )
         applied_army = [item for item in army_changes if not item.get("rejected")]
         if applied_army:
             applied["army_delta"] = applied_army
         rejections.extend(item for item in army_changes if item.get("rejected"))
 
     if power_updates:
-        power_changes = db.apply_power_deltas(state, power_updates)
+        power_changes = db.apply_power_deltas(state, power_updates, origin_ref=origin_ref)
         applied_power = [item for item in power_changes if not item.get("rejected")]
         if applied_power:
             applied["power_updates"] = applied_power
@@ -791,6 +804,7 @@ def _apply_monthly_ongoing_entities(
             llm_config=llm_config,
             source="system_simulation",
             derived_from=label,
+            origin_ref=origin_ref,
         )
         applied_people = [item for item in results if not item.get("rejected")]
         if applied_people:
@@ -4650,10 +4664,14 @@ def apply_issue_tracker_output(
         if new_row["status"] == "resolved":
             effect = loads_effect_dict(new_row["effect_on_resolve"])
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
+            parent_origin_ref = _canonical_issue_origin(db, new_row)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(r for r in _apply_economy_list(
+                db, state, effect.get("economy") or [], commit=commit_now,
+                origin_ref=parent_origin_ref,
+            ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=commit_now)
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案", commit=commit_now, origin_ref=parent_origin_ref)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
@@ -4664,15 +4682,19 @@ def apply_issue_tracker_output(
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
-                    origin_ref=str(new_row["origin_ref"] or "盘面自发"),
+                    origin_ref=parent_origin_ref,
                 ))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         elif new_row["status"] == "failed":
             effect = loads_effect_dict(new_row["effect_on_fail"])
+            parent_origin_ref = _canonical_issue_origin(db, new_row)
             _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            entity_rejections.extend(r for r in _apply_economy_list(
+                db, state, effect.get("economy") or [], commit=commit_now,
+                origin_ref=parent_origin_ref,
+            ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=commit_now)
+            _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败", commit=commit_now, origin_ref=parent_origin_ref)
             entity_rejections.extend(
                 _apply_issue_entities(
                     db,
@@ -4683,7 +4705,7 @@ def apply_issue_tracker_output(
                     llm_config=llm_config,
                     applied_person_changes=issue_person_changes,
                     commit=commit_now,
-                    origin_ref=str(new_row["origin_ref"] or "盘面自发"),
+                    origin_ref=parent_origin_ref,
                 ))
             _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
         applied_advances.append({
@@ -4983,7 +5005,6 @@ def apply_issue_tracker_output(
                         title,
                         str(ni.get("stage_text") or ""),
                         llm_config=llm_config,
-                        origin_ref=origin_ref,
                     )
                     resolve_eff = enr.get("effect_on_resolve") or resolve_eff
                     ongoing_eff = enr.get("ongoing_effects") or ongoing_eff
@@ -5243,13 +5264,17 @@ def apply_issue_tracker_output(
             effect = {**effect, **cl_effect}
         if reason == "resolved":
             _emit_pairing_warnings(new_row, effect, pairing_warnings)
+        parent_origin_ref = _canonical_issue_origin(db, new_row)
         _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-        entity_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+        entity_rejections.extend(r for r in _apply_economy_list(
+            db, state, effect.get("economy") or [], commit=commit_now,
+            origin_ref=parent_origin_ref,
+        ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
         entity_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         building_ops = _apply_issue_buildings(
             db, state, effect.get("buildings"),
             _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}{'结案' if reason == 'resolved' else '失败'}",
-            commit=commit_now,
+            commit=commit_now, origin_ref=parent_origin_ref,
         )
         close_person_changes: List[Dict[str, object]] = []
         entity_rejections.extend(_apply_issue_entities(
@@ -5261,6 +5286,7 @@ def apply_issue_tracker_output(
             llm_config=llm_config,
             applied_person_changes=close_person_changes,
             commit=commit_now,
+            origin_ref=parent_origin_ref,
         ))
         issue_person_changes.extend(close_person_changes)
         _spawn_legacy_from_effect(db, state, effect, issue_id, str(new_row["title"]), commit=commit_now)
@@ -7756,6 +7782,7 @@ def apply_issue_inertia_and_ongoing(
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格
         if inertia != 0 and not is_commitment:
+            parent_origin_ref = _canonical_issue_origin(db, row)
             new_bar = max(0, min(100, bar + inertia))
             actual = new_bar - bar
             if actual != 0:
@@ -7773,9 +7800,12 @@ def apply_issue_inertia_and_ongoing(
                     effect = loads_effect_dict(new_row["effect_on_resolve"])
                     _emit_pairing_warnings(new_row, effect)  # inertia 路只 tlog（#45/#46）
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-                    _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}结案")
+                    _apply_issue_buildings(
+                        db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
+                        f"局势#{issue_id}结案", origin_ref=parent_origin_ref,
+                    )
                     # 与 tracker advance/close 路径一致：自然结案也落实体后果 + 帝国修正，
                     # 否则靠 inertia 推到 100 的 issue 会丢 new_armies/army_delta/人物状态/legacy（codexB-P1）。
                     for _tr in _apply_issue_entities(
@@ -7784,6 +7814,7 @@ def apply_issue_inertia_and_ongoing(
                         effect,
                         f"局势#{issue_id}结案",
                         applied_person_changes=applied_person_changes,
+                        origin_ref=parent_origin_ref,
                     ):
                         tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
                         inertia_rejections.append(_tr)
@@ -7792,15 +7823,19 @@ def apply_issue_inertia_and_ongoing(
                 elif new_row["status"] == "failed":
                     effect = loads_effect_dict(new_row["effect_on_fail"])
                     _apply_metric_dict(state, effect.get("metrics") or {}, db=db)
-                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or []) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+                    inertia_rejections.extend(r for r in _apply_economy_list(db, state, effect.get("economy") or [], origin_ref=parent_origin_ref) if r.get("rejected"))  # economy 拒收不蒸发（#14）
                     inertia_rejections.extend(_apply_faction_dict(db, effect.get("factions") or {}).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
-                    _apply_issue_buildings(db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT, f"局势#{issue_id}失败")
+                    _apply_issue_buildings(
+                        db, state, effect.get("buildings"), _ISSUE_PSEUDO_EVENT,
+                        f"局势#{issue_id}失败", origin_ref=parent_origin_ref,
+                    )
                     for _tr in _apply_issue_entities(
                         db,
                         state,
                         effect,
                         f"局势#{issue_id}失败",
                         applied_person_changes=applied_person_changes,
+                        origin_ref=parent_origin_ref,
                     ):
                         tlog(f"[issue-entities] 容忍拒收：{_tr.get('reason')}")
                         inertia_rejections.append(_tr)
@@ -7830,6 +7865,7 @@ def apply_issue_inertia_and_ongoing(
         economy_part: List[Dict[str, object]] = []
         applied_monthly_parts: Dict[str, object] = {}
         if _monthly_ongoing_effects_has_work(ongoing):
+            parent_origin_ref = _canonical_issue_origin(db, row)
             # 折扣系数：bar 越高（越好）越少扣
             # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
             if bar >= 80:
@@ -7888,6 +7924,7 @@ def apply_issue_inertia_and_ongoing(
                 _monthly_economy_items(ongoing),
                 allow_pay_arrears_pool=allow_pay_arrears_pool,
                 pay_arrears_pool_army_ids=pay_arrears_pool_army_ids,
+                origin_ref=parent_origin_ref,
             )
             economy_rejections = [r for r in _eco_out if r.get("rejected")]
             issue_monthly_rejections.extend(economy_rejections)
@@ -7900,6 +7937,7 @@ def apply_issue_inertia_and_ongoing(
                 ongoing,
                 f"局势#{issue_id}持续效果",
                 applied_person_changes=applied_person_changes,
+                origin_ref=parent_origin_ref,
             )
             issue_monthly_rejections.extend(monthly_rejections)
             inertia_rejections.extend(monthly_rejections)

@@ -957,6 +957,7 @@ def _apply_economy_list(
     allow_pay_arrears_pool: bool = False,
     pay_arrears_pool_army_ids: Optional[List[str]] = None,
     require_origin: bool = False,
+    origin_ref: str = "",
 ) -> List[Dict[str, object]]:
     """落 extractor 抽出的 economy_moves 到 economy_ledger。
 
@@ -1004,7 +1005,8 @@ def _apply_economy_list(
             continue
         category = str(move.get("category") or move.get("reason") or "事项")[:40]
         reason = str(move.get("reason") or "")[:80]
-        origin_ref = str(move.get("origin_ref") or "").strip()
+        move_origin_ref = str(move.get("origin_ref") or "").strip()
+        effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()
@@ -1030,7 +1032,7 @@ def _apply_economy_list(
             ):
                 # The pooled path mutates treasury, both arrears ledgers and logs;
                 # provenance must be authorized before the first of those writes.
-                origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+                origin_error = db.effect_origin_rejection(effective_origin_ref) if require_origin else None
                 if origin_error:
                     applied.append({"account": account, **origin_error, "item": move})
                     continue
@@ -1044,7 +1046,7 @@ def _apply_economy_list(
                     reason,
                     commit=commit,
                     allowed_army_ids=allowed_pool_ids,
-                    origin_ref=origin_ref,
+                    origin_ref=effective_origin_ref,
                 )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
@@ -1069,7 +1071,7 @@ def _apply_economy_list(
                     "item": move,
                 })
                 continue
-            origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+            origin_error = db.effect_origin_rejection(effective_origin_ref) if require_origin else None
             if origin_error:
                 applied.append({"account": account, **origin_error, "item": move})
                 continue
@@ -1093,7 +1095,7 @@ def _apply_economy_list(
                 continue
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
-                reason, "诏拨补饷", origin_ref=origin_ref,
+                reason, "诏拨补饷", origin_ref=effective_origin_ref,
             )
             if spent:
                 if pay_source_cutover:
@@ -1105,14 +1107,14 @@ def _apply_economy_list(
             continue
 
         # ── 常规扣账（其它/无 purpose）─────────────────────────────────────────
-        origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+        origin_error = db.effect_origin_rejection(effective_origin_ref) if require_origin else None
         if origin_error:
             applied.append({"account": account, **origin_error, "item": move})
             continue
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,
-            target_kind=None, target_id=None, origin_ref=origin_ref,
+            target_kind=None, target_id=None, origin_ref=effective_origin_ref,
             commit=commit,
         )
         if actual:
