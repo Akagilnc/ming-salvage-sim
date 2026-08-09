@@ -260,6 +260,16 @@ def write_decree_with_agno(
     return text.strip()
 
 
+def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
+    """Whether advancing this month requires the normal simulator/extractor rail."""
+    return bool(db.list_monthly_dossier_progress_nudges()) or bool(
+        db.list_decree_dossiers(status="proposed")
+    ) or any(
+        row.get("kind") == "directive"
+        for row in db.list_pending_actions(state.turn)
+    )
+
+
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
                           inflight_wait_s: float | None = None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
@@ -288,11 +298,7 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # the dossier/judge route.  This deterministic fast path has no judge
     # dependency, so fail loudly and let the caller route through normal
     # settlement; never delete the player's directive to manufacture "no edict".
-    pending_directives = [
-        row for row in db.list_pending_actions(state.turn)
-        if row.get("kind") == "directive"
-    ]
-    if pending_directives:
+    if _requires_full_settlement(state, db):
         return False
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
@@ -358,11 +364,7 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    pending_dossier_work = bool(db.list_decree_dossiers(status="proposed")) or any(
-        row.get("kind") == "directive"
-        for row in db.list_pending_actions(state.turn)
-    )
-    if not directives and not pending_dossier_work:
+    if not directives and not _requires_full_settlement(state, db):
         advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
@@ -539,7 +541,7 @@ def resolve_directives(
             on_text=lambda c: _emit("text", c),
         )
     except Exception as exc:
-        print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，跳过 LLM 结算。")
+        print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，继续正常抽取结算。")
         narrative = (
             f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
             f"已颁诏书：\n{executable_decree_text}\n"
@@ -561,55 +563,22 @@ def resolve_directives(
                 awaiting=True,
                 decisions=db.list_pending_decisions(state.turn),
             )
-        # ADR 0008 S7（决定 2）：fallback 是降级正常路径，其推进写序列同样整体包 atomic
-        # ——崩在其中(只可能是代码异常，simulator 失败已被本 except 接住)则全回滚、内存从 DB
-        # 重载、回合不前进，与正常路/advance 同语义。此路无 LLM 产出、无 resolve_context 入真源
-        # （extractor 被跳过），故不写错误包——裸异常透传（上游 user 边界按普通错误处理；本
-        # 路本就不抛 SettlementAbort）。pre_settle 自有 atomic 在本 except 之前已提交，不嵌套。
-        # 回滚后内存从 DB 重载（同 pre_settle 先例），链式 re-raise 不吞（fail-loud）。见 atomic_and_reload。
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            # 终端写路所有权：fallback 推进回合，暂存动作在此 atomic 内 commit
-            # （幂等；守门早退已不消费，不补则成孤儿，cmr S7 r5）。
-            db.commit_pending_actions(state, content=content, registry=registry)
-            if verdict_rows:
-                db.apply_dossier_verdicts(
-                    state, verdict_rows, content=content, registry=registry,
-                )
-            # 跳过 extractor，避免连锁失败
-            db.record_log(state, narrative[:1200])
-            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
-            # #976: same hold-release as normal settle path.
-            db.release_held_audience_knowledge(commit=False)
-            # Inertia/ongoing effects may create participant-scoped sources.
-            # Materialize the complete source set only after those writes and
-            # before either aggregate archive is saved, matching the normal
-            # settlement path's source-first authorization boundary.
-            _record_settlement_narrative_sources(db, state, narrative, commit=False)
-            db.persist_knowledge_items_for_turn(state, commit=False)
-            db.save_turn_report(
-                state, narrative, knowledge_items=[], commit=False
-            )
-            db.save_turn_extraction(
-                state, decree_text=decree_text, narrative=narrative,
-                extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
-            )
-            # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
-            # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
-            # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
-            db.recompute_all_faction_leverage()
-            for name in clear_gated_legacies(db, state):
-                db.record_log(state, f"帝国修正消除：{name}")
-            db.mark_directives_issued(state)
-            # 同 advance_without_edict：推进回合前清 stale context（cmr S2+S3 r4）。
-            db.clear_resolve_context(state.turn)
-            state.next_period()
-            # 第三条推进尾同样复位 settling（cmr S4 r2）：漏掉的话新回合被守门跳过前半段。
-            state.turn_phase = TurnPhase.SUMMONING.value
-            db.save_state(state)
-        return ResolveResult(
-            awaiting=False,
-            report=f"\n本{TURN_UNIT}颁布诏书：\n" + decree_text + "\n\n" + narrative,
+        # Fallback only replaces the unavailable narrative.  Extraction,
+        # private-context merge, durable resolve context, and atomic settlement
+        # remain on the normal single rail; a missing required report therefore
+        # raises SettlementAbort and leaves the turn unadvanced.
+        report = _settle_after_narrative(
+            state, db, agno_db, llm_config, decree_text, narrative,
+            simulator_payload=simulator_payload,
+            relevant_memories=relevant_memories,
+            secret_orders=secret_orders_for_sim,
+            before_turn=before_turn, _emit=_emit,
+            content=content, registry=registry,
+            cheat_directive=cheat_directive,
+            source=source,
+            dossier_verdicts=verdict_rows,
         )
+        return ResolveResult(awaiting=False, report=report)
 
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。

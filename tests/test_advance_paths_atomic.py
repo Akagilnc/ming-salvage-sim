@@ -92,6 +92,16 @@ def _drive_fallback(db, state, content, monkeypatch):
     def _stub_sim(*a, **k):
         raise RuntimeError("simulated simulator crash")
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
+    # Fallback now replaces only the narrative and deliberately stays on the
+    # normal extractor→atomic-settle rail.
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "fallback-extractor-output", "fallback-extractor-input"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
@@ -114,8 +124,12 @@ def test_fallback_branch_atomic(game, monkeypatch):
     before_report = db.conn.execute(
         "SELECT COUNT(*) FROM turn_reports WHERE turn=?", (turn,)).fetchone()[0]
 
-    with pytest.raises(RuntimeError, match="fallback inertia boom"):
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as error:
         _drive_fallback(db, state, content, monkeypatch)
+    assert error.value.stage == "settle"
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "fallback inertia boom"
 
     other = sqlite3.connect(db.path)
     try:
