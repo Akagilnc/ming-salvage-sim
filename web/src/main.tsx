@@ -16,6 +16,7 @@ import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
+import { retryAudienceStoryExtraction } from "./extractionRetry";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
@@ -614,14 +615,9 @@ export function App() {
     setBusy("重试补写账本");
     setError("");
     try {
-      const data = await api<ExtractionPendingStatus>("/api/audience/extraction/retry", {
-        method: "POST",
-      });
+      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll);
       setExtractionPendingCount(Number(data?.count || 0));
-      if ((data?.count || 0) === 0) {
-        invalidateAudienceScroll();
-        setChatNotice("待补账本已补写完毕。");
-      }
+      if ((data?.count || 0) === 0) setChatNotice("待补账本已补写完毕。");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
