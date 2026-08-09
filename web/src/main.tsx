@@ -7,7 +7,7 @@ import { useDurableProjection } from "./useDurableProjection";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
-import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, QuadFrame } from "./components/hud";
+import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
@@ -1022,43 +1022,41 @@ export function App() {
       <div className="hud2-stage" ref={hudStageCbRef}>
         <img className="hud2-bg" src={HUD_BG} alt="" />
 
-        {/* 地图：透视梯形（GrandMap 已改 transform pan，兼容 matrix3d）。?flat=1 关透视调试 */}
+        {/* 地图：平面矩形，盖在底图中央素绢图框上 */}
         {ready ? (
-          (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("flat")) ? (
-            <div className="hud2-map-quad" style={{
-              position: "absolute",
-              left: `${HUD_SLOTS.地图四角.tl[0]}%`, top: `${HUD_SLOTS.地图四角.tl[1]}%`,
-              width: `${HUD_SLOTS.地图四角.tr[0] - HUD_SLOTS.地图四角.tl[0]}%`,
-              height: `${HUD_SLOTS.地图四角.bl[1] - HUD_SLOTS.地图四角.tl[1]}%`,
-            }}>
-              <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
-            </div>
-          ) : (
-            <QuadFrame className="hud2-map-quad" quad={HUD_SLOTS.地图四角}
-              stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
-              <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
-            </QuadFrame>
-          )
+          <div className="hud2-map-quad" style={{
+            position: "absolute",
+            left: `${HUD_SLOTS.地图框.left}%`, top: `${HUD_SLOTS.地图框.top}%`,
+            width: `${HUD_SLOTS.地图框.width}%`, height: `${HUD_SLOTS.地图框.height}%`,
+          }}>
+            <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
+          </div>
         ) : null}
 
         {/* 地图暖黄昏调+暗角：盖在交互地图上的纯装饰层（夜·烛基调），不吃点击 */}
-        {ready && !(typeof window !== "undefined" && new URLSearchParams(window.location.search).has("flat")) ? (
-          <QuadFrame className="hud2-map-grade-frame" quad={HUD_SLOTS.地图四角}
-            stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
+        {ready ? (
+          <div className="hud2-map-grade-frame" style={{
+            position: "absolute",
+            left: `${HUD_SLOTS.地图框.left}%`, top: `${HUD_SLOTS.地图框.top}%`,
+            width: `${HUD_SLOTS.地图框.width}%`, height: `${HUD_SLOTS.地图框.height}%`,
+          }}>
             <div className="hud2-map-grade" />
-          </QuadFrame>
+          </div>
         ) : null}
 
-        {/* 局势进度：塞进左卡透视梯形 */}
+        {/* 局势进度：左挂轴平面矩形 */}
         {ready ? (
-          <QuadFrame className="hud2-issue-quad" quad={HUD_SLOTS.局势四角}
-            stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
+          <div className="hud2-issue-quad" style={{
+            position: "absolute",
+            left: `${HUD_SLOTS.局势框.left}%`, top: `${HUD_SLOTS.局势框.top}%`,
+            width: `${HUD_SLOTS.局势框.width}%`, height: `${HUD_SLOTS.局势框.height}%`,
+          }}>
             <SituationPanel
               issues={state.issues}
               closedIssues={state.closed_this_turn || []}
               hasLegacies={(state.legacies || []).length > 0}
             />
-          </QuadFrame>
+          </div>
         ) : null}
 
         {/* 顶栏：年月 + 国库/内库 + 民心/皇威，各按坑位绝对定位 */}
