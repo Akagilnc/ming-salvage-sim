@@ -236,10 +236,13 @@ export type Budget = Record<"国库" | "内库", BudgetAccount>;
 export type DecisionOption = {
   label: string;
   hint: string;
+  dossier_id?: number;
+  dossier_decision?: string;
 };
 
 export type PendingDecision = {
   idx: number;
+  event_id?: string;
   title: string;
   context: string;
   options: DecisionOption[];

@@ -200,7 +200,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 ### `dossier_executions` — S1 案卷执行结局
 - 每项必须带 `dossier_id`、`outcome`、`note`。
-- `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed`；`note` 不得为空。
+- `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
 
 ### `cancels` — 撤销 issue
