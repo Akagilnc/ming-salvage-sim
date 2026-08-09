@@ -412,11 +412,20 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     # A divider belongs after each exit.  Its optional name is sourced only from
     # the next entry fact; an unmatched final exit deliberately remains unnamed.
     facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
+    divided_exits: set[tuple[str, float]] = set()
     for index, entry in enumerate(facts):
         tags = set(entry.get("tags") or [])
         is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
         if not is_exit:
             continue
+        person = (entry.get("person_names") or [""])[0]
+        # Command and extractor facts can describe the same actual departure.
+        # Their shared night order is the durable source-turn identity; a later
+        # departure has a different order and must retain its own divider.
+        exit_identity = (person, _entry_order_key(entry))
+        if exit_identity in divided_exits:
+            continue
+        divided_exits.add(exit_identity)
         next_name = ""
         for following in facts[index + 1:]:
             following_tags = set(following.get("tags") or [])

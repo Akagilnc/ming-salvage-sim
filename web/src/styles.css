@@ -6774,13 +6774,17 @@ button:disabled {
 }
 
 /* #539 单卷轴 scene：无气泡通栏；divider 保持柔和且可继续上滚回读。 */
-.chat-message.scene {
+.modal-bg-chat .chat-message.scene {
   width: 100%;
   display: block;
   padding: 10px 8%;
   text-align: center;
   color: rgba(224, 211, 181, 0.72);
   font-style: italic;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .chat-message.scene p { white-space: pre-wrap; }

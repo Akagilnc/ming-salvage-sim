@@ -1186,6 +1186,7 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
+            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}

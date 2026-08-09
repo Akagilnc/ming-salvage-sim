@@ -540,6 +540,8 @@ export type HistoryTurnItem = {
   period: number;
   has_report: boolean;
   has_directive: boolean;
+  /** Persisted closed audience night for this archived turn, when one exists. */
+  night_id?: number;
 };
 
 export type HistoryDirective = {

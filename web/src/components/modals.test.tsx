@@ -474,7 +474,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("旧分线程不应闪回");
     await act(async () => { reject(new Error("卷轴读取失败")); await Promise.resolve(); });
     expect(document.body.textContent).not.toContain("旧分线程不应闪回");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
   });
 
   it("restores at the tail, follows new content only while the player remains at the tail", async () => {
@@ -586,7 +586,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("旧轮迟到递话");
     expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
 
     await act(async () => {
       dispatchChat({ type: "mindreading", chatTurnId: 2, records: [{ id: 92, narration: "刷新触发递话" }] });
@@ -600,7 +600,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
   it("keeps the last-known scroll and completed tail when a refresh fails", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷" }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷", chat_turn_id: 1 }] }) })
       .mockRejectedValueOnce(new Error("refresh failed"));
     vi.stubGlobal("fetch", fetchMock);
     let updateChat!: (chat: ChatMessage[]) => void;
@@ -621,7 +621,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
 
     expect(document.body.textContent).toContain("旧卷");
     expect(document.body.textContent).toContain("失败前已完成");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
   });
 
   it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
