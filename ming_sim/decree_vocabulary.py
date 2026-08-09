@@ -55,7 +55,8 @@ def dossier_action_policy(action_type: object, payload=None):
     if action == "grant_allocation":
         if str((payload or {}).get("account") or "") == "内库":
             policy.update(external_review=False, effect_owner="immediate")
-        policy["execution_surface"] = str(
-            (payload or {}).get("execution_surface") or "in_transit"
-        )
+        surface = str((payload or {}).get("execution_surface") or "in_transit")
+        if surface not in {"immediate", "in_transit"}:
+            raise ValueError("拨帑旨意 execution_surface 非法")
+        policy["execution_surface"] = surface
     return policy

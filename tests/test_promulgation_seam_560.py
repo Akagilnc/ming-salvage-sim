@@ -5,7 +5,7 @@ from ming_sim.decree import (
     stub_promulgation_verdicts,
     validate_promulgation_verdicts,
 )
-from ming_sim.exceptions import LLMContractError
+from ming_sim.exceptions import LLMContractError, SettlementAbort
 
 
 def test_default_promulgation_stub_passes_every_dossier_without_collaborators():
@@ -78,11 +78,13 @@ def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
     db, state, content = game
     _stage_policy_dossier(db, state)
 
-    with pytest.raises(LLMContractError, match="必须为列表"):
+    with pytest.raises(SettlementAbort) as exc_info:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工", content=content,
             promulgation_verdict_provider=lambda *_: {"decision": "promulgated"},
         )
+    assert exc_info.value.stage == "promulgation"
+    assert exc_info.value.error_pack_path
     assert db.get_pending_promulgation_verdicts(state.turn) == []
 
 
@@ -90,7 +92,7 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
     db, state, content = game
     dossier_id = _stage_policy_dossier(db, state)
 
-    with pytest.raises(LLMContractError, match="必须携带受损方"):
+    with pytest.raises(SettlementAbort) as exc_info:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工", content=content,
             promulgation_verdict_provider=lambda *_: [{
@@ -109,6 +111,7 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
             }],
         )
 
+    assert exc_info.value.stage == "promulgation"
     assert db.get_pending_promulgation_verdicts(state.turn) == []
     assert db.list_decree_dossier_decisions(dossier_id) == []
 
@@ -124,7 +127,7 @@ def test_public_resolve_seam_rejects_incomplete_persisted_batch(game):
         state.turn, [{"dossier_id": first_id, "decision": "promulgated"}],
     )
 
-    with pytest.raises(LLMContractError, match="逐案覆盖"):
+    with pytest.raises(SettlementAbort) as exc_info:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工并整饬漕运",
             content=content,
@@ -132,6 +135,7 @@ def test_public_resolve_seam_rejects_incomplete_persisted_batch(game):
                 "残缺持久批次必须 fail-loud，不得重跑 provider"
             ),
         )
+    assert exc_info.value.stage == "promulgation"
     assert {first_id, second_id} == {
         row["id"] for row in db.list_decree_dossiers(status="proposed")
     }
