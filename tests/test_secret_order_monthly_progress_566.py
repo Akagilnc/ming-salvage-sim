@@ -28,28 +28,54 @@ def _settle(db, state, content, narrative="本月邸报", progress=None):
     return turn
 
 
-def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game):
+def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game, monkeypatch):
     from ming_sim.db import GameDB
+    import ming_sim.simulation as simulation
 
     db, state, content = game
     _order_id, dossier_id = _order(db, state)
+    monthly = [
+        ("启程", "首批出京，已对一处关防"),
+        ("在途", "据前月关防记录续报，已至山海关"),
+        ("将达", "据前两月记录续报，三批已会齐"),
+    ]
+    extraction_month = 0
 
-    first_turn = _settle(db, state, content, progress={
-        "dossier_id": dossier_id, "progress_band": "启程",
-        "memorial_text": "首批出京，已对一处关防",
-    })
+    def run_extractor(_agent, prompt, tag):
+        nonlocal extraction_month
+        if tag != "extractor/personnel_secret":
+            return "{}"
+        band, memorial = monthly[extraction_month]
+        if extraction_month:
+            assert monthly[extraction_month - 1][1] in prompt
+        extraction_month += 1
+        return json.dumps({"dossier_progress_reports": [{
+            "dossier_id": dossier_id,
+            "progress_band": band,
+            "memorial_text": memorial,
+        }]}, ensure_ascii=False)
+
+    monkeypatch.setattr(simulation, "run_agent_text", run_extractor)
+    agents = {module: object() for module in simulation.EXTRACTION_MODULES}
+
+    def production_month_end():
+        from ming_sim.decree import settle_with_delta
+        turn = state.turn
+        extracted, _output, _input = simulation.extract_scores_by_modules_with_agno(
+            agents, db, state, "本月邸报",
+        )
+        settle_with_delta(
+            state, db, extracted, before_turn=turn, content=content, narrative="本月邸报",
+        )
+        return turn
+
+    first_turn = production_month_end()
     reopened = GameDB(db.path, content=content)
     db.close()
     db = reopened
     state = db.load_state()
-    second_turn = _settle(db, state, content, progress={
-        "dossier_id": dossier_id, "progress_band": "在途",
-        "memorial_text": "据前月关防记录续报，已至山海关",
-    })
-    third_turn = _settle(db, state, content, progress={
-        "dossier_id": dossier_id, "progress_band": "将达",
-        "memorial_text": "据前两月记录续报，三批已会齐",
-    })
+    second_turn = production_month_end()
+    third_turn = production_month_end()
 
     rows = db.list_dossier_progress(dossier_id)
     stored = db.conn.execute(
