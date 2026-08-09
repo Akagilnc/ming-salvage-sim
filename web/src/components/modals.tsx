@@ -572,14 +572,26 @@ export function ChatModal({
       kind: "night";
       nightId: number;
       messages: AudienceScrollMessage[];
-      chatLengthAtRead: number;
+      chatIdentitiesAtRead: ReadonlySet<string>;
       refreshError: boolean;
     } | { kind: "error" }
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
+  const chatIdentity = (message: ChatMessage): string | null => {
+    if (!message.chatTurnId) return null;
+    return message.role === "attendant"
+      ? (message.recordId ? `${message.role}:${message.chatTurnId}:${message.recordId}` : null)
+      : `${message.role}:${message.chatTurnId}`;
+  };
   const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollState.kind === "night"
-    ? [...scrollState.messages, ...chat.slice(scrollState.chatLengthAtRead)]
+    ? [
+        ...scrollState.messages,
+        ...chat.filter((message) => {
+          const identity = chatIdentity(message);
+          return identity !== null && !scrollState.chatIdentitiesAtRead.has(identity);
+        }),
+      ]
     : scrollState.kind === "none" ? [...chat] : [];
 
   React.useEffect(() => {
@@ -594,7 +606,7 @@ export function ChatModal({
           kind: "night",
           nightId: data.night_id,
           messages: data.messages || [],
-          chatLengthAtRead: chat.length,
+          chatIdentitiesAtRead: new Set(chat.map(chatIdentity).filter((identity): identity is string => identity !== null)),
           refreshError: false,
         } : { kind: "none" });
       })
