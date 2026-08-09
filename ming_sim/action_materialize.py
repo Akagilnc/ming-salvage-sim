@@ -356,25 +356,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "dossier_action_type", "target_kind", "target_id", "amount", "account",
             "execution_surface", "assignee", "authorization_id", "deadline_months",
         )
-        extracted_action = str(draft_res.get("dossier_action_type") or "")
-        extracted_mechanics_complete = not (
-            extracted_action in {"assignment", "authorization", "military_order"}
-            and not str(draft_res.get("assignee") or draft_res.get("assignee_id") or "").strip()
-        ) and not (
-            extracted_action == "authorization"
-            and not str(draft_res.get("authorization_id") or "").strip()
-        ) and not (
-            extracted_action == "grant_allocation"
-            and (not draft_res.get("amount") or not str(draft_res.get("account") or "").strip())
-        )
-        # A supplement extractor can misclassify prose as an incomplete mechanical
-        # action.  For an existing draft that incomplete fragment must not replace
-        # the already-valid dossier payload; text and roster remain independently
-        # mergeable at the durable update boundary.
-        if not is_existing_update or extracted_mechanics_complete:
-            for field_name in mechanical_fields:
-                if draft_res.get(field_name) not in (None, ""):
-                    semantic_payload[field_name] = draft_res[field_name]
+        for field_name in mechanical_fields:
+            if draft_res.get(field_name) not in (None, ""):
+                semantic_payload[field_name] = draft_res[field_name]
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
         if not is_existing_update:
