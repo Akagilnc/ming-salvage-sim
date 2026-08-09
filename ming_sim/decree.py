@@ -265,9 +265,23 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     return bool(db.list_monthly_dossier_progress_nudges()) or bool(
         db.list_decree_dossiers(status="proposed")
     ) or any(
-        row.get("kind") in {"directive", "secret_order"}
+        row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
+
+
+def materialize_pending_actions_for_advance(
+    state: GameState, db: GameDB, *, content=None, registry=None,
+) -> bool:
+    """Commit default-approved actions, then choose the settlement rail from DB truth.
+
+    In particular, pending secret orders cannot be classified before materialization:
+    their canonical tags and effective deadline live on the order/dossier rows.  Both
+    CLI and Web call this seam before routing; the terminal implementations call it
+    again defensively (``commit_pending_actions`` is idempotent).
+    """
+    db.commit_pending_actions(state, content=content, registry=registry)
+    return _requires_full_settlement(state, db)
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
@@ -298,7 +312,9 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # the dossier/judge route.  This deterministic fast path has no judge
     # dependency, so fail loudly and let the caller route through normal
     # settlement; never delete the player's directive to manufacture "no edict".
-    if _requires_full_settlement(state, db):
+    if materialize_pending_actions_for_advance(
+        state, db, content=content, registry=registry,
+    ):
         return False
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。

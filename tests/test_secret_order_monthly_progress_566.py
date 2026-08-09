@@ -243,12 +243,19 @@ def test_real_module_extractor_traces_private_context_through_settlement(game, m
 
 def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db, state, content = game
-    order_id, dossier_id = _order(db, state, deadline=4)
-    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
+    order_id, dossier_id = _order(db, state, deadline=1)
+    assert db.list_monthly_dossier_progress_nudges() == []
 
-    # The current deadline span is authoritative; issuance age and the dossier copy are not.
-    state.turn += 5
-    db.rush_secret_order(order_id, state, 1)
+    # The current effective deadline is authoritative; the dossier copy and the
+    # requested rush duration are not.
+    rushed = db.rush_secret_order(order_id, state, 3)
+    row = db.conn.execute(
+        "SELECT deadline_span FROM secret_orders WHERE id=?", (order_id,),
+    ).fetchone()
+    # The older due date wins, so the stored span must describe that effective date,
+    # not the caller's three-month request.
+    assert rushed["due_turn"] == state.turn + 1
+    assert row["deadline_span"] == 1
     assert db.list_monthly_dossier_progress_nudges() == []
     db.update_secret_order_by_id(state, order_id, "护行辽饷", "继续逐月办理", ["护行"], 3)
     assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
@@ -263,27 +270,83 @@ def test_pending_long_secret_order_routes_cli_no_edict_to_full_settlement(game, 
     target_id = None
     if action == "更新":
         target_id, _ = _order(db, state, deadline=1)
-    db.stage_pending_action(state.turn, "secret_order", action, _actor(db), {
-        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"], "deadline_months": 3,
-    }, target_id=target_id)
+    payload = {
+        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"],
+        "new_title": "护行辽饷", "new_content": "继续逐月稽核",
+        "deadline_months": 3,
+    }
+    db.stage_pending_action(
+        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
+    )
     session = GameSession.__new__(GameSession)
     session.db, session.state, session.content, session.registry = db, state, content, None
     calls = []
-    monkeypatch.setattr(session, "resolve_turn", lambda: calls.append("full") or "settled")
+    def resolve_after_materialization():
+        pending = db.list_pending_actions(state.turn)
+        assert pending[0]["status"] == "committed"
+        assert db.list_monthly_dossier_progress_nudges()
+        calls.append("full")
+        return "settled"
+
+    monkeypatch.setattr(session, "resolve_turn", resolve_after_materialization)
 
     assert session.advance_without_decree() == "settled"
     assert calls == ["full"]
 
 
-def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game, monkeypatch):
+@pytest.mark.parametrize("action", ["新建", "更新"])
+def test_pending_short_secret_order_uses_cli_fast_advance(game, monkeypatch, action):
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    target_id = None
+    if action == "更新":
+        target_id, _ = _order(db, state, deadline=3)
+    payload = {
+        "title": "短差", "content": "下月回奏", "tags": ["护行"],
+        "new_title": "短差", "new_content": "改为下月回奏",
+        "deadline_months": 1,
+    }
+    db.stage_pending_action(
+        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
+    )
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content, session.registry = db, state, content, None
+    monkeypatch.setattr(
+        session, "resolve_turn",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("短差不得进入昂贵结算")),
+    )
+    fast_calls = []
+    monkeypatch.setattr(
+        session_mod, "advance_without_edict",
+        lambda *a, **k: fast_calls.append("fast") or True,
+    )
+
+    assert session.advance_without_decree() is None
+    assert fast_calls == ["fast"]
+    assert db.list_pending_actions(state.turn)[0]["status"] == "committed"
+    assert db.list_monthly_dossier_progress_nudges() == []
+
+
+@pytest.mark.parametrize("action", ["新建", "更新"])
+def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game, monkeypatch, action):
     from contextlib import contextmanager
     from types import SimpleNamespace
     import web_app
 
     db, state, content = game
-    db.stage_pending_action(state.turn, "secret_order", "新建", _actor(db), {
-        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"], "deadline_months": 3,
-    })
+    target_id = None
+    if action == "更新":
+        target_id, _ = _order(db, state, deadline=1)
+    payload = {
+        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"],
+        "new_title": "护行辽饷", "new_content": "继续逐月稽核",
+        "deadline_months": 3,
+    }
+    db.stage_pending_action(
+        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
+    )
     calls = []
 
     class Session:
@@ -308,6 +371,8 @@ def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game
     monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
     payload = web_app.api_advance_without_edict()
 
+    assert db.list_pending_actions(state.turn)[0]["status"] == "committed"
+    assert db.list_monthly_dossier_progress_nudges()
     assert calls == [{"inflight_wait_s": 0.0}]
     assert payload["awaiting_decision"] is False
 

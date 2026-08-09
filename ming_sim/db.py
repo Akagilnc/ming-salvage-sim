@@ -13976,7 +13976,12 @@ class GameDB:
                     SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (due_turn, months, "\n".join(lines), int(order_id)),
+                    (
+                        due_turn,
+                        max(int(due_turn) - int(state.turn), 0),
+                        "\n".join(lines),
+                        int(order_id),
+                    ),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)
