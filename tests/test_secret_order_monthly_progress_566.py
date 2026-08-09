@@ -1,5 +1,7 @@
 """#566: production settlement owns the durable monthly progress rail."""
 
+import json
+
 
 def _actor(db):
     return str(db.conn.execute(
@@ -50,6 +52,13 @@ def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game):
     })
 
     rows = db.list_dossier_progress(dossier_id)
+    stored = db.conn.execute(
+        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (_order_id,),
+    ).fetchone()
+    assert json.loads(stored["dossier_progress_json"]) == rows
+    assert db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dossier_progress_reports'"
+    ).fetchone() is None
     assert [row["turn"] for row in rows] == [first_turn, second_turn, third_turn]
     assert [row["progress_band"] for row in rows] == ["启程", "在途", "将达"]
     for row in rows:
