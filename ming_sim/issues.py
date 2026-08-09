@@ -6443,6 +6443,45 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    dossier_participant_results: List[Dict[str, object]] = []
+    for item in extracted.get("dossier_participants") or []:
+        if not isinstance(item, dict):
+            dossier_participant_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+            })
+            continue
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            if db.get_decree_dossier(dossier_id) is None:
+                raise ValueError("案卷不存在")
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            known_names = {
+                str(row["name"]) for row in db.conn.execute(
+                    "SELECT name FROM characters WHERE name IN (?,?)",
+                    (character_id, delegator_id),
+                ).fetchall()
+            }
+            if not character_id or character_id not in known_names:
+                raise ValueError("参与人物不存在")
+            if delegator_id and delegator_id not in known_names:
+                raise ValueError("委派人不存在")
+            tier = str(item.get("tier") or "").strip()
+            db.append_decree_dossier_participants(dossier_id, [{
+                "character_id": character_id,
+                "tier": tier,
+                "role": str(item.get("role") or "").strip(),
+                "delegator_id": delegator_id or None,
+            }], commit=False)
+            dossier_participant_results.append({
+                "dossier_id": dossier_id, "character_id": character_id, "tier": tier,
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            dossier_participant_results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+
     dossier_execution_results: List[Dict[str, object]] = []
     for item in extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
@@ -7630,6 +7669,7 @@ def apply_score_extraction(
         "power_changes": power_changes,
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
+        "dossier_participants": dossier_participant_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,

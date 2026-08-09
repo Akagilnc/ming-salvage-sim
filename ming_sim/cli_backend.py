@@ -1063,7 +1063,8 @@ def extract_draft_intent(
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"..."},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
-            '"承办人":"...","授权ID":"","期限月数":3}]}\n'
+            '"承办人":"...","授权ID":"","期限月数":3,'
+            '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             "【皇帝】" + (player_message or "（无）") + "\n"
             "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
@@ -1109,7 +1110,8 @@ def extract_draft_intent(
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
-                "target_id": target_id, "target_candidate": "", **mechanical,
+                "target_id": target_id, "target_candidate": "",
+                "participant_roster": value.get("参与人") or [], **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
@@ -1147,6 +1149,7 @@ def extract_draft_intent(
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
         '  "授权ID": "",\n'
+        '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "期限月数": null' + (
             "," if (_candidates or _supplement_mode) else ""
         ) + '           // 军令必填正整数；非军令留 null\n'
@@ -1227,7 +1230,8 @@ def extract_draft_intent(
             draft_text = (minister_reply or "").strip()
         return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
                 "dossier_action_type": dossier_action,
-                "target_kind": target_kind, "target_id": target_id_value, **mechanical}
+                "target_kind": target_kind, "target_id": target_id_value,
+                "participant_roster": obj.get("参与人") or [], **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1256,7 +1260,8 @@ def extract_draft_intent(
     return {
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
-        "target_kind": target_kind, "target_id": target_id_value, **mechanical,
+        "target_kind": target_kind, "target_id": target_id_value,
+        "participant_roster": obj.get("参与人") or [], **mechanical,
     }
 
 
@@ -1280,7 +1285,7 @@ def capture_manual_directive_payload(
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
-        "authorization_id", "deadline_months",
+        "authorization_id", "deadline_months", "participant_roster",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
