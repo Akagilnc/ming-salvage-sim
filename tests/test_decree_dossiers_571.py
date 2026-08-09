@@ -383,12 +383,15 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
                 "SELECT name FROM characters WHERE status='active'"
             ).fetchall()
         }
-        character = next(
-            character for character in content.characters
-            if character.name in active_names and character.aliases
+        character, alias = next(
+            (character, alias)
+            for character in content.characters.values()
+            if character.name in active_names
+            for alias in character.aliases
+            if alias != character.name
         )
         assignee = character.name
-        assignee_input = character.aliases[0]
+        assignee_input = alias
     candidate_id = db.stage_directive_candidate(
         state.turn,
         assignee,
