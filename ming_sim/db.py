@@ -10009,9 +10009,13 @@ class GameDB:
         for row in rows:
             payload = json.loads(str(row["payload_json"] or "{}"))
             policy = dossier_action_policy(row["action_type"], payload)
-            # Immediate palace/private actions have already taken effect at
-            # admission and must not re-enter the settlement simulator.
-            if policy["effect_owner"] != "immediate":
+            # Admission-owned effects never run through the simulator again.
+            # An in-transit dossier remains visible as execution context until
+            # its execution verdict closes it, however.
+            if (
+                policy["effect_owner"] != "immediate"
+                or str(row["status"]) == "executing"
+            ):
                 visible.append(self._dossier_row(row))
         return visible
 
@@ -10306,6 +10310,31 @@ class GameDB:
                     self.transition_decree_dossier(
                         dossier_id, "executing", commit=False,
                     )
+                elif row["action_type"] == "grant_allocation":
+                    amount = int(payload.get("amount") or 0)
+                    moves = self.list_economy_moves_for_dossier(dossier_id)
+                    if len(moves) > 1:
+                        raise ValueError("内批拨帑案卷存在重复经济流水")
+                    actual = int(moves[0]["delta"]) if moves else 0
+                    if actual != -amount:
+                        if policy["execution_surface"] == "in_transit":
+                            self.transition_decree_dossier(
+                                dossier_id, "executing", commit=False,
+                            )
+                        self.record_dossier_execution(
+                            dossier_id, "failed",
+                            f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                            state.turn, close=True, commit=False,
+                        )
+                    elif policy["execution_surface"] == "in_transit":
+                        self.transition_decree_dossier(
+                            dossier_id, "executing", commit=False,
+                        )
+                    else:
+                        self.record_dossier_execution(
+                            dossier_id, "fulfilled", "成案时足额拨付",
+                            state.turn, close=True, commit=False,
+                        )
                 else:
                     self.record_dossier_execution(
                         dossier_id, "fulfilled", "成案时即生效",
@@ -10360,7 +10389,7 @@ class GameDB:
                         state.turn, close=True, commit=False,
                     )
                     return
-            elif row["action_type"] == "authorization":
+            elif row["action_type"] in {"authorization", "secret_authorization"}:
                 if not self.grant_skill(
                     state,
                     str(payload.get("character_id") or payload.get("assignee_id") or ""),

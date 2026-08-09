@@ -1116,12 +1116,15 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
             "执行面": "immediate",
         }),
         ("cli", "authorization", {
-            "动作类型": "authorization", "目标类型": "character",
+            "动作类型": "secret_authorization", "目标类型": "character",
             "授权ID": "理财",
         }),
         ("web", "controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
             "目标ID": "granary-corruption",
+        }),
+        ("cli", "controlled_verb", {
+            "动作类型": "protection", "目标类型": "character",
         }),
         ("cli", "dismiss", {"动作类型": "dismiss_assignment"}),
         ("web", "dismiss", {"动作类型": "dismiss_assignment"}),
@@ -1136,7 +1139,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     db, state, content = game
     actor = _active_minister(db)
     response = {"拟旨意图": "拟旨", **model_fields}
-    if case == "authorization":
+    if case == "authorization" or model_fields.get("动作类型") == "protection":
         response.update({"目标ID": actor, "承办人": actor})
     elif case == "dismiss":
         response.update({"目标类型": "character", "目标ID": actor})
@@ -1174,8 +1177,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
     dossier = db.get_dossier_for_directive(directive_id)
     assert dossier["target_id"]
     if case == "controlled_verb":
-        assert dossier["action_type"] == "secret_investigation"
-        assert dossier["target_id"] == "granary-corruption"
+        assert dossier["action_type"] in {"secret_investigation", "protection"}
+        if dossier["action_type"] == "secret_investigation":
+            assert dossier["target_id"] == "granary-corruption"
+        db.apply_dossier_promulgation(state, dossier["id"], "promulgated")
+        assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+        assert db.get_decree_dossier(dossier["id"])["execution_outcome"] == ""
         return
 
     db.apply_dossier_promulgation(
@@ -2105,6 +2112,51 @@ def test_immediate_terminal_payload_cannot_bypass_execution_surface(game):
         dossier_id, "fulfilled", "真实执行完毕", state.turn,
     )
     assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+
+
+@pytest.mark.parametrize(("balance", "expected_actual", "outcome"), [
+    (20, -10, "executing"),
+    (4, -4, "failed"),
+    (0, 0, "failed"),
+])
+def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
+    game, balance, expected_actual, outcome,
+):
+    db, state, _content = game
+    state.metrics["内库"] = balance
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="grant_allocation",
+        decree_text="内帑拨银押解赈济",
+        target_kind="issue", target_id="relief",
+        payload={
+            "account": "内库", "amount": 10,
+            "execution_surface": "in_transit",
+        },
+    )
+
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert [row["delta"] for row in db.list_economy_moves_for_dossier(dossier_id)] == (
+        [] if expected_actual == 0 else [expected_actual]
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == ("executing" if outcome == "executing" else "closed")
+    assert dossier["execution_outcome"] == outcome
+    assert state.metrics["内库"] == max(0, balance - 10)
+    assert len(db.list_economy_moves_for_dossier(dossier_id)) == int(expected_actual != 0)
+    if outcome == "failed":
+        assert "应拨10两" in dossier["execution_note"]
+        assert f"实拨{abs(expected_actual)}两" in dossier["execution_note"]
+    else:
+        assert dossier_id in {
+            row["id"] for row in db.list_decree_dossiers_for_simulation(state.turn)
+        }
+        db.record_dossier_execution(
+            dossier_id, "fulfilled", "赈银押解到达", state.turn,
+        )
+        assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
 
 def test_in_transit_allocation_requires_execution_verdict(game):

@@ -21,17 +21,21 @@ DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     "policy", "strategy_selection", "approve_reject", "special_decree",
     "punishment", "pacification", "referral", "revoke_decree",
+    "secret_investigation", "protection",
 })
-_DOSSIER_EXEMPT_ACTIONS = frozenset({
+_DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
     "secret_order", "secret_authorization", "secret_investigation", "protection",
 })
-_DOSSIER_TERMINAL_ACTIONS = frozenset({"authorization", "dismiss_assignment"})
+_DOSSIER_IMMEDIATE_ACTIONS = frozenset({"secret_order"})
+_DOSSIER_TERMINAL_ACTIONS = frozenset({
+    "authorization", "secret_authorization", "secret_order", "dismiss_assignment",
+})
 
 DOSSIER_ACTION_POLICY = {
     action: {
-        "external_review": action not in _DOSSIER_EXEMPT_ACTIONS,
+        "external_review": action not in _DOSSIER_EXTERNAL_REVIEW_EXEMPT,
         "effect_owner": (
-            "immediate" if action in _DOSSIER_EXEMPT_ACTIONS
+            "immediate" if action in _DOSSIER_IMMEDIATE_ACTIONS
             else "narrative" if action in _DOSSIER_NARRATIVE_ACTIONS
             else "payload"
         ),
