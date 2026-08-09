@@ -1,0 +1,234 @@
+<!doctype html>
+<!--
+  PROTOTYPE（一次性，看完即弃）— 召对 UI 基调三变体
+  问题：局内召对从「白昼金銮殿」换成「夜·烛·墨·朱」（冰汽式反差：外冷内暖）长什么样？
+  变体：A 夜殿 / B 案头批红 / C 现状压暗（基准对照）
+  用法：直接双击打开，或 http://127.0.0.1:8010/prototype-audience-night.html?variant=A
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PROTOTYPE · 召对基调三变体</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --gold: #d8b96a;
+    --gold-dim: #a68b4b;
+    --zhu: #e0503a;
+    --ink: #0d0f14;
+    --paper: #efe3c2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Noto Serif SC", serif; background: #000; overflow: hidden; }
+  .stage { position: fixed; inset: 0; display: none; }
+  .stage.active { display: block; }
+  .proto-banner {
+    position: fixed; top: 8px; left: 12px; z-index: 99;
+    color: #999; font-size: 12px; letter-spacing: .2em; opacity: .7;
+  }
+
+  /* ===== 变体 A：夜殿（暖光池 + 远处暗青） ===== */
+  #va { background: url("/proto-audience-a.png") center / cover no-repeat; }
+  #va .topbar {
+    position: absolute; top: 0; left: 0; right: 0; padding: 14px 28px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    background: linear-gradient(180deg, rgba(0,0,0,.72), transparent);
+    color: var(--gold);
+  }
+  #va .topbar .era { font-size: 15px; letter-spacing: .35em; font-weight: 700; }
+  #va .topbar .stats { font-size: 13px; color: #cdb37e; opacity: .9; }
+  #va .dialog {
+    position: absolute; left: 50%; bottom: 118px; transform: translateX(-50%);
+    width: min(760px, 86vw);
+    background: linear-gradient(180deg, rgba(13,15,20,.82), rgba(13,15,20,.88));
+    border: 1px solid rgba(216,185,106,.35);
+    border-radius: 4px; padding: 22px 30px 18px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.8), 0 0 80px rgba(216,185,106,.06) inset;
+  }
+  #va .who { color: var(--gold); font-weight: 700; letter-spacing: .2em; font-size: 15px; margin-bottom: 10px; }
+  #va .who em { color: var(--zhu); font-style: normal; margin-left: 12px; font-size: 12px; letter-spacing: .3em; }
+  #va .line { color: #e9dcc0; font-size: 16px; line-height: 1.9; }
+  #va .line + .line { margin-top: 10px; }
+  #va .line .stagehint { color: #8d8574; font-size: 13px; }
+  #va .composer {
+    position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%);
+    width: min(760px, 86vw); display: flex; gap: 12px;
+  }
+  #va .composer input {
+    flex: 1; background: rgba(13,15,20,.85); border: 1px solid rgba(216,185,106,.4);
+    color: var(--paper); padding: 12px 16px; font-size: 15px; font-family: inherit; border-radius: 3px;
+  }
+  #va .composer button {
+    background: var(--zhu); color: #fff8f0; border: none; padding: 0 26px;
+    font-family: inherit; font-size: 15px; letter-spacing: .3em; border-radius: 3px; cursor: pointer;
+    box-shadow: 0 0 18px rgba(224,80,58,.35);
+  }
+
+  /* ===== 变体 B：案头批红（对话即奏疏，朕的回话是朱批） ===== */
+  #vb { background: url("/proto-audience-b.png") center / cover no-repeat; }
+  #vb .topbar {
+    position: absolute; top: 0; left: 0; right: 0; padding: 14px 28px;
+    display: flex; justify-content: space-between;
+    background: linear-gradient(180deg, rgba(0,0,0,.75), transparent);
+    color: var(--gold); font-size: 14px; letter-spacing: .3em;
+  }
+  #vb .doc {
+    position: absolute; left: 50%; top: 54%; transform: translate(-50%, -50%) rotate(-.4deg);
+    width: min(680px, 80vw); max-height: 62vh; overflow: hidden;
+    background: linear-gradient(175deg, #f3e8c8, #e9d9ae);
+    border: 1px solid #b99b5e; padding: 34px 44px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.85);
+    color: #3a2c18;
+  }
+  #vb .doc h3 { font-size: 15px; letter-spacing: .4em; color: #6d5326; margin-bottom: 16px; font-weight: 700; }
+  #vb .doc h3 span { color: #9a7b3f; font-weight: 400; letter-spacing: .15em; margin-left: 10px; font-size: 12px; }
+  #vb .doc .mem { font-size: 16px; line-height: 2.05; }
+  #vb .doc .mem + .mem { margin-top: 8px; }
+  #vb .zhupi {
+    margin-top: 20px; padding-top: 14px; border-top: 1px dashed #b99b5e;
+    color: #b03a28; font-size: 19px; font-weight: 700; line-height: 1.8;
+    font-family: "Noto Serif SC", serif;
+  }
+  #vb .zhupi::before { content: "【朱批】"; font-size: 13px; letter-spacing: .3em; display: block; color: #b03a28; opacity: .75; margin-bottom: 6px; }
+  #vb .composer {
+    position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%);
+    width: min(680px, 80vw); display: flex; gap: 12px;
+  }
+  #vb .composer input {
+    flex: 1; background: rgba(20,14,8,.88); border: 1px solid rgba(216,185,106,.45);
+    color: var(--paper); padding: 12px 16px; font-size: 15px; font-family: inherit; border-radius: 3px;
+  }
+  #vb .composer button {
+    background: #b03a28; color: #fff8f0; border: none; padding: 0 24px;
+    font-family: inherit; letter-spacing: .25em; font-size: 15px; border-radius: 3px; cursor: pointer;
+  }
+
+  /* ===== 变体 C：现状压暗（基准对照） ===== */
+  #vc { background: url("/bg_chat.webp") center / cover no-repeat; }
+  #vc::before {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(10,10,18,.45), rgba(10,10,18,.25) 40%, rgba(10,10,18,.55));
+  }
+  #vc .dialog {
+    position: absolute; left: 50%; bottom: 118px; transform: translateX(-50%);
+    width: min(760px, 86vw); z-index: 2;
+    background: rgba(20,18,14,.78); border: 1px solid rgba(216,185,106,.3);
+    border-radius: 4px; padding: 22px 30px 18px;
+  }
+  #vc .who { color: var(--gold); font-weight: 700; letter-spacing: .2em; font-size: 15px; margin-bottom: 10px; }
+  #vc .line { color: #eee2c4; font-size: 16px; line-height: 1.9; }
+  #vc .composer {
+    position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%);
+    width: min(760px, 86vw); display: flex; gap: 12px; z-index: 2;
+  }
+  #vc .composer input {
+    flex: 1; background: rgba(20,18,14,.85); border: 1px solid rgba(216,185,106,.35);
+    color: var(--paper); padding: 12px 16px; font-size: 15px; font-family: inherit; border-radius: 3px;
+  }
+  #vc .composer button {
+    background: #a68b4b; color: #14100a; border: none; padding: 0 26px;
+    font-family: inherit; letter-spacing: .3em; font-size: 15px; border-radius: 3px; cursor: pointer;
+  }
+
+  /* ===== 底部切换条 ===== */
+  #switcher {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 100;
+    display: flex; align-items: center; gap: 14px;
+    background: #16181d; border: 1px solid #3a3f4a; border-radius: 999px;
+    padding: 8px 16px; color: #dfe3ea; font-size: 14px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.6);
+  }
+  #switcher button {
+    background: #23262e; color: #fff; border: 1px solid #4a505c; border-radius: 50%;
+    width: 30px; height: 30px; cursor: pointer; font-size: 15px;
+  }
+  #switcher .name { min-width: 190px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="proto-banner">PROTOTYPE · 一次性 · 看完即弃</div>
+
+<!-- 变体 A：夜殿 -->
+<section class="stage" id="va">
+  <div class="topbar">
+    <span class="era">崇祯元年 · 冬 · 戌时</span>
+    <span class="stats">国库约四百万两 · 辽东警讯 · 乾清宫召对</span>
+  </div>
+  <div class="dialog">
+    <div class="who">杨嗣昌 <em>兵部尚书</em></div>
+    <p class="line">臣夜观辽东塘报，建州侦骑已至宁远外五十里。臣以为当下之急，在固关宁、缓清丈——饷一日不集，兵一日不可驱。</p>
+    <p class="line"><span class="stagehint">（他伏在丹墀下，烛影里看不清脸。）</span>陛下若问臣，臣只有八个字：先安内，再攘外。</p>
+  </div>
+  <div class="composer">
+    <input value="清丈之事，朕问你——太仓还能撑几个月？" readonly />
+    <button>朕问</button>
+  </div>
+</section>
+
+<!-- 变体 B：案头批红 -->
+<section class="stage" id="vb">
+  <div class="topbar">
+    <span>崇祯元年 · 冬 · 戌时</span>
+    <span>御案 · 夜批</span>
+  </div>
+  <div class="doc">
+    <h3>兵部尚书杨嗣昌 谨奏 <span>崇祯元年十一月十二日 到</span></h3>
+    <p class="line mem">臣夜观辽东塘报，建州侦骑已至宁远外五十里。当下之急，在固关宁、缓清丈——饷一日不集，兵一日不可驱。</p>
+    <p class="line mem">伏惟陛下圣裁：先安内，再攘外。臣昧死以闻。</p>
+    <div class="zhupi">清丈之事，朕问你——太仓还能撑几个月？</div>
+  </div>
+  <div class="composer">
+    <input value="清丈之事，朕问你——太仓还能撑几个月？" readonly />
+    <button>批红</button>
+  </div>
+</section>
+
+<!-- 变体 C：现状压暗（对照） -->
+<section class="stage" id="vc">
+  <div class="dialog">
+    <div class="who">杨嗣昌 · 兵部尚书</div>
+    <p class="line">臣夜观辽东塘报，建州侦骑已至宁远外五十里。臣以为当下之急，在固关宁、缓清丈——饷一日不集，兵一日不可驱。</p>
+    <p class="line">陛下若问臣，臣只有八个字：先安内，再攘外。</p>
+  </div>
+  <div class="composer">
+    <input value="清丈之事，朕问你——太仓还能撑几个月？" readonly />
+    <button>朕问</button>
+  </div>
+</section>
+
+<div id="switcher">
+  <button id="prev">←</button>
+  <span class="name" id="vname"></span>
+  <button id="next">→</button>
+</div>
+
+<script>
+  const variants = [
+    ["A", "A — 夜殿（暖光池·暗青夜色）"],
+    ["B", "B — 案头批红（对话即奏疏）"],
+    ["C", "C — 现状压暗（基准对照）"],
+  ];
+  const params = new URLSearchParams(location.search);
+  let idx = Math.max(0, variants.findIndex(v => v[0] === (params.get("variant") || "A")));
+  function show(i) {
+    idx = (i + variants.length) % variants.length;
+    document.querySelectorAll(".stage").forEach(s => s.classList.remove("active"));
+    document.getElementById("v" + variants[idx][0].toLowerCase()).classList.add("active");
+    document.getElementById("vname").textContent = variants[idx][1];
+    const p = new URLSearchParams(location.search);
+    p.set("variant", variants[idx][0]);
+    history.replaceState(null, "", "?" + p.toString());
+  }
+  document.getElementById("prev").onclick = () => show(idx - 1);
+  document.getElementById("next").onclick = () => show(idx + 1);
+  window.addEventListener("keydown", e => {
+    if (/INPUT|TEXTAREA/.test(document.activeElement?.tagName || "")) return;
+    if (e.key === "ArrowLeft") show(idx - 1);
+    if (e.key === "ArrowRight") show(idx + 1);
+  });
+  show(idx);
+</script>
+</body>
+</html>
