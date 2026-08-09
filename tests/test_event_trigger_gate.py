@@ -2288,6 +2288,59 @@ def test_strategic_event_person_tenure_change_is_material_world_state(game, acti
     ).fetchone()["military_pressure"] == before_pressure - 1
 
 
+@pytest.mark.parametrize("action", ["任命", "调任"])
+def test_strategic_event_invalid_person_tenure_rejects_whole_result_envelope(game, action):
+    """#607：非法任别须逐项拒收，且战略事件同信封战果不得半落主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    office = "大名府知府"
+    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
+    db.set_character_office("卢象升", office, office_type, commit=False)
+    before_pressure = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"]
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "name": "卢象升",
+                "动作": action,
+                "office": "宣大总督",
+                "office_type": office_type,
+                "任别": "权署",
+                "reason": "戊寅虏变后调度主帅",
+            }],
+            "region_delta": {
+                "beizhili": {"military_pressure": -1, "reason": "戊寅虏变边患稍解"}
+            },
+        },
+        content=content,
+    )
+
+    rejected_issue = out["issue_summary"]["new_issues"][0]
+    assert rejected_issue["rejected"] is True
+    assert rejected_issue["category"] == "invalid_event_result_delta"
+    assert "人物战果拒收" in rejected_issue["reason"]
+    assert "任别非白名单" in rejected_issue["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    office_row = db.conn.execute(
+        "SELECT c.office, co.appointment_tenure FROM characters c "
+        "LEFT JOIN character_offices co ON co.character_name = c.name WHERE c.name = ?",
+        ("卢象升",),
+    ).fetchone()
+    assert dict(office_row) == {"office": office, "appointment_tenure": "真除"}
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == before_pressure
+    assert any(item.get("rejected") for item in out["applied_person_changes"])
+    assert any(item.get("rejected") for item in out["region_changes"])
+
+
 def test_strategic_event_accepts_power_update_as_material_world_state(game):
     """ADR0014：势力也是世界主账，只有有效 power_updates 的战略战果也可触发事件。"""
     db, state, content = game
