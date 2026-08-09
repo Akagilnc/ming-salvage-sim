@@ -22,6 +22,28 @@ def _chat(db, state, night_id, minister, user_text, answer, seq):
     return int(cur.lastrowid)
 
 
+def test_real_player_stream_replaces_closed_same_turn_night_and_publishes_persisted_identity(game):
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    old_night_id = _night(db, state)
+    db.conn.execute(
+        "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
+        (old_night_id,),
+    )
+    db.conn.commit()
+    runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣谨奏。"] ))
+
+    stream = runtime.chat_stream("温体仁", "新场问话")
+    accepted = next(stream)
+    persisted = an.get_open_night(db)
+    stream.close()
+
+    assert accepted == {"type": "accepted", "night_id": int(persisted["id"])}
+    assert accepted["night_id"] != old_night_id
+    assert int(persisted["turn"]) == int(state.turn)
+
+
 def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     import web_app
 
