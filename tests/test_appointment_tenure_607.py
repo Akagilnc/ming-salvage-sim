@@ -86,10 +86,22 @@ def test_person_delta_rejects_invalid_appointment_tenure_without_mutation(game):
     ).fetchone()["office"] == before
 
 
-def test_failed_reappointment_restores_tenure_and_audit_records(game, monkeypatch):
+def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkeypatch):
     db, state, content = game
     name = _active_minister(db)
     _promulgate_appointment(db, state, content, name, "失败回滚原官", "署理")
+
+    pending_id = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=_active_minister(db), target_id=None,
+        payload={"name": name, "office": "失败回滚新官", "任别": "兼署"},
+    )
+    db.commit_pending_actions(state, content=content, registry=None)
+    dossier = next(
+        row for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == pending_id
+    )
+    dossier_id = dossier["id"]
     before_office = dict(db.conn.execute(
         "SELECT * FROM character_offices WHERE character_name=?", (name,)
     ).fetchone())
@@ -98,6 +110,10 @@ def test_failed_reappointment_restores_tenure_and_audit_records(game, monkeypatc
             "SELECT * FROM office_change_records ORDER BY id"
         ).fetchall()
     ]
+    before_sequence = dict(db.conn.execute(
+        "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
+    ).fetchone())
+    before_dossier = dict(db.get_decree_dossier(dossier_id))
 
     def fail_after_office_write(*_args, **_kwargs):
         raise RuntimeError("simulated post-office-write failure")
@@ -105,11 +121,15 @@ def test_failed_reappointment_restores_tenure_and_audit_records(game, monkeypatc
     monkeypatch.setattr(
         issue_engine, "_displace_duplicate_offices", fail_after_office_write
     )
-    result = issue_engine.apply_score_extraction(db, state, {"人物变更": [{
-        "name": name, "动作": "任命", "office": "失败回滚新官", "任别": "兼署",
-    }]}, content=content)
+    try:
+        db.apply_dossier_promulgation(
+            state, dossier_id, "promulgated", content=content, registry=None,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "simulated post-office-write failure"
+    else:
+        raise AssertionError("injected post-office-write failure did not propagate")
 
-    assert result["applied_person_changes"][0]["rejected"] is True
     assert dict(db.conn.execute(
         "SELECT * FROM character_offices WHERE character_name=?", (name,)
     ).fetchone()) == before_office
@@ -118,6 +138,24 @@ def test_failed_reappointment_restores_tenure_and_audit_records(game, monkeypatc
             "SELECT * FROM office_change_records ORDER BY id"
         ).fetchall()
     ] == before_records
+    assert dict(db.conn.execute(
+        "SELECT * FROM sqlite_sequence WHERE name='office_change_records'"
+    ).fetchone()) == before_sequence
+    assert dict(db.get_decree_dossier(dossier_id)) == before_dossier
+
+    monkeypatch.undo()
+    db.apply_dossier_promulgation(
+        state, dossier_id, "promulgated", content=content, registry=None,
+    )
+    audit = db.conn.execute(
+        "SELECT * FROM office_change_records WHERE dossier_id=?", (dossier_id,)
+    ).fetchone()
+    assert audit["id"] == before_sequence["seq"] + 1
+    assert audit["appointment_tenure"] == "兼署"
+    assert db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()["appointment_tenure"] == "兼署"
 
 
 def test_appointment_tenure_survives_restore(game):
