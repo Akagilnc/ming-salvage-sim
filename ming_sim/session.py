@@ -1175,6 +1175,7 @@ class GameSession:
                                 "deadline_months": payload.get("deadline_months") or 0,
                                 "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                 "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                "dossier_links": payload.get("dossier_links") if isinstance(payload.get("dossier_links"), list) else [],
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):

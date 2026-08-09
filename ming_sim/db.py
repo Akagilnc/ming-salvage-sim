@@ -1376,6 +1376,7 @@ class GameDB:
             CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_dossier_id INTEGER NOT NULL,
+                pending_action_id INTEGER,
                 target_dossier_id INTEGER NOT NULL DEFAULT 0,
                 relation_type TEXT NOT NULL DEFAULT '',
                 note TEXT NOT NULL DEFAULT '',
@@ -1772,6 +1773,9 @@ class GameDB:
         self.ensure_column("game_state", "ended", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("game_state", "ending_status", "TEXT NOT NULL DEFAULT ''")
         # 密令推演副作用列（result 留给承办人进展，sim_note 给推演写泄漏/反弹，互不覆盖）
+        self.ensure_column(
+            "decree_dossier_link_rejections", "pending_action_id", "INTEGER"
+        )
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
@@ -9861,6 +9865,17 @@ class GameDB:
 
     _DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
+    def _record_dossier_link_rejection(
+        self, source_id: int, target_id: int, relation: str, note: str,
+        reason: str, *, pending_action_id: Optional[int] = None,
+    ) -> None:
+        self.conn.execute(
+            """INSERT INTO decree_dossier_link_rejections
+               (source_dossier_id,pending_action_id,target_dossier_id,relation_type,note,reason)
+               VALUES (?,?,?,?,?,?)""",
+            (source_id, pending_action_id, target_id, relation, note, reason),
+        )
+
     def add_dossier_links(
         self, source_dossier_id: int, links: Iterable[Dict[str, object]], *,
         commit: bool = True,
@@ -9894,14 +9909,16 @@ class GameDB:
             normalized.append((target_id, relation, note))
         if rejection is not None:
             target_id, relation, note, reason = rejection
-            self.conn.execute(
-                """INSERT INTO decree_dossier_link_rejections
-                   (source_dossier_id,target_dossier_id,relation_type,note,reason)
-                   VALUES (?,?,?,?,?)""",
-                (source_id, target_id, relation, note, reason),
+            self._record_dossier_link_rejection(
+                source_id, target_id, relation, note, reason,
             )
             self._commit_dossier_write(commit)
-            raise ValueError(reason)
+            exc = ValueError(reason)
+            # commit_pending_actions rolls its business savepoint back.  Carry the
+            # rejected item across that boundary so its outer failure path can
+            # persist the audit without retaining the incomplete secret order.
+            exc.dossier_link_rejection = (source_id, target_id, relation, note, reason)
+            raise exc
         self.conn.executemany(
             """INSERT OR IGNORE INTO decree_dossier_links
                (source_dossier_id,target_dossier_id,relation_type,note)
@@ -9925,11 +9942,18 @@ class GameDB:
         return [dict(row) for row in rows]
 
     def list_dossier_link_rejections(
-        self, source_dossier_id: int,
+        self, source_dossier_id: Optional[int] = None, *,
+        pending_action_id: Optional[int] = None,
     ) -> List[Dict[str, object]]:
+        if (source_dossier_id is None) == (pending_action_id is None):
+            raise ValueError("须且只能按来源案卷或待确认动作查询拒收记录")
+        if pending_action_id is not None:
+            column, value = "pending_action_id", pending_action_id
+        else:
+            column, value = "source_dossier_id", source_dossier_id
         rows = self.conn.execute(
-            "SELECT * FROM decree_dossier_link_rejections WHERE source_dossier_id=? ORDER BY id",
-            (strict_int(source_dossier_id, accept_numeric_strings=False),),
+            f"SELECT * FROM decree_dossier_link_rejections WHERE {column}=? ORDER BY id",
+            (strict_int(value, accept_numeric_strings=False),),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -10998,6 +11022,11 @@ class GameDB:
                             "UPDATE pending_actions SET status='failed' WHERE id=?", (int(pa["id"]),))
                 except Exception as exc:
                     self.conn.execute(f"ROLLBACK TO {savepoint}")
+                    rejection = getattr(exc, "dossier_link_rejection", None)
+                    if rejection is not None:
+                        self._record_dossier_link_rejection(
+                            *rejection, pending_action_id=int(pa["id"]),
+                        )
                     tlog(f"[pending_actions] 落库失败 id={pa['id']} {pa['kind']}/{pa['action']}：{exc}")
                     ok = False
                     self.conn.execute(

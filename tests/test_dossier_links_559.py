@@ -73,6 +73,46 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
     assert [link["target_dossier_id"] for link in result["dossier_links"]] == [11, 12]
 
 
+def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
+    db, state, _ = game
+    targets = [_make_dossier(db, state, name) for name in ("辽东补饷", "宣大补饷", "东江补饷")]
+    action_id = db.stage_pending_action(
+        state.turn, "secret_order", "新建", "孙承宗",
+        {"title": "护行三路饷银", "content": "密护三路饷银", "assignee": "孙承宗",
+         "dossier_links": [
+             {"target_dossier_id": target, "relation_type": "护卫", "note": "护送该路饷银"}
+             for target in targets
+         ]},
+    )
+
+    applied = db.commit_pending_actions(state, action_ids=[action_id])
+
+    assert [row["id"] for row in applied] == [action_id]
+    order = db.list_secret_orders(minister_name="孙承宗")[0]
+    dossier = db.get_dossier_for_secret_order(order["id"])
+    assert [row["target_dossier_id"] for row in db.list_dossier_links(dossier["id"])] == targets
+
+
+def test_unknown_target_in_pending_commit_is_rolled_back_and_durably_audited(game):
+    db, state, _ = game
+    before_orders = len(db.list_secret_orders())
+    action_id = db.stage_pending_action(
+        state.turn, "secret_order", "新建", "孙承宗",
+        {"title": "护行密令", "content": "护送旧案", "assignee": "孙承宗",
+         "dossier_links": [
+             {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}
+         ]},
+    )
+
+    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
+
+    assert len(db.list_secret_orders()) == before_orders
+    assert db.list_pending_actions(state.turn, status="failed")[0]["id"] == action_id
+    audit = db.list_dossier_link_rejections(pending_action_id=action_id)
+    assert audit[-1]["target_dossier_id"] == 999999
+    assert "指向不存在案卷" in audit[-1]["reason"]
+
+
 def test_unknown_target_link_is_rejected_and_audited(game):
     db, state, _ = game
     source = _make_dossier(db, state, "护行密令")
