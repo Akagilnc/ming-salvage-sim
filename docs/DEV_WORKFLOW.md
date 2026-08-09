@@ -20,6 +20,8 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 
 权威源 = Matt 的 `ask-matt` 路由器 + 各 skill SKILL.md 原文。整条主线：**想法 → grill 出 CONTEXT/ADR →（大/模糊想法先 decision-mapping 推雾）→ to-spec 综合成完整 PRD → 切薄 issue → 逐片 implement → ship。** 每步一个 skill，状态全靠 label + open/close 跟踪。
 
+自动化交付的角色与运行时由仓外 v3 [`ak-pi-workflow-roles`](https://github.com/Akagilnc/ak-pi-workflow-roles) 维护；本页只定义 Ming 项目的开发方法和质量闸，不保存自动化接力、模型路线或运行时配置。
+
 > [!important] grill **在 to-spec 之前**
 > `to-spec` 故意**不访谈**（SKILL.md 原文："Do NOT interview the user — just synthesize what you already know"）。访谈/逼问那一步是 `grill-with-docs`，它在前；`to-spec` 只是把 grill 透的对话**笔录**成 PRD。所以顺序不可能反——to-spec 前面没 grill 就没东西可综合。
 
@@ -49,7 +51,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
  └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（评审态真源=ADR Status；标签不管）
  └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 跑 typecheck/单测/全量
           → 手动/单 session：baseline commit → /code-review → fix commits
-          → 编排器：Implementation 停在 internal self-check；后续 Verification → Change Finalization baseline → /code-review 的准确接力只读 #869
+          → 自动化交付：由仓外 v3 独立角色接力，本仓不复制其内部流程
         ▼
      merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
         （prototype 按需绕道，handoff 出/回桥接）
@@ -68,9 +70,9 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
 | `to-spec` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
 | `to-tickets` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
-| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量；手动流随后 baseline commit → 单评 → fix commits；编排器只内联到 internal self-check，后续接力只读 #869，不直接 invoke umbrella |
+| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量；手动流随后 baseline commit → 单评 → fix commits |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
-| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 要在 baseline commit 后跑；编排器只在 independent Verification 收敛、Change Finalization 建 baseline 后由 #869 派独立 reviewer，coder worker 不自启 review；Flow / 专业 Action 传入该 slice 开工或分叉时的基线，准确契约只读 live #869，Runner 不选择 fixed point |
+| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 要在 baseline commit 后跑 |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
 | `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
@@ -87,7 +89,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 且即便 DoD 齐、进了 ship-pre，装起来跑的整体 cmr 仍是独立一道闸——别当走过场：per-slice cmr 各自全绿 ≠ feature 完成，整体闸基本仍会抓出 per-slice 照不到的**跨片接缝**（字段名/类型对不对、字段口径一不一致、组合后才出现的 e2e 行为），要预期它有料、按真闸认真跑。
 
 > [!note] 本项目在 Matt 之上加的闸（非 Matt canonical）
-> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR）。手动流在 ⑥ baseline commit 后进入**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）；编排器的 Verification、Change Finalization 与 `/code-review` 位置只读 #869。`/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；coder/reviewer 角色必须分离，`/code-review` 不属于 coder worker 自评。详见 [[cross-model-review]] / [[pr-review-loop]]。
+> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR）。手动流在 ⑥ baseline commit 后进入**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）。`/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；自动化 coder/reviewer 分工由仓外 v3 维护。详见 [[cross-model-review]] / [[pr-review-loop]]。
 
 ### to-spec —— 完整 PRD（含两层设计，别漏）
 
@@ -101,7 +103,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **Out of Scope** —— 明确不做的。
 - **Further Notes** —— 其它。
 
-产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage（标签贴着无所谓、不用管——评审态真源 = ADR Status；父标对编排器无效，admission 只读子票；owner 2026-07-14 简化）。
+产出发到 issue tracker（父/epic），贴 `ready-for-agent`，无需再单独 triage（标签贴着无所谓、不用管——评审态真源 = ADR Status；owner 2026-07-14 简化）。
 
 ### 设计落在哪（六层阶梯，解「详细设计在哪长」）
 
@@ -146,7 +148,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 ### agent brief —— ready-for-agent 的契约
 
 > [!important] brief（存在时）是最权威契约；**可选**——无 brief 则以整个 issue（body + 讨论）为准
-> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-tickets` 切片未必带它、工具不能这么死板）：现有 legacy S0 不因缺 brief 拒收；canonical cutover 后，缺 brief 同样不是 Issue Admission 的拒收条件。coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
+> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-tickets` 切片未必带它、工具不能这么死板）。coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
 
 **四原则**：① **durability over precision**——不写文件路径/行号（会过时），写接口/类型/行为契约、点名 symbol；② **behavioral not procedural**——写做什么不写怎么改；③ 完整可测验收；④ 显式 out-of-scope 防镀金。
 
@@ -161,12 +163,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **垂直切片（tracer bullet）**：每片穿透所有层、独立可 demo/merge。**禁横切**（先全 schema 再全 UI = 谁也独立不了）。
 - **`Blocked by` 真源 = native blocked_by**（2026-07-14 起 to-tickets 已内建挂接；GitHub 原生强制可 filter）；子 body 里的 prose `## Blocked by` 降级为可读面包屑/核验信息，不再是唯一契约（核验命令见下节）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
-- **context hygiene**：grill → to-spec → to-tickets 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd`；手动流可接 `/code-review`，编排器在 internal self-check 后按 #869 由独立 Verification、Change Finalization 与 reviewer 接力；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
-- **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；现有 legacy S0/resume 只读查表，canonical cutover 后仅 coder/coderFix 的 owning Action 与 Policy 消费，Runner 不读（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
-
-```text
-Coder-Rec: grok-4.5 → terra@med → luna@med
-```
+- **context hygiene**：grill → to-spec → to-tickets 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd`；手动流可接 `/code-review`；自动化角色上下文由仓外 v3 隔离），别拿上一个 issue 的脏 context 接下一个。
 
 ### to-tickets 后的原生核验（2026-07-14 上游改版后：①②已内建，③仍手动）
 
@@ -182,7 +179,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
    bid=$(gh api repos/O/R/issues/<blocker号> -q .id)
    gh api -X POST repos/O/R/issues/<blocked号>/dependencies/blocked_by -F issue_id=$bid
    ```
-3. ~~保护父：撤父工作态 label~~（**已废止 2026-07-14**：标签不管，评审态真源 = ADR Status；编排器 admission 只读子票且有 parent_issue 双保险，父标贴着无害）
+3. ~~保护父：撤父工作态 label~~（**已废止 2026-07-14**：标签不管，评审态真源 = ADR Status，父标贴着无害）
 4. **(可选) wave milestone**：无前置 = `wave-1`、前置都在更早波 = `waveN`（告诉 agent 先抓哪；Matt #238）。**大图才需要**——native blocked_by 已把依赖上了 tracker，小图（unblocked 没几个）可省。
 
 ### 追踪模型
@@ -226,7 +223,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
   - 标签 Matt 纯化：35 → 7（删 `priority/area/type` 等 28 个）。
   - triage 36 个 backlog：fan-out 分类 → 7 ready-for-agent / 20 ready-for-human / 2 关闭 / 7 tracker 留空。
 - **本页校订（2026-06-18）**：对照 skill 原文修正三处真错——① `to-spec` 实为「grill 之后」（不访谈，只综合）；② `to-spec` 产**完整 PRD**含 Implementation/Testing Decisions 两层设计（先前误写成薄 issue）；③ `triage` 是**入口匝道**、不对 `to-tickets` 产出用——并补「设计六层阶梯」消歧。
-- **本页校订（2026-07-02）**：同步 Matt 新增 `code-review` 与 `implement`：`implement` 是 umbrella（自治/编排器内联，不直接 invoke）；手动流在 baseline commit 后用 `/code-review` 做 Standards + Spec 两轴单评，本项目 per-slice cmr 仍是额外跨模型闸，二者叠加非替代。编排器 coder 不自评且不建 baseline，Verification、Change Finalization 与独立 `/code-review` reviewer 的准确接力只读 #869。
+- **本页校订（2026-07-02）**：同步 Matt 新增 `code-review` 与 `implement`；手动流在 baseline commit 后用 `/code-review` 做 Standards + Spec 两轴单评，本项目 per-slice cmr 仍是额外跨模型闸，二者叠加非替代。
 - **关联**：ship 后的 PR 评审循环见 [[pr-review-loop]]；自治 TDD 实现 loop 见 [[tdd-autonomous-dev]]；设计阶段 cross-model 评审见 [[cross-model-review]]。
 
 > [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）
