@@ -2212,6 +2212,7 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     state.turn += 1
     seen = {}
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "apply_fixed_period_flows", lambda *_a, **_k: None)
 
     def _simulate(*_args, **kwargs):
         seen["dossiers"] = kwargs["simulator_payload"]["decree_dossiers"]
@@ -2244,6 +2245,7 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     assert "decree_text" not in projected[0]
     assert "payload" not in projected[0]
     assert "payload_json" not in projected[0]
+    assert state.metrics["内库"] == 10
     assert [
         row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])
     ] == [-10]
