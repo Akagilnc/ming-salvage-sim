@@ -9,7 +9,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterator, List, Optional
+from typing import Callable, Dict, Iterator, List, Optional, Protocol, Sequence
 
 from agno.db.sqlite import SqliteDb
 
@@ -19,7 +19,6 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
-    create_promulgation_judge_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
     parse_agent_json,
@@ -94,6 +93,67 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+
+
+class PromulgationVerdictProvider(Protocol):
+    """颁布判决注入 seam；实现不得写 DB，判决在后半段 atomic 内统一落库。"""
+
+    def __call__(
+        self, dossiers: Sequence[Dict[str, object]], state: GameState,
+    ) -> List[Dict[str, object]]: ...
+
+
+def stub_promulgation_verdicts(
+    dossiers: Sequence[Dict[str, object]], state: GameState,
+) -> List[Dict[str, object]]:
+    """S5 默认判官：确定性逐案顺颁，零 LLM、零等待。"""
+    del state
+    return [
+        {"dossier_id": int(row["id"]), "decision": "promulgated"}
+        for row in dossiers
+    ]
+
+
+def validate_promulgation_verdicts(
+    generated: object, proposed_dossiers: Sequence[Dict[str, object]], db: GameDB,
+) -> List[Dict[str, object]]:
+    """Validate one injected batch before it can reach simulation or persistence."""
+    if not isinstance(generated, list):
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
+    if any(
+        not isinstance(row, dict)
+        or str(row.get("decision") or "") not in {"promulgated", "rejected"}
+        for row in generated
+    ):
+        raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+    try:
+        for row in generated:
+            if row.get("decision") == "rejected":
+                validate_rejection_verdict(
+                    row, {"cabinet_drafting", "palace_rescript", "six_offices"},
+                    faction_names={
+                        str(item["name"])
+                        for item in db.conn.execute("SELECT name FROM factions")
+                    },
+                    character_ids={
+                        str(item["name"])
+                        for item in db.conn.execute("SELECT name FROM characters")
+                    },
+                )
+    except ValueError as exc:
+        raise LLMContractError(str(exc)) from exc
+    if any(
+        isinstance(row.get("dossier_id"), bool)
+        or not isinstance(row.get("dossier_id"), int)
+        or not 0 < row["dossier_id"] <= 2 ** 63 - 1
+        for row in generated
+    ):
+        raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
+    verdict_ids = {int(row["dossier_id"]) for row in generated}
+    proposed_ids = {int(row["id"]) for row in proposed_dossiers}
+    if verdict_ids != proposed_ids or len(generated) != len(proposed_ids):
+        raise LLMContractError("颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过")
+    return generated
 
 
 def _rescript_decisions(
@@ -336,6 +396,7 @@ def resolve_directives(
     registry=None,
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
+    promulgation_verdict_provider: Optional[PromulgationVerdictProvider] = None,
 ) -> ResolveResult:
     """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
 
@@ -401,56 +462,13 @@ def resolve_directives(
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
     if proposed_dossiers:
-        judge = create_promulgation_judge_agent(llm_config, agno_db)
-        raw = run_agent_text(
-            judge,
-            json.dumps(
-                {"dossiers": proposed_dossiers, "state": dict(state.metrics)},
-                ensure_ascii=False,
-            ),
-            "promulgation-judge",
+        # S5 ships a deterministic pass-through judge.  Later slices can inject
+        # the real judge at this public seam without moving persistence/apply.
+        provider = promulgation_verdict_provider or stub_promulgation_verdicts
+        generated = provider(proposed_dossiers, state)
+        verdict_rows = validate_promulgation_verdicts(
+            generated, proposed_dossiers, db,
         )
-        parsed = parse_agent_json(raw, "颁布判官")
-        generated = parsed.get("verdicts")
-        if not isinstance(generated, list):
-            raise LLMContractError("颁布判官 verdicts 必须为列表")
-        if any(
-            not isinstance(row, dict)
-            or str(row.get("decision") or "") not in {"promulgated", "rejected"}
-            for row in generated
-        ):
-            raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
-        try:
-            for row in generated:
-                if row.get("decision") == "rejected":
-                    validate_rejection_verdict(
-                        row, {"cabinet_drafting", "palace_rescript", "six_offices"},
-                        faction_names={
-                            str(item["name"])
-                            for item in db.conn.execute("SELECT name FROM factions")
-                        },
-                        character_ids={
-                            str(item["name"])
-                            for item in db.conn.execute("SELECT name FROM characters")
-                        },
-                    )
-        except ValueError as exc:
-            raise LLMContractError(str(exc)) from exc
-        if any(
-            isinstance(row.get("dossier_id"), bool)
-            or not isinstance(row.get("dossier_id"), int)
-            or not 0 < row["dossier_id"] <= 2 ** 63 - 1
-            for row in generated
-        ):
-            raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
-        verdict_rows = generated
-        verdict_ids = {
-            int(row.get("dossier_id") or 0)
-            for row in verdict_rows if isinstance(row, dict)
-        }
-        proposed_ids = {int(row["id"]) for row in proposed_dossiers}
-        if verdict_ids != proposed_ids or len(verdict_rows) != len(proposed_ids):
-            raise LLMContractError("颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过")
 
     verdict_by_id = {
         int(row["dossier_id"]): str(row.get("decision") or "")

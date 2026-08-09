@@ -90,17 +90,11 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "run_agent_text",
-        lambda _agent, prompt, _label: json.dumps({
-            "verdicts": [
-                {"dossier_id": row["id"], "decision": "promulgated"}
-                for row in json.loads(prompt)["dossiers"]
-            ],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda dossiers, _state: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
     )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
