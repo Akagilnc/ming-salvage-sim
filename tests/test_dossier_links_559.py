@@ -350,6 +350,20 @@ def test_same_target_multiple_relations_keep_exact_confirmed_tuples(monkeypatch)
     ) == proposals[:2]
 
 
+def test_force_promulgated_rejected_dossier_is_referenceable(game):
+    db, state, _ = game
+    dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
+
+    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["promulgation_decision"] == "rejected"
+    assert dossier_id in {
+        row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
+    }
+
+
 def test_withdrawn_rejected_dossier_is_not_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "收回的旧旨")
