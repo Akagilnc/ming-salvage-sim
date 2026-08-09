@@ -7779,10 +7779,12 @@ def apply_issue_inertia_and_ongoing(
         commitment_kind = str(row["commitment_kind"] if "commitment_kind" in row.keys() else "").strip()
         commitment_stop_gate = _commitment_stop_gate(row)
         is_commitment = bool(commitment_kind or commitment_stop_gate)
+        parent_origin_ref: Optional[str] = None
 
         # 1) inertia 漂移：每月对所有进行中 issue 都走一格
         if inertia != 0 and not is_commitment:
-            parent_origin_ref = _canonical_issue_origin(db, row)
+            if parent_origin_ref is None:
+                parent_origin_ref = _canonical_issue_origin(db, row)
             new_bar = max(0, min(100, bar + inertia))
             actual = new_bar - bar
             if actual != 0:
@@ -7865,7 +7867,8 @@ def apply_issue_inertia_and_ongoing(
         economy_part: List[Dict[str, object]] = []
         applied_monthly_parts: Dict[str, object] = {}
         if _monthly_ongoing_effects_has_work(ongoing):
-            parent_origin_ref = _canonical_issue_origin(db, row)
+            if parent_origin_ref is None:
+                parent_origin_ref = _canonical_issue_origin(db, row)
             # 折扣系数：bar 越高（越好）越少扣
             # bar=0~40 → 100%, bar=40~80 → 60%, bar=80~100 → 30%
             if bar >= 80:
