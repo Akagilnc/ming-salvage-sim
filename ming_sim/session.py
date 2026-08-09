@@ -1506,6 +1506,9 @@ class GameSession:
                     "deadline_months": so.get("deadline_months", 0),
                     "excluded_names": so.get("excluded_names") or [],
                     "excluded_offices": so.get("excluded_offices") or [],
+                    # The extractor emits only links explicitly narrowed in the
+                    # minister's confirmation; carry that immutable set to commit.
+                    "dossier_links": so.get("dossier_links") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:

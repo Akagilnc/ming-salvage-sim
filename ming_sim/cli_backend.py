@@ -2046,8 +2046,11 @@ def _extract_secret_order(
         + (default_assignee or "") + "\",\n"
         "  \"期限月数\": 整数，皇帝限了期就填月数（如『三月内结案』填3），没限填0,\n"
         "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
-        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]}\n"
-        "}\n\n"
+        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]},\n"
+        "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
+        "\"说明\": \"一句说明\"}]\n"
+        "}\n"
+        "案卷关联只能填写大臣回话中已明确复述确认的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n\n"
         "【皇帝密令】" + (player_command or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
@@ -2126,9 +2129,25 @@ def _extract_secret_order(
         tags = fallback_tags
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
+    dossier_links: List[Dict[str, Any]] = []
+    raw_links = obj.get("案卷关联")
+    if isinstance(raw_links, list):
+        for link in raw_links:
+            if not isinstance(link, dict):
+                continue
+            target = link.get("目标案卷ID")
+            # IDs are intentionally not guessed from prose: only the structured
+            # confirmation output can cross this boundary; DB validates existence/age.
+            if isinstance(target, bool) or not isinstance(target, int):
+                continue
+            dossier_links.append({
+                "target_dossier_id": target,
+                "relation_type": str(link.get("类型") or "").strip(),
+                "note": str(link.get("说明") or "").strip(),
+            })
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
-            "excluded_offices": excluded_offices,
+            "excluded_offices": excluded_offices, "dossier_links": dossier_links,
             "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
 
 def resolve_minister_actions(
