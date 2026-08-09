@@ -155,6 +155,22 @@ def _apply_issue_buildings(
         if not isinstance(op, dict):
             continue
         action = str(op.get("action") or "").lower()
+        origin_ref = str(op.get("origin_ref") or "").strip()
+        valid_origin = origin_ref == "盘面自发"
+        if origin_ref.startswith("dossier:"):
+            try:
+                origin_dossier_id = _parse_sqlite_id(origin_ref.split(":", 1)[1])
+                valid_origin = db.dossier_authorizes_effects(origin_dossier_id)
+            except (TypeError, ValueError):
+                valid_origin = False
+        if not valid_origin:
+            applied.append({"action": action, "rejected": True,
+                            "category": "missing_origin_ref" if not origin_ref else "invalid_origin_ref",
+                            "reason": "building effect 必须带 canonical origin_ref", "item": op})
+            continue
+        before_log_id = int(db.conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM building_logs"
+        ).fetchone()[0])
         try:
             if action == "create":
                 bid = db.add_building(
@@ -177,7 +193,7 @@ def _apply_issue_buildings(
             elif action == "modify":
                 bid = str(op.get("building_id") or "")
                 fields = {k: v for k, v in op.items()
-                          if k not in ("action", "building_id")}
+                          if k not in ("action", "building_id", "origin_ref")}
                 fields.setdefault("reason", reason)
                 ch = db.apply_building_deltas(state, pseudo_event, None, "档房", {bid: fields}, commit=commit)
                 applied.append({"action": "modify", "building_id": bid, "changes": ch})
@@ -187,6 +203,10 @@ def _apply_issue_buildings(
                 applied.append({"action": "remove", "building_id": bid, "removed": ok})
             else:
                 print(f"[WARN] issue effect buildings: action 非法 '{action}'，跳过。")
+            db.conn.execute(
+                "UPDATE building_logs SET origin_ref=? WHERE id>? AND origin_ref=''",
+                (origin_ref, before_log_id),
+            )
         except Exception as exc:
             print(f"[WARN] issue effect buildings 落库失败：{exc}；op={op}")
             raise
@@ -6668,6 +6688,61 @@ def apply_score_extraction(
         applied_person_changes.extend(results)
         return results
 
+    # #558: every durable extractor effect carries one canonical provenance.
+    # Empty means historical rows only; new payloads must say either dossier:N
+    # (already authorization-checked above) or the exact spontaneous sentinel.
+    origin_rejections: Dict[str, List[Dict[str, object]]] = {}
+    origin_sections = (
+        "economy_moves", "fiscal_creates", "new_armies", "人物变更",
+        "appointments", "character_status_changes", "character_power_changes", "office_changes",
+    )
+    origin_dict_sections = ("region_delta", "army_delta", "power_updates")
+
+    def _origin_rejection(section: str, item: object, value: str) -> None:
+        origin_rejections.setdefault(section, []).append({
+            "rejected": True,
+            "category": "missing_origin_ref" if not value else "invalid_origin_ref",
+            "reason": ("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」"
+                       if not value else f"origin_ref 非法：{value}"),
+            "item": item,
+        })
+
+    def _valid_origin(value: str) -> bool:
+        if value == "盘面自发":
+            return True
+        if not value.startswith("dossier:"):
+            return False
+        try:
+            dossier_id = _parse_sqlite_id(value.split(":", 1)[1])
+        except (TypeError, ValueError):
+            return False
+        return db.get_decree_dossier(dossier_id) is not None and db.dossier_authorizes_effects(dossier_id)
+
+    for section in origin_sections:
+        retained: List[object] = []
+        for item in extracted.get(section) or []:
+            if not isinstance(item, dict):
+                retained.append(item)
+                continue
+            value = str(item.get("origin_ref") or "").strip()
+            if _valid_origin(value):
+                retained.append(item)
+            else:
+                _origin_rejection(section, item, value)
+        extracted[section] = retained
+    for section in origin_dict_sections:
+        retained_dict: Dict[str, object] = {}
+        for target_id, item in (extracted.get(section) or {}).items():
+            if not isinstance(item, dict):
+                retained_dict[target_id] = item
+                continue
+            value = str(item.get("origin_ref") or "").strip()
+            if _valid_origin(value):
+                retained_dict[target_id] = item
+            else:
+                _origin_rejection(section, {target_id: item}, value)
+        extracted[section] = retained_dict
+
     # 1) metric_delta
     applied_metric = _apply_metric_dict(state, extracted.get("metric_delta") or {}, db=db)
     # 2) economy_moves
@@ -6704,7 +6779,7 @@ def apply_score_extraction(
         commit=commit_now,
     )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]
-    economy_rejections = [r for r in _eco_out if r.get("rejected")]
+    economy_rejections = origin_rejections.get("economy_moves", []) + [r for r in _eco_out if r.get("rejected")]
     # 3) faction_delta + class_delta（朝堂派系 + 社会阶级；联动靠 LLM，不在代码做）
     # 返回 (已落 delta dict, 拒收项列表)：dict 供 web 面板（形状不变），拒收列表置于
     # 独立 *_rejections 段供桥接收集器（ADR 0008 决定 1，#14/#63）——不复用 *_delta key
@@ -6759,39 +6834,49 @@ def apply_score_extraction(
         interests=[],
         audiences=[],
     )
-    region_changes: List[Dict[str, object]] = []
-    army_changes: List[Dict[str, object]] = []
-    created_armies: List[Dict[str, object]] = []
+    region_changes: List[Dict[str, object]] = list(origin_rejections.get("region_delta", []))
+    army_changes: List[Dict[str, object]] = list(origin_rejections.get("army_delta", []))
+    created_armies: List[Dict[str, object]] = list(origin_rejections.get("new_armies", []))
     # 先建军：避免同回合 army_delta 引用新军被跳过。
     # ADR 0008 决定 1（PR2-S2）：LLM 脏数据（查无此地/此军、字段非法、值不可解析）在
     # 三个 db 方法内逐项拒收留痕（返回列表含 {"rejected": True, ...}，桥接自动收进
     # rejection_reports），好项照落、坏一项不带走整批；代码异常（bug 类）仍上抛到 settle
     # 层回滚整批，绝不吞。clamp 语义（城防炮 city_level×8、随军炮 cap12、火器 0-100）不变。
-    if ordinary_new_armies_raw:
-        created_armies = db.create_armies_from_extraction(
-            state,
-            ordinary_new_armies_raw,
-            actor="档房",
-            commit=commit_now,
+    def _apply_with_log_origin(table: str, origin_ref: str, apply_fn):
+        before_id = int(db.conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0])
+        result = apply_fn()
+        db.conn.execute(
+            f"UPDATE {table} SET origin_ref=? WHERE id>? AND origin_ref=''",
+            (origin_ref, before_id),
         )
-    if ordinary_region_deltas_raw:
-        region_changes = db.apply_region_deltas(
-            state,
-            pseudo_event,
-            None,
-            "档房",
-            ordinary_region_deltas_raw,
-            commit=commit_now,
-        )
-    if ordinary_army_deltas_raw:
-        army_changes = db.apply_army_deltas(
-            state,
-            pseudo_event,
-            None,
-            "档房",
-            ordinary_army_deltas_raw,
-            commit=commit_now,
-        )
+        return result
+
+    for army_item in ordinary_new_armies_raw:
+        origin_ref = str(army_item.get("origin_ref") or "").strip()
+        created_armies.extend(_apply_with_log_origin(
+            "army_logs", origin_ref,
+            lambda item=army_item: db.create_armies_from_extraction(
+                state, [item], actor="档房", commit=commit_now,
+            ),
+        ))
+    for region_id, raw_changes in ordinary_region_deltas_raw.items():
+        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+        region_changes.extend(_apply_with_log_origin(
+            "region_logs", origin_ref,
+            lambda rid=region_id, changes=payload: db.apply_region_deltas(
+                state, pseudo_event, None, "档房", {rid: changes}, commit=commit_now,
+            ),
+        ))
+    for army_id, raw_changes in ordinary_army_deltas_raw.items():
+        origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+        payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+        army_changes.extend(_apply_with_log_origin(
+            "army_logs", origin_ref,
+            lambda aid=army_id, changes=payload: db.apply_army_deltas(
+                state, pseudo_event, None, "档房", {aid: changes}, commit=commit_now,
+            ),
+        ))
 
     # 注：建筑的新建/变更/废止不走顶层字段，全由 issue 的 effect_on_resolve /
     #     effect_on_fail 里的 `buildings` 段在局势结案时落地（见 _apply_issue_buildings）。
@@ -6800,7 +6885,7 @@ def apply_score_extraction(
     # ADR 0008 决定 1:不再整段吞——LLM 脏数据(未知 power id/字段非法)在
     # apply_power_deltas 内逐项拒收留痕(返回列表含 {"rejected": True, ...});
     # 代码异常(KeyError/AttributeError 等)上抛到 settle 层回滚整批,绝不吞。
-    power_changes: List[Dict[str, object]] = []
+    power_changes: List[Dict[str, object]] = list(origin_rejections.get("power_updates", []))
     if ordinary_power_updates_raw:
         power_updates_to_apply = dict(ordinary_power_updates_raw)
         for power_id in sorted(set(power_updates_to_apply) & amnesty_conflict_power_ids):
@@ -6812,10 +6897,23 @@ def apply_score_extraction(
                 "reason": "同一股同一时段已有招安易主，拒绝顶层 power_updates 剿股；削股须随易主反噬一处落账",
                 "item": {"power_id": power_id, "changes": raw_changes},
             })
-        if power_updates_to_apply:
-            power_changes.extend(db.apply_power_deltas(state, power_updates_to_apply, commit=commit_now))
+        for power_id, raw_changes in power_updates_to_apply.items():
+            origin_ref = str(raw_changes.get("origin_ref") or "").strip()
+            payload = {k: v for k, v in raw_changes.items() if k != "origin_ref"}
+            power_changes.extend(_apply_with_log_origin(
+                "power_logs", origin_ref,
+                lambda pid=power_id, changes=payload: db.apply_power_deltas(
+                    state, {pid: changes}, commit=commit_now,
+                ),
+            ))
 
-    _apply_normalized_person_changes(pre_issue_person_changes, legacy=legacy_person_mode)
+    for person_change in pre_issue_person_changes:
+        origin_ref = str(person_change.get("origin_ref") or "").strip()
+        clean_change = {k: v for k, v in person_change.items() if k != "origin_ref"}
+        _apply_with_log_origin(
+            "person_logs", origin_ref,
+            lambda item=clean_change: _apply_normalized_person_changes([item], legacy=legacy_person_mode),
+        )
 
     # 6) issue_advances / new_issues / close_issues / cancels (复用旧 tracker 落地)
     issue_summary = apply_issue_tracker_output(db, state, {
@@ -7071,7 +7169,13 @@ def apply_score_extraction(
             new_issue["category"] = "missing_world_state_delta"
             new_issue["reason"] = "战略/外敌战事缺世界状态主账结果（地区/军队/人物变更/新建军队均未成功）"
             _reject_suppressed_strategic_results(event_id, str(new_issue.get("title") or ""), reason=new_issue["reason"])
-    _apply_normalized_person_changes(post_issue_person_changes, legacy=legacy_person_mode)
+    for person_change in post_issue_person_changes:
+        origin_ref = str(person_change.get("origin_ref") or "").strip()
+        clean_change = {k: v for k, v in person_change.items() if k != "origin_ref"}
+        _apply_with_log_origin(
+            "person_logs", origin_ref,
+            lambda item=clean_change: _apply_normalized_person_changes([item], legacy=legacy_person_mode),
+        )
 
     def _norm_int_leaf(v):
         """无损整数串归一（cmr S3 r10,2/2）：strip 后能精确 int 的 str 转 int,
@@ -7133,7 +7237,7 @@ def apply_score_extraction(
 
     # 6.5) fiscal_creates：推演凭空新立月固定收支项（税是其一种）。先于 fiscal_changes，
     #      使同{月}「新立关税 + 立即调率」可一气落地。
-    applied_fiscal_creates: List[Dict[str, object]] = []
+    applied_fiscal_creates: List[Dict[str, object]] = list(origin_rejections.get("fiscal_creates", []))
     for create in extracted.get("fiscal_creates") or []:
         # direction 同义词在唯一守门人处归一（cmr S3 r9:归一放 driver 不经过的
         # cleaner 层=同输入两判;DELTA_SCHEMA 明言吃中文别名）。表与 cleaner 共用
@@ -7196,9 +7300,11 @@ def apply_score_extraction(
         # display 缺省=归一 stem（与落库同源——raw key 去 _base 会把「关税_rate」
         # 显示成「关税_rate」,cmr S3 r11;DELTA_SCHEMA 契约「缺省=key 去后缀」）。
         display = str(create.get("display") or "").strip() or (db._stem_of(key) or key)
+        origin_ref = str(create.get("origin_ref") or "").strip()
         new_key = db.create_fiscal_item(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
+            origin_ref=origin_ref,
             commit=commit_now,
         )
         if new_key is None:

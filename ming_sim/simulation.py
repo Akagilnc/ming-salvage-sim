@@ -1145,14 +1145,18 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         # display 默认由 applier 统一派生（归一 stem,cmr S3 r12）——cleaner 不再
         # 预填,否则引擎路抢先用 raw-key 去 _base 的旧式默认=两路两值。
         display = str(item.get("display") or "").strip()
-        cleaned.append({
+        entry = {
             "key": key,
             "account": account,
             "direction": direction,
             "display": display,
             "init_value": init_value,
             "reason": str(item.get("reason") or "")[:120],
-        })
+        }
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if origin_ref:
+            entry["origin_ref"] = origin_ref
+        cleaned.append(entry)
     return cleaned
 
 

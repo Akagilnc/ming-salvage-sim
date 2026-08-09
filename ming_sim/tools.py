@@ -964,26 +964,28 @@ def build_extractor_tools(context: CourtContext):
         ══ 必须包含的顶层字段（无内容填 {} 或 []）══
 
         metric_delta        两量表增量 {"民心":N,"皇威":N}（增量非新值）
-        economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason}
+        economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason,origin_ref}；
+                            旨意驱动须从 extractor_context.decree_dossiers 选 dossier:<id>，
+                            月末局势自然演化须显式填 origin_ref:"盘面自发"
                             单位万两；程序已落账的月度固定收支（税/军饷/建筑维护等）不重复写
                             account按钱出自哪个库定：内帑/内库拨出=内库，户部/太仓=国库
         faction_delta       派系满意度增量 {阉党/皇党/军队/东林/宗室/中立/西学: N}
         class_delta         阶级满意度/影响力增量
                             key="农民"(全国)或"农民@shaanxi"(省级切片)
                             value={"satisfaction":N,"leverage":N}（可只写一个）
-        region_delta        地区数值变化 {region_id: {字段:增量}}
+        region_delta        地区数值变化 {region_id: {字段:增量,origin_ref}}
                             合法字段：public_support/unrest/grain_security/gentry_resistance/
                             military_pressure/corruption/population/registered_land/
                             hidden_land/tax_per_turn/natural_disaster/human_disaster/status
                             减人口写population，禁止写manpower（军队字段）
-        army_delta          军队数值变化 {army_id: {字段:增量}}
+        army_delta          军队数值变化 {army_id: {字段:增量,origin_ref}}
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
                             manpower/station/commander/controller/troop_type/status
                             禁止写cohesion（势力字段）。army_delta.arrears/欠饷只允许既有军
                             正值外生加欠，引擎按饷源比例拆入省/中央累加器；负值拒收。
                             补饷、减欠、核销必须走 economy_moves（purpose=补饷）或显式核销路径。
                             新军初始欠饷固定 0，不在 new_armies 写欠饷。
-        new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/
+        new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/origin_ref/
                             commander/troop_type/status 等完整军队字段。
                             owner_power="ming" 且不是土司/自养军时，必须写饷源三字段：
                             pay_source_region/饷源省=明控省 region_id，
@@ -992,7 +994,7 @@ def build_extractor_tools(context: CourtContext):
                             土司/自养明军才写 is_tusi/土司 或 self_funded_pay/自养军饷，
                             且饷源比例为 0/0；非明军不写明军饷源。
                             明军月饷总额由引擎按 manpower 派生，不写饷额。
-        power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
+        power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N,origin_ref}}
                             只写非大明势力；三项均为整数增量；不写立场/近动/状态
         world_advance       外交态度 KV；key 为势力名或 power_id，value 为简短态度字符串
                             如 {"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}；无内容填 {}
@@ -1008,7 +1010,7 @@ def build_extractor_tools(context: CourtContext):
                               ongoing_effects,effect_on_resolve,effect_on_fail,
                               cancellable(decree/never/by_progress)
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
-                              buildings每项：{action:create/modify/remove,...}
+                              buildings每项：{action:create/modify/remove,origin_ref,...}；来源同样只能为已颁 dossier:<id> 或盘面自发
                             圣旨承诺(#136)固定 kind:"initiative" 且必须有
                               origin_ref(只能从 extractor_context.decree_dossiers 选择
                               dossier:<id>),commitment_kind:"until_stop"；
