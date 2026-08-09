@@ -1996,7 +1996,7 @@ def test_invalid_promulgation_decision_stops_before_simulation(
     game, monkeypatch, bad_id, bad_decision, match,
 ):
     import ming_sim.decree as decree_mod
-    from ming_sim.exceptions import LLMContractError
+    from ming_sim.exceptions import LLMContractError, SettlementAbort
 
     db, state, content = game
     dossier_id = db.create_decree_dossier(
@@ -2011,10 +2011,14 @@ def test_invalid_promulgation_decision_stops_before_simulation(
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", forbidden)
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", forbidden)
 
-    with pytest.raises(LLMContractError, match=match):
+    with pytest.raises(SettlementAbort) as exc_info:
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工", content=content,
         )
+    assert exc_info.value.stage == "promulgation"
+    assert exc_info.value.error_pack_path
+    assert isinstance(exc_info.value.__cause__, LLMContractError)
+    assert match in str(exc_info.value.__cause__)
 
 
 def test_withdrawn_rescript_records_closed_turn(game):
