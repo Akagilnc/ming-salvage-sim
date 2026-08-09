@@ -6839,6 +6839,12 @@ button:disabled {
   border-bottom: 1px solid rgba(216, 185, 106, 0.18);
 }
 
+/* 无标题栏时收掉旧的高度和分隔线 */
+.modal-bg-gazette .modal-header-bare {
+  min-height: 0;
+  border-bottom: none;
+}
+
 .modal-bg-gazette .modal-title h1 {
   color: #e8d5a8 !important;
   letter-spacing: 0.4em;
