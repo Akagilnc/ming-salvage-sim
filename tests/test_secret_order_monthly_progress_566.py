@@ -19,6 +19,46 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
+def _production_session(db, state, content):
+    from ming_sim.session import GameSession
+
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = session.llm_config = session.agno_db = None
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.last_decree = session.last_report = ""
+    session._decree_draft_fingerprint = ()
+    session.auto_save = lambda *args, **kwargs: None
+    return session
+
+
+def _canned_monthly_settlement(monkeypatch, extractor_calls):
+    """Keep the production settlement pipeline; replace only external LLM seams."""
+    import ming_sim.decree as decree
+    import ming_sim.memories as memories
+
+    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree, "simulate_season_with_payload",
+        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
+    )
+    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: object())
+
+    def extract(_agents, db, state, _narrative, *args, **kwargs):
+        extractor_calls.append(state.turn)
+        reports = [{
+            "dossier_id": item["dossier_id"],
+            "progress_band": "月度核验",
+            "memorial_text": "本月长差已有密奏",
+        } for item in db.list_monthly_dossier_progress_nudges()]
+        return {"dossier_progress_reports": reports}, "out", "in"
+
+    monkeypatch.setattr(decree, "extract_scores_by_modules_with_agno", extract)
+    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
+
 def _settle(db, state, content, narrative="本月邸报", progress=None):
     from ming_sim.decree import settle_with_delta
 
@@ -262,102 +302,80 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
 
 
-@pytest.mark.parametrize("action", ["新建", "更新"])
-def test_pending_long_secret_order_routes_cli_no_edict_to_full_settlement(game, monkeypatch, action):
-    from ming_sim.session import GameSession
-
-    db, state, content = game
+def _stage_routed_secret_order(db, state, action, deadline):
     target_id = None
     if action == "更新":
-        target_id, _ = _order(db, state, deadline=1)
-    payload = {
-        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"],
-        "new_title": "护行辽饷", "new_content": "继续逐月稽核",
-        "deadline_months": 3,
-    }
-    db.stage_pending_action(
-        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
+        target_id, _ = _order(db, state, deadline=1 if deadline > 1 else 3)
+    pending_id = db.stage_pending_action(
+        state.turn, "secret_order", action, _actor(db), {
+            "title": "护行辽饷", "content": "逐月稽核", "tags": ["护行"],
+            "new_title": "护行辽饷", "new_content": "继续逐月稽核",
+            "deadline_months": deadline,
+        }, target_id=target_id,
     )
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content, session.registry = db, state, content, None
-    calls = []
-    def resolve_after_materialization():
-        pending = db.list_pending_actions(state.turn)
-        assert pending[0]["status"] == "committed"
-        assert db.list_monthly_dossier_progress_nudges()
-        calls.append("full")
-        return "settled"
-
-    monkeypatch.setattr(session, "resolve_turn", resolve_after_materialization)
-
-    assert session.advance_without_decree() == "settled"
-    assert calls == ["full"]
+    return pending_id, target_id
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
-def test_pending_short_secret_order_uses_cli_fast_advance(game, monkeypatch, action):
-    import ming_sim.session as session_mod
-    from ming_sim.session import GameSession
+def test_pending_long_secret_order_routes_real_cli_to_full_settlement(game, monkeypatch, action):
+    db, state, content = game
+    turn = state.turn
+    pending_id, _target_id = _stage_routed_secret_order(db, state, action, deadline=3)
+    extractor_calls = []
+    _canned_monthly_settlement(monkeypatch, extractor_calls)
+
+    result = _production_session(db, state, content).advance_without_decree()
+
+    assert result.awaiting is False
+    assert extractor_calls == [turn]
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "committed"
+    assert state.turn == turn + 1
+    assert any(order["dossier_progress"] for order in db.list_secret_orders())
+
+
+@pytest.mark.parametrize("action", ["新建", "更新"])
+def test_pending_short_secret_order_uses_real_cli_fast_advance(game, monkeypatch, action):
+    import ming_sim.decree as decree
 
     db, state, content = game
-    target_id = None
-    if action == "更新":
-        target_id, _ = _order(db, state, deadline=3)
-    payload = {
-        "title": "短差", "content": "下月回奏", "tags": ["护行"],
-        "new_title": "短差", "new_content": "改为下月回奏",
-        "deadline_months": 1,
-    }
-    db.stage_pending_action(
-        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
-    )
-    session = GameSession.__new__(GameSession)
-    session.db, session.state, session.content, session.registry = db, state, content, None
+    turn = state.turn
+    pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
     monkeypatch.setattr(
-        session, "resolve_turn",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("短差不得进入昂贵结算")),
-    )
-    fast_calls = []
-    monkeypatch.setattr(
-        session_mod, "advance_without_edict",
-        lambda *a, **k: fast_calls.append("fast") or True,
+        decree, "create_score_extractor_module_agent",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("短差不得调用 extractor")),
     )
 
-    assert session.advance_without_decree() is None
-    assert fast_calls == ["fast"]
-    assert db.list_pending_actions(state.turn)[0]["status"] == "committed"
-    assert db.list_monthly_dossier_progress_nudges() == []
+    assert _production_session(db, state, content).advance_without_decree() is None
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "committed"
+    assert state.turn == turn + 1
+    order = next(order for order in db.list_secret_orders()
+                 if target_id is None or order["id"] == target_id)
+    stored = db.conn.execute(
+        "SELECT deadline_span FROM secret_orders WHERE id=?", (order["id"],),
+    ).fetchone()
+    assert stored["deadline_span"] == 1
+    dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
+    assert db.list_dossier_progress(dossier_id) == []
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
-def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game, monkeypatch, action):
+def test_web_no_edict_endpoint_routes_real_long_order_to_full_settlement(game, monkeypatch, action):
     from contextlib import contextmanager
     from types import SimpleNamespace
     import web_app
 
     db, state, content = game
-    target_id = None
-    if action == "更新":
-        target_id, _ = _order(db, state, deadline=1)
-    payload = {
-        "title": "密查辽饷", "content": "逐月稽核", "tags": ["稽核"],
-        "new_title": "护行辽饷", "new_content": "继续逐月稽核",
-        "deadline_months": 3,
-    }
-    db.stage_pending_action(
-        state.turn, "secret_order", action, _actor(db), payload, target_id=target_id,
-    )
-    calls = []
-
-    class Session:
-        registry = None
-
-        def resolve_turn(self, **kwargs):
-            calls.append(kwargs)
-            return SimpleNamespace(awaiting=False, decisions=[], report="ok")
-
+    turn = state.turn
+    pending_id, _target_id = _stage_routed_secret_order(db, state, action, deadline=3)
+    extractor_calls = []
+    _canned_monthly_settlement(monkeypatch, extractor_calls)
+    session = _production_session(db, state, content)
     web_game = SimpleNamespace(
-        db=db, state=state, content=content, session=Session(),
+        db=db, state=state, content=content, session=session,
         directive_rows=lambda: [], refresh_turn=lambda: None,
         state_payload=lambda: {"turn": state.turn},
     )
@@ -369,12 +387,119 @@ def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
     monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
     monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
-    payload = web_app.api_advance_without_edict()
+    response = web_app.api_advance_without_edict()
 
-    assert db.list_pending_actions(state.turn)[0]["status"] == "committed"
-    assert db.list_monthly_dossier_progress_nudges()
-    assert calls == [{"inflight_wait_s": 0.0}]
-    assert payload["awaiting_decision"] is False
+    assert response["awaiting_decision"] is False
+    assert extractor_calls == [turn]
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "committed"
+    assert state.turn == turn + 1
+    assert any(order["dossier_progress"] for order in db.list_secret_orders())
+
+
+@pytest.mark.parametrize("action", ["新建", "更新"])
+def test_web_short_order_fast_path_never_calls_extractor(game, monkeypatch, action):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import ming_sim.decree as decree
+    import web_app
+
+    db, state, content = game
+    turn = state.turn
+    pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
+    monkeypatch.setattr(
+        decree, "create_score_extractor_module_agent",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("Web 短差不得调用 extractor")),
+    )
+    session = _production_session(db, state, content)
+    web_game = SimpleNamespace(
+        db=db, state=state, content=content, session=session,
+        directive_rows=lambda: [], refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": state.turn},
+    )
+
+    @contextmanager
+    def unlocked(_game):
+        yield
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
+    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
+    response = web_app.api_advance_without_edict()
+
+    assert response["awaiting_decision"] is False
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] == "committed"
+    assert state.turn == turn + 1
+    order = next(order for order in db.list_secret_orders()
+                 if target_id is None or order["id"] == target_id)
+    dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
+    assert db.list_dossier_progress(dossier_id) == []
+
+
+@pytest.mark.parametrize("deadline,with_non_secret", [(1, False), (3, True)])
+def test_fast_and_full_advance_failure_roll_back_actions_side_effects_fiscal_and_turn(
+    game, monkeypatch, deadline, with_non_secret,
+):
+    """Late deterministic failure leaves both routing rails wholly retryable."""
+    import copy
+    import ming_sim.decree as decree
+
+    db, state, content = game
+    turn = state.turn
+    secret_pending, _target_id = _stage_routed_secret_order(
+        db, state, "新建", deadline=deadline,
+    )
+    pending_ids = [secret_pending]
+    if with_non_secret:
+        pending_ids.append(db.stage_pending_action(
+            turn, "directive", "拟旨", _actor(db), {
+                "text": "着户部清核辽饷。", "actor": _actor(db),
+                "dossier_action_type": "policy",
+                "target_kind": "issue", "target_id": "liao-pay-audit-566",
+            },
+        ))
+
+    before_metrics = copy.deepcopy(state.metrics)
+    before_orders = db.conn.execute("SELECT COUNT(*) AS n FROM secret_orders").fetchone()["n"]
+    before_sources = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources"
+    ).fetchone()["n"]
+    fiscal_tables = [row["name"] for row in db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND (name LIKE '%fiscal%' OR name LIKE '%economy%' OR name LIKE '%ledger%')"
+    ).fetchall()]
+    before_fiscal = {name: db.conn.execute(
+        f'SELECT COUNT(*) AS n FROM "{name}"'
+    ).fetchone()["n"] for name in fiscal_tables}
+
+    monkeypatch.setattr(
+        decree, "apply_fixed_period_flows",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("late fiscal failure 566")),
+    )
+
+    with pytest.raises(RuntimeError, match="late fiscal failure 566"):
+        advanced = decree.advance_without_edict(state, db, content=content)
+        assert advanced is False  # long/full tracer only
+        decree.resolve_directives(
+            state, db, None, None, [], "", content=content, registry=None,
+        )
+
+    assert state.turn == turn == db.load_state().turn
+    assert state.metrics == before_metrics
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM secret_orders").fetchone()["n"] == before_orders
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_sources"
+    ).fetchone()["n"] == before_sources
+    assert {name: db.conn.execute(
+        f'SELECT COUNT(*) AS n FROM "{name}"'
+    ).fetchone()["n"] for name in fiscal_tables} == before_fiscal
+    statuses = [db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["status"] for pending_id in pending_ids]
+    assert statuses == ["pending"] * len(pending_ids)
 
 
 def test_simulator_fallback_missing_private_report_aborts_without_advancing(game, monkeypatch):
