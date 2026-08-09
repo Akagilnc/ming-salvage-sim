@@ -2160,34 +2160,56 @@ def test_inner_treasury_admission_uses_actual_once_and_preserves_surface(
         assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
 
+def _complete_session(game):
+    """GameSession construction contract on the fixture's real DB/state."""
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    session = GameSession.__new__(GameSession)
+    session.content = content
+    session.llm_config = None
+    session.db = db
+    session.agno_db = None
+    session.state = state
+    session.deaths_this_turn = []
+    session.debuts_this_turn = []
+    session.power_renames_this_turn = []
+    session.previous_summary = ""
+    session.registry = None
+    session.temporary_characters = {}
+    session.last_decree = ""
+    session.last_report = ""
+    session._decree_draft_fingerprint = ()
+    session._begun = False
+    return session
+
+
 def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     game, monkeypatch,
 ):
     import ming_sim.cli_backend as cli_backend
     import ming_sim.decree as decree_mod
     import web_app
-    from ming_sim.session import GameSession
 
     db, state, content = game
-    state.metrics["内库"] = 20
-    response = {
-        "拟旨意图": "拟旨", "动作类型": "grant_allocation",
-        "目标类型": "issue", "目标ID": "relief", "金额": 10,
-        "账户": "内库", "执行面": "in_transit",
-    }
+    state.metrics["内库"] = 50
+    responses = iter((
+        {
+            "拟旨意图": "拟旨", "动作类型": "grant_allocation",
+            "目标类型": "issue", "目标ID": "relief", "金额": 10,
+            "账户": "内库", "执行面": "in_transit",
+        },
+        {
+            "拟旨意图": "拟旨", "动作类型": "grant_allocation",
+            "目标类型": "issue", "目标ID": "relief", "金额": 15,
+            "账户": "内库", "执行面": "in_transit",
+        },
+    ))
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
+        lambda *_a, **_k: (json.dumps(next(responses), ensure_ascii=False), 1),
     )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.llm_config = None
-    session.agno_db = None
-    session.content = content
-    session.registry = None
-    session.last_decree = ""
-    session.last_report = None
+    session = _complete_session(game)
     web_game = types.SimpleNamespace(
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
@@ -2199,20 +2221,28 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     )
     monkeypatch.setattr(web_app, "get_game", lambda: web_game)
 
-    result = asyncio.run(web_app.api_create_directive(
-        web_app.DirectiveRequest(text="内帑拨银押解赈济"),
-    ))
-    directive_id = int(result["directive"]["id"])
+    commands = ("内帑拨银押解赈济", "再拨十五两内帑押解赈济")
+    directive_ids = []
+    for command in commands:
+        result = asyncio.run(web_app.api_create_directive(
+            web_app.DirectiveRequest(text=command),
+        ))
+        directive_ids.append(int(result["directive"]["id"]))
     db.ensure_dossiers_for_draft_directives(state)
-    dossier = db.get_dossier_for_directive(directive_id)
-    db.apply_dossier_promulgation(
-        state, dossier["id"], "promulgated", content=content,
-    )
-    assert state.metrics["内库"] == 10
+    dossiers = [db.get_dossier_for_directive(item) for item in directive_ids]
+    for dossier in dossiers:
+        db.apply_dossier_promulgation(
+            state, dossier["id"], "promulgated", content=content,
+        )
+    assert state.metrics["内库"] == 25
     assert [
-        row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])
-    ] == [-10]
-    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+        [row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])]
+        for dossier in dossiers
+    ] == [[-10], [-15]]
+    assert all(
+        db.get_decree_dossier(dossier["id"])["status"] == "executing"
+        for dossier in dossiers
+    )
 
     state.turn += 1
     seen = {}
@@ -2230,10 +2260,13 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     )
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({"dossier_executions": [{
-            "dossier_id": dossier["id"], "outcome": "fulfilled",
-            "note": "赈银押解到达",
-        }]}, "", ""),
+        lambda *a, **k: ({"dossier_executions": [
+            {
+                "dossier_id": dossier["id"], "outcome": "fulfilled",
+                "note": "赈银押解到达",
+            }
+            for dossier in dossiers
+        ]}, "", ""),
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
@@ -2242,28 +2275,30 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
 
     assert result["awaiting_decision"] is False
     projected = seen["dossiers"]
-    assert [row["id"] for row in projected] == [dossier["id"]]
-    assert projected[0]["status"] == "executing"
-    assert "decree_text" not in projected[0]
-    assert "payload" not in projected[0]
-    assert "payload_json" not in projected[0]
-    assert projected[0]["execution_summary"] == {
-        "command": "内帑拨银押解赈济", "amount": 10, "account": "内库",
-    }
-    assert state.metrics["内库"] == 10
+    assert [row["id"] for row in projected] == [row["id"] for row in dossiers]
+    assert all(row["status"] == "executing" for row in projected)
+    assert all("decree_text" not in row for row in projected)
+    assert all("payload" not in row for row in projected)
+    assert all("payload_json" not in row for row in projected)
+    assert [row["execution_summary"] for row in projected] == [
+        {"command": commands[0], "amount": 10, "account": "内库"},
+        {"command": commands[1], "amount": 15, "account": "内库"},
+    ]
+    assert state.metrics["内库"] == 25
     assert [
-        row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])
-    ] == [-10]
-    closed = db.get_decree_dossier(dossier["id"])
-    assert closed["status"] == "closed"
-    assert closed["execution_outcome"] == "fulfilled"
-    assert closed["execution_note"] == "赈银押解到达"
+        [row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])]
+        for dossier in dossiers
+    ] == [[-10], [-15]]
+    for dossier in dossiers:
+        closed = db.get_decree_dossier(dossier["id"])
+        assert closed["status"] == "closed"
+        assert closed["execution_outcome"] == "fulfilled"
+        assert closed["execution_note"] == "赈银押解到达"
 
 
 def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
     import ming_sim.decree as decree_mod
-    from ming_sim.session import GameSession
 
     db, state, content = game
     actor = _active_minister(db)
@@ -2275,9 +2310,7 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
         cli_backend, "_run_backend_for_config",
         lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
     )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
+    session = _complete_session(game)
     payload = cli_backend.capture_manual_directive_payload("护行此臣", None)
     directive_id = session.add_directive("护行此臣", dossier_payload=payload).id
     db.ensure_dossiers_for_draft_directives(state)
@@ -2305,12 +2338,6 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
-    session.content = content
-    session.registry = None
-    session.agno_db = None
-    session.llm_config = None
-    session.last_decree = ""
-    session.last_report = None
     session.advance_without_decree()
 
     closed = db.get_decree_dossier(dossier["id"])
@@ -2356,6 +2383,9 @@ def test_secret_authorization_rejects_incomplete_payload_without_grant(
             payload, content=content, current_turn=state.turn,
         )
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM skill_grants WHERE TRIM(character_name)='' OR TRIM(skill_id)=''"
+    ).fetchone()[0] == 0
 
 
 def test_in_transit_allocation_requires_execution_verdict(game):

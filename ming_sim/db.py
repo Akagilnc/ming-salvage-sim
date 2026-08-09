@@ -10404,9 +10404,8 @@ class GameDB:
                 character_exists = self.conn.execute(
                     "SELECT 1 FROM characters WHERE name=?", (character_id,),
                 ).fetchone()
-                skill_catalog = getattr(content or self.content, "skill_catalog", {})
-                if not character_exists or skill_id not in skill_catalog:
-                    raise ValueError("授权案卷引用未知人物或技能")
+                if not character_exists:
+                    raise ValueError("授权案卷引用未知人物")
                 if not self.grant_skill(
                     state,
                     character_id,
