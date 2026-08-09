@@ -461,6 +461,7 @@ export type DirectiveConfirmationAmbiguous = {
 };
 
 export type ChatUndoResponse = {
+  undone_chat_turn_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];

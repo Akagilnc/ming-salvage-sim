@@ -533,6 +533,7 @@ export function ChatModal({
   portraitPrefix,
   scrollMode = "audience",
   currentNightId,
+  undoneChatTurnId,
   chat,
   suggestions,
   pendingUserMessage,
@@ -564,6 +565,8 @@ export function ChatModal({
   scrollMode?: "audience" | "legacy";
   /** Persisted open-night identity received through the player chat entry; 0 means no open night. */
   currentNightId: number;
+  /** Persisted turn identity returned by the latest successful withdrawal. */
+  undoneChatTurnId: number | null;
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
@@ -626,17 +629,9 @@ export function ChatModal({
       : `${message.role}:${chatTurnId}`;
   };
   const chatIdentity = (message: ChatMessage) => messageIdentity(message);
-  const currentChatIdentities = new Set(chat.map(chatIdentity).filter((identity): identity is string => identity !== null));
-  const previousChatRef = React.useRef({
-    nightId: currentNightId,
-    identities: currentChatIdentities,
-  });
-  const previousChat = previousChatRef.current;
-  const snapshotInvalidatedByWithdrawal = previousChat.nightId === currentNightId
-    && [...previousChat.identities].some((identity) => !currentChatIdentities.has(identity));
-  previousChatRef.current = { nightId: currentNightId, identities: currentChatIdentities };
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
-    !snapshotInvalidatedByWithdrawal && (state.kind !== "night" || state.nightId === currentNightId);
+    state.kind !== "night" || (state.nightId === currentNightId
+      && !state.messages.some((message) => message.chat_turn_id === undoneChatTurnId));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
   const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
     if (scrollMode === "legacy") return [...chat];
@@ -688,7 +683,7 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat, scrollMode, currentNightId]);
+  }, [minister.name, chat, scrollMode, currentNightId, undoneChatTurnId]);
 
   if (pendingUserMessage) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });

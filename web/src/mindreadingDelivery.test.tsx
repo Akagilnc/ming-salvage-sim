@@ -62,6 +62,7 @@ function mount() {
       <ChatModal
         minister={MINISTER} portraitPrefix="minister_"
         currentNightId={hook.currentNightId}
+        undoneChatTurnId={null}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
         streamingMinisterMessage={hook.streamingMinisterMessage}

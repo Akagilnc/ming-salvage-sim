@@ -43,6 +43,7 @@ function renderModal(props: {
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
   currentNightId?: number;
+  undoneChatTurnId?: number | null;
   chat?: ChatMessage[];
   busy?: string;
   onCancel?: () => void;
@@ -56,6 +57,7 @@ function renderModal(props: {
   onSend?: (text?: string) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
+  registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
   registerChatDispatch?: (dispatch: React.Dispatch<ChatAction>) => void;
 }) {
   const host = document.createElement("div");
@@ -67,6 +69,7 @@ function renderModal(props: {
   function Harness() {
     const [input, setInput] = React.useState("");
     const [currentNightId, setCurrentNightId] = React.useState(props.currentNightId ?? 0);
+    const [undoneChatTurnId, setUndoneChatTurnId] = React.useState<number | null>(props.undoneChatTurnId ?? null);
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
@@ -79,6 +82,7 @@ function renderModal(props: {
     }), []);
     React.useEffect(() => props.registerChatUpdate?.(setChat), [setChat]);
     React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
+    React.useEffect(() => props.registerUndoUpdate?.(setUndoneChatTurnId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
     return (
       <ChatModal
@@ -86,6 +90,7 @@ function renderModal(props: {
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
         currentNightId={currentNightId}
+        undoneChatTurnId={undoneChatTurnId}
         busy={props.busy ?? ""}
         chat={chat}
         suggestions={props.suggestions ?? []}
@@ -498,7 +503,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("旧夜问话");
   });
 
-  it("retires the pre-withdrawal snapshot before the same-night refresh fails", async () => {
+  it("retires the pre-withdrawal snapshot when a successful undo identifies its turn", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
@@ -508,24 +513,40 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       ] }) })
       .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }));
     vi.stubGlobal("fetch", fetchMock);
-    let updateChat!: (chat: ChatMessage[]) => void;
+    let updateUndo!: (chatTurnId: number | null) => void;
     renderModal({
       minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
       chat: [{ role: "user", content: "撤回前问话", chatTurnId: 1 }],
-      registerChatUpdate: (update) => { updateChat = update; },
+      registerUndoUpdate: (update) => { updateUndo = update; },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("撤回前答复");
 
-    await act(async () => { updateChat([]); await Promise.resolve(); });
+    await act(async () => { updateUndo(1); await Promise.resolve(); });
     expect(document.body.textContent).not.toContain("撤回前问话");
     expect(document.body.textContent).not.toContain("撤回前答复");
     expect(document.body.textContent).not.toContain("仍在旧 snapshot");
 
     await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); });
-    expect(document.body.textContent).not.toContain("撤回前问话");
     expect(document.body.textContent).not.toContain("撤回前答复");
-    expect(document.body.textContent).not.toContain("仍在旧 snapshot");
+  });
+
+  it("does not treat an ordinary history reduction as a withdrawal", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+      { role: "user", speaker: "朕", content: "公共卷仍保留", chat_turn_id: 1 },
+      { role: "minister", speaker: MINISTER_MOCK.name, content: "公共答复仍保留", chat_turn_id: 1 },
+    ] }) }));
+    let updateChat!: (chat: ChatMessage[]) => void;
+    renderModal({
+      minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
+      chat: [{ role: "user", content: "个人 history", chatTurnId: 1 }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { updateChat([]); await Promise.resolve(); });
+
+    expect(document.body.textContent).toContain("公共卷仍保留");
+    expect(document.body.textContent).toContain("公共答复仍保留");
   });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
