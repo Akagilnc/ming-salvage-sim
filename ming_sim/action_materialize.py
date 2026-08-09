@@ -346,23 +346,48 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 for item in roster if isinstance(item, dict)
             ]
             draft_res["participant_roster"] = roster
-        for field_name in (
-            "dossier_action_type", "target_kind", "target_id", "participant_roster",
-        ):
-            if draft_res.get(field_name) not in (None, ""):
-                semantic_payload[field_name] = draft_res[field_name]
-        for field_name in (
-            "amount", "account", "execution_surface",
-            "assignee", "authorization_id", "deadline_months",
-        ):
-            if draft_res.get(field_name) not in (None, ""):
-                semantic_payload[field_name] = draft_res[field_name]
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
         is_existing_update = (
             (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
             or (committed_draft is not None and not has_pending_directive)
         )
+        mechanical_fields = (
+            "dossier_action_type", "target_kind", "target_id", "amount", "account",
+            "execution_surface", "assignee", "authorization_id", "deadline_months",
+        )
+        extracted_action = str(draft_res.get("dossier_action_type") or "")
+        extracted_mechanics_complete = not (
+            extracted_action in {"assignment", "authorization", "military_order"}
+            and not str(draft_res.get("assignee") or draft_res.get("assignee_id") or "").strip()
+        ) and not (
+            extracted_action == "authorization"
+            and not str(draft_res.get("authorization_id") or "").strip()
+        ) and not (
+            extracted_action == "grant_allocation"
+            and (not draft_res.get("amount") or not str(draft_res.get("account") or "").strip())
+        )
+        # A supplement extractor can misclassify prose as an incomplete mechanical
+        # action.  For an existing draft that incomplete fragment must not replace
+        # the already-valid dossier payload; text and roster remain independently
+        # mergeable at the durable update boundary.
+        if not is_existing_update or extracted_mechanics_complete:
+            for field_name in mechanical_fields:
+                if draft_res.get(field_name) not in (None, ""):
+                    semantic_payload[field_name] = draft_res[field_name]
+        elif committed_draft is not None:
+            try:
+                committed_payload = json.loads(committed_draft["dossier_payload_json"] or "{}")
+            except (ValueError, TypeError):
+                committed_payload = {}
+            if not committed_payload:
+                semantic_payload.update({
+                    "dossier_action_type": "special_decree",
+                    "target_kind": "policy",
+                    "target_id": f"legacy-directive:{int(committed_draft['id'])}",
+                })
+        if isinstance(draft_res.get("participant_roster"), list):
+            semantic_payload["participant_roster"] = draft_res["participant_roster"]
         if not is_existing_update:
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")

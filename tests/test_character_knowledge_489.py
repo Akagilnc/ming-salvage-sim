@@ -897,6 +897,46 @@ def test_participant_roster_is_discovered_from_any_persistent_table(game):
     assert any(item["source_id"] == "custom:1" for item in view["events"])
 
 
+def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="着礼部核定历书正文。",
+        target_kind="issue", target_id="calendar-copy",
+        participants=[{"character_id": minister.name, "tier": "主办"}],
+    )
+
+    item = next(
+        item for item in db.get_character_knowledge(state, minister.name)["events"]
+        if item["source_id"] == f"decree_dossier:{dossier_id}"
+    )
+    assert (item["turn"], item["year"], item["period"]) == (
+        state.turn, state.year, state.period,
+    )
+    assert item["body"] == "着礼部核定历书正文。"
+
+
+def test_secret_order_dossier_never_leaks_through_shared_roster_projection(game):
+    db, state, content = game
+    member = next(c for c in content.characters.values() if c.office_type == "礼部")
+    outsider = next(c for c in content.characters.values() if c.name != member.name)
+    order_id = db.create_secret_order(
+        state, member.name, "密核历书", "暗查历局底稿。", [], deadline_months=0,
+    )
+    dossier = next(d for d in db.list_decree_dossiers() if d["secret_order_id"] == order_id)
+    db.conn.execute(
+        "UPDATE decree_dossiers SET participant_roster=? WHERE id=?",
+        (json.dumps([{"character_id": member.name, "tier": "主办"}], ensure_ascii=False), dossier["id"]),
+    )
+    db.conn.commit()
+
+    for reader in (member.name, outsider.name):
+        assert not any(
+            item["source_id"] == f"decree_dossier:{dossier['id']}"
+            for item in db.get_character_knowledge(state, reader)["events"]
+        )
+
+
 def test_knowledge_titles_restore_without_persistence_truncation(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")

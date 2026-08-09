@@ -220,6 +220,100 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
     }
 
 
+def test_driver_settle_freezes_dossier_roster_authority_at_input(game, monkeypatch):
+    import driver
+
+    db, state, content = game
+    lead, worker = _active_people(db, 2)
+    visible_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    closed_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="旧案已结。",
+        target_kind="issue", target_id="closed-calendar",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    db.conn.execute("UPDATE decree_dossiers SET status='closed' WHERE id=?", (closed_id,))
+    secret_order_id = db.create_secret_order(
+        state, lead, "密修历", "暗修历书。", [], deadline_months=0,
+    )
+    secret_id = next(
+        row["id"] for row in db.list_decree_dossiers()
+        if row["secret_order_id"] == secret_order_id
+    )
+    created = {}
+    real_pre_settle = driver.pre_settle
+
+    def create_during_settle(state_arg, db_arg):
+        real_pre_settle(state_arg, db_arg)
+        created["id"] = db_arg.create_decree_dossier(
+            state_arg, action_type="assignment", decree_text="同批新案。",
+            target_kind="issue", target_id="same-batch",
+            participants=[{"character_id": lead, "tier": "主办"}],
+        )
+
+    monkeypatch.setattr(driver, "pre_settle", create_during_settle)
+    real_persist = driver.persist_resolve_context
+
+    def persist_with_same_batch_item(db_arg, turn, extracted, **kwargs):
+        extracted["dossier_participants"].append({
+            "dossier_id": created["id"], "character_id": worker,
+            "tier": "协办", "delegator_id": lead,
+        })
+        return real_persist(db_arg, turn, extracted, **kwargs)
+
+    monkeypatch.setattr(driver, "persist_resolve_context", persist_with_same_batch_item)
+    additions = [
+        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
+        for dossier_id in (visible_id, closed_id, secret_id)
+    ]
+    driver.run_settle(db, state, content, {"dossier_participants": additions})
+
+    assert len(db.get_decree_dossier(visible_id)["participant_roster"]) == 2
+    assert len(db.get_decree_dossier(closed_id)["participant_roster"]) == 1
+    assert len(db.get_decree_dossier(secret_id)["participant_roster"]) == 0
+    assert len(db.get_decree_dossier(created["id"])["participant_roster"]) == 1
+
+
+def test_settlement_replay_uses_only_persisted_dossier_authority(game, monkeypatch):
+    import ming_sim.decree as decree
+
+    db, state, content = game
+    lead, worker = _active_people(db, 2)
+    allowed = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="replay-allowed",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    denied = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="未入冻结输入。",
+        target_kind="issue", target_id="replay-denied",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    extracted = {"dossier_participants": [
+        {"dossier_id": dossier_id, "character_id": worker, "tier": "协办", "delegator_id": lead}
+        for dossier_id in (allowed, denied)
+    ]}
+    decree.pre_settle(state, db)
+    db.save_resolve_context(
+        state.turn, "", "", {"decree_dossiers": [{"id": allowed}]},
+        extracted=extracted,
+    )
+    ctx = db.get_resolve_context(state.turn)
+    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *args, **kwargs: None)
+    monkeypatch.setattr(decree, "record_chapter_memory", lambda *args, **kwargs: None)
+
+    result = decree.resolve_settling_recovery(
+        state, db, None, types.SimpleNamespace(), ctx, content=content,
+    )
+
+    assert result.awaiting is False
+    assert len(db.get_decree_dossier(allowed)["participant_roster"]) == 2
+    assert len(db.get_decree_dossier(denied)["participant_roster"]) == 1
+
+
 @pytest.mark.parametrize("authority", [None, set()])
 def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
     game, authority,
