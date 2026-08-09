@@ -6833,47 +6833,15 @@ button:disabled {
   box-shadow: none !important;
 }
 
-.modal-bg-gazette .modal-header {
-  justify-content: center;
-  min-height: 78px;
-  border-bottom: 1px solid rgba(216, 185, 106, 0.18);
-}
-
-/* 无标题栏时收掉旧的高度和分隔线 */
-.modal-bg-gazette .modal-header-bare {
-  min-height: 0;
-  border-bottom: none;
-}
-
-.modal-bg-gazette .modal-title h1 {
-  color: #e8d5a8 !important;
-  letter-spacing: 0.4em;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
-}
-
-.modal-bg-gazette .modal-title span {
-  color: rgba(232, 213, 168, 0.78) !important;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
-}
-
-.modal-bg-gazette .modal-header .icon-button {
-  position: absolute;
-  top: 50%;
-  right: 18px;
-  transform: translateY(-50%);
+/* 邸报恒为无标题栏（hideTitle）：只需给悬浮关闭钮配色，旧标题栏规则已删 */
+.modal-bg-gazette .modal-header-bare .icon-button {
   color: #e8d5a8 !important;
   border: 1px solid rgba(216, 185, 106, 0.35) !important;
 }
 
-.modal-bg-gazette .modal-header .icon-button:hover {
+.modal-bg-gazette .modal-header-bare .icon-button:hover {
   background: rgba(158, 42, 43, 0.92) !important;
   color: #ffe4b0 !important;
-}
-
-/* bare 模式下关闭钮回到正常流内定位；必须放在旧 icon-button 规则之后（同优先级后者赢） */
-.modal-bg-gazette .modal-header-bare .icon-button {
-  position: static;
-  transform: none;
 }
 
 /* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
