@@ -148,7 +148,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 ### agent brief —— ready-for-agent 的契约
 
 > [!important] brief（存在时）是最权威契约；**可选**——无 brief 则以整个 issue（body + 讨论）为准
-> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-tickets` 切片未必带它、工具不能这么死板）：现有 legacy S0 不因缺 brief 拒收；canonical cutover 后，缺 brief 同样不是 Issue Admission 的拒收条件。coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
+> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-tickets` 切片未必带它、工具不能这么死板）。coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
 
 **四原则**：① **durability over precision**——不写文件路径/行号（会过时），写接口/类型/行为契约、点名 symbol；② **behavioral not procedural**——写做什么不写怎么改；③ 完整可测验收；④ 显式 out-of-scope 防镀金。
 
