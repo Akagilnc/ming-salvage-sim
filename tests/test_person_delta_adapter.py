@@ -22,6 +22,16 @@ from ming_sim.simulation import (
 from tests.conftest import active_ming_character
 
 
+def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=decree_text,
+        target_kind="character", target_id=target_id,
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+    return f"dossier:{dossier_id}"
+
+
 def test_normalize_person_changes_keeps_new_key_items():
     extracted = {
         "人物变更": [
@@ -238,6 +248,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     before = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
+    origin_ref = _promulgated_dossier(db, state, "安抚毛文龙")
 
     applied = issues.apply_score_extraction(
         db,
@@ -246,7 +257,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:appease-mao",
+                    "origin_ref": origin_ref,
                     "kind": "initiative",
                     "title": "安抚毛文龙·进行中",
                     "bar_value": 20,
@@ -255,7 +266,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
                         "人物变更": [
                             {
                                 "name": "毛文龙",
-                                "origin_ref": "盘面自发", "动作": "评定",
+                                "origin_ref": origin_ref, "动作": "评定",
                                 "loyalty": 2,
                                 "reason": "奉旨持续安抚",
                             }
@@ -268,10 +279,9 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "人物变更": [
                 {
                     "name": "毛文龙",
-                    "origin_ref": "盘面自发", "动作": "评定",
+                    "origin_ref": origin_ref, "动作": "评定",
                     "loyalty": 8,
                     "reason": "奉旨安抚，软判其观望稍解",
-                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -295,7 +305,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     assert applied["applied_person_changes"] == [
         {
             "name": "毛文龙",
-            "origin_ref": "盘面自发", "动作": "评定",
+            "origin_ref": origin_ref, "动作": "评定",
             "loyalty": 8,
             "old_loyalty": before,
             "new_loyalty": after,
@@ -391,7 +401,6 @@ def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, del
                     "origin_ref": "盘面自发", "动作": "评定",
                     "loyalty": delta,
                     "reason": "边界软判",
-                    "origin_ref": "盘面自发",
                 }
             ]
         },
@@ -545,7 +554,6 @@ def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_comm
                     "origin_ref": "盘面自发", "动作": "评定",
                     "loyalty": 3,
                     "reason": "一次性赏赐后略有感念",
-                    "origin_ref": "盘面自发",
                 }
             ],
         },

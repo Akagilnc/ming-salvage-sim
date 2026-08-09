@@ -6288,6 +6288,8 @@ def _apply_person_changes(
                 state,
                 backlash,
                 commit=commit_person_change,
+                origin_ref=str(item.get("origin_ref") or item.get("来源引用") or "").strip(),
+                require_origin=True,
             ) if backlash else []
             for result in power_results:
                 new_power = str(result.get("new_power") or "")
