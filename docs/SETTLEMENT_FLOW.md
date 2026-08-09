@@ -4,7 +4,13 @@
 **事务边界与崩溃恢复**：见 `docs/adr/0008-settlement-applier-contract-and-transaction-boundary.md`（v0.8.0.0 起）。一句话：前半段 `pre_settle` 提交后保持已落，后半段 `settle_with_delta` 整段单一 `applier.atomic`、全有或全无。
 原版是 simulator/extractor 两步 LLM；探针 step1 我**一次产 delta**，driver 把两步合一。
 
-## 完整顺序（按调用先后）
+## #571 S1 案卷颁布关（当前实码顺序）
+
+`pre_settle` 提交后，结算读取 DB 中的 `proposed` 案卷作为待判集；有待判案卷时只调用一次批量颁布判官，并要求 verdict 覆盖全集。随后将已颁与本回合可执行的案卷过滤进 simulator/extractor：被拒案卷的效果文本不进入执行输入。若判决产生批红动作，先保存 rescript 决策并暂停；皇帝选择后，verdict/rescript 与 pending actions 在 `settle_with_delta` 的同一 atomic 中应用。无诏推进若存在待判案卷，也走同一判决与原子应用链，不绕过颁布关。
+
+这段只描述 #571 S1 已实现的案卷判决与执行闸；其它案卷扩展不属于本契约。
+
+## S1 结算顺序（按调用先后）
 
 ```
 [step1：召见 / 拟旨阶段]

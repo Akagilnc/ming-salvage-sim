@@ -19,8 +19,10 @@ from ming_sim.agents import (
     create_decree_writer_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
+    create_promulgation_judge_agent,
     create_score_extractor_module_agent,
     create_season_simulator_agent,
+    parse_agent_json,
     run_agent_text,
 )
 from ming_sim.applier import Provenance, RejectedItem, RejectionCollector, atomic
@@ -57,6 +59,7 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
+from ming_sim.strict_types import validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -91,6 +94,68 @@ class ResolveResult:
     awaiting: bool
     report: str = ""
     decisions: List[Dict[str, object]] = field(default_factory=list)
+
+
+def _rescript_decisions(
+    verdicts: List[Dict[str, object]],
+    dossiers: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Turn rejected promulgation verdicts into the existing HITL decision rail."""
+    by_id = {int(row["id"]): row for row in dossiers}
+    decisions: List[Dict[str, object]] = []
+    for verdict in verdicts:
+        if str(verdict.get("decision") or "") != "rejected":
+            continue
+        dossier_id = int(verdict.get("dossier_id") or 0)
+        dossier = by_id.get(dossier_id)
+        if dossier is None:
+            continue
+        decisions.append({
+            "event_id": f"dossier:{dossier_id}",
+            "title": "批红待裁",
+            "context": str(dossier.get("decree_text") or ""),
+            "options": [
+                {
+                    "label": "强颁",
+                    "note": "以中旨强行颁出",
+                    "dossier_id": dossier_id,
+                    "dossier_decision": "force_promulgated",
+                },
+                {
+                    "label": "收回",
+                    "note": "收回此道准旨",
+                    "dossier_id": dossier_id,
+                    "dossier_decision": "withdrawn",
+                },
+                {
+                    "label": "留中",
+                    "note": "留待下月重判",
+                    "dossier_id": dossier_id,
+                    "dossier_decision": "hold",
+                },
+            ],
+        })
+    return decisions
+
+
+def _chosen_rescript_actions(
+    decisions: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    actions: List[Dict[str, object]] = []
+    for decision in decisions:
+        if not str(decision.get("event_id") or "").startswith("dossier:"):
+            continue
+        choice = decision.get("choice")
+        if not isinstance(choice, dict):
+            raise LLMContractError("批红决策缺少玩家选择")
+        dossier_id = int(choice.get("dossier_id") or 0)
+        action = str(choice.get("dossier_decision") or "")
+        if dossier_id <= 0 or action not in {
+            "force_promulgated", "withdrawn", "hold",
+        }:
+            raise LLMContractError("批红决策载荷非法")
+        actions.append({"dossier_id": dossier_id, "decision": action})
+    return actions
 
 
 def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
@@ -196,7 +261,7 @@ def write_decree_with_agno(
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None) -> None:
+                          inflight_wait_s: float | None = None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -219,15 +284,20 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=production_beat_generator)
+    # ADR 0049/0055: an unspoken-on directive is default-approved and must enter
+    # the dossier/judge route.  This deterministic fast path has no judge
+    # dependency, so fail loudly and let the caller route through normal
+    # settlement; never delete the player's directive to manufacture "no edict".
+    pending_directives = [
+        row for row in db.list_pending_actions(state.turn)
+        if row.get("kind") == "directive"
+    ]
+    if pending_directives:
+        return False
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
-            # 退朝无诏：对话式拟旨草案须先丢弃，再 commit 其余 pending 动作。
-            # commit_pending_actions 会把 kind=directive 插成 turn_directives(draft)，
-            # 但无诏路径不走 extractor / mark_directives_issued → 孤儿 draft 既不颁诏也不可见。
-            # 先 discard 确保 commit 时 directive pending 为空（codex r5 F2）。
-            db.discard_pending_directives(state.turn)
             db.commit_pending_actions(state, content=content, registry=registry)
             fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
             if fiscal_levies:
@@ -249,6 +319,7 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     except BaseException as exc:
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
+    return True
 
 
 def resolve_directives(
@@ -287,7 +358,11 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    if not directives:
+    pending_dossier_work = bool(db.list_decree_dossiers(status="proposed")) or any(
+        row.get("kind") == "directive"
+        for row in db.list_pending_actions(state.turn)
+    )
+    if not directives and not pending_dossier_work:
         advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
@@ -323,6 +398,92 @@ def resolve_directives(
         raise_fixed_period_flow_abort_if_needed(db, state, exc)
         raise
 
+    proposed_dossiers = db.list_decree_dossiers(status="proposed")
+    verdict_rows: List[Dict[str, object]] = []
+    if proposed_dossiers:
+        judge = create_promulgation_judge_agent(llm_config, agno_db)
+        raw = run_agent_text(
+            judge,
+            json.dumps(
+                {"dossiers": proposed_dossiers, "state": dict(state.metrics)},
+                ensure_ascii=False,
+            ),
+            "promulgation-judge",
+        )
+        parsed = parse_agent_json(raw, "颁布判官")
+        generated = parsed.get("verdicts")
+        if not isinstance(generated, list):
+            raise LLMContractError("颁布判官 verdicts 必须为列表")
+        if any(
+            not isinstance(row, dict)
+            or str(row.get("decision") or "") not in {"promulgated", "rejected"}
+            for row in generated
+        ):
+            raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+        try:
+            for row in generated:
+                if row.get("decision") == "rejected":
+                    validate_rejection_verdict(
+                        row, {"cabinet_drafting", "palace_rescript", "six_offices"},
+                        faction_names={
+                            str(item["name"])
+                            for item in db.conn.execute("SELECT name FROM factions")
+                        },
+                        character_ids={
+                            str(item["name"])
+                            for item in db.conn.execute("SELECT name FROM characters")
+                        },
+                    )
+        except ValueError as exc:
+            raise LLMContractError(str(exc)) from exc
+        if any(
+            isinstance(row.get("dossier_id"), bool)
+            or not isinstance(row.get("dossier_id"), int)
+            or not 0 < row["dossier_id"] <= 2 ** 63 - 1
+            for row in generated
+        ):
+            raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
+        verdict_rows = generated
+        verdict_ids = {
+            int(row.get("dossier_id") or 0)
+            for row in verdict_rows if isinstance(row, dict)
+        }
+        proposed_ids = {int(row["id"]) for row in proposed_dossiers}
+        if verdict_ids != proposed_ids or len(verdict_rows) != len(proposed_ids):
+            raise LLMContractError("颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过")
+
+    verdict_by_id = {
+        int(row["dossier_id"]): str(row.get("decision") or "")
+        for row in verdict_rows
+    }
+    simulation_visible_dossiers = [
+        {
+            **row,
+            **(
+                {"settlement_verdict": verdict_by_id[int(row["id"])]}
+                if int(row["id"]) in verdict_by_id else {}
+            ),
+        }
+        for row in db.list_decree_dossiers_for_simulation(state.turn)
+    ]
+    dossier_payload = [
+        row for row in simulation_visible_dossiers
+        if (
+            str(row.get("status") or "") != "proposed"
+            or str(row.get("settlement_verdict") or "") == "promulgated"
+        )
+    ]
+    current_decree_ids = set(verdict_by_id)
+    current_decree_ids.update(
+        db.executable_decree_dossier_ids(simulation_visible_dossiers)
+    )
+    executable_decree_text = "\n".join(
+        str(row.get("decree_text") or "").strip()
+        for row in dossier_payload
+        if int(row["id"]) in current_decree_ids
+        and str(row.get("decree_text") or "").strip()
+    )
+
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。
     relevant_memories: List[Dict] = []
     secret_orders_for_sim: Dict[str, list] = {}  # try 外初始化：检索失败也不能让后续 NameError
@@ -355,18 +516,20 @@ def resolve_directives(
     _emit("stage", "推演月末邸报")
     previous_narrative = db.previous_turn_summary(state) or ""
     simulator_payload = build_simulator_payload(
-        state, db, decree_text, previous_narrative,
+        state, db, executable_decree_text, previous_narrative,
         deaths_this_turn=deaths_this_turn,
         debuts_this_turn=debuts_this_turn,
         relevant_memories=relevant_memories,
         secret_orders=secret_orders_for_sim,
+        decree_dossiers=dossier_payload,
     )
+    simulator_payload["dossier_verdicts"] = verdict_rows
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
     )
     try:
         narrative, simulator_payload = simulate_season_with_payload(
-            simulator, state, db, decree_text, previous_narrative,
+            simulator, state, db, executable_decree_text, previous_narrative,
             deaths_this_turn=deaths_this_turn,
             debuts_this_turn=debuts_this_turn,
             relevant_memories=relevant_memories,
@@ -379,9 +542,25 @@ def resolve_directives(
         print(f"[WARN] 推演 agent 失败：{exc}；本{TURN_UNIT}用简化邸报兜底，跳过 LLM 结算。")
         narrative = (
             f"奉天承运皇帝诏曰：本{TURN_UNIT}推演 agent 被服务方拦截，无完整邸报。"
-            f"已颁诏书：\n{decree_text}\n"
+            f"已颁诏书：\n{executable_decree_text}\n"
             f"固定收支已落账，事项 inertia 自然漂移；本{TURN_UNIT}无新立 issue。"
         )
+        rescript_decisions = _rescript_decisions(verdict_rows, proposed_dossiers)
+        if rescript_decisions:
+            with atomic_and_reload(db, state, content=content, registry=registry):
+                db.save_resolve_context(
+                    state.turn, decree_text, narrative, simulator_payload,
+                    secret_orders=secret_orders_for_sim,
+                    relevant_memories=relevant_memories,
+                    source=Provenance(source).value,
+                )
+                db.save_pending_decisions(state.turn, rescript_decisions)
+                state.turn_phase = TurnPhase.AWAITING_DECISION.value
+                db.save_state(state)
+            return ResolveResult(
+                awaiting=True,
+                decisions=db.list_pending_decisions(state.turn),
+            )
         # ADR 0008 S7（决定 2）：fallback 是降级正常路径，其推进写序列同样整体包 atomic
         # ——崩在其中(只可能是代码异常，simulator 失败已被本 except 接住)则全回滚、内存从 DB
         # 重载、回合不前进，与正常路/advance 同语义。此路无 LLM 产出、无 resolve_context 入真源
@@ -392,6 +571,10 @@ def resolve_directives(
             # 终端写路所有权：fallback 推进回合，暂存动作在此 atomic 内 commit
             # （幂等；守门早退已不消费，不补则成孤儿，cmr S7 r5）。
             db.commit_pending_actions(state, content=content, registry=registry)
+            if verdict_rows:
+                db.apply_dossier_verdicts(
+                    state, verdict_rows, content=content, registry=registry,
+                )
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
             apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
@@ -431,7 +614,9 @@ def resolve_directives(
     # 2.4) HITL 决策点：从邸报抽 <<DECISION>> 块。有 → 存上下文+决策点，暂停等皇帝亲裁。
     #      剥离后的干净邸报落库/展示；决策点选完由 resolve_decisions_phase2 续跑结算。
     narrative, decisions = parse_decision_blocks(narrative)
-    decisions = bind_decisions_to_candidate_events(decisions, simulator_payload)
+    decisions = _rescript_decisions(verdict_rows, proposed_dossiers) + (
+        bind_decisions_to_candidate_events(decisions, simulator_payload)
+    )
     if decisions:
         tlog(f"[HITL] 检测到 {len(decisions)} 个决策点，暂停等皇帝亲裁：{[d['title'] for d in decisions]}")
         # 暂停态三件（上下文+决策点+AWAITING 相位）同事务落库（cmr S4 r2）：相位若靠
@@ -462,6 +647,10 @@ def resolve_directives(
         content=content, registry=registry,
         cheat_directive=cheat_directive,
         source=source,
+        dossier_verdicts=(
+            simulator_payload.get("dossier_verdicts")
+            if isinstance(simulator_payload, dict) else None
+        ),
     )
     return ResolveResult(awaiting=False, report=report)
 
@@ -533,6 +722,9 @@ def resolve_settling_recovery(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
             simulator_payload=ctx.get("simulator_payload"),
+            dossier_rescript_actions=_chosen_rescript_actions(
+                db.list_pending_decisions(state.turn)
+            ),
             content=content, registry=registry, _emit=_emit, source=source,
         )
     except SettlementAbort as abort_exc:
@@ -560,6 +752,7 @@ def _replay_settle(
     decree_text: str,
     narrative: str,
     simulator_payload: object = None,
+    dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     content=None,
     registry=None,
     _emit: Callable[[str, str], None],
@@ -587,6 +780,11 @@ def _replay_settle(
         ),
         on_stage=lambda label: _emit("stage", label),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
+        dossier_verdicts=(
+            simulator_payload.get("dossier_verdicts")
+            if isinstance(simulator_payload, dict) else None
+        ),
+        dossier_rescript_actions=dossier_rescript_actions,
     )
     return report
 
@@ -685,6 +883,8 @@ def _settle_after_narrative(
     cheat_directive: str = "",
     decision_directive: str = "",
     source: Provenance = Provenance.system_simulation,
+    dossier_verdicts: Optional[List[Dict[str, object]]] = None,
+    dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     """phase2：邸报已定（已剥离决策块），跑 extractor→落库→章节记忆→结局→推进。
     cheat_directive / decision_directive 各自拼到 effective_narrative 最前喂 extractor。
@@ -707,14 +907,22 @@ def _settle_after_narrative(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
+    # simulator_payload 的 decree_text 已在 phase1 收敛为本批可执行诏文；extractor
+    # 必须复用同一授权输入，不能重新接回包含封驳案卷的原始聚合文本。
+    executable_decree_text = str(simulator_payload.get("decree_text") or "")
     # #883: per-module supplemental context so only personnel_secret receives
     # secret-order prose; other public extractors never pre-read it.
     extractor_shared_contexts = {
         module: build_extractor_shared_context(
-            db, state, effective_narrative, decree_text,
+            db, state, effective_narrative, executable_decree_text,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             module=module,
+            decree_dossiers=(
+                simulator_payload.get("decree_dossiers")
+                if isinstance(simulator_payload.get("decree_dossiers"), list)
+                else []
+            ),
         )
         for module in EXTRACTION_MODULES
     }
@@ -736,7 +944,7 @@ def _settle_after_narrative(
         # 仅并发安全的 CLI runner（codex，--ephemeral 隔离）下并发跑 4 个 extractor（#83，省约 1 分钟）；
         # claude/agy/api/形态1 → cli_backend_parallel_safe=False → 串行不变。合并/落库仍串行单事务（ADR 0008）。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-            extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
+            extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             parallel=cli_backend_parallel_safe(llm_config),
@@ -812,6 +1020,8 @@ def _settle_after_narrative(
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
         # 无旨/世界自演变=system_simulation（静默）。重抽路从 ctx['source'] 继承、不因重抽改变。
         source=source,
+        dossier_verdicts=dossier_verdicts,
+        dossier_rescript_actions=dossier_rescript_actions,
     )
 
 
@@ -1068,6 +1278,8 @@ def settle_with_delta(
     delta_applier=None,
     on_stage=None,
     source: Provenance = Provenance.unknown,
+    dossier_verdicts: Optional[List[Dict[str, object]]] = None,
+    dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
 ) -> str:
     """确定性结算「后括号」：apply→turn_logs→inertia→留痕→章节记忆→clear→结局判定→next_period。
 
@@ -1129,6 +1341,15 @@ def settle_with_delta(
             # 事务外 commit 的话重放炸时结算回滚而动作及其真表副作用留存=跨事务半写
             # （cmr S7 r4，claude+codex 两面同根）。
             db.commit_pending_actions(state, content=content, registry=registry)
+            if dossier_verdicts:
+                db.apply_dossier_verdicts(
+                    state, dossier_verdicts, content=content, registry=registry,
+                )
+            if dossier_rescript_actions:
+                db.apply_dossier_verdicts(
+                    state, dossier_rescript_actions,
+                    content=content, registry=registry,
+                )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
@@ -1485,6 +1706,7 @@ def resolve_decisions_phase2(
         return result.report
     decisions = db.list_pending_decisions(state.turn)
     decision_directive = _format_decision_directive(decisions)
+    rescript_actions = _chosen_rescript_actions(decisions)
     # #48 / #883 恢复端闭环：HITL 续跑复用存档的 narrative + simulator_payload（不重推演）。
     # 密令分组真源在 ctx["secret_orders"]，经独立 rail 喂 personnel_secret extractor
     # （_recovered_grouped 归一 list/dict）；simulator_payload 是公共轨，不含密令正文。
@@ -1504,6 +1726,11 @@ def resolve_decisions_phase2(
         cheat_directive=cheat_directive,
         decision_directive=decision_directive,
         source=ctx_source,
+        dossier_verdicts=(
+            sim_payload.get("dossier_verdicts")
+            if isinstance(sim_payload.get("dossier_verdicts"), list) else None
+        ),
+        dossier_rescript_actions=rescript_actions,
     )
     # 结算完清掉暂存决策点（next_period 已在 _settle 内执行，故按 before_turn 清理本回合残留）。
     # resolve_context 的清理已移入 settle_with_delta 的写序列内（ADR 0008 S3），不在此 post-settle 处清。

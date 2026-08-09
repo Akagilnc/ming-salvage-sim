@@ -7,6 +7,7 @@ import pytest
 from ming_sim.models import Character
 from ming_sim.recommendations import build_recommendation_brief, validate_recommendation_snapshot
 from ming_sim.tools import build_minister_tools
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge(game):
@@ -267,6 +268,7 @@ def test_recommendation_appointment_preserves_kind_and_restores_both_types(game)
             state, content=content, registry=None, action_ids=[action_id]
         )
         assert result and result[0]["id"] == action_id
+        promulgate_proposed_appointments(db, state, content)
 
     restored = db.load_state()
     events = db.list_recommendation_events(restored, recommender.name)

@@ -59,6 +59,7 @@ TOP_LEVEL_ALIASES = {
     "event_outcomes": "事件结局",
     "撤销局势": "cancels",
     "结案局势": "close_issues",
+    "案卷执行": "dossier_executions",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
@@ -139,6 +140,9 @@ ITEM_FIELD_ALIASES = {
     "sim_note": "sim_note", "推演备注": "sim_note",
     "disclosed": "disclosed", "泄漏结论": "disclosed",
     "result": "result", "结果": "result",
+    "dossier_id": "dossier_id", "案卷编号": "dossier_id",
+    "outcome": "outcome", "执行结果": "outcome",
+    "note": "note", "执行说明": "note",
     "stance": "stance", "立场": "stance",
     "action": "action", "行动": "action",
     "impact": "impact", "影响": "impact",
@@ -435,6 +439,7 @@ def build_simulator_payload(
     debuts_this_turn: Optional[List[Dict[str, str]]] = None,
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
+    decree_dossiers: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     # #883: due commitments are public review work, unlike actual secret
     # orders.  Keep them on a separately named public rail; never pre-load
@@ -512,6 +517,9 @@ def build_simulator_payload(
         "year": state.year,
         "period": state.period,
         "decree_text": decree_text,
+        # ADR 0051/0055: structured dossier rows are the source; decree_text is
+        # only a compatibility rendering derived by the settlement caller.
+        "decree_dossiers": decree_dossiers or [],
         "current_state": dict(state.metrics),
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
@@ -632,13 +640,17 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "人物变更": [],
     "secret_order_updates": [],
     "secret_order_closes": [],
+    "dossier_executions": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
     "internal": {"metric_delta", "economy_moves", "faction_delta", "class_delta", "region_delta", "fiscal_changes", "fiscal_creates", "fiscal_removes"},
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
-    "issues": {"issue_advances", "new_issues", "事件结局", "cancels", "close_issues"},
+    "issues": {
+        "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
+        "dossier_executions",
+    },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
     },
@@ -827,6 +839,7 @@ def build_extractor_shared_context(
     relevant_memories: Optional[List[Dict[str, object]]] = None,
     secret_orders: Optional[Dict[str, object]] = None,
     module: str = "",
+    decree_dossiers: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """供模块 extractor 放入 system 前缀的共同结算补充上下文。
 
@@ -848,6 +861,23 @@ def build_extractor_shared_context(
     )
     compat = _extractor_compat_payload(base)
     slim = {k: v for k, v in compat.items() if k not in _MODULE_DROP_FIELDS}
+    authorized_dossiers = (
+        decree_dossiers
+        if decree_dossiers is not None
+        else db.list_decree_dossiers_for_simulation(state.turn)
+    )
+    slim["decree_dossiers"] = [
+        {
+            "id": int(row["id"]),
+            "origin_ref": f"dossier:{int(row['id'])}",
+            "action_type": str(row["action_type"]),
+            "decree_text": str(row["decree_text"]),
+            "status": str(row["status"]),
+            "due_turn": int(row.get("due_turn") or 0),
+        }
+        for row in authorized_dossiers
+        if row["action_type"] != "secret_order"
+    ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
     slim["_dedup_note"] = (
@@ -1032,6 +1062,9 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         target_id = str(item.get("target_id") or "").strip()
         if target_id:
             entry["target_id"] = target_id
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if origin_ref:
+            entry["origin_ref"] = origin_ref
         cleaned.append(entry)
     return cleaned
 

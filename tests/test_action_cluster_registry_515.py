@@ -315,8 +315,22 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
         },
     ], ensure_ascii=False)
     drafts = [
-        "着户部发帑十万两赈济陕西灾民。",
-        "着孙传庭巡抚陕西，整饬军政。",
+        {
+            "正文": "着户部发帑十万两赈济陕西灾民。",
+            "动作类型": "grant_allocation",
+            "目标类型": "region",
+            "目标ID": "shaanxi",
+            "金额": 100000,
+            "账户": "国库",
+            "执行面": "in_transit",
+        },
+        {
+            "正文": "着孙传庭巡抚陕西，整饬军政。",
+            "动作类型": "assignment",
+            "目标类型": "region",
+            "目标ID": "shaanxi",
+            "承办人": "孙传庭",
+        },
     ]
     calls = []
 
@@ -363,9 +377,12 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     assert calls == ["action_intent", "draft_intent"]
     assert [row["kind"] for row in rows] == ["directive", "directive", "directive", "office"]
     assert len({int(row["id"]) for row in rows[:3]}) == 3
-    assert [
-        json.loads(row["payload_json"] or "{}")["text"] for row in rows[:3]
-    ] == [old_text, *drafts]
+    payloads = [json.loads(row["payload_json"] or "{}") for row in rows[:3]]
+    assert [payload["text"] for payload in payloads] == [
+        old_text, drafts[0]["正文"], drafts[1]["正文"],
+    ]
+    assert payloads[1]["amount"] == 100000
+    assert payloads[2]["assignee"] == "孙传庭"
 
 
 def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):

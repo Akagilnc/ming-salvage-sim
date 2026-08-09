@@ -15,6 +15,7 @@ TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 en
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -249,6 +250,23 @@ def _recovery_session(db, state, content, monkeypatch):
 
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    original_run_agent_text = decree_mod.run_agent_text
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+    )
+
+    def _run_agent_text(agent, prompt, label):
+        if label == "promulgation-judge":
+            dossiers = json.loads(prompt)["dossiers"]
+            return json.dumps({
+                "verdicts": [
+                    {"dossier_id": row["id"], "decision": "promulgated"}
+                    for row in dossiers
+                ],
+            })
+        return original_run_agent_text(agent, prompt, label)
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", _run_agent_text)
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -342,7 +360,13 @@ def test_recover_after_simulation_crash_can_resettle(saved_game, monkeypatch):
 
     sess = _recovery_session(db, state, content, monkeypatch)
     # 需要一条 draft 才能走正常 resolve_directives（fallthrough 路径）。
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess.resolve_turn(decree="补颁诏")
 
     assert result.awaiting is False
@@ -439,7 +463,13 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
     sess2 = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess2.resolve_turn(decree="补颁诏")
     assert result.awaiting is False
     assert state.turn == turn + 1
@@ -652,6 +682,48 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
         "SELECT choice_json FROM event_triggers WHERE event_id=?", (event_id,)).fetchone()
     assert json.loads(row["choice_json"]) == {"label": "斩", "note": "原裁断"}, \
         "ready-replay 重试不得用新选择覆写事件账"
+
+
+def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch):
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    option = {
+        "label": "收回", "dossier_id": dossier_id,
+        "dossier_decision": "withdrawn",
+    }
+    db.save_pending_decisions(state.turn, [{
+        "event_id": f"dossier:{dossier_id}", "title": "批红待裁",
+        "context": "清核河工", "options": [option],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    monkeypatch.setattr(
+        session_mod, "resolve_decisions_phase2", lambda *_a, **_k: "ok",
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    assert sess.submit_decisions([option]) == "ok"
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone() is None
+    stored = db.list_pending_decisions(state.turn)[0]
+    assert stored["status"] == "decided"
+    assert stored["choice"] == option
 
 
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
@@ -971,7 +1043,13 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_boom)
 
     sess = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     with pytest.raises(SettlementAbort):
         sess.resolve_turn(decree="补颁诏")
 

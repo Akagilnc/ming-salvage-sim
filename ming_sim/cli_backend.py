@@ -47,6 +47,12 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+
+# #529 owns interim-office capture/materialization.  Keep the #471 dossier
+# vocabulary compatible, but do not let manual/draft extraction create it yet.
+DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
+from ming_sim.strict_types import strict_int
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
@@ -987,6 +993,44 @@ def classify_cli_action_intent(
     return candidates_from_classifier_payload(obj, soft=True)
 
 
+def _normalize_draft_mechanics(action: str, values: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    """Single/multi draft shared mechanical completeness boundary."""
+    mechanical = {
+        "amount": values.get("amount"),
+        "account": str(values.get("account") or "").strip(),
+        "execution_surface": str(values.get("execution_surface") or "").strip(),
+        "assignee": str(values.get("assignee") or "").strip(),
+        "authorization_id": str(values.get("authorization_id") or "").strip(),
+        "deadline_months": values.get("deadline_months"),
+    }
+    for key in ("amount", "deadline_months"):
+        try:
+            mechanical[key] = strict_int(
+                mechanical[key], accept_numeric_strings=False
+            ) if mechanical[key] is not None else None
+        except ValueError:
+            mechanical[key] = None
+    if action == "grant_allocation" and not (
+        mechanical["amount"] is not None and mechanical["amount"] > 0
+        and mechanical["account"]
+        and mechanical["execution_surface"] in {"immediate", "in_transit"}
+    ):
+        action = "special_decree"
+    elif action == "assignment" and not mechanical["assignee"]:
+        action = "special_decree"
+    elif action == "authorization" and not (
+        mechanical["authorization_id"] and mechanical["assignee"]
+    ):
+        action = "special_decree"
+    elif action == "military_order" and not (
+        mechanical["assignee"]
+        and mechanical["deadline_months"] is not None
+        and mechanical["deadline_months"] > 0
+    ):
+        action = "special_decree"
+    return action, mechanical
+
+
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
@@ -1015,7 +1059,11 @@ def extract_draft_intent(
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
-            f'{{\"成品旨稿\": [\"第一道完整旨稿\", \"……共 {draft_count} 道\"]}}\n'
+            '{"成品旨稿": ['
+            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"..."},'
+            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
+            '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
+            '"承办人":"...","授权ID":"","期限月数":3}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             "【皇帝】" + (player_message or "（无）") + "\n"
             "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
@@ -1027,17 +1075,48 @@ def extract_draft_intent(
             _log(f"多旨稿抽取失败：{exc}")
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
-        draft_texts = [
-            str(value).strip()
-            for value in (values if isinstance(values, list) else [])
-            if str(value).strip()
-        ]
-        if len(draft_texts) != draft_count or len(set(draft_texts)) != draft_count:
-            draft_texts = []
+        drafts = []
+        seen_texts = set()
+        invalid_batch = not isinstance(values, list) or len(values) != draft_count
+        for value in values if isinstance(values, list) else []:
+            if not isinstance(value, dict):
+                invalid_batch = True
+                break
+            text = str(value.get("正文") or "").strip()
+            action = str(value.get("动作类型") or "").strip()
+            target_kind = str(value.get("目标类型") or "").strip()
+            target_id = str(value.get("目标ID") or "").strip()
+            if not text or not action or not target_kind or not target_id or text in seen_texts:
+                invalid_batch = True
+                break
+            seen_texts.add(text)
+            if action == "acting_appointment":
+                # #529 尚未接管署理；保留原批次位置，避免后续按候选序号消费时错配 sibling。
+                drafts.append(None)
+                continue
+            if action not in DRAFT_ACTION_TYPES:
+                invalid_batch = True
+                break
+            raw_mechanical = {
+                target: value.get(source)
+                for source, target in (
+                    ("金额", "amount"), ("账户", "account"),
+                    ("执行面", "execution_surface"), ("承办人", "assignee"),
+                    ("授权ID", "authorization_id"), ("期限月数", "deadline_months"),
+                )
+            }
+            action, mechanical = _normalize_draft_mechanics(action, raw_mechanical)
+            drafts.append({
+                "draft_action": "拟旨", "draft_text": text,
+                "dossier_action_type": action, "target_kind": target_kind,
+                "target_id": target_id, "target_candidate": "", **mechanical,
+            })
+        if invalid_batch or not any(draft is not None for draft in drafts):
+            drafts = []
         return {
-            "draft_action": "拟旨" if draft_texts else "无",
+            "draft_action": "拟旨" if drafts else "无",
             "draft_text": "",
-            "draft_texts": draft_texts,
+            "drafts": drafts,
             "target_candidate": "",
         }
 
@@ -1056,13 +1135,27 @@ def extract_draft_intent(
     _supplement_mode = (has_pending_draft or bool(_candidates)) and (
         bool(_existing_draft_text) or bool(_candidates))
     intent_schema_line = (
-        '  "拟旨意图": "无|拟旨",  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
-        if _supplement_mode else
-        '  "拟旨意图": "无|拟旨"  // 皇帝明确请拟旨/起草圣旨=拟旨；闲谈/议事/问询/密令/任免=无\n'
+        '  "拟旨意图": "无|拟旨",\n'
+        '  "动作类型": "policy|approve_reject|assignment|'
+        'grant_allocation|authorization|secret_authorization|secret_investigation|'
+        'protection|strategy_selection|punishment|pacification|referral|'
+        'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
+        '  "目标类型": "policy|character|office|army|region|issue|account",\n'
+        '  "目标ID": "",\n'
+        '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
+        '  "账户": "",\n'
+        '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
+        '  "承办人": "",\n'
+        '  "授权ID": "",\n'
+        '  "期限月数": null' + (
+            "," if (_candidates or _supplement_mode) else ""
+        ) + '           // 军令必填正整数；非军令留 null\n'
     )
     # 多道模式：加「目标草案」判新拟 vs 补某道 + 现有候选清单（供 LLM 指认）。
     target_schema_line = (
-        '  "目标草案": "新",       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
+        '  "目标草案": "新"' + (
+            "," if _supplement_mode else ""
+        ) + '       // 明确另拟独立一道=「新」；补充/修改现有某一道=填该道方括号编号；'
         '想改/补但没指明是哪道=「含糊」\n'
         if _candidates else ""
     )
@@ -1107,6 +1200,22 @@ def extract_draft_intent(
         obj = {}
     _raw = str(obj.get("拟旨意图") or "无").strip()
     _action = _raw if _raw in {"无", "拟旨"} else "无"
+    dossier_action = str(obj.get("动作类型") or "special_decree").strip()
+    if dossier_action not in DRAFT_ACTION_TYPES:
+        dossier_action = "special_decree"
+    target_kind = str(obj.get("目标类型") or "policy").strip()
+    if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
+        target_kind = "policy"
+    target_id_value = str(obj.get("目标ID") or "").strip()
+    dossier_action, mechanical = _normalize_draft_mechanics(dossier_action, {
+        "amount": obj.get("金额"), "account": obj.get("账户"),
+        "execution_surface": (
+            str(obj.get("执行面") or "in_transit")
+            if dossier_action == "grant_allocation" else ""
+        ),
+        "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
+        "deadline_months": obj.get("期限月数"),
+    })
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
@@ -1116,7 +1225,9 @@ def extract_draft_intent(
             draft_text = merged if merged else _existing_draft_text
         else:
             draft_text = (minister_reply or "").strip()
-        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": ""}
+        return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
+                "dossier_action_type": dossier_action,
+                "target_kind": target_kind, "target_id": target_id_value, **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1142,7 +1253,51 @@ def extract_draft_intent(
         existing = str(_by_id[int(target)].get("text") or "")
         # 补某道：优先合并全文；LLM 未合并时保留原文（避免用确认语覆盖），原文亦空则退回话。
         draft_text = merged if merged else (existing if existing else (minister_reply or "").strip())
-    return {"draft_action": _action, "draft_text": draft_text, "target_candidate": target}
+    return {
+        "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
+        "dossier_action_type": dossier_action,
+        "target_kind": target_kind, "target_id": target_id_value, **mechanical,
+    }
+
+
+def capture_manual_directive_payload(
+    text: str, llm_config: Any = None,
+) -> Dict[str, object]:
+    """Web/CLI 手工下旨共用既有草稿抽取 seam；只搬运结构化结果。"""
+    captured = extract_draft_intent(
+        "请据此拟旨", str(text or ""), llm_config=llm_config,
+    )
+    if captured.get("draft_action") != "拟旨":
+        return {
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
+            "target_id": "manual-directive",
+        }
+    payload = {
+        "dossier_action_type": captured.get("dossier_action_type"),
+        "target_kind": captured.get("target_kind"),
+        "target_id": captured.get("target_id"),
+    }
+    for field in (
+        "amount", "account", "execution_surface", "assignee",
+        "authorization_id", "deadline_months",
+    ):
+        if captured.get(field) not in (None, ""):
+            payload[field] = captured[field]
+    if payload.get("dossier_action_type") == "dismiss_assignment":
+        # Manual CLI/Web directives bypass pending office actions, so preserve
+        # the same structured materialization fields at this capture seam.
+        payload["name"] = str(payload.get("target_id") or "").strip()
+        payload["_office_action"] = "罢免"
+    if not all(str(payload.get(key) or "").strip() for key in (
+        "dossier_action_type", "target_kind", "target_id",
+    )):
+        return {
+            "dossier_action_type": "special_decree",
+            "target_kind": "policy",
+            "target_id": "manual-directive",
+        }
+    return payload
 
 
 # 任免(office)会话动作抽取：与密令【完全独立】——任免和密令无关，故另起一函数，

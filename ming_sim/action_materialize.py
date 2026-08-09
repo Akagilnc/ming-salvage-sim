@@ -284,24 +284,21 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         and intent_kind == "draft"
         and ctx.candidate_kind_count > 1
     ):
-        if "draft_texts" not in ctx.batch_state:
+        if "drafts" not in ctx.batch_state:
             batch_res = extract_draft_intent(
                 ctx.player_message,
                 ctx.reply,
                 llm_config=ctx.llm_config,
                 draft_count=ctx.candidate_kind_count,
             )
-            ctx.batch_state["draft_texts"] = list(batch_res.get("draft_texts") or [])
-        draft_texts = ctx.batch_state["draft_texts"]
-        if ctx.candidate_kind_index >= len(draft_texts):
+            ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
+        drafts = ctx.batch_state["drafts"]
+        if ctx.candidate_kind_index >= len(drafts):
             return
-        draft_res = {
-            "draft_action": "拟旨",
-            "draft_text": draft_texts[ctx.candidate_kind_index],
-            "target_candidate": "",
-        }
-    elif intent is not None and intent_kind == "draft" and not has_existing_draft:
-        draft_res = {"draft_action": "拟旨", "draft_text": ctx.reply, "target_candidate": ""}
+        batch_draft = drafts[ctx.candidate_kind_index]
+        if not isinstance(batch_draft, dict):
+            return
+        draft_res = dict(batch_draft)
     else:
         draft_res = extract_draft_intent(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
@@ -309,6 +306,15 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             existing_draft_text=existing_draft_text,
             existing_candidates=dir_candidates or None,
         )
+        if intent is not None and intent_kind == "draft" and not has_existing_draft:
+            # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
+            # #571 的串行抽取只补案卷结构字段，失败不得吞掉已判定的动作。
+            draft_res = {
+                **draft_res,
+                "draft_action": "拟旨",
+                "draft_text": ctx.reply,
+                "target_candidate": "",
+            }
 
     if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
         ctx.out["directive_confirmation_ambiguous"] = {
@@ -317,26 +323,49 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         ctx.draft_staged = True
         return
     if draft_res["draft_action"] == "拟旨" and draft_res["draft_text"]:
+        semantic_payload = {
+            "text": draft_res["draft_text"],
+            "actor": minister_name,
+        }
+        for field_name in ("dossier_action_type", "target_kind", "target_id"):
+            if draft_res.get(field_name) not in (None, ""):
+                semantic_payload[field_name] = draft_res[field_name]
+        for field_name in (
+            "amount", "account", "execution_surface",
+            "assignee", "authorization_id", "deadline_months",
+        ):
+            if draft_res.get(field_name) not in (None, ""):
+                semantic_payload[field_name] = draft_res[field_name]
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
+        is_existing_update = (
+            (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
+            or (committed_draft is not None and not has_pending_directive)
+        )
+        if not is_existing_update:
+            semantic_payload.setdefault("dossier_action_type", "special_decree")
+            semantic_payload.setdefault("target_kind", "policy")
+            semantic_payload.setdefault("target_id", ctx.player_message.strip())
         if ctx.candidate_kind_count > 1:
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
-                payload={"text": draft_res["draft_text"], "actor": minister_name},
+                payload=semantic_payload,
             )
         elif dir_candidates and _target == "新":
             ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
                 session.state.turn, minister_name,
-                payload={"text": draft_res["draft_text"], "actor": minister_name},
+                payload=semantic_payload,
             )
         elif _target_id is not None and any(c["id"] == _target_id for c in dir_candidates):
             ctx.out["pending_action_id"] = session.db.update_directive_candidate(
                 _target_id,
-                payload={"text": draft_res["draft_text"], "actor": minister_name},
+                payload=semantic_payload,
             )
         elif committed_draft is not None and not has_pending_directive:
             did = int(committed_draft["id"])
-            session.db.update_directive_text(did, draft_res["draft_text"])
+            session.db.update_directive_text(
+                did, draft_res["draft_text"], dossier_payload=semantic_payload,
+            )
             ctx.out["directive"] = {
                 "id": did,
                 "text": draft_res["draft_text"],
@@ -346,7 +375,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         else:
             pid = session.db.upsert_pending_directive(
                 session.state.turn, minister_name,
-                payload={"text": draft_res["draft_text"], "actor": minister_name},
+                payload=semantic_payload,
             )
             ctx.out["pending_action_id"] = pid
         ctx.draft_staged = True

@@ -233,17 +233,30 @@ export type BudgetAccount = {
 
 export type Budget = Record<"国库" | "内库", BudgetAccount>;
 
+export type DossierDecision = "promulgated" | "rejected" | "force_promulgated";
+
+export type DecisionChoice = {
+  label?: string;
+  hint?: string;
+  note?: string;
+  dossier_id?: number | null;
+  dossier_decision?: DossierDecision;
+};
+
 export type DecisionOption = {
   label: string;
   hint: string;
+  dossier_id?: number;
+  dossier_decision?: DossierDecision;
 };
 
 export type PendingDecision = {
   idx: number;
+  event_id?: string;
   title: string;
   context: string;
   options: DecisionOption[];
-  choice?: { label?: string; hint?: string; note?: string } | null;
+  choice?: DecisionChoice | null;
   status?: string;
 };
 
