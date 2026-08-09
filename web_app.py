@@ -3603,6 +3603,7 @@ def api_advance_without_edict() -> Dict[str, Any]:
                 game.directive_rows()
                 or pending_directive_actions
                 or game.db.list_decree_dossiers(status="proposed")
+                or game.db.list_monthly_dossier_progress_nudges()
             ):
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:

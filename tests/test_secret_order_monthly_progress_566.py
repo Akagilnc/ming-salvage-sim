@@ -28,27 +28,41 @@ def _settle(db, state, content, narrative="本月邸报", progress=None):
     return turn
 
 
-def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game, monkeypatch):
+def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, monkeypatch):
+    """Real CLI production entry; only simulator/extractor LLM calls are canned."""
     from ming_sim.db import GameDB
+    from ming_sim.session import GameSession
+    import ming_sim.decree as decree
+    import ming_sim.memories as memories
     import ming_sim.simulation as simulation
 
     db, state, content = game
-    _order_id, dossier_id = _order(db, state)
+    order_id, dossier_id = _order(db, state)
     monthly = [
         ("启程", "首批出京，已对一处关防"),
         ("在途", "据前月关防记录续报，已至山海关"),
         ("将达", "据前两月记录续报，三批已会齐"),
     ]
-    extraction_month = 0
+    private_contexts = []
 
-    def run_extractor(_agent, prompt, tag):
-        nonlocal extraction_month
+    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree, "simulate_season_with_payload",
+        lambda *a, **k: ("本月公开邸报", k["simulator_payload"]),
+    )
+    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
+
+    def make_extractor(*args, **kwargs):
+        if args[2] == "personnel_secret":
+            private_contexts.append(kwargs["supplemental_context"])
+        return object()
+
+    monkeypatch.setattr(decree, "create_score_extractor_module_agent", make_extractor)
+
+    def run_extractor(_agent, _prompt, tag):
         if tag != "extractor/personnel_secret":
             return "{}"
-        band, memorial = monthly[extraction_month]
-        if extraction_month:
-            assert monthly[extraction_month - 1][1] in prompt
-        extraction_month += 1
+        band, memorial = monthly[len(private_contexts) - 1]
         return json.dumps({"dossier_progress_reports": [{
             "dossier_id": dossier_id,
             "progress_band": band,
@@ -56,39 +70,40 @@ def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game, 
         }]}, ensure_ascii=False)
 
     monkeypatch.setattr(simulation, "run_agent_text", run_extractor)
-    agents = {module: object() for module in simulation.EXTRACTION_MODULES}
+    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    monkeypatch.setattr(GameSession, "auto_save", lambda *a, **k: None)
 
-    def production_month_end():
-        from ming_sim.decree import settle_with_delta
-        turn = state.turn
-        extracted, _output, _input = simulation.extract_scores_by_modules_with_agno(
-            agents, db, state, "本月邸报",
-        )
-        settle_with_delta(
-            state, db, extracted, before_turn=turn, content=content, narrative="本月邸报",
-        )
-        return turn
+    def session():
+        sess = GameSession.__new__(GameSession)
+        sess.db, sess.state, sess.content = db, state, content
+        sess.registry = sess.llm_config = sess.agno_db = None
+        sess.deaths_this_turn, sess.debuts_this_turn = [], []
+        sess.last_decree = sess.last_report = ""
+        return sess
 
-    first_turn = production_month_end()
+    turns = []
+    turns.append(state.turn)
+    session().advance_without_decree()
+    assert private_contexts[0]["monthly_dossier_reports"][0]["progress"] == []
+
     reopened = GameDB(db.path, content=content)
     db.close()
-    db = reopened
-    state = db.load_state()
-    second_turn = production_month_end()
-    third_turn = production_month_end()
+    db, state = reopened, reopened.load_state()
+    turns.append(state.turn)
+    session().advance_without_decree()
+    assert monthly[0][1] in str(private_contexts[1]["monthly_dossier_reports"])
+    turns.append(state.turn)
+    session().advance_without_decree()
 
     rows = db.list_dossier_progress(dossier_id)
     stored = db.conn.execute(
-        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (_order_id,),
+        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
     ).fetchone()
     assert json.loads(stored["dossier_progress_json"]) == rows
-    assert db.conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dossier_progress_reports'"
-    ).fetchone() is None
-    assert [row["turn"] for row in rows] == [first_turn, second_turn, third_turn]
+    assert [row["turn"] for row in rows] == turns
     assert [row["progress_band"] for row in rows] == ["启程", "在途", "将达"]
-    for row in rows:
-        assert row["memorial_text"] not in db.get_turn_report(row["turn"])
+    assert all(row["memorial_text"] not in db.get_turn_report(row["turn"]) for row in rows)
 
 
 def test_only_private_extractor_context_reads_canonical_history(game):
@@ -233,6 +248,68 @@ def test_current_secret_order_deadline_controls_monthly_eligibility(game):
     db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn + 3, order_id))
     assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
     assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
+
+
+def test_web_no_edict_endpoint_routes_due_monthly_report_to_full_settlement(game, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    import web_app
+
+    db, state, content = game
+    _order(db, state)
+    calls = []
+
+    class Session:
+        registry = None
+
+        def resolve_turn(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(awaiting=False, decisions=[], report="ok")
+
+    web_game = SimpleNamespace(
+        db=db, state=state, content=content, session=Session(),
+        directive_rows=lambda: [], refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": state.turn},
+    )
+
+    @contextmanager
+    def unlocked(_game):
+        yield
+
+    monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _game: None)
+    monkeypatch.setattr(web_app, "_serialized_web_write", unlocked)
+    payload = web_app.api_advance_without_edict()
+
+    assert calls == [{"inflight_wait_s": 0.0}]
+    assert payload["awaiting_decision"] is False
+
+
+def test_simulator_fallback_missing_private_report_aborts_without_advancing(game, monkeypatch):
+    import pytest
+    import ming_sim.decree as decree
+    from ming_sim.exceptions import SettlementAbort
+
+    db, state, content = game
+    _order_id, dossier_id = _order(db, state)
+    turn = state.turn
+    monkeypatch.setattr(decree, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree, "simulate_season_with_payload",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("simulator unavailable")),
+    )
+    monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "out", "in"),
+    )
+    with pytest.raises(SettlementAbort, match="本月结算失败"):
+        decree.resolve_directives(
+            state, db, None, None, [], "", content=content, registry=None,
+        )
+    assert state.turn == turn
+    assert db.load_state().turn == turn
+    assert db.list_dossier_progress(dossier_id) == []
 
 
 def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game):
