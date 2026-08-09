@@ -585,9 +585,7 @@ export function ChatModal({
         if (!alive) return;
         setScrollState(data.night_id ? { kind: "night", messages: data.messages || [] } : { kind: "none" });
       })
-      .catch(() => {
-        if (alive) setScrollState((current) => current.kind === "night" ? { kind: "error" } : { kind: "none" });
-      });
+      .catch(() => { if (alive) setScrollState({ kind: "error" }); });
     return () => { alive = false; };
   }, [minister.name, chat]);
 
