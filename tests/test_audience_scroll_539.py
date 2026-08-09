@@ -1,5 +1,9 @@
 """Issue #539: night-scroll read contract at the audience-night public seam."""
 
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+
 from ming_sim import audience_night as an
 
 
@@ -16,6 +20,28 @@ def _chat(db, state, night_id, minister, user_text, answer, seq):
     )
     db.conn.commit()
     return int(cur.lastrowid)
+
+
+def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = _night(db, state)
+    _chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+    client = TestClient(web_app.app)
+
+    live = client.get("/api/audience/scroll").json()
+    db.conn.execute("UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?", (night_id,))
+    db.conn.commit()
+    closed = client.get(f"/api/audience/scroll?night_id={night_id}").json()
+
+    assert live["night_id"] == closed["night_id"] == night_id
+    assert [set(message) for message in live["messages"]] == [set(message) for message in closed["messages"]]
+    assert [message["content"] for message in live["messages"]] == [message["content"] for message in closed["messages"]]
+    assert set(live) == set(closed) == {"night_id", "status", "messages"}
+    assert live["status"] == "open"
+    assert closed["status"] == "closed"
 
 
 def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
