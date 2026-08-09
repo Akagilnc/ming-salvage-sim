@@ -72,6 +72,8 @@ export type StreamChatOptions = {
     mindreading: MindreadingRecord | null;
     chat_turn_id: number;
   }) => void;
+  /** 玩家问话已持久化并开夜；先于模型生成/失败返回。 */
+  onAccepted?: (payload: { night_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
   onDone?: (payload: ChatResponse) => void;
 };
@@ -115,7 +117,9 @@ export const streamChat = async (
       const parsed = parseSseMessage(messageBlock);
       if (!parsed) continue;
       const payload = JSON.parse(parsed.data);
-      if (parsed.event === "delta") {
+      if (parsed.event === "accepted") {
+        options.onAccepted?.({ night_id: Number(payload.night_id || 0) });
+      } else if (parsed.event === "delta") {
         onDelta(String(payload.content || ""));
       } else if (parsed.event === "done") {
         // 回话先可见：不结束流，等 end；兼容旧服务端（仅 done 无 end）则缓存后继续

@@ -89,6 +89,30 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
+  it("真实 send 入口一开新夜即淘汰旧卷，回话随后失败也不回闪", async () => {
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      call += 1;
+      if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
+        night_id: 23,
+        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
+      });
+      return sse([
+        { event: "accepted", data: { night_id: 24 } },
+        { event: "error", data: { message: "回话失败" } },
+      ]);
+    }));
+    const { hookRef, rows } = mount();
+    await tick();
+    expect(rows()).toContain("minister:旧夜他臣");
+
+    await act(async () => {
+      await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
+    });
+    expect(hookRef.current!.currentNightId).toBe(24);
+    expect(rows()).not.toContain("minister:旧夜他臣");
+  });
+
   it("迟到的旧流读心：新 send 作废 token 后，旧流 mind1 仍归其轮浮现（不按 token 门控）", async () => {
     const { hookRef, rows } = mount();
     const hook = hookRef.current!;

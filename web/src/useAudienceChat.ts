@@ -152,6 +152,9 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
+            onAccepted: ({ night_id }) => {
+              if (panelMatches()) setCurrentNightId(night_id);
+            },
             onDone: (doneData) => {
               // 短暂请求态按 token 回收
               if (ownsEphemeral()) {
