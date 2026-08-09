@@ -10287,6 +10287,12 @@ class GameDB:
                     commit=False,
                 )
                 if actual != -amount:
+                    if self._dossier_has_execution_surface(
+                        row["action_type"], payload,
+                    ):
+                        self.transition_decree_dossier(
+                            dossier_id, "executing", commit=False,
+                        )
                     self.record_dossier_execution(
                         dossier_id, "failed",
                         f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
@@ -11682,6 +11688,7 @@ class GameDB:
             pending_action_id=0 if pending is None else int(pending["id"]),
             directive_id=int(directive_id),
             payload=structured,
+            due_turn=int(structured.get("due_turn") or 0),
             commit=commit,
         )
 

@@ -2283,7 +2283,7 @@ class GameSession:
                     (_json.dumps(choice, ensure_ascii=False), self.state.turn, idx),
                 )
                 event_id = str(d.get("event_id") or "").strip()
-                if event_id:
+                if event_id and not event_id.startswith("dossier:"):
                     self.db.record_event_decision_choice(
                         self.state, event_id, choice, commit=False)
             self.db.conn.commit()

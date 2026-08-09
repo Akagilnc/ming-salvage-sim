@@ -684,6 +684,48 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
         "ready-replay 重试不得用新选择覆写事件账"
 
 
+def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch):
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    option = {
+        "label": "收回", "dossier_id": dossier_id,
+        "dossier_decision": "withdrawn",
+    }
+    db.save_pending_decisions(state.turn, [{
+        "event_id": f"dossier:{dossier_id}", "title": "批红待裁",
+        "context": "清核河工", "options": [option],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    monkeypatch.setattr(
+        session_mod, "resolve_decisions_phase2", lambda *_a, **_k: "ok",
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    assert sess.submit_decisions([option]) == "ok"
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone() is None
+    stored = db.list_pending_decisions(state.turn)[0]
+    assert stored["status"] == "decided"
+    assert stored["choice"] == option
+
+
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
     """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
