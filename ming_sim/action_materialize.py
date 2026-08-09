@@ -140,6 +140,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
                 "deadline_months": secret.get("deadline_months", 0),
                 "excluded_names": secret.get("excluded_names") or [],
                 "excluded_offices": secret.get("excluded_offices") or [],
+                "dossier_links": secret.get("dossier_links") or [],
             },
         )
         return
