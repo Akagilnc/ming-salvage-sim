@@ -10335,6 +10335,14 @@ class GameDB:
                 if decision == "rejected":
                     validate_rejection_verdict(
                         verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
+                        faction_names={
+                            str(row["name"])
+                            for row in self.conn.execute("SELECT name FROM factions")
+                        },
+                        character_ids={
+                            str(row["name"])
+                            for row in self.conn.execute("SELECT name FROM characters")
+                        },
                     )
                 self.apply_dossier_promulgation(
                     state, strict_int(verdict.get("dossier_id")), decision,

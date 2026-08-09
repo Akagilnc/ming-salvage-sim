@@ -14,14 +14,20 @@ def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
 
 
 REJECTION_SNAPSHOT_KEYS = frozenset({
-    "imperial_authority_band", "involved_offices",
+    "imperial_authority_band", "involved_office_types",
     "authorization_ids", "endorsement_entry_ids",
 })
 IMPERIAL_AUTHORITY_BANDS = frozenset({"极弱", "偏弱", "中等", "偏强", "强盛"})
 
 
-def validate_rejection_verdict(verdict: object, blocked_layers: object) -> None:
-    """Validate the complete ADR 0066 typed rejection shape."""
+def validate_rejection_verdict(
+    verdict: object,
+    blocked_layers: object,
+    *,
+    faction_names: object,
+    character_ids: object,
+) -> None:
+    """Validate the complete ADR 0066 shape against authoritative DB identities."""
     if not isinstance(verdict, dict):
         raise ValueError("打回判决须为对象")
     opponents = verdict.get("primary_opponents")
@@ -33,12 +39,16 @@ def validate_rejection_verdict(verdict: object, blocked_layers: object) -> None:
     if (
         verdict.get("blocked_layer") not in blocked_layers
         or not string_list(opponents) or not opponents
+        or any(opponent not in faction_names for opponent in opponents)
+        or "gatekeeper_id" not in verdict
         or (verdict.get("gatekeeper_id") is not None and
-            (not isinstance(verdict["gatekeeper_id"], str) or not verdict["gatekeeper_id"].strip()))
+            (not isinstance(verdict["gatekeeper_id"], str)
+             or not verdict["gatekeeper_id"].strip()
+             or verdict["gatekeeper_id"] not in character_ids))
         or not isinstance(verdict.get("reason"), str) or not verdict["reason"].strip()
         or not isinstance(snapshot, dict) or set(snapshot) != REJECTION_SNAPSHOT_KEYS
         or snapshot.get("imperial_authority_band") not in IMPERIAL_AUTHORITY_BANDS
-        or not string_list(snapshot.get("involved_offices"))
+        or not string_list(snapshot.get("involved_office_types"))
         or not string_list(snapshot.get("authorization_ids"))
         or not isinstance(endorsement_ids, list)
         or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0

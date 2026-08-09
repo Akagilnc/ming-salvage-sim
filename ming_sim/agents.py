@@ -470,7 +470,7 @@ def create_promulgation_judge_agent(
             "primary_opponents（非空 faction key 清单）、gatekeeper_id（人物 id 或 null）、"
             "reason（非空一句）及 criteria_snapshot，其键必须且只能为 "
             "imperial_authority_band（极弱|偏弱|中等|偏强|强盛）、"
-            "involved_offices、authorization_ids、"
+            "involved_office_types（涉事任别）、authorization_ids、"
             "endorsement_entry_ids，后三项均为清单。不得添加散文。",
         ],
         add_history_to_context=False,

@@ -425,6 +425,14 @@ def resolve_directives(
                 if row.get("decision") == "rejected":
                     validate_rejection_verdict(
                         row, {"cabinet_drafting", "palace_rescript", "six_offices"},
+                        faction_names={
+                            str(item["name"])
+                            for item in db.conn.execute("SELECT name FROM factions")
+                        },
+                        character_ids={
+                            str(item["name"])
+                            for item in db.conn.execute("SELECT name FROM characters")
+                        },
                     )
         except ValueError as exc:
             raise LLMContractError(str(exc)) from exc
