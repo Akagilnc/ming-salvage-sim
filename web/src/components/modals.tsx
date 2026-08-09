@@ -444,37 +444,6 @@ export function HistoryDetailView({
   );
 }
 
-export function PreviousSummary({ summary }: { summary: string }) {
-  if (!summary) {
-    return <p className="long-copy">登基伊始，尚无上月回奏。</p>;
-  }
-  const lines = summary.split("\n").map((line) => line.trim()).filter(Boolean);
-  const rows = lines
-    .map((line) => {
-      const idx = line.indexOf("：");
-      if (idx <= 0) return null;
-      return { label: line.slice(0, idx), value: line.slice(idx + 1) };
-    })
-    .filter((row): row is { label: string; value: string } => !!row && !!row.value);
-
-  if (!rows.length) {
-    return <p className="long-copy">{summary}</p>;
-  }
-
-  return (
-    <table className="summary-table">
-      <tbody>
-        {rows.map((row) => (
-          <tr key={row.label}>
-            <th>{row.label}</th>
-            <td>{row.value}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 export function StateModal({ state }: { state: GameState }) {
   const report = state.last_report || state.previous_summary;
   return (
@@ -487,18 +456,6 @@ export function StateModal({ state }: { state: GameState }) {
     </article>
   );
 }
-
-export function BriefReport({ title, items }: { title: string; items: string[] }) {
-  return (
-    <article>
-      <h2>{title}</h2>
-      <ul className="brief-list">
-        {items.map((item) => <li key={`${title}-${item}`}>{item}</li>)}
-      </ul>
-    </article>
-  );
-}
-
 
 export function ChatModal({
   minister,

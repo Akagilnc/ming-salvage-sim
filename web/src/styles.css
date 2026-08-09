@@ -66,9 +66,7 @@ h1,
 h2,
 h3,
 .modal-title h1,
-.drawer-brand strong,
-.command-caption b,
-.status-emblem span {
+.drawer-brand strong {
   font-family: var(--font-brush);
   letter-spacing: 0.04em;
 }
@@ -428,44 +426,9 @@ select:focus-visible {
   color: #5a4a30;
 }
 
-.status-bar {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 12;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 2px;
-  width: max-content;
-  max-width: calc(100vw - 16px);
-  padding: 5px 7px;
-  border: 1px solid rgba(74, 45, 20, 0.55);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(247, 239, 219, 0.97) 0%, rgba(228, 217, 191, 0.96) 100%);
-  box-shadow:
-    0 4px 16px rgba(24, 18, 11, 0.34),
-    inset 0 1px 0 rgba(255, 250, 235, 0.85),
-    inset 0 0 0 1px rgba(210, 163, 74, 0.35);
-  backdrop-filter: blur(7px);
-}
 
 /* 组间细金竖线分隔 */
-.status-bar .hud-divider {
-  align-self: stretch;
-  width: 1px;
-  margin: 4px 3px;
-  background: linear-gradient(
-    180deg,
-    transparent,
-    rgba(138, 100, 36, 0.5) 22%,
-    rgba(138, 100, 36, 0.5) 78%,
-    transparent
-  );
-}
 
-.status-bar,
 .budget-hover {
   overflow: visible;
 }
@@ -607,51 +570,12 @@ select:focus-visible {
   line-height: 1.4;
 }
 
-.status-emblem {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 28px;
-  flex: 0 0 auto;
-  padding: 3px 9px;
-  border: 0;
-  border-radius: 5px;
-  color: #1a1410;
-  background: linear-gradient(180deg, rgba(210, 163, 74, 0.16), rgba(210, 163, 74, 0.06));
-  box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.3);
-  font-weight: 700;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
-}
 
-.status-emblem:hover {
-  background: linear-gradient(180deg, rgba(210, 163, 74, 0.28), rgba(210, 163, 74, 0.12));
-  box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.5);
-}
 
-.status-emblem svg {
-  width: 16px;
-  height: 16px;
-}
 
-.emblem-art {
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
-}
 
-.status-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-}
 
-.status-money,
-.status-pill {
+.status-money {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -849,118 +773,27 @@ select:focus-visible {
   color: #a64036;
 }
 
-.status-money b,
-.status-pill b {
+.status-money b {
   color: #1a1410;
 }
 
-.status-pill.good b {
-  color: #2f7651;
-}
 
-.status-pill.warn b {
-  color: #a06d18;
-}
 
-.status-pill.danger b {
-  color: #a64036;
-}
 
-.status-pill b {
-  font-size: 1.02em;
-  font-variant-numeric: tabular-nums;
-}
 
 /* 民心/皇威 按好坏淡染底色，扫一眼可辨 */
-.status-pill.good {
-  background: rgba(49, 93, 71, 0.12);
-  box-shadow: inset 0 0 0 1px rgba(49, 93, 71, 0.22);
-}
 
-.status-pill.warn {
-  background: rgba(160, 109, 24, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(160, 109, 24, 0.26);
-}
 
-.status-pill.danger {
-  background: rgba(158, 52, 41, 0.13);
-  box-shadow: inset 0 0 0 1px rgba(158, 52, 41, 0.26);
-}
 
-.bottom-command-bar {
-  position: absolute;
-  left: 15%;
-  bottom: 58%;
-  width: 70%;
-  height: 1px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  overflow: visible;
-  z-index: 2;
-}
 
-.bottom-command-bar .command-icon,
-.bottom-command-bar .edict-turn-button {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-}
 
-.bottom-command-bar .command-icon,
-.bottom-command-bar .edict-turn-button {
-  position: relative;
-  bottom: 0;
-}
 
-.bottom-caption-bar {
-  position: absolute;
-  left: 15%;
-  bottom: 7vh;
-  width: 70%;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  overflow: visible;
-  z-index: 2;
-  pointer-events: none;
-}
 
-.bottom-caption-bar .command-caption {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
 
 /* 16:9 UI 容器，居中贴合屏幕，所有底部元素在此容器内用 % 定位 */
-.ui-stage {
-  position: fixed;
-  z-index: 11;
-  /* 始终保持 16:9，居中 */
-  width: min(100vw, calc(100vh * 16 / 9));
-  height: min(100vh, calc(100vw * 9 / 16));
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
 
-.ui-stage > * {
-  pointer-events: auto;
-}
 
 /* 案板容器：fixed 贴底，背景图 */
-.anban-wrap {
-  position: fixed;
-  left: -15vw;
-  bottom: -6vh;
-  width: 130vw;
-  height: 17vh;
-  background: url('/ui/exact/案板.png') center / 100% 100% no-repeat;
-  z-index: 11;
-}
 
 /* 旧 img 已移除 */
 
@@ -968,144 +801,24 @@ select:focus-visible {
 
 
 
-.bottom-command-bar .command-icon {
-  outline: none;
-  border: none;
-  background: transparent;
-}
-.bottom-command-bar .command-icon:focus,
-.bottom-command-bar .command-icon:active {
-  outline: none;
-}
 
 
 /* 底部命令按钮：图标 + 竖排小字 */
-.command-icon {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  transition: transform 150ms ease;
-}
 
-.command-icon:hover {
-  transform: translateY(-3px);
-}
 
-.command-art {
-  width: auto;
-  height: 14vh;
-  max-width: 18vw;
-  object-fit: contain;
-  filter: drop-shadow(0 6px 10px rgba(15, 8, 4, 0.6));
-}
 
-.command-icon:hover .command-art {
-  filter: drop-shadow(0 9px 14px rgba(15, 8, 4, 0.7));
-}
 
 /* 角标 */
-.command-badge {
-  position: absolute;
-  top: -6px;
-  right: -8px;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 4px;
-  border: 1px solid rgba(255, 238, 190, 0.55);
-  border-radius: 999px;
-  color: #fff2cf;
-  background: linear-gradient(180deg, #c0432f, #7c241b);
-  font-size: 0.72rem;
-  font-weight: 700;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
-}
 
 /* 文字说明（竖排小字） */
-.command-caption {
-  display: grid;
-  justify-items: center;
-  gap: 0;
-  line-height: 1.2;
-}
 
-.command-caption b {
-  color: #ffe7b5;
-  font-size: 0.82rem;
-  font-weight: 700;
-}
 
-.command-caption small {
-  color: rgba(245, 215, 158, 0.72);
-  font-size: 0.7rem;
-}
 
-.edict-turn-button {
-  position: relative;
-  left: auto;
-  top: auto;
-  z-index: 14;
-  display: grid;
-  place-items: center;
-  width: auto;
-  height: auto;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  overflow: visible;
-  outline: none;
-  color: #fff0c4;
-  background: transparent;
-  box-shadow: none;
-  cursor: pointer;
-  transition: transform 150ms ease, filter 150ms ease;
-  -webkit-tap-highlight-color: transparent;
-}
 
-.edict-turn-button:hover,
-.edict-turn-button:focus,
-.edict-turn-button:active,
-.bottom-command-bar .edict-turn-button:focus,
-.bottom-command-bar .edict-turn-button:active {
-  outline: none;
-}
 
-.edict-turn-button:hover,
-.edict-turn-button:focus,
-.edict-turn-button:active {
-  transform: translateY(-6px) scale(1.03);
-  filter: brightness(1.08);
-  outline: none;
-  box-shadow: none;
-}
 
-.edict-turn-art {
-  position: relative;
-  display: grid;
-  place-items: end center;
-  width: auto;
-  height: auto;
-  transform: translateY(3vh);
-  filter: drop-shadow(0 4px 6px rgba(18, 7, 2, 0.58));
-}
 
-.edict-turn-art img {
-  width: auto;
-  height: 24vh;
-  max-width: 28vw;
-  object-fit: contain;
-}
 
-.edict-turn-badge {
-  top: 2px;
-  right: 6px;
-}
 
 
 
@@ -1529,38 +1242,11 @@ select:focus-visible {
 }
 
 
-.info-cell {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  min-height: 58px;
-  padding: 12px;
-  border: 1px solid rgba(111, 83, 46, 0.15);
-  border-radius: 6px;
-  background: rgba(255, 250, 235, 0.48);
-}
 
-.map-intel-panel .info-cell span {
-  color: #000;
-  font-size: 0.75rem;
-}
 
-.map-intel-panel .info-cell b {
-  color: #000;
-  font-size: 0.95rem;
-}
 
-.map-intel-panel .info-cell.good b {
-  color: #000;
-}
 
-.map-intel-panel .info-cell.warn b {
-  color: #000;
-}
 
-.map-intel-panel .info-cell.danger b {
-  color: #000;
-}
 
 .profile-copy,
 .directive-item p,
@@ -1585,9 +1271,6 @@ select:focus-visible {
   font-weight: 700;
 }
 
-.map-intel-panel .info-cell {
-  overflow-wrap: anywhere;
-}
 
 .garrison-title {
   margin: 10px 0 4px;
@@ -2021,32 +1704,9 @@ select:focus-visible {
   font-size: 0.9rem;
 }
 
-.summary-table {
-  width: 100%;
-  border-collapse: collapse;
-}
 
-.summary-table th,
-.summary-table td {
-  padding: 9px 12px;
-  border: 1px solid rgba(111, 83, 46, 0.3);
-  text-align: left;
-  vertical-align: top;
-  font-size: 0.9rem;
-  line-height: 1.55;
-}
 
-.summary-table th {
-  width: 5.5em;
-  white-space: nowrap;
-  color: #5a2018;
-  background: rgba(158, 42, 43, 0.1);
-  font-weight: 700;
-}
 
-.summary-table td {
-  color: #2c2418;
-}
 
 .document-section h2 {
   margin: 0;
@@ -2165,17 +1825,7 @@ select:focus-visible {
 
 
 
-.brief-list {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0 0 0 18px;
-  color: #5f4d34;
-}
 
-.brief-list li {
-  padding-left: 2px;
-}
 
 .chat-full-grid {
   display: grid;
@@ -3013,9 +2663,6 @@ button:disabled {
   box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4) !important;
 }
 
-.modal-bg-state .summary-table th {
-  background: rgba(158, 42, 43, 0.16) !important;
-}
 
 /* 弹窗标题栏：透明、大字居中、无深色底 */
 .modal-bg-state .modal-header,
@@ -3093,11 +2740,6 @@ button:disabled {
   background: rgba(255, 241, 208, 0.92) !important;
 }
 
-.modal-bg-state .command-badge,
-.modal-bg-chat .command-badge,
-.modal-bg-edict .command-badge {
-  background: linear-gradient(180deg, #c0432f, #7c241b) !important;
-}
 
 .modal-bg-state .issue-progress div,
 .modal-bg-state .issue-progress i {
@@ -3114,7 +2756,6 @@ button:disabled {
 /* 透明后保留极淡分隔边 */
 .modal-bg-state .modal-pane,
 .modal-bg-edict .modal-pane,
-.modal-bg-state .info-cell,
 .modal-bg-edict .directive-item {
   border-color: rgba(255, 232, 170, 0.22) !important;
 }
@@ -3147,9 +2788,6 @@ button:disabled {
 }
 
 /* 深色底的徽章/主按钮文字保持浅色 */
-.modal-bg-state .command-badge,
-.modal-bg-chat .command-badge,
-.modal-bg-edict .command-badge,
 .modal-bg-state .primary-action {
   color: #ffe4b0 !important;
 }
@@ -3794,28 +3432,11 @@ button:disabled {
     overflow: hidden;
   }
 
-  .status-bar {
-    top: 3px;
-    width: calc(100vw - 6px);
-    min-height: 40px;
-    padding: 4px;
-  }
 
-  .status-bar .hud-divider {
-    display: none;
-  }
 
-  .status-metrics {
-    gap: 4px;
-  }
 
-  .status-emblem {
-    min-height: 30px;
-    padding: 4px 8px;
-  }
 
-  .status-money,
-  .status-pill {
+  .status-money {
     min-height: 29px;
     padding: 4px 6px;
   }
@@ -3837,43 +3458,12 @@ button:disabled {
     transform: translateY(0);
   }
 
-  .bottom-command-bar {
-    left: 10px;
-    bottom: 10px;
-    gap: 10px;
-    transform: none;
-  }
 
-  .command-art {
-    width: 50px;
-    height: 50px;
-  }
 
-  .command-caption b {
-    font-size: 0.72rem;
-  }
 
-  .command-caption small {
-    display: none;
-  }
 
-  .edict-turn-button {
-    right: 12px;
-    bottom: 12px;
-    width: 117px;
-    height: 117px;
-    padding: 11px;
-  }
 
-  .edict-turn-art {
-    width: 144px;
-    height: 144px;
-  }
 
-  .edict-turn-art img {
-    width: 144px;
-    height: 144px;
-  }
 
 
 
@@ -4337,23 +3927,6 @@ button:disabled {
 }
 
 /* ─── 游戏菜单 ─────────────────────────────────────────── */
-.status-menu {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 28px;
-  padding: 4px 10px;
-  margin-left: 6px;
-  border: 1px solid rgba(120, 80, 30, 0.4);
-  background: rgba(255, 248, 224, 0.6);
-  color: #4a3014;
-  border-radius: 4px;
-  font-size: 0.88rem;
-  cursor: pointer;
-}
-.status-menu:hover {
-  background: rgba(255, 240, 200, 0.85);
-}
 
 .game-menu {
   display: flex;
@@ -5401,13 +4974,7 @@ button:disabled {
 }
 
 /* 密令按钮——诏书图作背景裁切图标 */
-.command-art-secret {
-  object-fit: contain;
-}
 
-.command-badge-secret {
-  background: #8a2020 !important;
-}
 
 /* 作弊控制台（Ctrl+~）：terminal 风格，盖在最上层 */
 .cheat-console {
@@ -5531,50 +5098,9 @@ button:disabled {
    Right Nav Bar + Right Drawers
    ═══════════════════════════════════ */
 
-.right-nav-bar {
-  position: fixed;
-  top: 50%;
-  right: 0;
-  z-index: 14;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 0;
-  background: rgba(30, 18, 10, 0.88);
-  border-radius: 6px 0 0 6px;
-  border: 1px solid rgba(226, 180, 86, 0.22);
-  border-right: none;
-  box-shadow: -3px 0 12px rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(6px);
-}
 
-.right-nav-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border: none;
-  background: transparent;
-  color: rgba(226, 200, 150, 0.82);
-  font-size: 1.4rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 120ms, color 120ms;
-}
 
-.right-nav-btn:hover {
-  background: rgba(226, 180, 86, 0.18);
-  color: #ffe9b0;
-}
 
-.right-nav-btn.active {
-  background: rgba(157, 57, 43, 0.75);
-  color: #ffd08a;
-}
 
 
 
