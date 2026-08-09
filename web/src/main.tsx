@@ -84,6 +84,7 @@ export function App() {
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<{ campaign_id: string; night_id: number; chat_turn_id: number } | null>(null);
+  const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
   const [cheatDirective, setCheatDirective] = React.useState("");
@@ -97,6 +98,9 @@ export function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
+  const invalidateAudienceScroll = React.useCallback(() => {
+    setAudienceScrollGeneration((generation) => generation + 1);
+  }, []);
 
   // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
@@ -116,7 +120,7 @@ export function App() {
     sendChat: runAudienceTurn,
     cancelChat,
     // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废 poll-batch。
-  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat");
+  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat", invalidateAudienceScroll);
 
   // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。
   const applyDurableState = React.useCallback((data: GameState) => {
@@ -615,6 +619,7 @@ export function App() {
       });
       setExtractionPendingCount(Number(data?.count || 0));
       if ((data?.count || 0) === 0) {
+        invalidateAudienceScroll();
         setChatNotice("待补账本已补写完毕。");
       }
     } catch (err) {
@@ -1207,6 +1212,7 @@ export function App() {
             pendingUserMessage={pendingUserMessage}
             pendingIdentity={pendingIdentity}
             failedIdentity={failedIdentity}
+            scrollGeneration={audienceScrollGeneration}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
             chatFailures={activeChatFailures}

@@ -44,7 +44,7 @@ const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => 
 
 type HookApi = ReturnType<typeof useAudienceChat>;
 
-function mount(scrollMode: "audience" | "legacy" = "legacy") {
+function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = false) {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
   const setModalRef = { current: (_m: string) => {} };
@@ -52,11 +52,15 @@ function mount(scrollMode: "audience" | "legacy" = "legacy") {
     const selectedRef = React.useRef("温体仁");
     const [busy, setBusy] = React.useState("");
     const [activeModal, setActiveModal] = React.useState("chat");
+    const [scrollGeneration, setScrollGeneration] = React.useState(0);
+    const invalidateScroll = React.useCallback(() => setScrollGeneration((value) => value + 1), []);
     busyRef.current = busy;
     setModalRef.current = setActiveModal;
     // App 同款消费：chatOpen=activeModal==="chat"。chat-exit 归属逻辑在 hook 内部（生产真实
     // 消费的 controller）；测试只驱动 activeModal，退出取消经 hook 内置 effect，不复制退出胶水。
-    const hook = useAudienceChat(setBusy, selectedRef, activeModal === "chat");
+    const hook = useAudienceChat(
+      setBusy, selectedRef, activeModal === "chat", refreshOnEnd ? invalidateScroll : undefined,
+    );
     hookRef.current = hook;
     return (
       <ChatModal
@@ -68,6 +72,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy") {
         pendingUserMessage={hook.pendingUserMessage}
         pendingIdentity={hook.pendingIdentity}
         failedIdentity={hook.failedIdentity}
+        scrollGeneration={scrollGeneration}
         streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
@@ -93,6 +98,47 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
+  it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {
+    let scrollCalls = 0;
+    let resolveEnd!: () => void;
+    let ended = false;
+    const endGate = new Promise<void>((resolve) => { resolveEnd = resolve; });
+    const releaseEnd = () => { ended = true; resolveEnd(); };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp({
+          night_id: 24,
+          messages: !ended ? [] : [
+            { role: "scene", speaker: "", content: "新落账场景", chat_turn_id: 8 },
+          ],
+        });
+      }
+      return gatedSse(
+        [
+          { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
+          { event: "done", data: { history: [], suggestions: [], directives: [] } },
+        ],
+        endGate,
+        [{ event: "end", data: {} }],
+      );
+    }));
+    const { hookRef, rows } = mount("audience", true);
+    await tick();
+    expect(scrollCalls).toBe(1);
+
+    let sending!: Promise<void>;
+    act(() => { sending = hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
+    await tick();
+    const callsBeforeEnd = scrollCalls;
+    releaseEnd();
+    await act(async () => { await sending; });
+    await tick();
+
+    expect(scrollCalls).toBe(callsBeforeEnd + 1);
+    expect(document.body.textContent).toContain("新落账场景");
+  });
+
   it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
     let scrollCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

@@ -1351,6 +1351,10 @@ class WebGame:
         递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
         入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
         if self._persistent_chat_minister(minister_name):
+            # Lightweight stream seams intentionally expose neither a durable connection nor
+            # the night-aware projection signature. Production DBs always use the night owner.
+            if not hasattr(self.db, "conn"):
+                return self.db.build_chat_projection(minister_name)
             from ming_sim.audience_night import get_open_night
             night = get_open_night(self.db)
             return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
@@ -1538,7 +1542,7 @@ class WebGame:
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
             # 前端 setChat 不再抹掉先前浮现的读心递话。
@@ -2271,17 +2275,30 @@ class WebGame:
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         identity = {
-            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "campaign_id": "",
             "night_id": 0,
             "chat_turn_id": int(chat_turn_id or 0),
         }
-        # Publish the complete durable identity before LLM work. Every terminal event
-        # repeats it, so clients never infer ownership from text or a prior snapshot.
-        if chat_turn_id and hasattr(self.db, "conn"):
-            from ming_sim.audience_night import get_open_night
-            open_night = get_open_night(self.db)
-            identity["night_id"] = int(open_night["id"]) if open_night else 0
-            ev_queue.put({"type": "accepted", **identity})
+        # Identity setup is still between durable prologue and worker ownership. Any failure
+        # must close the durable turn and pending owner through the same terminal path as a
+        # worker failure, rather than escaping this SSE generator.
+        try:
+            if hasattr(self.db, "kv_get"):
+                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if chat_turn_id and hasattr(self.db, "conn"):
+                from ming_sim.audience_night import get_open_night
+                open_night = get_open_night(self.db)
+                identity["night_id"] = int(open_night["id"]) if open_night else 0
+                ev_queue.put({"type": "accepted", **identity})
+        except Exception as error:  # noqa: BLE001
+            try:
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
+            self._complete_pending_write()
+            yield {"type": "error", "message": str(error), **identity}
+            return
 
         def emit_delta(delta: str) -> None:
             ev_queue.put({"type": "delta", "content": delta})
