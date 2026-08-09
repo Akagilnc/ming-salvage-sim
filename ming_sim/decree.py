@@ -50,6 +50,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
+from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -489,8 +490,17 @@ def resolve_directives(
         if stored:
             verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
         else:
+            reviewed, exempt = [], []
+            for dossier in proposed_dossiers:
+                payload = dossier.get("payload")
+                if not isinstance(payload, dict):
+                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                (reviewed if dossier_action_policy(
+                    dossier.get("action_type"), payload,
+                )["external_review"] else exempt).append(dossier)
             provider = promulgation_verdict_provider or stub_promulgation_verdicts
-            generated = provider(proposed_dossiers, state)
+            generated = provider(reviewed, state) if reviewed else []
+            generated = list(generated) + stub_promulgation_verdicts(exempt, state)
             verdict_rows = validate_promulgation_verdicts(
                 generated, proposed_dossiers, db,
             )
