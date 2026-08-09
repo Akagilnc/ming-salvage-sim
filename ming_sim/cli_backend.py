@@ -1560,7 +1560,12 @@ def _loads_lenient(
     return obj if isinstance(obj, accepted_types) else None
 
 
-def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
+def enrich_initiative_effects(
+    title: str,
+    stage: str = "",
+    llm_config: Any = None,
+    origin_ref: str = "",
+) -> Dict[str, Any]:
     """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
     按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
     纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
@@ -1620,10 +1625,33 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     for b in _bld:
         if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
             b["region_id"] = "beizhili"
+
+    # Enriched mechanics are children of the issue being created.  Stamp the
+    # canonical parent source deterministically rather than asking the model to
+    # copy an authority token reliably.
+    def _stamp(effect: Dict[str, Any]) -> None:
+        if not origin_ref:
+            return
+        for key in ("economy", "buildings", "new_armies", "人物变更", "character_status_changes"):
+            items = effect.get(key)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        item["origin_ref"] = origin_ref
+        for key in ("region_delta", "army_delta", "power_updates"):
+            items = effect.get(key)
+            if isinstance(items, dict):
+                for item in items.values():
+                    if isinstance(item, dict):
+                        item["origin_ref"] = origin_ref
+    ongoing = _d(norm.get("ongoing_effects"))
+    failed = _d(norm.get("effect_on_fail"))
+    for effect in (resolve, ongoing, failed):
+        _stamp(effect)
     return {
         "effect_on_resolve": resolve,
-        "ongoing_effects": _d(norm.get("ongoing_effects")),
-        "effect_on_fail": _d(norm.get("effect_on_fail")),
+        "ongoing_effects": ongoing,
+        "effect_on_fail": failed,
     }
 
 

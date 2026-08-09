@@ -1028,6 +1028,12 @@ def _apply_economy_list(
                 and not explicit_target
                 and (pay_arrears_pool_army_ids is None or allowed_pool_ids)
             ):
+                # The pooled path mutates treasury, both arrears ledgers and logs;
+                # provenance must be authorized before the first of those writes.
+                origin_error = db.effect_origin_rejection(origin_ref) if require_origin else None
+                if origin_error:
+                    applied.append({"account": account, **origin_error, "item": move})
+                    continue
                 budget = abs(delta)
                 spent = _auto_pay_arrears_by_priority(
                     db,

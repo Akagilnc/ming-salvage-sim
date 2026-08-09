@@ -1855,7 +1855,16 @@ class GameDB:
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
         self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
-        self.ensure_column("economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''")
+        origin_column_added = self.ensure_column(
+            "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
+        )
+        if origin_column_added:
+            self.conn.execute(
+                """UPDATE economy_ledger
+                   SET origin_ref='dossier:' || dossier_id
+                   WHERE dossier_id > 0
+                     AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
+            )
         self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
         for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
             self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
@@ -5929,7 +5938,7 @@ class GameDB:
                         })
                         continue
 
-                if require_origin and value not in (0, ""):
+                if require_origin and field not in REGION_TEXT_FIELDS and value not in (0, ""):
                     origin_error = self.effect_origin_rejection(origin_ref)
                     if origin_error:
                         changes.append({"region": row["name"], "field": field, **origin_error,
@@ -6020,6 +6029,12 @@ class GameDB:
                             continue
                     if not text_value or text_value == str(old_value):
                         continue
+                    if require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     stored_new = text_value
                     log_delta = None
                 self.conn.execute(
@@ -6053,7 +6068,10 @@ class GameDB:
                     and str(stored_new) == "ming"
                     and str(old_value) != "ming"
                 ):
-                    extra = self._apply_on_restore(state, region_id, event, edict_id, actor, reason)
+                    extra = self._apply_on_restore(
+                        state, region_id, event, edict_id, actor, reason,
+                        origin_ref=origin_ref,
+                    )
                     changes.extend(extra)
         if commit:
             self.conn.commit()
@@ -6067,6 +6085,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         reason: str,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         """收复瞬间用 region.on_restore 覆盖主字段，记 region_logs。"""
         region_def = self.content.regions.get(region_id)
@@ -6092,11 +6111,11 @@ class GameDB:
                         continue
                     fiscal[sub_field] = new_sub
                     self.conn.execute(
-                        "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (state.turn, state.year, state.period, region_id,
                          sub_field, str(old_sub), str(new_sub), new_sub - int(old_sub),
-                         f"收复重置：{reason}", event.id, edict_id, actor),
+                         f"收复重置：{reason}", event.id, edict_id, actor, origin_ref),
                     )
                     out.append({
                         "region": row["name"], "field": sub_field,
@@ -6126,11 +6145,11 @@ class GameDB:
             )
             log_delta = (int(new_val) - int(old_val)) if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS) else None
             self.conn.execute(
-                "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (state.turn, state.year, state.period, region_id,
                  raw_field, str(old_val), str(new_val), log_delta,
-                 f"收复重置：{reason}", event.id, edict_id, actor),
+                 f"收复重置：{reason}", event.id, edict_id, actor, origin_ref),
             )
             out.append({
                 "region": row["name"], "field": raw_field,
