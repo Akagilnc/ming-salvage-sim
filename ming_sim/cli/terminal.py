@@ -781,7 +781,7 @@ def play_turn(session: GameSession) -> None:
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 result = session.advance_without_decree()
-                _submit_first_cli_decisions(session, result)
+                report = _submit_first_cli_decisions(session, result)
             except (ValueError, SettlementAbort) as error:
                 # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 print(f"\n{error}")
@@ -792,6 +792,9 @@ def play_turn(session: GameSession) -> None:
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
             )
+            if result is not None:
+                print(report)
+                session.end_turn()
             return
         if action == "issue":
             turn_before = int(session.state.turn)

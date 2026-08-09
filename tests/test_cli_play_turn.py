@@ -522,6 +522,22 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
         assert session.calls == ["begin", "resolve", "end"]
 
 
+def test_play_turn_skip_prints_dossier_settlement_report_and_ends_turn(monkeypatch, capsys):
+    session = _Sess(RuntimeError("unused"))
+    session.current_phase = lambda: TurnPhase.REVIEWING
+    session.advance_without_decree = lambda: SimpleNamespace(
+        awaiting=False, report="留中案卷本月重判月报",
+    )
+    monkeypatch.setattr(term, "review_directives", lambda _s: "skip")
+    monkeypatch.setattr(term, "_print_header", lambda _s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda _db: None)
+
+    term.play_turn(session)
+
+    assert "留中案卷本月重判月报" in capsys.readouterr().out
+    assert session.calls == ["begin", "end"]
+
+
 def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys):
     class Session:
         previous_summary = ""

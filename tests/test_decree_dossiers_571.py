@@ -1019,10 +1019,15 @@ def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
     session.db = db
     session.state = state
 
-    with pytest.raises(ValueError, match="逐道旨稿"):
+    with pytest.raises(ValueError, match="逐道旨意入口"):
         session.set_decree("不再拨款")
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
+
+    db.delete_directive(directive_id)
+    with pytest.raises(ValueError, match="逐道旨意入口"):
+        session.set_decree("孤立聚合正文")
+    assert not getattr(session, "last_decree", "")
 
 
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
@@ -1699,7 +1704,17 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
     assert result["validate_shape_rejections"][0]["category"] == "missing_ref"
 
 
-def test_invalid_promulgation_decision_stops_before_simulation(game, monkeypatch):
+@pytest.mark.parametrize("bad_id,bad_decision,match", [
+    ("abc", "promulgated", "dossier_id"),
+    ({"id": 1}, "promulgated", "dossier_id"),
+    (True, "promulgated", "dossier_id"),
+    (1.0, "promulgated", "dossier_id"),
+    (2 ** 63, "promulgated", "dossier_id"),
+    (None, "approve", "decision"),
+])
+def test_invalid_promulgation_decision_stops_before_simulation(
+    game, monkeypatch, bad_id, bad_decision, match,
+):
     import ming_sim.decree as decree_mod
     from ming_sim.exceptions import LLMContractError
 
@@ -1712,14 +1727,14 @@ def test_invalid_promulgation_decision_stops_before_simulation(game, monkeypatch
     monkeypatch.setattr(
         decree_mod, "run_agent_text",
         lambda *_a, **_k: json.dumps({
-            "verdicts": [{"dossier_id": dossier_id, "decision": "approve"}],
+            "verdicts": [{"dossier_id": bad_id, "decision": bad_decision}],
         }),
     )
     forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", forbidden)
     monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", forbidden)
 
-    with pytest.raises(LLMContractError, match="decision"):
+    with pytest.raises(LLMContractError, match=match):
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "清核河工", content=content,
         )

@@ -419,6 +419,13 @@ def resolve_directives(
             for row in generated
         ):
             raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+        if any(
+            isinstance(row.get("dossier_id"), bool)
+            or not isinstance(row.get("dossier_id"), int)
+            or not 0 < row["dossier_id"] <= 2 ** 63 - 1
+            for row in generated
+        ):
+            raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
         verdict_rows = generated
         verdict_ids = {
             int(row.get("dossier_id") or 0)
@@ -449,10 +456,28 @@ def resolve_directives(
             or str(row.get("settlement_verdict") or "") == "promulgated"
         )
     ]
+    current_decree_ids = set(verdict_by_id)
+    current_decree_ids.update(
+        int(row["dossier_id"])
+        for row in db.conn.execute(
+            "SELECT dossier_id FROM decree_dossier_decisions "
+            "WHERE turn=? AND (decision='promulgated' OR rescript_action='force_promulgated')",
+            (int(state.turn),),
+        ).fetchall()
+    )
+    current_decree_ids.update(
+        int(row["dossier_id"])
+        for row in db.conn.execute(
+            "SELECT dossier_id FROM decree_dossier_decisions "
+            "WHERE turn=? AND rescript_action='force_promulgated'",
+            (int(state.turn) - 1,),
+        ).fetchall()
+    )
     executable_decree_text = "\n".join(
         str(row.get("decree_text") or "").strip()
         for row in dossier_payload
-        if str(row.get("decree_text") or "").strip()
+        if int(row["id"]) in current_decree_ids
+        and str(row.get("decree_text") or "").strip()
     )
 
     # 1.8) 历史脉络：取近几回合章节记忆注入推演（章节记忆取代旧的关键词原子检索）。

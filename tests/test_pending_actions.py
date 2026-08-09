@@ -1838,7 +1838,7 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
 
     applied = db.commit_pending_actions(state, content=content, registry=None)
     assert any(item["kind"] == "office" for item in applied)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
         promulgate_proposed_appointments(db, state, content)
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (new_name,)

@@ -5406,7 +5406,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     office_rows = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT character_name, office_title, office_type, source, updated_at "
+            "SELECT character_name, office_title, office_type, source, dossier_id, updated_at "
             "FROM character_offices"
         ).fetchall()
     ]
