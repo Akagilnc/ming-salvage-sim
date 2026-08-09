@@ -14,11 +14,13 @@ export function ReportModal({
 }) {
   const activeText = stripOrganicMarkdown(report);
   return (
-    <FullscreenModal title="月末邸报" subtitle="本月故事" bgClass="modal-bg-state" onClose={onClose}>
-      <article className="state-document modal-scroll">
-        <div className="document-section">
-          <pre className="memorial-text">{activeText}</pre>
+    <FullscreenModal title="邸报" subtitle="本月故事" bgClass="modal-bg-gazette" onClose={onClose}>
+      <article className="gazette-document modal-scroll">
+        <div className="gazette-masthead">
+          <b>邸报</b>
+          <span>本月故事 · 通政使司发抄</span>
         </div>
+        <pre className="memorial-text">{activeText}</pre>
       </article>
     </FullscreenModal>
   );
