@@ -73,7 +73,7 @@ export type StreamChatOptions = {
     chat_turn_id: number;
   }) => void;
   /** 玩家问话已持久化并开夜；先于模型生成/失败返回。 */
-  onAccepted?: (payload: { night_id: number }) => void;
+  onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
   onDone?: (payload: ChatResponse) => void;
 };
@@ -118,7 +118,11 @@ export const streamChat = async (
       if (!parsed) continue;
       const payload = JSON.parse(parsed.data);
       if (parsed.event === "accepted") {
-        options.onAccepted?.({ night_id: Number(payload.night_id || 0) });
+        options.onAccepted?.({
+          campaign_id: String(payload.campaign_id || ""),
+          night_id: Number(payload.night_id || 0),
+          chat_turn_id: Number(payload.chat_turn_id || 0),
+        });
       } else if (parsed.event === "delta") {
         onDelta(String(payload.content || ""));
       } else if (parsed.event === "done") {

@@ -54,8 +54,8 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
 
     assert response.headers["content-type"].startswith("text/event-stream")
     assert events == [
-        ("accepted", {"night_id": int(persisted["id"])}),
-        ("error", {"message": "reply failed"}),
+        ("accepted", {"campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
+        ("error", {"message": "reply failed", "campaign_id": "", "night_id": int(persisted["id"]), "chat_turn_id": 1}),
     ]
     assert int(persisted["id"]) != old_night_id
     assert int(persisted["turn"]) == int(state.turn)
@@ -278,8 +278,42 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     entries = [item for item in payload["turns"] if item["turn"] == state.turn]
 
     assert [item["night_id"] for item in entries] == [first, second]
+    assert [(item["kind"], item["time_of_day"], item["location"]) for item in entries] == [
+        ("night", "戌时", "乾清宫"), ("night", "戌时", "乾清宫"),
+    ]
     assert all(not item["has_report"] and not item["has_directive"] for item in entries)
     assert all("has_extraction" not in item for item in entries)
+
+
+def test_personal_projection_only_reads_the_current_open_night(game):
+    db, state, _ = game
+    old_night = _night(db, state)
+    _chat(db, state, old_night, "杨嗣昌", "旧夜问话", "旧夜答复", 10)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (old_night,))
+    current_night = _night(db, state)
+    current_turn = _chat(db, state, current_night, "杨嗣昌", "本夜问话", "本夜答复", 10)
+
+    projection = db.build_chat_projection("杨嗣昌")
+
+    assert [message["content"] for message in projection] == ["本夜问话", "本夜答复"]
+    assert {message["chat_turn_id"] for message in projection} == {current_turn}
+
+
+def test_ending_timeline_consumes_monthly_archive_once_not_scene_rows():
+    from ming_sim.memories import build_timeline
+
+    class FakeDB:
+        def list_chapter_memories(self, upto_turn=None): return []
+        def list_monthly_archives(self):
+            return [{"turn": 7, "year": 1628, "period": 3}]
+        def list_archived_turns(self):
+            raise AssertionError("scene-combined archive must not drive ending timeline")
+        def get_turn_extraction(self, turn): return None
+
+    assert build_timeline(FakeDB()) == [{
+        "turn": 7, "year": 1628, "period": 3,
+        "decree_brief": "", "effect_brief": "", "chapter": "",
+    }]
 
 
 def test_history_projection_handlers_are_sync_for_sqlite_access():

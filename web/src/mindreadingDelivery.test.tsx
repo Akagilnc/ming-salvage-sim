@@ -60,11 +60,13 @@ function mount() {
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} portraitPrefix="minister_"
+        minister={MINISTER} portraitPrefix="minister_" scrollMode="legacy"
+        currentCampaignId={hook.currentCampaignId}
         currentNightId={hook.currentNightId}
-        undoneChatTurnId={null}
+        undoneChatIdentity={null}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
+        pendingIdentity={hook.pendingIdentity}
         streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}

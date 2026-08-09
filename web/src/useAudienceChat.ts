@@ -1,7 +1,7 @@
 import React from "react";
 import { api, pollMindreadingUntilReady, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
 
 /**
  * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流、历史加载、读心轮询、
@@ -27,6 +27,7 @@ export type AudienceHistoryData = {
   mindreading_pending?: boolean;
   /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
   pending_turn_ids?: number[];
+  campaign_id: string;
   /** Persisted current open-night identity; 0 means no open audience night. */
   night_id: number;
   /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
@@ -52,7 +53,9 @@ export function useAudienceChat(
 ) {
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
+  const [pendingIdentity, setPendingIdentity] = React.useState<ChatIdentity | null>(null);
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
+  const [currentCampaignId, setCurrentCampaignId] = React.useState("");
   const [currentNightId, setCurrentNightId] = React.useState<number>(0);
   // 短暂请求归属：每次 sendChat 自增。
   const requestTokenRef = React.useRef(0);
@@ -84,12 +87,15 @@ export function useAudienceChat(
     pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
+    setPendingIdentity(null);
     setStreamingMinisterMessage("");
+    setCurrentCampaignId("");
     setCurrentNightId(0);
   }, []);
 
   const clearPendingText = React.useCallback(() => {
     setPendingUserMessage("");
+    setPendingIdentity(null);
     setStreamingMinisterMessage("");
   }, []);
 
@@ -110,6 +116,7 @@ export function useAudienceChat(
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
+      setCurrentCampaignId(String(data.campaign_id || ""));
       setCurrentNightId(Number(data.night_id || 0));
       // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
       const batch = ++pollBatchRef.current;
@@ -141,6 +148,7 @@ export function useAudienceChat(
       const panelMatches = () => selectedMinisterRef.current === minister;
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
       setPendingUserMessage(message);
+      setPendingIdentity(null);
       setStreamingMinisterMessage("");
       setBusy("大臣思索中");
       try {
@@ -152,13 +160,18 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
-            onAccepted: ({ night_id }) => {
-              if (panelMatches()) setCurrentNightId(night_id);
+            onAccepted: (identity) => {
+              if (panelMatches()) {
+                setCurrentCampaignId(identity.campaign_id);
+                setCurrentNightId(identity.night_id);
+                setPendingIdentity(identity);
+              }
             },
             onDone: (doneData) => {
               // 短暂请求态按 token 回收
               if (ownsEphemeral()) {
                 setPendingUserMessage("");
+                setPendingIdentity(null);
                 setStreamingMinisterMessage("");
                 setBusy("");
               }
@@ -185,6 +198,7 @@ export function useAudienceChat(
       } catch (err) {
         if (!ownsEphemeral()) return;  // 旧流尾巴：绝不触碰更新请求的短暂态
         setPendingUserMessage("");
+        setPendingIdentity(null);
         setStreamingMinisterMessage("");
         if (err instanceof Error && err.name === "AbortError") cb.onLeave?.();
         else cb.onError?.(err);
@@ -202,8 +216,10 @@ export function useAudienceChat(
 
   return {
     chat,
+    currentCampaignId,
     currentNightId,
     pendingUserMessage,
+    pendingIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
