@@ -385,6 +385,68 @@ def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
     assert db.list_dossier_link_rejections(pending_action_id=action_id)
 
 
+def test_serial_and_parallel_join_share_proposal_normalization(monkeypatch):
+    candidates = [{"id": 11, "decree_text": "辽饷"}]
+    mixed = [
+        {"target_dossier_id": 11, "relation_type": " 护卫 ", "note": " 护送 "},
+        {"target_dossier_id": 11, "relation_type": "稽核", "note": "   "},
+        {"target_dossier_id": 11, "relation_type": "越权", "note": "坏类型"},
+        {"target_dossier_id": True, "relation_type": "护卫", "note": "坏 ID"},
+        {"target_dossier_id": 99, "relation_type": "接应", "note": "不可见"},
+    ]
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
+            {"target_dossier_id": 11, "relation_type": "护卫"},
+            {"target_dossier_id": 11, "relation_type": "稽核"},
+        ]}, ensure_ascii=False), 1),
+    )
+
+    normalized = cli_backend._normalize_dossier_link_proposals(candidates, mixed)
+    serial = cli_backend.confirm_dossier_links("臣确认护卫辽饷。", candidates, mixed)
+    confirmed = {(11, "护卫"), (11, "稽核")}
+    parallel_join = [item for identity, item in normalized.items() if identity in confirmed]
+
+    assert serial == parallel_join == [
+        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}
+    ]
+
+
+def test_parallel_cli_bad_link_does_not_roll_back_valid_secret_order(game, monkeypatch):
+    db, state, content = game
+    target = _make_dossier(db, state, "辽东补饷")
+    db.record_dossier_decision(target, "promulgated")
+    extracted = {
+        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
+        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "   "}],
+    }
+
+    def runner(*args, **kwargs):
+        value = ({"confirmed_links": [
+            {"target_dossier_id": target, "relation_type": "护卫"}
+        ]} if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
+        return json.dumps(value, ensure_ascii=False), 1
+
+    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = SimpleNamespace(refresh=lambda _name: None)
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+
+    result = sess.apply_cli_conversation_actions(
+        SimpleNamespace(name="毕自严", office_type="户部"),
+        "密令：护行辽饷。", "臣明确确认护卫辽东补饷。",
+        has_directive=False, secret_order_id=None,
+    )
+    applied = db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
+
+    assert [item["id"] for item in applied] == [result["pending_action_id"]]
+    assert db.list_pending_actions(state.turn, status="failed") == []
+    order = db.list_secret_orders(minister_name="毕自严")[0]
+    source = db.get_dossier_for_secret_order(order["id"])
+    assert db.list_dossier_links(source["id"]) == []
+
+
 def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
     import threading
     barrier = threading.Barrier(2)
