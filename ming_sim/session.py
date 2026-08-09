@@ -1231,6 +1231,13 @@ class GameSession:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
             augmented = brief + "\n\n" + augmented
+        candidates = self.db.list_referenceable_dossiers(character.name, self.state.turn)
+        if candidates:
+            dossier_brief = "【可引用旧案卷（密令关联须由大臣复述具体编号）】\n" + "\n".join(
+                f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
+                for row in candidates
+            )
+            augmented = dossier_brief + "\n\n" + augmented
         # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
         # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
         # 的组装输入不含殿内对话（区间取数复用 audible_entries_for，御前低语不流入）。
@@ -1487,7 +1494,9 @@ class GameSession:
         if needs_draft_fallback or needs_secret_fallback:
             acts = resolve_minister_actions(
                 reply, player_message, default_assignee=minister_name, llm_config=llm_config,
-                secret_context=secret_context)
+                secret_context=secret_context,
+                dossier_candidates=self.db.list_referenceable_dossiers(
+                    minister_name, self.state.turn))
         else:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:

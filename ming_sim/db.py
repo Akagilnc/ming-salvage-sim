@@ -9863,6 +9863,27 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
+    def list_referenceable_dossiers(
+        self, character_name: str, current_turn: int,
+    ) -> List[Dict[str, object]]:
+        """List older dossiers visible to this audience participant.
+
+        Promulgated decrees are public; a secret-order dossier is visible only
+        to its assignee.  API tools and CLI extraction share this capability
+        boundary rather than independently guessing dossier IDs.
+        """
+        rows = self.conn.execute(
+            """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
+                      s.title AS secret_title
+               FROM decree_dossiers d
+               LEFT JOIN secret_orders s ON s.id=d.secret_order_id
+               WHERE d.created_turn <= ?
+                 AND (d.secret_order_id IS NULL OR s.minister_name = ?)
+               ORDER BY d.id DESC""",
+            (int(current_turn), str(character_name or "")),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     _DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
     def _record_dossier_link_rejection(
