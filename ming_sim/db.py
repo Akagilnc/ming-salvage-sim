@@ -15,6 +15,7 @@ import sqlite3
 from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
+from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -783,6 +784,7 @@ class GameDB:
                 office_type TEXT NOT NULL,
                 source TEXT NOT NULL,
                 dossier_id INTEGER,
+                appointment_tenure TEXT NOT NULL DEFAULT '真除',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
@@ -795,6 +797,7 @@ class GameDB:
                 office_type TEXT NOT NULL,
                 source TEXT NOT NULL,
                 dossier_id INTEGER,
+                appointment_tenure TEXT NOT NULL DEFAULT '真除',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
             );
@@ -1780,6 +1783,12 @@ class GameDB:
         self.ensure_column(
             "turn_directives", "dossier_payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("character_offices", "dossier_id", "INTEGER")
+        self.ensure_column(
+            "character_offices", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
+        )
+        self.ensure_column(
+            "office_change_records", "appointment_tenure", "TEXT NOT NULL DEFAULT '真除'"
+        )
         self.ensure_column("skill_grants", "dossier_id", "INTEGER")
         self.ensure_column(
             "decree_dossiers", "execution_outcome", "TEXT NOT NULL DEFAULT ''")
@@ -2704,18 +2713,21 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO character_offices
-                (character_name, office_title, office_type, source, dossier_id)
-            VALUES (?, ?, ?, ?, ?)
+                (character_name, office_title, office_type, source, dossier_id,
+                 appointment_tenure)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(character_name) DO UPDATE SET
                 office_title = excluded.office_title,
                 office_type = excluded.office_type,
                 source = excluded.source,
                 dossier_id = excluded.dossier_id,
+                appointment_tenure = excluded.appointment_tenure,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
                 name, office, office_type, source,
                 int(getattr(self.conn, "_materializing_dossier_id", 0) or 0) or None,
+                str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
             ),
         )
         dossier_id = int(
@@ -2725,10 +2737,14 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO office_change_records
-                    (character_name,office_title,office_type,source,dossier_id)
-                VALUES (?,?,?,?,?)
+                    (character_name,office_title,office_type,source,dossier_id,
+                     appointment_tenure)
+                VALUES (?,?,?,?,?,?)
                 """,
-                (name, office, office_type, source, dossier_id),
+                (
+                    name, office, office_type, source, dossier_id,
+                    str(getattr(self.conn, "_appointment_tenure", "真除") or "真除"),
+                ),
             )
 
     def _ensure_event_parents(self) -> None:
@@ -9747,6 +9763,10 @@ class GameDB:
         """在成案点落一条独立案卷；幂等键只使用真实 (>0) 来源 id。"""
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
+        normalized_payload = dict(payload or {})
+        if action == "appointment":
+            normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
+            normalized_payload.pop("appointment_tenure", None)
         if not action or not text:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
@@ -9802,7 +9822,7 @@ class GameDB:
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
-                text, json.dumps(payload or {}, ensure_ascii=False), status,
+                text, json.dumps(normalized_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
@@ -11283,6 +11303,10 @@ class GameDB:
             faction = str(payload.get("faction") or "中立").strip() or "中立"
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
+            try:
+                appointment_tenure = appointment_tenure_from(payload)
+            except ValueError:
+                return False
             recommendation = payload.get("recommendation")
             staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
             recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
@@ -11306,7 +11330,8 @@ class GameDB:
                     res = apply_office_appointment(
                         self, state, content, registry, name, office,
                         reason=reason, new_office_type=office_type,
-                        faction=faction, llm_config=self.llm_config, commit=False)
+                        faction=faction, appointment_tenure=appointment_tenure,
+                        llm_config=self.llm_config, commit=False)
                     accepted = not res.get("rejected")
                     if accepted:
                         self.record_recommendation(
@@ -11315,7 +11340,8 @@ class GameDB:
                     return accepted
             res = apply_office_appointment(
                 self, state, content, registry, name, office,
-                reason=reason, new_office_type=office_type, faction=faction, llm_config=self.llm_config)
+                reason=reason, new_office_type=office_type, faction=faction,
+                appointment_tenure=appointment_tenure, llm_config=self.llm_config)
             return not res.get("rejected")
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
