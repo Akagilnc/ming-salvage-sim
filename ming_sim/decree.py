@@ -265,7 +265,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     return bool(db.list_monthly_dossier_progress_nudges()) or bool(
         db.list_decree_dossiers(status="proposed")
     ) or any(
-        row.get("kind") == "directive"
+        row.get("kind") in {"directive", "secret_order"}
         for row in db.list_pending_actions(state.turn)
     )
 

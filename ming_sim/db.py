@@ -1287,6 +1287,7 @@ class GameDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn_issued INTEGER NOT NULL,
                 due_turn INTEGER NOT NULL DEFAULT 0,
+                deadline_span INTEGER NOT NULL DEFAULT 0,
                 year_issued INTEGER NOT NULL,
                 period_issued INTEGER NOT NULL,
                 minister_name TEXT NOT NULL,
@@ -1750,6 +1751,13 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+        if self.ensure_column(
+            "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
+        ):
+            self.conn.execute(
+                "UPDATE secret_orders SET deadline_span="
+                "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
+            )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
         # #566/#883: monthly reports are private derivatives of the order itself;
         # no parallel dossier report store is authorized.
@@ -9804,7 +9812,7 @@ class GameDB:
             SELECT d.*, s.tags FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
-              AND s.due_turn-s.turn_issued >= 2
+              AND s.deadline_span >= 2
             ORDER BY d.id
             """
         ).fetchall()
@@ -9839,7 +9847,9 @@ class GameDB:
             if not isinstance(item, dict):
                 raise ValueError("长差月报格式无效")
             try:
-                dossier_id = int(item.get("dossier_id", 0))
+                dossier_id = strict_int(item.get("dossier_id", 0))
+                if dossier_id <= 0:
+                    raise ValueError("not positive")
             except (TypeError, ValueError) as exc:
                 raise ValueError("长差月报案卷编号无效") from exc
             band = str(item.get("progress_band") or "").strip()
@@ -13478,10 +13488,10 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO secret_orders
-                    (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
-                (state.turn, due_turn, state.year, state.period, minister_name, title, content, tags_json, importance,
+                (state.turn, due_turn, deadline, state.year, state.period, minister_name, title, content, tags_json, importance,
                  json.dumps(snapshot_excluded_names, ensure_ascii=False),
                  json.dumps(exclusion_targets_payload, ensure_ascii=False)),
             )
@@ -13628,9 +13638,9 @@ class GameDB:
         with atomic(self):
             if deadline:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, excluded_names=?, excluded_targets=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, excluded_names=?, excluded_targets=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, int(state.turn) + deadline,
+                    (persisted_title, content, tags_json, int(state.turn) + deadline, deadline,
                      json.dumps(excluded_names, ensure_ascii=False), json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
             else:
@@ -13949,7 +13959,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     UPDATE secret_orders
-                    SET status = 'pending_review', due_turn = ?, result = ?, updated_at=CURRENT_TIMESTAMP
+                    SET status = 'pending_review', due_turn = ?, deadline_span = 0,
+                        result = ?, updated_at=CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (int(state.turn), "\n".join(lines), int(order_id)),
@@ -13962,10 +13973,10 @@ class GameDB:
                 self.conn.execute(
                     """
                     UPDATE secret_orders
-                    SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (due_turn, "\n".join(lines), int(order_id)),
+                    (due_turn, months, "\n".join(lines), int(order_id)),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)
