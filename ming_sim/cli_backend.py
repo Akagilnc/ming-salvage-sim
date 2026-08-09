@@ -52,7 +52,6 @@ from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 # #529 owns interim-office capture/materialization.  Keep the #471 dossier
 # vocabulary compatible, but do not let manual/draft extraction create it yet.
 DRAFT_ACTION_TYPES = DIRECTIVE_ACTION_TYPES - {"acting_appointment"}
-from ming_sim.strict_types import strict_int
 
 # agy 是自治编程 agent：给它仓库目录当 workspace，它会跑去翻源码/DB 研究问题，
 # 行动计划（英文）泄进角色对话 + 元游戏泄漏。给它一个空目录当 cwd，无可探。
@@ -993,44 +992,6 @@ def classify_cli_action_intent(
     return candidates_from_classifier_payload(obj, soft=True)
 
 
-def _normalize_draft_mechanics(action: str, values: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-    """Single/multi draft shared mechanical completeness boundary."""
-    mechanical = {
-        "amount": values.get("amount"),
-        "account": str(values.get("account") or "").strip(),
-        "execution_surface": str(values.get("execution_surface") or "").strip(),
-        "assignee": str(values.get("assignee") or "").strip(),
-        "authorization_id": str(values.get("authorization_id") or "").strip(),
-        "deadline_months": values.get("deadline_months"),
-    }
-    for key in ("amount", "deadline_months"):
-        try:
-            mechanical[key] = strict_int(
-                mechanical[key], accept_numeric_strings=False
-            ) if mechanical[key] is not None else None
-        except ValueError:
-            mechanical[key] = None
-    if action == "grant_allocation" and not (
-        mechanical["amount"] is not None and mechanical["amount"] > 0
-        and mechanical["account"]
-        and mechanical["execution_surface"] in {"immediate", "in_transit"}
-    ):
-        action = "special_decree"
-    elif action == "assignment" and not mechanical["assignee"]:
-        action = "special_decree"
-    elif action == "authorization" and not (
-        mechanical["authorization_id"] and mechanical["assignee"]
-    ):
-        action = "special_decree"
-    elif action == "military_order" and not (
-        mechanical["assignee"]
-        and mechanical["deadline_months"] is not None
-        and mechanical["deadline_months"] > 0
-    ):
-        action = "special_decree"
-    return action, mechanical
-
-
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
@@ -1098,7 +1059,7 @@ def extract_draft_intent(
             if action not in DRAFT_ACTION_TYPES:
                 invalid_batch = True
                 break
-            raw_mechanical = {
+            mechanical = {
                 target: value.get(source)
                 for source, target in (
                     ("金额", "amount"), ("账户", "account"),
@@ -1106,7 +1067,6 @@ def extract_draft_intent(
                     ("授权ID", "authorization_id"), ("期限月数", "deadline_months"),
                 )
             }
-            action, mechanical = _normalize_draft_mechanics(action, raw_mechanical)
             drafts.append({
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
@@ -1210,15 +1170,12 @@ def extract_draft_intent(
     if target_kind not in {"policy", "character", "office", "army", "region", "issue", "account"}:
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "").strip()
-    dossier_action, mechanical = _normalize_draft_mechanics(dossier_action, {
+    mechanical = {
         "amount": obj.get("金额"), "account": obj.get("账户"),
-        "execution_surface": (
-            str(obj.get("执行面") or "in_transit")
-            if dossier_action == "grant_allocation" else ""
-        ),
+        "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
         "deadline_months": obj.get("期限月数"),
-    })
+    }
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}

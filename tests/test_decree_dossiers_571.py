@@ -109,7 +109,7 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     ]
     canned = {
         "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
-        "目标ID": "granary-audit", "参与人": roster,
+        "目标ID": "granary-audit", "承办人": minister, "参与人": roster,
     }
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
@@ -2458,22 +2458,46 @@ def test_in_transit_allocation_requires_execution_verdict(game):
 
 
 @pytest.mark.parametrize("value", [True, 1.5, 2.9, "3"])
-def test_draft_mechanical_integers_do_not_coerce_non_integer_types(value):
-    from ming_sim.cli_backend import _normalize_draft_mechanics
-
-    action, _ = _normalize_draft_mechanics("grant_allocation", {
+def test_durable_allocation_rejects_non_integer_amount_without_downgrade(game, value):
+    db, state, _content = game
+    minister = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(state.turn, minister, {
+        "text": "拨帑赈济。", "actor": minister,
+        "dossier_action_type": "grant_allocation",
+        "target_kind": "issue", "target_id": "invalid-allocation",
         "amount": value, "account": "国库", "execution_surface": "immediate",
     })
-    assert action == "special_decree"
 
+    with pytest.raises(ValueError, match="拨帑旨意缺少正数 amount 或 account"):
+        db.commit_pending_actions(
+            state, kind_filter="directive", action_ids=[candidate_id],
+            directive_status="draft",
+        )
 
-def test_military_order_without_assignee_downgrades_before_commit():
-    from ming_sim.cli_backend import _normalize_draft_mechanics
-
-    action, _ = _normalize_draft_mechanics(
-        "military_order", {"deadline_months": 3, "assignee": ""},
+    assert not any(
+        row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
     )
-    assert action == "special_decree"
+
+
+def test_durable_military_order_without_assignee_fails_loudly(game):
+    db, state, _content = game
+    minister = _active_minister(db)
+    candidate_id = db.stage_directive_candidate(state.turn, minister, {
+        "text": "三月内整军。", "actor": minister,
+        "dossier_action_type": "military_order",
+        "target_kind": "army", "target_id": "capital-army",
+        "deadline_months": 3, "assignee": "",
+    })
+
+    with pytest.raises(ValueError, match="military_order 旨意缺少 canonical assignee"):
+        db.commit_pending_actions(
+            state, kind_filter="directive", action_ids=[candidate_id],
+            directive_status="draft",
+        )
+
+    assert not any(
+        row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
+    )
 
 
 def test_complete_rejection_verdict_is_restoreable_audit_record(game):
