@@ -4,6 +4,9 @@
 >
 > **追踪方式（2026-06-08 起，渐进迁移）**：主用 GitHub issue 记问题/讨论/状态；本文件**逐步舍弃**，只留「需要做、但不值得单开 issue 的小事」+ 已上 issue 项的指针索引。新发现的实质 bug/架构项直接开 issue，不再在此写长条目。
 
+## 🟣 远景素材（随想勿当定案，2026-08-05 owner 口谕留痕）
+- **分发阶段候选：CF Worker 托管**——Worker 托前端 + D1 存档 + Worker 转发 LLM，玩家零配置开链接即玩；`wrangler deploy --temporary`（60 分钟自毁试玩链）可做限量试玩分发。对应 CLAUDE.md 形态(2)「搁置到分发阶段」那条路。owner 并提**手游版**远景——前提「帐要算得过来」（单局 LLM 成本×模型档位是唯一变量）。探针铁律不变：先验证好不好玩（M11），分发是之后的仗。
+
 ## 🔵 E2E 验证总台 → [issue #92](https://github.com/Akagilnc/ming-salvage-sim/issues/92)
 - 已修待实玩验证的 issue 全挂那里（checklist + 验证剧本）；**merge 不关的 issue，merge 当时就往 #92 加条目 + 源 issue 回贴互链**。当前待验：#3（v0.8.0.0 结算事务，5 步剧本）+ CA3（大臣领命 prompt）。
 
@@ -42,11 +45,6 @@
 
 ### ~~B14. 召对取消的内存历史按文本剪枝，并发同文本会误删（P3·自愈，family/362-base CMR defer）~~ ✅ 已解决（被 id-based `db.fail_chat_turn(chat_turn_id)` 取代）
 - 原文批评的 `WebGame._fail_incomplete_chat_turn`（按文本签名倒序剪 `chat_history`）与其锁定测试 `tests/test_chat_stream_cancel.py` 均已不存在；取消/失败路径现走 `db.fail_chat_turn(chat_turn_id)`（[db.py](ming_sim/db.py)），按精确 id 操作，原文提出的文本歧义前提不再成立。#505/#506（撤回/续夜）在此 id-based 底座上继续重写 chat-turn 回滚子系统。
-
-### ~~B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）~~ ✅ 已修（v0.15.0.0, 2026-06-27, cf1038f）
-- **现象**：`web/src/epicOrchestratorWorkflow.test.ts` 「merges reviewed commits from different slice worktrees through one dedicated family worktree」断言 `mergeWorktrees[0].startsWith(repoPath) === false` 失败，实得 `true`（merge worktree 路径在 repo 目录内，不是外部 tmpdir）。
-- **定位**：测试假设与当前实现漂移；family merge worktree 现在位于仓库 sibling 的 `.worktrees/.epic-orchestrator/` 下。
-- **修复**：测试改为断言 family worktree 位于 `.worktrees/.epic-orchestrator` 路径，`epicOrchestratorWorkflow.test.ts` 聚焦用例与完整 web Vitest 已通过。
 
 ### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
 - **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。

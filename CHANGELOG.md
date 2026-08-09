@@ -4,6 +4,13 @@
 
 ## [未发布]
 
+## [0.46.0.0] - 2026-07-31
+
+### Fixed
+- **#1145 线上评审 Runner 退回纯调度**：GitHub 查询、有限等待、证据整理与 post-fix retrigger 改由独立 **Collector** 席完成；**Verify** 只裁决 finding 并执笔 opaque fixer packet，修复结果回同一判官。Runner 只运输 `cargoPointer` / typed receipt，不再解释 PR comments、findings、threads、bot 完成度或 `committed`/`alreadySatisfied`。
+- 删除宿主侧 `onlineReviewSideEffects` 双拥有残留与 host-typed plan cargo；durable 进度/回执改由 worker 自有 `.orchestrator-online-review-durable` + `bin.mjs`，崩溃复飞不重烧已完成等待。
+- 补齐 Collector 路由/灵魂/契约与贯穿 production shared-tail 的边界 tracer（`online-review-runner-boundary-1145`）。
+
 ## [0.45.0.0] - 2026-07-26
 
 ### Added
