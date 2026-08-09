@@ -35,6 +35,7 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.participant_roster import participant_roster_names
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
@@ -10486,10 +10487,10 @@ class GameDB:
         for row in rows:
             try:
                 value = json.loads(row["verdict_json"])
-            except Exception as exc:
-                raise ValueError("待应用颁布判决 JSON 损坏") from exc
-            if not isinstance(value, dict):
-                raise ValueError("待应用颁布判决须为对象")
+                if not isinstance(value, dict):
+                    raise ValueError("待应用颁布判决须为对象")
+            except ValueError as exc:
+                raise LLMContractError(f"待应用颁布判决读取失败：{exc}") from exc
             result.append(value)
         return result
 

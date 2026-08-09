@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import ming_sim.decree as decree_mod
@@ -72,6 +74,80 @@ def test_public_resolve_seam_reuses_durable_batch_after_pre_simulation_crash(
             content=content, promulgation_verdict_provider=provider,
         )
     assert calls == [[dossier_id]]
+
+
+@pytest.mark.parametrize("stored_json", ["{", "[]"])
+def test_public_resolve_seam_wraps_corrupt_durable_verdict_on_real_recovery(
+    game, monkeypatch, stored_json,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    provider_calls = []
+
+    def provider(dossiers, _state):
+        provider_calls.append([row["id"] for row in dossiers])
+        return [{"dossier_id": dossier_id, "decision": "promulgated"}]
+
+    original = db.list_decree_dossiers_for_simulation
+    monkeypatch.setattr(
+        db, "list_decree_dossiers_for_simulation",
+        lambda _turn: (_ for _ in ()).throw(RuntimeError("durable tracer")),
+    )
+    with pytest.raises(RuntimeError, match="durable tracer"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工",
+            content=content, promulgation_verdict_provider=provider,
+        )
+
+    baseline_state = tuple(db.conn.execute(
+        "SELECT turn, turn_phase FROM game_state WHERE id=1"
+    ).fetchone())
+    baseline_metrics = list(db.conn.execute(
+        "SELECT key, value FROM metrics ORDER BY key"
+    ).fetchall())
+    baseline_dossier = db.get_decree_dossier(dossier_id)
+    assert baseline_dossier["status"] == "proposed"
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+    db.conn.execute(
+        "UPDATE pending_promulgation_verdicts SET verdict_json=? "
+        "WHERE turn=? AND dossier_id=?",
+        (stored_json, state.turn, dossier_id),
+    )
+    db.conn.commit()
+    monkeypatch.setattr(db, "list_decree_dossiers_for_simulation", original)
+    monkeypatch.setattr(
+        decree_mod, "create_season_simulator_agent",
+        lambda *a, **k: pytest.fail("坏持久判决不得进入 simulator"),
+    )
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工",
+            content=content,
+            promulgation_verdict_provider=lambda *_: pytest.fail(
+                "恢复必须读取原批次，不得重跑 provider"
+            ),
+        )
+
+    abort = exc_info.value
+    assert abort.stage == "promulgation"
+    assert abort.error_pack_path and Path(abort.error_pack_path).is_dir()
+    assert isinstance(abort.__cause__, LLMContractError)
+    assert isinstance(abort.__cause__.__cause__, ValueError)
+    assert provider_calls == [[dossier_id]]
+    assert tuple(db.conn.execute(
+        "SELECT turn, turn_phase FROM game_state WHERE id=1"
+    ).fetchone()) == baseline_state
+    assert list(db.conn.execute(
+        "SELECT key, value FROM metrics ORDER BY key"
+    ).fetchall()) == baseline_metrics
+    assert db.get_decree_dossier(dossier_id) == baseline_dossier
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.conn.execute(
+        "SELECT verdict_json FROM pending_promulgation_verdicts "
+        "WHERE turn=? AND dossier_id=?", (state.turn, dossier_id),
+    ).fetchone()["verdict_json"] == stored_json
 
 
 def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
