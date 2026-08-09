@@ -537,14 +537,16 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         row for row in db.list_decree_dossiers()
         if row["pending_action_id"] > 0
     ]
+    # Narrative-owned policy reaches the simulator; payload-owned allocation
+    # is consumed only by the deterministic post-verdict dispatcher.
     assert [row["id"] for row in seen["payload"]["decree_dossiers"]] == [
-        published_id, staged["id"],
+        published_id,
     ]
     db.update_secret_order_progress(
         secret_order_id, "密查仍在推进", state.year, state.period,
     )
     assert db.get_decree_dossier(secret_dossier_id)["status"] == "executing"
-    assert seen["payload"]["decree_text"] == "本月已颁之旨\n拨国库十两赈济"
+    assert seen["payload"]["decree_text"] == "本月已颁之旨"
     assert [
         row["settlement_verdict"]
         for row in seen["payload"]["decree_dossiers"]
