@@ -346,17 +346,17 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 
     async def scenario():
-        game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
-        try:
-            async with _client() as client:
+        async with _client() as client:
+            game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
+            try:
                 chat_task = asyncio.create_task(
                     client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
                 await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
-        finally:
-            game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
-        return _parse_sse((await chat_task).text)
+            finally:
+                game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+            return _parse_sse((await chat_task).text)
 
     events = asyncio.run(scenario())
 

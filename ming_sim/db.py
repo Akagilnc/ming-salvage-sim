@@ -9874,7 +9874,7 @@ class GameDB:
         return [self._dossier_row(row) for row in rows]
 
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
-        """本月新生/重判案卷及所有未结案执行中案卷。"""
+        """本月新生、重判或新颁出的叙事案卷。"""
         rows = self.conn.execute(
             """
             SELECT DISTINCT d.*
@@ -9891,8 +9891,6 @@ class GameDB:
                        AND ? > d.held_turn
                     )
                 )
-            ) OR (
-                    d.status='executing'
             ) OR (
                     d.status='promulgated'
                 AND (

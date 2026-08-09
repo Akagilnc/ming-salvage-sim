@@ -1263,6 +1263,11 @@ def capture_manual_directive_payload(
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
+    if payload.get("dossier_action_type") == "dismiss_assignment":
+        # Manual CLI/Web directives bypass pending office actions, so preserve
+        # the same structured materialization fields at this capture seam.
+        payload["name"] = str(payload.get("target_id") or "").strip()
+        payload["_office_action"] = "罢免"
     if not all(str(payload.get(key) or "").strip() for key in (
         "dossier_action_type", "target_kind", "target_id",
     )):

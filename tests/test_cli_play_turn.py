@@ -522,6 +522,40 @@ def test_play_turn_reports_default_approval_secret_order_failure(monkeypatch, ca
         assert session.calls == ["begin", "resolve", "end"]
 
 
+def test_play_turn_skip_settlement_abort_stays_in_player_loop(monkeypatch, capsys):
+    class Session:
+        previous_summary = ""
+
+        def __init__(self):
+            self.db = SimpleNamespace(list_pending_actions=lambda *a, **k: [])
+            self.state = SimpleNamespace(turn=7)
+            self.calls = []
+
+        def begin_turn(self):
+            self.calls.append("begin")
+            return _Snap()
+
+        def current_phase(self):
+            return TurnPhase.REVIEWING
+
+        def advance_without_decree(self):
+            self.calls.append("advance")
+            if self.calls.count("advance") == 1:
+                raise SettlementAbort("退朝结算中止，可重试。", turn=7, stage="settle")
+            return None
+
+    actions = iter(["skip", "skip"])
+    monkeypatch.setattr(term, "review_directives", lambda s: next(actions))
+    monkeypatch.setattr(term, "_print_header", lambda s: None)
+    monkeypatch.setattr(issues_mod, "show_active_issues", lambda db: None)
+    session = Session()
+
+    term.play_turn(session)
+
+    assert "可重试" in capsys.readouterr().out
+    assert session.calls == ["begin", "advance", "advance"]
+
+
 def test_play_turn_reports_secret_order_failure_when_settlement_aborts(monkeypatch, capsys):
     """pre_settle 已标 failed 后若后续结算中止，CLI 仍须显示 retry id。"""
 
