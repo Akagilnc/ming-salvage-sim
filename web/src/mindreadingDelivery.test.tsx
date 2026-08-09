@@ -108,8 +108,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         });
       }
       return sse([
-        { event: "accepted", data: { campaign_id: "camp", night_id: 24, chat_turn_id: 8 } },
-        { event: "error", data: { message: "回话失败", campaign_id: "camp", night_id: 24, chat_turn_id: 8 } },
+        { event: "accepted", data: { campaign_id: "", night_id: 24, chat_turn_id: 8 } },
+        { event: "error", data: { message: "回话失败", campaign_id: "", night_id: 24, chat_turn_id: 8 } },
       ]);
     }));
     const { hookRef, rows } = mount("audience");
@@ -118,10 +118,35 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
     await tick();
 
-    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "camp", night_id: 24, chat_turn_id: 8 });
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
     expect(rows()).not.toContain("user:失败问话");
     expect(rows()).toContain("user:保留问话");
     expect(rows()).toContain("minister:保留答复");
+  });
+
+  it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      call += 1;
+      if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
+        night_id: 23,
+        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
+      });
+      return sse([
+        { event: "accepted", data: { night_id: 24 } },
+        { event: "error", data: { message: "回话失败" } },
+      ]);
+    }));
+    const { hookRef, rows } = mount();
+    await tick();
+    expect(hookRef.current!.currentNightId).toBe(0);
+    expect(rows()).not.toContain("minister:旧夜他臣");
+
+    await act(async () => {
+      await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
+    });
+    expect(hookRef.current!.currentNightId).toBe(24);
+    expect(rows()).not.toContain("minister:旧夜他臣");
   });
 
   it("迟到的旧流读心：新 send 作废 token 后，旧流 mind1 仍归其轮浮现（不按 token 门控）", async () => {

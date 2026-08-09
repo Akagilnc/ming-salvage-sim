@@ -154,7 +154,7 @@ export const streamChat = async (
         throw new ApiRequestError(
           normalizeApiError(payload, "流式回复失败。"),
           "流式回复失败。",
-          identity.campaign_id && identity.night_id && identity.chat_turn_id ? identity : undefined,
+          identity.night_id && identity.chat_turn_id ? identity : undefined,
         );
       }
     }
