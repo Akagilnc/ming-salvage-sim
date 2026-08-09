@@ -2163,7 +2163,12 @@ class GameSession:
         directives = self.db.list_directives(self.state, statuses=("draft",))
         dossier_only = bool(self.db.list_decree_dossiers(status="proposed"))
         monthly_report_due = bool(self.db.list_monthly_dossier_progress_nudges())
-        if not directives and not dossier_only and not monthly_report_due:
+        # The no-edict fast rail may have speculatively materialized a pending
+        # non-directive action, discovered that it requires full settlement, and
+        # rolled that transaction back.  The pending row is then the durable reason
+        # to enter resolve_directives, whose owning transaction materializes it again.
+        pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        if not directives and not dossier_only and not monthly_report_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
@@ -2309,7 +2314,10 @@ class GameSession:
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn()
         advanced = advance_without_edict(
-            self.state, self.db, content=self.content, registry=self.registry)
+            self.state, self.db,
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None),
+        )
         if not advanced:
             return self.resolve_turn()
         self.state.turn_phase = TurnPhase.SUMMONING.value

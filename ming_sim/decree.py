@@ -369,7 +369,8 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    if not directives and not _requires_full_settlement(state, db):
+    if (not directives and not _requires_full_settlement(state, db)
+            and not db.list_pending_actions(state.turn)):
         advance_without_edict(state, db, content=content, registry=registry)
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
