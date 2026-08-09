@@ -467,7 +467,8 @@ export function BudgetHover({ accountName, budget }: { accountName: "国库" | "
         aria-label={`查看${accountName}固定收支`}
         onClick={() => (open ? hide() : show())}
       >
-        <span>{accountName} <b>{formatMoney(budget.balance)}</b></span>
+        <span className="hud2-lab">{accountName}</span>
+        <span className="hud2-val"><b>{formatMoney(budget.balance)}</b></span>
         <small className={budget.net >= 0 ? "income" : "expense"}>月 {formatSignedMoney(budget.net)}</small>
       </button>
       {open && pos && createPortal(

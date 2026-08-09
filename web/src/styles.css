@@ -6995,22 +6995,76 @@ button:disabled {
 }
 
 
-/* ===== 顶栏五匾：统一左对齐排版；修余额金字被旧规则压成黑字 ===== */
+/* ===== 顶栏五匾：居中 + 三行统一节奏（小字行/主值行/副行，行位五匾一致） ===== */
 .hud2-stage .hud2-year,
-.hud2-stage .hud2-metric-pair,
 .hud2-stage .hud2-legacy-slot,
 .hud2-stage .hud2-slot:has(.budget-hover) {
-  width: 9.6%;
-  align-items: flex-start;
+  width: 11%;
+  height: 6.2cqh;
+  align-items: center;
   justify-content: flex-start;
-  text-align: left;
+  text-align: center;
 }
-.hud2-slot .status-money {
+.hud2-stage .hud2-metric-pair {
+  width: 11%;
+  height: 6.2cqh;
+  flex-direction: row;
+  justify-content: center;
   align-items: flex-start;
-  text-align: left;
 }
-.hud2-slot .status-money b {
+/* 三行固定行位：label / value / 副行 */
+.hud2-stage .hud2-year .hud2-lab,
+.hud2-stage .hud2-metric-one .hud2-lab,
+.hud2-stage .hud2-slot:has(.budget-hover) .hud2-lab,
+.hud2-stage .hud2-legacy-slot .legacy-bar-label {
+  height: 1.7cqh;
+  line-height: 1.7cqh;
+  font-size: 1.3cqh;
+  font-weight: 400;
+  color: #c9b48a;
+}
+.hud2-stage .hud2-year .hud2-val,
+.hud2-stage .hud2-metric-one .hud2-val,
+.hud2-stage .hud2-slot:has(.budget-hover) .hud2-val,
+.hud2-stage .hud2-legacy-slot .legacy-bar-count {
+  height: 2.9cqh;
+  line-height: 2.9cqh;
+  font-size: 2.3cqh;
+}
+.hud2-stage .hud2-slot:has(.budget-hover) .status-money small {
+  height: 1.6cqh;
+  line-height: 1.6cqh;
+  font-size: 1.3cqh;
+}
+/* 缺副行的匾用占位行补齐节奏 */
+.hud2-stage .hud2-year::after,
+.hud2-stage .hud2-metric-one::after,
+.hud2-stage .hud2-legacy-slot .legacy-bar::after {
+  content: "\00a0";
+  height: 1.6cqh;
+  line-height: 1.6cqh;
+  font-size: 1.3cqh;
+}
+/* 国库/内库触发器：三行竖排居中 */
+.hud2-slot .status-money {
+  align-items: center;
+  text-align: center;
+  gap: 0;
+}
+.hud2-slot .status-money .hud2-val b {
   color: #f6eccf;
+}
+/* 民心/皇威：每个数值上下两行 */
+.hud2-stage .hud2-metric-one {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+/* 帝国修正：label/count 上下两行 */
+.hud2-stage .hud2-legacy-slot .legacy-bar {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
 }
 
 /* 导航挂牌：显式居中保险（防任何覆盖吃掉 translate） */
