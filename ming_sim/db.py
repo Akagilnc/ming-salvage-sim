@@ -47,7 +47,7 @@ from ming_sim.relations import (
     normalize_evidence,
     validate_edge_kind,
 )
-from ming_sim.strict_types import strict_int
+from ming_sim.strict_types import strict_int, validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -9897,6 +9897,29 @@ class GameDB:
         ).fetchall()
         return [self._dossier_row(row) for row in rows]
 
+    def list_decree_dossier_decisions(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """Production audit/restore read seam for the append-only verdict history."""
+        rows = self.conn.execute(
+            "SELECT * FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id",
+            (strict_int(dossier_id, accept_numeric_strings=False),),
+        ).fetchall()
+        decisions: List[Dict[str, object]] = []
+        for row in rows:
+            item = dict(row)
+            item["id"] = int(item["id"])
+            item["dossier_id"] = int(item["dossier_id"])
+            item["turn"] = int(item["turn"])
+            item["primary_opponents"] = json.loads(
+                str(item.pop("primary_opponents_json") or "[]")
+            )
+            item["criteria_snapshot"] = json.loads(
+                str(item.pop("criteria_snapshot_json") or "{}")
+            )
+            decisions.append(item)
+        return decisions
+
     def list_decree_dossiers_for_simulation(self, turn: int) -> List[Dict[str, object]]:
         """本月新生/重判案卷及所有未结案执行中案卷。"""
         rows = self.conn.execute(
@@ -10309,22 +10332,10 @@ class GameDB:
                 decision = str(verdict.get("decision") or "")
                 opponents = verdict.get("primary_opponents")
                 snapshot = verdict.get("criteria_snapshot")
-                if decision == "rejected" and (
-                    str(verdict.get("blocked_layer") or "") not in
-                    (self._PROMULGATION_BLOCKED_LAYERS - {""})
-                    or not isinstance(opponents, list) or not opponents
-                    or any(not isinstance(item, str) or not item.strip() for item in opponents)
-                    or not str(verdict.get("reason") or "").strip()
-                    or not isinstance(snapshot, dict)
-                    or set(snapshot) != {
-                        "imperial_authority_band", "involved_offices",
-                        "authorization_ids", "endorsement_entry_ids",
-                    }
-                    or not isinstance(snapshot.get("involved_offices"), list)
-                    or not isinstance(snapshot.get("authorization_ids"), list)
-                    or not isinstance(snapshot.get("endorsement_entry_ids"), list)
-                ):
-                    raise ValueError("打回判决缺少关口、主否决方、缘由或完整判据快照")
+                if decision == "rejected":
+                    validate_rejection_verdict(
+                        verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
+                    )
                 self.apply_dossier_promulgation(
                     state, strict_int(verdict.get("dossier_id")), decision,
                     blocked_layer=str(verdict.get("blocked_layer") or ""),
