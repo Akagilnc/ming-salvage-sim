@@ -1,5 +1,6 @@
 import pytest
 
+import ming_sim.decree as decree_mod
 from ming_sim.decree import (
     stub_promulgation_verdicts,
     validate_promulgation_verdicts,
@@ -25,3 +26,102 @@ def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(read_game):
         validate_promulgation_verdicts(
             [{"dossier_id": 7, "decision": "promulgated"}], dossiers, db,
         )
+
+
+def _stage_policy_dossier(db, state):
+    return db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id=f"river-{state.turn}",
+    )
+
+
+def test_public_resolve_seam_reuses_durable_batch_after_pre_simulation_crash(
+    game, monkeypatch,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    calls = []
+
+    def provider(dossiers, _state):
+        calls.append([row["id"] for row in dossiers])
+        return [{"dossier_id": dossier_id, "decision": "promulgated"}]
+
+    def stop_after_persistence(_turn):
+        raise RuntimeError("stop after durable verdict")
+
+    original = db.list_decree_dossiers_for_simulation
+    monkeypatch.setattr(db, "list_decree_dossiers_for_simulation", stop_after_persistence)
+    with pytest.raises(RuntimeError, match="durable verdict"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工",
+            content=content, promulgation_verdict_provider=provider,
+        )
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": dossier_id, "decision": "promulgated"},
+    ]
+
+    # Recovery must consume the same turn-scoped batch, not call the provider.
+    monkeypatch.setattr(db, "list_decree_dossiers_for_simulation", original)
+    monkeypatch.setattr(
+        decree_mod, "create_season_simulator_agent",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop after recovery")),
+    )
+    with pytest.raises(RuntimeError, match="stop after recovery"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工",
+            content=content, promulgation_verdict_provider=provider,
+        )
+    assert calls == [[dossier_id]]
+
+
+def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
+    db, state, content = game
+    _stage_policy_dossier(db, state)
+
+    with pytest.raises(LLMContractError, match="必须为列表"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: {"decision": "promulgated"},
+        )
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+
+
+def test_turn_batch_replacement_rolls_back_atomically_on_partial_bad_row(game):
+    db, state, _content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    original = [{"dossier_id": dossier_id, "decision": "promulgated"}]
+    db.save_pending_promulgation_verdicts(state.turn, original)
+
+    with pytest.raises((TypeError, ValueError)):
+        db.save_pending_promulgation_verdicts(state.turn, [
+            original[0], {"dossier_id": "not-an-int", "decision": "rejected"},
+        ])
+
+    assert db.get_pending_promulgation_verdicts(state.turn) == original
+
+
+def test_public_resolve_seam_ignores_previous_turn_batch(game, monkeypatch):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    db.save_pending_promulgation_verdicts(
+        state.turn - 1, [{"dossier_id": dossier_id, "decision": "rejected"}],
+    )
+    called = []
+
+    def provider(dossiers, _state):
+        called.append(True)
+        return [{"dossier_id": dossiers[0]["id"], "decision": "promulgated"}]
+
+    monkeypatch.setattr(
+        db, "list_decree_dossiers_for_simulation",
+        lambda _turn: (_ for _ in ()).throw(RuntimeError("stop after current batch")),
+    )
+    with pytest.raises(RuntimeError, match="current batch"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=provider,
+        )
+    assert called == [True]
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": dossier_id, "decision": "promulgated"},
+    ]

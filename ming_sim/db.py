@@ -9761,6 +9761,15 @@ class GameDB:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
             raise ValueError(f"案卷 action_type 非法：{action}")
+        canonical_payload = dict(payload or {})
+        # Staging validates against the same policy later consumed by review,
+        # simulation and materialization.  In particular, callers cannot invent
+        # a terminal/immediate surface for an action whose canonical surface is
+        # in-transit (grant_allocation is the sole payload-selected surface).
+        policy = dossier_action_policy(action, canonical_payload)
+        supplied_surface = str(canonical_payload.get("execution_surface") or "").strip()
+        if action != "grant_allocation" and supplied_surface and supplied_surface != policy["execution_surface"]:
+            raise ValueError(f"{action} execution_surface 与案卷动作策略不符")
         canonical_target_kind = str(target_kind or "").strip()
         canonical_target_id = str(target_id or "").strip()
         if not canonical_target_kind or not canonical_target_id:
@@ -9812,14 +9821,30 @@ class GameDB:
                 source_turn_id, int(pending_action_id or 0),
                 None if int(directive_id or 0) <= 0 else int(directive_id),
                 None if secret_order_id is None else int(secret_order_id),
-                text, json.dumps(payload or {}, ensure_ascii=False), status,
+                text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
+        dossier_id = int(cur.lastrowid)
+        if policy["effect_owner"] == "immediate" and action == "grant_allocation":
+            amount = strict_int(
+                canonical_payload.get("amount"), accept_numeric_strings=False,
+            )
+            account = str(canonical_payload.get("account") or "").strip()
+            if amount <= 0 or account != "内库":
+                raise ValueError("内批拨帑案卷须含正数 amount 与内库 account")
+            self.record_issue_economy_move(
+                state, account, -amount,
+                str(canonical_payload.get("category") or "奉旨拨帑"),
+                str(canonical_payload.get("reason") or text),
+                purpose=str(canonical_payload.get("purpose") or "") or None,
+                target_kind=canonical_target_kind, target_id=canonical_target_id,
+                dossier_id=dossier_id, commit=False,
+            )
         self._commit_dossier_write(commit)
-        return int(cur.lastrowid)
+        return dossier_id
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -9974,10 +9999,15 @@ class GameDB:
                 int(turn), int(turn), int(turn), int(turn), int(turn),
             ),
         ).fetchall()
-        return [
-            self._dossier_row(row) for row in rows
-            if str(row["action_type"]) != "secret_order"
-        ]
+        visible = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            policy = dossier_action_policy(row["action_type"], payload)
+            # Immediate palace/private actions have already taken effect at
+            # admission and must not re-enter the settlement simulator.
+            if policy["effect_owner"] != "immediate":
+                visible.append(self._dossier_row(row))
+        return visible
 
     @staticmethod
     def executable_decree_dossier_ids(
@@ -10261,6 +10291,21 @@ class GameDB:
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
                 raise ValueError("案卷 payload 非对象")
+            policy = dossier_action_policy(row["action_type"], payload)
+            # Narrative-owned effects are deliberately left to the
+            # simulator/extractor; immediate-owned effects were staged before
+            # this gate.  Only payload-owned actions enter this dispatcher.
+            if policy["effect_owner"] != "payload":
+                if policy["effect_owner"] == "narrative":
+                    self.transition_decree_dossier(
+                        dossier_id, "executing", commit=False,
+                    )
+                else:
+                    self.record_dossier_execution(
+                        dossier_id, "fulfilled", "成案时即生效",
+                        state.turn, close=True, commit=False,
+                    )
+                return
             if row["action_type"] in {"appointment", "dismiss_assignment"}:
                 pa = {
                     "id": int(row["pending_action_id"]),
@@ -10326,7 +10371,7 @@ class GameDB:
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
-            if not self._dossier_has_execution_surface(row["action_type"], payload):
+            if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
                     close=True, commit=False,
