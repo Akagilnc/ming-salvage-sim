@@ -10967,6 +10967,57 @@ class GameDB:
             for r in rows
         ]
 
+    def _prepare_pending_directive(
+        self, state: GameState, pa: Dict[str, object], *, content=None,
+        allow_clarification: bool = False,
+    ) -> Optional[Dict[str, object]]:
+        """Canonical read-only eligibility and projection for a staged directive."""
+        if (
+            pa.get("status") != "pending"
+            or pa.get("kind") != "directive"
+            or pa.get("action") != "拟旨"
+        ):
+            return None
+        try:
+            payload = json.loads(str(pa.get("payload_json") or "{}"))
+            if not isinstance(payload, dict):
+                return None
+            if payload.get("_needs_clarification") and not allow_clarification:
+                return None
+            payload = self._normalize_directive_dossier_payload(
+                payload, content=content, current_turn=int(state.turn),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return None
+        actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
+        payload["text"] = text
+        payload["actor"] = actor
+        return {
+            "id": -int(pa["id"]),
+            "text": text,
+            "status": "pending",
+            "source": "pending_action",
+            "actor": actor,
+            "pending_action_id": int(pa["id"]),
+            "payload": payload,
+        }
+
+    def preview_pending_directives(
+        self, state: GameState, *, content=None,
+    ) -> List[Dict[str, object]]:
+        """Read-only default-approval view, using the commit owner's rules."""
+        previews = []
+        for pa in self.list_pending_actions(int(state.turn)):
+            prepared = self._prepare_pending_directive(state, pa, content=content)
+            if prepared is not None:
+                preview = dict(prepared)
+                preview.pop("payload", None)
+                previews.append(preview)
+        return previews
+
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
@@ -11006,23 +11057,29 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
         for pa in rows:
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
-                # 含糊待澄清（#502 AC5）：批量默认提交（action_ids=None=「不回→默认同意」路）跳过
-                # 待澄清候选——含糊口令 ≠ 未表态，不得被静默默认提交；皇帝指明后经 action_ids 显式提交。
-                if action_ids is None and payload.get("_needs_clarification"):
+                prepared = self._prepare_pending_directive(
+                    state, pa, content=content,
+                    allow_clarification=action_ids is not None,
+                )
+                # Invalid/default-ineligible candidates remain durable pending for
+                # clarification or correction; preview and commit share this decision.
+                if prepared is None:
                     continue
+                payload = dict(prepared["payload"])
+                payload["_canonical_pending_directive"] = True
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
                     directive_status=directive_status)
                 if committed is not None:
                     applied.append(committed)
                 continue
+            try:
+                payload = json.loads(pa["payload_json"] or "{}")
+                if not isinstance(payload, dict):
+                    payload = {}
+            except (ValueError, TypeError):
+                payload = {}
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
@@ -11343,9 +11400,11 @@ class GameDB:
                 registry.refresh(name)
             return True
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
-            payload = self._normalize_directive_dossier_payload(
-                payload, content=content, current_turn=int(state.turn),
-            )
+            payload = dict(payload)
+            if payload.pop("_canonical_pending_directive", False) is not True:
+                payload = self._normalize_directive_dossier_payload(
+                    payload, content=content, current_turn=int(state.turn),
+                )
             text = str(payload.get("text") or "").strip()
             actor = str(payload.get("actor") or pa["minister_name"] or "")
             if not text:
