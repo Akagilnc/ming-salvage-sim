@@ -487,21 +487,16 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     seen = {}
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+
+    def _promulgation_verdicts(dossiers, _state):
+        return [
+            ({"dossier_id": row["id"], "decision": "promulgated"}
+             if row["target_id"] == "relief" else _rejected_verdict(row["id"]))
+            for row in dossiers
+        ]
+
     monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "run_agent_text",
-        lambda *a, **k: json.dumps({
-            "verdicts": [
-                ({"dossier_id": row["id"], "decision": "promulgated"}
-                 if row["target_id"] == "relief" else
-                 _rejected_verdict(row["id"]))
-                for row in db.list_decree_dossiers()
-                if row["pending_action_id"] > 0
-            ],
-        }),
+        decree_mod, "stub_promulgation_verdicts", _promulgation_verdicts,
     )
     monkeypatch.setattr(
         decree_mod,
@@ -592,8 +587,8 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     db, state, content = game
     monkeypatch.setattr(
         decree_mod,
-        "create_promulgation_judge_agent",
-        lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判官"),
+        "stub_promulgation_verdicts",
+        lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判决 seam"),
     )
 
     result = decree_mod.resolve_directives(
@@ -635,18 +630,14 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
         if row["pending_action_id"] == candidate_id
     )
 
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *a, **k: json.dumps({
-            "verdicts": [
-                _rejected_verdict(dossier["id"])
-                if state.turn == 1 else
-                {"dossier_id": dossier["id"], "decision": "promulgated"}
-            ],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda _dossiers, _state: [
+            _rejected_verdict(dossier["id"]) if state.turn == 1 else
+            {"dossier_id": dossier["id"], "decision": "promulgated"}
+        ],
     )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod, "simulate_season_with_payload",
         lambda *a, **k: ("本月邸报。", k["simulator_payload"]),
@@ -723,14 +714,11 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
         if row["pending_action_id"] == candidate_id
     )
 
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *a, **k: json.dumps({
-            "verdicts": [_rejected_verdict(dossier["id"])],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda _dossiers, _state: [_rejected_verdict(dossier["id"])],
     )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
     def _fail_simulator(*args, **kwargs):
         raise RuntimeError("simulator unavailable")
@@ -811,18 +799,14 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
     raw_decree = "此道改革已被打回\n此道新政准予施行"
     seen = {}
 
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None)
-    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod,
-        "run_agent_text",
-        lambda *a, **k: json.dumps({
-            "verdicts": [
-                _rejected_verdict(rejected["id"]),
-                {"dossier_id": promulgated["id"], "decision": "promulgated"},
-            ],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda _dossiers, _state: [
+            _rejected_verdict(rejected["id"]),
+            {"dossier_id": promulgated["id"], "decision": "promulgated"},
+        ],
     )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
         decree_mod,
         "simulate_season_with_payload",
@@ -2006,12 +1990,9 @@ def test_invalid_promulgation_decision_stops_before_simulation(
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works",
     )
-    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        decree_mod, "run_agent_text",
-        lambda *_a, **_k: json.dumps({
-            "verdicts": [{"dossier_id": bad_id, "decision": bad_decision}],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda *_a, **_k: [{"dossier_id": bad_id, "decision": bad_decision}],
     )
     forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", forbidden)
