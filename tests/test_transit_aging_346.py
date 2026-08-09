@@ -148,7 +148,7 @@ def test_行止_sets_transit_start_turn(game):
     issues.apply_score_extraction(
         db,
         state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
         content=content,
     )
 
@@ -173,7 +173,7 @@ def test_行止_arrival_clears_transit_start_turn(game):
     issues.apply_score_extraction(
         db,
         state,
-        {"人物变更": [{"name": name, "动作": "行止", "location": DEST, "transit_to": ""}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "location": DEST, "transit_to": ""}]},
         content=content,
     )
 
@@ -200,7 +200,7 @@ def test_行止_reemit_same_dest_preserves_start_turn(game):
     state.turn = 3
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
         content=content,
     )
     assert db.conn.execute(
@@ -211,7 +211,7 @@ def test_行止_reemit_same_dest_preserves_start_turn(game):
     state.turn = 4
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
         content=content,
     )
     row = db.conn.execute(
@@ -237,7 +237,7 @@ def test_行止_change_dest_resets_start_turn(game):
     state.turn = 3
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
         content=content,
     )
 
@@ -245,7 +245,7 @@ def test_行止_change_dest_resets_start_turn(game):
     state.turn = 6
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": "shandong"}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": "shandong"}]},
         content=content,
     )
     row = db.conn.execute(
@@ -272,7 +272,7 @@ def test_行止_reemit_same_dest_preserves_legacy_zero_start(game):
     state.turn = 7
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "行止", "transit_to": DEST}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": name, "动作": "行止", "transit_to": DEST}]},
         content=content,
     )
     start = db.conn.execute(

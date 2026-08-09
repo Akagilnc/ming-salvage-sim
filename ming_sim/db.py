@@ -3559,6 +3559,8 @@ class GameDB:
         raw_changes: Dict[str, object],
         reason: str,
         changes: List[Dict[str, object]],
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> None:
         normalized = {
             ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
@@ -3658,6 +3660,13 @@ class GameDB:
         changed_fields = [field for field, new in new_values.items() if old_values[field] != new]
         if not changed_fields:
             return
+        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+        if origin_error:
+            changes.append({
+                "army": row["name"], "field": "pay_source", **origin_error,
+                "item": {"army_id": army_id, "changes": raw_changes},
+            })
+            return
         wrote_owner_transfer_writeoff = (
             str(old_values["owner_power"]) == "ming"
             and owner_power != "ming"
@@ -3668,14 +3677,14 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, army_id,
                     str(old_values["arrears"]), -float(old_values["arrears"]),
                     f"owner易主核销：{reason}",
-                    event.id, edict_id, actor,
+                    event.id, edict_id, actor, origin_ref,
                 ),
             )
             changed_fields = [field for field in changed_fields if field != "arrears"]
@@ -3701,13 +3710,13 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, army_id, field,
                     str(old_values[field]), str(new_values[field]), reason,
-                    event.id, edict_id, actor,
+                    event.id, edict_id, actor, origin_ref,
                 ),
             )
             changes.append({
@@ -5413,12 +5422,33 @@ class GameDB:
             for row in rows
         )
 
+    def effect_origin_rejection(self, origin_ref: str) -> Dict[str, object] | None:
+        """Authorize extractor provenance immediately before a durable write."""
+        value = str(origin_ref or "").strip()
+        valid = value == "盘面自发"
+        if value.startswith("dossier:"):
+            try:
+                dossier_id = int(value.split(":", 1)[1])
+                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
+                    and self.dossier_authorizes_effects(dossier_id)
+            except (OverflowError, TypeError, ValueError):
+                valid = False
+        if valid:
+            return None
+        return {
+            "rejected": True,
+            "category": "missing_origin_ref" if not value else "invalid_origin_ref",
+            "reason": ("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」"
+                       if not value else f"origin_ref 非法：{value}"),
+        }
+
     def apply_power_deltas(
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
         commit: bool = True,
         origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -5456,7 +5486,7 @@ class GameDB:
             reason = (reason or "势力推演")[:120]
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "last_action"):
+                if field in ("reason", "last_action", "origin_ref"):
                     # reason/last_action（含 近动 等别名）是本函数上方消费的 reason
                     # 载体键——跳过，不得记成 invalid_enum 假阳（cmr S1 r2）。
                     continue
@@ -5489,6 +5519,14 @@ class GameDB:
                 new_value = max(0, min(100, int(old_value) + delta))
                 actual_delta = new_value - int(old_value)
                 if actual_delta == 0:
+                    continue
+                origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                if origin_error:
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        **origin_error,
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
                     continue
                 stored_new: object = new_value
                 log_delta: int | None = actual_delta
@@ -5751,6 +5789,7 @@ class GameDB:
         region_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
         origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -5771,7 +5810,7 @@ class GameDB:
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "origin_ref"):
                     continue
 
                 # ── 城防炮（城头红夷炮）：另挂 region.cannon，走 apply_region_cannon（clamp city_level×8），
@@ -5794,6 +5833,12 @@ class GameDB:
                         })
                         continue
                     old_value = int(row["cannon"])
+                    if cannon_delta != 0 and require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
@@ -5882,6 +5927,13 @@ class GameDB:
                             # （convention 对称 army,防未来 issue 路接入误升级;ship-pre r1）。
                             "issue_strict": not isinstance(value, (bool, float)),
                         })
+                        continue
+
+                if require_origin and value not in (0, ""):
+                    origin_error = self.effect_origin_rejection(origin_ref)
+                    if origin_error:
+                        changes.append({"region": row["name"], "field": field, **origin_error,
+                                        "item": {"region_id": region_id, "field": field, "value": value}})
                         continue
 
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
@@ -6312,6 +6364,7 @@ class GameDB:
         army_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
         origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -6330,12 +6383,13 @@ class GameDB:
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             if self.is_army_pay_source_cutover_enabled():
                 self._apply_army_pay_source_delta(
-                    state, event, edict_id, actor, row, raw_changes, reason, changes
+                    state, event, edict_id, actor, row, raw_changes, reason, changes,
+                    origin_ref=origin_ref, require_origin=require_origin,
                 )
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "origin_ref"):
                     continue
                 if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
                     continue
@@ -6424,6 +6478,11 @@ class GameDB:
                         new_province = float(row["province_pay_arrears"] or 0) + province_delta
                         new_central = float(row["central_pay_arrears"] or 0) + central_delta
                         new_value = new_province + new_central
+                        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                        if origin_error:
+                            changes.append({"army": row["name"], "field": field, **origin_error,
+                                            "item": {"army_id": army_id, "field": field, "value": value}})
+                            continue
                         self.conn.execute(
                             """
                             UPDATE armies
@@ -6492,6 +6551,11 @@ class GameDB:
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
+                    origin_error = self.effect_origin_rejection(origin_ref) if require_origin and delta != 0 else None
+                    if origin_error:
+                        changes.append({"army": row["name"], "field": field, **origin_error,
+                                        "item": {"army_id": army_id, "field": field, "value": value}})
+                        continue
                     if (
                         self.is_army_pay_source_cutover_enabled()
                         and new_value == 0
@@ -6555,6 +6619,11 @@ class GameDB:
                     # 分支处理=代码漏接(往 ARMY_*_FIELDS 加了字段却忘了 dispatch)。
                     # 按 ADR 0008 决定 1：代码 bug 响亮上抛触发回滚，不静默丢一个合法 delta。
                     raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
+                origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                if origin_error:
+                    changes.append({"army": row["name"], "field": field, **origin_error,
+                                    "item": {"army_id": army_id, "field": field, "value": value}})
+                    continue
                 self.conn.execute(
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
@@ -6605,6 +6674,7 @@ class GameDB:
         actor: str = "档房",
         commit: bool = True,
         origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -6674,15 +6744,18 @@ class GameDB:
                     continue
                 reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
-                self.apply_army_deltas(
+                merge_results = self.apply_army_deltas(
                     state,
                     pseudo_event,
                     None,
                     actor,
                     {existing["id"]: {"manpower": delta, "reason": reason}},
-                    commit=False, origin_ref=origin_ref,
+                    commit=False, origin_ref=origin_ref, require_origin=require_origin,
                 )
-                created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
+                if any(result.get("rejected") for result in merge_results):
+                    created.extend(result for result in merge_results if result.get("rejected"))
+                else:
+                    created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
             # 必填字段：manpower 缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
             # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
@@ -6791,6 +6864,10 @@ class GameDB:
                         "item": raw,
                     })
                     continue
+            origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+            if origin_error:
+                created.append({"id": aid, **origin_error, "item": raw})
+                continue
             commander = str(item.get("commander") or "")
             row = (
                 aid,

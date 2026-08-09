@@ -790,7 +790,7 @@ def test_defection_through_settlement_reconciles_old_faction(game):
     # → apply_character_power_changes 翻 power_id ming→houjin（office_type→身名分），此路无即时 hook。
     run_settle(
         db, state, content,
-        {"character_power_changes": [{"name": name, "new_power": "houjin", "reason": "通虏投敌"}]},
+        {"character_power_changes": [{"origin_ref": "盘面自发", "name": name, "new_power": "houjin", "reason": "通虏投敌"}]},
         narrative="九千岁通虏出关", decree_text="x",
     )
 

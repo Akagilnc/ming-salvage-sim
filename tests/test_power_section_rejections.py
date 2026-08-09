@@ -12,8 +12,16 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from driver import run_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+
+
+def run_settle(db, state, content, extracted, **kwargs):
+    """These rejection tests model canonical spontaneous extractor envelopes."""
+    for item in (extracted.get("power_updates") or {}).values():
+        if isinstance(item, dict):
+            item.setdefault("origin_ref", "盘面自发")
+    return _run_settle(db, state, content, extracted, **kwargs)
 
 
 def _valid_power_id(db):

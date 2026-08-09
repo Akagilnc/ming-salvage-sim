@@ -1985,7 +1985,7 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
 
     assert state.metrics["国库"] == before
     assert result["economy_moves"] == []
-    assert result["validate_shape_rejections"][0]["category"] == "missing_ref"
+    assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
 
 
 @pytest.mark.parametrize("bad_id,bad_decision,match", [
