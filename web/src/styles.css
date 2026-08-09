@@ -3565,16 +3565,18 @@ button:disabled {
 }
 
 /* 顶栏：民心+皇威双值并排 */
-.hud2-metric-pair { display: flex; gap: 8%; align-items: center; }
-.hud2-metric-one { display: inline-flex; gap: 0.25em; align-items: baseline; white-space: nowrap; }
-/* 帝国修正：木牌本身就是框，纯白大字无边框 */
+.hud2-stage .hud2-metric-pair { display: flex; gap: 8%; flex-direction: row; justify-content: center; align-items: flex-start; width: 11%; height: 6.2cqh; }
+.hud2-metric-one { display: inline-flex; flex-direction: column; gap: 0; align-items: flex-start; text-align: left; white-space: nowrap; }
+/* 帝国修正：木牌本身就是框，纯白大字无边框；label/count 上下两行、块内左对齐 */
 .hud2-legacy-slot .legacy-bar {
   position: static !important;
   top: auto !important;
   left: auto !important;
   display: inline-flex;
-  align-items: center;
-  gap: 0.4em;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  text-align: left;
   padding: 0 !important;
   background: none !important;
   border: none !important;
@@ -3584,8 +3586,8 @@ button:disabled {
   color: #f8efd6;
   text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 2px rgba(0,0,0,0.7);
 }
-.hud2-legacy-slot .legacy-bar-label { font-size: 2.4cqh; font-weight: 700; color: #f8efd6; }
-.hud2-legacy-slot .legacy-bar-count { font-size: 2.6cqh; font-weight: 800; color: #f8efd6; }
+.hud2-legacy-slot .legacy-bar-label { height: 1.7cqh; line-height: 1.7cqh; font-size: 1.3cqh; font-weight: 400; color: #c9b48a; }
+.hud2-legacy-slot .legacy-bar-count { height: 2.9cqh; line-height: 2.9cqh; font-size: 2.3cqh; font-weight: 800; color: #f8efd6; }
 
 /* 游戏菜单：左下角灰色按钮（脱离顶栏木牌）*/
 .hud2-menu-btn {
@@ -5924,16 +5926,69 @@ button:disabled {
 .hud2-metric.danger .hud2-val { color: #e07a55; }
 .hud2-metric.good .hud2-val { color: #8fd08a; }
 
-/* 顶栏国库/内库复用 BudgetHover，去掉旧浮层底色 */
+/* 顶栏国库/内库复用 BudgetHover，去掉旧浮层底色；三行竖排、块内左对齐 */
 .hud2-slot .budget-hover { overflow: visible; }
 .hud2-slot .status-money {
   background: none; border: none; box-shadow: none; padding: 0;
-  display: inline-flex; flex-direction: column; align-items: center;
+  display: inline-flex; flex-direction: column; align-items: flex-start;
+  text-align: left; gap: 0;
   color: #f6eccf; cursor: pointer; font: inherit;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
 }
 .hud2-slot .status-money > span { font-size: 2.0cqh; font-weight: 700; }
 .hud2-slot .status-money small { font-size: 1.3cqh; }
+
+/* ===== 顶栏五匾：居中 + 三行统一节奏（小字行/主值行/副行，行位五匾一致） ===== */
+.hud2-stage .hud2-year,
+.hud2-stage .hud2-legacy-slot,
+.hud2-stage .hud2-slot:has(.budget-hover) {
+  width: 11%;
+  height: 6.2cqh;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+/* 三行固定行位：label / value / 副行 */
+.hud2-stage .hud2-year .hud2-lab,
+.hud2-stage .hud2-metric-one .hud2-lab,
+.hud2-stage .hud2-slot:has(.budget-hover) .hud2-lab {
+  height: 1.7cqh;
+  line-height: 1.7cqh;
+  font-size: 1.3cqh;
+  font-weight: 400;
+  color: #c9b48a;
+}
+.hud2-stage .hud2-year .hud2-val,
+.hud2-stage .hud2-metric-one .hud2-val,
+.hud2-stage .hud2-slot:has(.budget-hover) .hud2-val {
+  height: 2.9cqh;
+  line-height: 2.9cqh;
+  font-size: 2.3cqh;
+}
+.hud2-stage .hud2-slot:has(.budget-hover) .status-money small {
+  height: 1.6cqh;
+  line-height: 1.6cqh;
+  font-size: 1.3cqh;
+}
+/* 缺副行的匾用占位行补齐节奏 */
+.hud2-stage .hud2-block::after,
+.hud2-stage .hud2-metric-one::after,
+.hud2-stage .hud2-legacy-slot .legacy-bar::after {
+  content: "\00a0";
+  height: 1.6cqh;
+  line-height: 1.6cqh;
+  font-size: 1.3cqh;
+}
+/* 文本块：块整体在匾内居中，块内文字左对齐（共享左边缘） */
+.hud2-block {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+.hud2-slot .status-money .hud2-val b {
+  color: #f6eccf;
+}
 
 /* 右侧竖排导航单字 */
 .hud2-nav {
@@ -5942,6 +5997,7 @@ button:disabled {
   color: #ecd9a8;
   width: 3cqh;
   height: 3cqh;
+  transform: translate(-50%, -50%);
 }
 .hud2-nav.active { color: #fff0c0; text-shadow: 0 0 6px rgba(255, 210, 120, 0.8); }
 .hud2-nav:hover { color: #fff0c0; }
@@ -6354,88 +6410,3 @@ button:disabled {
   border-top: 1px solid rgba(107, 76, 36, 0.18);
 }
 
-
-/* ===== 顶栏五匾：居中 + 三行统一节奏（小字行/主值行/副行，行位五匾一致） ===== */
-.hud2-stage .hud2-year,
-.hud2-stage .hud2-legacy-slot,
-.hud2-stage .hud2-slot:has(.budget-hover) {
-  width: 11%;
-  height: 6.2cqh;
-  align-items: center;
-  justify-content: flex-start;
-  text-align: center;
-}
-.hud2-stage .hud2-metric-pair {
-  width: 11%;
-  height: 6.2cqh;
-  flex-direction: row;
-  justify-content: center;
-  align-items: flex-start;
-}
-/* 三行固定行位：label / value / 副行 */
-.hud2-stage .hud2-year .hud2-lab,
-.hud2-stage .hud2-metric-one .hud2-lab,
-.hud2-stage .hud2-slot:has(.budget-hover) .hud2-lab,
-.hud2-stage .hud2-legacy-slot .legacy-bar-label {
-  height: 1.7cqh;
-  line-height: 1.7cqh;
-  font-size: 1.3cqh;
-  font-weight: 400;
-  color: #c9b48a;
-}
-.hud2-stage .hud2-year .hud2-val,
-.hud2-stage .hud2-metric-one .hud2-val,
-.hud2-stage .hud2-slot:has(.budget-hover) .hud2-val,
-.hud2-stage .hud2-legacy-slot .legacy-bar-count {
-  height: 2.9cqh;
-  line-height: 2.9cqh;
-  font-size: 2.3cqh;
-}
-.hud2-stage .hud2-slot:has(.budget-hover) .status-money small {
-  height: 1.6cqh;
-  line-height: 1.6cqh;
-  font-size: 1.3cqh;
-}
-/* 缺副行的匾用占位行补齐节奏 */
-.hud2-stage .hud2-block::after,
-.hud2-stage .hud2-metric-one::after,
-.hud2-stage .hud2-legacy-slot .legacy-bar::after {
-  content: "\00a0";
-  height: 1.6cqh;
-  line-height: 1.6cqh;
-  font-size: 1.3cqh;
-}
-/* 文本块：块整体在匾内居中，块内文字左对齐（共享左边缘） */
-.hud2-block {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-}
-.hud2-slot .status-money {
-  align-items: flex-start;
-  text-align: left;
-  gap: 0;
-}
-.hud2-slot .status-money .hud2-val b {
-  color: #f6eccf;
-}
-/* 民心/皇威：每个数值上下两行，块内左对齐 */
-.hud2-stage .hud2-metric-one {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-  text-align: left;
-}
-/* 帝国修正：label/count 上下两行，块内左对齐 */
-.hud2-stage .hud2-legacy-slot .legacy-bar {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0;
-  text-align: left;
-}
-
-/* 导航挂牌：显式居中保险（防任何覆盖吃掉 translate） */
-.hud2-nav {
-  transform: translate(-50%, -50%);
-}
