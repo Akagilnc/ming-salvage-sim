@@ -496,9 +496,6 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         ]
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts", _promulgation_verdicts,
-    )
-    monkeypatch.setattr(
         decree_mod,
         "simulate_season_with_payload",
         lambda *a, **k: (
@@ -520,6 +517,7 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     result = decree_mod.resolve_directives(
         state, db, None, None, [object()], "不应作为真源",
         content=content,
+        promulgation_verdict_provider=_promulgation_verdicts,
     )
     assert result.awaiting is True
     decision = result.decisions[0]

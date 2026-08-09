@@ -7,8 +7,8 @@ from ming_sim.decree import (
 from ming_sim.exceptions import LLMContractError
 
 
-def test_default_promulgation_stub_passes_every_dossier_without_collaborators(game):
-    _db, state, _content = game
+def test_default_promulgation_stub_passes_every_dossier_without_collaborators():
+    state = object()
     dossiers = [{"id": 7}, {"id": 11}]
 
     assert stub_promulgation_verdicts(dossiers, state) == [
@@ -17,8 +17,8 @@ def test_default_promulgation_stub_passes_every_dossier_without_collaborators(ga
     ]
 
 
-def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(game):
-    db, state, _content = game
+def test_injected_promulgation_batch_cannot_silently_omit_a_dossier(read_game):
+    db, state, _content = read_game
     dossiers = [{"id": 7}, {"id": 11}]
 
     with pytest.raises(LLMContractError, match="逐案覆盖"):
