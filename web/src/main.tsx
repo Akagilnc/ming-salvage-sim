@@ -1062,8 +1062,10 @@ export function App() {
         {/* 顶栏：年月 + 国库/内库 + 民心/皇威，各按坑位绝对定位 */}
         <button className="hud2-slot hud2-year" style={HUD_SLOTS.顶栏.年月}
           onClick={() => setActiveModal("state")}>
-          <span className="hud2-lab">大明</span>
-          <span className="hud2-val">{state.turn.year} 年 {state.turn.period} 月</span>
+          <span className="hud2-block">
+            <span className="hud2-lab">大明</span>
+            <span className="hud2-val">{state.turn.year} 年 {state.turn.period} 月</span>
+          </span>
         </button>
         <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>
           <BudgetHover accountName="国库" budget={state.budget["国库"]} />

@@ -7037,7 +7037,7 @@ button:disabled {
   font-size: 1.3cqh;
 }
 /* 缺副行的匾用占位行补齐节奏 */
-.hud2-stage .hud2-year::after,
+.hud2-stage .hud2-block::after,
 .hud2-stage .hud2-metric-one::after,
 .hud2-stage .hud2-legacy-slot .legacy-bar::after {
   content: "\00a0";
@@ -7045,26 +7045,34 @@ button:disabled {
   line-height: 1.6cqh;
   font-size: 1.3cqh;
 }
-/* 国库/内库触发器：三行竖排居中 */
+/* 文本块：块整体在匾内居中，块内文字左对齐（共享左边缘） */
+.hud2-block {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
 .hud2-slot .status-money {
-  align-items: center;
-  text-align: center;
+  align-items: flex-start;
+  text-align: left;
   gap: 0;
 }
 .hud2-slot .status-money .hud2-val b {
   color: #f6eccf;
 }
-/* 民心/皇威：每个数值上下两行 */
+/* 民心/皇威：每个数值上下两行，块内左对齐 */
 .hud2-stage .hud2-metric-one {
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 0;
+  text-align: left;
 }
-/* 帝国修正：label/count 上下两行 */
+/* 帝国修正：label/count 上下两行，块内左对齐 */
 .hud2-stage .hud2-legacy-slot .legacy-bar {
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 0;
+  text-align: left;
 }
 
 /* 导航挂牌：显式居中保险（防任何覆盖吃掉 translate） */
