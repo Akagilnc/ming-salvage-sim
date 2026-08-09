@@ -1,8 +1,10 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from ming_sim import cli_backend
+from ming_sim.session import GameSession
 
 
 def _make_dossier(db, state, text):
@@ -171,6 +173,82 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     assert dossier["id"] not in {
         row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)
     }
+
+
+@pytest.mark.parametrize("confirmed_ids, expected", [([1], True), ([], False)])
+def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
+    game, monkeypatch, confirmed_ids, expected,
+):
+    db, state, content = game
+    target = _make_dossier(db, state, "辽东补饷")
+    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (target,))
+    db.conn.commit()
+    minister = "毕自严"
+    payload = json.dumps({
+        "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
+        "dossier_links": [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送"}],
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_ids": [target] if confirmed_ids else []}), 1),
+    )
+
+    class Agent:
+        def run(self, _message):
+            answer = "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。"
+            return SimpleNamespace(
+                content=answer,
+                tools=[SimpleNamespace(tool_name="secret_order", result=f"__secret_order__{payload}")],
+            )
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = SimpleNamespace(get=lambda _character: Agent(), build_draft_line=lambda: "无")
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message, *_args, **_kwargs: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, "下密令护行辽饷。")
+    db.commit_pending_actions(state, action_ids=[result.pending_action_id])
+    order = db.list_secret_orders(minister_name=minister)[0]
+    source = db.get_dossier_for_secret_order(order["id"])
+    assert bool(db.list_dossier_links(source["id"])) is expected
+
+
+@pytest.mark.parametrize("confirmed, expected", [(True, True), (False, False)])
+def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
+    game, monkeypatch, confirmed, expected,
+):
+    db, state, content = game
+    target = _make_dossier(db, state, "辽东补饷")
+    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (target,))
+    db.conn.commit()
+    extracted = {
+        "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
+        "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
+    }
+    def runner(*args, **kwargs):
+        value = ({"confirmed_ids": [target] if confirmed else []}
+                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
+        return json.dumps(value, ensure_ascii=False), 1
+    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = SimpleNamespace(refresh=lambda _name: None)
+    sess.llm_config = SimpleNamespace(channel="cli")
+
+    result = sess.apply_cli_conversation_actions(
+        SimpleNamespace(name="毕自严", office_type="户部"),
+        "密令：护行辽饷。",
+        "臣明确确认护卫辽东补饷。" if confirmed else "臣不能确认护卫辽东补饷。",
+        has_directive=False, secret_order_id=None,
+    )
+    db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
+    order = db.list_secret_orders(minister_name="毕自严")[0]
+    source = db.get_dossier_for_secret_order(order["id"])
+    assert bool(db.list_dossier_links(source["id"])) is expected
 
 
 def test_confirmed_secret_order_materializes_links_through_pending_commit(game):
