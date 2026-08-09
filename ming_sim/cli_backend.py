@@ -1076,15 +1076,27 @@ def extract_draft_intent(
         obj = _loads_lenient(raw) or {}
         values = obj.get("成品旨稿") if isinstance(obj, dict) else None
         drafts = []
+        seen_texts = set()
+        invalid_batch = not isinstance(values, list) or len(values) != draft_count
         for value in values if isinstance(values, list) else []:
             if not isinstance(value, dict):
-                continue
+                invalid_batch = True
+                break
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
             target_kind = str(value.get("目标类型") or "").strip()
             target_id = str(value.get("目标ID") or "").strip()
-            if not text or action not in DRAFT_ACTION_TYPES or not target_kind or not target_id:
+            if not text or not action or not target_kind or not target_id or text in seen_texts:
+                invalid_batch = True
+                break
+            seen_texts.add(text)
+            if action == "acting_appointment":
+                # #529 尚未接管署理；保留原批次位置，避免后续按候选序号消费时错配 sibling。
+                drafts.append(None)
                 continue
+            if action not in DRAFT_ACTION_TYPES:
+                invalid_batch = True
+                break
             raw_mechanical = {
                 target: value.get(source)
                 for source, target in (
@@ -1099,7 +1111,7 @@ def extract_draft_intent(
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "", **mechanical,
             })
-        if len(drafts) != draft_count or len({d["draft_text"] for d in drafts}) != draft_count:
+        if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
         return {
             "draft_action": "拟旨" if drafts else "无",
