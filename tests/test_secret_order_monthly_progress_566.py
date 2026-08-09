@@ -312,6 +312,61 @@ def test_simulator_fallback_missing_private_report_aborts_without_advancing(game
     assert db.list_dossier_progress(dossier_id) == []
 
 
+def test_no_eligible_dossier_rejects_hallucinated_reports_and_advances(game):
+    """Production settle keeps per-item evidence instead of swallowing unknown reports."""
+    db, state, content = game
+    turn = state.turn
+    hallucinated = {
+        "dossier_id": 999999,
+        "progress_band": "伪进展",
+        "memorial_text": "并不存在的案卷已有回报",
+    }
+
+    from ming_sim.decree import settle_with_delta
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": [hallucinated]},
+        before_turn=turn, content=content, narrative="本月其余结算照常",
+    )
+
+    row = db.conn.execute(
+        """
+        SELECT section,item_json,reason,category FROM rejection_reports
+        WHERE turn=? AND section='dossier_progress_reports'
+        """,
+        (turn,),
+    ).fetchone()
+    assert row is not None
+    assert json.loads(row["item_json"]) == hallucinated
+    assert row["reason"]
+    assert row["category"] == "hallucinated_id"
+    assert state.turn == turn + 1
+    assert db.conn.execute(
+        "SELECT dossier_progress_json FROM secret_orders WHERE dossier_progress_json != '[]'"
+    ).fetchone() is None
+
+
+def test_no_eligible_dossier_bad_report_shape_aborts_but_empty_list_advances(game):
+    from ming_sim.decree import settle_with_delta
+    from ming_sim.exceptions import SettlementAbort
+    import pytest
+
+    db, state, content = game
+    turn = state.turn
+    with pytest.raises(SettlementAbort):
+        settle_with_delta(
+            state, db, {"dossier_progress_reports": {"dossier_id": 999999}},
+            before_turn=turn, content=content, narrative="不得推进",
+        )
+    assert state.turn == turn
+    assert db.load_state().turn == turn
+
+    settle_with_delta(
+        state, db, {"dossier_progress_reports": []},
+        before_turn=turn, content=content, narrative="合法空月",
+    )
+    assert state.turn == turn + 1
+
+
 def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game):
     from ming_sim.exceptions import SettlementAbort
     import pytest

@@ -1478,10 +1478,27 @@ def _settle_after_extract_body(
     # Persist private monthly reports before applying disclosure updates from
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
-    # this ordering all-or-nothing.
-    db.record_monthly_dossier_progress(
-        before_turn, extracted.get("dossier_progress_reports"),
-    )
+    # this ordering all-or-nothing.  With no eligible dossier, a list remains
+    # per-item LLM dirt: retain every hallucinated item on the existing
+    # rejection rail and continue.  A non-list shape cannot be split safely and
+    # therefore remains fail-loud through the settlement abort path.
+    generated_reports = extracted.get("dossier_progress_reports")
+    reports_to_persist = generated_reports
+    if not db.list_monthly_dossier_progress_nudges() and isinstance(generated_reports, list):
+        if collector is not None:
+            for item in generated_reports:
+                collector.record(
+                    "dossier_progress_reports",
+                    RejectedItem(
+                        item=item,
+                        reason="无合资格长差案卷，拒收未知月报",
+                        category="hallucinated_id",
+                        source=source,
+                    ),
+                    before_turn,
+                )
+        reports_to_persist = []
+    db.record_monthly_dossier_progress(before_turn, reports_to_persist)
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
