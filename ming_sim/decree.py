@@ -1561,6 +1561,14 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # #566: materialize and expose monthly memorials inside the settlement
+    # transaction, so restore/retry continues (or upserts) one durable chain.
+    progress_reports = db.record_monthly_dossier_progress(before_turn)
+    if progress_reports:
+        narrative += "\n\n" + "\n".join(
+            f"密奏·{row['progress_band']}：{row['memorial_text']}"
+            for row in progress_reports
+        )
     # #976: release held pure-public audience chat (non-withheld) before
     # archive materialization so 参与即知 lands without secret-origin rows.
     db.release_held_audience_knowledge(commit=False)

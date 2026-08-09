@@ -9807,13 +9807,10 @@ class GameDB:
         """Long protection/audit errands due a monthly report, with history."""
         rows = self.conn.execute(
             """
-            SELECT d.* FROM decree_dossiers d
+            SELECT d.*, s.tags FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
               AND d.due_turn-d.created_turn >= 2
-              AND (s.title LIKE '%护%' OR s.content LIKE '%护行%'
-                   OR s.title LIKE '%稽核%' OR s.content LIKE '%稽核%'
-                   OR s.tags LIKE '%护行%' OR s.tags LIKE '%稽核%')
             ORDER BY d.id
             """
         ).fetchall()
@@ -9825,7 +9822,24 @@ class GameDB:
                 "progress": self.list_dossier_progress(int(row["id"])),
             }
             for row in rows
+            if {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
+               & {"护行", "稽核"}
         ]
+
+    def record_monthly_dossier_progress(self, turn: int) -> List[Dict[str, object]]:
+        """Materialize this month's canonical reports for eligible active dossiers."""
+        reports: List[Dict[str, object]] = []
+        for item in self.list_monthly_dossier_progress_nudges():
+            month = 1 + sum(
+                not row["is_terminal"] for row in item["progress"]
+                if int(row["turn"]) < int(turn)
+            )
+            self.record_dossier_progress(
+                int(item["dossier_id"]), int(turn), f"第{month}月在办",
+                f"{item['title']}按月具奏：仍在承办。", commit=False,
+            )
+            reports.append(self.list_dossier_progress(int(item["dossier_id"]))[-1])
+        return reports
 
     def create_decree_dossier(
         self,
@@ -13676,6 +13690,11 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         def close_in_current_transaction() -> None:
+            dossier = self.get_dossier_for_secret_order(int(order_id))
+            has_progress_chain = bool(
+                dossier is not None
+                and self.list_dossier_progress(int(dossier["id"]))
+            )
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -13684,16 +13703,16 @@ class GameDB:
                 """,
                 (status, result, turn_closed, int(order_id)),
             )
-            dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None and dossier["status"] != "closed":
                 if dossier["status"] == "promulgated":
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
-                self.record_dossier_progress(
-                    int(dossier["id"]), int(turn_closed), "结案",
-                    str(result), is_terminal=True, commit=False,
-                )
+                if has_progress_chain:
+                    self.record_dossier_progress(
+                        int(dossier["id"]), int(turn_closed), "结案",
+                        str(result), is_terminal=True, commit=False,
+                    )
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
