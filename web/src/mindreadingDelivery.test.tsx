@@ -95,8 +95,18 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     let releaseTail1!: () => void;
     const gate1 = new Promise<void>((r) => { releaseTail1 = r; });
     let call = 0;
+    let mindReleased = false;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 0, messages: [] });
+      if (String(url).includes("/api/audience/scroll")) {
+        if (mindReleased) return new Promise<Response>(() => {}); // 权威刷新延迟，交接态须显示 reducer 增量
+        return jsonResp({
+        night_id: 23,
+        messages: [
+          { role: "user", content: "问1" }, { role: "minister", content: "答1" },
+          { role: "user", content: "问2" }, { role: "minister", content: "答2" },
+        ],
+      });
+      }
       call += 1;
       if (call === 1) {
         // 流 1：done1 后门控挂起；mind1 尾巴延迟到流 2 完成之后才到
@@ -120,10 +130,12 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await act(async () => { await hook.sendChat("温体仁", "问2", noCbs); });  // 流 2 完成 → [u1,m1,u2,m2]
     expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
 
+    mindReleased = true;
     releaseTail1();  // 流 1 迟到的 mind1（turn10）到达——token 已被流 2 作废
     await act(async () => { await p1; });
-    // mind1 仍按归属轮 10 插入（回话之后），未因 token 作废而永久丢失
-    expect(rows()).toEqual(["user:问1", "minister:答1", "attendant:近臣低声。", "user:问2", "minister:答2"]);
+    // hook 的真实 reducer 把 mind1 插回旧轮；ChatModal 与权威卷轴交接按身份差集保住它，
+    // 不会因位置水位偏移而漏递话、重复既有尾轮。
+    expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2", "attendant:近臣低声。"]);
   });
 
   it("持久后果在 done 到手即消费：读心延后 end 期间起新轮，旧轮后果不被丢弃", async () => {
