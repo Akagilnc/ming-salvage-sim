@@ -542,7 +542,15 @@ def resolve_directives(
         if policy["effect_owner"] == "narrative" and admitted:
             dossier_payload.append(row)
         elif admitted and str(row.get("status") or "") == "executing":
-            dossier_payload.append({**row, "decree_text": "", "payload": {}})
+            dossier_payload.append({
+                key: row[key]
+                for key in (
+                    "id", "action_type", "target_kind", "target_id",
+                    "executor_kind", "executor_id", "status", "due_turn",
+                    "created_turn", "promulgated_turn",
+                )
+                if key in row
+            })
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)
