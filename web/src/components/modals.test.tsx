@@ -66,7 +66,7 @@ function renderModal(props: {
   // (ChatModal is a controlled component; frozen input="" would hide real fill).
   function Harness() {
     const [input, setInput] = React.useState("");
-    const [currentNightId, setCurrentNightId] = React.useState(props.currentNightId);
+    const [currentNightId, setCurrentNightId] = React.useState(props.currentNightId ?? 0);
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
@@ -498,28 +498,38 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent).not.toContain("旧夜问话");
   });
 
-  it("drops a withdrawn snapshot before a failed refresh", async () => {
+  it("keeps a withdrawn turn deleted after a later refresh fails", async () => {
+    let rejectLateRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
-        { role: "user", speaker: "朕", content: "旧夜问话", chat_turn_id: 1 },
-        { role: "minister", speaker: MINISTER_MOCK.name, content: "旧夜答复", chat_turn_id: 1 },
-        { role: "minister", speaker: "洪承畴", content: "同夜他臣", chat_turn_id: 2 },
+        { role: "user", speaker: "朕", content: "撤回前问话", chat_turn_id: 1 },
+        { role: "minister", speaker: MINISTER_MOCK.name, content: "撤回前答复", chat_turn_id: 1 },
+        { role: "minister", speaker: "洪承畴", content: "仍在卷中", chat_turn_id: 2 },
       ] }) })
-      .mockRejectedValueOnce(new Error("refresh failed"));
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
+        { role: "minister", speaker: "洪承畴", content: "仍在卷中", chat_turn_id: 2 },
+      ] }) })
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectLateRefresh = reject; }));
     vi.stubGlobal("fetch", fetchMock);
     let updateChat!: (chat: ChatMessage[]) => void;
     renderModal({
-      minister: MINISTER_MOCK, portraitPrefix: "minister_",
-      chat: [{ role: "user", content: "旧夜问话", chatTurnId: 1 }],
+      minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23,
+      chat: [{ role: "user", content: "撤回前问话", chatTurnId: 1 }],
       registerChatUpdate: (update) => { updateChat = update; },
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).toContain("同夜他臣");
+    expect(document.body.textContent).toContain("撤回前答复");
 
     await act(async () => { updateChat([]); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).not.toContain("旧夜问话");
-    expect(document.body.textContent).not.toContain("旧夜答复");
-    expect(document.body.textContent).not.toContain("同夜他臣");
+    expect(document.body.textContent).not.toContain("撤回前问话");
+    expect(document.body.textContent).not.toContain("撤回前答复");
+    expect(document.body.textContent).toContain("仍在卷中");
+
+    await act(async () => { updateChat([]); await Promise.resolve(); });
+    await act(async () => { rejectLateRefresh(new Error("late refresh failed")); await Promise.resolve(); });
+    expect(document.body.textContent).not.toContain("撤回前问话");
+    expect(document.body.textContent).not.toContain("撤回前答复");
+    expect(document.body.textContent).toContain("仍在卷中");
   });
   it("does not flash old minister chat while the night scroll is loading or failed", async () => {
     let reject!: (reason?: unknown) => void;
@@ -582,6 +592,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
+      currentNightId: 23,
       chat: [{ role: "user", content: "旧卷", chatTurnId: 1 }],
       registerChatUpdate: (update) => { updateChat = update; },
     });
@@ -625,6 +636,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
+      currentNightId: 23,
       chat: [
         { role: "user", content: "初问", chatTurnId: 1 },
         { role: "minister", content: "初答", chatTurnId: 1 },
@@ -666,6 +678,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     renderModal({
       minister: MINISTER_MOCK,
       portraitPrefix: "minister_",
+      currentNightId: 23,
       chat: [{ role: "user", content: "旧卷", chatTurnId: 1 }],
       registerChatUpdate: (update) => { updateChat = update; },
     });
@@ -690,7 +703,8 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     ];
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => replies.shift() })));
     let updateChat!: (chat: ChatMessage[]) => void;
-    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", registerChatUpdate: (update) => { updateChat = update; } });
+    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_",
+      currentNightId: 23, registerChatUpdate: (update) => { updateChat = update; } });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("旧卷");
     await act(async () => { updateChat([{ role: "minister", content: "旧分线程答" }]); await Promise.resolve(); await Promise.resolve(); });
