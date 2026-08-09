@@ -158,13 +158,17 @@ def _chosen_rescript_actions(
     return actions
 
 
-def _dossier_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[int]]:
+def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
     if not isinstance(simulator_payload, dict):
-        return None
+        return set()
     raw = simulator_payload.get("decree_dossiers")
     if not isinstance(raw, list):
-        return None
-    return {int(item["id"]) for item in raw if isinstance(item, dict) and str(item.get("id") or "").isdigit()}
+        return set()
+    return {
+        int(item["id"])
+        for item in raw
+        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
+    }
 
 
 def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:

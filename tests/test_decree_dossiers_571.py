@@ -89,10 +89,23 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     people = _active_people(db, 3)
     minister = people[0]
     character = next(ch for ch in content.characters.values() if ch.name == minister)
+    active_names = {
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active'"
+        ).fetchall()
+    }
+    aliased, alias = next(
+        (ch, alias)
+        for ch in content.characters.values() if ch.name in active_names
+        for alias in ch.aliases if alias != ch.name
+    )
     roster = [
         {"character_id": people[0], "tier": "主办", "role": "总理"},
-        {"character_id": people[1], "tier": "主办", "role": "会办"},
+        {"character_id": alias, "tier": "主办", "role": "会办"},
         {"character_id": people[2], "tier": "协办", "role": "核账"},
+    ]
+    expected_roster = [
+        roster[0], {**roster[1], "character_id": aliased.name}, roster[2],
     ]
     canned = {
         "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
@@ -119,8 +132,39 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
 
     dossier = db.list_decree_dossiers()[-1]
     assert dossier["participant_roster"] == [
-        {**item, "delegator_id": None} for item in roster
+        {**item, "delegator_id": None} for item in expected_roster
     ]
+
+
+@pytest.mark.parametrize("write_path", ["create", "append"])
+@pytest.mark.parametrize("delegation", ["self", "unrelated"])
+def test_dossier_roster_write_boundary_rejects_invalid_delegator(
+    game, write_path, delegation,
+):
+    db, state, _content = game
+    lead, worker, outsider = _active_people(db, 3)
+    delegator = worker if delegation == "self" else outsider
+    invalid = [
+        {"character_id": lead, "tier": "主办"},
+        {"character_id": worker, "tier": "知情", "delegator_id": delegator},
+    ]
+
+    if write_path == "create":
+        with pytest.raises(ValueError, match="委派人须为同案主办/协办且不得自委派"):
+            db.create_decree_dossier(
+                state, action_type="assignment", decree_text="命查仓储。",
+                target_kind="issue", target_id="granary", participants=invalid,
+            )
+        assert db.list_decree_dossiers() == []
+    else:
+        dossier_id = db.create_decree_dossier(
+            state, action_type="assignment", decree_text="命查仓储。",
+            target_kind="issue", target_id="granary",
+            participants=[{"character_id": lead, "tier": "主办"}],
+        )
+        with pytest.raises(ValueError, match="委派人须为同案主办/协办且不得自委派"):
+            db.append_decree_dossier_participants(dossier_id, invalid[1:])
+        assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 
 def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
@@ -165,7 +209,7 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
             "role": "推算历法",
             "delegator_id": people[0],
         }],
-    })
+    }, dossier_ids_at_input={dossier_id})
 
     assert result["dossier_participants"] == [{
         "dossier_id": dossier_id, "character_id": people[1], "tier": "协办",
@@ -174,6 +218,29 @@ def test_month_end_extractor_appends_self_dispatched_participant(game):
         "character_id": people[1], "tier": "协办", "role": "推算历法",
         "delegator_id": people[0],
     }
+
+
+@pytest.mark.parametrize("authority", [None, set()])
+def test_extractor_never_reconstructs_missing_dossier_authority_from_live_db(
+    game, authority,
+):
+    db, state, _content = game
+    lead, worker = _active_people(db, 2)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_participants": [{
+            "dossier_id": dossier_id, "character_id": worker,
+            "tier": "协办", "delegator_id": lead,
+        }],
+    }, dossier_ids_at_input=authority)
+
+    assert result["dossier_participants"][0]["rejected"] is True
+    assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 1
 
 
 def test_committing_each_directive_creates_independent_restoreable_dossier(game):
