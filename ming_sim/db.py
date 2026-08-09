@@ -9802,6 +9802,7 @@ class GameDB:
             roster_source = payload.get("participant_roster") or payload.get("participants")
         roster = self._normalize_participant_roster(roster_source)
         self._validate_participant_roster_references(roster)
+        self._validate_dossier_delegations(roster)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
@@ -9827,6 +9828,19 @@ class GameDB:
         self._commit_dossier_write(commit)
         return int(cur.lastrowid)
 
+    @staticmethod
+    def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
+        entries = list(roster)
+        responsible = {
+            str(item.get("character_id") or "") for item in entries
+            if item.get("tier") in {"主办", "协办"}
+        }
+        for item in entries:
+            delegator = str(item.get("delegator_id") or "")
+            character = str(item.get("character_id") or "")
+            if delegator and (delegator == character or delegator not in responsible):
+                raise ValueError("委派人须为同案主办/协办且不得自委派")
+
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *, commit: bool = True,
     ) -> List[Dict[str, object]]:
@@ -9845,17 +9859,9 @@ class GameDB:
         )
         additions = self._normalize_participant_roster(participants)
         self._validate_participant_roster_references(additions)
-        responsible = {
-            str(item.get("character_id") or "") for item in [*existing, *additions]
-            if item.get("tier") in {"主办", "协办"}
-        }
-        for item in additions:
-            delegator = str(item.get("delegator_id") or "")
-            character = str(item.get("character_id") or "")
-            if delegator and (delegator == character or delegator not in responsible):
-                raise ValueError("委派人须为同案既有主办/协办且不得自委派")
-            if item not in existing:
-                existing.append(item)
+        merged = existing + [item for item in additions if item not in existing]
+        self._validate_dossier_delegations(merged)
+        existing = merged
         self._validate_participant_roster_references(existing)
         self.conn.execute(
             "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",

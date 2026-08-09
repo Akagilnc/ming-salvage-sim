@@ -6445,10 +6445,10 @@ def apply_score_extraction(
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
     dossier_participant_results: List[Dict[str, object]] = []
-    if dossier_ids_at_input is None:
-        dossier_ids_at_input = {
-            int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)
-        }
+    # Only the caller's frozen simulator input grants roster-write authority.
+    # Missing authority is an empty closed set; never reconstruct it from live DB.
+    if not isinstance(dossier_ids_at_input, set):
+        dossier_ids_at_input = set()
     for item in extracted.get("dossier_participants") or []:
         if not isinstance(item, dict):
             dossier_participant_results.append({

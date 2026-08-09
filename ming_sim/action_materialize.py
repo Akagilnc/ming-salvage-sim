@@ -329,18 +329,19 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         }
         roster = draft_res.get("participant_roster")
         if isinstance(roster, list):
-            characters = list(getattr(session.db.content, "characters", {}).values())
-            canonical = {
-                token: character.name
-                for character in characters
-                for token in (character.name, *(character.aliases or []))
-                if token
-            }
+            from ming_sim.session import _canonical_minister_key
+
             roster = [
                 {
                     **item,
-                    "character_id": canonical.get(str(item.get("character_id") or "").strip(), str(item.get("character_id") or "").strip()),
-                    **({"delegator_id": canonical.get(str(item.get("delegator_id") or "").strip(), str(item.get("delegator_id") or "").strip())} if item.get("delegator_id") else {}),
+                    "character_id": _canonical_minister_key(
+                        session.content, item.get("character_id"), session.db,
+                    ),
+                    **({
+                        "delegator_id": _canonical_minister_key(
+                            session.content, item.get("delegator_id"), session.db,
+                        ),
+                    } if item.get("delegator_id") else {}),
                 }
                 for item in roster if isinstance(item, dict)
             ]
