@@ -1351,7 +1351,9 @@ class WebGame:
         递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
         入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
         if self._persistent_chat_minister(minister_name):
-            return self.db.build_chat_projection(minister_name)
+            from ming_sim.audience_night import get_open_night
+            night = get_open_night(self.db)
+            return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
             for m in self.chat_history.get(minister_name, [])
@@ -1479,6 +1481,8 @@ class WebGame:
         character = self.session._character(minister_name)
         return {
             "minister": minister_name,
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "night_id": int(row.get("night_id") or 0),
             "undone_chat_turn_id": int(undone["id"]),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
             "history": self.chat_projection(minister_name),
@@ -1534,6 +1538,7 @@ class WebGame:
             "answer": answer,
             # Persisted identity travels with the real player response; the web client
             # never infers night ownership from cross-night personal chat history.
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
             "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
             # 前端 setChat 不再抹掉先前浮现的读心递话。
@@ -2265,12 +2270,18 @@ class WebGame:
             write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
-        # The night is durable before LLM work starts. Publish its identity immediately
-        # so a failed/delayed reply cannot leave the player looking at the prior scroll.
+        identity = {
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "night_id": 0,
+            "chat_turn_id": int(chat_turn_id or 0),
+        }
+        # Publish the complete durable identity before LLM work. Every terminal event
+        # repeats it, so clients never infer ownership from text or a prior snapshot.
         if chat_turn_id and hasattr(self.db, "conn"):
             from ming_sim.audience_night import get_open_night
             open_night = get_open_night(self.db)
-            ev_queue.put({"type": "accepted", "night_id": int(open_night["id"]) if open_night else 0})
+            identity["night_id"] = int(open_night["id"]) if open_night else 0
+            ev_queue.put({"type": "accepted", **identity})
 
         def emit_delta(delta: str) -> None:
             ev_queue.put({"type": "delta", "content": delta})
@@ -2302,9 +2313,9 @@ class WebGame:
                     except Exception:
                         pass
                     if isinstance(error, LLMUnavailable):
-                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
+                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error), **identity})
                     else:
-                        ev_queue.put({"type": "error", "message": str(error)})
+                        ev_queue.put({"type": "error", "message": str(error), **identity})
                     return
 
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
@@ -3381,6 +3392,7 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
     return {
         "minister": game.public_character(character),
+        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
         "night_id": int(open_night["id"]) if open_night else 0,
         # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
         "history": game.chat_projection(minister_name),
@@ -3482,7 +3494,11 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 break
             item_type = str(item.get("type", "message"))
             if item_type == "accepted":
-                yield sse_event("accepted", {"night_id": item.get("night_id", 0)})
+                yield sse_event("accepted", {
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
             elif item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
@@ -3497,7 +3513,14 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("end", {})
                 break
             elif item_type == "error":
-                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
+                detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
+                payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
+                payload.update({
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
+                yield sse_event("error", payload)
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")

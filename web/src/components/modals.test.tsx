@@ -89,12 +89,14 @@ function renderModal(props: {
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
+        currentCampaignId="test-campaign"
         currentNightId={currentNightId}
-        undoneChatTurnId={undoneChatTurnId}
+        undoneChatIdentity={undoneChatTurnId == null ? null : { campaign_id: "test-campaign", night_id: currentNightId, chat_turn_id: undoneChatTurnId }}
         busy={props.busy ?? ""}
         chat={chat}
         suggestions={props.suggestions ?? []}
         pendingUserMessage=""
+        pendingIdentity={null}
         streamingMinisterMessage=""
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
@@ -599,7 +601,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps the completed tail visible while the canonical scroll refresh is delayed", async () => {
+  it("does not merge personal history while the canonical scroll refresh is delayed", async () => {
     let resolveRefresh!: (value: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷", chat_turn_id: 1 }] }) })
@@ -624,8 +626,8 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       await Promise.resolve();
     });
     expect(document.body.textContent).toContain("旧卷");
-    expect(document.body.textContent).toContain("刚完成的新问");
-    expect(document.body.textContent).toContain("刚完成的答复");
+    expect(document.body.textContent).not.toContain("刚完成的新问");
+    expect(document.body.textContent).not.toContain("刚完成的答复");
 
     await act(async () => {
       resolveRefresh({ ok: true, json: async () => ({ night_id: 23, messages: [
@@ -638,7 +640,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.body.textContent?.match(/刚完成的答复/g)).toHaveLength(1);
   });
 
-  it("keeps a late old-turn aside without repeating the existing tail while refresh is delayed and failed", async () => {
+  it("waits for the canonical scroll before showing a late persisted aside", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [
@@ -672,11 +674,11 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
       dispatchChat({ type: "mindreading", chatTurnId: 1, records: [{ id: 91, narration: "旧轮迟到递话" }] });
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("旧轮迟到递话");
+    expect(document.body.textContent).not.toContain("旧轮迟到递话");
     expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
 
     await act(async () => { rejectRefresh(new Error("refresh failed")); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).toContain("旧轮迟到递话");
+    expect(document.body.textContent).not.toContain("旧轮迟到递话");
     expect(document.body.textContent?.match(/已完成尾答/g)).toHaveLength(1);
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
 
@@ -690,7 +692,7 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it("keeps the last-known scroll and completed tail when a refresh fails", async () => {
+  it("keeps the last-known scroll without importing personal history when refresh fails", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "旧卷", chat_turn_id: 1 }] }) })
       .mockRejectedValueOnce(new Error("refresh failed"));
@@ -714,8 +716,8 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     });
 
     expect(document.body.textContent).toContain("旧卷");
-    expect(document.body.textContent).toContain("失败前新问");
-    expect(document.body.textContent).toContain("失败前已完成");
+    expect(document.body.textContent).not.toContain("失败前新问");
+    expect(document.body.textContent).not.toContain("失败前已完成");
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("召对记录读取失败");
   });
 

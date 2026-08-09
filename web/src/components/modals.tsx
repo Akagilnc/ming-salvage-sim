@@ -301,6 +301,8 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
   const [archivedScroll, setArchivedScroll] = React.useState<AudienceScrollMessage[] | null>(null);
+  const [scrollLoading, setScrollLoading] = React.useState(false);
+  const [scrollError, setScrollError] = React.useState("");
 
   React.useEffect(() => {
     let alive = true;
@@ -329,30 +331,34 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
     setDetailLoading(true);
     setDetailError("");
     setArchivedScroll(null);
-    (async () => {
-      try {
-        const [detailResp, scrollResp] = await Promise.all([
-          fetch(`/api/history/turn/${selectedTurn}`),
-          selectedArchive.night_id ? fetch(`/api/audience/scroll?night_id=${selectedArchive.night_id}`) : Promise.resolve(null),
-        ]);
-        if (!detailResp.ok) throw new Error(`HTTP ${detailResp.status}`);
-        if (scrollResp && !scrollResp.ok) throw new Error(`HTTP ${scrollResp.status}`);
-        const data = await detailResp.json();
-        const scrollData = scrollResp ? await scrollResp.json() : null;
-        if (alive) {
-          setDetail(data);
-          setArchivedScroll(scrollData?.messages || null);
-        }
-      } catch (e: any) {
-        if (alive) setDetailError(e?.message || "加载失败");
-      } finally {
-        if (alive) setDetailLoading(false);
-      }
-    })();
+    setScrollError("");
+    setScrollLoading(!!selectedArchive.night_id);
+    void fetch(`/api/history/turn/${selectedTurn}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => { if (alive) setDetail(data); })
+      .catch((error) => { if (alive) setDetailError(error?.message || "加载失败"); })
+      .finally(() => { if (alive) setDetailLoading(false); });
+    if (selectedArchive.night_id) {
+      void fetch(`/api/audience/scroll?night_id=${selectedArchive.night_id}`)
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((data) => { if (alive) setArchivedScroll(data?.messages || []); })
+        .catch((error) => { if (alive) setScrollError(error?.message || "加载失败"); })
+        .finally(() => { if (alive) setScrollLoading(false); });
+    } else {
+      setScrollLoading(false);
+    }
     return () => { alive = false; };
   }, [selectedArchive]);
 
-  const subtitle = turns.length ? `共 ${turns.length} 月存档` : "尚无存档";
+  const monthCount = turns.filter((item) => item.kind === "month").length;
+  const nightCount = turns.filter((item) => item.kind === "night").length;
+  const subtitle = turns.length ? `共 ${monthCount} 月档 · ${nightCount} 场档` : "尚无存档";
 
   return (
     <FullscreenModal title="史册：历代奏报与诏书" subtitle={subtitle} bgClass="modal-bg-state" onClose={onClose}>
@@ -375,8 +381,8 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
                     className={`history-turn-item ${active ? "active" : ""}`}
                     onClick={() => setSelectedArchive(t)}
                   >
-                    <b>{t.year} 年 {t.period} 月</b>
-                    <small>第 {t.turn} 回合 · {tags.join(" / ") || "—"}</small>
+                    <b>{t.kind === "night" ? `${t.location || "召对"}${t.time_of_day || "场"}` : `${t.year} 年 ${t.period} 月`}</b>
+                    <small>第 {t.turn} 回合 · {t.kind === "night" ? "场档" : (tags.join(" / ") || "月档")}</small>
                   </button>
                 </li>
               );
@@ -390,6 +396,8 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             detail={detail}
             selectedTurn={selectedArchive?.turn ?? null}
             archivedScroll={archivedScroll}
+            scrollLoading={scrollLoading}
+            scrollError={scrollError}
           />
         </article>
       </div>
@@ -403,12 +411,16 @@ export function HistoryDetailView({
   detail,
   selectedTurn,
   archivedScroll = null,
+  scrollLoading = false,
+  scrollError = "",
 }: {
   loading: boolean;
   error: string;
   detail: HistoryDetail | null;
   selectedTurn: number | null;
   archivedScroll?: AudienceScrollMessage[] | null;
+  scrollLoading?: boolean;
+  scrollError?: string;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
   if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
@@ -417,6 +429,8 @@ export function HistoryDetailView({
 
   return (
     <>
+      {scrollLoading ? <section className="document-section"><p className="long-copy">场档加载中…</p></section> : null}
+      {scrollError ? <section className="document-section"><p className="long-copy">场档加载失败：{scrollError}</p></section> : null}
       {archivedScroll ? (
         <section className="document-section modal-bg-chat">
           <h3 className="extraction-section-title">召对记录</h3>
@@ -532,11 +546,13 @@ export function ChatModal({
   minister,
   portraitPrefix,
   scrollMode = "audience",
+  currentCampaignId,
   currentNightId,
-  undoneChatTurnId,
+  undoneChatIdentity,
   chat,
   suggestions,
   pendingUserMessage,
+  pendingIdentity,
   streamingMinisterMessage,
   chatNotice,
   chatFailures,
@@ -563,13 +579,15 @@ export function ChatModal({
   minister: Minister;
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
-  /** Persisted open-night identity received through the player chat entry; 0 means no open night. */
+  /** Complete ownership of the currently open scroll. */
+  currentCampaignId: string;
   currentNightId: number;
-  /** Persisted turn identity returned by the latest successful withdrawal. */
-  undoneChatTurnId: number | null;
+  /** Complete persisted identity returned by the latest successful withdrawal. */
+  undoneChatIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
+  pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   streamingMinisterMessage: string;
   chatNotice: string;
   chatFailures: PendingActionFailure[];
@@ -615,47 +633,20 @@ export function ChatModal({
   >({ kind: "loading" });
   const followsTailRef = React.useRef(true);
   const restoredNightRef = React.useRef<number | false>(false);
-  const messageIdentity = (message: ChatMessage | AudienceScrollMessage): string | null => {
-    const isChatMessage = "chatTurnId" in message || "recordId" in message;
-    const chatTurnId = isChatMessage
-      ? (message as ChatMessage).chatTurnId
-      : (message as AudienceScrollMessage).chat_turn_id;
-    const recordId = isChatMessage
-      ? (message as ChatMessage).recordId
-      : (message as AudienceScrollMessage).record_id;
-    if (!chatTurnId || message.role === "scene") return null;
-    return message.role === "attendant"
-      ? (recordId ? `${message.role}:${chatTurnId}:${recordId}` : null)
-      : `${message.role}:${chatTurnId}`;
-  };
-  const chatIdentity = (message: ChatMessage) => messageIdentity(message);
+  const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
+    undoneChatIdentity
+    && undoneChatIdentity.campaign_id === currentCampaignId
+    && undoneChatIdentity.night_id === currentNightId
+    && message.chat_turn_id === undoneChatIdentity.chat_turn_id
+  );
   const snapshotStillCurrent = (state: typeof scrollState): boolean =>
-    state.kind !== "night" || (state.nightId === currentNightId
-      && !state.messages.some((message) => message.chat_turn_id === undoneChatTurnId));
+    state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
   const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
-  const mergeScrollWithChat = (): Array<ChatDisplayMessage | AudienceScrollMessage> => {
-    if (scrollMode === "legacy") return [...chat];
-    if (effectiveScrollState.kind !== "night") return effectiveScrollState.kind === "none" ? [...chat] : [];
-    const merged: Array<ChatDisplayMessage | AudienceScrollMessage> = [...effectiveScrollState.messages];
-    const present = new Set(merged.map(messageIdentity).filter((identity): identity is string => identity !== null));
-    for (const message of chat) {
-      const identity = chatIdentity(message);
-      if (!identity || present.has(identity)) continue;
-      let insertion = merged.length;
-      for (let index = merged.length - 1; index >= 0; index -= 1) {
-        const candidate = merged[index];
-        const turnId = "chatTurnId" in candidate ? candidate.chatTurnId : ("chat_turn_id" in candidate ? candidate.chat_turn_id : undefined);
-        if (turnId === message.chatTurnId) {
-          insertion = index + 1;
-          break;
-        }
-      }
-      merged.splice(insertion, 0, message);
-      present.add(identity);
-    }
-    return merged;
-  };
-  const displayMessages = mergeScrollWithChat();
+  // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
+  // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
+  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
+    ? [...chat]
+    : effectiveScrollState.kind === "night" ? [...effectiveScrollState.messages] : [];
 
   React.useEffect(() => {
     let alive = true;
@@ -683,9 +674,13 @@ export function ChatModal({
           : { kind: "error" });
       });
     return () => { alive = false; };
-  }, [minister.name, chat, scrollMode, currentNightId, undoneChatTurnId]);
+  }, [minister.name, chat, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity]);
 
-  if (pendingUserMessage) {
+  const pendingAlreadyPersisted = !!pendingIdentity
+    && pendingIdentity.campaign_id === currentCampaignId
+    && pendingIdentity.night_id === currentNightId
+    && displayMessages.some((message) => "chat_turn_id" in message && message.chat_turn_id === pendingIdentity.chat_turn_id);
+  if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
   if (streamingMinisterMessage) {

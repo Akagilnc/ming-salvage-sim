@@ -7315,23 +7315,38 @@ class GameDB:
             )
         return history
 
-    def build_chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """一份 turn-identified 召对投影（#499）：user/minister 逐条带 chat_turn_id，
+    def build_chat_projection(self, minister_name: str, night_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id，
         每轮的读心记录（带持久 id）紧随该轮大臣回话之后归位。
 
         单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
         chat_turns 打 turn 身份、按 (chat_turn_id, id) 织入 mindreading_records。
         前端据此一投影渲染，不再靠 setChat(history) 覆盖抹掉读心递话。
         """
-        msgs = self.conn.execute(
-            "SELECT id, role, content FROM chat_messages WHERE minister_name=? ORDER BY id",
-            (minister_name,),
-        ).fetchall()
+        if night_id is None:
+            open_night = self.conn.execute(
+                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            night_id = int(open_night["id"]) if open_night else 0
         turns = self.conn.execute(
             "SELECT id, user_message_id, minister_message_id FROM chat_turns "
-            "WHERE minister_name=?",
-            (minister_name,),
+            "WHERE minister_name=? AND night_id=?",
+            (minister_name, int(night_id)),
         ).fetchall()
+        message_ids = [
+            int(message_id)
+            for turn in turns
+            for message_id in (turn["user_message_id"], turn["minister_message_id"])
+            if message_id is not None
+        ]
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            msgs = self.conn.execute(
+                f"SELECT id, role, content FROM chat_messages WHERE id IN ({placeholders}) ORDER BY id",
+                message_ids,
+            ).fetchall()
+        else:
+            msgs = []
         msg_turn: Dict[int, int] = {}
         minister_msg_turn: Dict[int, int] = {}
         for t in turns:
@@ -9149,53 +9164,57 @@ class GameDB:
             "timeline": timeline,
         }
 
-    def list_archived_turns(self) -> List[Dict[str, object]]:
-        """列出月档及每一个已关闭召对场次；night_id 是场级归档身份。"""
+    def list_monthly_archives(self) -> List[Dict[str, object]]:
+        """每回合至多一条月档；召对场次绝不扩增月度时间线。"""
         rows = self.conn.execute(
             """
-            WITH materials AS (
-                SELECT turn, MAX(year) AS year, MAX(period) AS period,
-                       MAX(has_report) AS has_report,
-                       MAX(has_extraction) AS has_extraction,
-                       MAX(has_directive) AS has_directive
-                FROM (
-                    SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive FROM turn_reports
-                    UNION ALL
-                    SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
-                    UNION ALL
-                    SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
-                )
-                GROUP BY turn
-            ), archive_turns AS (
-                SELECT turn FROM materials
-                UNION
-                SELECT turn FROM audience_nights WHERE status = 'closed'
+            SELECT turn, MAX(year) AS year, MAX(period) AS period,
+                   MAX(has_report) AS has_report,
+                   MAX(has_extraction) AS has_extraction,
+                   MAX(has_directive) AS has_directive
+            FROM (
+                SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive FROM turn_reports
+                UNION ALL
+                SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
+                UNION ALL
+                SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
             )
-            SELECT a.turn,
-                   COALESCE(n.year, m.year) AS year,
-                   COALESCE(n.period, m.period) AS period,
-                   COALESCE(m.has_report, 0) AS has_report,
-                   COALESCE(m.has_extraction, 0) AS has_extraction,
-                   COALESCE(m.has_directive, 0) AS has_directive,
-                   n.id AS night_id
-            FROM archive_turns a
-            LEFT JOIN materials m ON m.turn = a.turn
-            LEFT JOIN audience_nights n ON n.turn = a.turn AND n.status = 'closed'
-            ORDER BY a.turn, n.id
+            GROUP BY turn ORDER BY turn
             """
         ).fetchall()
-        return [
-            {
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "has_report": bool(r["has_report"]),
-                "has_extraction": bool(r["has_extraction"]),
-                "has_directive": bool(r["has_directive"]),
-                **({"night_id": int(r["night_id"])} if r["night_id"] is not None else {}),
-            }
-            for r in rows
-        ]
+        return [{
+            "kind": "month", "turn": int(r["turn"]), "year": int(r["year"]),
+            "period": int(r["period"]), "has_report": bool(r["has_report"]),
+            "has_extraction": bool(r["has_extraction"]), "has_directive": bool(r["has_directive"]),
+        } for r in rows]
+
+    def list_closed_night_archives(self) -> List[Dict[str, object]]:
+        """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
+        rows = self.conn.execute(
+            "SELECT id,turn,year,period,time_of_day,location FROM audience_nights "
+            "WHERE status='closed' ORDER BY turn,id"
+        ).fetchall()
+        return [{
+            "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
+            "year": int(r["year"]), "period": int(r["period"]),
+            "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+        } for r in rows]
+
+    def list_archived_turns(self) -> List[Dict[str, object]]:
+        """兼容组合读面：月档和场档保持独立条目，不再以 SQL join 互相复制。"""
+        monthly = self.list_monthly_archives()
+        nights = self.list_closed_night_archives()
+        by_turn = {int(item["turn"]): item for item in monthly}
+        combined = list(monthly)
+        for night in nights:
+            material = by_turn.get(int(night["turn"]), {})
+            combined.append({
+                **night,
+                "has_report": bool(material.get("has_report", False)),
+                "has_extraction": bool(material.get("has_extraction", False)),
+                "has_directive": bool(material.get("has_directive", False)),
+            })
+        return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
 
     def list_directives_by_turn(self, turn: int) -> List[Dict[str, object]]:
         """读某回合已颁诏（issued）草案，按 id 升序。"""

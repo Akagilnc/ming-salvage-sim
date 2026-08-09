@@ -83,7 +83,7 @@ export function App() {
   const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
-  const [undoneChatTurnId, setUndoneChatTurnId] = React.useState<number | null>(null);
+  const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<{ campaign_id: string; night_id: number; chat_turn_id: number } | null>(null);
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
   const [cheatDirective, setCheatDirective] = React.useState("");
@@ -103,8 +103,10 @@ export function App() {
   // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
   const {
     chat,
+    currentCampaignId,
     currentNightId,
     pendingUserMessage,
+    pendingIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
@@ -205,6 +207,7 @@ export function App() {
   }, [refreshMenuStatus, loadState]);
 
   const enterGameAfterMenu = React.useCallback(async () => {
+    setUndoneChatIdentity(null);
     setAppView("game");
     await loadState();
   }, [loadState]);
@@ -215,6 +218,7 @@ export function App() {
     beginDurableMutation();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
+    setUndoneChatIdentity(null);
     setAppView("menu");
     await refreshMenuStatus();
   }, [refreshMenuStatus, beginDurableMutation]);
@@ -551,7 +555,11 @@ export function App() {
       // block on `busy`, so the player can switch ministers during the undo POST;
       // writing A's post-undo history into B's open panel is the same bleed.
       setSecretOrders(data.secret_orders || []);
-      setUndoneChatTurnId(data.undone_chat_turn_id);
+      setUndoneChatIdentity({
+        campaign_id: data.campaign_id,
+        night_id: data.night_id,
+        chat_turn_id: data.undone_chat_turn_id,
+      });
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
@@ -1190,11 +1198,13 @@ export function App() {
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            currentCampaignId={currentCampaignId}
             currentNightId={currentNightId}
-            undoneChatTurnId={undoneChatTurnId}
+            undoneChatIdentity={undoneChatIdentity}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
+            pendingIdentity={pendingIdentity}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
             chatFailures={activeChatFailures}

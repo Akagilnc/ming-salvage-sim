@@ -438,9 +438,13 @@ export type ExtractionPendingStatus = {
   }>;
 };
 
+export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };
+
 export type ChatResponse = {
   answer: string;
+  campaign_id: string;
   night_id: number;
+  chat_turn_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
@@ -461,6 +465,8 @@ export type DirectiveConfirmationAmbiguous = {
 };
 
 export type ChatUndoResponse = {
+  campaign_id: string;
+  night_id: number;
   undone_chat_turn_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
@@ -537,13 +543,16 @@ export type MenuStatus = {
 };
 
 export type HistoryTurnItem = {
+  kind: "month" | "night";
   turn: number;
   year: number;
   period: number;
   has_report: boolean;
   has_directive: boolean;
-  /** Persisted closed audience night for this archived turn, when one exists. */
+  /** Persisted closed audience night for a scene archive. */
   night_id?: number;
+  time_of_day?: string;
+  location?: string;
 };
 
 export type HistoryDirective = {
