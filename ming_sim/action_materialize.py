@@ -375,17 +375,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             for field_name in mechanical_fields:
                 if draft_res.get(field_name) not in (None, ""):
                     semantic_payload[field_name] = draft_res[field_name]
-        elif committed_draft is not None:
-            try:
-                committed_payload = json.loads(committed_draft["dossier_payload_json"] or "{}")
-            except (ValueError, TypeError):
-                committed_payload = {}
-            if not committed_payload:
-                semantic_payload.update({
-                    "dossier_action_type": "special_decree",
-                    "target_kind": "policy",
-                    "target_id": f"legacy-directive:{int(committed_draft['id'])}",
-                })
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
         if not is_existing_update:
