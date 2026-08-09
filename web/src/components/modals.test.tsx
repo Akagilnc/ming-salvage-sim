@@ -51,6 +51,7 @@ function renderModal(props: {
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
   onSend?: (text?: string) => void;
+  registerChatUpdate?: (update: (chat: Array<{ role: "user" | "minister"; content: string }>) => void) => void;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -60,12 +61,14 @@ function renderModal(props: {
   // (ChatModal is a controlled component; frozen input="" would hide real fill).
   function Harness() {
     const [input, setInput] = React.useState("");
+    const [chat, setChat] = React.useState(props.chat ?? []);
+    React.useEffect(() => props.registerChatUpdate?.(setChat), []);
     return (
       <ChatModal
         minister={props.minister}
         portraitPrefix={props.portraitPrefix}
         busy={props.busy ?? ""}
-        chat={props.chat ?? []}
+        chat={chat}
         suggestions={props.suggestions ?? []}
         pendingUserMessage=""
         streamingMinisterMessage=""
@@ -460,6 +463,57 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { reject(new Error("卷轴读取失败")); await Promise.resolve(); });
     expect(document.body.textContent).not.toContain("旧分线程不应闪回");
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("夜卷轴读取失败");
+  });
+
+  it("restores at the tail, follows new content only while the player remains at the tail", async () => {
+    let resolveScroll!: (value: unknown) => void;
+    const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => { resolveScroll = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    let updateChat!: (chat: Array<{ role: "user" | "minister"; content: string }>) => void;
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      chat: [{ role: "user", content: "初问" }],
+      registerChatUpdate: (update) => { updateChat = update; },
+    });
+    const log = host.querySelector(".chat-log") as HTMLDivElement;
+    let scrollHeight = 600;
+    Object.defineProperties(log, {
+      scrollHeight: { get: () => scrollHeight },
+      clientHeight: { get: () => 200 },
+    });
+
+    await act(async () => {
+      resolveScroll({ ok: true, json: async () => ({ night_id: 17, messages: [{ role: "user", content: "卷首" }] }) });
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(log.scrollTop).toBe(600);
+
+    scrollHeight = 700;
+    await act(async () => { updateChat([{ role: "user", content: "完成一轮" }]); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(700);
+
+    log.scrollTop = 100;
+    act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
+    scrollHeight = 800;
+    await act(async () => { updateChat([{ role: "user", content: "完成二轮" }]); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(100);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes the canonical scroll after a non-streaming completed chat update", async () => {
+    const replies = [
+      { night_id: 23, messages: [{ role: "user", content: "旧卷" }] },
+      { night_id: 23, messages: [{ role: "user", content: "旧卷" }, { role: "minister", content: "非流式新答" }] },
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => ({ ok: true, json: async () => replies.shift() })));
+    let updateChat!: (chat: Array<{ role: "user" | "minister"; content: string }>) => void;
+    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", registerChatUpdate: (update) => { updateChat = update; } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("旧卷");
+    await act(async () => { updateChat([{ role: "minister", content: "旧分线程答" }]); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.textContent).toContain("非流式新答");
+    expect(document.body.textContent).not.toContain("旧分线程答");
   });
 
   it("keeps ordinary no-night chat on the legacy projection", async () => {

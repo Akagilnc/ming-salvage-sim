@@ -95,7 +95,8 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     let releaseTail1!: () => void;
     const gate1 = new Promise<void>((r) => { releaseTail1 = r; });
     let call = 0;
-    vi.stubGlobal("fetch", vi.fn(async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) return jsonResp({ night_id: 0, messages: [] });
       call += 1;
       if (call === 1) {
         // 流 1：done1 后门控挂起；mind1 尾巴延迟到流 2 完成之后才到
