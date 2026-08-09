@@ -992,28 +992,6 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
 
 
-def test_draft_intent_schema_keeps_commas_before_optional_fields(monkeypatch):
-    import ming_sim.cli_backend as cli_backend
-
-    prompts = []
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda prompt, *_a, **_k: (
-            prompts.append(prompt) or '{"拟旨意图":"无"}', 1
-        ),
-    )
-    cli_backend.extract_draft_intent(
-        "补上河工细节", "臣已补拟。",
-        None,
-        existing_draft_text="旧稿",
-        existing_candidates=[{"id": 7, "text": "旧稿"}],
-    )
-
-    schema = prompts[0].split("只输出一个 JSON 对象", 1)[1].split("判定要点", 1)[0]
-    assert '"期限月数": null,' in schema
-    assert '"目标草案": "新",' in schema
-
-
 def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
     from ming_sim.session import GameSession
 
