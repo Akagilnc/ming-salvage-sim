@@ -1416,6 +1416,20 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
             ON economy_ledger(turn, account);
 
+            CREATE TABLE IF NOT EXISTS fiscal_config_tombstones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                removed_turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
+            ON fiscal_config_tombstones(origin_ref, removed_turn);
+
             CREATE TABLE IF NOT EXISTS fiscal_config (
                 key   TEXT PRIMARY KEY,
                 value INTEGER NOT NULL,
@@ -2465,7 +2479,10 @@ class GameDB:
             self.conn.commit()
         return touched
 
-    def remove_fiscal_item(self, key: str, commit: bool = True) -> Optional[str]:
+    def remove_fiscal_item(
+        self, key: str, commit: bool = True, *, origin_ref: str = "",
+        reason: str = "", turn: int = 0,
+    ) -> Optional[str]:
         """彻底裁撤一个月固定收支项（罢税/裁俸）：删 base+rate 两行。
 
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
@@ -2493,6 +2510,16 @@ class GameDB:
         ).fetchone()
         if exists is None:
             return None
+        # The live catalogue cannot retain provenance after DELETE.  Preserve the
+        # removed rows in a narrow append-only audit so origin -> removal is a
+        # single indexed lookup rather than an inference from unrelated logs.
+        self.conn.execute(
+            """INSERT INTO fiscal_config_tombstones
+               (removed_turn, key, value, kind, origin_ref, reason)
+               SELECT ?, key, value, kind, ?, ? FROM fiscal_config
+               WHERE key IN (?, ?)""",
+            (int(turn), origin_ref, reason[:240], base_key, rate_key),
+        )
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
         )

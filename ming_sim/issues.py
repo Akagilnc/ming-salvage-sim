@@ -7177,7 +7177,10 @@ def apply_score_extraction(
         if origin_error:
             applied_fiscal_removes.append({**origin_error, "item": remove})
             continue
-        removed_key = db.remove_fiscal_item(key, commit=commit_now)
+        removed_key = db.remove_fiscal_item(
+            key, commit=commit_now, origin_ref=origin_ref,
+            reason=str(remove.get("reason") or ""), turn=state.turn,
+        )
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
             applied_fiscal_removes.append({

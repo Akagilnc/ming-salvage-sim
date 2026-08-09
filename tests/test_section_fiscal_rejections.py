@@ -15,8 +15,16 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from driver import run_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+
+
+def run_settle(db, state, content, extracted, **kwargs):
+    """Legacy rejection fixtures now satisfy the durable-effect origin contract."""
+    for section in ("fiscal_removes", "fiscal_changes"):
+        for item in extracted.get(section) or []:
+            item.setdefault("origin_ref", "盘面自发")
+    return _run_settle(db, state, content, extracted, **kwargs)
 
 
 def _a_fiscal_key(db):

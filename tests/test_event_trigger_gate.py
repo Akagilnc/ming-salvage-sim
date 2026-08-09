@@ -4191,7 +4191,7 @@ def test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollbac
     out = issues.apply_score_extraction(
         db,
         state,
-        {"fiscal_changes": [{"key": key, "delta": 1, "reason": "测试顶层财政事务R7"}]},
+        {"fiscal_changes": [{"origin_ref": "盘面自发", "key": key, "delta": 1, "reason": "测试顶层财政事务R7"}]},
         content=content,
     )
     assert out["fiscal_changes"][0]["key"] == key
@@ -4317,7 +4317,7 @@ def test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transacti
         db,
         state,
         {
-            "fiscal_removes": [{"key": remove_key, "reason": "测试顶层财政裁撤事务R7"}],
+            "fiscal_removes": [{"origin_ref": "盘面自发", "key": remove_key, "reason": "测试顶层财政裁撤事务R7"}],
             "fiscal_creates": [
                 {
                     "origin_ref": "盘面自发", "key": created_key,
