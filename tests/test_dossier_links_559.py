@@ -64,7 +64,7 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
         ],
     }
     def run_extractor(*args, **kwargs):
-        value = ({"confirmed_ids": [11, 12]}
+        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}, {"target_dossier_id": 12, "relation_type": "护卫"}]}
                  if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
         return json.dumps(value, ensure_ascii=False), 1
 
@@ -91,7 +91,7 @@ def test_secret_order_extractor_only_carries_explicit_confirmed_dossier_ids(monk
 def test_semantic_verdict_rejects_negative_quote_vague_and_containment(monkeypatch, reply):
     monkeypatch.setattr(
         cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_ids": []}), 1),
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": []}), 1),
     )
     links = cli_backend.confirm_dossier_links(
         reply,
@@ -127,7 +127,7 @@ def test_semantic_verdict_bad_shape_fails_closed_without_crashing(monkeypatch, v
 def test_semantic_verdict_can_narrow_to_exactly_one_proposed_candidate(monkeypatch):
     monkeypatch.setattr(
         cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_ids": [12, 999]}), 1),
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": [{"target_dossier_id": 12, "relation_type": "接应"}, {"target_dossier_id": 999, "relation_type": "接应"}]}), 1),
     )
     links = cli_backend.confirm_dossier_links(
         "臣明确确认接应辽东补饷补充案。",
@@ -161,8 +161,7 @@ def test_reference_candidates_hide_other_ministers_secret_dossiers(game):
     db, state, _ = game
     draft_id = _make_dossier(db, state, "尚未明发饷案")
     public_id = _make_dossier(db, state, "公开饷案")
-    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (public_id,))
-    db.conn.commit()
+    db.record_dossier_decision(public_id, "promulgated")
     other_order = db.create_secret_order(state, "卢象升", "密查", "不可外泄", [])
     other_secret = db.get_dossier_for_secret_order(other_order)
 
@@ -197,15 +196,14 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
 
 
 @pytest.mark.parametrize("confirmed_ids, expected", [
-    ("target", True), ([], False), ([True], False), ([{"id": 1}], False),
+    ("target", True), ([], False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
 ])
 def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     game, monkeypatch, confirmed_ids, expected,
 ):
     db, state, content = game
     target = _make_dossier(db, state, "辽东补饷")
-    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (target,))
-    db.conn.commit()
+    db.record_dossier_decision(target, "promulgated")
     minister = "毕自严"
     payload = json.dumps({
         "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
@@ -214,7 +212,7 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     verdict_ids = [target] if confirmed_ids == "target" else confirmed_ids
     monkeypatch.setattr(
         cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_ids": verdict_ids}), 1),
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if verdict_ids == [target] else verdict_ids)}), 1),
     )
 
     class Agent:
@@ -242,22 +240,21 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
 
 
 @pytest.mark.parametrize("confirmed_ids, expected", [
-    ("target", True), (None, False), ([True], False), ([{"id": 1}], False),
+    ("target", True), (None, False), ([{"target_dossier_id": True, "relation_type": "护卫"}], False), ([{"id": 1}], False),
 ])
 def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
     game, monkeypatch, confirmed_ids, expected,
 ):
     db, state, content = game
     target = _make_dossier(db, state, "辽东补饷")
-    db.conn.execute("UPDATE decree_dossiers SET status='promulgated' WHERE id=?", (target,))
-    db.conn.commit()
+    db.record_dossier_decision(target, "promulgated")
     extracted = {
         "标题": "护行辽饷", "内容": "护送辽饷", "承办人": "毕自严",
         "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
     }
     def runner(*args, **kwargs):
         ids = [target] if confirmed_ids == "target" else (confirmed_ids or [])
-        value = ({"confirmed_ids": ids}
+        value = ({"confirmed_links": ([{"target_dossier_id": target, "relation_type": "护卫"}] if ids == [target] else ids)}
                  if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
         return json.dumps(value, ensure_ascii=False), 1
     monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
@@ -332,3 +329,65 @@ def test_unknown_target_link_is_rejected_and_audited(game):
     audit = db.list_dossier_link_rejections(source)
     assert audit[-1]["target_dossier_id"] == 999999
     assert "指向不存在案卷" in audit[-1]["reason"]
+
+
+
+def test_same_target_multiple_relations_keep_exact_confirmed_tuples(monkeypatch):
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps({"confirmed_links": [
+            {"target_dossier_id": 11, "relation_type": "护卫"},
+            {"target_dossier_id": 11, "relation_type": "稽核"},
+        ]}, ensure_ascii=False), 1),
+    )
+    proposals = [
+        {"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"},
+        {"target_dossier_id": 11, "relation_type": "稽核", "note": "查账"},
+        {"target_dossier_id": 11, "relation_type": "接应", "note": "接应"},
+    ]
+    assert cli_backend.confirm_dossier_links(
+        "臣确认护卫并稽核该案。", [{"id": 11, "decree_text": "辽饷"}], proposals,
+    ) == proposals[:2]
+
+
+def test_withdrawn_rejected_dossier_is_not_referenceable(game):
+    db, state, _ = game
+    dossier_id = _make_dossier(db, state, "收回的旧旨")
+    db.record_dossier_decision(dossier_id, "rejected", reason="驳回")
+    db.record_dossier_decision(dossier_id, "withdrawn", reason="收回")
+    assert dossier_id not in {row["id"] for row in db.list_referenceable_dossiers("孙承宗", state.turn)}
+
+
+def test_pending_rejection_does_not_follow_reused_rolled_back_source_id(game):
+    db, state, _ = game
+    action_id = db.stage_pending_action(
+        state.turn, "secret_order", "新建", "孙承宗",
+        {"title": "坏引用", "content": "坏引用", "assignee": "孙承宗", "dossier_links": [
+            {"target_dossier_id": 999999, "relation_type": "护卫", "note": "护送"}]},
+    )
+    assert db.commit_pending_actions(state, action_ids=[action_id]) == []
+    reused_id = _make_dossier(db, state, "后建案卷")
+    assert db.list_dossier_link_rejections(reused_id) == []
+    assert db.list_dossier_link_rejections(pending_action_id=action_id)
+
+
+def test_cli_secret_extraction_overlaps_independent_confirmation(monkeypatch):
+    import threading
+    barrier = threading.Barrier(2)
+    seen = []
+    extracted = {"标题": "护饷", "内容": "护饷", "承办人": "孙承宗", "案卷关联": [
+        {"目标案卷ID": 11, "类型": "护卫", "说明": "护送"}]}
+    def runner(*args, **kwargs):
+        seen.append(kwargs.get("tag"))
+        barrier.wait(timeout=2)
+        value = ({"confirmed_links": [{"target_dossier_id": 11, "relation_type": "护卫"}]}
+                 if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
+        return json.dumps(value, ensure_ascii=False), 1
+    monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
+    result = cli_backend._extract_secret_order(
+        "护饷", "臣确认护卫辽饷。", "孙承宗",
+        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
+        dossier_candidates=[{"id": 11, "decree_text": "辽饷"}],
+    )
+    assert set(seen) == {"secret_extract", "dossier_link_confirmation"}
+    assert result["dossier_links"][0]["target_dossier_id"] == 11

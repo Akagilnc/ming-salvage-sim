@@ -23,7 +23,7 @@ from ming_sim.constants import (
     ECONOMY_ACCOUNTS, POWER_FIELD_LABELS, POWER_SCORE_FIELDS,
     POWER_FIELD_ALIASES, POWER_TEXT_FIELDS, MONEY_UNIT, REGION_FIELD_LABELS, REGION_QUANTITY_FIELDS,
     FISCAL_SCORE_FIELDS, REGION_FIELD_ALIASES, REGION_SCORE_FIELDS, REGION_TEXT_FIELDS,
-    SALARY_RATE_ANCHOR, TURN_UNIT,
+    DOSSIER_LINK_TYPES, SALARY_RATE_ANCHOR, TURN_UNIT,
 )
 from ming_sim.content import GameContent
 from ming_sim.decree_vocabulary import DOSSIER_ACTION_TYPES, DIRECTIVE_ACTION_TYPES
@@ -9883,7 +9883,7 @@ class GameDB:
                 known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
             """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      d.secret_order_id,s.title AS secret_title
+                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title
                FROM decree_dossiers d
                LEFT JOIN secret_orders s ON s.id=d.secret_order_id
                WHERE d.created_turn <= ?
@@ -9893,14 +9893,13 @@ class GameDB:
         return [
             dict(row) for row in rows
             if (
-                row["secret_order_id"] is None and str(row["status"]) != "proposed"
+                row["secret_order_id"] is None
+                and str(row["promulgation_decision"] or "") == "promulgated"
             ) or (
                 row["secret_order_id"] is not None
                 and int(row["secret_order_id"]) in known_secret_ids
             )
         ]
-
-    _DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
 
     def _record_dossier_link_rejection(
         self, source_id: int, target_id: int, relation: str, note: str,
@@ -9937,7 +9936,7 @@ class GameDB:
                 rejection = (target_id, relation, note, "关联指向不存在案卷")
             elif target_id >= source_id:
                 rejection = (target_id, relation, note, "案卷关联只允许新案卷指向旧案卷")
-            elif relation not in self._DOSSIER_LINK_TYPES:
+            elif relation not in DOSSIER_LINK_TYPES:
                 rejection = (target_id, relation, note, "案卷关联类型非法")
             elif not note:
                 rejection = (target_id, relation, note, "案卷关联说明不能为空")
@@ -9954,7 +9953,8 @@ class GameDB:
             # commit_pending_actions rolls its business savepoint back.  Carry the
             # rejected item across that boundary so its outer failure path can
             # persist the audit without retaining the incomplete secret order.
-            exc.dossier_link_rejection = (source_id, target_id, relation, note, reason)
+            # source_id belongs to the savepoint and may be reused after rollback.
+            exc.dossier_link_rejection = (0, target_id, relation, note, reason)
             raise exc
         self.conn.executemany(
             """INSERT OR IGNORE INTO decree_dossier_links

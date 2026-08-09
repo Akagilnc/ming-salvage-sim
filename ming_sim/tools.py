@@ -6,7 +6,7 @@ import json
 import re
 from typing import Dict, List
 
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.qualitative import qualitative_band
@@ -541,6 +541,11 @@ def build_minister_tools(character: Character, context: CourtContext,
         - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且非建档当月则暂存落档，同月补充会修正本月行。
         - "submit"：提交结案。填 order_id、claim（办结陈词）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
+
+        issue 可用 dossier_links_json 关联当前提示中的旧案卷。它是 JSON 数组，每项必须含
+        target_dossier_id（旧案卷整数 ID）、relation_type（护卫/稽核/接应之一）和 note
+        （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
+        "note":"护送辽饷"}]。未明确确认则传 []。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
         # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
@@ -615,7 +620,7 @@ def build_minister_tools(character: Character, context: CourtContext,
                 continue
             relation = str(link.get("relation_type") or "").strip()
             note = str(link.get("note") or "").strip()
-            if target_id in visible_ids and relation in {"护卫", "稽核", "接应"} and note:
+            if target_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
                 dossier_links.append({"target_dossier_id": target_id, "relation_type": relation, "note": note})
         try:
             deadline = max(0, min(int(deadline_months or 0), 36))
