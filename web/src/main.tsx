@@ -1041,6 +1041,14 @@ export function App() {
           )
         ) : null}
 
+        {/* 地图暖黄昏调+暗角：盖在交互地图上的纯装饰层（夜·烛基调），不吃点击 */}
+        {ready && !(typeof window !== "undefined" && new URLSearchParams(window.location.search).has("flat")) ? (
+          <QuadFrame className="hud2-map-grade-frame" quad={HUD_SLOTS.地图四角}
+            stageW={sz.w} stageH={sz.h} baseW={2560} baseH={1440}>
+            <div className="hud2-map-grade" />
+          </QuadFrame>
+        ) : null}
+
         {/* 局势进度：塞进左卡透视梯形 */}
         {ready ? (
           <QuadFrame className="hud2-issue-quad" quad={HUD_SLOTS.局势四角}
