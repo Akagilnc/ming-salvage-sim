@@ -61,6 +61,7 @@ function mount() {
     return (
       <ChatModal
         minister={MINISTER} portraitPrefix="minister_"
+        currentNightId={hook.currentNightId || undefined}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
         streamingMinisterMessage={hook.streamingMinisterMessage}

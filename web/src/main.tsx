@@ -102,6 +102,7 @@ export function App() {
   // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
   const {
     chat,
+    currentNightId,
     pendingUserMessage,
     streamingMinisterMessage,
     resetPanel,
@@ -1187,6 +1188,7 @@ export function App() {
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            currentNightId={currentNightId || undefined}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
