@@ -2030,24 +2030,20 @@ def confirm_dossier_links(
     minister_reply: str,
     dossier_candidates: Optional[List[Dict[str, Any]]],
     suggested_links: Any,
+    llm_config: Any = None,
 ) -> List[Dict[str, Any]]:
-    """Resolve links from the minister's visible, unambiguous restatement."""
-    reply = re.sub(r"\s+", "", minister_reply or "")
-    labels: Dict[int, str] = {}
-    counts: Dict[str, int] = {}
-    for row in dossier_candidates or []:
-        try:
-            dossier_id = int(row["id"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        label = re.sub(r"\s+", "", str(
-            row.get("secret_title") or row.get("decree_text") or ""
-        ).strip())
-        if label:
-            labels[dossier_id] = label
-            counts[label] = counts.get(label, 0) + 1
-    confirmed = {key for key, label in labels.items() if counts[label] == 1 and label in reply}
-    out: List[Dict[str, Any]] = []
+    """Use one structured semantic verdict to narrow model-suggested links.
+
+    Internal IDs are capabilities only: the verdict may select an ID only from
+    both the reader-visible candidates and the producer's structured proposal.
+    A failed/ambiguous verdict authorises nothing.
+    """
+    candidates = {
+        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+        for row in (dossier_candidates or [])
+        if isinstance(row, dict) and isinstance(row.get("id"), int)
+    }
+    proposals: Dict[int, Dict[str, Any]] = {}
     for link in suggested_links if isinstance(suggested_links, list) else []:
         if not isinstance(link, dict) or isinstance(link.get("target_dossier_id"), bool):
             continue
@@ -2057,9 +2053,28 @@ def confirm_dossier_links(
             continue
         relation = str(link.get("relation_type") or "").strip()
         note = str(link.get("note") or "").strip()
-        if target in confirmed and relation in {"护卫", "稽核", "接应"} and note:
-            out.append({"target_dossier_id": target, "relation_type": relation, "note": note})
-    return out
+        if target in candidates and relation in {"护卫", "稽核", "接应"} and note:
+            proposals[target] = {"target_dossier_id": target, "relation_type": relation, "note": note}
+    if not proposals:
+        return []
+    prompt = (
+        "你是案卷关联确认判词，不是对话角色。只依据【大臣最终可见回话】的完整语义判断；"
+        "否定、仅引用旧案、模糊复述、长短标题包含歧义、未明确承诺关联，均不得确认。"
+        "内部ID只用于输出，不是确认依据。只输出合法JSON：{\"confirmed_ids\":[整数]}。\n"
+        "【可选提议】\n" + "\n".join(
+            f"- #{target} {candidates[target]}；{item['relation_type']}；{item['note']}"
+            for target, item in proposals.items()
+        ) + "\n【大臣最终可见回话】\n" + (minister_reply or "（空）")
+    )
+    try:
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="dossier_link_confirmation")
+        verdict = _loads_lenient(raw) or {}
+    except Exception as exc:
+        _log(f"案卷关联确认失败：{exc}")
+        return []
+    ids = verdict.get("confirmed_ids")
+    confirmed = set(ids) if isinstance(ids, list) else set()
+    return [item for target, item in proposals.items() if target in confirmed]
 
 
 def _extract_secret_order(
@@ -2188,7 +2203,8 @@ def _extract_secret_order(
                 "relation_type": str(link.get("类型") or "").strip(),
                 "note": str(link.get("说明") or "").strip(),
             })
-    dossier_links = confirm_dossier_links(minister_reply, dossier_candidates, dossier_links)
+    dossier_links = confirm_dossier_links(
+        minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
