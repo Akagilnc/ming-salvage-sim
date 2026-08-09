@@ -9804,7 +9804,7 @@ class GameDB:
             SELECT d.*, s.tags FROM decree_dossiers d
             JOIN secret_orders s ON s.id=d.secret_order_id
             WHERE d.status IN ('promulgated','executing') AND s.status='active'
-              AND d.due_turn-d.created_turn >= 2
+              AND s.due_turn-s.turn_issued >= 2
             ORDER BY d.id
             """
         ).fetchall()
@@ -9823,31 +9823,36 @@ class GameDB:
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
-        """Persist valid extractor-authored briefs; never invent missing facts."""
-        if not isinstance(generated, list):
-            return []
+        """Persist one valid extractor-authored brief for every eligible dossier."""
         candidates = {
             int(item["dossier_id"]): item
             for item in self.list_monthly_dossier_progress_nudges()
         }
-        reports: List[Dict[str, object]] = []
-        seen: set[int] = set()
+        if not candidates:
+            return []
+        if not isinstance(generated, list):
+            raise ValueError("合资格长差案卷缺少本月密奏")
+        supplied: Dict[int, Dict[str, object]] = {}
         for item in generated:
             if not isinstance(item, dict):
-                continue
+                raise ValueError("长差月报格式无效")
             try:
                 dossier_id = int(item.get("dossier_id", 0))
-            except (TypeError, ValueError):
-                continue
+            except (TypeError, ValueError) as exc:
+                raise ValueError("长差月报案卷编号无效") from exc
             band = str(item.get("progress_band") or "").strip()
             text = str(item.get("memorial_text") or "").strip()
-            # Unknown/ineligible dossiers, malformed prose, and duplicate entries
-            # are rejected rather than converted into a plausible-sounding fact.
-            if dossier_id not in candidates or dossier_id in seen or not band or not text:
-                continue
-            seen.add(dossier_id)
+            if dossier_id not in candidates or dossier_id in supplied or not band or not text:
+                raise ValueError("长差月报存在未知、重复或空白条目")
+            supplied[dossier_id] = item
+        if set(supplied) != set(candidates):
+            raise ValueError("合资格长差案卷月报未完整覆盖")
+
+        reports: List[Dict[str, object]] = []
+        for dossier_id, item in supplied.items():
             self.record_dossier_progress(
-                dossier_id, int(turn), band, text, commit=False,
+                dossier_id, int(turn), str(item["progress_band"]).strip(),
+                str(item["memorial_text"]).strip(), commit=False,
             )
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports

@@ -86,8 +86,7 @@ def test_only_private_extractor_context_reads_canonical_history(game):
     assert pushed["progress"] == db.list_dossier_progress(dossier_id)
 
 
-def test_emperor_and_assignee_private_presentations_show_monthly_report(game):
-    from ming_sim.registry import CourtContext, build_secret_order_brief
+def test_only_emperor_private_payload_shows_monthly_report(game):
 
     db, state, content = game
     order_id, dossier_id = _order(db, state)
@@ -101,13 +100,11 @@ def test_emperor_and_assignee_private_presentations_show_monthly_report(game):
     emperor_order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
     assert emperor_order["dossier_progress"][-1]["memorial_text"] == marker
 
-    # The assignee receives the same report in their private audience context.
+    # The report does not leak into the assignee's registry-fed audience brief.
+    from ming_sim.registry import CourtContext, build_secret_order_brief
     assignee = content.characters[emperor_order["minister_name"]]
-    private_brief = build_secret_order_brief(
-        assignee, CourtContext(db=db, state=state),
-    )
-    assert "在途核验" in private_brief
-    assert marker in private_brief
+    private_brief = build_secret_order_brief(assignee, CourtContext(db=db, state=state))
+    assert marker not in private_brief
 
 
 def test_disclosure_promotes_monthly_report_to_public_event_only_after_disclosure(game):
@@ -201,16 +198,46 @@ def test_real_module_extractor_traces_private_context_through_settlement(game, m
     assert db.list_dossier_progress(dossier_id)[0]["memorial_text"] == "首批出京，已验关防"
 
 
-def test_missing_bad_unknown_and_duplicate_reports_do_not_invent_progress(game):
+def test_current_secret_order_deadline_controls_monthly_eligibility(game):
+    db, state, content = game
+    order_id, dossier_id = _order(db, state, deadline=1)
+    assert db.list_monthly_dossier_progress_nudges() == []
+
+    # rush/update changes the current order deadline; the dossier's copied deadline is stale.
+    db.conn.execute("UPDATE secret_orders SET due_turn=? WHERE id=?", (state.turn + 3, order_id))
+    assert db.get_decree_dossier(dossier_id)["due_turn"] != state.turn + 3
+    assert [item["dossier_id"] for item in db.list_monthly_dossier_progress_nudges()] == [dossier_id]
+
+
+def test_eligible_missing_report_aborts_settlement_but_empty_month_succeeds(game):
+    from ming_sim.exceptions import SettlementAbort
+    import pytest
+
+    db, state, content = game
+    before = state.turn
+    _order(db, state)
+    with pytest.raises(SettlementAbort):
+        _settle(db, state, content)
+    assert state.turn == before
+
+    db.conn.execute("UPDATE secret_orders SET status='cancelled'")
+    _settle(db, state, content)
+    assert state.turn == before + 1
+
+
+def test_missing_bad_unknown_and_duplicate_reports_are_rejected(game):
     db, state, _content = game
     _, dossier_id = _order(db, state)
-    assert db.record_monthly_dossier_progress(state.turn, None) == []
-    assert db.record_monthly_dossier_progress(state.turn, {"dossier_id": dossier_id}) == []
-    rows = db.record_monthly_dossier_progress(state.turn, [
+    import pytest
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, None)
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, {"dossier_id": dossier_id})
+    with pytest.raises(ValueError):
+        db.record_monthly_dossier_progress(state.turn, [
         {"dossier_id": 999999, "progress_band": "伪", "memorial_text": "伪进展"},
         {"dossier_id": dossier_id, "progress_band": "", "memorial_text": "缺档"},
         {"dossier_id": dossier_id, "progress_band": "启程", "memorial_text": "首批出京"},
-        {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
-    ])
-    assert len(rows) == 1
-    assert db.list_dossier_progress(dossier_id)[0]["memorial_text"] == "首批出京"
+            {"dossier_id": dossier_id, "progress_band": "重复", "memorial_text": "不得覆盖"},
+        ])
+    assert db.list_dossier_progress(dossier_id) == []

@@ -268,12 +268,6 @@ def build_secret_order_brief(character: Character, context: CourtContext) -> str
         content_brief = (o.get("content") or "")[:80].replace("\n", " ")
         if content_brief:
             lines.append(f"    （任务摘要：{content_brief}…）")
-        progress = o.get("dossier_progress") or []
-        if progress:
-            latest = progress[-1]
-            lines.append(
-                f"    【御前密奏·{latest['progress_band']}】{latest['memorial_text']}"
-            )
     return "\n".join(lines)
 
 
