@@ -897,6 +897,44 @@ def test_participant_roster_is_discovered_from_any_persistent_table(game):
     assert any(item["source_id"] == "custom:1" for item in view["events"])
 
 
+def test_appended_dossier_participant_learns_only_on_join_turn_after_restore(game):
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    lead, newcomer = [
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' LIMIT 2"
+        ).fetchall()
+    ]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="着核定历书。",
+        target_kind="issue", target_id="calendar-copy",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    created_turn = state.turn
+    state.turn = 7
+    db.append_decree_dossier_participants(dossier_id, [{
+        "character_id": newcomer, "tier": "协办", "delegator_id": lead,
+    }], state=state)
+
+    assert min(item["turn"] for item in db.get_character_knowledge(
+        state, lead,
+    )["events"] if item["source_id"] == f"decree_dossier:{dossier_id}") == created_turn
+    joined = [item for item in db.get_character_knowledge(state, newcomer)["events"]
+              if item["source_id"].startswith(f"dossier:{dossier_id}:participant:")]
+    assert [item["turn"] for item in joined] == [7]
+
+    path = db.path
+    db.close()
+    reopened = GameDB(path, content=content)
+    try:
+        restored = [item for item in reopened.get_character_knowledge(state, newcomer)["events"]
+                    if item["source_id"].startswith(f"dossier:{dossier_id}:participant:")]
+        assert [item["turn"] for item in restored] == [7]
+    finally:
+        reopened.close()
+
+
 def test_decree_dossier_participant_reads_frozen_metadata_and_text(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")

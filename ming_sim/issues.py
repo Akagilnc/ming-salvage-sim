@@ -6462,14 +6462,35 @@ def apply_score_extraction(
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
             tier = str(item.get("tier") or "").strip()
-            db.append_decree_dossier_participants(dossier_id, [{
+            if not character_id:
+                raise ValueError("追加参与人物不能为空")
+            if tier not in {"主办", "协办", "知情"}:
+                raise ValueError("追加参与层级必须为主办/协办/知情")
+            if not delegator_id:
+                raise ValueError("追加参与人必须注明委派人")
+            added = db.append_decree_dossier_participants(dossier_id, [{
                 "character_id": character_id,
                 "tier": tier,
                 "role": str(item.get("role") or "").strip(),
-                "delegator_id": delegator_id or None,
-            }], commit=False)
+                "delegator_id": delegator_id,
+            }], state=state, commit=False)
+            if not added:
+                # Exact durable duplicate is the only no-write success case.
+                existing = db.get_decree_dossier(dossier_id) or {}
+                if not any(
+                    row.get("character_id") == character_id
+                    and row.get("tier") == tier
+                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("delegator_id") == delegator_id
+                    for row in existing.get("participant_roster", [])
+                ):
+                    raise ValueError("参与人未实际加入案卷")
+            persisted = added[0] if added else {
+                "character_id": character_id, "tier": tier,
+            }
             dossier_participant_results.append({
-                "dossier_id": dossier_id, "character_id": character_id, "tier": tier,
+                "dossier_id": dossier_id,
+                "character_id": persisted["character_id"], "tier": persisted["tier"],
             })
         except (TypeError, ValueError, KeyError) as exc:
             dossier_participant_results.append({

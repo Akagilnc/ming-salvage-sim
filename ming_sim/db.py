@@ -9825,8 +9825,14 @@ class GameDB:
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
+        dossier_id = int(cur.lastrowid)
+        if roster and action != "secret_order":
+            self.register_character_knowledge_source(
+                state, roster, "assignment", "旨意案卷", text,
+                source_id=f"decree_dossier:{dossier_id}", commit=False,
+            )
         self._commit_dossier_write(commit)
-        return int(cur.lastrowid)
+        return dossier_id
 
     @staticmethod
     def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
@@ -9842,11 +9848,13 @@ class GameDB:
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
     def append_decree_dossier_participants(
-        self, dossier_id: int, participants: Iterable[object], *, commit: bool = True,
+        self, dossier_id: int, participants: Iterable[object], *,
+        state: Optional[GameState] = None, commit: bool = True,
     ) -> List[Dict[str, object]]:
         """Append ADR 0053 roster entries without replacing durable members."""
         row = self.conn.execute(
-            "SELECT participant_roster FROM decree_dossiers WHERE id=?", (int(dossier_id),)
+            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
         ).fetchone()
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
@@ -9859,16 +9867,28 @@ class GameDB:
         )
         additions = self._normalize_participant_roster(participants)
         self._validate_participant_roster_references(additions)
-        merged = existing + [item for item in additions if item not in existing]
+        added = [item for item in additions if item not in existing]
+        merged = existing + added
         self._validate_dossier_delegations(merged)
-        existing = merged
-        self._validate_participant_roster_references(existing)
-        self.conn.execute(
-            "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (json.dumps(existing, ensure_ascii=False), int(dossier_id)),
-        )
+        self._validate_participant_roster_references(merged)
+        if added:
+            self.conn.execute(
+                "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(merged, ensure_ascii=False), int(dossier_id)),
+            )
+            if state is not None and str(row["action_type"] or "") != "secret_order":
+                for item in added:
+                    identity = ":".join(str(item.get(key) or "-") for key in (
+                        "character_id", "tier", "role", "delegator_id",
+                    ))
+                    self.register_character_knowledge_source(
+                        state, [item], "assignment", "旨意案卷追加参与",
+                        str(row["decree_text"] or ""),
+                        source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
+                        commit=False,
+                    )
         self._commit_dossier_write(commit)
-        return existing
+        return added
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -12779,7 +12799,7 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
-            if table == "character_knowledge_sources":
+            if table in {"character_knowledge_sources", "decree_dossiers"}:
                 continue
             columns = {
                 str(column["name"])

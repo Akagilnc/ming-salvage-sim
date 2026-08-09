@@ -1223,9 +1223,9 @@ def extract_draft_intent(
 
 
 def capture_manual_directive_payload(
-    text: str, llm_config: Any = None,
+    text: str, llm_config: Any = None, *, db: Any = None, content: Any = None,
 ) -> Dict[str, object]:
-    """Web/CLI 手工下旨共用既有草稿抽取 seam；只搬运结构化结果。"""
+    """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
     captured = extract_draft_intent(
         "请据此拟旨", str(text or ""), llm_config=llm_config,
     )
@@ -1246,6 +1246,27 @@ def capture_manual_directive_payload(
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
+    roster = payload.get("participant_roster")
+    if isinstance(roster, list) and roster and db is not None and content is not None:
+        from ming_sim.session import _canonical_minister_key
+        canonical_roster = []
+        for raw_item in roster:
+            if not isinstance(raw_item, dict):
+                canonical_roster.append(raw_item)
+                continue
+            item = dict(raw_item)
+            item["character_id"] = _canonical_minister_key(
+                content, str(item.get("character_id") or ""), db,
+            )
+            if str(item.get("delegator_id") or "").strip():
+                item["delegator_id"] = _canonical_minister_key(
+                    content, str(item["delegator_id"]), db,
+                )
+            canonical_roster.append(item)
+        # Reuse the durable roster reference validator here so unknown aliases
+        # fail at the manual-entry boundary rather than surviving until issue.
+        db._validate_participant_roster_references(canonical_roster)
+        payload["participant_roster"] = canonical_roster
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
