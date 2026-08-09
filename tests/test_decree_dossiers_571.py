@@ -788,26 +788,45 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
         ),
     )
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    original_build_context = decree_mod.build_extractor_shared_context
+
+    def _capture_context(*args, **kwargs):
+        context = original_build_context(*args, **kwargs)
+        seen.setdefault("extractor_contexts", []).append(context)
+        return context
+
+    monkeypatch.setattr(decree_mod, "build_extractor_shared_context", _capture_context)
     monkeypatch.setattr(
         decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None,
     )
+
+    def _extract(*args, **kwargs):
+        seen["extractor_decree_text"] = kwargs["decree_text"]
+        leaked = "此道改革已被打回" in kwargs["decree_text"] or any(
+            "此道改革已被打回" in context
+            for context in seen["extractor_contexts"]
+        )
+        moves = [
+            {
+                "account": "国库", "delta": -13,
+                "category": "被打回改革不得生效",
+                "origin_ref": f"dossier:{rejected['id']}",
+            },
+            {
+                "account": "国库", "delta": -7,
+                "category": "已颁新政合法生效",
+                "origin_ref": f"dossier:{promulgated['id']}",
+            },
+        ]
+        if leaked:
+            moves.append({
+                "account": "国库", "delta": -19,
+                "category": "无案卷来源的打回拨款旁路",
+            })
+        return {"economy_moves": moves}, "", ""
+
     monkeypatch.setattr(
-        decree_mod,
-        "extract_scores_by_modules_with_agno",
-        lambda *a, **k: ({
-            "economy_moves": [
-                {
-                    "account": "国库", "delta": -13,
-                    "category": "被打回改革不得生效",
-                    "origin_ref": f"dossier:{rejected['id']}",
-                },
-                {
-                    "account": "国库", "delta": -7,
-                    "category": "已颁新政合法生效",
-                    "origin_ref": f"dossier:{promulgated['id']}",
-                },
-            ],
-        }, "", ""),
+        decree_mod, "extract_scores_by_modules_with_agno", _extract,
     )
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
@@ -841,14 +860,63 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
         state, db, None, None, content=content,
     )
 
+    assert seen["extractor_decree_text"] == "此道新政准予施行"
+    assert all(
+        "此道改革已被打回" not in context
+        for context in seen["extractor_contexts"]
+    )
     applied = {
         str(row["category"]): int(row["delta"])
         for row in db.conn.execute(
-            "SELECT category,delta FROM economy_ledger WHERE category IN (?,?)",
-            ("被打回改革不得生效", "已颁新政合法生效"),
+            "SELECT category,delta FROM economy_ledger WHERE category IN (?,?,?)",
+            (
+                "被打回改革不得生效", "已颁新政合法生效",
+                "无案卷来源的打回拨款旁路",
+            ),
         ).fetchall()
     }
     assert applied == {"已颁新政合法生效": -7}
+
+
+@pytest.mark.parametrize("invalid_id", [True, 1.5, "1.5", 2 ** 63])
+def test_dossier_execution_rejects_non_sqlite_integer_ids(game, invalid_id):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="奉旨办理",
+        target_kind="issue", target_id="strict-execution-id",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_executions": [{
+            "dossier_id": invalid_id, "outcome": "fulfilled", "note": "办理完毕",
+        }],
+    }, content=content)
+
+    assert result["dossier_executions"][0]["rejected"] is True
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+
+
+def test_dossier_execution_accepts_sqlite_integer_id(game):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="奉旨办理",
+        target_kind="issue", target_id="valid-execution-id",
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "dossier_executions": [{
+            "dossier_id": dossier_id, "outcome": "fulfilled", "note": "办理完毕",
+        }],
+    }, content=content)
+
+    assert result["dossier_executions"] == [{
+        "dossier_id": dossier_id, "outcome": "fulfilled",
+    }]
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
 
 
 def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(game):
