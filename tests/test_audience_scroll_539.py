@@ -44,6 +44,51 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     assert closed["status"] == "closed"
 
 
+def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_character_stats(game, monkeypatch):
+    import web_app
+
+    db, state, _ = game
+    night_id = _night(db, state)
+    first_turn = _chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
+    db.record_mindreading(first_turn, {
+        "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
+        "precision": "约略", "narration": "万岁爷，他尚有保留。",
+    })
+    an.append_ledger_entry(
+        db, night_id, body="杨嗣昌以身家作保。", tags=["站台", "作保"],
+        person_names=["杨嗣昌"], source_chat_turn_id=first_turn, order_key=10,
+    )
+    an.append_ledger_entry(
+        db, night_id, body="帘外忽起雨声。", tags=["天气"],
+        person_names=[], source_chat_turn_id=first_turn, order_key=10,
+    )
+    _chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
+    monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
+
+    payload = TestClient(web_app.app).get("/api/audience/scroll").json()
+    messages = payload["messages"]
+    contents = [message["content"] for message in messages]
+
+    assert [content for content in contents if content in {
+        "辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。",
+    }] == ["辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。"]
+    assert "杨嗣昌以身家作保。" not in contents
+    assert "帘外忽起雨声。" in contents
+    assert {message["speaker"] for message in messages if message["role"] == "minister"} == {"杨嗣昌", "洪承畴"}
+
+    allowed_message_fields = {
+        "role", "speaker", "audibility", "time", "content",
+        "soft_boundary", "beat", "highlights", "container",
+    }
+    forbidden_character_stats = {"loyalty", "ability", "importance", "influence", "power", "favor"}
+    assert messages
+    for message in messages:
+        assert set(message) == allowed_message_fields
+        assert forbidden_character_stats.isdisjoint(message)
+        assert forbidden_character_stats.isdisjoint(message["container"])
+        assert set(message["container"]) == {"time_of_day", "location", "audience_type"}
+
+
 def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     db, state, _ = game
     night_id = _night(db, state)
