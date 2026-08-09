@@ -6844,11 +6844,6 @@ button:disabled {
   min-height: 0;
   border-bottom: none;
 }
-/* bare 模式下关闭钮回到正常流内定位（旧的 top:50%+translate 会把它顶出屏外） */
-.modal-bg-gazette .modal-header-bare .icon-button {
-  position: static;
-  transform: none;
-}
 
 .modal-bg-gazette .modal-title h1 {
   color: #e8d5a8 !important;
@@ -6873,6 +6868,12 @@ button:disabled {
 .modal-bg-gazette .modal-header .icon-button:hover {
   background: rgba(158, 42, 43, 0.92) !important;
   color: #ffe4b0 !important;
+}
+
+/* bare 模式下关闭钮回到正常流内定位；必须放在旧 icon-button 规则之后（同优先级后者赢） */
+.modal-bg-gazette .modal-header-bare .icon-button {
+  position: static;
+  transform: none;
 }
 
 /* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
