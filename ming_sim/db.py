@@ -1376,6 +1376,23 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
 
+            -- ADR 0058/0073: the reported progress rail.  It is deliberately
+            -- separate from effect ledgers: reports never mutate world state.
+            CREATE TABLE IF NOT EXISTS dossier_progress_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                progress_band TEXT NOT NULL,
+                memorial_text TEXT NOT NULL,
+                is_terminal INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_dossier_progress_reports_month
+                ON dossier_progress_reports(dossier_id, turn) WHERE is_terminal=0;
+            CREATE INDEX IF NOT EXISTS idx_dossier_progress_reports_dossier
+                ON dossier_progress_reports(dossier_id, turn, id);
+
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_name TEXT NOT NULL,
@@ -9723,6 +9740,93 @@ class GameDB:
         out["rescript_pending"] = bool(out.get("rescript_pending"))
         return out
 
+    def record_dossier_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        progress_band: str,
+        memorial_text: str,
+        *,
+        is_terminal: bool = False,
+        commit: bool = True,
+    ) -> int:
+        """Append one canonical reported-progress entry for a dossier/month."""
+        dossier = self.get_decree_dossier(int(dossier_id))
+        band = str(progress_band or "").strip()
+        text = str(memorial_text or "").strip()
+        if dossier is None:
+            raise ValueError("案卷不存在")
+        if not band or not text:
+            raise ValueError("进展档和密奏均不能为空")
+        if is_terminal:
+            cur = self.conn.execute(
+                """
+                INSERT INTO dossier_progress_reports
+                    (dossier_id,turn,progress_band,memorial_text,is_terminal)
+                VALUES (?,?,?,?,1)
+                RETURNING id
+                """,
+                (int(dossier_id), int(turn), band, text),
+            )
+        else:
+            cur = self.conn.execute(
+                """
+                INSERT INTO dossier_progress_reports
+                    (dossier_id,turn,progress_band,memorial_text,is_terminal)
+                VALUES (?,?,?,?,0)
+                ON CONFLICT(dossier_id,turn) WHERE is_terminal=0 DO UPDATE SET
+                    progress_band=excluded.progress_band,
+                    memorial_text=excluded.memorial_text
+                RETURNING id
+                """,
+                (int(dossier_id), int(turn), band, text),
+            )
+        report_id = int(cur.fetchone()["id"])
+        if commit:
+            self._commit_dossier_write(True)
+        return report_id
+
+    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        """Canonical read seam shared by monthly push and future inquiry pull."""
+        return [
+            {
+                "id": int(row["id"]),
+                "dossier_id": int(row["dossier_id"]),
+                "turn": int(row["turn"]),
+                "progress_band": str(row["progress_band"]),
+                "memorial_text": str(row["memorial_text"]),
+                "is_terminal": bool(row["is_terminal"]),
+            }
+            for row in self.conn.execute(
+                "SELECT * FROM dossier_progress_reports WHERE dossier_id=? "
+                "ORDER BY turn,id", (int(dossier_id),),
+            ).fetchall()
+        ]
+
+    def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
+        """Long protection/audit errands due a monthly report, with history."""
+        rows = self.conn.execute(
+            """
+            SELECT d.* FROM decree_dossiers d
+            JOIN secret_orders s ON s.id=d.secret_order_id
+            WHERE d.status IN ('promulgated','executing') AND s.status='active'
+              AND d.due_turn-d.created_turn >= 2
+              AND (s.title LIKE '%护%' OR s.content LIKE '%护行%'
+                   OR s.title LIKE '%稽核%' OR s.content LIKE '%稽核%'
+                   OR s.tags LIKE '%护行%' OR s.tags LIKE '%稽核%')
+            ORDER BY d.id
+            """
+        ).fetchall()
+        return [
+            {
+                "dossier_id": int(row["id"]),
+                "secret_order_id": int(row["secret_order_id"]),
+                "title": json.loads(row["payload_json"] or "{}").get("title", ""),
+                "progress": self.list_dossier_progress(int(row["id"])),
+            }
+            for row in rows
+        ]
+
     def create_decree_dossier(
         self,
         state: GameState,
@@ -13586,6 +13690,10 @@ class GameDB:
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
                     )
+                self.record_dossier_progress(
+                    int(dossier["id"]), int(turn_closed), "结案",
+                    str(result), is_terminal=True, commit=False,
+                )
                 self.record_dossier_execution(
                     int(dossier["id"]),
                     "fulfilled" if str(status) == "done" else "failed",
