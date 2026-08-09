@@ -96,3 +96,24 @@ def test_ordinary_entity_log_families_persist_origin_at_write_seam(game):
     for table in ("region_logs", "army_logs", "power_logs", "person_logs"):
         row = db.conn.execute(f"SELECT origin_ref FROM {table} ORDER BY id DESC LIMIT 1").fetchone()
         assert row is not None and row["origin_ref"] == SPONTANEOUS
+
+
+def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classification(game):
+    db, state, content = game
+    region_id = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    before_logs = db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0]
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "region_delta": {
+            "not-a-region": {"unrest": 2},
+            region_id: {"unrest": 0},
+        },
+        "new_armies": [{
+            "id": "bad-origin-preflight", "name": "坏军", "owner_power": "ming",
+            "manpower": 100, "morale": "高",
+        }],
+    }, content=content)
+
+    assert result["region_changes"][0]["category"] == "missing_ref"
+    assert result["created_armies"][0]["category"] == "invalid_enum"
+    assert db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0] == before_logs

@@ -6746,9 +6746,59 @@ def apply_score_extraction(
                 and isinstance(raw_value, int)
                 and not isinstance(raw_value, bool)
             )
-        # Remaining entity adapters perform shape/id/value validation themselves;
-        # only structurally plausible items reach provenance authorization.
-        return bool(item)
+        if section == "new_armies":
+            army_id = str(item.get("id") or "").strip()
+            owner = str(item.get("owner_power") or "").strip()
+            manpower = item.get("manpower")
+            numeric_fields = {
+                "manpower", "maintenance_per_turn", "morale", "training",
+                "firearm_equipment", "cannon_equipment", "arrears",
+            }
+            malformed_numeric = any(
+                key in item and (isinstance(item[key], bool) or not isinstance(item[key], int))
+                for key in numeric_fields
+            )
+            return (
+                not malformed_numeric
+                and bool(army_id and str(item.get("name") or "").strip() and owner)
+                and db.conn.execute("SELECT 1 FROM powers WHERE id=?", (owner,)).fetchone() is not None
+                and isinstance(manpower, int) and not isinstance(manpower, bool)
+                and manpower > 0
+            )
+        if section in {"人物变更", "appointments", "character_status_changes", "character_power_changes", "office_changes"}:
+            # Person adapters own a broad action-specific schema.  Missing the two
+            # routing keys can never mutate or log and must retain their established
+            # missing_field classification.
+            return bool(str(item.get("name") or "").strip() and str(item.get("动作") or "").strip())
+        return False
+
+    def _entity_requires_origin(section: str, target_id: object, item: Dict[str, object]) -> bool:
+        """Cheap preflight for dict adapters; malformed references/no-ops reach their applier."""
+        target = str(target_id or "").strip()
+        table = {"region_delta": "regions", "army_delta": "armies", "power_updates": "powers"}[section]
+        if not target or db.conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (target,)).fetchone() is None:
+            return False
+        aliases = {
+            "region_delta": REGION_FIELD_ALIASES,
+            "army_delta": ARMY_FIELD_ALIASES,
+            "power_updates": POWER_FIELD_ALIASES,
+        }[section]
+        valid = {
+            "region_delta": set(REGION_SCORE_FIELDS) | set(REGION_QUANTITY_FIELDS) | set(REGION_TEXT_FIELDS) | set(FISCAL_SCORE_FIELDS) | {"cannon"},
+            "army_delta": set(ARMY_SCORE_FIELDS) | set(ARMY_QUANTITY_FIELDS) | set(ARMY_TEXT_FIELDS),
+            "power_updates": {"leverage", "military_strength", "supply"},
+        }[section]
+        for raw_field, value in item.items():
+            field = aliases.get(str(raw_field).strip(), str(raw_field).strip())
+            if field in {"origin_ref", "reason", "last_action"} or field not in valid:
+                continue
+            if field not in set(REGION_TEXT_FIELDS) | set(ARMY_TEXT_FIELDS):
+                if isinstance(value, bool) or not isinstance(value, int) or value == 0:
+                    continue
+            elif not str(value or "").strip():
+                continue
+            return True
+        return False
 
     for section in origin_sections:
         retained: List[object] = []
@@ -6769,7 +6819,7 @@ def apply_score_extraction(
                 retained_dict[target_id] = item
                 continue
             value = str(item.get("origin_ref") or "").strip()
-            if _valid_origin(value):
+            if not _entity_requires_origin(section, target_id, item) or _valid_origin(value):
                 retained_dict[target_id] = item
             else:
                 _origin_rejection(section, {target_id: item}, value)
