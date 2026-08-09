@@ -1563,7 +1563,9 @@ def _settle_after_extract_body(
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
     # #566: materialize and expose monthly memorials inside the settlement
     # transaction, so restore/retry continues (or upserts) one durable chain.
-    progress_reports = db.record_monthly_dossier_progress(before_turn)
+    progress_reports = db.record_monthly_dossier_progress(
+        before_turn, extracted.get("dossier_progress_reports"),
+    )
     if progress_reports:
         narrative += "\n\n" + "\n".join(
             f"密奏·{row['progress_band']}：{row['memorial_text']}"

@@ -9826,19 +9826,34 @@ class GameDB:
                & {"护行", "稽核"}
         ]
 
-    def record_monthly_dossier_progress(self, turn: int) -> List[Dict[str, object]]:
-        """Materialize this month's canonical reports for eligible active dossiers."""
+    def record_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> List[Dict[str, object]]:
+        """Persist extractor-generated reports for every eligible active dossier."""
+        candidates = {
+            int(item["dossier_id"]): item
+            for item in self.list_monthly_dossier_progress_nudges()
+        }
+        supplied = {
+            int(item.get("dossier_id", 0)): item
+            for item in (generated if isinstance(generated, list) else [])
+            if isinstance(item, dict)
+        }
         reports: List[Dict[str, object]] = []
-        for item in self.list_monthly_dossier_progress_nudges():
+        for dossier_id, candidate in candidates.items():
+            item = supplied.get(dossier_id, {})
             month = 1 + sum(
-                not row["is_terminal"] for row in item["progress"]
+                not row["is_terminal"] for row in candidate["progress"]
                 if int(row["turn"]) < int(turn)
             )
+            band = str(item.get("progress_band") or f"第{month}月在办").strip()
+            text = str(item.get("memorial_text") or "").strip()
+            if not text:
+                text = f"{candidate['title']}按月具奏：仍在承办。"
             self.record_dossier_progress(
-                int(item["dossier_id"]), int(turn), f"第{month}月在办",
-                f"{item['title']}按月具奏：仍在承办。", commit=False,
+                dossier_id, int(turn), band, text, commit=False,
             )
-            reports.append(self.list_dossier_progress(int(item["dossier_id"]))[-1])
+            reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
     def create_decree_dossier(

@@ -643,6 +643,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_updates": [],
     "secret_order_closes": [],
     "dossier_executions": [],
+    "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
 
@@ -654,7 +655,8 @@ MODULE_FIELDS: Dict[str, set[str]] = {
         "dossier_executions",
     },
     "personnel_secret": {
-        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
+        "dossier_progress_reports", "emperor_fate",
     },
 }
 

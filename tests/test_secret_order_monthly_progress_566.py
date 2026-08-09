@@ -15,12 +15,13 @@ def _order(db, state, title="护行辽饷", tags=None, deadline=4):
     return order_id, int(db.get_dossier_for_secret_order(order_id)["id"])
 
 
-def _settle(db, state, content, narrative="本月邸报"):
+def _settle(db, state, content, narrative="本月邸报", progress=None):
     from ming_sim.decree import settle_with_delta
 
     turn = state.turn
+    extracted = {"dossier_progress_reports": [progress]} if progress else {}
     settle_with_delta(
-        state, db, {}, before_turn=turn, content=content, narrative=narrative,
+        state, db, extracted, before_turn=turn, content=content, narrative=narrative,
     )
     return turn
 
@@ -31,19 +32,26 @@ def test_real_month_end_records_three_restoreable_reports_and_pushes_them(game):
     db, state, content = game
     _order_id, dossier_id = _order(db, state)
 
-    first_turn = _settle(db, state, content)
+    first_turn = _settle(db, state, content, progress={
+        "dossier_id": dossier_id, "progress_band": "启程",
+        "memorial_text": "首批出京，已对一处关防",
+    })
     reopened = GameDB(db.path, content=content)
     db.close()
     db = reopened
     state = db.load_state()
-    second_turn = _settle(db, state, content)
-    third_turn = _settle(db, state, content)
+    second_turn = _settle(db, state, content, progress={
+        "dossier_id": dossier_id, "progress_band": "在途",
+        "memorial_text": "据前月关防记录续报，已至山海关",
+    })
+    third_turn = _settle(db, state, content, progress={
+        "dossier_id": dossier_id, "progress_band": "将达",
+        "memorial_text": "据前两月记录续报，三批已会齐",
+    })
 
     rows = db.list_dossier_progress(dossier_id)
     assert [row["turn"] for row in rows] == [first_turn, second_turn, third_turn]
-    assert [row["progress_band"] for row in rows] == [
-        "第1月在办", "第2月在办", "第3月在办",
-    ]
+    assert [row["progress_band"] for row in rows] == ["启程", "在途", "将达"]
     for row in rows:
         assert row["memorial_text"] in db.get_turn_report(row["turn"])
 
