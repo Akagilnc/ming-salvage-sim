@@ -9,10 +9,10 @@ import ming_sim.issues as issue_engine
 def _rejected_verdict(dossier_id):
     return {
         "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices", "primary_opponents": ["donglin"],
+        "blocked_layer": "six_offices", "primary_opponents": ["东林"],
         "gatekeeper_id": None, "reason": "科臣封驳。",
         "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_offices": ["六科"],
+            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
     }
@@ -568,6 +568,20 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
         "SELECT 1 FROM economy_ledger WHERE dossier_id=?",
         (rejected["id"],),
     ).fetchone() is None
+
+    from ming_sim.db import GameDB
+    reopened = GameDB(db.path, content=content)
+    try:
+        audit = next(
+            row for row in reopened.list_decree_dossier_decisions(rejected["id"])
+            if row["decision"] == "rejected"
+        )
+        expected = _rejected_verdict(rejected["id"])
+        assert audit["primary_opponents"] == expected["primary_opponents"]
+        assert audit["gatekeeper_id"] is None
+        assert audit["criteria_snapshot"] == expected["criteria_snapshot"]
+    finally:
+        reopened.close()
 
 
 def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
@@ -2098,7 +2112,7 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
 
 
 @pytest.mark.parametrize("missing", [
-    "blocked_layer", "primary_opponents", "reason", "criteria_snapshot",
+    "blocked_layer", "primary_opponents", "gatekeeper_id", "reason", "criteria_snapshot",
 ])
 def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
     db, state, _content = game
@@ -2113,8 +2127,24 @@ def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
 
 
 @pytest.mark.parametrize(("field", "bad_value"), [
+    ("primary_opponents", ["not-a-real-faction"]),
+    ("gatekeeper_id", "not-a-real-character"),
+])
+def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_value):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict[field] = bad_value
+    with pytest.raises(ValueError, match="打回判决缺少"):
+        db.apply_dossier_verdicts(state, [verdict])
+
+
+@pytest.mark.parametrize(("field", "bad_value"), [
     ("imperial_authority_band", "low"),
-    ("involved_offices", [1]),
+    ("involved_office_types", [1]),
     ("authorization_ids", [{}]),
     ("endorsement_entry_ids", [True]),
     ("endorsement_entry_ids", ["1"]),
