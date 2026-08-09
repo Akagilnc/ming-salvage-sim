@@ -6451,7 +6451,7 @@ def apply_score_extraction(
             })
             continue
         try:
-            dossier_id = int(item.get("dossier_id") or 0)
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
             dossier = db.get_decree_dossier(dossier_id)
             if dossier is None or dossier["status"] != "executing":
                 raise ValueError("案卷不存在或不在 executing")

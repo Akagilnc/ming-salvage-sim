@@ -903,11 +903,14 @@ def _settle_after_narrative(
     # 3) 结算 agent: 读邸报抽 JSON
     tlog("结算 3/4 结算 agent（抽 JSON）")
     _emit("stage", "数值推演结算")
+    # simulator_payload 的 decree_text 已在 phase1 收敛为本批可执行诏文；extractor
+    # 必须复用同一授权输入，不能重新接回包含封驳案卷的原始聚合文本。
+    executable_decree_text = str(simulator_payload.get("decree_text") or "")
     # #883: per-module supplemental context so only personnel_secret receives
     # secret-order prose; other public extractors never pre-read it.
     extractor_shared_contexts = {
         module: build_extractor_shared_context(
-            db, state, effective_narrative, decree_text,
+            db, state, effective_narrative, executable_decree_text,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             module=module,
@@ -937,7 +940,7 @@ def _settle_after_narrative(
         # 仅并发安全的 CLI runner（codex，--ephemeral 隔离）下并发跑 4 个 extractor（#83，省约 1 分钟）；
         # claude/agy/api/形态1 → cli_backend_parallel_safe=False → 串行不变。合并/落库仍串行单事务（ADR 0008）。
         extracted, extractor_output, extractor_input = extract_scores_by_modules_with_agno(
-            extractors, db, state, effective_narrative, decree_text=decree_text, sanitizer=sanitizer,
+            extractors, db, state, effective_narrative, decree_text=executable_decree_text, sanitizer=sanitizer,
             relevant_memories=relevant_memories,
             secret_orders=secret_orders_for_sim,
             parallel=cli_backend_parallel_safe(llm_config),
