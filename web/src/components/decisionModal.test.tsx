@@ -172,6 +172,33 @@ describe("DecisionModal", () => {
     cleanup();
   });
 
+  it("requires a listed rescript action for dossier memorials", () => {
+    const onResolve = vi.fn();
+    const dossierDecision: PendingDecision = {
+      ...decisions[0],
+      event_id: "dossier:42",
+      options: [{
+        label: "强颁", hint: "以中旨颁行。",
+        dossier_id: 42, dossier_decision: "force_promulgated",
+      }],
+    };
+    const cleanup = render(<DecisionModal decisions={[dossierDecision]} onResolve={onResolve} />);
+    const note = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "朕意已决。");
+      note.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.querySelector<HTMLButtonElement>(".decision-confirm")!.disabled).toBe(true);
+    act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolve).toHaveBeenCalledWith([{
+      label: "强颁", hint: "以中旨颁行。",
+      dossier_id: 42, dossier_decision: "force_promulgated",
+      note: "朕意已决。",
+    }]);
+    cleanup();
+  });
+
   it("keeps the handwritten reply in the existing resolve payload", () => {
     const onResolve = vi.fn();
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);

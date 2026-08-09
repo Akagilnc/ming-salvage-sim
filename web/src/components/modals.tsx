@@ -787,7 +787,6 @@ export function EdictModal({
   onDeleteDirective,
   onWriteDecree,
   onAdvanceWithoutEdict,
-  onSaveDecree,
   onResetDecree,
   onIssueDecree,
   onConfirmDirective,
@@ -811,7 +810,6 @@ export function EdictModal({
   onDeleteDirective: (directiveId: number) => void;
   onWriteDecree: () => void;
   onAdvanceWithoutEdict: () => void;
-  onSaveDecree: (text: string) => void;
   onResetDecree: () => void;
   onIssueDecree: () => void;
   onConfirmDirective: (directiveId: number) => void;
@@ -825,10 +823,6 @@ export function EdictModal({
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
   const canAdvanceWithoutEdict = !draftDirectives.length && !hasPendingConversationalDraft;
-  const [decreeDraft, setDecreeDraft] = React.useState(decree);
-  React.useEffect(() => {
-    setDecreeDraft(decree);
-  }, [decree]);
 
   // 分幕：随 decree/report 态切。无诏文=御案理政；有诏文未结算=诏书御览；已结算=颁诏奏章。
   const phase: "desk" | "review" | "issued" = report ? "issued" : decree ? "review" : "desk";
@@ -853,7 +847,7 @@ export function EdictModal({
       <div className="edict-stage edict-stage-review">
         {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
         {error && <div className="error-line" role="alert">{error}</div>}
-        <DecreeScroll text={decreeDraft} editable onChange={setDecreeDraft} />
+        <DecreeScroll text={decree} />
         <div className="edict-review-bar">
           <button
             className="seal-btn-ghost"
@@ -862,20 +856,11 @@ export function EdictModal({
           >
             <Edit3 size={15} />返工改稿
           </button>
-          {decreeDraft !== decree && (
-            <button
-              className="seal-btn-save"
-              onClick={() => onSaveDecree(decreeDraft)}
-              disabled={!!busy || !decreeDraft.trim()}
-            >
-              <Check size={15} />存改
-            </button>
-          )}
           <button
             className="seal-btn-issue"
             onClick={onIssueDecree}
-            disabled={!!busy || decreeDraft !== decree}
-            title={decreeDraft !== decree ? "请先存改诏文" : "盖玉玺，诏告天下"}
+            disabled={!!busy}
+            title="盖玉玺，诏告天下"
           >
             盖玺颁布
           </button>

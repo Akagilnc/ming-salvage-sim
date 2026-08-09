@@ -4937,6 +4937,9 @@ def apply_issue_tracker_output(
                     stop_condition = ""
                 else:
                     stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
+                origin_ref = db.resolve_commitment_origin_ref(
+                    state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
+                )
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
@@ -5403,7 +5406,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     office_rows = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT character_name, office_title, office_type, source, updated_at "
+            "SELECT character_name, office_title, office_type, source, dossier_id, updated_at "
             "FROM character_offices"
         ).fetchall()
     ]
@@ -5484,14 +5487,15 @@ def _restore_person_write_state(
     )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(character_name, office_title, office_type, source, dossier_id, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
                 row["office_title"],
                 row["office_type"],
                 row["source"],
+                row.get("dossier_id"),
                 row["updated_at"],
             )
             for row in office_rows
@@ -6439,6 +6443,78 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    dossier_execution_results: List[Dict[str, object]] = []
+    for item in extracted.get("dossier_executions") or []:
+        if not isinstance(item, dict):
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+            })
+            continue
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            dossier = db.get_decree_dossier(dossier_id)
+            if dossier is None or dossier["status"] != "executing":
+                raise ValueError("案卷不存在或不在 executing")
+            outcome = str(item.get("outcome") or "").strip()
+            if outcome not in {"fulfilled", "degraded", "failed", "transformed"}:
+                raise ValueError(
+                    "执行结果必须为 fulfilled/degraded/failed/transformed"
+                )
+            note = str(item.get("note") or "").strip()
+            if not note:
+                raise ValueError("执行说明不能为空")
+            db.record_dossier_execution(
+                dossier_id, outcome, note, state.turn, close=True, commit=False,
+            )
+            dossier_execution_results.append({
+                "dossier_id": dossier_id, "outcome": outcome,
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            dossier_execution_results.append({
+                "rejected": True, "category": "invalid_transition",
+                "reason": str(exc), "item": item,
+            })
+    # ADR 0051/0055 authorization backstop: the extractor receives only
+    # executable dossiers, but a model can still invent a syntactically valid
+    # dossier:<id>.  Reject every list-carried effect whose dossier has not
+    # actually crossed the promulgation boundary.  Raw decree records remain
+    # durable; they do not authorize effects.
+    dossier_origin_rejections: List[Tuple[str, Dict[str, object], str]] = []
+    for section, value in list(extracted.items()):
+        if not isinstance(value, list):
+            continue
+        authorized: List[object] = []
+        for item in value:
+            if not isinstance(item, dict):
+                authorized.append(item)
+                continue
+            origin_ref = str(item.get("origin_ref") or "").strip()
+            if not origin_ref.startswith("dossier:"):
+                authorized.append(item)
+                continue
+            try:
+                prefix, raw_id = origin_ref.split(":")
+                if prefix != "dossier":
+                    raise ValueError("案卷 origin_ref 前缀非法")
+                dossier_id = _parse_sqlite_id(raw_id)
+            except (TypeError, ValueError):
+                dossier_origin_rejections.append(
+                    (section, item, f"origin_ref 案卷引用非法：{origin_ref}")
+                )
+                continue
+            dossier = db.get_decree_dossier(dossier_id)
+            if dossier is None:
+                dossier_origin_rejections.append(
+                    (section, item, f"origin_ref 指向不存在案卷：{origin_ref}")
+                )
+                continue
+            if db.dossier_authorizes_effects(dossier_id):
+                authorized.append(item)
+            else:
+                dossier_origin_rejections.append(
+                    (section, item, f"origin_ref 案卷尚未颁布：{origin_ref}")
+                )
+        extracted[section] = authorized
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
     if candidate_event_ids_at_input is None:
@@ -6597,10 +6673,34 @@ def apply_score_extraction(
     # 2) economy_moves
     # 拒收项拆到独立 economy_moves_rejections 段（不污染玩家可见 economy_moves list；
     # 同 faction_delta_rejections 治理，#14 cmr r1 codex/P4）。
+    economy_moves = []
+    for move in extracted.get("economy_moves") or []:
+        if not isinstance(move, dict):
+            economy_moves.append(move)
+            continue
+        origin_ref = str(move.get("origin_ref") or "").strip()
+        if not origin_ref.startswith("dossier:"):
+            economy_moves.append(move)
+            continue
+        try:
+            prefix, raw_id = origin_ref.split(":")
+            if prefix != "dossier":
+                raise ValueError("案卷 origin_ref 前缀非法")
+            dossier_id = _parse_sqlite_id(raw_id)
+        except (TypeError, ValueError):
+            continue
+        dossier = db.get_decree_dossier(dossier_id)
+        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
+            economy_moves.append(move)
+            continue
+        # ADR 0055: structured allocation effects are materialized from the
+        # dossier payload.  The extractor may repeat the same non-empty delta,
+        # but origin-bound apply must not debit it twice.  Narrative dossiers
+        # remain on the extractor rail.
     _eco_out = _apply_economy_list(
         db,
         state,
-        extracted.get("economy_moves") or [],
+        economy_moves,
         commit=commit_now,
     )
     applied_economy = [r for r in _eco_out if not r.get("rejected")]
@@ -7496,6 +7596,16 @@ def apply_score_extraction(
         }
         for _section, item, reason in validate_rejections
     ]
+    validate_rejection_items.extend(
+        {
+            "rejected": True,
+            "item": item,
+            "reason": reason,
+            "category": "missing_ref",
+            "section": section,
+        }
+        for section, item, reason in dossier_origin_rejections
+    )
     raw_module_rejections = extracted.get("_module_rejections")
     module_rejections = [
         item for item in raw_module_rejections if isinstance(item, dict)
@@ -7519,6 +7629,7 @@ def apply_score_extraction(
         "created_armies": created_armies,
         "power_changes": power_changes,
         "issue_summary": issue_summary,
+        "dossier_executions": dossier_execution_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,

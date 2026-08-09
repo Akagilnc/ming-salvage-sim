@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 from ming_sim import audience_night as an
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -256,8 +262,11 @@ def test_write_decree_leaves_unacted_pending_unchanged(tmp_path, content, monkey
     try:
         db, state = sess.db, sess.state
         minister = _active_minister(db, content)
+        old_office = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"]
         pid = db.upsert_pending_directive(
-            state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
         # 无 draft：拟诏响亮拒绝、不为 preview 造持久态
         with pytest.raises(ValueError, match="草案"):
             sess.write_decree()
@@ -276,14 +285,14 @@ def test_cross_night_directive_reassigned_to_second_night(game):
     minister = _active_minister(db, content)
 
     n1 = an.open_night(db, state, location="乾清宫")
-    d_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "初稿：缓征辽饷", "actor": minister})
+    d_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "初稿：缓征辽饷", "actor": minister})
     # 第一夜不应允 → 留 pending；收夜不提交
     an.close_night(db, state, night_id=n1["id"], content=content)
     assert db.conn.execute("SELECT status FROM pending_actions WHERE id=?", (d_id,)).fetchone()["status"] == "pending"
 
     n2 = an.open_night(db, state, location="文华殿")
     # 同臣同回合复用更新（last-write-wins）→ 归属须迁到第二夜、清 approval
-    same_id = db.upsert_pending_directive(state.turn, minister, payload={"text": "定稿：改折色", "actor": minister})
+    same_id = db.upsert_pending_directive(state.turn, minister, payload={**_POLICY_FIELDS, "text": "定稿：改折色", "actor": minister})
     assert same_id == d_id
     row = db.conn.execute("SELECT night_id, night_approved FROM pending_actions WHERE id=?", (d_id,)).fetchone()
     assert int(row["night_id"]) == n2["id"]
@@ -310,6 +319,9 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         db.seed_static_data()
         state = db.load_state()
         minister = _active_minister(db, content)
+        old_office = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"]
         night = an.open_night(db, state)
 
         new_office = "兵部郎中"
@@ -323,7 +335,7 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         )
         db.mark_pending_night_approved([pa_id], night_id=night["id"])
         dir_id = db.upsert_pending_directive(
-            state.turn, minister, payload={"text": "着户部清查边饷", "actor": minister},
+            state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部清查边饷", "actor": minister},
         )
         db.mark_pending_night_approved([dir_id], night_id=night["id"])
 
@@ -336,7 +348,10 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         assert ei.value.code == "close_crash"
         assert db.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"] == new_office
+        ).fetchone()["office"] == old_office
+        assert db.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )
         db.close()  # 进程崩溃：关库
 
         # 重开 GameDB / state，从游标续跑（跨进程恢复）
@@ -351,10 +366,13 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         final = an.get_night(db2, night["id"])
         assert final["status"] == "closed"
         assert int(final["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
-        # 任免仍在（不因重开丢失）+ 候选真实转档
+        # 任免案卷仍在（不因重开丢失）且判决前不改盘 + 候选真实转档
         assert db2.conn.execute(
             "SELECT office FROM characters WHERE name=?", (minister,),
-        ).fetchone()["office"] == new_office
+        ).fetchone()["office"] == old_office
+        assert db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )
         assert db2.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (dir_id,),
         ).fetchone()["status"] == "committed"
@@ -368,6 +386,19 @@ def test_close_night_crash_then_reopen_db_resumes_idempotent(content):
         again = an.close_night(db2, state2, night_id=night["id"], content=content)
         assert again.get("already") is True
         assert len(_find_entries(an.list_ledger(db2, night["id"]), TAG_CLOSE_NIGHT)) == 1
+
+        # 真实收夜只负责成案；结算判决入口消费结构化 verdict 后才物化任免。
+        dossier = db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )[0]
+        db2.apply_dossier_verdicts(
+            state2,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+        assert db2.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"] == new_office
         db2.close()
     finally:
         for p in (path, f"{path}_agno.db"):
@@ -413,6 +444,9 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         db.seed_static_data()
         state = db.load_state()
         minister = _active_minister(db, content)
+        old_office = db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (minister,),
+        ).fetchone()["office"]
         night = an.open_night(db, state)
         new_office = "兵部郎中"
         pa_id = db.stage_pending_action(
@@ -436,11 +470,14 @@ def test_closing_cursor0_reopen_refuses_new_and_explicit_resume_commits(content)
         assert an.get_night(db2, night["id"])["status"] == "closing"
         assert db2.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "pending"
-        # 携 content 的显式续收：合法任免真实落盘并封夜
+        # 携 content 的显式续收：合法任免成案并封夜，判决前不改盘
         an.close_night(db2, state2, night_id=night["id"], content=content)
         assert an.get_night(db2, night["id"])["status"] == "closed"
         assert db2.conn.execute(
-            "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == new_office
+            "SELECT office FROM characters WHERE name=?", (minister,)).fetchone()["office"] == old_office
+        assert db2.list_decree_dossiers(
+            status="proposed", target_kind="character", target_id=minister
+        )
         assert db2.conn.execute(
             "SELECT status FROM pending_actions WHERE id=?", (pa_id,)).fetchone()["status"] == "committed"
         db2.close()

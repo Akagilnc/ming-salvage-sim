@@ -19,6 +19,12 @@ import ming_sim.cli_backend as cb
 from ming_sim.session import GameSession
 import ming_sim.audience_night as an
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 
 def _active_minister_name(db, content) -> str:
     for name, ch in content.characters.items():
@@ -53,6 +59,13 @@ def _canned_by_tag(mapping):
 
     def _run(prompt, llm_config=None, tag=""):
         obj = mapping.get(tag, _defaults.get(tag, {}))
+        if tag == "draft_intent" and obj.get("拟旨意图") == "拟旨":
+            obj = {
+                "动作类型": "policy",
+                "目标类型": "issue",
+                "目标ID": "test-policy",
+                **obj,
+            }
         return (json.dumps(obj, ensure_ascii=False), 1)
     return _run
 
@@ -73,6 +86,53 @@ def _draft_turn(sess, ch, monkeypatch, *, player_message, reply, draft_result):
 
 def _pending_directives(db, turn):
     return [p for p in db.list_pending_actions(turn) if p["kind"] == "directive"]
+
+
+def test_mixed_batch_stages_supported_decree_without_capturing_acting_appointment(
+    game, monkeypatch,
+):
+    """同批暂缓的署理项不应连带吞掉已支持的独立旨稿。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    sess = _fake_session(db, state)
+    supported_text = "着户部清查三边粮饷，限三月完报。"
+    acting_text = "命洪承畴暂署兵部尚书。"
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "draft_intent": {
+            "成品旨稿": [
+                {
+                    "正文": supported_text,
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "three-borders-pay",
+                },
+                {
+                    "正文": acting_text,
+                    "动作类型": "acting_appointment",
+                    "目标类型": "office",
+                    "目标ID": "兵部尚书",
+                },
+            ],
+        },
+    }))
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="分别拟旨清查三边粮饷，并命洪承畴暂署兵部尚书",
+        answer="臣已分别拟妥。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}, {"kind": "draft"}],
+    )
+
+    pending = _pending_directives(db, state.turn)
+    assert len(pending) == 1
+    payload = json.loads(pending[0]["payload_json"])
+    assert payload["text"] == supported_text
+    assert payload["dossier_action_type"] == "policy"
+    assert acting_text not in payload["text"]
 
 
 def test_two_new_decrees_stage_as_independent_candidates(game, monkeypatch):
@@ -113,9 +173,9 @@ def test_two_new_decrees_stage_as_independent_candidates(game, monkeypatch):
 def _stage_two_night_candidates(db, state, name):
     """夜内直接暂存两道独立 directive 候选（确定性，不走 LLM），返回 (id_a, id_b)。"""
     id_a = db.stage_directive_candidate(
-        state.turn, name, payload={"text": "着户部清查三边粮饷，限三月完报。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "着户部清查三边粮饷，限三月完报。", "actor": name})
     id_b = db.stage_directive_candidate(
-        state.turn, name, payload={"text": "着兵部核饷九边军械，限两月呈览。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "着兵部核饷九边军械，限两月呈览。", "actor": name})
     return id_a, id_b
 
 
@@ -284,8 +344,8 @@ def test_night_promulgated_directives_identifiable_by_night_and_range(game):
     # 第一夜：两道拟旨 + 一道密令（私密），全应允，收夜
     n1 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     nid1 = int(n1["id"])
-    d1 = db.stage_directive_candidate(state.turn, name, payload={"text": "着户部清查粮饷。", "actor": name})
-    d2 = db.stage_directive_candidate(state.turn, name, payload={"text": "着兵部核饷军械。", "actor": name})
+    d1 = db.stage_directive_candidate(state.turn, name, payload={**_POLICY_FIELDS, "text": "着户部清查粮饷。", "actor": name})
+    d2 = db.stage_directive_candidate(state.turn, name, payload={**_POLICY_FIELDS, "text": "着兵部核饷军械。", "actor": name})
     so = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "密查盐引", "content": "着人密查两淮盐引亏空。", "assignee": name,
@@ -308,7 +368,7 @@ def test_night_promulgated_directives_identifiable_by_night_and_range(game):
     state.turn += 1
     n2 = an.open_night(db, state, location="文华殿", time_of_day="日")
     nid2 = int(n2["id"])
-    d3 = db.stage_directive_candidate(state.turn, name, payload={"text": "着工部修葺城防。", "actor": name})
+    d3 = db.stage_directive_candidate(state.turn, name, payload={**_POLICY_FIELDS, "text": "着工部修葺城防。", "actor": name})
     db.mark_pending_night_approved([d3], night_id=nid2)
     an.close_night(db, state, night_id=nid2, content=content)
 
@@ -396,10 +456,10 @@ def test_update_directive_candidate_preserves_underscore_flags(game):
     db, state, content = game
     name = _active_minister_name(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    cid = db.stage_directive_candidate(state.turn, name, payload={"text": "旧稿", "actor": name})
+    cid = db.stage_directive_candidate(state.turn, name, payload={**_POLICY_FIELDS, "text": "旧稿", "actor": name})
     db.flag_directive_needs_clarification(cid)
 
-    db.update_directive_candidate(cid, payload={"text": "新稿", "actor": name})
+    db.update_directive_candidate(cid, payload={**_POLICY_FIELDS, "text": "新稿", "actor": name})
 
     payload = json.loads(_by_pid(db, cid)["payload_json"])
     assert payload["text"] == "新稿", "正文已更新"

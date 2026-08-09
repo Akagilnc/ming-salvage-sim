@@ -29,6 +29,7 @@ for src, dst in (("CLI_API_KEY", "OPENAI_API_KEY"),
 from ming_sim.content import GameContent
 from ming_sim.llm_config import load_llm_config
 from ming_sim.session import GameSession
+from scripts.probe_directive_contract import add_narrative_probe_directive
 
 DB = "data/secret_test.db"
 ASSIGNEE = "曹化淳"
@@ -51,7 +52,9 @@ def main() -> None:
     sess.begin_turn()
     oid = sess.db.create_secret_order(sess.state, ASSIGNEE, TITLE, CONTENT, ["阉党", "密查"], importance=4)
     print(f"[probe] 密令已下 id={oid} 承办={ASSIGNEE}")
-    sess.add_directive(DECREE, notes="密令同发")
+    add_narrative_probe_directive(
+        sess, DECREE, notes="密令同发", probe_id="secret-order",
+    )
     report = sess.resolve_turn(decree=DECREE)
     print("\n========== 月末邸报 ==========\n")
     print(report)

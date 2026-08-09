@@ -19,10 +19,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 
 import httpx
 import pytest
+
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
 
 import web_app
 import ming_sim.agents as agents_mod
@@ -82,6 +89,19 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        decree_mod,
+        "run_agent_text",
+        lambda _agent, prompt, _label: json.dumps({
+            "verdicts": [
+                {"dossier_id": row["id"], "decision": "promulgated"}
+                for row in json.loads(prompt)["dossiers"]
+            ],
+        }),
+    )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
@@ -216,7 +236,11 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
             # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={
+                    "text": "着户部核边饷", "actor": minister,
+                    "dossier_action_type": "policy",
+                    "target_kind": "issue", "target_id": "border-pay",
+                })
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
@@ -322,17 +346,17 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 
     async def scenario():
-        game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
-        try:
-            async with _client() as client:
+        async with _client() as client:
+            game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
+            try:
                 chat_task = asyncio.create_task(
                     client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
                 await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
-        finally:
-            game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
-        return _parse_sse((await chat_task).text)
+            finally:
+                game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+            return _parse_sse((await chat_task).text)
 
     events = asyncio.run(scenario())
 
@@ -357,7 +381,7 @@ def test_asgi_write_decree_preview_does_not_close_night(web_game, monkeypatch):
             night = an.get_open_night(game.db)
             # 一条有效 draft（应允/默认同意路径）
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister})
             game.db.commit_pending_actions(game.state, kind_filter="directive")
             resp = await client.post("/api/decree/write", json={})
             return night, resp

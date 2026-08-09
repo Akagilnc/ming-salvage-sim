@@ -663,7 +663,13 @@ def review_directives(session: GameSession) -> str:
             if lowered == "add" or raw == "新增":
                 text = input("指令内容：").strip()
                 if text:
-                    dv = session.add_directive(text)
+                    from ming_sim.cli_backend import capture_manual_directive_payload
+                    dv = session.add_directive(
+                        text,
+                        dossier_payload=capture_manual_directive_payload(
+                            text, session.llm_config,
+                        ),
+                    )
                     print(f"已新增草案 #{dv.id}。")
                 else:
                     print("指令为空，已取消。")
@@ -692,7 +698,14 @@ def review_directives(session: GameSession) -> str:
                         continue
                     new_text = input("新的指令内容：").strip()
                     if new_text:
-                        session.update_directive(target_id, new_text)
+                        from ming_sim.cli_backend import capture_manual_directive_payload
+                        session.update_directive(
+                            target_id,
+                            new_text,
+                            dossier_payload=capture_manual_directive_payload(
+                                new_text, session.llm_config,
+                            ),
+                        )
                         print("已修改。")
                     continue
                 if verb in {"del", "delete", "删", "删除"}:
@@ -710,6 +723,20 @@ def review_directives(session: GameSession) -> str:
             print(f"\n{error}")
             continue
         print("未识别操作。")
+
+
+def _submit_first_cli_decisions(session: GameSession, result) -> str:
+    """CLI 暂无亲裁 UI：所有结算入口共用同一首选项续跑策略。"""
+    if result is None or not result.awaiting:
+        return "" if result is None else result.report
+    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
+    choices = []
+    for decision in result.decisions:
+        options = decision.get("options") or []
+        first = options[0] if options else {}
+        print(f"  · {decision.get('title')} → {first.get('label', '（无）')}")
+        choices.append(dict(first))
+    return session.submit_decisions(choices)
 
 
 def play_turn(session: GameSession) -> None:
@@ -753,9 +780,10 @@ def play_turn(session: GameSession) -> None:
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
-                session.advance_without_decree()
-            except ValueError as error:
-                # FRONT_HALF_DONE 拒绝跳过（ADR 决定 6）：打印指引回会话循环，不崩出进程。
+                result = session.advance_without_decree()
+                report = _submit_first_cli_decisions(session, result)
+            except (ValueError, SettlementAbort) as error:
+                # 跳过与颁诏共享可恢复结算语义：失败后留在本回合循环，允许重试。
                 print(f"\n{error}")
                 _print_pending_action_failures(
                     _new_secret_order_failure_payloads(session, turn_before, failed_before)
@@ -764,24 +792,16 @@ def play_turn(session: GameSession) -> None:
             _print_pending_action_failures(
                 _new_secret_order_failure_payloads(session, turn_before, failed_before)
             )
+            if result is not None:
+                print(report)
+                session.end_turn()
             return
         if action == "issue":
             turn_before = int(session.state.turn)
             failed_before = _failed_secret_order_ids(session, turn_before)
             try:
                 result = session.resolve_turn()
-                if result.awaiting:
-                    # CLI 端暂未做交互式决策 UI（本期只接 Web）：每个决策点默认取首个预设选项续跑。
-                    print("\n【月末重大抉择】（CLI 暂自动取首选项；交互式裁决见网页版）")
-                    choices = []
-                    for d in result.decisions:
-                        opts = d.get("options") or []
-                        first = opts[0] if opts else {}
-                        print(f"  · {d.get('title')} → {first.get('label', '（无）')}")
-                        choices.append(dict(first))
-                    report = session.submit_decisions(choices)
-                else:
-                    report = result.report
+                report = _submit_first_cli_decisions(session, result)
             except ValueError as error:
                 # 恢复态守门消息（pending 拟旨/草案等）：打印指引留在本回合交互循环
                 # （continue 与 skip 分支同语义，不 return 重进 play_turn 刷屏——
