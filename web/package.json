@@ -10,8 +10,7 @@
     "test": "vitest run --environment jsdom",
     "electron": "npm run build && electron electron/main.cjs",
     "electron:dev": "npm run build && electron electron/main.cjs",
-    "preview": "vite preview --host 127.0.0.1",
-    "typecheck:orch": "tsc -p orchestrator/tsconfig.json"
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
