@@ -2026,6 +2026,42 @@ def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
     return tags, deadline
 
 
+def confirm_dossier_links(
+    minister_reply: str,
+    dossier_candidates: Optional[List[Dict[str, Any]]],
+    suggested_links: Any,
+) -> List[Dict[str, Any]]:
+    """Resolve links from the minister's visible, unambiguous restatement."""
+    reply = re.sub(r"\s+", "", minister_reply or "")
+    labels: Dict[int, str] = {}
+    counts: Dict[str, int] = {}
+    for row in dossier_candidates or []:
+        try:
+            dossier_id = int(row["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        label = re.sub(r"\s+", "", str(
+            row.get("secret_title") or row.get("decree_text") or ""
+        ).strip())
+        if label:
+            labels[dossier_id] = label
+            counts[label] = counts.get(label, 0) + 1
+    confirmed = {key for key, label in labels.items() if counts[label] == 1 and label in reply}
+    out: List[Dict[str, Any]] = []
+    for link in suggested_links if isinstance(suggested_links, list) else []:
+        if not isinstance(link, dict) or isinstance(link.get("target_dossier_id"), bool):
+            continue
+        try:
+            target = int(link.get("target_dossier_id"))
+        except (TypeError, ValueError):
+            continue
+        relation = str(link.get("relation_type") or "").strip()
+        note = str(link.get("note") or "").strip()
+        if target in confirmed and relation in {"护卫", "稽核", "接应"} and note:
+            out.append({"target_dossier_id": target, "relation_type": relation, "note": note})
+    return out
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
@@ -2136,9 +2172,6 @@ def _extract_secret_order(
         deadline = fallback_deadline
     dossier_links: List[Dict[str, Any]] = []
     candidate_ids = {int(row["id"]) for row in (dossier_candidates or [])}
-    # The minister's own reply is the confirmation boundary.  A model-emitted
-    # integer cannot create authority unless that exact ID occurs in the reply.
-    confirmed_ids = {int(value) for value in re.findall(r"(?<!\d)(\d+)(?!\d)", minister_reply or "")}
     raw_links = obj.get("案卷关联")
     if isinstance(raw_links, list):
         for link in raw_links:
@@ -2148,13 +2181,14 @@ def _extract_secret_order(
             # IDs are intentionally not guessed from prose: only the structured
             # confirmation output can cross this boundary; DB validates existence/age.
             if (isinstance(target, bool) or not isinstance(target, int)
-                    or target not in candidate_ids or target not in confirmed_ids):
+                    or target not in candidate_ids):
                 continue
             dossier_links.append({
                 "target_dossier_id": target,
                 "relation_type": str(link.get("类型") or "").strip(),
                 "note": str(link.get("说明") or "").strip(),
             })
+    dossier_links = confirm_dossier_links(minister_reply, dossier_candidates, dossier_links)
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
             "excluded_offices": excluded_offices, "dossier_links": dossier_links,
