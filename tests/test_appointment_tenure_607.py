@@ -125,10 +125,10 @@ def test_failed_dossier_reappointment_rolls_back_audit_and_sequence(game, monkey
         db.apply_dossier_promulgation(
             state, dossier_id, "promulgated", content=content, registry=None,
         )
-    except RuntimeError as exc:
-        assert str(exc) == "simulated post-office-write failure"
+    except ValueError as exc:
+        assert str(exc) == "任免案卷载荷物化失败"
     else:
-        raise AssertionError("injected post-office-write failure did not propagate")
+        raise AssertionError("dossier materialization failure did not propagate")
 
     assert dict(db.conn.execute(
         "SELECT * FROM character_offices WHERE character_name=?", (name,)
