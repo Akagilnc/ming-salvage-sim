@@ -6432,6 +6432,7 @@ def apply_score_extraction(
     registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -6444,6 +6445,10 @@ def apply_score_extraction(
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
     dossier_participant_results: List[Dict[str, object]] = []
+    if dossier_ids_at_input is None:
+        dossier_ids_at_input = {
+            int(row["id"]) for row in db.list_decree_dossiers_for_simulation(state.turn)
+        }
     for item in extracted.get("dossier_participants") or []:
         if not isinstance(item, dict):
             dossier_participant_results.append({
@@ -6452,8 +6457,8 @@ def apply_score_extraction(
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
-            if db.get_decree_dossier(dossier_id) is None:
-                raise ValueError("案卷不存在")
+            if dossier_id not in dossier_ids_at_input:
+                raise ValueError("案卷不在本批可见输入")
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
             tier = str(item.get("tier") or "").strip()

@@ -327,6 +327,24 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "text": draft_res["draft_text"],
             "actor": minister_name,
         }
+        roster = draft_res.get("participant_roster")
+        if isinstance(roster, list):
+            characters = list(getattr(session.db.content, "characters", {}).values())
+            canonical = {
+                token: character.name
+                for character in characters
+                for token in (character.name, *(character.aliases or []))
+                if token
+            }
+            roster = [
+                {
+                    **item,
+                    "character_id": canonical.get(str(item.get("character_id") or "").strip(), str(item.get("character_id") or "").strip()),
+                    **({"delegator_id": canonical.get(str(item.get("delegator_id") or "").strip(), str(item.get("delegator_id") or "").strip())} if item.get("delegator_id") else {}),
+                }
+                for item in roster if isinstance(item, dict)
+            ]
+            draft_res["participant_roster"] = roster
         for field_name in (
             "dossier_action_type", "target_kind", "target_id", "participant_roster",
         ):

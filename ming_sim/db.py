@@ -9843,7 +9843,17 @@ class GameDB:
         existing = self._normalize_participant_roster(
             existing_raw if isinstance(existing_raw, list) else []
         )
-        for item in self._normalize_participant_roster(participants):
+        additions = self._normalize_participant_roster(participants)
+        self._validate_participant_roster_references(additions)
+        responsible = {
+            str(item.get("character_id") or "") for item in [*existing, *additions]
+            if item.get("tier") in {"主办", "协办"}
+        }
+        for item in additions:
+            delegator = str(item.get("delegator_id") or "")
+            character = str(item.get("character_id") or "")
+            if delegator and (delegator == character or delegator not in responsible):
+                raise ValueError("委派人须为同案既有主办/协办且不得自委派")
             if item not in existing:
                 existing.append(item)
         self._validate_participant_roster_references(existing)
@@ -10687,7 +10697,16 @@ class GameDB:
             raise ValueError("既有旨稿结构化载荷损坏") from exc
         if not isinstance(old, dict):
             raise ValueError("既有旨稿结构化载荷必须为对象")
-        merged = {**old, **dict(new_payload or {})}
+        incoming = dict(new_payload or {})
+        old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
+        new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
+        if not new_roster:
+            incoming.pop("participant_roster", None)
+        else:
+            incoming["participant_roster"] = old_roster + [
+                item for item in new_roster if item not in old_roster
+            ]
+        merged = {**old, **incoming}
         requested = str(merged.get("dossier_action_type") or "")
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
@@ -11817,7 +11836,14 @@ class GameDB:
     ) -> None:
         if self.get_dossier_for_directive(directive_id) is not None:
             raise ValueError("已成案旨意不得编辑")
-        payload = dict(dossier_payload or {})
+        row = self.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (directive_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("旨意不存在")
+        payload = self._merge_directive_payload(
+            row["dossier_payload_json"], dict(dossier_payload or {})
+        )
         if not all(str(payload.get(key) or "").strip() for key in (
             "dossier_action_type", "target_kind", "target_id",
         )):
@@ -12708,17 +12734,18 @@ class GameDB:
             # explicit source_id in their own table.
             fallback_prefix = table[:-1] if table.endswith("s") else table
             source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
-            turn_expr = selected.get("turn") or selected.get("origin_turn") or "0"
-            year_expr = selected.get("year") or "0"
-            period_expr = selected.get("period") or "0"
+            turn_expr = selected.get("turn") or selected.get("origin_turn") or selected.get("created_turn") or "0"
+            year_expr = selected.get("year") or selected.get("created_year") or "0"
+            period_expr = selected.get("period") or selected.get("created_period") or "0"
             kind_expr = selected.get("kind") or "'assignment'"
             title_expr = selected.get("title") or "''"
-            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or "''"
+            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or selected.get("decree_text") or "''"
+            secrecy_sql = " AND action_type <> 'secret_order'" if table == "decree_dossiers" else ""
             query = (
                 f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
                 f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
                 f"{source_sql} AS source_id, participant_roster "
-                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
+                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
