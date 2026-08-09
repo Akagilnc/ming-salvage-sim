@@ -2183,6 +2183,11 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     session.db = db
     session.state = state
     session.llm_config = None
+    session.agno_db = None
+    session.content = content
+    session.registry = None
+    session.last_decree = ""
+    session.last_report = None
     web_game = types.SimpleNamespace(
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: db.list_directives(
@@ -2233,9 +2238,6 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
-    session.resolve_turn = lambda **_kwargs: decree_mod.resolve_directives(
-        state, db, None, None, [], "", content=content,
-    )
     result = web_app.api_advance_without_edict()
 
     assert result["awaiting_decision"] is False
@@ -2245,6 +2247,9 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     assert "decree_text" not in projected[0]
     assert "payload" not in projected[0]
     assert "payload_json" not in projected[0]
+    assert projected[0]["execution_summary"] == {
+        "command": "内帑拨银押解赈济", "amount": 10, "account": "内库",
+    }
     assert state.metrics["内库"] == 10
     assert [
         row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])
@@ -2302,15 +2307,55 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
 
     session.content = content
     session.registry = None
-    session.resolve_turn = lambda: decree_mod.resolve_directives(
-        state, db, None, None, [], "", content=content,
-    )
+    session.agno_db = None
+    session.llm_config = None
+    session.last_decree = ""
+    session.last_report = None
     session.advance_without_decree()
 
     closed = db.get_decree_dossier(dossier["id"])
     assert closed["status"] == "closed"
     assert closed["execution_outcome"] == "fulfilled"
     assert closed["execution_note"] == "护行已妥"
+
+
+def test_secret_authorization_uses_canonical_authorization_boundary(game):
+    db, state, content = game
+    character = next(
+        item for item in content.characters.values()
+        if item.aliases and db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=? AND status='active'",
+            (item.name,),
+        ).fetchone()
+    )
+    normalized = db._normalize_directive_dossier_payload({
+        "dossier_action_type": "secret_authorization",
+        "target_kind": "character", "target_id": character.aliases[0],
+        "assignee": character.aliases[0], "authorization_id": "理财",
+    }, content=content, current_turn=state.turn)
+    assert normalized["assignee_id"] == character.name
+    assert normalized["target_id"] == character.name
+    assert normalized["authorization_id"] == "理财"
+
+
+@pytest.mark.parametrize("missing", ("assignee", "authorization_id"))
+def test_secret_authorization_rejects_incomplete_payload_without_grant(
+    game, missing,
+):
+    db, state, content = game
+    actor = _active_minister(db)
+    payload = {
+        "dossier_action_type": "secret_authorization",
+        "target_kind": "character", "target_id": actor,
+        "assignee": actor, "authorization_id": "理财",
+    }
+    payload.pop(missing)
+    before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
+    with pytest.raises(ValueError, match="canonical assignee 或授权字段"):
+        db._normalize_directive_dossier_payload(
+            payload, content=content, current_turn=state.turn,
+        )
+    assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
 
 
 def test_in_transit_allocation_requires_execution_verdict(game):

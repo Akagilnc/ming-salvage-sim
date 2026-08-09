@@ -545,14 +545,26 @@ def resolve_directives(
         if policy["effect_owner"] == "narrative" and admitted:
             dossier_payload.append(row)
         elif admitted and str(row.get("status") or "") == "executing":
+            # Keep enough inert context to distinguish concurrent work while
+            # withholding the executable decree/payload surfaces.
+            execution_summary = {
+                "command": str(row.get("decree_text") or "").strip(),
+            }
+            for key in ("amount", "account", "target_account", "purpose", "reason"):
+                value = payload.get(key)
+                if value not in (None, ""):
+                    execution_summary[key] = value
             dossier_payload.append({
-                key: row[key]
-                for key in (
-                    "id", "action_type", "target_kind", "target_id",
-                    "executor_kind", "executor_id", "status", "due_turn",
-                    "created_turn", "promulgated_turn",
-                )
-                if key in row
+                **{
+                    key: row[key]
+                    for key in (
+                        "id", "action_type", "target_kind", "target_id",
+                        "executor_kind", "executor_id", "status", "due_turn",
+                        "created_turn", "promulgated_turn",
+                    )
+                    if key in row
+                },
+                "execution_summary": execution_summary,
             })
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(

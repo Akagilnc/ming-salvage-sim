@@ -9660,7 +9660,9 @@ class GameDB:
                 else:
                     normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
-        elif action in {"assignment", "authorization", "military_order"}:
+        elif action in {
+            "assignment", "authorization", "secret_authorization", "military_order",
+        }:
             assignee = str(
                 normalized.get("assignee_id") or normalized.get("assignee") or ""
             ).strip()
@@ -9670,14 +9672,17 @@ class GameDB:
             authorization_id = str(
                 normalized.get("authorization_id") or ""
             ).strip()
+            authorization_action = action in {
+                "authorization", "secret_authorization",
+            }
             complete = bool(assignee) and (
-                action != "authorization" or bool(authorization_id)
+                not authorization_action or bool(authorization_id)
             )
             if not complete:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
             normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
-            if action == "authorization":
+            if authorization_action:
                 normalized["authorization_id"] = authorization_id
         if action == "military_order":
             try:
@@ -10388,10 +10393,24 @@ class GameDB:
                     )
                     return
             elif row["action_type"] in {"authorization", "secret_authorization"}:
+                character_id = str(
+                    payload.get("character_id") or payload.get("assignee_id") or ""
+                ).strip()
+                skill_id = str(
+                    payload.get("skill_id") or payload.get("authorization_id") or ""
+                ).strip()
+                if not character_id or not skill_id:
+                    raise ValueError("授权案卷缺少 canonical assignee 或授权字段")
+                character_exists = self.conn.execute(
+                    "SELECT 1 FROM characters WHERE name=?", (character_id,),
+                ).fetchone()
+                skill_catalog = getattr(content or self.content, "skill_catalog", {})
+                if not character_exists or skill_id not in skill_catalog:
+                    raise ValueError("授权案卷引用未知人物或技能")
                 if not self.grant_skill(
                     state,
-                    str(payload.get("character_id") or payload.get("assignee_id") or ""),
-                    str(payload.get("skill_id") or payload.get("authorization_id") or ""),
+                    character_id,
+                    skill_id,
                     granted_by=str(payload.get("granted_by") or "皇帝"),
                     dossier_id=int(dossier_id),
                     commit=False,
