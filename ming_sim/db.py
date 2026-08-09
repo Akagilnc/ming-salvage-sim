@@ -9639,7 +9639,7 @@ class GameDB:
                 else:
                     normalized["execution_surface"] = surface
                 normalized.pop("delta", None)
-        elif action in {"assignment", "authorization"}:
+        elif action in {"assignment", "authorization", "military_order"}:
             assignee = str(
                 normalized.get("assignee_id") or normalized.get("assignee") or ""
             ).strip()
@@ -9654,12 +9654,11 @@ class GameDB:
             )
             if not complete:
                 raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
-            else:
-                normalized["assignee_id"] = assignee
-                normalized.pop("assignee", None)
-                if action == "authorization":
-                    normalized["authorization_id"] = authorization_id
-        elif action == "military_order":
+            normalized["assignee_id"] = assignee
+            normalized.pop("assignee", None)
+            if action == "authorization":
+                normalized["authorization_id"] = authorization_id
+        if action == "military_order":
             try:
                 due_turn = int(normalized.get("due_turn") or 0)
                 deadline = int(normalized.get("deadline_months") or 0)
@@ -9885,7 +9884,12 @@ class GameDB:
         """本月新生/重判案卷及所有未结案执行中案卷。"""
         rows = self.conn.execute(
             """
-            SELECT DISTINCT d.*
+            SELECT d.*,
+                MAX(CASE WHEN
+                       (d.created_turn=? AND d.promulgation_decision='promulgated')
+                    OR (h.turn=? AND h.decision='promulgated')
+                    OR (h.rescript_action='force_promulgated' AND h.turn=? - 1)
+                THEN 1 ELSE 0 END) AS executable_this_turn
             FROM decree_dossiers d
             LEFT JOIN decree_dossier_decisions h ON h.dossier_id=d.id
             WHERE (
@@ -9912,14 +9916,28 @@ class GameDB:
                     )
                 )
             )
+            GROUP BY d.id
             ORDER BY d.id
             """,
-            (int(turn), int(turn), int(turn), int(turn), int(turn)),
+            (
+                int(turn), int(turn), int(turn),
+                int(turn), int(turn), int(turn), int(turn), int(turn),
+            ),
         ).fetchall()
         return [
             self._dossier_row(row) for row in rows
             if str(row["action_type"]) != "secret_order"
         ]
+
+    @staticmethod
+    def executable_decree_dossier_ids(
+        dossiers: List[Dict[str, object]],
+    ) -> set[int]:
+        """Return ids selected by the simulation query's canonical T/T+1 rule."""
+        return {
+            int(row["id"]) for row in dossiers
+            if bool(row.get("executable_this_turn"))
+        }
 
     def transition_decree_dossier(
         self, dossier_id: int, new_status: str, *, commit: bool = True,

@@ -458,20 +458,7 @@ def resolve_directives(
     ]
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
-        int(row["dossier_id"])
-        for row in db.conn.execute(
-            "SELECT dossier_id FROM decree_dossier_decisions "
-            "WHERE turn=? AND (decision='promulgated' OR rescript_action='force_promulgated')",
-            (int(state.turn),),
-        ).fetchall()
-    )
-    current_decree_ids.update(
-        int(row["dossier_id"])
-        for row in db.conn.execute(
-            "SELECT dossier_id FROM decree_dossier_decisions "
-            "WHERE turn=? AND rescript_action='force_promulgated'",
-            (int(state.turn) - 1,),
-        ).fetchall()
+        db.executable_decree_dossier_ids(simulation_visible_dossiers)
     )
     executable_decree_text = "\n".join(
         str(row.get("decree_text") or "").strip()
