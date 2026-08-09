@@ -12782,7 +12782,9 @@ class GameDB:
                     "turn": int(row["turn"]), "year": int(row["year"]),
                     "period": int(row["period"]), "kind": "secret_order_brief",
                     "title": row["title"], "body": row["body"], "source_id": source_id,
-                    **({"excluded_names": "[]"} if include_exclusions else {}),
+                    **({"excluded_names": json.dumps(
+                        self.knowledge_exclusions_for_source(source_id), ensure_ascii=False,
+                    )} if include_exclusions else {}),
                 })
                 known_sources.add(source_id)
         for row in self.conn.execute(
@@ -12883,11 +12885,9 @@ class GameDB:
         # test_minister_context / test_web_chat_serialization_393). Without
         # this branch those writes lose the blacklist. session.py only DELETEs
         # legacy sources with this prefix; no live production producer.
-        if source.startswith("secret_order:"):
-            try:
-                order_id = int(source.split(":", 1)[1])
-            except (TypeError, ValueError):
-                return []
+        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        if match:
+            order_id = int(match.group(1))
             order = self.conn.execute(
                 "SELECT excluded_names FROM secret_orders WHERE id=?", (order_id,)
             ).fetchone()
@@ -12909,17 +12909,11 @@ class GameDB:
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
         order_id = None
-        # #883 CR R1 S2: same retention as knowledge_exclusions_for_source —
-        # no production shared-source producer for bare ``secret_order:``, but
-        # the reader still serves exclusion-target inheritance for that prefix
-        # (AC harness + any residual event rows). See comment there.
-        if source.startswith("secret_order:"):
-            try:
-                order_id = int(source.split(":", 1)[1])
-            except (TypeError, ValueError):
-                # ``secret_order:...`` is also a valid producer-defined source
-                # id for records that are not rows in secret_orders.
-                order_id = None
+        # Private briefs and retained bare secret-order sources share the
+        # canonical exclusions persisted on secret_orders.
+        match = re.fullmatch(r"secret_order(?:_brief)?:(\d+)", source)
+        if match:
+            order_id = int(match.group(1))
         if order_id is None:
             row = self.conn.execute(
                 "SELECT excluded_targets FROM character_knowledge_sources WHERE source_id=?", (source,)

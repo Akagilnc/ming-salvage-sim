@@ -103,6 +103,27 @@ def test_semantic_verdict_rejects_negative_quote_vague_and_containment(monkeypat
     assert links == []
 
 
+@pytest.mark.parametrize("verdict", [
+    {"confirmed_ids": [True]},
+    {"confirmed_ids": [{"id": 11}]},
+    {"confirmed_ids": "11"},
+    {"confirmed_ids": {"id": 11}},
+    {},
+    [11],
+])
+def test_semantic_verdict_bad_shape_fails_closed_without_crashing(monkeypatch, verdict):
+    monkeypatch.setattr(
+        cli_backend, "_run_json_extractor_for_config",
+        lambda *args, **kwargs: (json.dumps(verdict), 1),
+    )
+
+    assert cli_backend.confirm_dossier_links(
+        "臣明确确认护卫辽东补饷。",
+        [{"id": 11, "decree_text": "辽东补饷"}],
+        [{"target_dossier_id": 11, "relation_type": "护卫", "note": "护送"}],
+    ) == []
+
+
 def test_semantic_verdict_can_narrow_to_exactly_one_proposed_candidate(monkeypatch):
     monkeypatch.setattr(
         cli_backend, "_run_json_extractor_for_config",
@@ -175,7 +196,9 @@ def test_reference_candidates_obey_canonical_disclosure_blacklist(game):
     }
 
 
-@pytest.mark.parametrize("confirmed_ids, expected", [([1], True), ([], False)])
+@pytest.mark.parametrize("confirmed_ids, expected", [
+    ("target", True), ([], False), ([True], False), ([{"id": 1}], False),
+])
 def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     game, monkeypatch, confirmed_ids, expected,
 ):
@@ -188,9 +211,10 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
         "title": "护行辽饷", "content": "护送辽饷", "assignee": minister,
         "dossier_links": [{"target_dossier_id": target, "relation_type": "护卫", "note": "护送"}],
     }, ensure_ascii=False)
+    verdict_ids = [target] if confirmed_ids == "target" else confirmed_ids
     monkeypatch.setattr(
         cli_backend, "_run_json_extractor_for_config",
-        lambda *args, **kwargs: (json.dumps({"confirmed_ids": [target] if confirmed_ids else []}), 1),
+        lambda *args, **kwargs: (json.dumps({"confirmed_ids": verdict_ids}), 1),
     )
 
     class Agent:
@@ -217,9 +241,11 @@ def test_real_api_session_tool_path_commits_only_semantically_confirmed_link(
     assert bool(db.list_dossier_links(source["id"])) is expected
 
 
-@pytest.mark.parametrize("confirmed, expected", [(True, True), (False, False)])
+@pytest.mark.parametrize("confirmed_ids, expected", [
+    ("target", True), (None, False), ([True], False), ([{"id": 1}], False),
+])
 def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
-    game, monkeypatch, confirmed, expected,
+    game, monkeypatch, confirmed_ids, expected,
 ):
     db, state, content = game
     target = _make_dossier(db, state, "辽东补饷")
@@ -230,7 +256,8 @@ def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
         "案卷关联": [{"目标案卷ID": target, "类型": "护卫", "说明": "护送"}],
     }
     def runner(*args, **kwargs):
-        value = ({"confirmed_ids": [target] if confirmed else []}
+        ids = [target] if confirmed_ids == "target" else (confirmed_ids or [])
+        value = ({"confirmed_ids": ids}
                  if kwargs.get("tag") == "dossier_link_confirmation" else extracted)
         return json.dumps(value, ensure_ascii=False), 1
     monkeypatch.setattr(cli_backend, "_run_json_extractor_for_config", runner)
@@ -242,7 +269,7 @@ def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
     result = sess.apply_cli_conversation_actions(
         SimpleNamespace(name="毕自严", office_type="户部"),
         "密令：护行辽饷。",
-        "臣明确确认护卫辽东补饷。" if confirmed else "臣不能确认护卫辽东补饷。",
+        "臣明确确认护卫辽东补饷。" if expected else "臣不能确认护卫辽东补饷。",
         has_directive=False, secret_order_id=None,
     )
     db.commit_pending_actions(state, action_ids=[result["pending_action_id"]])
