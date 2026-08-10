@@ -10,8 +10,9 @@ import { consumeSettleStream } from "./settleStream";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
-import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar } from "./components/hud";
-import { GrandMap, NodeIntel } from "./components/map";
+import { FullscreenModal } from "./components/hud";
+import { GameHud } from "./components/gameHud";
+import { NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal } from "./components/chatModal";
 import { CheatConsole, useCheatHotkey } from "./components/cheatConsole";
@@ -25,11 +26,10 @@ import { SecretOrdersModal } from "./components/secretOrders";
 import { SettlementLock } from "./components/settlementLock";
 import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
-import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
-import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
+import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatUndoResponse, ClosedIssue, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
@@ -859,111 +859,18 @@ export function App() {
 
   return (
     <main className="game-shell">
-      <div className="hud2-stage" ref={hudStageCbRef}>
-        <img className="hud2-bg" src={HUD_BG} alt="" />
-
-        {/* 地图：平面矩形，盖在底图中央素绢图框上 */}
-        {ready ? (
-          <div className="hud2-map-quad" style={{
-            position: "absolute",
-            left: `${HUD_SLOTS.地图框.left}%`, top: `${HUD_SLOTS.地图框.top}%`,
-            width: `${HUD_SLOTS.地图框.width}%`, height: `${HUD_SLOTS.地图框.height}%`,
-          }}>
-            <GrandMap nodes={mapNodes} selectedId={mapIntelOpen ? selectedNode?.id || "" : ""} onSelect={selectMapNode} />
-          </div>
-        ) : null}
-
-        {/* 地图暖黄昏调+暗角：盖在交互地图上的纯装饰层（夜·烛基调），不吃点击 */}
-        {ready ? (
-          <div className="hud2-map-grade-frame" style={{
-            position: "absolute",
-            left: `${HUD_SLOTS.地图框.left}%`, top: `${HUD_SLOTS.地图框.top}%`,
-            width: `${HUD_SLOTS.地图框.width}%`, height: `${HUD_SLOTS.地图框.height}%`,
-          }}>
-            <div className="hud2-map-grade" />
-          </div>
-        ) : null}
-
-        {/* 局势进度：左挂轴平面矩形 */}
-        {ready ? (
-          <div className="hud2-issue-quad" style={{
-            position: "absolute",
-            left: `${HUD_SLOTS.局势框.left}%`, top: `${HUD_SLOTS.局势框.top}%`,
-            width: `${HUD_SLOTS.局势框.width}%`, height: `${HUD_SLOTS.局势框.height}%`,
-          }}>
-            <SituationPanel
-              issues={state.issues}
-              closedIssues={state.closed_this_turn || []}
-              hasLegacies={(state.legacies || []).length > 0}
-            />
-          </div>
-        ) : null}
-
-        {/* 顶栏：年月 + 国库/内库 + 民心/皇威，各按坑位绝对定位 */}
-        <button className="hud2-slot hud2-year" style={HUD_SLOTS.顶栏.年月}
-          onClick={() => setActiveModal("state")}>
-          <span className="hud2-block">
-            <span className="hud2-lab">大明</span>
-            <span className="hud2-val">{state.turn.year} 年 {state.turn.period} 月</span>
-          </span>
-        </button>
-        <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>
-          <BudgetHover accountName="国库" budget={state.budget["国库"]} />
-        </div>
-        <div className="hud2-slot" style={HUD_SLOTS.顶栏.内库}>
-          <BudgetHover accountName="内库" budget={state.budget["内库"]} />
-        </div>
-        <div className="hud2-slot hud2-metric-pair" style={HUD_SLOTS.顶栏.民心}>
-          <span className={`hud2-metric-one ${scoreTone(state.metrics["民心"], false)}`}>
-            <span className="hud2-lab">民心</span><span className="hud2-val">{state.metrics["民心"]}</span>
-          </span>
-          <span className={`hud2-metric-one ${scoreTone(state.metrics["皇威"], false)}`}>
-            <span className="hud2-lab">皇威</span><span className="hud2-val">{state.metrics["皇威"]}</span>
-          </span>
-        </div>
-        <div className="hud2-slot hud2-legacy-slot" style={HUD_SLOTS.顶栏.皇威}>
-          <LegacyBar legacies={state.legacies} />
-        </div>
-        <button className="hud2-menu-btn"
-          title="游戏菜单" aria-label="游戏菜单" onClick={() => setActiveModal("menu")}>
-          <span className="hud2-val">菜单</span>
-        </button>
-
-        {/* 右侧竖排部院导航 */}
-        {([
-          ["政", "court", "朝堂·召见大臣"],
-          ["吏", "appointment", "官员任免"],
-          ["省", "region", "省份列表"],
-          ["兵", "army", "军队列表"],
-          ["户", "economy", "经济面板"],
-          ["工", "building", "建筑列表"],
-          ["礼", "court", "礼部"],
-          ["后", "harem", "后宫"],
-        ] as const).map(([label, key, title], idx) => {
-          const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫"] as const)[idx];
-          return (
-            <button key={slotKey} className={`hud2-slot hud2-nav${activeDrawerKey === key ? " active" : ""}`}
-              style={HUD_SLOTS.导航[slotKey]} title={title} aria-label={title}
-              onClick={(navHandlers as any)[key]}>
-              {label}
-            </button>
-          );
-        })}
-
-        {/* 底部 5 命令物件（扣图填进木牌） */}
-        <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
-          caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => setActiveModal("state")} />
-        <CommandSlot slotKey="邸报" img="邸报"
-          caption="邸报" sub="本月奏报" onClick={() => setActiveModal("report")} />
-        <CommandSlot slotKey="密令" img="密令"
-          badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
-          caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
-        <CommandSlot slotKey="史册" img="史册"
-          caption="史册" sub="历代奏报/诏书" onClick={() => setActiveModal("history")} />
-        <CommandSlot slotKey="拟诏" img="拟诏" badge={state.directives.length}
-          caption="拟诏/结束回合" sub={state.directives.length ? `${state.directives.length} 道` : "本回合"}
-          onClick={() => setActiveModal("edict")} />
-      </div>
+      <GameHud
+        stageRef={hudStageCbRef}
+        ready={ready}
+        state={state}
+        mapNodes={mapNodes}
+        mapSelectedId={mapIntelOpen ? selectedNode?.id || "" : ""}
+        onSelectMapNode={selectMapNode}
+        activeDrawerKey={activeDrawerKey}
+        navHandlers={navHandlers}
+        secretOrderActiveCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
+        onOpenModal={setActiveModal}
+      />
 
       <CourtDrawer
         state={state}
