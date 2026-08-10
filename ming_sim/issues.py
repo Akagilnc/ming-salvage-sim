@@ -125,10 +125,20 @@ def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool
         return False
     if payload_action == "罢免":
         return item_action in {"罢黜", "罢免"}
-    if payload_action != "任命" or item_action != "任命":
+    if payload_action != "任命" or item_action not in {"任命", "调任"}:
         return False
-    payload_fields = _canonical_appointment_fields(payload)
-    return bool(payload_fields[0]) and payload_fields == _canonical_appointment_fields(item)
+    current_row = db.conn.execute(
+        "SELECT office_type FROM characters WHERE name=?", (person,)
+    ).fetchone()
+    current_office_type = str(current_row["office_type"] or "") if current_row else ""
+    canonical_kwargs = {
+        "current_office_type": current_office_type,
+        "llm_config": db.llm_config,
+    }
+    payload_fields = _canonical_appointment_fields(payload, **canonical_kwargs)
+    return bool(payload_fields[0]) and payload_fields == _canonical_appointment_fields(
+        item, **canonical_kwargs
+    )
 
 
 def _issue_condition_text(raw: object) -> str:
