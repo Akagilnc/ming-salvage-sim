@@ -3604,25 +3604,18 @@ def api_advance_without_edict() -> Dict[str, Any]:
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
-            pending_directive_actions = [
-                action for action in game.db.list_pending_actions(turn_before)
-                if action["kind"] == "directive"
-            ]
-            if (
-                game.directive_rows()
-                or pending_directive_actions
-                or game.db.list_decree_dossiers(status="proposed")
-                or game.db.list_decree_dossiers(status="executing")
-            ):
+            if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
-                advance_without_edict(
+                advanced = advance_without_edict(
                     game.state,
                     game.db,
                     content=game.content,
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
                 )
+                if not advanced:
+                    settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
     except ValueError as e:

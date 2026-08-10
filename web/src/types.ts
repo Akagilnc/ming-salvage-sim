@@ -376,6 +376,15 @@ export type LLMConfigInfo = {
   };
 };
 
+export type DossierProgressReport = {
+  id: number;
+  dossier_id: number;
+  turn: number;
+  progress_band: string;
+  memorial_text: string;
+  is_terminal: boolean;
+};
+
 export type SecretOrder = {
   id: number;
   turn_issued: number;
@@ -390,6 +399,7 @@ export type SecretOrder = {
   status: "active" | "pending_review" | "done" | "failed" | "cancelled";
   result: string;
   sim_note: string;
+  dossier_progress?: DossierProgressReport[];
   turn_closed: number | null;
 };
 

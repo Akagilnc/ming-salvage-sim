@@ -228,7 +228,7 @@ export function App() {
     }
   }, [state, closedShown]);
 
-  // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
+  // 新回合进入时拉取全部密令；仅刚结算出的御前密奏触发私密侧区。
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
   // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
   // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
@@ -242,9 +242,7 @@ export function App() {
       // 延迟呈现归协调器：400ms 后仍最新代次才弹窗；撤回等推进代次后陈旧定时器 no-op。
       autoOpen: {
         afterMs: 400,
-        when: (orders) =>
-          shouldAutoOpenSecretOrdersAfterSettlement()
-          && orders.some((o) => o.status === "active" || o.status === "pending_review"),
+        when: (orders) => shouldAutoOpenSecretOrdersAfterSettlement(orders, currentTurn),
         open: () => setActiveModal("secret_orders"),
       },
     });
