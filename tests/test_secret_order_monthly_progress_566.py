@@ -242,6 +242,39 @@ def test_only_an_existing_monthly_chain_gets_terminal_progress(game):
     assert db.list_dossier_progress(ordinary) == []
 
 
+def test_character_terminal_status_closes_secret_orders_through_canonical_progress_rail(game):
+    db, state, content = game
+    assignee = _actor(db)
+    chained_id, chained_dossier = _order(db, state, title="护行辽饷")
+    unchained_id, unchained_dossier = _order(
+        db, state, title="清查库藏", tags=["财政"],
+    )
+    _settle(db, state, content, progress={
+        "dossier_id": chained_dossier,
+        "progress_band": "在途",
+        "memorial_text": "首批已出京",
+    })
+
+    db.set_character_status(state, assignee, "dead", "途中病故")
+
+    orders = {
+        int(row["id"]): row
+        for row in db.conn.execute(
+            "SELECT id,status,result FROM secret_orders WHERE id IN (?, ?)",
+            (chained_id, unchained_id),
+        ).fetchall()
+    }
+    assert orders[chained_id]["status"] == "failed"
+    assert orders[unchained_id]["status"] == "failed"
+    assert "人物终态：dead；途中病故" in orders[chained_id]["result"]
+    assert db.get_decree_dossier(chained_dossier)["status"] == "closed"
+    assert db.get_decree_dossier(unchained_dossier)["status"] == "closed"
+    terminal = db.list_dossier_progress(chained_dossier)[-1]
+    assert terminal["is_terminal"] is True
+    assert "人物终态：dead；途中病故" in terminal["memorial_text"]
+    assert db.list_dossier_progress(unchained_dossier) == []
+
+
 def test_real_module_extractor_traces_private_context_through_settlement(game, monkeypatch):
     """Run the production four-agent extraction parser/merge before settlement."""
     import json

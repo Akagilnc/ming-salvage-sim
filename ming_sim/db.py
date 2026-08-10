@@ -10891,15 +10891,10 @@ class GameDB:
                 if order is not None and order["status"] in {"active", "pending_review"}:
                     previous = str(order["result"] or "")
                     result = "\n".join(x for x in (previous, reason) if x)
-                    self.conn.execute(
-                        """
-                        UPDATE secret_orders
-                        SET status='failed',result=?,turn_closed=?,
-                            updated_at=CURRENT_TIMESTAMP
-                        WHERE id=?
-                        """,
-                        (result, int(state.turn), int(order_id)),
+                    self.close_secret_order(
+                        int(order_id), "failed", result, int(state.turn), commit=False,
                     )
+                    continue
             self.record_dossier_execution(
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
