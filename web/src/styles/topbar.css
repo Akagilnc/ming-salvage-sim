@@ -231,12 +231,14 @@
 
 /* Portal 到 body 的预算浮框：fixed 定位脱离 hud2-stage transform，文字清晰、z 顶、盖一切 */
 .budget-popover-portal {
-  position: fixed !important;
-  z-index: 9999 !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
+  position: fixed;
+  z-index: 9999;
+  opacity: 1;
+  pointer-events: auto;
+  /* transform 保 !important：situation.css ≤820px 媒体查询里 .budget-popover 平级选择器
+     有 translateY(-2px)，同优先级后来者居上会顶掉 none。 */
   transform: none !important;
-  background: #f2e2b4 !important;
+  background: #f2e2b4;
 }
 
 .budget-popover-head {
