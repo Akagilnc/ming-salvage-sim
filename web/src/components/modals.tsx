@@ -3,7 +3,7 @@ import { Check, Crown, Edit3, Landmark, Loader2, Lock, MessageSquare, RotateCcw,
 import { api } from "../api";
 import { FullscreenModal, MinisterPortrait, cacheBust } from "./hud";
 import { formatClosedEffect, stripOrganicMarkdown } from "../format";
-import type { ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
+import type { AudienceScrollMessage, ChatDisplayMessage, ChatMessage, ClosedIssue, Directive, EndingPayload, GameState, HistoryDetail, HistoryTurnItem, Minister, PendingActionFailure, SecretOrder, Suggestion } from "../types";
 
 export function ReportModal({
   report,
@@ -230,6 +230,14 @@ export function SecretOrderDetailDialog({
           </dl>
           <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
           {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
+          {(order.dossier_progress || []).map((report, index) => (
+            <SecretOrderDetailBlock
+              key={report.id}
+              title={`${report.is_terminal ? "结案密奏" : `第 ${index + 1} 月密奏`} · ${report.progress_band}`}
+              text={report.memorial_text}
+              tone="green"
+            />
+          ))}
           {order.result ? (
             <SecretOrderDetailBlock title={order.status === "active" ? "承办回报" : "执行结果"} text={order.result} tone="green" />
           ) : null}
@@ -296,10 +304,13 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
-  const [selectedTurn, setSelectedTurn] = React.useState<number | null>(null);
+  const [selectedArchive, setSelectedArchive] = React.useState<HistoryTurnItem | null>(null);
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
+  const [archivedScroll, setArchivedScroll] = React.useState<AudienceScrollMessage[] | null>(null);
+  const [scrollLoading, setScrollLoading] = React.useState(false);
+  const [scrollError, setScrollError] = React.useState("");
 
   React.useEffect(() => {
     let alive = true;
@@ -311,7 +322,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
         if (!alive) return;
         const list: HistoryTurnItem[] = data.turns || [];
         setTurns(list);
-        if (list.length) setSelectedTurn(list[list.length - 1].turn);
+        if (list.length) setSelectedArchive(list[list.length - 1]);
       } catch (e: any) {
         if (alive) setListError(e?.message || "加载失败");
       } finally {
@@ -322,26 +333,41 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   React.useEffect(() => {
-    if (selectedTurn == null) return;
+    if (selectedArchive == null) return;
+    const selectedTurn = selectedArchive.turn;
     let alive = true;
     setDetailLoading(true);
     setDetailError("");
-    (async () => {
-      try {
-        const resp = await fetch(`/api/history/turn/${selectedTurn}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        if (alive) setDetail(data);
-      } catch (e: any) {
-        if (alive) setDetailError(e?.message || "加载失败");
-      } finally {
-        if (alive) setDetailLoading(false);
-      }
-    })();
+    setDetail(null);
+    setArchivedScroll(null);
+    setScrollError("");
+    setScrollLoading(!!selectedArchive.night_id);
+    void fetch(`/api/history/turn/${selectedTurn}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => { if (alive) setDetail(data); })
+      .catch((error) => { if (alive) setDetailError(error?.message || "加载失败"); })
+      .finally(() => { if (alive) setDetailLoading(false); });
+    if (selectedArchive.night_id) {
+      void fetch(`/api/audience/scroll?night_id=${selectedArchive.night_id}`)
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((data) => { if (alive) setArchivedScroll(data?.messages || []); })
+        .catch((error) => { if (alive) setScrollError(error?.message || "加载失败"); })
+        .finally(() => { if (alive) setScrollLoading(false); });
+    } else {
+      setScrollLoading(false);
+    }
     return () => { alive = false; };
-  }, [selectedTurn]);
+  }, [selectedArchive]);
 
-  const subtitle = turns.length ? `共 ${turns.length} 月存档` : "尚无存档";
+  const monthCount = turns.filter((item) => item.kind === "month").length;
+  const nightCount = turns.filter((item) => item.kind === "night").length;
+  const subtitle = turns.length ? `共 ${monthCount} 月档 · ${nightCount} 场档` : "尚无存档";
 
   return (
     <FullscreenModal title="史册：历代奏报与诏书" subtitle={subtitle} bgClass="modal-bg-state" onClose={onClose}>
@@ -354,18 +380,20 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
           ) : null}
           <ul>
             {turns.slice().reverse().map((t) => {
-              const active = t.turn === selectedTurn;
+              const active = t.turn === selectedArchive?.turn && t.night_id === selectedArchive?.night_id;
               const tags: string[] = [];
               if (t.has_report) tags.push("奏报");
               if (t.has_directive) tags.push("诏");
               return (
-                <li key={t.turn}>
+                <li key={`${t.turn}:${t.night_id ?? "month"}`}>
                   <button
                     className={`history-turn-item ${active ? "active" : ""}`}
-                    onClick={() => setSelectedTurn(t.turn)}
+                    onClick={() => setSelectedArchive(t)}
                   >
-                    <b>{t.year} 年 {t.period} 月</b>
-                    <small>第 {t.turn} 回合 · {tags.join(" / ") || "—"}</small>
+                    <b>{t.kind === "night"
+                      ? `${t.location || "召对"}${t.time_of_day || "场"}${(t.scene_count || 0) > 1 ? ` · 第 ${t.scene_number} 场` : ""}`
+                      : `${t.year} 年 ${t.period} 月`}</b>
+                    <small>第 {t.turn} 回合 · {t.kind === "night" ? "场档" : (tags.join(" / ") || "月档")}</small>
                   </button>
                 </li>
               );
@@ -377,7 +405,10 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             loading={detailLoading}
             error={detailError}
             detail={detail}
-            selectedTurn={selectedTurn}
+            selectedTurn={selectedArchive?.turn ?? null}
+            archivedScroll={archivedScroll}
+            scrollLoading={scrollLoading}
+            scrollError={scrollError}
           />
         </article>
       </div>
@@ -390,27 +421,43 @@ export function HistoryDetailView({
   error,
   detail,
   selectedTurn,
+  archivedScroll = null,
+  scrollLoading = false,
+  scrollError = "",
 }: {
   loading: boolean;
   error: string;
   detail: HistoryDetail | null;
   selectedTurn: number | null;
+  archivedScroll?: AudienceScrollMessage[] | null;
+  scrollLoading?: boolean;
+  scrollError?: string;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
-  if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
-  if (error) return <div className="document-section"><p className="long-copy">加载失败：{error}</p></div>;
-  if (!detail || !detail.exists) return <div className="document-section"><p className="long-copy">该回合无存档。</p></div>;
 
   return (
     <>
-      {detail.decree_text ? (
+      {loading ? <section className="document-section"><p className="long-copy">月档加载中…</p></section> : null}
+      {error ? <section className="document-section"><p className="long-copy">月档加载失败：{error}</p></section> : null}
+      {!loading && !error && (!detail || !detail.exists) && !archivedScroll && !scrollLoading && !scrollError
+        ? <section className="document-section"><p className="long-copy">该回合无存档。</p></section>
+        : null}
+      {scrollLoading ? <section className="document-section"><p className="long-copy">场档加载中…</p></section> : null}
+      {scrollError ? <section className="document-section"><p className="long-copy">场档加载失败：{scrollError}</p></section> : null}
+      {archivedScroll ? (
+        <section className="document-section modal-bg-chat">
+          <h3 className="extraction-section-title">召对记录</h3>
+          <ScrollMessages messages={archivedScroll} ministerName="" />
+        </section>
+      ) : null}
+      {detail?.decree_text ? (
         <section className="document-section">
           <h3 className="extraction-section-title">本月诏书</h3>
           <pre className="memorial-text">{detail.decree_text}</pre>
         </section>
       ) : null}
 
-      {detail.directives.length ? (
+      {detail?.directives?.length ? (
         <section className="document-section">
           <h3 className="extraction-section-title">已颁草案（{detail.directives.length} 道）</h3>
           <ul className="history-directive-list">
@@ -431,7 +478,7 @@ export function HistoryDetailView({
         </section>
       ) : null}
 
-      {detail.report ? (
+      {detail?.report ? (
         <section className="document-section">
           <h3 className="extraction-section-title">月末邸报奏报</h3>
           <pre className="memorial-text">{detail.report}</pre>
@@ -498,12 +545,29 @@ export function BriefReport({ title, items }: { title: string; items: string[] }
 }
 
 
+function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string }) {
+  return <>{messages.map((message, index) => {
+    const pending = "pending" in message && message.pending;
+    const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
+    const beat = "beat" in message ? message.beat : "dialogue";
+    if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
+    return <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}><span>{speaker}</span><p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p></div>;
+  })}</>;
+}
+
 export function ChatModal({
   minister,
   portraitPrefix,
+  scrollMode = "audience",
+  currentCampaignId,
+  currentNightId,
+  undoneChatIdentity,
   chat,
   suggestions,
   pendingUserMessage,
+  pendingIdentity,
+  failedIdentity,
+  scrollGeneration,
   streamingMinisterMessage,
   chatNotice,
   chatFailures,
@@ -529,9 +593,20 @@ export function ChatModal({
 }: {
   minister: Minister;
   portraitPrefix: string;
+  scrollMode?: "audience" | "legacy";
+  /** Complete ownership of the currently open scroll. */
+  currentCampaignId: string;
+  currentNightId: number;
+  /** Complete persisted identity returned by the latest successful withdrawal. */
+  undoneChatIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
   chat: ChatMessage[];
   suggestions: Suggestion[];
   pendingUserMessage: string;
+  pendingIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
+  /** Provider-failed persisted turn whose generating snapshot must be retired. */
+  failedIdentity: { campaign_id: string; night_id: number; chat_turn_id: number } | null;
+  /** 成功落账代次；变化时重读公共卷轴。 */
+  scrollGeneration?: number;
   streamingMinisterMessage: string;
   chatNotice: string;
   chatFailures: PendingActionFailure[];
@@ -567,9 +642,73 @@ export function ChatModal({
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
-  const displayMessages: ChatDisplayMessage[] = [...chat];
+  const [scrollState, setScrollState] = React.useState<
+    { kind: "loading" } | { kind: "none" } | {
+      kind: "night";
+      nightId: number;
+      messages: AudienceScrollMessage[];
+      refreshError: boolean;
+    } | { kind: "error" }
+  >({ kind: "loading" });
+  const followsTailRef = React.useRef(true);
+  const restoredNightRef = React.useRef<number | false>(false);
+  const withdrawnFromThisScroll = (message: AudienceScrollMessage): boolean => !!(
+    undoneChatIdentity
+    && undoneChatIdentity.campaign_id === currentCampaignId
+    && undoneChatIdentity.night_id === currentNightId
+    && message.chat_turn_id === undoneChatIdentity.chat_turn_id
+  );
+  const failedInThisScroll = (message: AudienceScrollMessage): boolean => !!(
+    failedIdentity
+    && failedIdentity.campaign_id === currentCampaignId
+    && failedIdentity.night_id === currentNightId
+    && message.chat_turn_id === failedIdentity.chat_turn_id
+  );
+  const snapshotStillCurrent = (state: typeof scrollState): boolean =>
+    state.kind !== "night" || (state.nightId === currentNightId && !state.messages.some(withdrawnFromThisScroll));
+  const effectiveScrollState = snapshotStillCurrent(scrollState) ? scrollState : { kind: "loading" as const };
+  // The night scroll is the sole live authority. Personal chat history is only the legacy fallback;
+  // mixing it here reintroduces cross-night records and snapshot-difference heuristics.
+  const displayMessages: Array<ChatDisplayMessage | AudienceScrollMessage> = scrollMode === "legacy" || (effectiveScrollState.kind === "none" && currentNightId === 0)
+    ? [...chat]
+    : effectiveScrollState.kind === "night" ? effectiveScrollState.messages.filter((message) => !failedInThisScroll(message)) : [];
 
-  if (pendingUserMessage) {
+  React.useEffect(() => {
+    let alive = true;
+    // Once an open night is known, refreshes retain that single authority while loading;
+    // first load/minister switches never flash the old per-minister projection.
+    setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current) ? current : { kind: "loading" });
+    if (scrollMode === "legacy") {
+      setScrollState({ kind: "none" });
+      return () => { alive = false; };
+    }
+    api<{ night_id: number; messages: AudienceScrollMessage[] }>("/api/audience/scroll")
+      .then((data) => {
+        if (!alive) return;
+        setScrollState(data.night_id ? {
+          kind: "night",
+          nightId: data.night_id,
+          messages: data.messages || [],
+          refreshError: false,
+        } : { kind: "none" });
+      })
+      .catch(() => {
+        if (!alive) return;
+        setScrollState((current) => current.kind === "night" && snapshotStillCurrent(current)
+          ? { ...current, refreshError: true }
+          : { kind: "error" });
+      });
+    return () => { alive = false; };
+  }, [minister.name, scrollMode, currentCampaignId, currentNightId, undoneChatIdentity, failedIdentity,
+    // App supplies the explicit durable-settlement generation. Standalone/legacy consumers
+    // retain the historical chat-driven refresh contract until they adopt that signal.
+    scrollGeneration === undefined ? chat : scrollGeneration]);
+
+  const pendingAlreadyPersisted = !!pendingIdentity
+    && pendingIdentity.campaign_id === currentCampaignId
+    && pendingIdentity.night_id === currentNightId
+    && displayMessages.some((message) => "chat_turn_id" in message && message.chat_turn_id === pendingIdentity.chat_turn_id);
+  if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
   if (streamingMinisterMessage) {
@@ -596,10 +735,17 @@ export function ChatModal({
 
   React.useEffect(() => {
     const node = chatLogRef.current;
-    if (node) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [minister.name, chat, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+    if (!node) return;
+    const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
+    const firstNightRestore = !!nightId && restoredNightRef.current !== nightId;
+    if (firstNightRestore || followsTailRef.current) node.scrollTop = node.scrollHeight;
+    if (firstNightRestore) restoredNightRef.current = nightId;
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+
+  const handleScroll = () => {
+    const node = chatLogRef.current;
+    if (node) followsTailRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+  };
 
   const handleSend = () => {
     onSend(input);
@@ -663,19 +809,11 @@ export function ChatModal({
       </aside>
 
       <section className="modal-pane chat-main">
-        <div className="chat-log" ref={chatLogRef}>
-          {displayMessages.map((message, index) => (
-            <div className={`chat-message ${message.role} ${message.pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
-              <span>
-                {message.role === "user"
-                  ? "朕"
-                  : message.role === "attendant"
-                    ? "近臣"
-                    : minister.name}
-              </span>
-              <p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p>
-            </div>
-          ))}
+        <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
+          <ScrollMessages messages={displayMessages} ministerName={minister.name} />
+          {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
+            <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
+          )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
               <span>{minister.name}</span>

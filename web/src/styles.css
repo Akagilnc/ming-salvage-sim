@@ -6773,6 +6773,27 @@ button:disabled {
   filter: grayscale(0.5);
 }
 
+/* #539 单卷轴 scene：无气泡通栏；divider 保持柔和且可继续上滚回读。 */
+.modal-bg-chat .chat-message.scene {
+  width: 100%;
+  display: block;
+  padding: 10px 8%;
+  text-align: center;
+  color: rgba(224, 211, 181, 0.72);
+  font-style: italic;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.chat-message.scene p { white-space: pre-wrap; }
+.chat-message.scene hr {
+  width: 58%;
+  border: 0;
+  border-top: 1px solid rgba(196, 164, 99, 0.35);
+}
+
 /* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算 */
 .recovery-banner {
   position: fixed;
