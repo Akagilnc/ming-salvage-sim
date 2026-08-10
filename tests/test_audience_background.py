@@ -72,11 +72,7 @@ class _FakeSession:
         self.content = content
         self.registry = _FakeRegistry(agent)
         self.temporary_characters = set()
-        # This harness exercises chat durability, not the real trailing LLMs.  A
-        # partial config used to start both agents and make their first OpenAI
-        # imports part of the pending-write deadline, producing an order-only
-        # failure while the ownership was still legitimately held.
-        self.llm_config = None
+        self.llm_config = SimpleNamespace(channel="api")
 
     def _character(self, minister_name: str):
         return self.content.characters[minister_name]
