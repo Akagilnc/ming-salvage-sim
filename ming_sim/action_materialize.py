@@ -331,6 +331,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         if isinstance(roster, list):
             from ming_sim.session import _canonical_minister_key
 
+            roster = session.db._normalize_participant_roster(
+                roster, strict_structured=True,
+            )
             roster = [
                 {
                     **item,
@@ -343,7 +346,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                         ),
                     } if item.get("delegator_id") else {}),
                 }
-                for item in roster if isinstance(item, dict)
+                for item in roster
             ]
             draft_res["participant_roster"] = roster
         _target = str(draft_res.get("target_candidate") or "")
