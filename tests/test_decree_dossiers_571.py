@@ -1000,6 +1000,38 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
     assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
 
 
+def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(game):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "office": "兵部尚书",
+            "office_type": "central",
+            "任别": "真除",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [{
+            "name": person["name"], "动作": "任命", "office": "兵部尚书",
+            "office_type": "central", "任别": "真除",
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content=content)
+
+    assert result["applied_person_changes"] == []
+
+
 def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(game):
     db, state, content = game
     person = db.conn.execute(

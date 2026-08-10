@@ -306,6 +306,43 @@ def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monke
     assert state.turn == turn + 1
 
 
+@pytest.mark.parametrize(
+    "extracted",
+    [
+        {"metric_delta": {"民心": 0}},
+        {"人物变更": [{"name": "不存在", "动作": "未知动作"}]},
+    ],
+)
+def test_recovery_entry_replays_modern_noop_without_origin(
+    game, monkeypatch, extracted,
+):
+    """Modern invalid/no-op envelopes are replayed, not mistaken for legacy."""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = "settling"
+    db.save_state(state)
+    persist_resolve_context(
+        db, turn, extracted, decree_text="今诏", narrative="今叙事",
+        simulator_payload={}, secret_orders=[], relevant_memories=[],
+    )
+    replayed = []
+
+    def _replay(*args, **kwargs):
+        replayed.append(True)
+        return session_mod.ResolveResult(awaiting=False, report="replayed")
+
+    monkeypatch.setattr(session_mod, "resolve_settling_recovery", _replay)
+
+    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
+
+    assert result.awaiting is False
+    assert replayed == [True]
+    assert state.turn == turn
+    assert state.turn_phase == "issued"
+
+
 def test_recovery_entry_consumes_ready_context(saved_game, monkeypatch):
     """settling + ready context（手工 persist 一份非空 delta）→ resolve_turn 直入 apply：
     不重跑 simulator/extractor（stub 成抛错断言未被调）、context 清掉、turn+1（ADR 0008 决定 3）。
