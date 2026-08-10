@@ -100,12 +100,25 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
 
 def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool:
     dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
-    if dossier is None or dossier.get("action_type") not in {"appointment", "acting_appointment", "dismiss_assignment"}:
+    if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
         return False
     payload = dossier["payload"]
     person = str(item.get("name") or item.get("人物") or "").strip()
     target = str(payload.get("_minister_name") or payload.get("minister_name") or dossier.get("target_id") or "").strip()
-    return bool(person and target and person == target)
+    payload_action = str(payload.get("_office_action") or "").strip()
+    item_action = str(item.get("动作") or item.get("action") or "").strip()
+    equivalent_actions = {("任命", "任命"), ("罢免", "罢黜"), ("罢免", "罢免")}
+    if not person or person != target or (payload_action, item_action) not in equivalent_actions:
+        return False
+    if payload_action == "任命":
+        payload_office = str(payload.get("office") or "").strip()
+        item_office = str(item.get("office") or item.get("new_office") or "").strip()
+        payload_type = str(payload.get("office_type") or payload.get("new_office_type") or "").strip()
+        item_type = str(item.get("office_type") or item.get("new_office_type") or "").strip()
+        payload_tenure = str(payload.get("任别") or payload.get("appointment_tenure") or "").strip()
+        item_tenure = str(item.get("任别") or item.get("appointment_tenure") or "").strip()
+        return bool(payload_office and payload_office == item_office and payload_type == item_type and payload_tenure == item_tenure)
+    return True
 
 
 def _issue_condition_text(raw: object) -> str:

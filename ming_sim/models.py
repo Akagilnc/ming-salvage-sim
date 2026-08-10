@@ -273,6 +273,56 @@ def _legacy_effect_has_work(raw: object) -> bool:
     )
 
 
+def durable_effect_items(raw: object) -> List[Dict[str, object]]:
+    """Return canonical per-item durable work from an extractor/effect envelope."""
+    effect = loads_effect_dict(raw)
+    items: List[Dict[str, object]] = []
+    list_sections = (
+        "economy_moves", "economy", "new_armies", "人物变更", "person_changes",
+    )
+    for section in list_sections:
+        values = effect.get(section)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if isinstance(item, dict) and effect_dict_has_work({section: [item]}):
+                items.append(item)
+    fiscal_sections = {
+        "fiscal_changes": lambda item: _nonempty_text(item.get("key")) and _nonzero_int(item.get("delta")),
+        "fiscal_creates": lambda item: (
+            _nonempty_text(item.get("key"))
+            and item.get("account") in {"国库", "内库"}
+            and item.get("direction") in {"income", "expense"}
+            and ("init_value" not in item or (
+                isinstance(item.get("init_value"), int)
+                and not isinstance(item.get("init_value"), bool)
+            ))
+        ),
+        "fiscal_removes": lambda item: _nonempty_text(item.get("key")),
+    }
+    for section, has_work in fiscal_sections.items():
+        values = effect.get(section)
+        if isinstance(values, list):
+            items.extend(item for item in values if isinstance(item, dict) and has_work(item))
+    for section in ("region_delta", "army_delta", "power_updates"):
+        values = effect.get(section)
+        if not isinstance(values, dict):
+            continue
+        for target, item in values.items():
+            if isinstance(item, dict) and effect_dict_has_work({section: {target: item}}):
+                items.append(item)
+    new_issues = effect.get("new_issues")
+    if isinstance(new_issues, list):
+        for item in new_issues:
+            if not isinstance(item, dict) or not _nonempty_text(item.get("title")):
+                continue
+            if _nonempty_text(item.get("commitment_kind")) or effect_dict_has_work(
+                item.get("ongoing_effects")
+            ):
+                items.append(item)
+    return items
+
+
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
     effect = loads_effect_dict(raw)
