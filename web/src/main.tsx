@@ -1,9 +1,11 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { Crown, Loader2, X } from "lucide-react";
+import { Crown, X } from "lucide-react";
 import { api } from "./api";
 import { useAudienceChat } from "./useAudienceChat";
 import { useDurableProjection } from "./useDurableProjection";
+import { useEscClose } from "./useEscClose";
+import { consumeSettleStream } from "./settleStream";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -11,12 +13,15 @@ import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
 import { ChatModal } from "./components/chatModal";
+import { CheatConsole, useCheatHotkey } from "./components/cheatConsole";
 import { ClosedIssuesModal } from "./components/closedIssues";
 import { EdictModal } from "./components/edictModal";
 import { EndingModal } from "./components/endingModal";
 import { HistoryModal } from "./components/historyModal";
+import { PendingFailureRecoveryPanel } from "./components/pendingFailureRecovery";
 import { ReportModal } from "./components/reportModal";
 import { SecretOrdersModal } from "./components/secretOrders";
+import { SettlementLock } from "./components/settlementLock";
 import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { SituationPanel } from "./components/situation";
@@ -326,45 +331,19 @@ export function App() {
   }, [selectedMinister, loadMinisterChat, failureRecoveryMode]);
 
   // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
-  React.useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders") {
-        // 召对/诏书等全屏弹窗最优先
-        setActiveModal("none");
-      } else if (drawerOpen) {
-        setDrawerOpen(false);
-      } else if (haremDrawerOpen) {
-        setHaremDrawerOpen(false);
-      } else if (armyDrawerOpen) {
-        setArmyDrawerOpen(false);
-      } else if (regionDrawerOpen) {
-        setRegionDrawerOpen(false);
-      } else if (buildingDrawerOpen) {
-        setBuildingDrawerOpen(false);
-      } else if (economyDrawerOpen) {
-        setEconomyDrawerOpen(false);
-      } else if (appointmentDrawerOpen) {
-        setAppointmentDrawerOpen(false);
-      } else if (mapIntelOpen) {
-        setMapIntelOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [activeModal, drawerOpen, haremDrawerOpen, armyDrawerOpen, regionDrawerOpen, buildingDrawerOpen, economyDrawerOpen, appointmentDrawerOpen, mapIntelOpen]);
+  useEscClose(activeModal, setActiveModal, [
+    { open: drawerOpen, close: () => setDrawerOpen(false) },
+    { open: haremDrawerOpen, close: () => setHaremDrawerOpen(false) },
+    { open: armyDrawerOpen, close: () => setArmyDrawerOpen(false) },
+    { open: regionDrawerOpen, close: () => setRegionDrawerOpen(false) },
+    { open: buildingDrawerOpen, close: () => setBuildingDrawerOpen(false) },
+    { open: economyDrawerOpen, close: () => setEconomyDrawerOpen(false) },
+    { open: appointmentDrawerOpen, close: () => setAppointmentDrawerOpen(false) },
+    { open: mapIntelOpen, close: () => setMapIntelOpen(false) },
+  ]);
 
   // 作弊控制台：Ctrl+~（或 Ctrl+`）切换显隐。强制结算唯一入口。
-  React.useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.ctrlKey && (event.key === "~" || event.key === "`")) {
-        event.preventDefault();
-        setCheatOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, []);
+  useCheatHotkey(setCheatOpen);
 
   if (appView === "menu") {
     return (
@@ -858,43 +837,12 @@ export function App() {
     setError("");
   };
 
-  // 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
-  // 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。
-  const consumeSettleStream = async (
-    response: Response
-  ): Promise<{ kind: "done" | "decisions" | "error"; data: any }> => {
-    if (!response.ok || !response.body) {
-      throw new Error(`颁诏失败：HTTP ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done: streamDone } = await reader.read();
-      if (streamDone) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split("\n\n");
-      buffer = blocks.pop() || "";
-      for (const block of blocks) {
-        let evName = "";
-        let dataRaw = "";
-        for (const line of block.split("\n")) {
-          if (line.startsWith("event: ")) evName = line.slice(7).trim();
-          else if (line.startsWith("data: ")) dataRaw += line.slice(6);
-        }
-        if (!evName || !dataRaw) continue;
-        let data: any = {};
-        try { data = JSON.parse(dataRaw); } catch { continue; }
-        if (evName === "stage") setSettleStage(data.content || "");
-        else if (evName === "thinking") setSettleThinking((prev) => prev + (data.content || ""));
-        else if (evName === "text") setSettleNarrative((prev) => prev + (data.content || ""));
-        else if (evName === "error") return { kind: "error", data };
-        else if (evName === "decisions") return { kind: "decisions", data };
-        else if (evName === "done") return { kind: "done", data };
-      }
-    }
-    return { kind: "error", data: "推演流意外中断。" };
-  };
+  // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
+  const consumeSettle = (response: Response) => consumeSettleStream(response, {
+    onStage: (text) => setSettleStage(text),
+    onThinking: (chunk) => setSettleThinking((prev) => prev + chunk),
+    onNarrative: (chunk) => setSettleNarrative((prev) => prev + chunk),
+  });
 
   const issueDecree = async () => {
     setBusy("月末结算");
@@ -913,7 +861,7 @@ export function App() {
       if (cheatPayload) {
         setCheatDirective("");
       }
-      const outcome = await consumeSettleStream(response);
+      const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
           setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
@@ -977,7 +925,7 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ choices }),
       });
-      const outcome = await consumeSettleStream(response);
+      const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
           setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
@@ -1366,183 +1314,6 @@ export function App() {
         <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
       ) : null}
     </main>
-  );
-}
-
-
-function PendingFailureRecoveryPanel({
-  failures,
-  busy,
-  error,
-  onRetryFailure,
-}: {
-  failures: PendingActionFailure[];
-  busy: string;
-  error: string;
-  onRetryFailure: (failure: PendingActionFailure) => void;
-}) {
-  return (
-    <div className="failure-recovery-panel">
-      {error ? <div className="error-line" role="alert">{error}</div> : null}
-      {failures.map((failure) => (
-        <div className="failure-recovery-item" role="alert" key={failure.id}>
-          <div>
-            {failure.minister_name ? (
-              <span className="failure-recovery-minister">{failure.minister_name}</span>
-            ) : null}
-            <span>{failure.message}</span>
-          </div>
-          {failure.retryable ? (
-            <button type="button" onClick={() => onRetryFailure(failure)} disabled={!!busy}>
-              重试
-            </button>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-
-// HITL 重大抉择弹窗：逐个亲裁本回合决策点，全部选完一次提交续跑结算。
-// 每个决策：标题 + 背景 + 2-3 预设选项（点选）+ 朱批输入框（可补自由旨意）。
-// 作弊控制台：terminal UI。强制结算唯一入口（Ctrl+~ 唤出）。输入的指令暂存于
-// cheatDirective，下次颁诏时随结算穿入 extractor 当既成事实落库。
-function CheatConsole({
-  directive,
-  onCommit,
-  onClose,
-}: {
-  directive: string;
-  onCommit: (text: string) => void;
-  onClose: () => void;
-}) {
-  const [draft, setDraft] = React.useState("");
-  const [history, setHistory] = React.useState<string[]>([]);
-  const inputRef = React.useRef<HTMLTextAreaElement>(null);
-  const bodyRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-  React.useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-  }, [history]);
-
-  const submit = () => {
-    const text = draft.trim();
-    if (!text) return;
-    onCommit(text);
-    setHistory((h) => [...h, `> ${text}`, "  已挂载强制结算项，下次颁诏随结算生效（一次性）。"]);
-    setDraft("");
-  };
-
-  const clearMounted = () => {
-    onCommit("");
-    setHistory((h) => [...h, "  已清空强制结算项。"]);
-  };
-
-  return (
-    <div className="cheat-console" role="dialog" aria-label="天命控制台" onClick={onClose}>
-      <div className="cheat-console-window" onClick={(e) => e.stopPropagation()}>
-        <div className="cheat-console-titlebar">
-          <span>tianming@ming-salvage:~$ 天命控制台</span>
-          <button className="cheat-console-x" onClick={onClose} aria-label="关闭">×</button>
-        </div>
-        <div className="cheat-console-body" ref={bodyRef}>
-          <div className="cheat-console-line cheat-console-dim">
-            强制结算控制台。输入的指令将在下次颁诏时作为「既成事实」穿入结算，无视合理性与史实。
-          </div>
-          <div className="cheat-console-line cheat-console-dim">
-            Enter 提交 · Shift+Enter 换行 · Ctrl+~ 关闭
-          </div>
-          {directive ? (
-            <div className="cheat-console-line cheat-console-armed">
-              ● 当前已挂载：{directive}
-            </div>
-          ) : (
-            <div className="cheat-console-line cheat-console-dim">○ 当前无挂载项</div>
-          )}
-          {history.map((line, i) => (
-            <div className="cheat-console-line" key={i}>{line}</div>
-          ))}
-        </div>
-        <div className="cheat-console-prompt">
-          <span className="cheat-console-caret">&gt;</span>
-          <textarea
-            ref={inputRef}
-            className="cheat-console-input"
-            value={draft}
-            rows={1}
-            placeholder="例：国库增至九千万两，后金军覆灭，皇太极暴毙"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-          />
-        </div>
-        <div className="cheat-console-actions">
-          <button className="cheat-console-btn" onClick={submit}>挂载</button>
-          <button className="cheat-console-btn cheat-console-btn-ghost" onClick={clearMounted}>清空挂载</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SettlementLock({
-  stage,
-  thinking,
-  narrative,
-}: {
-  stage: string;
-  thinking: string;
-  narrative: string;
-}) {
-  const thinkRef = React.useRef<HTMLDivElement>(null);
-  const narrRef = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const block = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    window.addEventListener("keydown", block, true);
-    return () => window.removeEventListener("keydown", block, true);
-  }, []);
-  // 流式内容到达时自动滚到底
-  React.useEffect(() => {
-    if (thinkRef.current) thinkRef.current.scrollTop = thinkRef.current.scrollHeight;
-  }, [thinking]);
-  React.useEffect(() => {
-    if (narrRef.current) narrRef.current.scrollTop = narrRef.current.scrollHeight;
-  }, [narrative]);
-  return (
-    <div className="settlement-lock" role="alertdialog" aria-modal="true" aria-label="月末结算">
-      <div className="settlement-lock-card">
-        <Loader2 className="settlement-spin" size={28} />
-        <h2>月末结算中</h2>
-        <p>{stage === "数值推演结算" ? "档房核账中，钱粮、地方、军务落账，请稍候。" : stage ? `当前：${stage}` : "朝廷推演钱粮、地方、军务，请勿操作。"}</p>
-        {thinking && (
-          <div className="settlement-stream-block">
-            <div className="settlement-stream-label">邸报房推敲</div>
-            <div className="settlement-stream-text settlement-thinking" ref={thinkRef}>
-              {thinking}
-            </div>
-          </div>
-        )}
-        {narrative && (
-          <div className="settlement-stream-block">
-            <div className="settlement-stream-label">月末奏章</div>
-            <div className="settlement-stream-text settlement-narrative" ref={narrRef}>
-              {narrative}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
 
