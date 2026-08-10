@@ -24,8 +24,8 @@
 /* 透视梯形容器：内容正放，被 matrix3d 压斜 */
 .hud2-map-quad { z-index: 3; overflow: hidden; }
 .hud2-map-quad .grand-map {
-  position: absolute !important;
-  inset: 0 !important;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   z-index: auto;
@@ -33,20 +33,20 @@
   /* 海色铺满整个地图框：地图小于框时露的是海，不是底图 */
   background:
     radial-gradient(circle at 50% 45%, rgba(170, 190, 180, 0.22), transparent 60%),
-    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 45%, #8ea7a8 100%) !important;
+    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 45%, #8ea7a8 100%);
   cursor: grab;
 }
 .hud2-map-quad .grand-map:active { cursor: grabbing; }
 /* map-tile 原 width:100vw 会爆出梯形框；改相对地图框、保持地图比例、放大留 pan 余量 */
 .hud2-map-quad .map-tile {
   will-change: transform;
-  width: 90% !important;           /* 地图略小于框，四周留海域（海色背景兜底）*/
-  height: auto !important;
-  aspect-ratio: 276 / 206 !important;
+  width: 90%;           /* 地图略小于框，四周留海域（海色背景兜底）*/
+  height: auto;
+  aspect-ratio: 276 / 206;
   /* 背景改海色+旧纸纹理：地形图外围露的是「海」，不是底图接缝 */
   background:
     radial-gradient(circle at 50% 45%, rgba(170, 190, 180, 0.25), transparent 55%),
-    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 40%, #8ea7a8 100%) !important;
+    linear-gradient(160deg, #aeb9b0 0%, #9fb0ad 40%, #8ea7a8 100%);
 }
 .hud2-issue-quad { z-index: 5; }
 .hud2-issue-quad .situation-panel {
@@ -56,11 +56,11 @@
 }
 /* 底图局势区：行背景透明、字体缩小（底图已有标题/纹理）*/
 .hud2-issue-quad .situation-row {
-  background: rgba(240, 224, 184, 0.78) !important;
+  background: rgba(240, 224, 184, 0.78);
   border-color: rgba(60, 30, 10, 0.25);
   padding: 3px 4px;
 }
-.hud2-issue-quad .situation-row:hover { background: rgba(246, 234, 200, 0.94) !important; }
+.hud2-issue-quad .situation-row:hover { background: rgba(246, 234, 200, 0.94); }
 .hud2-issue-quad .situation-name { font-size: 1.6cqh; color: #3a2410; }
 .hud2-issue-quad .situation-row-head b { font-size: 1.6cqh; color: #3a2410; }
 .hud2-issue-quad .situation-group-title { font-size: 1.4cqh; }
