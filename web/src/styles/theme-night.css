@@ -9,20 +9,20 @@
 }
 
 .modal-bg-gazette * {
-  background: transparent !important;
-  backdrop-filter: none !important;
-  box-shadow: none !important;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 /* 邸报恒为无标题栏（hideTitle）：只需给悬浮关闭钮配色，旧标题栏规则已删 */
 .modal-bg-gazette .modal-header-bare .icon-button {
-  color: #e8d5a8 !important;
-  border: 1px solid rgba(216, 185, 106, 0.35) !important;
+  color: #e8d5a8;
+  border: 1px solid rgba(216, 185, 106, 0.35);
 }
 
 .modal-bg-gazette .modal-header-bare .icon-button:hover {
-  background: rgba(158, 42, 43, 0.92) !important;
-  color: #ffe4b0 !important;
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
 }
 
 /* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
@@ -44,7 +44,7 @@
   font-weight: 900;
   letter-spacing: 0.9em;
   text-indent: 0.9em;
-  color: #d8453a !important;
+  color: #d8453a;
   text-shadow: 0 0 18px rgba(180, 40, 30, 0.45), 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
@@ -53,12 +53,12 @@
   margin-top: 8px;
   font-size: 0.82rem;
   letter-spacing: 0.32em;
-  color: rgba(232, 213, 168, 0.72) !important;
+  color: rgba(232, 213, 168, 0.72);
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 }
 
 .gazette-document .memorial-text {
-  color: #efe3c2 !important;
+  color: #efe3c2;
   font-size: 1.12rem;
   line-height: 2.05;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 24px rgba(0, 0, 0, 0.8);
@@ -130,10 +130,10 @@
   color: #2e2110;
 }
 .budget-popover-portal {
-  background: linear-gradient(175deg, #efe0ba, #e2cd9c) !important;
-  border: 1px solid #9e783a !important;
-  border-radius: 3px !important;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68) !important;
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68);
 }
 .budget-popover-head {
   border-bottom: 1px solid rgba(154, 42, 43, 0.4);
