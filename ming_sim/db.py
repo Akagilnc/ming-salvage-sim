@@ -1342,6 +1342,7 @@ class GameDB:
                 legal_reason_code TEXT NOT NULL DEFAULT '',
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
+                participant_roster TEXT NOT NULL DEFAULT '[]',
                 due_turn INTEGER NOT NULL DEFAULT 0,
                 execution_outcome TEXT NOT NULL DEFAULT '',
                 execution_note TEXT NOT NULL DEFAULT '',
@@ -1873,6 +1874,9 @@ class GameDB:
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -9837,6 +9841,11 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
+        try:
+            roster = json.loads(out.get("participant_roster") or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        out["participant_roster"] = roster if isinstance(roster, list) else []
         return out
 
     def record_dossier_progress(
@@ -9989,6 +9998,7 @@ class GameDB:
         status: str = "proposed",
         due_turn: int = 0,
         extension: Optional[Dict[str, object]] = None,
+        participants: Optional[Iterable[object]] = None,
         commit: bool = True,
         _issued_secret_order: bool = False,
     ) -> int:
@@ -10059,14 +10069,20 @@ class GameDB:
             ).fetchone()
             if origin is not None:
                 source_turn_id = int(origin["chat_turn_id"])
+        roster_source = participants
+        if roster_source is None and isinstance(payload, dict):
+            roster_source = payload.get("participant_roster") or payload.get("participants")
+        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+        self._validate_participant_roster_references(roster)
+        self._validate_dossier_delegations(roster)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
-                 extension_json,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,created_turn,created_year,created_period)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -10077,6 +10093,7 @@ class GameDB:
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
+                json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
@@ -10090,8 +10107,79 @@ class GameDB:
                 target_kind=canonical_target_kind, target_id=canonical_target_id,
                 dossier_id=dossier_id, commit=False,
             )
+        if roster and action != "secret_order":
+            self.register_character_knowledge_source(
+                state, roster, "assignment", "旨意案卷", text,
+                source_id=f"decree_dossier:{dossier_id}", commit=False,
+            )
         self._commit_dossier_write(commit)
         return dossier_id
+
+    @staticmethod
+    def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
+        entries = list(roster)
+        responsible = {
+            str(item.get("character_id") or "") for item in entries
+            if item.get("tier") in {"主办", "协办"}
+        }
+        for item in entries:
+            delegator = str(item.get("delegator_id") or "")
+            character = str(item.get("character_id") or "")
+            if delegator and (delegator == character or delegator not in responsible):
+                raise ValueError("委派人须为同案主办/协办且不得自委派")
+
+    def append_decree_dossier_participants(
+        self, dossier_id: int, participants: Iterable[object], *,
+        state: Optional[GameState] = None, commit: bool = True,
+    ) -> List[Dict[str, object]]:
+        """Append ADR 0053 roster entries without replacing durable members."""
+        row = self.conn.execute(
+            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        try:
+            existing_raw = json.loads(row["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            existing_raw = []
+        existing = self._normalize_participant_roster(
+            existing_raw if isinstance(existing_raw, list) else []
+        )
+        additions = self._normalize_participant_roster(participants, strict_structured=True)
+        self._validate_participant_roster_references(additions)
+        by_character = {str(item["character_id"]): item for item in existing}
+        added: List[Dict[str, object]] = []
+        for item in additions:
+            character_id = str(item["character_id"])
+            prior = by_character.get(character_id)
+            if prior is not None:
+                if prior != item:
+                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                continue
+            by_character[character_id] = item
+            added.append(item)
+        merged = existing + added
+        self._validate_dossier_delegations(merged)
+        self._validate_participant_roster_references(merged)
+        if added:
+            self.conn.execute(
+                "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(merged, ensure_ascii=False), int(dossier_id)),
+            )
+            if state is not None and str(row["action_type"] or "") != "secret_order":
+                for item in added:
+                    identity = ":".join(str(item.get(key) or "-") for key in (
+                        "character_id", "tier", "role", "delegator_id",
+                    ))
+                    self.register_character_knowledge_source(
+                        state, [item], "assignment", "旨意案卷追加参与",
+                        str(row["decree_text"] or ""),
+                        source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
+                        commit=False,
+                    )
+        self._commit_dossier_write(commit)
+        return added
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -11180,7 +11268,16 @@ class GameDB:
             raise ValueError("既有旨稿结构化载荷损坏") from exc
         if not isinstance(old, dict):
             raise ValueError("既有旨稿结构化载荷必须为对象")
-        merged = {**old, **dict(new_payload or {})}
+        incoming = dict(new_payload or {})
+        old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
+        new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
+        if not new_roster:
+            incoming.pop("participant_roster", None)
+        else:
+            incoming["participant_roster"] = old_roster + [
+                item for item in new_roster if item not in old_roster
+            ]
+        merged = {**old, **incoming}
         requested = str(merged.get("dossier_action_type") or "")
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
@@ -12400,7 +12497,14 @@ class GameDB:
     ) -> None:
         if self.get_dossier_for_directive(directive_id) is not None:
             raise ValueError("已成案旨意不得编辑")
-        payload = dict(dossier_payload or {})
+        row = self.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (directive_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("旨意不存在")
+        payload = self._merge_directive_payload(
+            row["dossier_payload_json"], dict(dossier_payload or {})
+        )
         if not all(str(payload.get(key) or "").strip() for key in (
             "dossier_action_type", "target_kind", "target_id",
         )):
@@ -13173,17 +13277,30 @@ class GameDB:
     # ----- secret_orders（密令系统）-----
 
     @staticmethod
-    def _normalize_participant_roster(participants: Iterable[object] | str | None) -> List[Dict[str, object]]:
-        """Normalize ADR 0053 entries while retaining legacy name input."""
+    def _normalize_participant_roster(
+        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
         values = [participants] if isinstance(participants, str) else list(participants or [])
         roster: List[Dict[str, object]] = []
         for value in values:
             if isinstance(value, Mapping):
-                character_id = str(value.get("character_id") or value.get("name") or "").strip()
-                tier = str(value.get("tier") or value.get("档") or "知情").strip()
+                if strict_structured:
+                    character_id = str(value.get("character_id") or "").strip()
+                    tier_value = value.get("tier")
+                else:
+                    character_id = str(value.get("character_id") or value.get("name") or "").strip()
+                    tier_value = value.get("tier") if "tier" in value else value.get("档")
+                if strict_structured and not character_id:
+                    raise ValueError("参与人物 character_id 不能为空")
+                if strict_structured and tier_value is None:
+                    raise ValueError("参与人物 tier 必须显式提供")
+                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 role = str(value.get("role") or value.get("职分") or "").strip()
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
+                if strict_structured:
+                    raise ValueError("结构化参与人名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
@@ -13194,6 +13311,35 @@ class GameDB:
             if item not in roster:
                 roster.append(item)
         return roster
+
+    def _validate_participant_roster_references(
+        self, roster: Iterable[Mapping[str, object]],
+    ) -> None:
+        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        entries = list(roster)
+        referenced = {
+            str(value).strip()
+            for item in entries
+            for value in (item.get("character_id"), item.get("delegator_id"))
+            if str(value or "").strip()
+        }
+        if not referenced:
+            return
+        placeholders = ",".join("?" for _ in referenced)
+        known = {
+            str(row["name"])
+            for row in self.conn.execute(
+                f"SELECT name FROM characters WHERE name IN ({placeholders})",
+                tuple(referenced),
+            ).fetchall()
+        }
+        for item in entries:
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            if character_id not in known:
+                raise ValueError(f"参与人物不存在：{character_id}")
+            if delegator_id and delegator_id not in known:
+                raise ValueError(f"委派人不存在：{delegator_id}")
 
     def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
         rows = self.conn.execute(
@@ -13264,17 +13410,18 @@ class GameDB:
             # explicit source_id in their own table.
             fallback_prefix = table[:-1] if table.endswith("s") else table
             source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
-            turn_expr = selected.get("turn") or selected.get("origin_turn") or "0"
-            year_expr = selected.get("year") or "0"
-            period_expr = selected.get("period") or "0"
+            turn_expr = selected.get("turn") or selected.get("origin_turn") or selected.get("created_turn") or "0"
+            year_expr = selected.get("year") or selected.get("created_year") or "0"
+            period_expr = selected.get("period") or selected.get("created_period") or "0"
             kind_expr = selected.get("kind") or "'assignment'"
             title_expr = selected.get("title") or "''"
-            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or "''"
+            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or selected.get("decree_text") or "''"
+            secrecy_sql = " AND action_type <> 'secret_order'" if table == "decree_dossiers" else ""
             query = (
                 f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
                 f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
                 f"{source_sql} AS source_id, participant_roster "
-                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
+                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
@@ -13302,7 +13449,7 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
-            if table == "character_knowledge_sources":
+            if table in {"character_knowledge_sources", "decree_dossiers"}:
                 continue
             columns = {
                 str(column["name"])
