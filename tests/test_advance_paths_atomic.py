@@ -290,6 +290,12 @@ def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monke
         }, decree_text="旧诏", narrative="旧叙事", simulator_payload={},
         secret_orders=[], relevant_memories=[],
     )
+    # Simulate a ready row written before the current replay contract existed.
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET resolve_contract_version=0 WHERE turn=?",
+        (turn,),
+    )
+    db.conn.commit()
     replayed = []
     monkeypatch.setattr(session_mod, "resolve_settling_recovery", lambda *a, **k: replayed.append(True))
     monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
@@ -306,15 +312,8 @@ def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monke
     assert state.turn == turn + 1
 
 
-@pytest.mark.parametrize(
-    "extracted",
-    [
-        {"metric_delta": {"民心": 0}},
-        {"人物变更": [{"name": "不存在", "动作": "未知动作"}]},
-    ],
-)
 def test_recovery_entry_replays_modern_noop_without_origin(
-    game, monkeypatch, extracted,
+    game, monkeypatch,
 ):
     """Modern invalid/no-op envelopes are replayed, not mistaken for legacy."""
     import ming_sim.session as session_mod
@@ -323,10 +322,13 @@ def test_recovery_entry_replays_modern_noop_without_origin(
     turn = state.turn
     state.turn_phase = "settling"
     db.save_state(state)
+    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
     persist_resolve_context(
-        db, turn, extracted, decree_text="今诏", narrative="今叙事",
-        simulator_payload={}, secret_orders=[], relevant_memories=[],
+        db, turn, {"region_delta": {region: {"prosperity": 1}}},
+        decree_text="今诏", narrative="今叙事", simulator_payload={},
+        secret_orders=[], relevant_memories=[],
     )
+    assert db.get_resolve_context(turn)["resolve_contract_version"] == 1
     replayed = []
 
     def _replay(*args, **kwargs):

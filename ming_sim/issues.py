@@ -98,6 +98,20 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     return {**row, "payload": payload}
 
 
+def _canonical_appointment_fields(
+    payload: Dict[str, object], *, current_office_type: str = "", llm_config=None,
+) -> tuple[str, str, str]:
+    """Canonical fields consumed by both appointment apply and payload dedup."""
+    office = normalize_office(str(payload.get("office") or payload.get("new_office") or ""))
+    office_type = resolve_office_type_preserving_title(
+        office,
+        str(payload.get("office_type") or payload.get("new_office_type") or ""),
+        current_office_type,
+        llm_config,
+    )
+    return office, office_type, appointment_tenure_from(payload)
+
+
 def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool:
     dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
     if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
@@ -107,22 +121,14 @@ def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool
     target = str(payload.get("_minister_name") or payload.get("minister_name") or dossier.get("target_id") or "").strip()
     payload_action = str(payload.get("_office_action") or "").strip()
     item_action = str(item.get("动作") or item.get("action") or "").strip()
-    equivalent_actions = {("任命", "任命"), ("罢免", "罢黜"), ("罢免", "罢免")}
-    if not person or person != target or (payload_action, item_action) not in equivalent_actions:
+    if not person or person != target:
         return False
-    payload_office = str(payload.get("office") or "").strip()
-    item_office = str(item.get("office") or item.get("new_office") or "").strip()
-    payload_type = str(payload.get("office_type") or payload.get("new_office_type") or "").strip()
-    item_type = str(item.get("office_type") or item.get("new_office_type") or "").strip()
-    payload_tenure = str(payload.get("任别") or payload.get("appointment_tenure") or "").strip()
-    item_tenure = str(item.get("任别") or item.get("appointment_tenure") or "").strip()
-    if payload_action == "任命" and not payload_office:
+    if payload_action == "罢免":
+        return item_action in {"罢黜", "罢免"}
+    if payload_action != "任命" or item_action != "任命":
         return False
-    return (
-        payload_office == item_office
-        and payload_type == item_type
-        and payload_tenure == item_tenure
-    )
+    payload_fields = _canonical_appointment_fields(payload)
+    return bool(payload_fields[0]) and payload_fields == _canonical_appointment_fields(item)
 
 
 def _issue_condition_text(raw: object) -> str:
@@ -5766,7 +5772,6 @@ def apply_office_appointment(
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
-    appointment_tenure = appointment_tenure_from({"任别": appointment_tenure})
     if not name or not new_office:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
     # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅…），解析到在册大臣的规范 key，
@@ -5780,6 +5785,7 @@ def apply_office_appointment(
             name = canon
     in_roster = content is not None and name in content.characters
     cur_status = db.get_character_status(name)[0] if in_roster else ""
+    current_office_type = content.characters[name].office_type if in_roster else ""
     if in_roster:
         if cur_status == "dead":
             return {"name": name, "new_office": new_office, "rejected": True, "reason": "人物已故，不能重新启用"}
@@ -5793,6 +5799,15 @@ def apply_office_appointment(
         old_office = content.characters[name].office
         snapshot = _snapshot_person_write_state(db, content)
         try:
+            new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
+                {
+                    "office": new_office,
+                    "office_type": new_office_type,
+                    "任别": appointment_tenure,
+                },
+                current_office_type=current_office_type,
+                llm_config=llm_config or db.llm_config,
+            )
             if cur_status != "active":
                 db.set_character_status(
                     state,
@@ -5828,16 +5843,8 @@ def apply_office_appointment(
             if _reason_row is not None:
                 ch.status_reason = str(_reason_row["status_reason"] or "")
                 ch.reason_code = str(_reason_row["reason_code"] or "")
-            ch.office = normalize_office(new_office)
-            # 显式名分透传（#1059 codex l6k）：set_character_office 的 DB 写已由守卫保住
-            # 显式 new_office_type 名分，但内存 Character 若在此被 infer 反推成官职
-            # （office='诸生'→'生员'），DB 与内存分岔、registry.refresh 按错角色建当回合上下文。
-            ch.office_type = resolve_office_type_preserving_title(
-                ch.office,
-                new_office_type,
-                ch.office_type,
-                llm_config or db.llm_config,
-            )
+            ch.office = new_office
+            ch.office_type = new_office_type
             if registry is not None:
                 registry.refresh(name)
                 # 被顶替者 office/office_type 也变了,一并刷 Agent,免本回合后续用陈旧身份/工具(线上 gemini)。
@@ -5858,12 +5865,20 @@ def apply_office_appointment(
     # office_type 必须透传：apply_appointment→add_character 靠它走 person-title 守卫（名分不建
     # offices 父行、不写 character_offices）。漏传则 infer 兜成「待铨」→ 名分人物被当普通官职、
     # 建脏 character_offices 行（#1058 接缝回归；transfer 分支已带 new_office_type，此处对称补齐）。
-    appt = {"name": name, "office": new_office, "office_type": new_office_type,
-            "faction": faction, "reason": reason, "approved": True}
     # 建档抛错(DB 锁/唯一约束/注册失败)不得上抛崩月末结算致半落库(P1 铁律);
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
+        new_office, new_office_type, appointment_tenure = _canonical_appointment_fields(
+            {
+                "office": new_office,
+                "office_type": new_office_type,
+                "任别": appointment_tenure,
+            },
+            llm_config=llm_config or db.llm_config,
+        )
+        appt = {"name": name, "office": new_office, "office_type": new_office_type,
+                "faction": faction, "reason": reason, "approved": True}
         with _appointment_tenure_scope(db, appointment_tenure):
             appointed, _ = apply_appointment(
                 db,

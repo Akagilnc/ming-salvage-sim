@@ -1016,7 +1016,6 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
             "_office_action": "任命",
             "office": "兵部尚书",
             "office_type": "central",
-            "任别": "真除",
         },
     )
     db.record_dossier_decision(dossier_id, "promulgated")
