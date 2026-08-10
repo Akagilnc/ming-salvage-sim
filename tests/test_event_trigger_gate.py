@@ -2276,6 +2276,7 @@ def test_strategic_event_person_tenure_change_is_material_world_state(game, acti
         {
             "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
             "人物变更": [{
+                "origin_ref": "盘面自发",
                 "name": "卢象升",
                 "动作": action,
                 "office": office,
@@ -2284,7 +2285,11 @@ def test_strategic_event_person_tenure_change_is_material_world_state(game, acti
                 "reason": "戊寅虏变后主帅由署理转真除",
             }],
             "region_delta": {
-                "beizhili": {"military_pressure": -1, "reason": "戊寅虏变边患稍解"}
+                "beizhili": {
+                    "origin_ref": "盘面自发",
+                    "military_pressure": -1,
+                    "reason": "戊寅虏变边患稍解",
+                }
             },
         },
         content=content,

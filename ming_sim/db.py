@@ -10065,7 +10065,7 @@ class GameDB:
                 str(canonical_payload.get("reason") or text),
                 purpose=str(canonical_payload.get("purpose") or "") or None,
                 target_kind=canonical_target_kind, target_id=canonical_target_id,
-                dossier_id=dossier_id, commit=False,
+                origin_ref=f"dossier:{dossier_id}", commit=False,
             )
         self._commit_dossier_write(commit)
         return dossier_id
