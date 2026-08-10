@@ -16,6 +16,7 @@ import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
+import { retryAudienceStoryExtraction } from "./extractionRetry";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
 import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
@@ -83,6 +84,8 @@ export function App() {
   const [endingDismissed, setEndingDismissed] = React.useState(false);
   const [secretOrders, setSecretOrders] = React.useState<SecretOrder[]>([]);
   const [secretOrderShown, setSecretOrderShown] = React.useState<number>(-1);
+  const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<{ campaign_id: string; night_id: number; chat_turn_id: number } | null>(null);
+  const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
   const [cheatDirective, setCheatDirective] = React.useState("");
@@ -96,13 +99,20 @@ export function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
+  const invalidateAudienceScroll = React.useCallback(() => {
+    setAudienceScrollGeneration((generation) => generation + 1);
+  }, []);
 
   // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
   // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
   const {
     chat,
+    currentCampaignId,
+    currentNightId,
     pendingUserMessage,
+    pendingIdentity,
+    failedIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
@@ -111,7 +121,7 @@ export function App() {
     sendChat: runAudienceTurn,
     cancelChat,
     // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废 poll-batch。
-  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat");
+  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat", invalidateAudienceScroll);
 
   // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。
   const applyDurableState = React.useCallback((data: GameState) => {
@@ -203,6 +213,7 @@ export function App() {
   }, [refreshMenuStatus, loadState]);
 
   const enterGameAfterMenu = React.useCallback(async () => {
+    setUndoneChatIdentity(null);
     setAppView("game");
     await loadState();
   }, [loadState]);
@@ -213,6 +224,7 @@ export function App() {
     beginDurableMutation();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
+    setUndoneChatIdentity(null);
     setAppView("menu");
     await refreshMenuStatus();
   }, [refreshMenuStatus, beginDurableMutation]);
@@ -228,7 +240,7 @@ export function App() {
     }
   }, [state, closedShown]);
 
-  // 新回合进入时拉取全部密令，有 active 密令则弹密令进度弹窗（邸报关闭后显示）。
+  // 新回合进入时拉取全部密令；仅刚结算出的御前密奏触发私密侧区。
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
   // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
   // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
@@ -242,9 +254,7 @@ export function App() {
       // 延迟呈现归协调器：400ms 后仍最新代次才弹窗；撤回等推进代次后陈旧定时器 no-op。
       autoOpen: {
         afterMs: 400,
-        when: (orders) =>
-          shouldAutoOpenSecretOrdersAfterSettlement()
-          && orders.some((o) => o.status === "active" || o.status === "pending_review"),
+        when: (orders) => shouldAutoOpenSecretOrdersAfterSettlement(orders, currentTurn),
         open: () => setActiveModal("secret_orders"),
       },
     });
@@ -549,6 +559,11 @@ export function App() {
       // block on `busy`, so the player can switch ministers during the undo POST;
       // writing A's post-undo history into B's open panel is the same bleed.
       setSecretOrders(data.secret_orders || []);
+      setUndoneChatIdentity({
+        campaign_id: data.campaign_id,
+        night_id: data.night_id,
+        chat_turn_id: data.undone_chat_turn_id,
+      });
       setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
@@ -598,13 +613,9 @@ export function App() {
     setBusy("重试补写账本");
     setError("");
     try {
-      const data = await api<ExtractionPendingStatus>("/api/audience/extraction/retry", {
-        method: "POST",
-      });
+      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll);
       setExtractionPendingCount(Number(data?.count || 0));
-      if ((data?.count || 0) === 0) {
-        setChatNotice("待补账本已补写完毕。");
-      }
+      if ((data?.count || 0) === 0) setChatNotice("待补账本已补写完毕。");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1186,9 +1197,16 @@ export function App() {
           <ChatModal
             minister={activeMinister}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
+            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            currentCampaignId={currentCampaignId}
+            currentNightId={currentNightId}
+            undoneChatIdentity={undoneChatIdentity}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
+            pendingIdentity={pendingIdentity}
+            failedIdentity={failedIdentity}
+            scrollGeneration={audienceScrollGeneration}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
             chatFailures={activeChatFailures}

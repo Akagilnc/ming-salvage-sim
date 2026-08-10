@@ -36,6 +36,7 @@ from ming_sim.db import (
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
+    _requires_full_settlement,
     advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
@@ -2166,33 +2167,32 @@ class GameSession:
             wait_timeout_s=inflight_wait_s,
             beat_generator=production_beat_generator,
         )
-        # 结束回合才执行“不回=默认同意”；preview 阶段仍可撤回。旧式 pending
-        # turn_directives 与 pending_actions 都汇入各自既有幂等确认/成案口。
+        # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
+        # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
+        # pre_settle owning transaction 与财政等副作用一起物化。
         for pending in self.db.list_directives(self.state, statuses=("pending",)):
             self.db.confirm_directive(int(pending["id"]), self.state)
-        # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时先响亮拒绝，
-        # 再 commit 对话式拟旨——否则被拒的颁诏已把对话草案落成 draft 副作用、无回滚。
-        # draft 不计入 pending_count（后者只计 turn_directives.status='pending'），守门只看显式 pending。
-        # "不回=默认同意"（ADR 0006）：颁诏前先把对话式拟旨暂存（pending_actions kind=directive）
-        # 提交为 draft，使 list_directives(status='draft') 能拾取、进入本次诏书。
-        # 收夜已交本夜已应允；此处交剩余未应允 default-agree。
-        committed_directives = self.db.commit_pending_actions(
-            self.state, kind_filter="directive",
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None))
-        self.db.ensure_dossiers_for_draft_directives(self.state)
-        if committed_directives and recovered_source is None and (decree or "").strip():
-            # 外部传入的 decree 早于本次 auto-commit 出来的对话草案；若继续使用，会把新 draft
-            # 标为 issued 却不进诏书正文/extractor 输入。强制按当前 draft 集重拟。
+        directives = list(self.db.list_directives(self.state, statuses=("draft",)))
+        # DB owner supplies the canonical read-only default-approval projection.
+        # Negative preview ids participate in stale-decree fingerprinting without
+        # colliding with durable turn_directives ids.
+        pending_directives = self.db.preview_pending_directives(
+            self.state, content=getattr(self, "content", None),
+        )
+        directives.extend(pending_directives)
+        if pending_directives and recovered_source is None and (decree or "").strip():
+            # The supplied decree predates these durable candidates; regenerate from
+            # the complete read-only view rather than issuing unseen directives.
             decree = ""
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
-        directives = self.db.list_directives(self.state, statuses=("draft",))
-        dossier_only = bool(
-            self.db.list_decree_dossiers(status="proposed")
-            or self.db.list_decree_dossiers(status="executing")
-        )
-        if not directives and not dossier_only:
+        settlement_due = _requires_full_settlement(self.state, self.db)
+        # The no-edict fast rail may have speculatively materialized a pending
+        # non-directive action, discovered that it requires full settlement, and
+        # rolled that transaction back.  The pending row is then the durable reason
+        # to enter resolve_directives, whose owning transaction materializes it again.
+        pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
+        if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
@@ -2212,9 +2212,6 @@ class GameSession:
                 self._decree_draft_fingerprint = ()
         # 结算前先存一份：LLM 推演有可能崩，留个回滚锚点
         self.auto_save("preresolve")
-        # 注：上方的 commit_pending_actions(kind_filter='directive') 已提前把对话式拟旨
-        # 提交为 draft；下方 resolve_directives 内的 commit_pending_actions 再次调用时
-        # 对已 committed 行是幂等 no-op，不重复落库。
         decree_text = decree or self.last_decree
         if not decree_text and directives:
             decree_text = write_decree_with_agno(
@@ -2334,20 +2331,14 @@ class GameSession:
         return report
 
     def advance_without_decree(self):
-        """CLI 退朝无草案：仅财政 tick + 推进。"""
-        has_default_approved_work = bool(
-            self.db.list_directives(self.state, statuses=("pending", "draft"))
-        ) or any(
-            row.get("kind") == "directive"
-            for row in self.db.list_pending_actions(self.state.turn)
-        ) or bool(
-            self.db.list_decree_dossiers(status="proposed")
-            or self.db.list_decree_dossiers(status="executing")
-        )
-        if has_default_approved_work:
+        """CLI 退朝；fast 内核以事务内 DB 真源决定是否转完整结算。"""
+        if self.db.list_directives(self.state, statuses=("pending", "draft")):
             return self.resolve_turn()
         advanced = advance_without_edict(
-            self.state, self.db, content=self.content, registry=self.registry)
+            self.state, self.db,
+            content=getattr(self, "content", None),
+            registry=getattr(self, "registry", None),
+        )
         if not advanced:
             return self.resolve_turn()
         self.state.turn_phase = TurnPhase.SUMMONING.value

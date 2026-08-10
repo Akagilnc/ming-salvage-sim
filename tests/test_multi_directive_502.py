@@ -506,6 +506,7 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         temporary_characters = {name}
         content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
         state = SimpleNamespace(turn=1, turn_phase="")
+        db = SimpleNamespace()
 
         def chat(self, minister_name, text, chat_turn_id=0):
             return ChatTurnResult(
@@ -547,6 +548,7 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
         temporary_characters = {name}
         content = SimpleNamespace(characters={name: SimpleNamespace(name=name)})
         state = SimpleNamespace(turn=1, turn_phase="")
+        db = SimpleNamespace()
 
         def chat(self, minister_name, text, chat_turn_id=0):
             return ChatTurnResult(answer="臣遵旨。")

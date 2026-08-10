@@ -219,6 +219,69 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     assert first_reply not in updated_payload["text"]
 
 
+@pytest.mark.parametrize("landing", ["pending_upsert", "pending_candidate", "committed"])
+@pytest.mark.parametrize("supplement", ["omitted", "empty", "append"])
+def test_real_conversation_draft_supplement_preserves_and_appends_roster(
+    game, monkeypatch, landing, supplement,
+):
+    db, state, content = game
+    names = [
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 3"
+        ).fetchall()
+    ]
+    assert len(names) == 3
+    minister, existing, added = names
+    character = next(ch for ch in content.characters.values() if ch.name == minister)
+    initial = [{"character_id": existing, "tier": "主办", "role": "总理"}]
+    payload = {
+        **_POLICY_FIELDS, "text": "初稿", "actor": minister,
+        "participant_roster": initial,
+    }
+    target = ""
+    if landing == "committed":
+        db.add_directive(
+            state, None, "初稿", "大臣拟旨", actor=minister, status="draft",
+            dossier_payload=payload,
+        )
+    else:
+        candidate_id = db.upsert_pending_directive(state.turn, minister, payload=payload)
+        if landing == "pending_candidate":
+            target = str(candidate_id)
+
+    extracted = {
+        "draft_action": "拟旨", "draft_text": "补充后的草稿",
+        **_POLICY_FIELDS, "target_candidate": target,
+    }
+    if supplement == "empty":
+        extracted["participant_roster"] = []
+    elif supplement == "append":
+        extracted["participant_roster"] = [
+            initial[0], {"character_id": added, "tier": "协办", "role": "核账"},
+        ]
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *args, **kwargs: dict(extracted))
+
+    GameSession.apply_cli_conversation_actions(
+        types.SimpleNamespace(
+            db=db, state=state, content=content, registry=None,
+            llm_config=types.SimpleNamespace(channel="cli"),
+        ),
+        character, player_message="再补一条。", answer="臣已补妥。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
+    )
+
+    if landing == "committed":
+        row = db.list_directives(state, statuses=("draft",))[-1]
+        stored = json.loads(row["dossier_payload_json"])["participant_roster"]
+    else:
+        stored = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])["participant_roster"]
+    expected = ([{**initial[0], "delegator_id": None}, {
+        "character_id": added, "tier": "协办", "role": "核账", "delegator_id": None,
+    }] if supplement == "append" else initial)
+    assert stored == expected
+
+
 # ── ③ commit 时在 turn_directives 建档 ───────────────────────────────────
 
 def test_pending_directive_commit_creates_turn_directive(game):
