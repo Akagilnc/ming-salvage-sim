@@ -60,6 +60,7 @@ TOP_LEVEL_ALIASES = {
     "撤销局势": "cancels",
     "结案局势": "close_issues",
     "案卷执行": "dossier_executions",
+    "案卷参与人": "dossier_participants",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
@@ -143,6 +144,10 @@ ITEM_FIELD_ALIASES = {
     "dossier_id": "dossier_id", "案卷编号": "dossier_id",
     "outcome": "outcome", "执行结果": "outcome",
     "note": "note", "执行说明": "note",
+    "character_id": "character_id", "人物": "character_id",
+    "tier": "tier", "档位": "tier",
+    "role": "role", "职分": "role",
+    "delegator_id": "delegator_id", "委派人": "delegator_id",
     "stance": "stance", "立场": "stance",
     "action": "action", "行动": "action",
     "impact": "impact", "影响": "impact",
@@ -641,6 +646,8 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_updates": [],
     "secret_order_closes": [],
     "dossier_executions": [],
+    "dossier_participants": [],
+    "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
 
@@ -649,10 +656,11 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
-        "dossier_executions",
+        "dossier_executions", "dossier_participants",
     },
     "personnel_secret": {
-        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
+        "dossier_progress_reports", "emperor_fate",
     },
 }
 
@@ -874,12 +882,16 @@ def build_extractor_shared_context(
             "decree_text": str(row.get("decree_text") or ""),
             "status": str(row["status"]),
             "due_turn": int(row.get("due_turn") or 0),
+            "participant_roster": list(row.get("participant_roster") or []),
         }
         for row in authorized_dossiers
         if row["action_type"] != "secret_order"
     ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
+        # #566/#883: monthly briefs travel only on the authorized secret rail.
+        # This is also the canonical history read seam used after restore.
+        slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

@@ -668,6 +668,8 @@ def review_directives(session: GameSession) -> str:
                         text,
                         dossier_payload=capture_manual_directive_payload(
                             text, session.llm_config,
+                            **({"db": session.db, "content": session.content}
+                               if getattr(session, "content", None) is not None else {}),
                         ),
                     )
                     print(f"已新增草案 #{dv.id}。")
@@ -704,6 +706,8 @@ def review_directives(session: GameSession) -> str:
                             new_text,
                             dossier_payload=capture_manual_directive_payload(
                                 new_text, session.llm_config,
+                                **({"db": session.db, "content": session.content}
+                                   if getattr(session, "content", None) is not None else {}),
                             ),
                         )
                         print("已修改。")

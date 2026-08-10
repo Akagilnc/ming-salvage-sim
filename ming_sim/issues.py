@@ -6685,6 +6685,7 @@ def apply_score_extraction(
     registry=None,
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
+    dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -6696,6 +6697,60 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    dossier_participant_results: List[Dict[str, object]] = []
+    # Only the caller's frozen simulator input grants roster-write authority.
+    # Missing authority is an empty closed set; never reconstruct it from live DB.
+    if not isinstance(dossier_ids_at_input, set):
+        dossier_ids_at_input = set()
+    for item in extracted.get("dossier_participants") or []:
+        if not isinstance(item, dict):
+            dossier_participant_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+            })
+            continue
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            if dossier_id not in dossier_ids_at_input:
+                raise ValueError("案卷不在本批可见输入")
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            tier = str(item.get("tier") or "").strip()
+            if not character_id:
+                raise ValueError("追加参与人物不能为空")
+            if tier not in {"主办", "协办", "知情"}:
+                raise ValueError("追加参与层级必须为主办/协办/知情")
+            if not delegator_id:
+                raise ValueError("追加参与人必须注明委派人")
+            added = db.append_decree_dossier_participants(dossier_id, [{
+                "character_id": character_id,
+                "tier": tier,
+                "role": str(item.get("role") or "").strip(),
+                "delegator_id": delegator_id,
+            }], state=state, commit=False)
+            if not added:
+                # Exact durable duplicate is the only no-write success case.
+                existing = db.get_decree_dossier(dossier_id) or {}
+                if not any(
+                    row.get("character_id") == character_id
+                    and row.get("tier") == tier
+                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("delegator_id") == delegator_id
+                    for row in existing.get("participant_roster", [])
+                ):
+                    raise ValueError("参与人未实际加入案卷")
+            persisted = added[0] if added else {
+                "character_id": character_id, "tier": tier,
+            }
+            dossier_participant_results.append({
+                "dossier_id": dossier_id,
+                "character_id": persisted["character_id"], "tier": persisted["tier"],
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            dossier_participant_results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+
     dossier_execution_results: List[Dict[str, object]] = []
     for item in extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
@@ -7801,8 +7856,20 @@ def apply_score_extraction(
                     (f"{like_prefix}%",),
                 ).fetchone()
                 if already_disclosed is None:
+                    dossier = db.get_dossier_for_secret_order(real_id)
+                    progress = (
+                        db.list_dossier_progress(int(dossier["id"]))
+                        if dossier is not None else []
+                    )
+                    progress_text = "\n".join(
+                        f"【{item['progress_band']}】{item['memorial_text']}"
+                        for item in progress
+                    )
+                    public_body = sim_note
+                    if progress_text:
+                        public_body = f"{sim_note}\n{progress_text}"
                     db.record_public_knowledge_event(
-                        state, str(order["title"]), sim_note,
+                        state, str(order["title"]), public_body,
                         source_id=f"{disclosure_prefix}{state.turn}",
                         commit=commit_now,
                     )
@@ -7888,6 +7955,7 @@ def apply_score_extraction(
         "power_changes": power_changes,
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
+        "dossier_participants": dossier_participant_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,

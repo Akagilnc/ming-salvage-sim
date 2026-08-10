@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 22 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 23 字段，别指望守门人帮忙兜。
 
-## 顶层 22 字段（容器类型固定）
+## 顶层 23 字段（容器类型固定）
 
 ```jsonc
 {
@@ -32,6 +32,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "cancels":          [],  // 撤销 issue
   "close_issues":     [],  // 结案 issue
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
+  "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
@@ -205,6 +206,10 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
+### `dossier_participants` — S2 案卷参与人追加
+- 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
+- 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
+
 ### `dossier_executions` — S1 案卷执行结局
 - 每项必须带 `dossier_id`、`outcome`、`note`。
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
@@ -265,7 +270,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---

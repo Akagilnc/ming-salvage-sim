@@ -1302,6 +1302,7 @@ class GameDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn_issued INTEGER NOT NULL,
                 due_turn INTEGER NOT NULL DEFAULT 0,
+                deadline_span INTEGER NOT NULL DEFAULT 0,
                 year_issued INTEGER NOT NULL,
                 period_issued INTEGER NOT NULL,
                 minister_name TEXT NOT NULL,
@@ -1313,6 +1314,7 @@ class GameDB:
                 result TEXT NOT NULL DEFAULT '',
                 sim_note TEXT NOT NULL DEFAULT '',
                 excluded_names TEXT NOT NULL DEFAULT '[]',
+                dossier_progress_json TEXT NOT NULL DEFAULT '[]',
                 turn_closed INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1349,6 +1351,7 @@ class GameDB:
                 legal_reason_code TEXT NOT NULL DEFAULT '',
                 stigma_json TEXT NOT NULL DEFAULT '[]',
                 extension_json TEXT NOT NULL DEFAULT '{}',
+                participant_roster TEXT NOT NULL DEFAULT '[]',
                 due_turn INTEGER NOT NULL DEFAULT 0,
                 execution_outcome TEXT NOT NULL DEFAULT '',
                 execution_note TEXT NOT NULL DEFAULT '',
@@ -1846,7 +1849,19 @@ class GameDB:
         self.ensure_column("secret_orders", "sim_note", "TEXT NOT NULL DEFAULT ''")
         # 密令期限：0=无硬期限；到 due_turn 时自动转入待核议，由推演当月判 done/failed。
         self.ensure_column("secret_orders", "due_turn", "INTEGER NOT NULL DEFAULT 0")
+        if self.ensure_column(
+            "secret_orders", "deadline_span", "INTEGER NOT NULL DEFAULT 0"
+        ):
+            self.conn.execute(
+                "UPDATE secret_orders SET deadline_span="
+                "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
+            )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
+        # #566/#883: monthly reports are private derivatives of the order itself;
+        # no parallel dossier report store is authorized.
+        self.ensure_column(
+            "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
+        self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
         # #489：character_knowledge_events 在早期存档中已存在但没有黑名单列；
         # ensure_column 必须覆盖「表已存在」的迁移路径，不能只依赖 CREATE TABLE。
         self.ensure_column(
@@ -1911,6 +1926,9 @@ class GameDB:
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column(
+            "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -7573,23 +7591,38 @@ class GameDB:
             )
         return history
 
-    def build_chat_projection(self, minister_name: str) -> List[Dict[str, Any]]:
-        """一份 turn-identified 召对投影（#499）：user/minister 逐条带 chat_turn_id，
+    def build_chat_projection(self, minister_name: str, night_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """当前召对夜的 turn-identified 投影：user/minister 逐条带 chat_turn_id，
         每轮的读心记录（带持久 id）紧随该轮大臣回话之后归位。
 
         单一真源：以 chat_messages（与 load_all_chat_history 同基）为骨架，join
         chat_turns 打 turn 身份、按 (chat_turn_id, id) 织入 mindreading_records。
         前端据此一投影渲染，不再靠 setChat(history) 覆盖抹掉读心递话。
         """
-        msgs = self.conn.execute(
-            "SELECT id, role, content FROM chat_messages WHERE minister_name=? ORDER BY id",
-            (minister_name,),
-        ).fetchall()
+        if night_id is None:
+            open_night = self.conn.execute(
+                "SELECT id FROM audience_nights WHERE status='open' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            night_id = int(open_night["id"]) if open_night else 0
         turns = self.conn.execute(
             "SELECT id, user_message_id, minister_message_id FROM chat_turns "
-            "WHERE minister_name=?",
-            (minister_name,),
+            "WHERE minister_name=? AND night_id=?",
+            (minister_name, int(night_id)),
         ).fetchall()
+        message_ids = [
+            int(message_id)
+            for turn in turns
+            for message_id in (turn["user_message_id"], turn["minister_message_id"])
+            if message_id is not None
+        ]
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            msgs = self.conn.execute(
+                f"SELECT id, role, content FROM chat_messages WHERE id IN ({placeholders}) ORDER BY id",
+                message_ids,
+            ).fetchall()
+        else:
+            msgs = []
         msg_turn: Dict[int, int] = {}
         minister_msg_turn: Dict[int, int] = {}
         for t in turns:
@@ -8555,9 +8588,9 @@ class GameDB:
             for mid in (turn_row.get("user_message_id"), turn_row.get("minister_message_id"))
             if mid
         ]
-        # write_decree() 的 commit_pending_actions(kind_filter="directive") 可能在召对
-        # diff 已记录之后才生成 turn_directives(status='draft')，因此那类行不会进入
-        # rollback_items（召对期直接更新的 turn_directives 仍会被快照捕获并还原）。
+        # 颁诏 owning transaction 的 commit_pending_actions 可能在召对 diff 已记录之后
+        # 才生成 turn_directives(status='draft')，因此那类行不会进入 rollback_items
+        # （召对期直接更新的 turn_directives 仍会被快照捕获并还原）。
         # 删除前，从本召对触碰过的 pending_actions(kind='directive') 行读取
         # committed_directive_id，并且只删除那条 draft 行（BUG 3：旧实现按
         # (turn,actor) 删除，会连同同 actor 同回合的无关 draft 一起删掉）。
@@ -9407,41 +9440,66 @@ class GameDB:
             "timeline": timeline,
         }
 
-    def list_archived_turns(self) -> List[Dict[str, object]]:
-        """所有已存档回合（turn_reports/turn_extractions/turn_directives 任一有数据）。
-        返回按 turn 升序的元信息列表，每项含 turn/year/period 与各来源是否存在。"""
+    def list_monthly_archives(self) -> List[Dict[str, object]]:
+        """每回合至多一条月档；召对场次绝不扩增月度时间线。"""
         rows = self.conn.execute(
             """
-            SELECT t.turn AS turn,
-                   MAX(t.year) AS year,
-                   MAX(t.period) AS period,
-                   MAX(t.has_report) AS has_report,
-                   MAX(t.has_extraction) AS has_extraction,
-                   MAX(t.has_directive) AS has_directive
+            SELECT turn, MAX(year) AS year, MAX(period) AS period,
+                   MAX(has_report) AS has_report,
+                   MAX(has_extraction) AS has_extraction,
+                   MAX(has_directive) AS has_directive
             FROM (
-                SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive
-                FROM turn_reports
+                SELECT turn, year, period, 1 AS has_report, 0 AS has_extraction, 0 AS has_directive FROM turn_reports
                 UNION ALL
                 SELECT turn, year, period, 0, 1, 0 FROM turn_extractions
                 UNION ALL
-                SELECT turn, year, period, 0, 0, 1 FROM turn_directives
-                WHERE status = 'issued'
-            ) AS t
-            GROUP BY t.turn
-            ORDER BY t.turn
+                SELECT turn, year, period, 0, 0, 1 FROM turn_directives WHERE status = 'issued'
+            )
+            GROUP BY turn ORDER BY turn
             """
         ).fetchall()
-        return [
-            {
-                "turn": int(r["turn"]),
-                "year": int(r["year"]),
-                "period": int(r["period"]),
-                "has_report": bool(r["has_report"]),
-                "has_extraction": bool(r["has_extraction"]),
-                "has_directive": bool(r["has_directive"]),
-            }
-            for r in rows
-        ]
+        return [{
+            "kind": "month", "turn": int(r["turn"]), "year": int(r["year"]),
+            "period": int(r["period"]), "has_report": bool(r["has_report"]),
+            "has_extraction": bool(r["has_extraction"]), "has_directive": bool(r["has_directive"]),
+        } for r in rows]
+
+    def list_closed_night_archives(self) -> List[Dict[str, object]]:
+        """逐场列出 closed audience night，并保留玩家可见命名所需的容器属性。"""
+        rows = self.conn.execute(
+            """
+            SELECT id,turn,year,period,time_of_day,location,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY turn, location, time_of_day ORDER BY id
+                   ) AS scene_number,
+                   COUNT(*) OVER (
+                       PARTITION BY turn, location, time_of_day
+                   ) AS scene_count
+            FROM audience_nights WHERE status='closed' ORDER BY turn,id
+            """
+        ).fetchall()
+        return [{
+            "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
+            "year": int(r["year"]), "period": int(r["period"]),
+            "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+            "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
+        } for r in rows]
+
+    def list_archived_turns(self) -> List[Dict[str, object]]:
+        """兼容组合读面：月档和场档保持独立条目，不再以 SQL join 互相复制。"""
+        monthly = self.list_monthly_archives()
+        nights = self.list_closed_night_archives()
+        by_turn = {int(item["turn"]): item for item in monthly}
+        combined = list(monthly)
+        for night in nights:
+            material = by_turn.get(int(night["turn"]), {})
+            combined.append({
+                **night,
+                "has_report": bool(material.get("has_report", False)),
+                "has_extraction": bool(material.get("has_extraction", False)),
+                "has_directive": bool(material.get("has_directive", False)),
+            })
+        return sorted(combined, key=lambda item: (int(item["turn"]), 0 if item["kind"] == "month" else int(item["night_id"])))
 
     def list_directives_by_turn(self, turn: int) -> List[Dict[str, object]]:
         """读某回合已颁诏（issued）草案，按 id 升序。"""
@@ -9979,7 +10037,144 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
+        try:
+            roster = json.loads(out.get("participant_roster") or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        out["participant_roster"] = roster if isinstance(roster, list) else []
         return out
+
+    def record_dossier_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        progress_band: str,
+        memorial_text: str,
+        *,
+        is_terminal: bool = False,
+        commit: bool = True,
+    ) -> int:
+        """Append one canonical reported-progress entry to its private order."""
+        dossier = self.get_decree_dossier(int(dossier_id))
+        band = str(progress_band or "").strip()
+        text = str(memorial_text or "").strip()
+        if dossier is None or not dossier.get("secret_order_id"):
+            raise ValueError("密令案卷不存在")
+        if not band or not text:
+            raise ValueError("进展档和密奏均不能为空")
+        order_id = int(dossier["secret_order_id"])
+        row = self.conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("密令不存在")
+        reports = json.loads(row["dossier_progress_json"] or "[]")
+        existing = next((item for item in reports if not item.get("is_terminal")
+                         and int(item.get("turn", 0)) == int(turn)), None)
+        if existing is None or is_terminal:
+            report_id = max((int(item.get("id", 0)) for item in reports), default=0) + 1
+            existing = {
+                "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
+                "progress_band": band, "memorial_text": text,
+                "is_terminal": bool(is_terminal),
+            }
+            reports.append(existing)
+        else:
+            report_id = int(existing["id"])
+            existing.update(progress_band=band, memorial_text=text)
+        reports.sort(key=lambda item: (int(item["turn"]), int(item["id"])))
+        self.conn.execute(
+            "UPDATE secret_orders SET dossier_progress_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(reports, ensure_ascii=False), order_id),
+        )
+        if commit:
+            self._commit_dossier_write(True)
+        return report_id
+
+    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        """Canonical read seam shared by monthly push and future inquiry pull."""
+        dossier = self.get_decree_dossier(int(dossier_id))
+        if dossier is None or not dossier.get("secret_order_id"):
+            return []
+        row = self.conn.execute(
+            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+            (int(dossier["secret_order_id"]),),
+        ).fetchone()
+        if row is None:
+            return []
+        return [
+            {
+                "id": int(item["id"]), "dossier_id": int(item["dossier_id"]),
+                "turn": int(item["turn"]), "progress_band": str(item["progress_band"]),
+                "memorial_text": str(item["memorial_text"]),
+                "is_terminal": bool(item["is_terminal"]),
+            }
+            for item in json.loads(row["dossier_progress_json"] or "[]")
+        ]
+
+    def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
+        """Long protection/audit errands due a monthly report, with history."""
+        rows = self.conn.execute(
+            """
+            SELECT d.*, s.tags FROM decree_dossiers d
+            JOIN secret_orders s ON s.id=d.secret_order_id
+            WHERE d.status IN ('promulgated','executing') AND s.status='active'
+              AND s.deadline_span >= 2
+            ORDER BY d.id
+            """
+        ).fetchall()
+        return [
+            {
+                "dossier_id": int(row["id"]),
+                "secret_order_id": int(row["secret_order_id"]),
+                "title": json.loads(row["payload_json"] or "{}").get("title", ""),
+                "progress": self.list_dossier_progress(int(row["id"])),
+            }
+            for row in rows
+            if {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
+               & {"护行", "稽核"}
+        ]
+
+    def record_monthly_dossier_progress(
+        self, turn: int, generated: object = None,
+    ) -> List[Dict[str, object]]:
+        """Persist one valid extractor-authored brief for every eligible dossier."""
+        candidates = {
+            int(item["dossier_id"]): item
+            for item in self.list_monthly_dossier_progress_nudges()
+        }
+        if not candidates:
+            if generated is None or generated == []:
+                return []
+            raise ValueError("无合资格长差案卷却收到本月密奏")
+        if not isinstance(generated, list):
+            raise ValueError("合资格长差案卷缺少本月密奏")
+        supplied: Dict[int, Dict[str, object]] = {}
+        for item in generated:
+            if not isinstance(item, dict):
+                raise ValueError("长差月报格式无效")
+            try:
+                dossier_id = strict_int(item.get("dossier_id", 0))
+                if dossier_id <= 0:
+                    raise ValueError("not positive")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("长差月报案卷编号无效") from exc
+            band = str(item.get("progress_band") or "").strip()
+            text = str(item.get("memorial_text") or "").strip()
+            if dossier_id not in candidates or dossier_id in supplied or not band or not text:
+                raise ValueError("长差月报存在未知、重复或空白条目")
+            supplied[dossier_id] = item
+        if set(supplied) != set(candidates):
+            raise ValueError("合资格长差案卷月报未完整覆盖")
+
+        reports: List[Dict[str, object]] = []
+        for dossier_id, item in supplied.items():
+            self.record_dossier_progress(
+                dossier_id, int(turn), str(item["progress_band"]).strip(),
+                str(item["memorial_text"]).strip(), commit=False,
+            )
+            reports.append(self.list_dossier_progress(dossier_id)[-1])
+        return reports
 
     def create_decree_dossier(
         self,
@@ -9999,6 +10194,7 @@ class GameDB:
         status: str = "proposed",
         due_turn: int = 0,
         extension: Optional[Dict[str, object]] = None,
+        participants: Optional[Iterable[object]] = None,
         commit: bool = True,
         _issued_secret_order: bool = False,
     ) -> int:
@@ -10069,14 +10265,20 @@ class GameDB:
             ).fetchone()
             if origin is not None:
                 source_turn_id = int(origin["chat_turn_id"])
+        roster_source = participants
+        if roster_source is None and isinstance(payload, dict):
+            roster_source = payload.get("participant_roster") or payload.get("participants")
+        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
+        self._validate_participant_roster_references(roster)
+        self._validate_dossier_delegations(roster)
         cur = self.conn.execute(
             """
             INSERT INTO decree_dossiers
                 (action_type,target_kind,target_id,executor_kind,executor_id,
                  source_chat_turn_id,pending_action_id,
                  directive_id,secret_order_id,decree_text,payload_json,status,due_turn,
-                 extension_json,created_turn,created_year,created_period)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 extension_json,participant_roster,created_turn,created_year,created_period)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 action, canonical_target_kind, canonical_target_id,
@@ -10087,6 +10289,7 @@ class GameDB:
                 text, json.dumps(canonical_payload, ensure_ascii=False), status,
                 max(0, int(due_turn or 0)),
                 json.dumps(extension or {}, ensure_ascii=False),
+                json.dumps(roster, ensure_ascii=False),
                 int(state.turn), int(state.year), int(state.period),
             ),
         )
@@ -10100,8 +10303,79 @@ class GameDB:
                 target_kind=canonical_target_kind, target_id=canonical_target_id,
                 origin_ref=f"dossier:{dossier_id}", commit=False,
             )
+        if roster and action != "secret_order":
+            self.register_character_knowledge_source(
+                state, roster, "assignment", "旨意案卷", text,
+                source_id=f"decree_dossier:{dossier_id}", commit=False,
+            )
         self._commit_dossier_write(commit)
         return dossier_id
+
+    @staticmethod
+    def _validate_dossier_delegations(roster: Iterable[Dict[str, object]]) -> None:
+        entries = list(roster)
+        responsible = {
+            str(item.get("character_id") or "") for item in entries
+            if item.get("tier") in {"主办", "协办"}
+        }
+        for item in entries:
+            delegator = str(item.get("delegator_id") or "")
+            character = str(item.get("character_id") or "")
+            if delegator and (delegator == character or delegator not in responsible):
+                raise ValueError("委派人须为同案主办/协办且不得自委派")
+
+    def append_decree_dossier_participants(
+        self, dossier_id: int, participants: Iterable[object], *,
+        state: Optional[GameState] = None, commit: bool = True,
+    ) -> List[Dict[str, object]]:
+        """Append ADR 0053 roster entries without replacing durable members."""
+        row = self.conn.execute(
+            "SELECT participant_roster,action_type,decree_text FROM decree_dossiers WHERE id=?",
+            (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        try:
+            existing_raw = json.loads(row["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            existing_raw = []
+        existing = self._normalize_participant_roster(
+            existing_raw if isinstance(existing_raw, list) else []
+        )
+        additions = self._normalize_participant_roster(participants, strict_structured=True)
+        self._validate_participant_roster_references(additions)
+        by_character = {str(item["character_id"]): item for item in existing}
+        added: List[Dict[str, object]] = []
+        for item in additions:
+            character_id = str(item["character_id"])
+            prior = by_character.get(character_id)
+            if prior is not None:
+                if prior != item:
+                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                continue
+            by_character[character_id] = item
+            added.append(item)
+        merged = existing + added
+        self._validate_dossier_delegations(merged)
+        self._validate_participant_roster_references(merged)
+        if added:
+            self.conn.execute(
+                "UPDATE decree_dossiers SET participant_roster=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(merged, ensure_ascii=False), int(dossier_id)),
+            )
+            if state is not None and str(row["action_type"] or "") != "secret_order":
+                for item in added:
+                    identity = ":".join(str(item.get(key) or "-") for key in (
+                        "character_id", "tier", "role", "delegator_id",
+                    ))
+                    self.register_character_knowledge_source(
+                        state, [item], "assignment", "旨意案卷追加参与",
+                        str(row["decree_text"] or ""),
+                        source_id=f"dossier:{int(dossier_id)}:participant:{identity}",
+                        commit=False,
+                    )
+        self._commit_dossier_write(commit)
+        return added
 
     def get_decree_dossier(self, dossier_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
@@ -10941,15 +11215,10 @@ class GameDB:
                 if order is not None and order["status"] in {"active", "pending_review"}:
                     previous = str(order["result"] or "")
                     result = "\n".join(x for x in (previous, reason) if x)
-                    self.conn.execute(
-                        """
-                        UPDATE secret_orders
-                        SET status='failed',result=?,turn_closed=?,
-                            updated_at=CURRENT_TIMESTAMP
-                        WHERE id=?
-                        """,
-                        (result, int(state.turn), int(order_id)),
+                    self.close_secret_order(
+                        int(order_id), "failed", result, int(state.turn), commit=False,
                     )
+                    continue
             self.record_dossier_execution(
                 dossier_id, "failed", reason, state.turn,
                 close=True, commit=False,
@@ -11195,7 +11464,16 @@ class GameDB:
             raise ValueError("既有旨稿结构化载荷损坏") from exc
         if not isinstance(old, dict):
             raise ValueError("既有旨稿结构化载荷必须为对象")
-        merged = {**old, **dict(new_payload or {})}
+        incoming = dict(new_payload or {})
+        old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
+        new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
+        if not new_roster:
+            incoming.pop("participant_roster", None)
+        else:
+            incoming["participant_roster"] = old_roster + [
+                item for item in new_roster if item not in old_roster
+            ]
+        merged = {**old, **incoming}
         requested = str(merged.get("dossier_action_type") or "")
         normalized = self._normalize_directive_dossier_payload(
             merged, content=self.content,
@@ -11372,6 +11650,59 @@ class GameDB:
             for r in rows
         ]
 
+    def _prepare_pending_directive(
+        self, state: GameState, pa: Dict[str, object], *, content=None,
+        allow_clarification: bool = False,
+    ) -> Dict[str, object]:
+        """Classify and, only when valid, project one staged directive."""
+        if (
+            pa.get("status") != "pending"
+            or pa.get("kind") != "directive"
+            or pa.get("action") != "拟旨"
+        ):
+            return {"classification": "invalid"}
+        try:
+            payload = json.loads(str(pa.get("payload_json") or "{}"))
+            if not isinstance(payload, dict):
+                return {"classification": "invalid"}
+            if payload.get("_needs_clarification") and not allow_clarification:
+                return {"classification": "needs_clarification"}
+            payload = self._normalize_directive_dossier_payload(
+                payload, content=content, current_turn=int(state.turn),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"classification": "invalid"}
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return {"classification": "invalid"}
+        actor = str(payload.get("actor") or pa.get("minister_name") or "").strip()
+        payload["text"] = text
+        payload["actor"] = actor
+        return {
+            "classification": "valid",
+            "id": -int(pa["id"]),
+            "text": text,
+            "status": "pending",
+            "source": "pending_action",
+            "actor": actor,
+            "pending_action_id": int(pa["id"]),
+            "payload": payload,
+        }
+
+    def preview_pending_directives(
+        self, state: GameState, *, content=None,
+    ) -> List[Dict[str, object]]:
+        """Read-only default-approval view, using the commit owner's rules."""
+        previews = []
+        for pa in self.list_pending_actions(int(state.turn)):
+            prepared = self._prepare_pending_directive(state, pa, content=content)
+            if prepared["classification"] == "valid":
+                preview = dict(prepared)
+                preview.pop("classification", None)
+                preview.pop("payload", None)
+                previews.append(preview)
+        return previews
+
     def commit_pending_actions(
         self, state: GameState, *, content=None, registry=None, minister_name=None,
         kind_filter: Optional[str] = None, kind_filter_exclude: Optional[str] = None,
@@ -11411,23 +11742,36 @@ class GameDB:
             or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
         )
         for pa in rows:
-            try:
-                payload = json.loads(pa["payload_json"] or "{}")
-                if not isinstance(payload, dict):   # 坏 payload(JSON 数组/串)→ 当空,apply 必 False 标 failed
-                    payload = {}
-            except (ValueError, TypeError):
-                payload = {}
             if pa["kind"] == "directive" and pa["action"] == "拟旨":
-                # 含糊待澄清（#502 AC5）：批量默认提交（action_ids=None=「不回→默认同意」路）跳过
-                # 待澄清候选——含糊口令 ≠ 未表态，不得被静默默认提交；皇帝指明后经 action_ids 显式提交。
-                if action_ids is None and payload.get("_needs_clarification"):
+                prepared = self._prepare_pending_directive(
+                    state, pa, content=content,
+                    allow_clarification=action_ids is not None,
+                )
+                classification = prepared["classification"]
+                if classification == "needs_clarification":
                     continue
+                if classification == "invalid":
+                    cm = atomic(self) if owns_transaction else contextlib.nullcontext()
+                    with cm:
+                        self.conn.execute(
+                            "UPDATE pending_actions SET status='failed' WHERE id=?",
+                            (int(pa["id"]),),
+                        )
+                    continue
+                payload = dict(prepared["payload"])
+                payload["_canonical_pending_directive"] = True
                 committed = self._commit_conversational_draft(
                     state, pa, payload, content=content, registry=registry,
                     directive_status=directive_status)
                 if committed is not None:
                     applied.append(committed)
                 continue
+            try:
+                payload = json.loads(pa["payload_json"] or "{}")
+                if not isinstance(payload, dict):
+                    payload = {}
+            except (ValueError, TypeError):
+                payload = {}
             # apply 抛错(如 催办 对已转 pending_review 的密令)= 当 False:下面标 failed、
             # 不中断本轮其余动作、更不能崩整个结算(CMR P0)。
             cm = atomic(self) if owns_transaction else contextlib.nullcontext()
@@ -11763,9 +12107,11 @@ class GameDB:
                 registry.refresh(name)
             return True
         if pa["kind"] == "directive" and pa["action"] == "拟旨":
-            payload = self._normalize_directive_dossier_payload(
-                payload, content=content, current_turn=int(state.turn),
-            )
+            payload = dict(payload)
+            if payload.pop("_canonical_pending_directive", False) is not True:
+                payload = self._normalize_directive_dossier_payload(
+                    payload, content=content, current_turn=int(state.turn),
+                )
             text = str(payload.get("text") or "").strip()
             actor = str(payload.get("actor") or pa["minister_name"] or "")
             if not text:
@@ -12350,7 +12696,14 @@ class GameDB:
     ) -> None:
         if self.get_dossier_for_directive(directive_id) is not None:
             raise ValueError("已成案旨意不得编辑")
-        payload = dict(dossier_payload or {})
+        row = self.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives WHERE id=?", (directive_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("旨意不存在")
+        payload = self._merge_directive_payload(
+            row["dossier_payload_json"], dict(dossier_payload or {})
+        )
         if not all(str(payload.get(key) or "").strip() for key in (
             "dossier_action_type", "target_kind", "target_id",
         )):
@@ -13156,17 +13509,30 @@ class GameDB:
     # ----- secret_orders（密令系统）-----
 
     @staticmethod
-    def _normalize_participant_roster(participants: Iterable[object] | str | None) -> List[Dict[str, object]]:
-        """Normalize ADR 0053 entries while retaining legacy name input."""
+    def _normalize_participant_roster(
+        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
         values = [participants] if isinstance(participants, str) else list(participants or [])
         roster: List[Dict[str, object]] = []
         for value in values:
             if isinstance(value, Mapping):
-                character_id = str(value.get("character_id") or value.get("name") or "").strip()
-                tier = str(value.get("tier") or value.get("档") or "知情").strip()
+                if strict_structured:
+                    character_id = str(value.get("character_id") or "").strip()
+                    tier_value = value.get("tier")
+                else:
+                    character_id = str(value.get("character_id") or value.get("name") or "").strip()
+                    tier_value = value.get("tier") if "tier" in value else value.get("档")
+                if strict_structured and not character_id:
+                    raise ValueError("参与人物 character_id 不能为空")
+                if strict_structured and tier_value is None:
+                    raise ValueError("参与人物 tier 必须显式提供")
+                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 role = str(value.get("role") or value.get("职分") or "").strip()
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
+                if strict_structured:
+                    raise ValueError("结构化参与人名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
@@ -13177,6 +13543,35 @@ class GameDB:
             if item not in roster:
                 roster.append(item)
         return roster
+
+    def _validate_participant_roster_references(
+        self, roster: Iterable[Mapping[str, object]],
+    ) -> None:
+        """Enforce ADR 0053 character primary-key references at the DB write seam."""
+        entries = list(roster)
+        referenced = {
+            str(value).strip()
+            for item in entries
+            for value in (item.get("character_id"), item.get("delegator_id"))
+            if str(value or "").strip()
+        }
+        if not referenced:
+            return
+        placeholders = ",".join("?" for _ in referenced)
+        known = {
+            str(row["name"])
+            for row in self.conn.execute(
+                f"SELECT name FROM characters WHERE name IN ({placeholders})",
+                tuple(referenced),
+            ).fetchall()
+        }
+        for item in entries:
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            if character_id not in known:
+                raise ValueError(f"参与人物不存在：{character_id}")
+            if delegator_id and delegator_id not in known:
+                raise ValueError(f"委派人不存在：{delegator_id}")
 
     def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
         rows = self.conn.execute(
@@ -13247,17 +13642,18 @@ class GameDB:
             # explicit source_id in their own table.
             fallback_prefix = table[:-1] if table.endswith("s") else table
             source_sql = source_expr if source_expr else f"'{fallback_prefix}:' || {id_expr}"
-            turn_expr = selected.get("turn") or selected.get("origin_turn") or "0"
-            year_expr = selected.get("year") or "0"
-            period_expr = selected.get("period") or "0"
+            turn_expr = selected.get("turn") or selected.get("origin_turn") or selected.get("created_turn") or "0"
+            year_expr = selected.get("year") or selected.get("created_year") or "0"
+            period_expr = selected.get("period") or selected.get("created_period") or "0"
             kind_expr = selected.get("kind") or "'assignment'"
             title_expr = selected.get("title") or "''"
-            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or "''"
+            body_expr = selected.get("body") or selected.get("stage_text") or selected.get("content") or selected.get("decree_text") or "''"
+            secrecy_sql = " AND action_type <> 'secret_order'" if table == "decree_dossiers" else ""
             query = (
                 f"SELECT {turn_expr} AS turn, {year_expr} AS year, {period_expr} AS period, "
                 f"{kind_expr} AS kind, {title_expr} AS title, {body_expr} AS body, "
                 f"{source_sql} AS source_id, participant_roster "
-                f"FROM {quoted} WHERE participant_roster <> '[]' ORDER BY turn, {id_expr}"
+                f"FROM {quoted} WHERE participant_roster <> '[]'{secrecy_sql} ORDER BY turn, {id_expr}"
             )
             for row in self.conn.execute(query).fetchall():
                 source_id = str(row["source_id"])
@@ -13285,7 +13681,7 @@ class GameDB:
         result: List[tuple[str, set[str]]] = []
         for row in tables:
             table = str(row["name"])
-            if table == "character_knowledge_sources":
+            if table in {"character_knowledge_sources", "decree_dossiers"}:
                 continue
             columns = {
                 str(column["name"])
@@ -13945,10 +14341,10 @@ class GameDB:
             cur = self.conn.execute(
                 """
                 INSERT INTO secret_orders
-                    (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    (turn_issued, due_turn, deadline_span, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
-                (state.turn, due_turn, state.year, state.period, minister_name, title, content, tags_json, importance,
+                (state.turn, due_turn, deadline, state.year, state.period, minister_name, title, content, tags_json, importance,
                  json.dumps(snapshot_excluded_names, ensure_ascii=False),
                  json.dumps(exclusion_targets_payload, ensure_ascii=False)),
             )
@@ -14095,9 +14491,9 @@ class GameDB:
         with atomic(self):
             if deadline:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, excluded_names=?, excluded_targets=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, deadline_span=?, excluded_names=?, excluded_targets=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, int(state.turn) + deadline,
+                    (persisted_title, content, tags_json, int(state.turn) + deadline, deadline,
                      json.dumps(excluded_names, ensure_ascii=False), json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
             else:
@@ -14152,6 +14548,14 @@ class GameDB:
                 "status": r["status"],
                 "result": r["result"] or "",
                 "sim_note": (r["sim_note"] if "sim_note" in r.keys() else "") or "",
+                # Emperor-facing secret-order payload is an authorized private
+                # product seam; expose the same canonical monthly rail used by
+                # the personnel extractor and future dossier inquiry.
+                "dossier_progress": (
+                    self.list_dossier_progress(int(dossier["id"]))
+                    if (dossier := self.get_dossier_for_secret_order(int(r["id"])))
+                    else []
+                ),
                 "excluded_names": json.loads(r["excluded_names"] or "[]") if "excluded_names" in r.keys() else [],
                 "excluded_targets": json.loads(r["excluded_targets"] or "{}") if "excluded_targets" in r.keys() else {},
                 "turn_closed": r["turn_closed"],
@@ -14175,6 +14579,11 @@ class GameDB:
         commit: bool = True,
     ) -> None:
         def close_in_current_transaction() -> None:
+            dossier = self.get_dossier_for_secret_order(int(order_id))
+            has_progress_chain = bool(
+                dossier is not None
+                and self.list_dossier_progress(int(dossier["id"]))
+            )
             self.conn.execute(
                 """
                 UPDATE secret_orders
@@ -14183,11 +14592,15 @@ class GameDB:
                 """,
                 (status, result, turn_closed, int(order_id)),
             )
-            dossier = self.get_dossier_for_secret_order(int(order_id))
             if dossier is not None and dossier["status"] != "closed":
                 if dossier["status"] == "promulgated":
                     self.transition_decree_dossier(
                         int(dossier["id"]), "executing", commit=False,
+                    )
+                if has_progress_chain:
+                    self.record_dossier_progress(
+                        int(dossier["id"]), int(turn_closed), "结案",
+                        str(result), is_terminal=True, commit=False,
                     )
                 self.record_dossier_execution(
                     int(dossier["id"]),
@@ -14399,7 +14812,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     UPDATE secret_orders
-                    SET status = 'pending_review', due_turn = ?, result = ?, updated_at=CURRENT_TIMESTAMP
+                    SET status = 'pending_review', due_turn = ?, deadline_span = 0,
+                        result = ?, updated_at=CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (int(state.turn), "\n".join(lines), int(order_id)),
@@ -14412,10 +14826,15 @@ class GameDB:
                 self.conn.execute(
                     """
                     UPDATE secret_orders
-                    SET due_turn = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+                    SET due_turn = ?, deadline_span = ?, result = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (due_turn, "\n".join(lines), int(order_id)),
+                    (
+                        due_turn,
+                        max(int(due_turn) - int(state.turn), 0),
+                        "\n".join(lines),
+                        int(order_id),
+                    ),
                 )
                 status = "active"
             self.mark_secret_order_in_progress(int(order_id), commit=False)

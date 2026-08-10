@@ -1351,7 +1351,13 @@ class WebGame:
         递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
         入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
         if self._persistent_chat_minister(minister_name):
-            return self.db.build_chat_projection(minister_name)
+            # Lightweight stream seams intentionally expose neither a durable connection nor
+            # the night-aware projection signature. Production DBs always use the night owner.
+            if not hasattr(self.db, "conn"):
+                return self.db.build_chat_projection(minister_name)
+            from ming_sim.audience_night import get_open_night
+            night = get_open_night(self.db)
+            return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
             for m in self.chat_history.get(minister_name, [])
@@ -1479,6 +1485,8 @@ class WebGame:
         character = self.session._character(minister_name)
         return {
             "minister": minister_name,
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "night_id": int(row.get("night_id") or 0),
             "undone_chat_turn_id": int(undone["id"]),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
             "history": self.chat_projection(minister_name),
@@ -1525,9 +1533,17 @@ class WebGame:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
                 self.db.append_chat_message(minister_name, turn, "minister", answer)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        open_night = None
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
         return {
             "minister": minister_name,
             "answer": answer,
+            # Persisted identity travels with the real player response; the web client
+            # never infers night ownership from cross-night personal chat history.
+            "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
+            "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
             # 前端 setChat 不再抹掉先前浮现的读心递话。
             "history": self.chat_projection(minister_name),
@@ -2267,6 +2283,31 @@ class WebGame:
             write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        identity = {
+            "campaign_id": "",
+            "night_id": 0,
+            "chat_turn_id": int(chat_turn_id or 0),
+        }
+        # Identity setup is still between durable prologue and worker ownership. Any failure
+        # must close the durable turn and pending owner through the same terminal path as a
+        # worker failure, rather than escaping this SSE generator.
+        try:
+            if hasattr(self.db, "kv_get"):
+                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if chat_turn_id and hasattr(self.db, "conn"):
+                from ming_sim.audience_night import get_open_night
+                open_night = get_open_night(self.db)
+                identity["night_id"] = int(open_night["id"]) if open_night else 0
+                ev_queue.put({"type": "accepted", **identity})
+        except Exception as error:  # noqa: BLE001
+            try:
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
+            self._complete_pending_write()
+            yield {"type": "error", "message": str(error), **identity}
+            return
 
         def emit_delta(delta: str) -> None:
             ev_queue.put({"type": "delta", "content": delta})
@@ -2298,9 +2339,9 @@ class WebGame:
                     except Exception:
                         pass
                     if isinstance(error, LLMUnavailable):
-                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
+                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error), **identity})
                     else:
-                        ev_queue.put({"type": "error", "message": str(error)})
+                        ev_queue.put({"type": "error", "message": str(error), **identity})
                     return
 
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
@@ -3263,10 +3304,13 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
 
 
 @app.get("/api/history/turns")
-async def api_history_turns() -> Dict[str, Any]:
-    """已存档回合列表（turn_reports / turn_extractions / 已颁诏 turn_directives 并集）。"""
+def api_history_turns() -> Dict[str, Any]:
+    """场级归档列表；同步 handler 由 FastAPI 在线程池中执行 SQLite 投影。"""
     turns = get_game().db.list_archived_turns()
-    return {"turns": [{k: v for k, v in item.items() if k != "has_extraction"} for item in turns]}
+    return {"turns": [
+        {k: v for k, v in item.items() if k != "has_extraction"}
+        for item in turns
+    ]}
 
 
 @app.get("/api/history/turn/{turn}")
@@ -3348,14 +3392,34 @@ def _require_active_minister(minister_name: str) -> None:
         raise HTTPException(status_code=409, detail=detail.strip())
 
 
+@app.get("/api/audience/scroll")
+def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
+    """Shared live/read-only projection of one persisted audience scroll."""
+    from ming_sim.audience_night import get_night, get_open_night, read_night_scroll
+
+    game = get_game()
+    night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
+    if night is None:
+        return {"night_id": 0, "status": "", "messages": []}
+    return {
+        "night_id": int(night["id"]),
+        "status": night["status"],
+        "messages": read_night_scroll(game.db, int(night["id"])),
+    }
+
+
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
     game = get_game()
     character = game.session._character(minister_name)
     mind = game.mindreading_for_minister(minister_name)
+    from ming_sim.audience_night import get_open_night
+    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
     return {
         "minister": game.public_character(character),
+        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
+        "night_id": int(open_night["id"]) if open_night else 0,
         # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
         "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
@@ -3455,7 +3519,13 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             if item is None:
                 break
             item_type = str(item.get("type", "message"))
-            if item_type == "delta":
+            if item_type == "accepted":
+                yield sse_event("accepted", {
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
+            elif item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
@@ -3469,7 +3539,14 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("end", {})
                 break
             elif item_type == "error":
-                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
+                detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
+                payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
+                payload.update({
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
+                yield sse_event("error", payload)
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -3488,6 +3565,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
             capture_manual_directive_payload,
             request.text.strip(),
             game.session.llm_config,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
         )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
@@ -3524,6 +3603,8 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             capture_manual_directive_payload,
             text.strip(),
             game.session.llm_config,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
         )
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:
@@ -3604,25 +3685,18 @@ def api_advance_without_edict() -> Dict[str, Any]:
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
-            pending_directive_actions = [
-                action for action in game.db.list_pending_actions(turn_before)
-                if action["kind"] == "directive"
-            ]
-            if (
-                game.directive_rows()
-                or pending_directive_actions
-                or game.db.list_decree_dossiers(status="proposed")
-                or game.db.list_decree_dossiers(status="executing")
-            ):
+            if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
-                advance_without_edict(
+                advanced = advance_without_edict(
                     game.state,
                     game.db,
                     content=game.content,
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
                 )
+                if not advanced:
+                    settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
     except ValueError as e:
