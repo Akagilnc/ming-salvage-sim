@@ -1071,7 +1071,7 @@ def extract_draft_intent(
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
-                "participant_roster": value.get("参与人") or [], **mechanical,
+                "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
             drafts = []
@@ -1188,7 +1188,7 @@ def extract_draft_intent(
         return {"draft_action": _action, "draft_text": draft_text, "target_candidate": "",
                 "dossier_action_type": dossier_action,
                 "target_kind": target_kind, "target_id": target_id_value,
-                "participant_roster": obj.get("参与人") or [], **mechanical}
+                "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical}
     # 多道：归一目标——命中候选 id=补那道；「新」=明确另拟；否则含糊兜底（#502 L7）：
     # 单条→补那条（沿用 last-write-wins），**多条不静默新建第三道**→「含糊」交 session 追问哪一道。
     target_raw = str(obj.get("目标草案") or "").strip()
@@ -1218,7 +1218,7 @@ def extract_draft_intent(
         "draft_action": _action, "draft_text": draft_text, "target_candidate": target,
         "dossier_action_type": dossier_action,
         "target_kind": target_kind, "target_id": target_id_value,
-        "participant_roster": obj.get("参与人") or [], **mechanical,
+        "participant_roster": obj["参与人"] if "参与人" in obj else [], **mechanical,
     }
 
 

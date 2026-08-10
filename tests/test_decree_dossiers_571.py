@@ -156,21 +156,31 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("draft_count", [1, 2])
 @pytest.mark.parametrize("bad_roster", [
     ["not-an-object"],
     [{"character_id": "placeholder"}],
     {"character_id": "placeholder", "tier": "主办"},
+    {},
+    "",
+    0,
+    False,
 ])
 def test_conversation_draft_rejects_malformed_roster_without_staging(
-    game, monkeypatch, bad_roster,
+    game, monkeypatch, bad_roster, draft_count,
 ):
     db, state, content = game
     minister = _active_minister(db)
     character = next(ch for ch in content.characters.values() if ch.name == minister)
-    canned = {
-        "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
+    draft = {
+        "正文": "着会同清查仓储。", "动作类型": "assignment", "目标类型": "issue",
         "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
     }
+    canned = (
+        {"拟旨意图": "拟旨", **draft}
+        if draft_count == 1
+        else {"成品旨稿": [draft, {**draft, "正文": "再核各仓旧账。"}]}
+    )
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config",
         lambda *args, **kwargs: (json.dumps(canned, ensure_ascii=False), 1),
@@ -184,7 +194,7 @@ def test_conversation_draft_rejects_malformed_roster_without_staging(
         GameSession.apply_cli_conversation_actions(
             session, character, player_message="拟旨查仓。", answer="着会同清查仓储。",
             has_directive=False, secret_order_id=None,
-            preclassified_intent={"kind": "draft"},
+            preclassified_intent=[{"kind": "draft"}] * draft_count,
         )
 
     assert db.list_pending_actions(state.turn) == []
