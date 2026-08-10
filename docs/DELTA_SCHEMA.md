@@ -232,14 +232,16 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 动作 payload：
 | 动作 | 必填 | 可选 | 说明 |
 |---|---|---|---|
-| `任命` | `office` | `office_type` / `faction` | 身名分入职名分；若目标现持职名分，执行位可归一为 `调任` |
+| `任命` | `office` | `office_type` / `faction` / `任别` | 身名分入职名分；若目标现持职名分，执行位可归一为 `调任` |
 | `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
-| `调任` | `office` | `office_type` / `faction` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
+| `调任` | `office` | `office_type` / `faction` / `任别` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
 | `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
 | `册封` | `office` | `office_type` | 后宫 candidate 出边；落选走 `处置(status=offstage, reason_code=落选)` |
 | `行止` | `location` 或 `transit_to` | `reason_code` | 去向变更；`transit_to` 非空表示在途，迁出 active 时会被清空 |
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
+
+`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。
 
 状态白名单（DB 全集 8 态）：`active` / `candidate` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（去掉 `active` / `candidate`——二者经 `任命` / `册封` 级联或 applier 起复派生达成；直接 `处置(status=active/candidate)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 

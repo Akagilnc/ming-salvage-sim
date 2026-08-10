@@ -17,6 +17,9 @@ MONEY_UNIT = "万两"
 ECONOMY_ACCOUNTS = ("国库", "内库")
 SCORE_METRICS = ("民心", "皇威")
 
+# 案卷关联的 Python 权威枚举；DDL CHECK 仅保留为持久层约束。
+DOSSIER_LINK_TYPES = frozenset({"护卫", "稽核", "接应"})
+
 # #44 边军史实月饷锚点（两/兵·月）：ming 军 salary_rate<=0 非法（=白嫖）时的兜底率。单一真源——
 # 募兵默认（db._coerce_new_salary_rate）/ 旧档迁移兜底（db._backfill_salary_rate）/ 结算咽喉
 # （flows.army_needed 对 ming+有兵+rate<=0 锚定）三处共用，避免 1.5 散落多处漂移（线上 sourcery+coderabbit）。

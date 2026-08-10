@@ -871,7 +871,7 @@ def build_extractor_shared_context(
             "id": int(row["id"]),
             "origin_ref": f"dossier:{int(row['id'])}",
             "action_type": str(row["action_type"]),
-            "decree_text": str(row["decree_text"]),
+            "decree_text": str(row.get("decree_text") or ""),
             "status": str(row["status"]),
             "due_turn": int(row.get("due_turn") or 0),
         }

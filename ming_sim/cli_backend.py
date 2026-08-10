@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
 import subprocess
@@ -47,6 +48,7 @@ from pydantic import BaseModel
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 
 # #529 owns interim-office capture/materialization.  Keep the #471 dossier
@@ -2033,12 +2035,87 @@ def _secret_metadata_from_command(text: str) -> Tuple[List[str], int]:
     return tags, deadline
 
 
+def _normalize_dossier_link_proposals(
+    dossier_candidates: Optional[List[Dict[str, Any]]],
+    suggested_links: Any,
+) -> Dict[Tuple[int, str], Dict[str, Any]]:
+    """Return the one canonical, visible set of dossier-link proposals."""
+    candidate_ids = {
+        row["id"] for row in (dossier_candidates or [])
+        if isinstance(row, dict) and type(row.get("id")) is int
+    }
+    proposals: Dict[Tuple[int, str], Dict[str, Any]] = {}
+    for link in suggested_links if isinstance(suggested_links, list) else []:
+        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
+            continue
+        target = link["target_dossier_id"]
+        relation = str(link.get("relation_type") or "").strip()
+        note = str(link.get("note") or "").strip()
+        if target in candidate_ids and relation in DOSSIER_LINK_TYPES and note:
+            proposals[(target, relation)] = {
+                "target_dossier_id": target, "relation_type": relation, "note": note}
+    return proposals
+
+
+def confirm_dossier_links(
+    minister_reply: str,
+    dossier_candidates: Optional[List[Dict[str, Any]]],
+    suggested_links: Any,
+    llm_config: Any = None,
+) -> List[Dict[str, Any]]:
+    """Use one structured semantic verdict to narrow model-suggested links.
+
+    Internal IDs are capabilities only: the verdict may select an ID only from
+    both the reader-visible candidates and the producer's structured proposal.
+    A failed/ambiguous verdict authorises nothing.
+    """
+    candidates = {
+        int(row["id"]): str(row.get("secret_title") or row.get("decree_text") or "").strip()
+        for row in (dossier_candidates or [])
+        if isinstance(row, dict) and type(row.get("id")) is int
+    }
+    proposals = _normalize_dossier_link_proposals(dossier_candidates, suggested_links)
+    if not proposals:
+        return []
+    prompt = (
+        "你是案卷关联确认判词，不是对话角色。只依据【大臣最终可见回话】的完整语义判断；"
+        "否定、仅引用旧案、模糊复述、长短标题包含歧义、未明确承诺关联，均不得确认。"
+        "内部ID只用于输出，不是确认依据。只输出合法JSON："
+        "{\"confirmed_links\":[{\"target_dossier_id\":整数,\"relation_type\":\"护卫/稽核/接应\"}]}。\n"
+        "【可选提议】\n" + "\n".join(
+            f"- #{target} {candidates[target]}；{relation}；{item['note']}"
+            for (target, relation), item in proposals.items()
+        ) + "\n【大臣最终可见回话】\n" + (minister_reply or "（空）")
+    )
+    try:
+        raw, _ = _run_json_extractor_for_config(prompt, llm_config, tag="dossier_link_confirmation")
+        verdict = _loads_lenient(raw) or {}
+    except Exception as exc:
+        _log(f"案卷关联确认失败：{exc}")
+        return []
+    if not isinstance(verdict, dict):
+        return []
+    links = verdict.get("confirmed_links")
+    if not isinstance(links, list):
+        return []
+    confirmed = set()
+    for link in links:
+        if not isinstance(link, dict) or type(link.get("target_dossier_id")) is not int:
+            return []
+        relation = link.get("relation_type")
+        if relation not in DOSSIER_LINK_TYPES:
+            return []
+        confirmed.add((link["target_dossier_id"], relation))
+    return [item for identity, item in proposals.items() if identity in confirmed]
+
+
 def _extract_secret_order(
     player_command: str,
     minister_reply: str,
     default_assignee: str,
     llm_config: Any = None,
     force_default_assignee: bool = False,
+    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """聚焦提取：把密令交代+大臣回话抽成结构化字段。纯抽取任务（不扮演），
     与月末 extractor 同款可靠。失败则退回合理默认。"""
@@ -2053,12 +2130,31 @@ def _extract_secret_order(
         + (default_assignee or "") + "\",\n"
         "  \"期限月数\": 整数，皇帝限了期就填月数（如『三月内结案』填3），没限填0,\n"
         "  \"标签\": [\"相关人名/地区/事项关键词\"],\n"
-        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]}\n"
-        "}\n\n"
+        "  \"排除对象\": {\"人物\": [\"明确说要瞒住的人名\"], \"机构\": [\"不走的衙门\"]},\n"
+        "  \"案卷关联\": [{\"目标案卷ID\": 123, \"类型\": \"护卫/稽核/接应\", "
+        "\"说明\": \"一句说明\"}]\n"
+        "}\n"
+        "案卷关联只能填写大臣回话中已明确复述确认、且在下列候选中的具体旧案卷 ID；模糊指代、未确认或没有 ID 时填空列表。\n"
+        "【可引用旧案卷】\n" + "\n".join(
+            f"- #{int(row['id'])} {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
+            for row in (dossier_candidates or [])
+        ) + "\n\n"
         "【皇帝密令】" + (player_command or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
     raw = ""
+    confirmation_future = None
+    confirmation_pool = None
+    if cli_backend_parallel_safe(llm_config) and dossier_candidates:
+        # Confirmation reads only the already-visible reply/candidate set, so it
+        # can run beside field extraction; extracted proposals are intersected locally below.
+        broad_proposals = [
+            {"target_dossier_id": int(row["id"]), "relation_type": relation, "note": "待抽取后核对"}
+            for row in dossier_candidates for relation in DOSSIER_LINK_TYPES
+        ]
+        confirmation_pool = ThreadPoolExecutor(max_workers=1)
+        confirmation_future = confirmation_pool.submit(
+            confirm_dossier_links, minister_reply, dossier_candidates, broad_proposals, llm_config)
     try:
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
@@ -2133,14 +2229,43 @@ def _extract_secret_order(
         tags = fallback_tags
     if not deadline and not explicit_zero_deadline:
         deadline = fallback_deadline
+    raw_links = obj.get("案卷关联")
+    extracted_proposals = [
+        {
+            "target_dossier_id": link.get("目标案卷ID"),
+            "relation_type": link.get("类型"),
+            "note": link.get("说明"),
+        }
+        for link in raw_links if isinstance(link, dict)
+    ] if isinstance(raw_links, list) else []
+    proposals = _normalize_dossier_link_proposals(dossier_candidates, extracted_proposals)
+    dossier_links = list(proposals.values())
+    if confirmation_future is not None:
+        try:
+            confirmed = {
+                (item["target_dossier_id"], item["relation_type"])
+                for item in confirmation_future.result()
+            }
+        except Exception as exc:
+            _log(f"案卷关联确认失败：{exc}")
+            confirmed = set()
+        finally:
+            confirmation_pool.shutdown(wait=True)
+        dossier_links = [
+            item for identity, item in proposals.items() if identity in confirmed
+        ]
+    else:
+        dossier_links = confirm_dossier_links(
+            minister_reply, dossier_candidates, dossier_links, llm_config=llm_config)
     return {"title": title, "content": content, "assignee": assignee,
             "deadline_months": deadline, "tags": tags, "excluded_names": excluded_names,
-            "excluded_offices": excluded_offices,
+            "excluded_offices": excluded_offices, "dossier_links": dossier_links,
             "excluded_targets": {"people": excluded_names, "offices": excluded_offices}}
 
 def resolve_minister_actions(
     minister_reply: str, player_message: str = "", default_assignee: str = "", llm_config: Any = None,
     secret_context: str = "",
+    dossier_candidates: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """玩家上一句带拟旨/密令前缀时生成候选。
     - 拟旨：大臣回话原文即圣旨草稿（单一文本字段，够用）。
@@ -2172,6 +2297,7 @@ def resolve_minister_actions(
         out["secret_order"] = _extract_secret_order(
             secret_command, reply, default_assignee, llm_config,
             force_default_assignee=force_default_assignee,
+            dossier_candidates=dossier_candidates,
         )
 
     return out
