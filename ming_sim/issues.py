@@ -31,6 +31,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -72,6 +73,39 @@ def _parse_sqlite_id(raw: object) -> int:
     if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
         raise ValueError("id 超出 SQLite 64-bit 范围")
     return val
+
+
+def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optional[Dict[str, object]]:
+    """Resolve an authorized dossier through the canonical ownership policy."""
+    text = str(origin_ref or "").strip()
+    if not text.startswith("dossier:"):
+        return None
+    try:
+        dossier_id = _parse_sqlite_id(text.split(":", 1)[1])
+    except ValueError:
+        return None
+    row = db.get_decree_dossier(dossier_id)
+    if row is None or not db.dossier_authorizes_effects(dossier_id):
+        return None
+    try:
+        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
+        return None
+    return {**row, "payload": payload}
+
+
+def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool:
+    dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
+    if dossier is None or dossier.get("action_type") not in {"appointment", "acting_appointment", "dismiss_assignment"}:
+        return False
+    payload = dossier["payload"]
+    person = str(item.get("name") or item.get("人物") or "").strip()
+    target = str(payload.get("_minister_name") or payload.get("minister_name") or dossier.get("target_id") or "").strip()
+    return bool(person and target and person == target)
 
 
 def _issue_condition_text(raw: object) -> str:
@@ -5009,6 +5043,9 @@ def apply_issue_tracker_output(
                 origin_ref = db.resolve_commitment_origin_ref(
                     state, origin_ref, origin_kind=str(ni.get("origin_kind") or ""),
                 )
+                origin_error = db.effect_origin_rejection(origin_ref)
+                if origin_error:
+                    raise ValueError(str(origin_error["reason"]))
             except (TypeError, ValueError, OverflowError) as exc:
                 applied_new.append({
                     "rejected": True, "category": "invalid_enum",
@@ -6385,7 +6422,7 @@ def _apply_person_changes(
                 state,
                 backlash,
                 commit=commit_person_change,
-                origin_ref=str(item.get("origin_ref") or item.get("来源引用") or "").strip(),
+                origin_ref=origin_ref,
                 require_origin=True,
             ) if backlash else []
             for result in power_results:
@@ -6648,6 +6685,9 @@ def apply_score_extraction(
         runtime_content,
         db,
     )
+    # Payload materializers own appointment rails; narrative and immediate
+    # dossiers deliberately remain extractor-owned/exempt.
+    person_changes = [item for item in person_changes if not _payload_owned_person_duplicate(db, item)]
     use_legacy_person_keys = not person_changes
     legacy_person_mode = bool(legacy_person_changes)
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
@@ -6814,12 +6854,8 @@ def apply_score_extraction(
             # retain it for the durable-write seam to reject and report.
             economy_moves.append(move)
             continue
-        dossier = db.get_decree_dossier(dossier_id)
-        if (
-            dossier is None
-            or str(dossier.get("action_type") or "") != "grant_allocation"
-            or not db.dossier_authorizes_effects(dossier_id)
-        ):
+        dossier = _payload_owned_dossier_for_origin(db, origin_ref)
+        if dossier is None or str(dossier.get("action_type") or "") != "grant_allocation":
             economy_moves.append(move)
             continue
         # ADR 0055: structured allocation effects are materialized from the
@@ -7248,7 +7284,11 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": remove,
             })
             continue
-        if key not in db.get_fiscal_config() and f"{db._stem_of(key)}_base" not in db.get_fiscal_config():
+        fiscal_config = db.get_fiscal_config()
+        stem = db._stem_of(key)
+        if key not in fiscal_config and not any(
+            candidate in fiscal_config for candidate in (f"{stem}_base", f"{stem}_rate")
+        ):
             applied_fiscal_removes.append({
                 "rejected": True, "reason": f"裁撤目标「{key}」不存在,跳过。",
                 "category": "missing_ref", "item": remove,
@@ -7349,6 +7389,7 @@ def apply_score_extraction(
             key, account, direction, display, init_value,
             note=str(create.get("reason") or "")[:120],
             origin_ref=origin_ref,
+            turn=state.turn,
             commit=commit_now,
         )
         if new_key is None:

@@ -1562,11 +1562,7 @@ def _loads_lenient(
     return obj if isinstance(obj, accepted_types) else None
 
 
-def enrich_initiative_effects(
-    title: str,
-    stage: str = "",
-    llm_config: Any = None,
-) -> Dict[str, Any]:
+def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = None) -> Dict[str, Any]:
     """国策(initiative)立项后 agy 一贯不填效果字段（实测 0/4）。这里聚焦补全：
     按国策标题/现状生成 解决效果(完成回报)/持续效果(月度成本)/失败效果。
     纯数值设计任务（不扮演），与月末 extractor 同款可靠。返回英文 key 的三个 dict。"""
@@ -1627,12 +1623,10 @@ def enrich_initiative_effects(
         if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
             b["region_id"] = "beizhili"
 
-    ongoing = _d(norm.get("ongoing_effects"))
-    failed = _d(norm.get("effect_on_fail"))
     return {
         "effect_on_resolve": resolve,
-        "ongoing_effects": ongoing,
-        "effect_on_fail": failed,
+        "ongoing_effects": _d(norm.get("ongoing_effects")),
+        "effect_on_fail": _d(norm.get("effect_on_fail")),
     }
 
 

@@ -1095,11 +1095,15 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
                 pass  # 坏串透传
         if key and isinstance(delta, int) and not isinstance(delta, bool) and delta == 0:
             continue  # 非空 key 的真 int 0 = 无操作,照旧滤;空 key 垃圾项透传记拒（cmr S3 r8）
-        cleaned.append({
+        entry = {
             "key": key,
             "delta": delta,
             "reason": str(item.get("reason") or "")[:120],
-        })
+        }
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if origin_ref:
+            entry["origin_ref"] = origin_ref
+        cleaned.append(entry)
     return cleaned
 
 
@@ -1175,10 +1179,14 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
             continue
         key = str(item.get("key") or "").strip()
         # 空 key 不再静默滤——透传 applier 记拒（cmr S3 r7）。
-        cleaned.append({
+        entry = {
             "key": key,
             "reason": str(item.get("reason") or "")[:120],
-        })
+        }
+        origin_ref = str(item.get("origin_ref") or "").strip()
+        if origin_ref:
+            entry["origin_ref"] = origin_ref
+        cleaned.append(entry)
     return cleaned
 
 

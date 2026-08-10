@@ -1472,6 +1472,20 @@ class GameDB:
             CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
             ON fiscal_config_tombstones(origin_ref, removed_turn);
 
+            CREATE TABLE IF NOT EXISTS fiscal_config_creations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin
+            ON fiscal_config_creations(origin_ref, turn, id);
+
             CREATE TABLE IF NOT EXISTS fiscal_config_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 turn INTEGER NOT NULL DEFAULT 0,
@@ -2319,6 +2333,7 @@ class GameDB:
         init_value: int,
         note: str = "",
         origin_ref: str = "",
+        turn: int = 0,
         commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
@@ -2358,6 +2373,14 @@ class GameDB:
             "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
             "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?, ?)",
             (rate_key, account, direction, display, sort_order, f"{display}实收率%", origin_ref),
+        )
+        self.conn.executemany(
+            "INSERT INTO fiscal_config_creations "
+            "(turn, key, value, kind, origin_ref, reason) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240]),
+                (int(turn), rate_key, 100, "rate", origin_ref, note[:240]),
+            ],
         )
         if commit:
             self.conn.commit()
@@ -6045,13 +6068,6 @@ class GameDB:
                         })
                         continue
 
-                if require_origin and field not in REGION_TEXT_FIELDS and value not in (0, ""):
-                    origin_error = self.effect_origin_rejection(origin_ref)
-                    if origin_error:
-                        changes.append({"region": row["name"], "field": field, **origin_error,
-                                        "item": {"region_id": region_id, "field": field, "value": value}})
-                        continue
-
                 # ── fiscal JSON 子字段（corruption 等）────────────────────────
                 if field in FISCAL_SCORE_FIELDS:
                     fiscal: dict = json.loads(str(row["fiscal"] or "{}"))
@@ -6066,6 +6082,12 @@ class GameDB:
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
+                    if require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     fiscal[field] = new_value
                     self.conn.execute(
                         "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -6144,6 +6166,12 @@ class GameDB:
                             continue
                     stored_new = text_value
                     log_delta = None
+                if require_origin and field not in REGION_TEXT_FIELDS:
+                    origin_error = self.effect_origin_rejection(origin_ref)
+                    if origin_error:
+                        changes.append({"region": row["name"], "field": field, **origin_error,
+                                        "item": {"region_id": region_id, "field": field, "value": value}})
+                        continue
                 self.conn.execute(
                     f"UPDATE regions SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, region_id),
@@ -13085,7 +13113,7 @@ class GameDB:
         origin = f"dossier:{int(dossier_id)}"
         rows: List[Dict[str, object]] = []
         for effect_kind, table, order in (
-            ("create", "fiscal_config", "key"),
+            ("create", "fiscal_config_creations", "id"),
             ("change", "fiscal_config_changes", "id"),
             ("remove", "fiscal_config_tombstones", "id"),
         ):
