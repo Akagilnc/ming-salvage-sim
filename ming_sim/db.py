@@ -54,6 +54,8 @@ from ming_sim.relations import (
 from ming_sim.strict_types import strict_int, validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
+CURRENT_RESOLVE_CONTRACT_VERSION = 1
+
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
 _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
@@ -1143,6 +1145,7 @@ class GameDB:
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
                 secret_orders_json TEXT NOT NULL DEFAULT '[]',
                 relevant_memories_json TEXT NOT NULL DEFAULT '[]',
+                resolve_contract_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1996,6 +1999,8 @@ class GameDB:
         # 判别位：1=extractor 真产出过（'{}' 即真空 delta），0=占位（phase1 未跑/失败未存）。
         # 没有它 '{}' 三义不可分，恢复入口会把占位当真 delta 重放（cmr S2+S3 F1）。
         self.ensure_column("pending_resolve_context", "extracted_ready", "INTEGER NOT NULL DEFAULT 0")
+        # ready replay 契约版本：升级前在途行缺列后取 0，仅重推演一次；本版 ready 写 1。
+        self.ensure_column("pending_resolve_context", "resolve_contract_version", "INTEGER NOT NULL DEFAULT 0")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
@@ -11994,8 +11999,8 @@ class GameDB:
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
                 secret_orders_json, relevant_memories_json, extracted_delta_json,
-                extracted_ready, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_ready, resolve_contract_version, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
@@ -12004,6 +12009,7 @@ class GameDB:
                    relevant_memories_json = excluded.relevant_memories_json,
                    extracted_delta_json = excluded.extracted_delta_json,
                    extracted_ready = excluded.extracted_ready,
+                   resolve_contract_version = excluded.resolve_contract_version,
                    source = excluded.source""",
             (
                 int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
@@ -12014,6 +12020,7 @@ class GameDB:
                 safe_json_dumps(relevant_memories or [], ensure_ascii=False),
                 safe_json_dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
+                CURRENT_RESOLVE_CONTRACT_VERSION if extracted is not None else 0,
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
@@ -12028,7 +12035,7 @@ class GameDB:
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
             "secret_orders_json, relevant_memories_json, extracted_delta_json, "
-            "extracted_ready, source "
+            "extracted_ready, resolve_contract_version, source "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -12062,6 +12069,7 @@ class GameDB:
             "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
             "relevant_memories": _load(row["relevant_memories_json"], [], "relevant_memories"),
             "extracted": _load_extracted(),
+            "resolve_contract_version": int(row["resolve_contract_version"] or 0),
             "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
         }
 

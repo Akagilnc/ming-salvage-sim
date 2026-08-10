@@ -40,7 +40,6 @@ from ming_sim.decree import (
     resolve_decisions_phase2,
     resolve_directives,
     resolve_settling_recovery,
-    ready_envelope_predates_origin_contract,
     write_decree_with_agno,
 )
 from ming_sim.error_pack import clear_for_resimulation
@@ -2116,7 +2115,7 @@ class GameSession:
             if (
                 ctx is not None
                 and ctx.get("extracted") is not None
-                and ready_envelope_predates_origin_contract(ctx.get("extracted"))
+                and int(ctx.get("resolve_contract_version") or 0) == 0
             ):
                 clear_for_resimulation(self.db, self.state.turn)
                 ctx = self.db.get_resolve_context(self.state.turn)

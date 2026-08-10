@@ -273,26 +273,6 @@ def _legacy_effect_has_work(raw: object) -> bool:
     )
 
 
-def durable_effect_items(raw: object) -> List[Dict[str, object]]:
-    """Decompose canonical semantic work into its per-item durable writes."""
-    effect = loads_effect_dict(raw)
-    items: List[Dict[str, object]] = []
-    for section, values in effect.items():
-        if isinstance(values, list):
-            candidates = ((item, {section: [item]}) for item in values)
-        elif isinstance(values, dict):
-            candidates = (
-                (item, {section: {target: item}})
-                for target, item in values.items()
-            )
-        else:
-            continue
-        for item, singleton in candidates:
-            if isinstance(item, dict) and effect_dict_has_work(singleton):
-                items.append(item)
-    return items
-
-
 def effect_dict_has_work(raw: object) -> bool:
     """Return whether an effect/ongoing payload has semantic work, not just a non-empty shell."""
     effect = loads_effect_dict(raw)
@@ -332,36 +312,6 @@ def effect_dict_has_work(raw: object) -> bool:
         _character_power_effect_has_work(effect.get("character_power_changes")),
         _power_renames_effect_has_work(effect.get("power_renames")),
         _legacy_effect_has_work(effect.get("legacy")),
-        any(
-            isinstance(item, dict)
-            and _nonempty_text(item.get("key"))
-            and _nonzero_int(item.get("delta"))
-            for item in effect.get("fiscal_changes") or []
-        ) if isinstance(effect.get("fiscal_changes"), list) else False,
-        any(
-            isinstance(item, dict)
-            and _nonempty_text(item.get("key"))
-            and item.get("account") in {"国库", "内库"}
-            and item.get("direction") in {"income", "expense"}
-            and ("init_value" not in item or (
-                isinstance(item.get("init_value"), int)
-                and not isinstance(item.get("init_value"), bool)
-            ))
-            for item in effect.get("fiscal_creates") or []
-        ) if isinstance(effect.get("fiscal_creates"), list) else False,
-        any(
-            isinstance(item, dict) and _nonempty_text(item.get("key"))
-            for item in effect.get("fiscal_removes") or []
-        ) if isinstance(effect.get("fiscal_removes"), list) else False,
-        any(
-            isinstance(item, dict)
-            and _nonempty_text(item.get("title"))
-            and (
-                _nonempty_text(item.get("commitment_kind"))
-                or effect_dict_has_work(item.get("ongoing_effects"))
-            )
-            for item in effect.get("new_issues") or []
-        ) if isinstance(effect.get("new_issues"), list) else False,
     )
     return any(checks)
 
