@@ -3,7 +3,7 @@
 真实 WebGame + 真实 FastAPI 路由（httpx.ASGITransport），只把 LLM 边界换成 canned：
 - 大臣对话 = 假 agent.run 的 canned 流；
 - 月末推演 = 只假 simulator/extractor 这层 LLM 种子，resolve_directives 的 pre-settle /
-  结算核 / 推进回合全部真跑。
+  结算核 / 推进回合全部真跑；判官 verdict 仍固定为逐案 promulgated，非真实判官行为。
 
 外部行为断言（HTTP/SSE + DB 末态），不钉内部 helper 结构。
 
@@ -90,17 +90,11 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
-    )
-    monkeypatch.setattr(
-        decree_mod,
-        "run_agent_text",
-        lambda _agent, prompt, _label: json.dumps({
-            "verdicts": [
-                {"dossier_id": row["id"], "decision": "promulgated"}
-                for row in json.loads(prompt)["dossiers"]
-            ],
-        }),
+        decree_mod, "stub_promulgation_verdicts",
+        lambda dossiers, _state: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
     )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))

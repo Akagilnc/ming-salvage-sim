@@ -1176,6 +1176,14 @@ class GameSession:
                                 "deadline_months": payload.get("deadline_months") or 0,
                                 "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                 "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                "dossier_links": __import__(
+                                    "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
+                                ).confirm_dossier_links(
+                                    answer,
+                                    self.db.list_referenceable_dossiers(character.name, self.state.turn),
+                                    payload.get("dossier_links"),
+                                    llm_config=self.llm_config,
+                                ),
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1231,6 +1239,13 @@ class GameSession:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
             augmented = brief + "\n\n" + augmented
+        candidates = self.db.list_referenceable_dossiers(character.name, self.state.turn)
+        if candidates:
+            dossier_brief = "【可参考既有旨意（若有关联，请按标题或事项复述；勿向陛下念内部编号）】\n" + "\n".join(
+                f"- [内部键 {int(row['id'])}] {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
+                for row in candidates
+            )
+            augmented = dossier_brief + "\n\n" + augmented
         # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
         # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
         # 的组装输入不含殿内对话（区间取数复用 audible_entries_for，御前低语不流入）。
@@ -1487,7 +1502,9 @@ class GameSession:
         if needs_draft_fallback or needs_secret_fallback:
             acts = resolve_minister_actions(
                 reply, player_message, default_assignee=minister_name, llm_config=llm_config,
-                secret_context=secret_context)
+                secret_context=secret_context,
+                dossier_candidates=self.db.list_referenceable_dossiers(
+                    minister_name, self.state.turn))
         else:
             acts = {"decree_text": None, "secret_order": None}
         if not has_directive and acts["decree_text"]:
@@ -1507,6 +1524,9 @@ class GameSession:
                     "deadline_months": so.get("deadline_months", 0),
                     "excluded_names": so.get("excluded_names") or [],
                     "excluded_offices": so.get("excluded_offices") or [],
+                    # The extractor emits only links explicitly narrowed in the
+                    # minister's confirmation; carry that immutable set to commit.
+                    "dossier_links": so.get("dossier_links") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:
@@ -2158,14 +2178,13 @@ class GameSession:
             decree = ""
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
-        dossier_only = bool(self.db.list_decree_dossiers(status="proposed"))
-        monthly_report_due = bool(self.db.list_monthly_dossier_progress_nudges())
+        settlement_due = _requires_full_settlement(self.state, self.db)
         # The no-edict fast rail may have speculatively materialized a pending
         # non-directive action, discovered that it requires full settlement, and
         # rolled that transaction back.  The pending row is then the durable reason
         # to enter resolve_directives, whose owning transaction materializes it again.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
-        if not directives and not dossier_only and not monthly_report_due and not pending_action_due:
+        if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
             # 而 add 已冻结——硬要草案=循环死路，ship-pre r5）。directives 仅作非空哨兵。
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
