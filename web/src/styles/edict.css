@@ -191,7 +191,7 @@
 
 .pending-hint {
   margin-right: auto;
-  color: #a8321f !important;
+  color: #a8321f;
 }
 
 /* 拟诏大钮 */
@@ -258,7 +258,7 @@
   letter-spacing: 0.12em;
   font-size: 1.02rem;
   font-family: "Noto Serif SC", "Songti SC", serif;
-  color: #3a2410 !important;
+  color: #3a2410;
   white-space: pre-wrap;
 }
 
@@ -275,7 +275,7 @@
   border: none;
   outline: none;
   resize: none;
-  background: transparent !important;
+  background: transparent;
 }
 
 /* 朱印 */
@@ -289,7 +289,7 @@
   height: 56px;
   border: 2px solid rgba(150, 36, 28, 0.85);
   border-radius: 4px;
-  color: rgba(150, 36, 28, 0.9) !important;
+  color: rgba(150, 36, 28, 0.9);
   font-size: 1.6rem;
   font-weight: 700;
   font-family: "Noto Serif SC", "Songti SC", serif;
