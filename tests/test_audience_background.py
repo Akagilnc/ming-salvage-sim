@@ -7,6 +7,7 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
+from ming_sim.audience_night import get_open_night
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
@@ -132,6 +133,20 @@ def _wait_for(predicate, timeout: float = 1.0) -> bool:
     return predicate()
 
 
+def _assert_next_accepted(stream, db) -> None:
+    accepted = next(stream)
+    open_night = get_open_night(db)
+    assert accepted["type"] == "accepted"
+    assert accepted["campaign_id"] == str(db.kv_get("campaign_id") or "")
+    assert open_night is not None
+    assert accepted["night_id"] == int(open_night["id"])
+    persisted_turn = db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (accepted["chat_turn_id"],)
+    ).fetchone()
+    assert persisted_turn is not None
+    assert int(persisted_turn["night_id"]) == accepted["night_id"]
+
+
 def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(game):
     db, state, content = game
     minister_name = "毕自严"
@@ -139,6 +154,7 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "户部钱粮如何？")
+    _assert_next_accepted(stream, db)
     assert next(stream) == {"type": "delta", "content": "臣"}
 
     stream.close()
@@ -211,6 +227,7 @@ def test_background_audience_reply_keeps_staged_edict_after_observer_departure(g
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。")
+    _assert_next_accepted(stream, db)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -481,6 +498,7 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     web_game = _cli_web_game(db, state, content, agent, secret_order_id=4242)
 
     stream = web_game.chat_stream(minister_name, "密查盐政亏空。")
+    _assert_next_accepted(stream, db)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -500,6 +518,7 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     web_game = _cli_web_game(db, state, content, agent, pending_action_id=77)
 
     stream = web_game.chat_stream(minister_name, "着王承恩调教自省。")
+    _assert_next_accepted(stream, db)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -527,6 +546,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "拟以工具候选甲为户部尚书。")
+    _assert_next_accepted(stream, db)
     assert next(stream)["type"] == "delta"
     stream.close()
 
