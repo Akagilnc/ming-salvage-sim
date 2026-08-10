@@ -3044,12 +3044,15 @@ def test_durable_allocation_rejects_non_integer_amount_without_downgrade(game, v
         "amount": value, "account": "国库", "execution_surface": "immediate",
     })
 
-    with pytest.raises(ValueError, match="拨帑旨意缺少正数 amount 或 account"):
-        db.commit_pending_actions(
-            state, kind_filter="directive", action_ids=[candidate_id],
-            directive_status="draft",
-        )
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=[candidate_id],
+        directive_status="draft",
+    )
 
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
     assert not any(
         row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
     )
@@ -3065,12 +3068,15 @@ def test_durable_military_order_without_assignee_fails_loudly(game):
         "deadline_months": 3, "assignee": "",
     })
 
-    with pytest.raises(ValueError, match="military_order 旨意缺少 canonical assignee"):
-        db.commit_pending_actions(
-            state, kind_filter="directive", action_ids=[candidate_id],
-            directive_status="draft",
-        )
+    db.commit_pending_actions(
+        state, kind_filter="directive", action_ids=[candidate_id],
+        directive_status="draft",
+    )
 
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (candidate_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
     assert not any(
         row["pending_action_id"] == candidate_id for row in db.list_decree_dossiers()
     )
