@@ -1,7 +1,9 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, EdictModal, ReportModal } from "./modals";
+import { ChatModal } from "./chatModal";
+import { EdictModal } from "./edictModal";
+import { ReportModal } from "./reportModal";
 import type { BudgetAccount, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
