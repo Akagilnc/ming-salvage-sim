@@ -313,6 +313,21 @@ export type ChatMessage = {
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
 
+export type AudienceScrollMessage = {
+  role: "user" | "minister" | "attendant" | "scene";
+  speaker: string;
+  audibility: string;
+  time: string | null;
+  content: string;
+  soft_boundary: boolean;
+  beat: "opening" | "entrance" | "dialogue" | "aside" | "scene" | "exit" | "divider" | "closing" | "coda";
+  highlights: string[];
+  container: { time_of_day: string; location: string; audience_type: string };
+  /** Internal durable identity used only to merge a refreshing live projection. */
+  chat_turn_id?: number;
+  record_id?: number;
+};
+
 /** 服务端 turn-identified 召对投影里的一条消息（#499）：user/minister 带 chat_turn_id，
  *  attendant 递话额外带 record_id；前端映射为 ChatMessage 后渲染。 */
 export type ServerChatMessage = {
@@ -433,8 +448,13 @@ export type ExtractionPendingStatus = {
   }>;
 };
 
+export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };
+
 export type ChatResponse = {
   answer: string;
+  campaign_id: string;
+  night_id: number;
+  chat_turn_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
@@ -455,6 +475,9 @@ export type DirectiveConfirmationAmbiguous = {
 };
 
 export type ChatUndoResponse = {
+  campaign_id: string;
+  night_id: number;
+  undone_chat_turn_id: number;
   history: ServerChatMessage[];
   suggestions: Suggestion[];
   directives: Directive[];
@@ -530,11 +553,19 @@ export type MenuStatus = {
 };
 
 export type HistoryTurnItem = {
+  kind: "month" | "night";
   turn: number;
   year: number;
   period: number;
   has_report: boolean;
   has_directive: boolean;
+  /** Persisted closed audience night for a scene archive. */
+  night_id?: number;
+  time_of_day?: string;
+  location?: string;
+  /** Stable sequence among same-turn, same-place, same-time closed scenes. */
+  scene_number?: number;
+  scene_count?: number;
 };
 
 export type HistoryDirective = {
