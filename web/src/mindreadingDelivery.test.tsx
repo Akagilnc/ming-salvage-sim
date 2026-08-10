@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
-import { ChatModal } from "./components/modals";
+import { ChatModal } from "./components/chatModal";
 import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
