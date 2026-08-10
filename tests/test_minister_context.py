@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ming_sim.models import CourtContext
+from ming_sim.knowledge import knowledge_row_visible_to
 from ming_sim.context import character_context, character_context_with_db, minister_dossier
 from ming_sim.context import _faction_band, _identity_bucket
 from ming_sim.registry import (
@@ -560,6 +561,34 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     assert "密令转为明证" not in second_text
     second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
     assert "密令转为明证" not in second_tools["search_memories"](keywords="军饷")
+
+
+def test_secret_order_blacklist_overrides_assignee_brief_and_reference_candidate(game):
+    db, state, _content = game
+    excluded = "毕自严"
+    hidden_order = db.create_secret_order(
+        state, excluded, "黑名单密查军饷", "不可向承办人披露", [],
+        excluded_names=[excluded],
+    )
+    visible_order = db.create_secret_order(
+        state, excluded, "承办人可知军械", "正常承办密令", [],
+    )
+    hidden_dossier = db.get_dossier_for_secret_order(hidden_order)
+    visible_dossier = db.get_dossier_for_secret_order(visible_order)
+
+    events = db._character_knowledge_events(excluded, include_exclusions=True)
+    visible_events = [
+        event for event in events if knowledge_row_visible_to(db, event, excluded)
+    ]
+    visible_sources = {event["source_id"] for event in visible_events}
+    candidate_ids = {
+        row["id"] for row in db.list_referenceable_dossiers(excluded, state.turn)
+    }
+
+    assert f"secret_order_brief:{hidden_order}" not in visible_sources
+    assert hidden_dossier["id"] not in candidate_ids
+    assert f"secret_order_brief:{visible_order}" in visible_sources
+    assert visible_dossier["id"] in candidate_ids
 
 
 def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):

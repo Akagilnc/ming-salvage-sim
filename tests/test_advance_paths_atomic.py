@@ -264,23 +264,13 @@ def _recovery_session(db, state, content, monkeypatch):
 
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
-    original_run_agent_text = decree_mod.run_agent_text
     monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+        decree_mod, "stub_promulgation_verdicts",
+        lambda dossiers, _state: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
     )
-
-    def _run_agent_text(agent, prompt, label):
-        if label == "promulgation-judge":
-            dossiers = json.loads(prompt)["dossiers"]
-            return json.dumps({
-                "verdicts": [
-                    {"dossier_id": row["id"], "decision": "promulgated"}
-                    for row in dossiers
-                ],
-            })
-        return original_run_agent_text(agent, prompt, label)
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", _run_agent_text)
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
