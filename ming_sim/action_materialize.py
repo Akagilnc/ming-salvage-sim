@@ -328,7 +328,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "actor": minister_name,
         }
         roster = draft_res.get("participant_roster")
-        if isinstance(roster, list):
+        if "participant_roster" in draft_res:
+            if not isinstance(roster, list):
+                raise ValueError("参与人须为对象列表")
             from ming_sim.session import _canonical_minister_key
 
             roster = session.db._normalize_participant_roster(

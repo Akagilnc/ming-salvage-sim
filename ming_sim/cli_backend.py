@@ -1251,14 +1251,10 @@ def capture_manual_directive_payload(
         if not isinstance(roster, list):
             raise ValueError("参与人须为对象列表")
         from ming_sim.session import _canonical_minister_key
-        canonical_roster = []
-        for raw_item in roster:
-            if not isinstance(raw_item, dict):
-                raise ValueError("参与人列表项须为对象")
-            normalized = db._normalize_participant_roster([raw_item])
-            if len(normalized) != 1:
-                raise ValueError("参与人对象缺少 character_id")
-            item = normalized[0]
+        canonical_roster = db._normalize_participant_roster(
+            roster, strict_structured=True,
+        )
+        for item in canonical_roster:
             item["character_id"] = _canonical_minister_key(
                 content, str(item["character_id"]), db,
             )
@@ -1266,7 +1262,6 @@ def capture_manual_directive_payload(
                 item["delegator_id"] = _canonical_minister_key(
                     content, str(item["delegator_id"]), db,
                 )
-            canonical_roster.append(item)
         # Reuse the durable roster reference validator here so unknown aliases
         # fail at the manual-entry boundary rather than surviving until issue.
         db._validate_participant_roster_references(canonical_roster)

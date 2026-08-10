@@ -12675,7 +12675,7 @@ class GameDB:
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
                 if strict_structured:
-                    raise ValueError("结构化参与名单每项必须为对象")
+                    raise ValueError("结构化参与人名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue
