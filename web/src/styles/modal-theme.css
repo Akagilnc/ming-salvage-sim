@@ -423,57 +423,66 @@
   background-repeat: no-repeat;
 }
 
-/* 后宫弹窗文字：浅暖色 + 阴影，深底看得清 */
+/* 后宫弹窗文字：浅暖色 + 阴影，深底看得清。
+   双类选择器（0-2-0）代替 !important：须压过 court.css 的 0-1-1 元素规则
+   （.drawer-brand strong/span、.segmented button），又保证下面更具体的覆盖仍生效。 */
 .harem-drawer,
-.harem-drawer * {
-  color: #f3e2c4 !important;
-  font-weight: 700 !important;
-  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85) !important;
+.harem-drawer.harem-drawer * {
+  color: #f3e2c4;
+  font-weight: 700;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85);
 }
 
 .harem-drawer .panel-title,
 .harem-drawer .minister-name {
-  color: #ffd9a0 !important;
-  font-weight: 700 !important;
+  color: #ffd9a0;
+  font-weight: 700;
 }
 
 .harem-drawer .minister-bio {
-  font-weight: 700 !important;
-  color: #f0dcc0 !important;
+  font-weight: 700;
+  color: #f0dcc0;
 }
 
 .harem-drawer .segmented button.active,
 .harem-drawer .segmented button:hover {
-  color: #f9e0aa !important;
+  color: #f9e0aa;
 }
 
 /* 朝堂全屏沉浸模式文字 */
 .court-drawer .panel-title,
 .court-drawer .drawer-brand span {
-  color: #ffe8a0 !important;
+  color: #ffe8a0;
   text-shadow: 0 1px 6px rgba(0,0,0,0.8);
 }
 
+/* 后宫抽屉也带 court-drawer 类（标题命中上条）；但通配年代其标题阴影被后宫通配的
+   important 定成 5px/0.85——用更高优先级写回，避免摘平后渲染变化。 */
+.harem-drawer.harem-drawer .panel-title,
+.harem-drawer.harem-drawer .drawer-brand span {
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85);
+}
+
 .court-drawer .icon-button {
-  color: #ffe8a0 !important;
-  background: rgba(0,0,0,0.35) !important;
+  color: #ffe8a0;
+  background: rgba(0,0,0,0.35);
   border-radius: 50%;
 }
 
 .court-drawer .segmented {
-  background: rgba(20,10,0,0.55) !important;
-  border-color: rgba(255,200,80,0.3) !important;
+  background: rgba(20,10,0,0.55);
+  border-color: rgba(255,200,80,0.3);
   backdrop-filter: blur(4px);
 }
 
 .court-drawer .segmented button {
-  color: rgba(255,220,140,0.75) !important;
+  color: rgba(255,220,140,0.75);
 }
 
 .court-drawer .segmented button.active,
 .court-drawer .segmented button:hover {
-  color: #ffe8a0 !important;
-  background: rgba(143,47,37,0.75) !important;
+  color: #ffe8a0;
+  background: rgba(143,47,37,0.75);
 }
 
 /* 地图详情小面板背景 */
