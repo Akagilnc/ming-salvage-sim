@@ -5,6 +5,7 @@ import { api } from "./api";
 import { useAudienceChat } from "./useAudienceChat";
 import { useDurableProjection } from "./useDurableProjection";
 import { useEscClose } from "./useEscClose";
+import { useEdictActions } from "./useEdictActions";
 import { consumeSettleStream } from "./settleStream";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
@@ -31,7 +32,7 @@ import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDeci
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatUndoResponse, ClosedIssue, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -75,9 +76,6 @@ export function App() {
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
-  const [directiveText, setDirectiveText] = React.useState("");
-  const [editingDirectiveId, setEditingDirectiveId] = React.useState<number | null>(null);
-  const [editingDirectiveText, setEditingDirectiveText] = React.useState("");
   const [decree, setDecree] = React.useState("");
   const [report, setReport] = React.useState("");
   const [gazetteReport, setGazetteReport] = React.useState("");
@@ -141,6 +139,25 @@ export function App() {
     () => refreshDurableProjection(),
     [refreshDurableProjection],
   );
+
+  // 诏书台动作群（useEdictActions.ts）：草案/诏文的全部 busy 动作与代次推进。
+  const {
+    directiveText,
+    editingDirectiveId,
+    editingDirectiveText,
+    setDirectiveText,
+    setEditingDirectiveText,
+    createDirective,
+    startEditDirective,
+    cancelEditDirective,
+    saveDirective,
+    deleteDirective,
+    confirmDirective,
+    rejectDirective,
+    writeDecree,
+    saveDecree,
+    resetDecree,
+  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation, loadState, setDecree });
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
@@ -667,27 +684,6 @@ export function App() {
     }
   };
 
-  const createDirective = async () => {
-    if (!directiveText.trim()) return;
-    setBusy("登记诏书草案");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[] }>("/api/directives", {
-        method: "POST",
-        body: JSON.stringify({
-          text: directiveText.trim(),
-        }),
-      });
-      setDirectiveText("");
-      beginDurableMutation();  // 应用本变更响应前推进代次，作废在飞旧刷新（防旧 done 覆盖）
-      setState((current) => (current ? { ...current, directives: data.directives } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const toggleFavorite = async (minister: Minister) => {
     setBusy(minister.favorite ? "移出收藏" : "加入收藏");
     setError("");
@@ -695,96 +691,6 @@ export function App() {
       await api<{ favorites: string[] }>(`/api/favorites/${encodeURIComponent(minister.name)}`, {
         method: minister.favorite ? "DELETE" : "POST",
       });
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const startEditDirective = (directive: Directive) => {
-    setEditingDirectiveId(directive.id);
-    setEditingDirectiveText(directive.text);
-  };
-
-  const cancelEditDirective = () => {
-    setEditingDirectiveId(null);
-    setEditingDirectiveText("");
-  };
-
-  const saveDirective = async (directive: Directive) => {
-    if (!editingDirectiveText.trim()) return;
-    setBusy("修改草案");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[] }>(`/api/directives/${directive.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ text: editingDirectiveText.trim() }),
-      });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives } : current));
-      cancelEditDirective();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const deleteDirective = async (directiveId: number) => {
-    setBusy("删除草案");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[] }>(`/api/directives/${directiveId}`, { method: "DELETE" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives } : current));
-      if (editingDirectiveId === directiveId) {
-        cancelEditDirective();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const confirmDirective = async (directiveId: number) => {
-    setBusy("核定大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/confirm`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const rejectDirective = async (directiveId: number) => {
-    setBusy("驳回大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const writeDecree = async () => {
-    setBusy("拟写正式诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
-      setDecree(data.decree);
-      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
-      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
       await loadState();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -813,28 +719,6 @@ export function App() {
     } finally {
       setBusy("");
     }
-  };
-
-  const saveDecree = async (text: string) => {
-    setBusy("存改诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree", {
-        method: "PATCH",
-        body: JSON.stringify({ decree: text }),
-      });
-      setDecree(data.decree);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const resetDecree = () => {
-    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
-    setDecree("");
-    setError("");
   };
 
   // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
