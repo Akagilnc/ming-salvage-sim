@@ -58,6 +58,26 @@ def test_dossier_roster_preserves_multiple_leads_support_roles_and_knowers(game)
     ]
 
 
+@pytest.mark.parametrize("participants", [
+    ["not-an-object"],
+    [{}],
+    [{"character_id": "", "tier": "主办"}],
+    [{"character_id": "placeholder"}],
+    [{"character_id": "placeholder", "tier": ""}],
+    [{"character_id": "placeholder", "tier": "旁听"}],
+])
+def test_dossier_create_rejects_malformed_structured_roster(game, participants):
+    db, state, _content = game
+
+    with pytest.raises(ValueError):
+        db.create_decree_dossier(
+            state, action_type="assignment", decree_text="命查仓储。",
+            target_kind="issue", target_id="granary", participants=participants,
+        )
+
+    assert db.list_decree_dossiers() == []
+
+
 def test_dossier_roster_rejects_unknown_character_references_at_write_boundary(game):
     db, state, _content = game
     person = _active_minister(db)
@@ -136,6 +156,40 @@ def test_conversation_draft_roster_reaches_committed_dossier(game, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("bad_roster", [
+    ["not-an-object"],
+    [{"character_id": "placeholder"}],
+])
+def test_conversation_draft_rejects_malformed_roster_without_staging(
+    game, monkeypatch, bad_roster,
+):
+    db, state, content = game
+    minister = _active_minister(db)
+    character = next(ch for ch in content.characters.values() if ch.name == minister)
+    canned = {
+        "拟旨意图": "拟旨", "动作类型": "assignment", "目标类型": "issue",
+        "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
+    }
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *args, **kwargs: (json.dumps(canned, ensure_ascii=False), 1),
+    )
+    session = types.SimpleNamespace(
+        db=db, state=state, content=content, registry=None,
+        llm_config=types.SimpleNamespace(channel="cli"),
+    )
+
+    with pytest.raises(ValueError):
+        GameSession.apply_cli_conversation_actions(
+            session, character, player_message="拟旨查仓。", answer="着会同清查仓储。",
+            has_directive=False, secret_order_id=None,
+            preclassified_intent={"kind": "draft"},
+        )
+
+    assert db.list_pending_actions(state.turn) == []
+    assert db.list_decree_dossiers() == []
+
+
 @pytest.mark.parametrize("write_path", ["create", "append"])
 @pytest.mark.parametrize("delegation", ["self", "unrelated"])
 def test_dossier_roster_write_boundary_rejects_invalid_delegator(
@@ -190,6 +244,33 @@ def test_dossier_roster_append_keeps_existing_entries_and_delegator(game):
         {"character_id": people[1], "tier": "协办", "role": "推算", "delegator_id": people[0]},
         {"character_id": people[2], "tier": "知情", "role": "知会", "delegator_id": None},
     ]
+
+
+def test_dossier_append_is_idempotent_only_for_identical_character_entry(game):
+    db, state, _content = game
+    lead = _active_minister(db)
+    original = {"character_id": lead, "tier": "主办", "role": "总理"}
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar", participants=[original],
+    )
+
+    assert db.append_decree_dossier_participants(dossier_id, [original]) == []
+    with pytest.raises(ValueError, match="机械档不同"):
+        db.append_decree_dossier_participants(
+            dossier_id, [{**original, "tier": "协办"}],
+        )
+    with pytest.raises(ValueError, match="机械档不同"):
+        db.append_decree_dossier_participants(
+            dossier_id, [
+                {"character_id": lead, "tier": "主办", "role": "另职"},
+                original,
+            ],
+        )
+
+    assert db.get_decree_dossier(dossier_id)["participant_roster"] == [{
+        **original, "delegator_id": None,
+    }]
 
 
 def test_month_end_extractor_appends_self_dispatched_participant(game):
@@ -342,6 +423,40 @@ def test_settlement_replay_uses_only_persisted_dossier_authority(game, monkeypat
     assert result.awaiting is False
     assert len(db.get_decree_dossier(allowed)["participant_roster"]) == 2
     assert len(db.get_decree_dossier(denied)["participant_roster"]) == 1
+
+
+def test_driver_crash_persists_frozen_dossier_authority_for_replay(game, monkeypatch):
+    import driver
+    import ming_sim.decree as decree
+
+    db, state, content = game
+    lead, worker = _active_people(db, 2)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="命修历。",
+        target_kind="issue", target_id="calendar",
+        participants=[{"character_id": lead, "tier": "主办"}],
+    )
+    delta = {"dossier_participants": [{
+        "dossier_id": dossier_id, "character_id": worker,
+        "tier": "协办", "delegator_id": lead,
+    }]}
+    monkeypatch.setattr(
+        driver, "settle_with_delta",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("crash after ready")),
+    )
+
+    with pytest.raises(RuntimeError, match="crash after ready"):
+        driver.run_settle(db, state, content, delta)
+
+    ctx = db.get_resolve_context(state.turn)
+    assert ctx["simulator_payload"]["decree_dossiers"] == [{"id": dossier_id}]
+    monkeypatch.setattr(decree, "create_chapter_memory_agent", lambda *args, **kwargs: None)
+    monkeypatch.setattr(decree, "record_chapter_memory", lambda *args, **kwargs: None)
+    result = decree.resolve_settling_recovery(
+        state, db, None, types.SimpleNamespace(), ctx, content=content,
+    )
+    assert result.awaiting is False
+    assert len(db.get_decree_dossier(dossier_id)["participant_roster"]) == 2
 
 
 @pytest.mark.parametrize("authority", [None, set()])

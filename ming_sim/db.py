@@ -9800,7 +9800,7 @@ class GameDB:
         roster_source = participants
         if roster_source is None and isinstance(payload, dict):
             roster_source = payload.get("participant_roster") or payload.get("participants")
-        roster = self._normalize_participant_roster(roster_source)
+        roster = self._normalize_participant_roster(roster_source, strict_structured=True)
         self._validate_participant_roster_references(roster)
         self._validate_dossier_delegations(roster)
         cur = self.conn.execute(
@@ -9865,9 +9865,19 @@ class GameDB:
         existing = self._normalize_participant_roster(
             existing_raw if isinstance(existing_raw, list) else []
         )
-        additions = self._normalize_participant_roster(participants)
+        additions = self._normalize_participant_roster(participants, strict_structured=True)
         self._validate_participant_roster_references(additions)
-        added = [item for item in additions if item not in existing]
+        by_character = {str(item["character_id"]): item for item in existing}
+        added: List[Dict[str, object]] = []
+        for item in additions:
+            character_id = str(item["character_id"])
+            prior = by_character.get(character_id)
+            if prior is not None:
+                if prior != item:
+                    raise ValueError(f"参与人物已在案且机械档不同：{character_id}")
+                continue
+            by_character[character_id] = item
+            added.append(item)
         merged = existing + added
         self._validate_dossier_delegations(merged)
         self._validate_participant_roster_references(merged)
@@ -12642,17 +12652,30 @@ class GameDB:
     # ----- secret_orders（密令系统）-----
 
     @staticmethod
-    def _normalize_participant_roster(participants: Iterable[object] | str | None) -> List[Dict[str, object]]:
-        """Normalize ADR 0053 entries while retaining legacy name input."""
+    def _normalize_participant_roster(
+        participants: Iterable[object] | str | None, *, strict_structured: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Normalize ADR 0053 entries while retaining explicit legacy string input."""
         values = [participants] if isinstance(participants, str) else list(participants or [])
         roster: List[Dict[str, object]] = []
         for value in values:
             if isinstance(value, Mapping):
-                character_id = str(value.get("character_id") or value.get("name") or "").strip()
-                tier = str(value.get("tier") or value.get("档") or "知情").strip()
+                if strict_structured:
+                    character_id = str(value.get("character_id") or "").strip()
+                    tier_value = value.get("tier")
+                else:
+                    character_id = str(value.get("character_id") or value.get("name") or "").strip()
+                    tier_value = value.get("tier") if "tier" in value else value.get("档")
+                if strict_structured and not character_id:
+                    raise ValueError("参与人物 character_id 不能为空")
+                if strict_structured and tier_value is None:
+                    raise ValueError("参与人物 tier 必须显式提供")
+                tier = str(tier_value or ("" if strict_structured else "知情")).strip()
                 role = str(value.get("role") or value.get("职分") or "").strip()
                 delegator = str(value.get("delegator_id") or value.get("delegator") or "").strip()
             else:
+                if strict_structured:
+                    raise ValueError("结构化参与名单每项必须为对象")
                 character_id, tier, role, delegator = str(value).strip(), "知情", "", ""
             if not character_id:
                 continue

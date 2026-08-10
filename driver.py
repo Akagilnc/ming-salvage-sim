@@ -147,7 +147,12 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,
-            simulator_payload={}, secret_orders=[], relevant_memories=[],
+            simulator_payload={
+                "decree_dossiers": [
+                    {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
+                ],
+            },
+            secret_orders=[], relevant_memories=[],
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
     report = settle_with_delta(
