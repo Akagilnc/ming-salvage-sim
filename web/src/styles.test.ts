@@ -1,7 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const styles = readFileSync(`${process.cwd()}/src/styles.css`, "utf8");
+const stylesDir = `${process.cwd()}/src/styles`;
+const styles = readdirSync(stylesDir)
+  .filter((f) => f.endsWith(".css"))
+  .map((f) => readFileSync(`${stylesDir}/${f}`, "utf8"))
+  .join("\n");
 
 describe("窄屏召见布局", () => {
   it("保留两列并让左栏滚动，避免密令被立绘裁掉", () => {
