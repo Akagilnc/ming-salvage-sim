@@ -6,7 +6,7 @@ import { useAudienceChat } from "./useAudienceChat";
 import { useDurableProjection } from "./useDurableProjection";
 import { useEscClose } from "./useEscClose";
 import { useEdictActions } from "./useEdictActions";
-import { consumeSettleStream } from "./settleStream";
+import { useSettlementFlow } from "./useSettlementFlow";
 import { mergePendingActionFailures, refreshRetriedPendingActionFailures } from "./chatFailures";
 import { AppointmentDrawer, ArmyDrawer, BuildingDrawer, CourtDrawer, EconomyDrawer, HaremDrawer, RegionDrawer } from "./components/drawers";
 import { GameMenuModal } from "./components/gameMenu";
@@ -28,11 +28,9 @@ import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
-import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
-import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatUndoResponse, ClosedIssue, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatUndoResponse, ClosedIssue, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, ReplyRetry, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -81,9 +79,6 @@ export function App() {
   const [gazetteReport, setGazetteReport] = React.useState("");
   const [busy, setBusy] = React.useState("");
   const [error, setError] = React.useState("");
-  const [settleStage, setSettleStage] = React.useState("");
-  const [settleThinking, setSettleThinking] = React.useState("");
-  const [settleNarrative, setSettleNarrative] = React.useState("");
   const [closedShown, setClosedShown] = React.useState<number>(() => {
     const raw = sessionStorage.getItem("closedShownTurn");
     return raw ? Number(raw) : -1;
@@ -97,10 +92,6 @@ export function App() {
   // 作弊控制台（Ctrl+~）：cheatDirective 暂存强制结算项，下次颁诏随结算一次性穿入。
   const [cheatOpen, setCheatOpen] = React.useState(false);
   const [cheatDirective, setCheatDirective] = React.useState("");
-  // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
-  const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
-  const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
-  const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
@@ -158,6 +149,30 @@ export function App() {
     saveDecree,
     resetDecree,
   } = useEdictActions({ setBusy, setError, setState, beginDurableMutation, loadState, setDecree });
+
+  // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/退朝/HITL 决策点续裁/失败重拉。
+  // hook 必须在 menu/loading 早退之前调用；surfacePendingActionFailures 定义于早退之后，
+  // 故传惰性包装——仅在游戏视图的事件里才求值，彼时该 const 已初始化。
+  const {
+    settleStage,
+    settleThinking,
+    settleNarrative,
+    pendingDecisions,
+    decisionFailures,
+    pausedDecisionError,
+    issueDecree,
+    submitDecisions,
+    retryPendingDecisions,
+    advanceWithoutEdict,
+  } = useSettlementFlow({
+    setBusy,
+    setError,
+    cheatDirective,
+    setCheatDirective,
+    loadState,
+    surfacePendingActionFailures: (failures) => surfacePendingActionFailures(failures),
+    state,
+  });
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
@@ -287,17 +302,6 @@ export function App() {
     if (endingDismissed) return;
     setActiveModal("ending");
   }, [state, endingDismissed]);
-
-  // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
-  React.useEffect(() => {
-    if (!state) return;
-    const route = routeRefreshDecisions(state.turn.phase, state.pending_decisions || []);
-    if (route.pendingDecisions !== null) {
-      const next = route.pendingDecisions;
-      setPendingDecisions((prev) => replacePendingDecisionsOnRefresh(prev, next) || []);
-    }
-    if (route.error !== null) setPausedDecisionError(route.error);
-  }, [state]);
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
@@ -695,138 +699,6 @@ export function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy("");
-    }
-  };
-
-  const advanceWithoutEdict = async () => {
-    setBusy("退朝");
-    setError("");
-    try {
-      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>("/api/decree/advance_without_edict", { method: "POST" });
-      if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
-        return;
-      }
-      window.location.reload();
-    } catch (err: any) {
-      const detail = err?.detail && typeof err.detail === "object" ? err.detail : err;
-      const failures = detail?.pending_action_failures;
-      if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
-        setError(detail?.message || "退朝失败。");
-        return;
-      }
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  // 颁诏/续裁共用：消费 SSE 推演流（settleStream.ts），stage/thinking/text 实时更新进度区。
-  const consumeSettle = (response: Response) => consumeSettleStream(response, {
-    onStage: (text) => setSettleStage(text),
-    onThinking: (chunk) => setSettleThinking((prev) => prev + chunk),
-    onNarrative: (chunk) => setSettleNarrative((prev) => prev + chunk),
-  });
-
-  const issueDecree = async () => {
-    setBusy("月末结算");
-    setSettleStage("");
-    setSettleThinking("");
-    setSettleNarrative("");
-    setError("");
-    try {
-      // 作弊强制结算项随颁诏一次性穿入；发出即清空，绝不跨回合。
-      const cheatPayload = cheatDirective.trim();
-      const response = await fetch("/api/decree/issue/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cheat: cheatPayload }),
-      });
-      if (cheatPayload) {
-        setCheatDirective("");
-      }
-      const outcome = await consumeSettle(response);
-      if (outcome.kind === "error") {
-        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
-          return;
-        }
-        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
-        setBusy("");
-        return;
-      }
-      if (outcome.kind === "decisions") {
-        // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
-        const failures = outcome.data?.pending_action_failures || [];
-        setDecisionFailures(failures);
-        const route = routeIssueDecisions(outcome.data.decisions || []);
-        if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
-        if (route.error !== null) setPausedDecisionError(route.error);
-        setBusy("");
-        return;
-      }
-      await forwardSteamEvents(outcome.data);
-      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-        return;
-      }
-      // 结算完成：强制整页刷新，草案/对话/局势/closed 弹窗全部按新 state 重新初始化
-      window.location.reload();
-      return;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy("");
-    }
-  };
-
-  const retryPendingDecisions = async () => {
-    setBusy("重新拉取批红");
-    setPausedDecisionError("");
-    try {
-      const freshState = await loadState();
-      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
-      const route = routeRetryDecisions(freshState.turn.phase, freshState.pending_decisions || []);
-      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
-      if (route.error !== null) setPausedDecisionError(route.error);
-    } catch (err) {
-      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy("");
-    }
-  };
-
-  // 皇帝亲裁完所有决策点：续跑 phase2 结算。choices 按决策点 idx 顺序。
-  const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
-    setPendingDecisions([]);
-    setDecisionFailures([]);
-    setBusy("月末结算");
-    setSettleStage("圣意亲裁，续推时局");
-    setSettleThinking("");
-    setSettleNarrative("");
-    setError("");
-    try {
-      const response = await fetch("/api/decree/resolve_decisions/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ choices }),
-      });
-      const outcome = await consumeSettle(response);
-      if (outcome.kind === "error") {
-        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
-          return;
-        }
-        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
-        setBusy("");
-        return;
-      }
-      await forwardSteamEvents(outcome.data);
-      if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-        return;
-      }
-      window.location.reload();
-      return;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
       setBusy("");
     }
   };
