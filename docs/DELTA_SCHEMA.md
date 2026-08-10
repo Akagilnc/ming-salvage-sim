@@ -169,7 +169,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 {
   "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
   "事件结局": {"jisi_lubian": "入塞被遏"},
-  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}}
+  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿", "origin_ref": "盘面自发"}}
 }
 ```
 
