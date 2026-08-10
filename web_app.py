@@ -3565,6 +3565,8 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
             capture_manual_directive_payload,
             request.text.strip(),
             game.session.llm_config,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
         )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
@@ -3601,6 +3603,8 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             capture_manual_directive_payload,
             text.strip(),
             game.session.llm_config,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
         )
         with _serialized_web_write(game):
             if int(game.state.turn) != capture_turn:

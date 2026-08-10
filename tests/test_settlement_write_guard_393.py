@@ -126,7 +126,7 @@ def test_directive_capture_runs_outside_write_gate(
         "target_kind": "issue", "target_id": "land-survey",
     }
 
-    def capture(text, llm_config):
+    def capture(text, llm_config, **_context):
         with web_app._serialized_web_write(game):
             game.db.writes.append("unrelated-write")
         return payload
@@ -167,7 +167,7 @@ def test_directive_capture_result_is_rejected_after_turn_changes(
         "target_kind": "issue", "target_id": "land-survey",
     }
 
-    def capture(_text, _llm_config):
+    def capture(_text, _llm_config, **_context):
         game.state.turn += 1
         return payload
 

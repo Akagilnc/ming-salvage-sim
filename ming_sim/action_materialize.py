@@ -330,21 +330,45 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             "text": draft_res["draft_text"],
             "actor": minister_name,
         }
-        for field_name in ("dossier_action_type", "target_kind", "target_id"):
-            if draft_res.get(field_name) not in (None, ""):
-                semantic_payload[field_name] = draft_res[field_name]
-        for field_name in (
-            "amount", "account", "execution_surface",
-            "assignee", "authorization_id", "deadline_months",
-        ):
-            if draft_res.get(field_name) not in (None, ""):
-                semantic_payload[field_name] = draft_res[field_name]
+        roster = draft_res.get("participant_roster")
+        if "participant_roster" in draft_res:
+            if not isinstance(roster, list):
+                raise ValueError("参与人须为对象列表")
+            from ming_sim.session import _canonical_minister_key
+
+            roster = session.db._normalize_participant_roster(
+                roster, strict_structured=True,
+            )
+            roster = [
+                {
+                    **item,
+                    "character_id": _canonical_minister_key(
+                        session.content, item.get("character_id"), session.db,
+                    ),
+                    **({
+                        "delegator_id": _canonical_minister_key(
+                            session.content, item.get("delegator_id"), session.db,
+                        ),
+                    } if item.get("delegator_id") else {}),
+                }
+                for item in roster
+            ]
+            draft_res["participant_roster"] = roster
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
         is_existing_update = (
             (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
             or (committed_draft is not None and not has_pending_directive)
         )
+        mechanical_fields = (
+            "dossier_action_type", "target_kind", "target_id", "amount", "account",
+            "execution_surface", "assignee", "authorization_id", "deadline_months",
+        )
+        for field_name in mechanical_fields:
+            if draft_res.get(field_name) not in (None, ""):
+                semantic_payload[field_name] = draft_res[field_name]
+        if isinstance(draft_res.get("participant_roster"), list):
+            semantic_payload["participant_roster"] = draft_res["participant_roster"]
         if not is_existing_update:
             semantic_payload.setdefault("dossier_action_type", "special_decree")
             semantic_payload.setdefault("target_kind", "policy")

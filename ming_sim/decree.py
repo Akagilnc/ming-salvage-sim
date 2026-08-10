@@ -242,6 +242,19 @@ def _chosen_rescript_actions(
     return actions
 
 
+def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
+    if not isinstance(simulator_payload, dict):
+        return set()
+    raw = simulator_payload.get("decree_dossiers")
+    if not isinstance(raw, list):
+        return set()
+    return {
+        int(item["id"])
+        for item in raw
+        if isinstance(item, dict) and str(item.get("id") or "").isdigit()
+    }
+
+
 def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
     if not isinstance(simulator_payload, dict):
         return None
@@ -866,6 +879,7 @@ def _replay_settle(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
         ),
         on_stage=lambda label: _emit("stage", label),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
@@ -1104,6 +1118,7 @@ def _settle_after_narrative(
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
+            dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
         ),
         on_stage=lambda label: _emit("stage", label),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、

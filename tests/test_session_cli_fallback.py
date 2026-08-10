@@ -2073,7 +2073,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
     ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
-        actor=minister, notes="原草案", status="draft")
+        actor=minister, notes="原草案", status="draft",
+        dossier_payload={
+            "dossier_action_type": "special_decree", "target_kind": "policy",
+            "target_id": "liao-pay-audit",
+        })
     merged_text = "着户部清核辽饷，并加派监察御史随行。"
     called = []
 
@@ -2081,8 +2085,6 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
         called.append(kwargs.get("existing_draft_text"))
         return {
             "draft_action": "拟旨", "draft_text": merged_text,
-            "dossier_action_type": "assignment",
-            "target_kind": "issue", "target_id": "liao-pay-audit",
         }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
@@ -2118,7 +2120,11 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
     ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
-        actor=minister, notes="原草案", status="draft")
+        actor=minister, notes="原草案", status="draft",
+        dossier_payload={
+            "dossier_action_type": "special_decree", "target_kind": "policy",
+            "target_id": "liao-pay-audit",
+        })
     merged_text = "着户部清核辽饷，并加派监察御史随行。"
     fed_existing = []
 
@@ -2126,8 +2132,6 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
         fed_existing.append(kwargs.get("existing_draft_text"))
         return {
             "draft_action": "拟旨", "draft_text": merged_text,
-            "dossier_action_type": "assignment",
-            "target_kind": "issue", "target_id": "liao-pay-audit",
         }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
