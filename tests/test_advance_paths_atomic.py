@@ -92,6 +92,16 @@ def _drive_fallback(db, state, content, monkeypatch):
     def _stub_sim(*a, **k):
         raise RuntimeError("simulated simulator crash")
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
+    # Fallback now replaces only the narrative and deliberately stays on the
+    # normal extractor→atomic-settle rail.
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "fallback-extractor-output", "fallback-extractor-input"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
@@ -114,8 +124,12 @@ def test_fallback_branch_atomic(game, monkeypatch):
     before_report = db.conn.execute(
         "SELECT COUNT(*) FROM turn_reports WHERE turn=?", (turn,)).fetchone()[0]
 
-    with pytest.raises(RuntimeError, match="fallback inertia boom"):
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as error:
         _drive_fallback(db, state, content, monkeypatch)
+    assert error.value.stage == "settle"
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "fallback inertia boom"
 
     other = sqlite3.connect(db.path)
     try:
@@ -250,23 +264,13 @@ def _recovery_session(db, state, content, monkeypatch):
 
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
-    original_run_agent_text = decree_mod.run_agent_text
     monkeypatch.setattr(
-        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: None,
+        decree_mod, "stub_promulgation_verdicts",
+        lambda dossiers, _state: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
     )
-
-    def _run_agent_text(agent, prompt, label):
-        if label == "promulgation-judge":
-            dossiers = json.loads(prompt)["dossiers"]
-            return json.dumps({
-                "verdicts": [
-                    {"dossier_id": row["id"], "decision": "promulgated"}
-                    for row in dossiers
-                ],
-            })
-        return original_run_agent_text(agent, prompt, label)
-
-    monkeypatch.setattr(decree_mod, "run_agent_text", _run_agent_text)
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state

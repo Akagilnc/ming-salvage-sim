@@ -647,6 +647,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_closes": [],
     "dossier_executions": [],
     "dossier_participants": [],
+    "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
 
@@ -658,7 +659,8 @@ MODULE_FIELDS: Dict[str, set[str]] = {
         "dossier_executions", "dossier_participants",
     },
     "personnel_secret": {
-        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes", "emperor_fate",
+        "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
+        "dossier_progress_reports", "emperor_fate",
     },
 }
 
@@ -877,7 +879,7 @@ def build_extractor_shared_context(
             "id": int(row["id"]),
             "origin_ref": f"dossier:{int(row['id'])}",
             "action_type": str(row["action_type"]),
-            "decree_text": str(row["decree_text"]),
+            "decree_text": str(row.get("decree_text") or ""),
             "status": str(row["status"]),
             "due_turn": int(row.get("due_turn") or 0),
             "participant_roster": list(row.get("participant_roster") or []),
@@ -887,6 +889,9 @@ def build_extractor_shared_context(
     ]
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
+        # #566/#883: monthly briefs travel only on the authorized secret rail.
+        # This is also the canonical history read seam used after restore.
+        slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
