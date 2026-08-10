@@ -2217,6 +2217,11 @@ def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(g
     content.characters["卢象升"].status = "active"
     content.characters["卢象升"].office = office
     content.characters["卢象升"].office_type = office_type
+    db.set_character_office("卢象升", office, office_type, commit=False)
+    db.conn.execute(
+        "UPDATE character_offices SET appointment_tenure = ? WHERE character_name = ?",
+        ("真除", "卢象升"),
+    )
 
     out = issues.apply_score_extraction(
         db,
@@ -2229,6 +2234,7 @@ def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(g
                     "动作": action,
                     "office": office,
                     "office_type": office_type,
+                    "任别": "真除",
                     "reason": "戊寅虏变软判主帅仍督师",
                 }
             ],
@@ -2244,6 +2250,108 @@ def test_strategic_event_person_same_office_noop_does_not_mark_event_triggered(g
         ("卢象升",),
     ).fetchone()
     assert dict(row) == {"status": "active", "office": office, "office_type": office_type}
+
+
+@pytest.mark.parametrize("action", ["任命", "调任"])
+def test_strategic_event_person_tenure_change_is_material_world_state(game, action):
+    """#607：同官同类仅任别改变仍是战果，不得 suppress 同信封落账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    office = "大名府知府"
+    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
+    db.set_character_office("卢象升", office, office_type, commit=False)
+    db.conn.execute(
+        "UPDATE character_offices SET appointment_tenure = ? WHERE character_name = ?",
+        ("署理", "卢象升"),
+    )
+    before_pressure = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"]
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "name": "卢象升",
+                "动作": action,
+                "office": office,
+                "office_type": office_type,
+                "任别": "真除",
+                "reason": "戊寅虏变后主帅由署理转真除",
+            }],
+            "region_delta": {
+                "beizhili": {"military_pressure": -1, "reason": "戊寅虏变边患稍解"}
+            },
+        },
+        content=content,
+    )
+
+    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+    assert db.has_event_triggered("wuyin_lubian")
+    assert db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name = ?",
+        ("卢象升",),
+    ).fetchone()["appointment_tenure"] == "真除"
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == before_pressure - 1
+
+
+@pytest.mark.parametrize("action", ["任命", "调任"])
+def test_strategic_event_invalid_person_tenure_rejects_whole_result_envelope(game, action):
+    """#607：非法任别须逐项拒收，且战略事件同信封战果不得半落主账。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1638
+    state.period = 9
+    office = "大名府知府"
+    office_type = issues.infer_office_type_from_office(office, "", db.llm_config)
+    db.set_character_office("卢象升", office, office_type, commit=False)
+    before_pressure = db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"]
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "wuyin_lubian"}],
+            "人物变更": [{
+                "name": "卢象升",
+                "动作": action,
+                "office": "宣大总督",
+                "office_type": office_type,
+                "任别": "权署",
+                "reason": "戊寅虏变后调度主帅",
+            }],
+            "region_delta": {
+                "beizhili": {"military_pressure": -1, "reason": "戊寅虏变边患稍解"}
+            },
+        },
+        content=content,
+    )
+
+    rejected_issue = out["issue_summary"]["new_issues"][0]
+    assert rejected_issue["rejected"] is True
+    assert rejected_issue["category"] == "invalid_event_result_delta"
+    assert "人物战果拒收" in rejected_issue["reason"]
+    assert "任别非白名单" in rejected_issue["reason"]
+    assert not db.has_event_triggered("wuyin_lubian")
+    office_row = db.conn.execute(
+        "SELECT c.office, co.appointment_tenure FROM characters c "
+        "LEFT JOIN character_offices co ON co.character_name = c.name WHERE c.name = ?",
+        ("卢象升",),
+    ).fetchone()
+    assert dict(office_row) == {"office": office, "appointment_tenure": "真除"}
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id = ?", ("beizhili",)
+    ).fetchone()["military_pressure"] == before_pressure
+    assert any(item.get("rejected") for item in out["applied_person_changes"])
+    assert any(item.get("rejected") for item in out["region_changes"])
 
 
 def test_strategic_event_accepts_power_update_as_material_world_state(game):

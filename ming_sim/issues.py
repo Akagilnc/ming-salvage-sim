@@ -10,9 +10,11 @@ import json
 import math
 import re
 import sqlite3
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.applier import atomic
+from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
@@ -4271,7 +4273,10 @@ def _strategic_event_result_preflight_error(
                 target_office = normalize_office(str(item.get("office") or item.get("new_office") or ""))
                 if target_office:
                     row = db.conn.execute(
-                        "SELECT office, office_type FROM characters WHERE name = ?",
+                        "SELECT c.office, c.office_type, "
+                        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
+                        "FROM characters c LEFT JOIN character_offices co "
+                        "ON co.character_name = c.name WHERE c.name = ?",
                         (name,),
                     ).fetchone()
                     if row is not None:
@@ -4286,12 +4291,28 @@ def _strategic_event_result_preflight_error(
                             current_type,
                             llm_config or db.llm_config,
                         )
-                        if target_office == current_office and target_type == current_type:
+                        current_tenure = str(row["appointment_tenure"] or "真除")
+                        try:
+                            target_tenure = appointment_tenure_from(item)
+                        except ValueError:
+                            return (
+                                f"战略/外敌事件「{event_title or event_id}」人物战果拒收："
+                                f"{name}{action} 任别非白名单"
+                            )
+                        if (
+                            target_office == current_office
+                            and target_type == current_type
+                            and target_tenure == current_tenure
+                        ):
                             return _noop_error(
                                 "person",
                                 name,
                                 action,
-                                {"office": target_office, "office_type": target_type},
+                                {
+                                    "office": target_office,
+                                    "office_type": target_type,
+                                    "appointment_tenure": target_tenure,
+                                },
                             )
             if action != "行止":
                 continue
@@ -5463,8 +5484,15 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
     office_rows = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT character_name, office_title, office_type, source, dossier_id, updated_at "
-            "FROM character_offices"
+            "SELECT character_name, office_title, office_type, source, dossier_id, "
+            "appointment_tenure, updated_at FROM character_offices"
+        ).fetchall()
+    ]
+    office_change_rows = [
+        dict(row)
+        for row in db.conn.execute(
+            "SELECT id, character_name, office_title, office_type, source, dossier_id, "
+            "appointment_tenure, created_at FROM office_change_records"
         ).fetchall()
     ]
     # #9：起复路（apply_office_appointment）中途经 set_character_status/set_character_office 会
@@ -5478,7 +5506,7 @@ def _snapshot_person_write_state(db: GameDB, content: Optional[GameContent]):
         ).fetchall()
     ]
     content_rows = _snapshot_content_character_rows(content)
-    return character_rows, office_rows, faction_rows, content_rows
+    return character_rows, office_rows, faction_rows, content_rows, office_change_rows
 
 
 def _snapshot_content_character_rows(content: Optional[GameContent]) -> Dict[str, Dict[str, object]]:
@@ -5517,8 +5545,9 @@ def _restore_person_write_state(
     *,
     commit: bool = True,
 ) -> None:
-    character_rows, office_rows, faction_rows, content_rows = snapshot
+    character_rows, office_rows, faction_rows, content_rows, office_change_rows = snapshot
     db.conn.execute("DELETE FROM character_offices")
+    db.conn.execute("DELETE FROM office_change_records")
     snapshot_names = {str(row["name"]) for row in character_rows}
     for row in db.conn.execute("SELECT name FROM characters").fetchall():
         name = str(row["name"])
@@ -5544,8 +5573,8 @@ def _restore_person_write_state(
     )
     db.conn.executemany(
         "INSERT INTO character_offices "
-        "(character_name, office_title, office_type, source, dossier_id, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(character_name, office_title, office_type, source, dossier_id, "
+        "appointment_tenure, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row["character_name"],
@@ -5553,9 +5582,23 @@ def _restore_person_write_state(
                 row["office_type"],
                 row["source"],
                 row.get("dossier_id"),
+                row["appointment_tenure"],
                 row["updated_at"],
             )
             for row in office_rows
+        ],
+    )
+    db.conn.executemany(
+        "INSERT INTO office_change_records "
+        "(id, character_name, office_title, office_type, source, dossier_id, "
+        "appointment_tenure, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                row["id"], row["character_name"], row["office_title"],
+                row["office_type"], row["source"], row.get("dossier_id"),
+                row["appointment_tenure"], row["created_at"],
+            )
+            for row in office_change_rows
         ],
     )
     # #9：还原 factions.leverage + leverage_offset（起复路中途的全重算回滚，与 character 状态一并
@@ -5638,6 +5681,16 @@ def validate_delta_shape(extracted: dict) -> None:
     sanitize_delta_shape(extracted)
 
 
+@contextmanager
+def _appointment_tenure_scope(db: GameDB, appointment_tenure: str):
+    previous_tenure = getattr(db.conn, "_appointment_tenure", "真除")
+    db.conn._appointment_tenure = appointment_tenure
+    try:
+        yield
+    finally:
+        db.conn._appointment_tenure = previous_tenure
+
+
 def apply_office_appointment(
     db: GameDB,
     state: GameState,
@@ -5649,6 +5702,7 @@ def apply_office_appointment(
     reason: str = "",
     new_office_type: str = "",
     faction: str = "中立",
+    appointment_tenure: str = "真除",
     llm_config: Any = None,
     commit: bool = True,
 ) -> Dict[str, object]:
@@ -5658,6 +5712,7 @@ def apply_office_appointment(
     返回结果 dict（rejected / kind=transfer|appoint / displaced 等）。"""
     name = str(name or "").strip()
     new_office = str(new_office or "").strip()
+    appointment_tenure = appointment_tenure_from({"任别": appointment_tenure})
     if not name or not new_office:
         return {"name": name, "new_office": new_office, "rejected": True, "reason": "name 或 new_office 空"}
     # 别名归一：自然语言/LLM 可能用别名（韩老、温首辅…），解析到在册大臣的规范 key，
@@ -5692,11 +5747,12 @@ def apply_office_appointment(
                     reason[:200] or "诏书任命",
                     commit=commit,
                 )
-            db.set_character_office(
-                name, new_office, new_office_type,
-                source=reason[:60] or "诏书调任", llm_config=llm_config,
-                commit=commit,
-            )
+            with _appointment_tenure_scope(db, appointment_tenure):
+                db.set_character_office(
+                    name, new_office, new_office_type,
+                    source=reason[:60] or "诏书调任", llm_config=llm_config,
+                    commit=commit,
+                )
             if cur_status == "active":
                 db.conn.execute(
                     "UPDATE characters SET status_reason='', reason_code='' WHERE name=?",
@@ -5754,15 +5810,16 @@ def apply_office_appointment(
     # 与 in_roster 分支同样兜成 rejected、把 exc 记进 reason(不静默吞)(线上 gemini high)。
     snapshot = _snapshot_person_write_state(db, content)
     try:
-        appointed, _ = apply_appointment(
-            db,
-            state,
-            content,
-            registry,
-            appt,
-            llm_config=llm_config,
-            commit=commit,
-        )
+        with _appointment_tenure_scope(db, appointment_tenure):
+            appointed, _ = apply_appointment(
+                db,
+                state,
+                content,
+                registry,
+                appt,
+                llm_config=llm_config,
+                commit=commit,
+            )
         if appointed:
             # 新任也按 office 文字去重(与 transfer 分支对称):新人占独占实职,从他人剔同名分项,
             # 免占缺旧任者留旧官成双缺官(CMR R4：去 replaces 后新任分支漏了顶替)。
@@ -6063,6 +6120,11 @@ def _apply_person_changes(
 
         if action in {"任命", "调任"}:
             # 别名归一已在动作分派前统一完成，确保任命与处置/行止/易主同口径。
+            try:
+                appointment_tenure = appointment_tenure_from(item)
+            except ValueError:
+                applied.append(rejected(item, "任别非白名单", "invalid_enum"))
+                continue
             if content is not None and name not in content.characters:
                 applied.append(rejected(item, "非既有人物", "hallucinated_id"))
                 continue
@@ -6117,6 +6179,7 @@ def _apply_person_changes(
                         reason=str(item.get("reason") or ""),
                         new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                         faction=str(item.get("faction") or "中立"),
+                        appointment_tenure=appointment_tenure,
                         llm_config=llm_config,
                         commit=commit_person_change,
                     ),
@@ -6181,6 +6244,7 @@ def _apply_person_changes(
                 reason=str(item.get("reason") or ""),
                 new_office_type=str(item.get("office_type") or item.get("new_office_type") or ""),
                 faction=str(item.get("faction") or "中立"),
+                appointment_tenure=appointment_tenure,
                 llm_config=llm_config,
                 commit=commit_person_change,
             )
