@@ -1562,7 +1562,7 @@ def test_manual_directive_capture_reaches_structured_dossier(
     ("cli", {"character_id": "韩阁老", "tier": "主办"}),
 ])
 def test_manual_directive_capture_rejects_malformed_roster(
-    game, monkeypatch, entry, bad_roster,
+    game, monkeypatch, capsys, entry, bad_roster,
 ):
     import ming_sim.cli_backend as cli_backend
     from ming_sim.session import GameSession
@@ -1602,11 +1602,12 @@ def test_manual_directive_capture_rejects_malformed_roster(
         assert exc_info.value.status_code == 409
         assert "参与人" in str(exc_info.value.detail)
     else:
-        with pytest.raises(ValueError, match="参与人"):
-            payload = cli_backend.capture_manual_directive_payload(
-                "手工旨意", None, db=db, content=content,
-            )
-            session.add_directive("手工旨意", dossier_payload=payload)
+        import ming_sim.cli.terminal as terminal
+
+        answers = iter(["add", "手工旨意", "back"])
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+        assert terminal.review_directives(session) == "back"
+        assert "参与人" in capsys.readouterr().out
 
     assert db.list_directives(state) == []
 
