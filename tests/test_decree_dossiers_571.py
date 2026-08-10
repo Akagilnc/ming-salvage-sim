@@ -1031,6 +1031,57 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
     assert result["applied_person_changes"] == []
 
 
+def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(game, monkeypatch):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授未知官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "office": "同名未知官",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    seen_office_types = []
+    real_canonical = issue_engine._canonical_appointment_fields
+
+    def trace_canonical(payload, *, current_office_type="", llm_config=None):
+        if str(payload.get("office") or payload.get("new_office") or "") == "同名未知官":
+            seen_office_types.append(current_office_type)
+        return real_canonical(
+            payload,
+            current_office_type=current_office_type,
+            llm_config=llm_config,
+        )
+
+    monkeypatch.setattr(issue_engine, "_canonical_appointment_fields", trace_canonical)
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [
+            {
+                "name": person["name"], "动作": "调任", "office": "前置异官",
+                "office_type": "地方", "任别": "真除",
+                "origin_ref": f"dossier:{dossier_id}",
+            },
+            {
+                "name": person["name"], "动作": "调任", "office": "同名未知官",
+                "任别": "真除", "origin_ref": f"dossier:{dossier_id}",
+            },
+        ],
+    }, content=content)
+
+    assert seen_office_types[-2:] == ["地方", "地方"]
+    assert [item["new_office"] for item in result["applied_person_changes"]] == ["前置异官"]
+    assert content.characters[person["name"]].office == "前置异官"
+
+
 def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(game):
     db, state, content = game
     person = db.conn.execute(

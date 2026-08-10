@@ -112,7 +112,13 @@ def _canonical_appointment_fields(
     return office, office_type, appointment_tenure_from(payload)
 
 
-def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool:
+def _payload_owned_person_duplicate(
+    db: GameDB,
+    item: Dict[str, object],
+    *,
+    current_office_type: str = "",
+    llm_config=None,
+) -> bool:
     dossier = _payload_owned_dossier_for_origin(db, item.get("origin_ref") or item.get("来源引用"))
     if dossier is None or dossier.get("action_type") not in {"appointment", "dismiss_assignment"}:
         return False
@@ -127,13 +133,9 @@ def _payload_owned_person_duplicate(db: GameDB, item: Dict[str, object]) -> bool
         return item_action in {"罢黜", "罢免"}
     if payload_action != "任命" or item_action not in {"任命", "调任"}:
         return False
-    current_row = db.conn.execute(
-        "SELECT office_type FROM characters WHERE name=?", (person,)
-    ).fetchone()
-    current_office_type = str(current_row["office_type"] or "") if current_row else ""
     canonical_kwargs = {
         "current_office_type": current_office_type,
-        "llm_config": db.llm_config,
+        "llm_config": llm_config,
     }
     payload_fields = _canonical_appointment_fields(payload, **canonical_kwargs)
     return bool(payload_fields[0]) and payload_fields == _canonical_appointment_fields(
@@ -6169,6 +6171,8 @@ def _apply_person_changes(
             if origin_error:
                 applied.append(origin_error)
                 continue
+            if action == "罢黜" and _payload_owned_person_duplicate(db, item):
+                continue
             db.set_character_status(
                 state,
                 name,
@@ -6246,6 +6250,13 @@ def _apply_person_changes(
                 applied.append(result)
                 continue
             if content is None:
+                if _payload_owned_person_duplicate(
+                    db,
+                    item,
+                    current_office_type=current_office_type,
+                    llm_config=llm_config or db.llm_config,
+                ):
+                    continue
                 result = {
                     "动作": effective_action,
                     **apply_office_appointment(
@@ -6286,6 +6297,13 @@ def _apply_person_changes(
             origin_error = origin_rejected(item)
             if origin_error:
                 applied.append(origin_error)
+                continue
+            if _payload_owned_person_duplicate(
+                db,
+                item,
+                current_office_type=str(content.characters[name].office_type or ""),
+                llm_config=llm_config or db.llm_config,
+            ):
                 continue
             if derive_label:
                 release_status = "offstage" if derive_label in {"放归", "赦还"} else "active"
@@ -6727,9 +6745,6 @@ def apply_score_extraction(
         runtime_content,
         db,
     )
-    # Payload materializers own appointment rails; narrative and immediate
-    # dossiers deliberately remain extractor-owned/exempt.
-    person_changes = [item for item in person_changes if not _payload_owned_person_duplicate(db, item)]
     use_legacy_person_keys = not person_changes
     legacy_person_mode = bool(legacy_person_changes)
     strategic_event_pool_ids = _event_pool_ids_for_strategic_foreign_nodes(extracted, runtime_content)
