@@ -50,7 +50,9 @@ from ming_sim.issues import (
     validate_delta_shape,
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
-from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
+from ming_sim.models import (
+    FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase, durable_effect_items,
+)
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -789,22 +791,11 @@ def _provenance_from_stored(value: object) -> Provenance:
 
 
 def ready_envelope_predates_origin_contract(extracted: object) -> bool:
-    """Whether a persisted ready delta has durable items from before per-item origins."""
-    if not isinstance(extracted, dict):
-        return False
-    list_rails = ("economy_moves", "fiscal_changes", "fiscal_creates", "fiscal_removes",
-                  "new_armies", "人物变更", "person_changes")
-    for rail in list_rails:
-        for item in extracted.get(rail) or []:
-            if isinstance(item, dict) and not str(item.get("origin_ref") or item.get("来源引用") or "").strip():
-                return True
-    for rail in ("region_delta", "army_delta", "power_updates"):
-        values = extracted.get(rail) or {}
-        if isinstance(values, dict):
-            for item in values.values():
-                if isinstance(item, dict) and not str(item.get("origin_ref") or item.get("来源引用") or "").strip():
-                    return True
-    return False
+    """Whether canonical durable work predates the per-item origin contract."""
+    return any(
+        not str(item.get("origin_ref") or item.get("来源引用") or "").strip()
+        for item in durable_effect_items(extracted)
+    )
 
 
 def resolve_settling_recovery(

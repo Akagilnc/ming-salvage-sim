@@ -272,6 +272,40 @@ def _recovery_session(db, state, content, monkeypatch):
     return sess
 
 
+def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monkeypatch):
+    """A pre-origin ready commitment is not replayed and cannot advance the period."""
+    import ming_sim.decree as dm
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = "settling"
+    db.save_state(state)
+    persist_resolve_context(
+        db, turn, {
+            "new_issues": [{
+                "title": "旧档承诺", "commitment_kind": "until_stop",
+                "stop_condition": {"type": "manual"},
+            }],
+        }, decree_text="旧诏", narrative="旧叙事", simulator_payload={},
+        secret_orders=[], relevant_memories=[],
+    )
+    replayed = []
+    monkeypatch.setattr(session_mod, "resolve_settling_recovery", lambda *a, **k: replayed.append(True))
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "simulate_season_with_payload", lambda *a, **k: ("重推演", {}))
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
+
+    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
+
+    assert result.awaiting is False
+    assert replayed == []
+    assert state.turn == turn + 1
+
+
 def test_recovery_entry_consumes_ready_context(saved_game, monkeypatch):
     """settling + ready context（手工 persist 一份非空 delta）→ resolve_turn 直入 apply：
     不重跑 simulator/extractor（stub 成抛错断言未被调）、context 清掉、turn+1（ADR 0008 决定 3）。

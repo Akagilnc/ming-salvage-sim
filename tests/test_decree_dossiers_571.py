@@ -1000,6 +1000,39 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
     assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
 
 
+def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(game):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name, loyalty FROM characters WHERE status='active' AND loyalty < 100 LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "name": person["name"],
+            "office": "兵部尚书",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [{
+            "name": person["name"], "动作": "评定", "loyalty": 1,
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content=content)
+
+    assert result["applied_person_changes"][0]["动作"] == "评定"
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (person["name"],)
+    ).fetchone()[0] == person["loyalty"] + 1
+
+
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
