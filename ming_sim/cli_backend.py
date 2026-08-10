@@ -1247,18 +1247,22 @@ def capture_manual_directive_payload(
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
     roster = payload.get("participant_roster")
-    if isinstance(roster, list) and roster and db is not None and content is not None:
+    if roster is not None and db is not None and content is not None:
+        if not isinstance(roster, list):
+            raise ValueError("参与人须为对象列表")
         from ming_sim.session import _canonical_minister_key
         canonical_roster = []
         for raw_item in roster:
             if not isinstance(raw_item, dict):
-                canonical_roster.append(raw_item)
-                continue
-            item = dict(raw_item)
+                raise ValueError("参与人列表项须为对象")
+            normalized = db._normalize_participant_roster([raw_item])
+            if len(normalized) != 1:
+                raise ValueError("参与人对象缺少 character_id")
+            item = normalized[0]
             item["character_id"] = _canonical_minister_key(
-                content, str(item.get("character_id") or ""), db,
+                content, str(item["character_id"]), db,
             )
-            if str(item.get("delegator_id") or "").strip():
+            if item.get("delegator_id"):
                 item["delegator_id"] = _canonical_minister_key(
                     content, str(item["delegator_id"]), db,
                 )

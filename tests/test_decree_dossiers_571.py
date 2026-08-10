@@ -1556,6 +1556,61 @@ def test_manual_directive_capture_reaches_structured_dossier(
         assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
 
 
+@pytest.mark.parametrize(("entry", "bad_roster"), [
+    ("web", ["韩阁老"]),
+    ("cli", [{"tier": "主办"}]),
+    ("cli", {"character_id": "韩阁老", "tier": "主办"}),
+])
+def test_manual_directive_capture_rejects_malformed_roster(
+    game, monkeypatch, entry, bad_roster,
+):
+    import ming_sim.cli_backend as cli_backend
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    response = {
+        "拟旨意图": "拟旨", "动作类型": "assignment",
+        "目标类型": "issue", "目标ID": "granary-audit",
+        "参与人": bad_roster,
+    }
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config",
+        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
+    )
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.llm_config = None
+    session.content = content
+
+    if entry == "web":
+        import web_app
+        from fastapi import HTTPException
+
+        web_game = types.SimpleNamespace(
+            db=db, state=state, content=content, session=session,
+            directive_rows=lambda: db.list_directives(
+                state, statuses=("pending", "draft"),
+            ),
+            directive_payload=lambda row: dict(row),
+        )
+        monkeypatch.setattr(web_app, "get_game", lambda: web_game)
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(web_app.api_create_directive(
+                web_app.DirectiveRequest(text="手工旨意"),
+            ))
+        assert exc_info.value.status_code == 409
+        assert "参与人" in str(exc_info.value.detail)
+    else:
+        with pytest.raises(ValueError, match="参与人"):
+            payload = cli_backend.capture_manual_directive_payload(
+                "手工旨意", None, db=db, content=content,
+            )
+            session.add_directive("手工旨意", dossier_payload=payload)
+
+    assert db.list_directives(state) == []
+
+
 def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
     from ming_sim.session import GameSession
 
