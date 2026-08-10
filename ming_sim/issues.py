@@ -7597,8 +7597,20 @@ def apply_score_extraction(
                     (f"{like_prefix}%",),
                 ).fetchone()
                 if already_disclosed is None:
+                    dossier = db.get_dossier_for_secret_order(real_id)
+                    progress = (
+                        db.list_dossier_progress(int(dossier["id"]))
+                        if dossier is not None else []
+                    )
+                    progress_text = "\n".join(
+                        f"【{item['progress_band']}】{item['memorial_text']}"
+                        for item in progress
+                    )
+                    public_body = sim_note
+                    if progress_text:
+                        public_body = f"{sim_note}\n{progress_text}"
                     db.record_public_knowledge_event(
-                        state, str(order["title"]), sim_note,
+                        state, str(order["title"]), public_body,
                         source_id=f"{disclosure_prefix}{state.turn}",
                         commit=commit_now,
                     )
