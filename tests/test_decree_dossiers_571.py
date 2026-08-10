@@ -1022,7 +1022,7 @@ def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(ga
 
     result = issue_engine.apply_score_extraction(db, state, {
         "人物变更": [{
-            "name": person["name"], "动作": "任命", "office": "兵部尚书",
+            "name": person["name"], "动作": "调任", "office": "兵部尚书",
             "office_type": "central", "任别": "真除",
             "origin_ref": f"dossier:{dossier_id}",
         }],
