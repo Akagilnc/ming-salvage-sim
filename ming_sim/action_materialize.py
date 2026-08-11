@@ -408,6 +408,34 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         ctx.draft_staged = True
 
 
+def _materialize_pacification(ctx: MaterializeCtx) -> None:
+    """暂存招抚案卷；确认与判后人物易主仍走既有案卷链。"""
+    if (
+        ctx.intent_kind != "pacification"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    target_id = intent.get("target_id")
+    if not isinstance(target_id, str) or not target_id.strip():
+        return
+    minister_name = ctx.character.name
+    ctx.out["pending_action_id"] = ctx.session.db.stage_directive_candidate(
+        ctx.session.state.turn,
+        minister_name,
+        payload={
+            "text": ctx.reply,
+            "actor": minister_name,
+            "dossier_action_type": "pacification",
+            "target_kind": "character",
+            "target_id": target_id.strip(),
+        },
+    )
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action
     from ming_sim.session import (
@@ -498,6 +526,13 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
             fields=(),
             materialize_fn=_materialize_draft,
+        ),
+        ActionCluster(
+            "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
+            fields=(
+                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+            ),
+            materialize_fn=_materialize_pacification,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
