@@ -55,6 +55,7 @@ function renderModal(props: {
   extractionPendingCount?: number;
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
+  secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (text?: string) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
@@ -107,7 +108,7 @@ function renderModal(props: {
         composerHint=""
         input={input}
         error=""
-        secretOrders={[]}
+        secretOrders={props.secretOrders ?? []}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
         onInput={(value) => setInput(value)}
@@ -510,6 +511,39 @@ describe("ChatModal — four diegetic roles (#540)", () => {
     expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
     expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
     expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
+  });
+});
+
+describe("ChatModal — soft scenes and current audience (#543)", () => {
+  it("shows named and unnamed divisions while the sidebar follows the latest recognised minister", async () => {
+    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣" };
+    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+      { role: "minister", speaker: "杨嗣昌", content: "臣且告退。", beat: "dialogue", container: { audience_type: "越次" } },
+      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次" } },
+      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次" } },
+      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次" } },
+      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次" } },
+    ] }) }));
+
+    const host = renderModal({
+      minister: yang,
+      ministers: [yang, hong],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次");
+    expect(host.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
+    expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
+    expect(host.querySelector(".chat-secret-orders")?.textContent).toContain("密察边饷");
+    expect(host.textContent).toContain("臣且告退。");
+    const divisions = Array.from(host.querySelectorAll(".beat-divider"));
+    expect(divisions).toHaveLength(2);
+    expect(divisions[0]?.textContent).toContain("洪承畴");
+    expect(divisions[1]?.textContent).not.toMatch(/杨嗣昌|洪承畴/);
   });
 });
 
