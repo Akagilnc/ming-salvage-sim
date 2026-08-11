@@ -1064,8 +1064,13 @@ class WebGame:
         }
 
     def directive_rows(self):
-        # 颁诏候选 = draft；UI 列表含 pending
-        return self.db.list_directives(self.state, statuses=("pending", "draft"))
+        """Player desk projection: only current-turn directives not yet made dossiers."""
+        return [
+            row for row in self.db.list_directives(
+                self.state, statuses=("pending", "draft"),
+            )
+            if self.db.get_dossier_for_directive(int(row["id"])) is None
+        ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
         region_positions = {
@@ -3626,36 +3631,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
-
-
-@app.post("/api/directives/{directive_id}/confirm")
-async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
-    """大臣拟旨经皇帝核定：pending → draft。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.confirm_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/directives/{directive_id}/reject")
-async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
-    """皇帝驳回大臣拟旨：pending → rejected。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.reject_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
 
 
 @app.post("/api/decree/write")

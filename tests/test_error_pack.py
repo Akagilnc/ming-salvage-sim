@@ -337,33 +337,6 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     assert "错误包" in str(ei.value.detail)
 
 
-def test_web_directive_endpoints_409_when_frozen(monkeypatch):
-    """恢复窗冻结的 mutator 在 web 端回 409 指引而非 500（ship-pre r3 codex）。"""
-    import asyncio
-    from fastapi import HTTPException
-    import web_app
-
-    class _StubSession:
-        def confirm_directive(self, directive_id):
-            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
-        def pending_count(self):
-            return 0
-
-    class _StubGame:
-        session = _StubSession()
-        def directive_payload(self, item):
-            return {}
-        def directive_rows(self):
-            return []
-
-    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
-
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_confirm_directive(1))
-    assert ei.value.status_code == 409
-    assert "结算" in str(ei.value.detail)
-
-
 def test_shape_garbage_extractor_product_is_sanitized_and_recorded(game, monkeypatch, tmp_path):
     """ADR0015：可拆 shape 垃圾不再中止整月，拒收留痕后净化落库。"""
     from tests.test_resolve_context_recovery import _drive_settle_after_narrative

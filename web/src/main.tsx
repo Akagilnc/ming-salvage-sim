@@ -100,6 +100,7 @@ export function App() {
   const selectedMinisterRef = React.useRef<string>("");
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
   const sendAudienceCommandRef = React.useRef<(text: string) => Promise<void>>(async () => {});
+  const advanceWithoutEdictRef = React.useRef<() => Promise<void>>(async () => {});
   const suppressNextReportRef = React.useRef(false);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
@@ -485,6 +486,11 @@ export function App() {
 
     const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
+    if (["q", "quit", "退朝", "下朝"].includes(message.toLowerCase())) {
+      if (fromComposer) setInput("");
+      await advanceWithoutEdictRef.current();
+      return;
+    }
     setError("");
     setComposerHint("");
     setChatNotice("");
@@ -821,6 +827,7 @@ export function App() {
       setBusy("");
     }
   };
+  advanceWithoutEdictRef.current = advanceWithoutEdict;
 
   const resetDecree = () => {
     // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
@@ -1247,10 +1254,7 @@ export function App() {
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
-            onWriteDecree={writeDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onResetDecree={resetDecree}
-            onIssueDecree={issueDecree}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>

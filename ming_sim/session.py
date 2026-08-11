@@ -1988,14 +1988,6 @@ class GameSession:
         if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
             raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
 
-    def confirm_directive(self, directive_id: int) -> None:
-        self._refuse_if_settling()
-        self.db.confirm_directive(directive_id, self.state)
-
-    def reject_directive(self, directive_id: int) -> None:
-        self._refuse_if_settling()
-        self.db.reject_directive(directive_id)
-
     def add_directive(
         self, text: str, notes: str = "",
         dossier_payload: Optional[Dict[str, object]] = None,

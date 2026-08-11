@@ -223,10 +223,7 @@ function renderEdictModal(props: {
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
-        onWriteDecree={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
-        onResetDecree={() => {}}
-        onIssueDecree={() => {}}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -289,7 +286,9 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).not.toContain("准");
     expect(host.textContent).not.toContain("驳");
     expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toContain("拟诏");
+    expect(host.textContent).toContain("退朝");
+    expect(host.textContent).not.toContain("返工改稿");
+    expect(host.textContent).not.toContain("盖玺颁布");
   });
 
   it("offers durable recovery entry for failed secret orders", () => {
