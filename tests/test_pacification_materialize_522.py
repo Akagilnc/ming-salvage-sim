@@ -35,6 +35,21 @@ def _stage_pacification(db, turn, target="张献忠"):
     return ctx
 
 
+def _rejected_verdict(dossier_id):
+    return {
+        "dossier_id": dossier_id, "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "gatekeeper_id": None, "reason": "科臣封驳。",
+        "affected_parties": [{"kind": "faction", "key": "东林", "severity": "不满"}],
+        "midzhi_unpromulgatable": False,
+        "criteria_snapshot": {
+            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
+            "authorization_ids": [], "endorsement_entry_ids": [],
+        },
+    }
+
+
 def _make_enemy(db, content, name="张献忠", power_id="bandit_522"):
     db.conn.execute(
         """INSERT INTO powers
@@ -79,22 +94,26 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     db.commit_pending_actions(state, content=content)
     dossier = next(d for d in db.list_decree_dossiers(status="proposed")
                    if d["action_type"] == "pacification")
-    db.record_dossier_decision(dossier["id"], decision)
+    verdict = ({"dossier_id": dossier["id"], "decision": "promulgated"}
+               if decision == "promulgated" else _rejected_verdict(dossier["id"]))
+    db.apply_dossier_verdicts(state, [verdict], content=content)
 
+    origin = f"dossier:{dossier['id']}"
+    applied = issues.apply_score_extraction(db, state, {"人物变更": [
+        {"name": "张献忠", "origin_ref": origin, "动作": "易主",
+         "new_power": "ming", "方式": "主动归附",
+         "反噬": {"bandit_522": {"military_strength": -5, "reason": "受抚散众"}},
+         "reason": "受抚归明"},
+        {"name": "张献忠", "origin_ref": origin, "动作": "任命",
+         "office": "游击将军", "reason": "旨授游击将军"},
+    ]}, content=content)
+    changes = [x for x in applied["applied_person_changes"] if x.get("name") == "张献忠"]
+    accepted = [x["动作"] for x in changes if not x.get("rejected")]
     if decision == "promulgated":
-        origin = f"dossier:{dossier['id']}"
-        applied = issues.apply_score_extraction(db, state, {"人物变更": [
-            {"name": "张献忠", "origin_ref": origin, "动作": "易主",
-             "new_power": "ming", "方式": "主动归附",
-             "反噬": {"bandit_522": {"military_strength": -5, "reason": "受抚散众"}},
-             "reason": "受抚归明"},
-            {"name": "张献忠", "origin_ref": origin, "动作": "任命",
-             "office": "游击将军", "reason": "旨授游击将军"},
-        ]}, content=content)
-        changes = [x for x in applied["applied_person_changes"] if x.get("name") == "张献忠"]
-        assert [x["动作"] for x in changes if not x.get("rejected")] == ["易主", "任命"]
+        assert accepted == ["易主", "任命"]
         expected = ("ming", "游击将军", 50)
     else:
+        assert accepted == []
         expected = ("bandit_522", "张献忠流寇首领", 55)
 
     row = db.conn.execute(
@@ -125,10 +144,35 @@ def test_scripted_action_classes_are_mutually_exclusive(game):
     assert payload["dossier_action_type"] == "pacification"
     assert payload["target_id"] == "张献忠"
 
-    # 既有兄弟 owner 的结构化种类不能被 pacification materializer 吞入。
-    for kind in ("punishment", "military_order"):
-        other = _ctx(db, ctx.character.name, [{"kind": kind, "target_id": "张献忠"}], state.turn)
-        run_materialize_pipeline(other)
-        assert "pending_action_id" not in other.out
+    # 惩处由既有 dossier owner 成案，不借道 action-cluster classifier。
+    punishment_id = db.create_decree_dossier(
+        state, action_type="punishment", decree_text="命查其罪",
+        target_kind="character", target_id="张献忠",
+        executor_kind="character", executor_id=ctx.character.name,
+    )
+    punishment = db.get_decree_dossier(punishment_id)
+    assert punishment["action_type"] == "punishment"
+
+    # 军令由既有结构化旨稿 owner 成案，并保留合法承办人与外部旨稿。
+    directive_id = db.add_directive(
+        state, None, "命整军进剿", "脚本化判词", actor=ctx.character.name,
+        dossier_payload={
+            "dossier_action_type": "military_order",
+            "target_kind": "region", "target_id": "shaanxi",
+            "assignee": ctx.character.name, "deadline_months": 3,
+        },
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    directive = next(d for d in db.list_directives(state) if d["id"] == directive_id)
+    military = db.get_dossier_for_directive(directive_id)
+    assert json.loads(directive["dossier_payload_json"])["dossier_action_type"] == "military_order"
+    assert military["action_type"] == "military_order"
+    assert military["executor_id"] == ctx.character.name
+
+    dossiers = db.list_decree_dossiers()
+    assert {d["action_type"] for d in dossiers if d["id"] in {
+        punishment_id, military["id"],
+    }} == {"punishment", "military_order"}
+    assert len([d for d in dossiers if d["action_type"] == "pacification"]) == 0
     assert len([p for p in db.list_pending_actions(state.turn)
                 if json.loads(p["payload_json"]).get("dossier_action_type") == "pacification"]) == 1
