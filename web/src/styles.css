@@ -3722,7 +3722,7 @@ button:disabled {
 }
 
 /* 聊天气泡：透明后用细边区分主/客 */
-.modal-bg-chat .chat-message {
+.modal-bg-chat .chat-message:not(.aside) {
   border: 1px solid rgba(255, 232, 170, 0.2);
 }
 
@@ -3732,10 +3732,6 @@ button:disabled {
 
 .modal-bg-chat .chat-message.minister {
   border-color: rgba(122, 180, 150, 0.4);
-}
-
-.modal-bg-chat .chat-message.aside {
-  border-style: dashed;
 }
 
 /* 终章弹窗：整层盖掉 bg_state.png 黄底，统一深墨色（含顶栏）*/
