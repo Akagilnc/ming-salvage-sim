@@ -997,6 +997,10 @@ def classify_cli_action_intent(
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
+def _directive_mode(value: object) -> str:
+    return "midzhi" if str(value or "").strip() == "中旨直发" else "ordinary"
+
+
 def extract_draft_intent(
     player_message: Optional[str],
     minister_reply: str,
@@ -1074,7 +1078,7 @@ def extract_draft_intent(
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
-                "mode": "midzhi" if str(value.get("颁布方式") or "").strip() == "中旨直发" else "ordinary",
+                "mode": _directive_mode(value.get("颁布方式")),
                 "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
@@ -1176,7 +1180,7 @@ def extract_draft_intent(
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
-        "mode": "midzhi" if str(obj.get("颁布方式") or "").strip() == "中旨直发" else "ordinary",
+        "mode": _directive_mode(obj.get("颁布方式")),
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),

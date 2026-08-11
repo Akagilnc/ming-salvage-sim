@@ -87,12 +87,7 @@ def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optiona
     row = db.get_decree_dossier(dossier_id)
     if row is None or not db.dossier_authorizes_effects(dossier_id):
         return None
-    try:
-        payload = row.get("payload") or json.loads(str(row.get("payload_json") or "{}"))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict):
-        return None
+    payload = db._dossier_payload(row)
     if dossier_action_policy(row.get("action_type"), payload)["effect_owner"] != "payload":
         return None
     return {**row, "payload": payload}

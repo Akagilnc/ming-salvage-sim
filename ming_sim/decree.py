@@ -362,9 +362,7 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """Whether advancing this month requires the normal simulator/extractor rail."""
     executing_work = False
     for row in db.list_decree_dossiers(status="executing"):
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = db._dossier_payload(row)
         # Terminal immediate actions (notably short secret orders) are already
         # materialized and must retain the no-edict fast path.  Other executing
         # dossiers remain simulator continuation context under the #560 policy.
@@ -528,9 +526,7 @@ def resolve_directives(
             else:
                 reviewed, exempt = [], []
                 for dossier in proposed_dossiers:
-                    payload = dossier.get("payload")
-                    if not isinstance(payload, dict):
-                        payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                    payload = db._dossier_payload(dossier)
                     (reviewed if dossier_action_policy(
                         dossier.get("action_type"), payload,
                     )["external_review"] else exempt).append(dossier)
@@ -574,9 +570,7 @@ def resolve_directives(
     ]
     dossier_payload = []
     for row in simulation_visible_dossiers:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = db._dossier_payload(row)
         policy = dossier_action_policy(row.get("action_type"), payload)
         # Narrative-owned effects are simulator material.  Deterministically
         # materialized in-transit dossiers remain visible only as execution
