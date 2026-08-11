@@ -58,6 +58,57 @@ def test_real_midzhi_entry_reaches_provider_and_persists_stigma(game, monkeypatc
     }]
 
 
+def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
+    game, monkeypatch,
+):
+    db, state, content = game
+    dossier_id = _make_midzhi_dossier(db, state)
+
+    def provider(_dossiers, _state):
+        return [{
+            "dossier_id": dossier_id,
+            "decision": "rejected",
+            "blocked_layer": "six_offices",
+            "primary_opponents": ["东林"],
+            "affected_parties": [
+                {"kind": "faction", "key": "东林", "severity": "不满"},
+            ],
+            "gatekeeper_id": None,
+            "reason": "科臣封驳。",
+            "midzhi_unpromulgatable": True,
+            "criteria_snapshot": {
+                "imperial_authority_band": "偏弱",
+                "involved_office_types": ["言官"],
+                "authorization_ids": [],
+                "endorsement_entry_ids": [],
+            },
+        }]
+
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod,
+        "simulate_season_with_payload",
+        lambda _simulator, _state, _db, _decree_text, _previous, **kwargs: (
+            "本月邸报。", kwargs["simulator_payload"],
+        ),
+    )
+
+    result = decree_mod.resolve_directives(
+        state, db, None, None, [object()], "中旨直发，清核河工",
+        content=content, promulgation_verdict_provider=provider,
+    )
+
+    assert result.awaiting is True
+    dossier_decisions = {
+        option["dossier_decision"]
+        for decision in result.decisions
+        if decision["event_id"] == f"dossier:{dossier_id}"
+        for option in decision["options"]
+    }
+    assert dossier_decisions == {"withdrawn", "hold"}
+    assert "force_promulgated" not in dossier_decisions
+
+
 def test_ordinary_entry_remains_ordinary(monkeypatch):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
