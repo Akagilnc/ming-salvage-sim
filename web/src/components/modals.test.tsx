@@ -355,6 +355,45 @@ describe("ChatModal — #527 prefix chips only (拟旨/下密令)", () => {
   });
 });
 
+describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
+  it("renders entrance and exit facts as scene beats, not system notes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        night_id: 9,
+        messages: [
+          { role: "scene", speaker: "", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
+          { role: "scene", speaker: "", content: "周延儒告退。", beat: "exit", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
+        ],
+      }),
+    }));
+
+    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 9 });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await vi.waitFor(() => expect(document.querySelectorAll(".chat-message.scene")).toHaveLength(2));
+
+    expect(document.querySelector(".scene.beat-entrance")?.textContent).toContain("入殿");
+    expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
+    expect(document.querySelector(".chat-system-note")).toBeNull();
+  });
+
+  it("keeps failure and recovery affordances in the system layer", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      replyRetry: { chat_turn_id: 12, question: "边情如何？" },
+      onRetryReply: vi.fn(),
+      extractionPendingCount: 1,
+      onRetryExtraction: vi.fn(),
+      chatFailures: [{ id: 7, kind: "secret_order", action: "新建", retryable: true, message: "密令下达失败" }],
+    });
+
+    expect(document.querySelectorAll('.chat-system-note[role="alert"]')).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll("button")).map((button) => button.textContent)).toEqual(expect.arrayContaining(["重新生成回话", "重试补写", "重试"]));
+    expect(document.querySelector(".chat-message.scene")).toBeNull();
+  });
+});
+
 describe("ChatModal — placeholder switches on character type", () => {
   it("shows 大臣 and 他 in placeholder for ministers", () => {
     renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_" });
