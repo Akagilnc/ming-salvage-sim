@@ -11125,12 +11125,15 @@ class GameDB:
         ).fetchall()
         result = []
         for row in rows:
+            raw_value = row["verdict_json"]
             try:
-                value = json.loads(row["verdict_json"])
+                value = json.loads(raw_value)
                 if not isinstance(value, dict):
                     raise ValueError("待应用颁布判决须为对象")
             except ValueError as exc:
-                raise LLMContractError(f"待应用颁布判决读取失败：{exc}") from exc
+                raise LLMContractError(
+                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
+                ) from exc
             result.append(value)
         return result
 

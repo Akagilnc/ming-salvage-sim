@@ -13,6 +13,11 @@ def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
         raise ValueError("value must be an integer") from exc
 
 
+REJECTION_VERDICT_KEYS = frozenset({
+    "dossier_id", "decision", "blocked_layer", "primary_opponents",
+    "gatekeeper_id", "reason", "affected_parties", "criteria_snapshot",
+    "midzhi_unpromulgatable", "legal_reason_code",
+})
 REJECTION_SNAPSHOT_KEYS = frozenset({
     "imperial_authority_band", "involved_office_types",
     "authorization_ids", "endorsement_entry_ids",
@@ -49,27 +54,9 @@ def validate_rejection_verdict(
         )
     )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
-    allowed_numeric_paths = {
-        ("dossier_id",),
-        ("midzhi_unpromulgatable",),
-        ("criteria_snapshot", "endorsement_entry_ids", "[]"),
-    }
-
-    def has_numeric_contamination(value: object, path: tuple[str, ...] = ()) -> bool:
-        if isinstance(value, (int, float, bool)):
-            return path not in allowed_numeric_paths
-        if isinstance(value, dict):
-            return any(
-                has_numeric_contamination(item, (*path, str(key)))
-                for key, item in value.items()
-            )
-        if isinstance(value, list):
-            return any(has_numeric_contamination(item, (*path, "[]")) for item in value)
-        return False
-
     dossier_id = verdict.get("dossier_id")
     if (
-        has_numeric_contamination(verdict)
+        not set(verdict).issubset(REJECTION_VERDICT_KEYS)
         or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0
         or ("midzhi_unpromulgatable" in verdict
             and not isinstance(verdict["midzhi_unpromulgatable"], bool))

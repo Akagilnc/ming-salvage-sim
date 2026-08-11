@@ -116,18 +116,18 @@ def stub_promulgation_verdicts(
     ]
 
 
-def validate_promulgation_verdicts(
-    generated: object, proposed_dossiers: Sequence[Dict[str, object]], db: GameDB,
-) -> List[Dict[str, object]]:
-    """Validate one injected batch before it can reach simulation or persistence."""
-    if not isinstance(generated, list):
-        raise LLMContractError("颁布判官 verdicts 必须为列表")
-    if any(
-        not isinstance(row, dict)
-        or str(row.get("decision") or "") not in {"promulgated", "rejected"}
-        for row in generated
-    ):
+def _validate_promulgation_verdict_item(
+    row: object, db: GameDB,
+) -> Dict[str, object]:
+    """The single shape/identity authority for one provider verdict."""
+    if not isinstance(row, dict):
+        raise LLMContractError("颁布判决须为对象")
+    if str(row.get("decision") or "") not in {"promulgated", "rejected"}:
         raise LLMContractError("颁布判决 decision 只能为 promulgated 或 rejected")
+    dossier_id = row.get("dossier_id")
+    if (isinstance(dossier_id, bool) or not isinstance(dossier_id, int)
+            or not 0 < dossier_id <= 2 ** 63 - 1):
+        raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
     faction_names = {
         str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
     }
@@ -135,50 +135,52 @@ def validate_promulgation_verdicts(
         str(item["name"]) for item in db.conn.execute("SELECT DISTINCT name FROM classes")
     }
     try:
-        for row in generated:
-            marker = row.get("midzhi_unpromulgatable", False)
-            if not isinstance(marker, bool):
-                raise ValueError("中旨亦不可颁标记必须为 bool")
-            if row.get("decision") == "rejected" and "affected_parties" not in row:
-                raise ValueError("打回判决必须携带受损方 typed 清单")
-            affected = row.get("affected_parties", [])
-            if not isinstance(affected, list):
-                raise ValueError("受损方必须为 typed 清单")
-            for party in affected:
-                if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
-                    raise ValueError("受损方须且仅含 kind/key/severity")
-                kind, key = party.get("kind"), str(party.get("key") or "")
-                if kind not in {"faction", "class"}:
-                    raise ValueError("受损方 kind 只能为 faction 或 class")
-                if party.get("severity") not in {"大怒", "不满"}:
-                    raise ValueError("受损方程度只能为大怒或不满")
-                if key not in (faction_names if kind == "faction" else class_names):
-                    raise ValueError(f"未知受损方：{kind}:{key}")
-            if marker and row.get("decision") != "rejected":
-                raise ValueError("中旨亦不可颁只能标记打回判决")
-            if row.get("decision") == "rejected":
-                validate_rejection_verdict(
-                    row, {"cabinet_drafting", "palace_rescript", "six_offices"},
-                    faction_names=faction_names,
-                    character_ids={
-                        str(item["name"])
-                        for item in db.conn.execute("SELECT name FROM characters")
-                    },
-                )
+        marker = row.get("midzhi_unpromulgatable", False)
+        if not isinstance(marker, bool):
+            raise ValueError("中旨亦不可颁标记必须为 bool")
+        if row.get("decision") == "rejected" and "affected_parties" not in row:
+            raise ValueError("打回判决必须携带受损方 typed 清单")
+        affected = row.get("affected_parties", [])
+        if not isinstance(affected, list):
+            raise ValueError("受损方必须为 typed 清单")
+        for party in affected:
+            if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
+                raise ValueError("受损方须且仅含 kind/key/severity")
+            kind, key = party.get("kind"), str(party.get("key") or "")
+            if kind not in {"faction", "class"}:
+                raise ValueError("受损方 kind 只能为 faction 或 class")
+            if party.get("severity") not in {"大怒", "不满"}:
+                raise ValueError("受损方程度只能为大怒或不满")
+            if key not in (faction_names if kind == "faction" else class_names):
+                raise ValueError(f"未知受损方：{kind}:{key}")
+        if marker and row.get("decision") != "rejected":
+            raise ValueError("中旨亦不可颁只能标记打回判决")
+        if row.get("decision") == "rejected":
+            validate_rejection_verdict(
+                row, {"cabinet_drafting", "palace_rescript", "six_offices"},
+                faction_names=faction_names,
+                character_ids={
+                    str(item["name"])
+                    for item in db.conn.execute("SELECT name FROM characters")
+                },
+            )
     except ValueError as exc:
         raise LLMContractError(str(exc)) from exc
-    if any(
-        isinstance(row.get("dossier_id"), bool)
-        or not isinstance(row.get("dossier_id"), int)
-        or not 0 < row["dossier_id"] <= 2 ** 63 - 1
-        for row in generated
-    ):
-        raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
-    verdict_ids = {int(row["dossier_id"]) for row in generated}
+    return row
+
+
+def validate_promulgation_verdicts(
+    generated: object, proposed_dossiers: Sequence[Dict[str, object]], db: GameDB,
+) -> List[Dict[str, object]]:
+    """Validate items through one authority, then enforce batch coverage once."""
+    if not isinstance(generated, list):
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
+    rows = [_validate_promulgation_verdict_item(row, db) for row in generated]
+    verdict_ids = {int(row["dossier_id"]) for row in rows}
     proposed_ids = {int(row["id"]) for row in proposed_dossiers}
-    if verdict_ids != proposed_ids or len(generated) != len(proposed_ids):
+    if verdict_ids != proposed_ids or len(rows) != len(proposed_ids):
         raise LLMContractError("颁布判决须逐案覆盖全部 proposed 案卷，不能静默跳过")
-    return generated
+    return rows
 
 
 def _rescript_decisions(
@@ -544,19 +546,27 @@ def resolve_directives(
                 generated = generated + (
                     stub_promulgation_verdicts(exempt, state) if exempt else []
                 )
-                rejected_verdict_batch = generated
                 verdict_rows = validate_promulgation_verdicts(
                     generated, proposed_dossiers, db,
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
-        # Verdict contract failures use the existing rejection ledger.  Keep each
-        # dict verbatim and apply ADR 0015 F1 wrapping to every non-dict raw value.
-        rejected_items = (
-            rejected_verdict_batch
-            if isinstance(rejected_verdict_batch, list)
-            else [rejected_verdict_batch]
-        )
+        # Attribute item failures through the same validator used above.  Synthetic
+        # exempt stubs never enter this provider audit input.
+        if exc.raw_value is not None:
+            rejected_items = [exc.raw_value]
+        elif isinstance(rejected_verdict_batch, list):
+            rejected_items = []
+            for candidate in rejected_verdict_batch:
+                try:
+                    _validate_promulgation_verdict_item(candidate, db)
+                except LLMContractError:
+                    rejected_items.append(candidate)
+            # A pure coverage/duplicate failure belongs to the provider batch.
+            if not rejected_items:
+                rejected_items = rejected_verdict_batch
+        else:
+            rejected_items = [rejected_verdict_batch]
         collector = RejectionCollector(attempt=_next_attempt(state.turn))
         with atomic(db):
             for rejected_verdict in rejected_items:
