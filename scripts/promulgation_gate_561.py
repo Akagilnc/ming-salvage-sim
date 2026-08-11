@@ -145,20 +145,23 @@ def main() -> int:
         held_history = db.list_decree_dossier_decisions(hostile)
         text_after_hold = str(held["decree_text"])
 
-        # Change only actual board facts.  The held decree text is immutable here.
+        # Change only actual reconsideration facts.  The held decree text is immutable here.
         db.conn.execute(
-            "UPDATE factions SET leverage=5, agenda='支持清丈以均平田赋' WHERE name='东林'"
+            "UPDATE factions SET leverage=5, agenda='支持清丈以均平田赋、奉行御旨'"
         )
-        # A changed gatekeeping bench is a production board fact: with the
-        # formerly resolute censor dismissed and his peers unwilling to seal
-        # the objection, the same held wording can receive a different judgment.
-        db.conn.execute(
-            "UPDATE characters SET courage=5, integrity=5 WHERE status='active' "
-            "AND power_id='ming' AND (office LIKE '%首辅%' OR office LIKE '%掌印%' "
-            "OR office LIKE '%给事中%' OR office_type='六科')"
+        # Changing the gatekeeping bench is a production board fact.  The first
+        # judgment's officials now belong to the pro-decree coalition and lack
+        # the resolve to turn the unchanged procedural defect into a veto.
+        first_gatekeepers = [row["name"] for row in first_context["gatekeepers"]]
+        db.conn.executemany(
+            "UPDATE characters SET faction='皇党',courage=5,integrity=5 WHERE name=?",
+            [(name,) for name in first_gatekeepers],
         )
+        held_payload = json.loads(str(held["payload_json"] or "{}"))
+        held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
         db.conn.execute(
-            "UPDATE characters SET status='dismissed' WHERE name='许誉卿'"
+            "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
+            (json.dumps(held_payload, ensure_ascii=False), hostile),
         )
         state.metrics["皇威"] = 100
         db.save_state(state)
@@ -229,12 +232,15 @@ def main() -> int:
                         "vital_midzhi": vital_midzhi},
                 "rescript_choices": choices,
                 "hold_state": {"held_turn": held["held_turn"], "history": held_history},
-                "board_mutation_only": {
-                    "东林.leverage": [95, 5],
-                    "东林.agenda": ["反对清丈，维护田赋旧例", "支持清丈以均平田赋"],
+                "reconsideration_facts": {
+                    "factions": [first_context["factions"], second_context["factions"]],
                     "皇威": [first_context["imperial_authority_band"],
                              second_context["imperial_authority_band"]],
-                    "gatekeepers": ["seed bench", "许誉卿 dismissed; remainder courage/integrity 5"],
+                    "gatekeepers": [
+                        [row["name"] for row in first_context["gatekeepers"]],
+                        [row["name"] for row in second_context["gatekeepers"]],
+                    ],
+                    "authorization_ids": [[], ["御笔特准清丈不经部议"]],
                     "decree_text": [hostile_text, text_after_hold],
                 },
             },
