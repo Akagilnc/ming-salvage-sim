@@ -667,7 +667,7 @@ export function ChatModal({
   onRetryExtraction?: () => void;
   onUndo: () => void;
   onHint: (value: string) => void;
-  onFavorite: () => void;
+  onFavorite: (minister: Minister) => void;
   onOpenEdict: () => void;
   onClose: () => void;
   onCancel?: () => void;
@@ -749,12 +749,13 @@ export function ChatModal({
   }
 
   // The scroll remains the only authority: derive the sidebar lens from its latest
-  // recognised minister/entrance anchor instead of storing parallel scene state.
+  // recognised entrance/divider anchor instead of storing parallel scene state.
+  // Minister dialogue can be an interjection from someone standing at the side.
   const currentMinister = scrollMode === "audience"
     ? displayMessages.reduce<Minister | undefined>((current, message) => {
         if (!("speaker" in message) || !message.speaker) return current;
-        const isMinisterAnchor = message.role === "minister" || message.beat === "entrance" || message.beat === "divider";
-        return isMinisterAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
+        const isAudienceAnchor = message.beat === "entrance" || message.beat === "divider";
+        return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
       }, undefined) ?? minister
     : minister;
   const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
@@ -828,8 +829,8 @@ export function ChatModal({
               {currentMinister.office && <span className="profile-office">{currentMinister.office}</span>}
             </p>
           </div>
-          <button className="icon-button" aria-label="收藏大臣" onClick={onFavorite}>
-            <Star size={16} fill={minister.favorite ? "currentColor" : "none"} />
+          <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>
+            <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
           </button>
         </div>
         <p className="profile-copy">{currentMinister.summary}</p>

@@ -57,6 +57,7 @@ function renderModal(props: {
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
   onSend?: (text?: string) => void;
+  onFavorite?: (minister: Minister) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
@@ -118,7 +119,7 @@ function renderModal(props: {
         onRetryExtraction={props.onRetryExtraction}
         onUndo={() => {}}
         onHint={() => {}}
-        onFavorite={() => {}}
+        onFavorite={props.onFavorite ?? (() => {})}
         onOpenEdict={() => {}}
         onClose={() => {}}
         onCancel={props.onCancel}
@@ -515,15 +516,16 @@ describe("ChatModal — four diegetic roles (#540)", () => {
 });
 
 describe("ChatModal — soft scenes and current audience (#543)", () => {
-  it("shows named and unnamed divisions while the sidebar follows the latest recognised minister", async () => {
-    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣" };
-    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣" };
+  it("keeps a side interjection distinct while the whole sidebar follows the current audience", async () => {
+    const favorite = vi.fn();
+    const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
+    const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
-      { role: "minister", speaker: "杨嗣昌", content: "臣且告退。", beat: "dialogue", container: { audience_type: "越次" } },
-      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次" } },
-      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次" } },
-      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次" } },
-      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次" } },
+      { role: "scene", speaker: "洪承畴", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
+      { role: "scene", speaker: "洪承畴", content: "洪承畴趋入殿中。", beat: "entrance", container: { audience_type: "越次召对" } },
+      { role: "minister", speaker: "洪承畴", content: "臣自三边来。", beat: "dialogue", container: { audience_type: "越次召对" } },
+      { role: "minister", speaker: "杨嗣昌", content: "殿侧容臣插一句。", beat: "dialogue", container: { audience_type: "越次召对" } },
+      { role: "scene", speaker: "", content: "", beat: "divider", soft_boundary: true, container: { audience_type: "越次召对" } },
     ] }) }));
 
     const host = renderModal({
@@ -531,15 +533,21 @@ describe("ChatModal — soft scenes and current audience (#543)", () => {
       ministers: [yang, hong],
       portraitPrefix: "minister_",
       currentNightId: 23,
+      onFavorite: favorite,
       secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次");
+    expect(host.querySelector(".audience-type-label")?.textContent).toBe("越次召对");
     expect(host.querySelector(".minister-side h2")?.textContent).toBe("洪承畴");
     expect(host.querySelector(".chat-portrait-wrap img")?.getAttribute("src")).toBe("/portraits/minister_hong.png");
     expect(host.querySelector(".chat-secret-orders")?.textContent).toContain("密察边饷");
-    expect(host.textContent).toContain("臣且告退。");
+    const ministerMessages = host.querySelectorAll(".chat-message.minister");
+    expect(ministerMessages[ministerMessages.length - 1]?.textContent).toContain("杨嗣昌");
+    const favoriteButton = host.querySelector<HTMLButtonElement>('button[aria-label="收藏大臣"]');
+    expect(favoriteButton?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+    act(() => favoriteButton?.click());
+    expect(favorite).toHaveBeenCalledWith(hong);
     const divisions = Array.from(host.querySelectorAll(".beat-divider"));
     expect(divisions).toHaveLength(2);
     expect(divisions[0]?.textContent).toContain("洪承畴");
@@ -840,7 +848,7 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
         { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
-        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次 · 第1场", involved_people: ["杨嗣昌"] },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次召对 · 第1场", involved_people: ["杨嗣昌"] },
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
       const id = url.endsWith("31") ? 31 : 32;

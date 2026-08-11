@@ -1227,7 +1227,7 @@ export function App() {
             onRetryExtraction={retryStoryExtraction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={() => toggleFavorite(activeMinister)}
+            onFavorite={toggleFavorite}
             onOpenEdict={() => setActiveModal("edict")}
             onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
