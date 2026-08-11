@@ -23,6 +23,7 @@ _POLICY_FIELDS = {
     "target_id": "test-policy",
 }
 
+import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
@@ -669,6 +670,72 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     directives = db.list_directives(state, statuses=("pending",))
     assert len(directives) == 1
     assert directives[0]["text"] == "着户部清核辽饷。"
+
+
+@pytest.mark.parametrize("kind", ["directive", "office"])
+def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    if kind == "directive":
+        pending_id = db.stage_pending_action(
+            state.turn, kind="directive", action="拟旨", minister_name=minister,
+            payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister,
+                     "mode": "ordinary"},
+        )
+    else:
+        pending_id = db.stage_pending_action(
+            state.turn, kind="office", action="任命", minister_name=minister,
+            payload={"name": "史可法", "office": "兵部主事", "appointer": minister,
+                     "mode": "ordinary"},
+        )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+
+    if kind == "directive":
+        row = db.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives WHERE turn=?",
+            (state.turn,),
+        ).fetchone()
+        assert json.loads(row["dossier_payload_json"])["mode"] == "midzhi"
+    else:
+        dossiers = [
+            row for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+        ]
+        assert len(dossiers) == 1
+        assert dossiers[0]["mode"] == "midzhi"
+
+
+def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister,
+                 "mode": "ordinary"},
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+    audience_night.close_night(db, state, night_id=night["id"], content=content)
+
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == "midzhi"
 
 
 def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(game):
