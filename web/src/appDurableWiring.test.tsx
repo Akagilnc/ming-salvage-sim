@@ -22,12 +22,12 @@ const MENU_STATUS = {
 };
 const acct = () => ({ balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 });
 const directive = () => ({ id: 1, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "旧草案", source: "", status: "draft", notes: "", authority: "" });
-const makeState = (turn: number, directives: unknown[] = []) => ({
+const makeState = (turn: number, directives: unknown[] = [], ministers: unknown[] = []) => ({
   turn: { year: 1627, period: 10, turn, phase: "summoning" },
   metrics: {}, previous_summary: "", treasury: "", issues: [], legacies: [], closed_this_turn: [],
   budget: { 国库: acct(), 内库: acct() }, region_warning: "", army_warning: "", power_warning: "", powers: [],
   victory_status: { status: "", summary: "" }, ending: null, events: [], regions: [], armies: [],
-  map_nodes: [], ministers: [], consorts: [], directives, pending_count: 0, last_decree: "", last_report: "",
+  map_nodes: [], ministers, consorts: [], directives, pending_count: 0, last_decree: "", last_report: "",
 });
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -38,25 +38,37 @@ const findButton = (host: HTMLElement, text: string) =>
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
-  it("第二命令槽 opens the read-only 起居注 instead of 邸报", async () => {
+  it("第二命令槽 opens the read-only 起居注 and resolves archived attendant portraits from the App roster", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1));
-      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [
+        { name: "王承恩", portrait_id: "portrait_court_03" },
+      ]));
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [
+        { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
+      ] });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ messages: [
+        { role: "attendant", speaker: "王承恩", content: "御前低语", audibility: "御前低语" },
+      ] });
       return jsonResp({});
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
     await act(async () => { createRoot(host).render(<App />); });
-    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "起居注")).toBeTruthy());
+    });
 
-    const entry = findButton(host, "起居注");
-    expect(entry).toBeTruthy();
-    await click(entry);
-    await tick();
-    expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
+    await click(findButton(host, "起居注"));
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
+        expect(host.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src"))
+          .toBe("/portraits/minister_王承恩.png");
+      });
+    });
   });
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;

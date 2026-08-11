@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AudienceArchiveModal, ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal } from "./modals";
+import { AudienceArchiveModal, ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal, parseLeadingStageDirection } from "./modals";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -40,6 +40,7 @@ const CONSORT_MOCK: Minister = {
 
 function renderModal(props: {
   minister: Minister;
+  ministers?: Minister[];
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
   currentNightId?: number;
@@ -87,6 +88,7 @@ function renderModal(props: {
     return (
       <ChatModal
         minister={props.minister}
+        ministers={props.ministers ?? []}
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
         currentCampaignId="test-campaign"
@@ -476,6 +478,51 @@ describe("ChatModal — organic markdown display cleanup", () => {
   });
 });
 
+describe("ChatModal — four diegetic roles (#540)", () => {
+  it("renders role variants and derives the private aside only from audibility", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+      { role: "scene", speaker: "", content: "殿门徐启", beat: "scene", audibility: "殿上公开" },
+      { role: "user", speaker: "朕", content: "（搁笔）卿且直言。", beat: "dialogue", audibility: "殿上公开" },
+      { role: "minister", speaker: "周延儒", content: "臣谨奏。", beat: "dialogue", audibility: "殿上公开" },
+      { role: "attendant", speaker: "曹化淳", content: "圣上，他有所隐瞒。", beat: "aside", audibility: "御前低语" },
+      { role: "attendant", speaker: "王承恩", content: "容臣低声禀报。", beat: "aside", audibility: "御前低语" },
+      { role: "attendant", speaker: "王承恩", content: "公开传话。", beat: "aside", audibility: "殿上公开" },
+    ] }) }));
+
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      ministers: [
+        { ...MINISTER_MOCK, id: "attendant-current", name: "曹化淳", portrait_id: "custom:8" },
+        { ...MINISTER_MOCK, id: "attendant-former", name: "王承恩", portrait_id: "portrait_court_03" },
+      ],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".chat-message.scene")?.textContent).toBe("殿门徐启");
+    expect(host.querySelector(".chat-message.user .action")?.textContent).toBe("（搁笔）");
+    expect(host.querySelector(".chat-message.user p")?.textContent).toBe("卿且直言。");
+    expect(host.querySelector(".chat-message.minister")?.textContent).toContain("臣谨奏。");
+    expect(host.querySelector(".chat-message.aside")?.textContent).toContain("有所隐瞒");
+    const avatars = Array.from(host.querySelectorAll<HTMLImageElement>(".aside-avatar"));
+    expect(avatars[0]?.alt).toBe("曹化淳");
+    expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
+    expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
+    expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
+  });
+});
+
+describe("parseLeadingStageDirection", () => {
+  it.each([
+    ["（搁笔）卿且直言。", { action: "（搁笔）", content: "卿且直言。" }],
+    ["卿且（搁笔）直言。", { action: null, content: "卿且（搁笔）直言。" }],
+    ["卿且直言。", { action: null, content: "卿且直言。" }],
+  ])("recognises only an explicit leading full-width parenthetical in %s", (source, expected) => {
+    expect(parseLeadingStageDirection(source)).toEqual(expected);
+  });
+});
+
 describe("ChatModal — single night-scroll authority (#539)", () => {
   it("retires the whole old-night snapshot when the persisted player-entry identity changes before refresh fails", async () => {
     let rejectRefresh!: (reason?: unknown) => void;
@@ -763,16 +810,23 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
         { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
       const id = url.endsWith("31") ? 31 : 32;
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "user", content: `场次${id}` }] }) });
+      return Promise.resolve({ ok: true, json: async () => ({ messages: id === 32 ? [
+        { role: "user", content: `场次${id}` },
+        { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", audibility: "御前低语" },
+      ] : [{ role: "user", content: `场次${id}` }] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => { root.render(<AudienceArchiveModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[
+      { ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" },
+    ]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(host.textContent).toContain("召对记录");
     expect(host.textContent).toContain("涉及人物：洪承畴");
     expect(host.textContent).toContain("场次32");
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
+    const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
+    expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
