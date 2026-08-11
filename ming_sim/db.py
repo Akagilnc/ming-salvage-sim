@@ -10427,7 +10427,7 @@ class GameDB:
     def _append_midzhi_stigma(
         self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
-        """Append the ticket's fixed midzhi marker; exact replay is idempotent."""
+        """Append one marker per dossier semantic midzhi event, regardless of replay turn."""
         marker_fields = {
             "rejected": ("predeclared", "rejected"),
             "promulgated": ("predeclared", "promulgated"),
@@ -10444,7 +10444,11 @@ class GameDB:
             "source_action": source_action,
         }
         stigma = list(row["stigma"])
-        if marker not in stigma:
+        event_key = (marker["kind"], marker["reason"])
+        if not any(
+            (item.get("kind"), item.get("reason")) == event_key
+            for item in stigma if isinstance(item, dict)
+        ):
             stigma.append(marker)
             self.conn.execute(
                 "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -11461,13 +11465,20 @@ class GameDB:
         )
 
     def stage_explicit_directive(
-        self, turn: int, minister_name: str, text: str,
+        self, turn: int, minister_name: str, text: str, *, mode: Optional[str] = None,
     ) -> int:
         """显式拟旨（前缀「拟旨如下：」/ tool propose_directive）落候选的**单一 seam**（#502 L2，
         CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
         该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
         走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。"""
+        from ming_sim.cli_backend import _directive_mode
+
+        declared_mode = _directive_mode(mode)
+        if declared_mode is None:
+            declared_mode = _directive_mode(text)
         payload = {"text": text, "actor": minister_name}
+        if declared_mode is not None:
+            payload["mode"] = declared_mode
         existing = [
             p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
             if p["kind"] == "directive"

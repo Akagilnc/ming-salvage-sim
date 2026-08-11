@@ -179,6 +179,7 @@ def test_conversation_draft_rejects_malformed_roster_without_staging(
     draft = {
         "正文": "着会同清查仓储。", "动作类型": "assignment", "目标类型": "issue",
         "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
+        "颁布方式": "普通",
     }
     canned = (
         {"拟旨意图": "拟旨", **draft}
@@ -2611,6 +2612,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "金额": 10000,
                 "账户": "国库",
                 "执行面": "in_transit",
+                "颁布方式": "普通",
             },
             {
                 "正文": "命洪承畴三月出师",
@@ -2619,6 +2621,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "目标ID": "shaanxi",
                 "承办人": "洪承畴",
                 "期限月数": 3,
+                "颁布方式": "中旨直发",
             },
         ],
     }, ensure_ascii=False)

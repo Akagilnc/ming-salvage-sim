@@ -156,6 +156,55 @@ def test_missing_dossier_mode_defaults_to_ordinary(game):
     assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
 
 
+def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
+    db, state, _content = game
+    candidate_id = db.stage_explicit_directive(
+        state.turn, "温体仁", "中旨直发，清核河工",
+    )
+    db.update_directive_candidate(candidate_id, {"text": "增列核验期限"})
+    pending = next(
+        row for row in db.list_pending_actions(state.turn)
+        if row["id"] == candidate_id
+    )
+    assert json.loads(pending["payload_json"])["mode"] == "midzhi"
+
+    db.update_directive_candidate(candidate_id, {"mode": "ordinary"})
+    pending = next(
+        row for row in db.list_pending_actions(state.turn)
+        if row["id"] == candidate_id
+    )
+    assert json.loads(pending["payload_json"])["mode"] == "ordinary"
+
+
+def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
+    db, state, _content = game
+    dossier_id = _make_midzhi_dossier(db, state)
+    db.apply_dossier_promulgation(
+        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
+    )
+    db.record_dossier_decision(dossier_id, "hold")
+    state.turn += 1
+    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
+    db.apply_dossier_promulgation(
+        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣再驳",
+    )
+
+    stored = db.get_decree_dossier(dossier_id)
+    decisions = db.conn.execute(
+        "SELECT turn,decision FROM decree_dossier_decisions "
+        "WHERE dossier_id=? AND rescript_action='' ORDER BY id",
+        (dossier_id,),
+    ).fetchall()
+    assert [(row["turn"], row["decision"]) for row in decisions] == [
+        (state.turn - 1, "rejected"),
+        (state.turn, "rejected"),
+    ]
+    assert stored["stigma"] == [{
+        "kind": "midzhi", "reason": "predeclared", "turn": state.turn - 1,
+        "source_action": "rejected",
+    }]
+
+
 def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
