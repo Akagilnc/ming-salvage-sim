@@ -917,7 +917,6 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         "action": "任命",
         "faction": "阉党",
         "reason": "吏部举荐",
-        "mode": "midzhi",
     }, ensure_ascii=False)
 
     class Agent:
@@ -956,7 +955,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
 
     sess._apply_appointment = forbidden_direct_apply
 
-    result = GameSession.chat(sess, minister, "拟以工具候选乙为户部尚书。")
+    result = GameSession.chat(sess, minister, "中旨直发，拟以工具候选乙为户部尚书。")
 
     assert result.pending_action_id
     pending = db.list_pending_actions(state.turn)

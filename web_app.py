@@ -1893,7 +1893,9 @@ class WebGame:
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = self.session._stage_appointment_candidate(payload_json, character)
+                    pending_action_id = self.session._stage_appointment_candidate(
+                        payload_json, character, message_text,
+                    )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
