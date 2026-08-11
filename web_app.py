@@ -3585,6 +3585,8 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                     "chat_turn_id": item.get("chat_turn_id") or 0,
                     "highlights": item.get("highlights") or [],
                 })
+            elif item_type == "decoration_error":
+                yield sse_event("decoration_error", {"message": item.get("message", "")})
             elif item_type == "mindreading":
                 yield sse_event("mindreading", {
                     "mindreading": item.get("payload"),
