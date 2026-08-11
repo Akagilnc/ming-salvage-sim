@@ -744,10 +744,6 @@ export function ChatModal({
   if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
-  if (streamingMinisterMessage) {
-    displayMessages.push({ role: "minister", content: streamingMinisterMessage, pending: true });
-  }
-
   // The scroll remains the only authority: derive the sidebar lens from its latest
   // recognised entrance/divider anchor instead of storing parallel scene state.
   // Minister dialogue can be an interjection from someone standing at the side.
@@ -758,6 +754,9 @@ export function ChatModal({
         return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
       }, undefined) ?? minister
     : minister;
+  if (streamingMinisterMessage) {
+    displayMessages.push({ role: "minister", speaker: currentMinister.name, content: streamingMinisterMessage, pending: true });
+  }
   const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
   const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
   const audienceType = scrollMode === "audience"
@@ -860,13 +859,13 @@ export function ChatModal({
       <section className="modal-pane chat-main">
         <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
           {audienceType ? <div className="audience-type-label">{audienceType}</div> : null}
-          <ScrollMessages messages={displayMessages} ministerName={minister.name} ministers={ministers} />
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister.name} ministers={ministers} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
-              <span>{minister.name}</span>
+              <span>{currentMinister.name}</span>
               <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}

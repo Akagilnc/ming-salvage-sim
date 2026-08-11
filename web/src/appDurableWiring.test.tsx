@@ -70,6 +70,50 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       });
     });
   });
+  it("夜卷轴侧插话不夺锚且真实 App 请求命中当前奏对者", async () => {
+    const minister = (name: string) => ({ name, office: "兵部", office_type: "内阁", faction: "", style: "", status: "active", status_label: "在朝", summary: "", favorite: false, skills: [] });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      calls.push(`${init?.method || "GET"} ${decodeURIComponent(u.pathname)}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [minister("杨嗣昌"), minister("洪承畴")]));
+      if (u.pathname.endsWith("/api/ministers/%E6%9D%A8%E5%97%A3%E6%98%8C/chat")) return jsonResp({ campaign_id: "c", night_id: 23, history: [], suggestions: [], can_undo_last_chat: false });
+      if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ night_id: 23, messages: [
+        { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
+        { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
+      ] });
+      if (u.pathname.endsWith("/chat/stream")) {
+        const body = [
+          'event: delta\ndata: {"content":"臣请奏边务"}\n\n',
+          'event: done\ndata: {"history":[],"directives":[],"suggestions":[{"label":"追问边务","text":"追问边务"}],"can_undo_last_chat":true,"pending_count":0}\n\n',
+          'event: end\ndata: {}\n\n',
+        ].join("");
+        return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }
+      return jsonResp({});
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[title="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll(".minister-card")).find((node) => node.textContent?.includes("杨嗣昌")));
+    await act(async () => { await vi.waitFor(() => expect(host.querySelector("textarea")).not.toBeNull()); });
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(textarea, "边务如何");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(findButton(host, "发送"));
+    await act(async () => { await vi.waitFor(() => expect(calls).toContain("POST /api/ministers/洪承畴/chat/stream")); });
+    expect(calls).toContain("POST /api/ministers/洪承畴/chat/stream");
+    expect(host.textContent).toContain("杨嗣昌御前低语");
+  });
+
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
     const staleGate = new Promise<void>((r) => { releaseStale = r; });

@@ -47,6 +47,7 @@ function renderModal(props: {
   undoneChatTurnId?: number | null;
   chat?: ChatMessage[];
   busy?: string;
+  streamingMinisterMessage?: string;
   onCancel?: () => void;
   chatFailures?: PendingActionFailure[];
   onRetryFailure?: (failure: PendingActionFailure) => void;
@@ -104,7 +105,7 @@ function renderModal(props: {
         pendingUserMessage=""
         pendingIdentity={null}
         failedIdentity={null}
-        streamingMinisterMessage=""
+        streamingMinisterMessage={props.streamingMinisterMessage ?? ""}
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
         canUndoLastChat={props.canUndoLastChat ?? false}
@@ -843,6 +844,49 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { updateChat([{ role: "minister", content: "旧分线程答" }]); await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("非流式新答");
     expect(document.body.textContent).not.toContain("旧分线程答");
+  });
+
+  it("attributes thinking and streaming reply to the scroll's current audience, not the modal entry", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 23, messages: [
+        { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
+        { role: "attendant", speaker: "杨嗣昌", content: "御前低语", audibility: "御前低语", beat: "dialogue" },
+      ] }),
+    }));
+    const hong = { ...MINISTER_MOCK, name: "洪承畴" };
+    renderModal({
+      minister: { ...MINISTER_MOCK, name: "杨嗣昌" },
+      ministers: [{ ...MINISTER_MOCK, name: "杨嗣昌" }, hong],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      busy: "大臣思索中",
+      streamingMinisterMessage: "臣请奏边务",
+    });
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const streamed = Array.from(document.querySelectorAll(".chat-message.minister"))
+      .find((node) => node.textContent?.includes("臣请奏边务"));
+    expect(streamed?.querySelector("span")?.textContent).toBe("洪承畴");
+    expect(document.body.textContent).toContain("杨嗣昌御前低语");
+  });
+
+  it("attributes the thinking row to the scroll's current audience", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 23, messages: [
+        { role: "scene", speaker: "洪承畴", content: "入殿", beat: "entrance" },
+      ] }),
+    }));
+    renderModal({
+      minister: { ...MINISTER_MOCK, name: "杨嗣昌" },
+      ministers: [{ ...MINISTER_MOCK, name: "杨嗣昌" }, { ...MINISTER_MOCK, name: "洪承畴" }],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+      busy: "大臣思索中",
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(document.querySelector(".chat-message.thinking span")?.textContent).toBe("洪承畴");
   });
 
   it("keeps ordinary no-night chat on the legacy projection", async () => {
