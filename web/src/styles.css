@@ -3425,8 +3425,8 @@ button:disabled {
     url("/bg_state.png") center / cover no-repeat;
 }
 
-/* 诏书/长期目标仍是文字直贴底图；state/chat 由各承载块自己的样式控制，
-   避免通配 important 抹掉卷轴内 action/aside/scene 的角色语义。 */
+/* state/诏书/长期目标的文字直贴底图；归档卷轴保留 action/aside/scene 的角色语义。 */
+.modal-bg-state :not(.modal-bg-chat, .modal-bg-chat *),
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   background: transparent !important;
@@ -3606,6 +3606,7 @@ button:disabled {
   color: #1a1410 !important;
 }
 
+.modal-bg-state :not(.modal-bg-chat, .modal-bg-chat *),
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   color: #1a1410 !important;
