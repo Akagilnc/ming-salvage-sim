@@ -1873,6 +1873,9 @@ class GameDB:
         # held | released | withheld | private
         self.ensure_column(
             "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
+        # #544: decoration belongs to its message fact; no parallel highlight store.
+        self.ensure_column(
+            "chat_messages", "highlights", "TEXT NOT NULL DEFAULT '[]'")
         # #976 message-level origin provenance on assignee briefs (durable bloodline).
         self.ensure_column(
             "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
@@ -7562,6 +7565,17 @@ class GameDB:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def set_minister_message_highlights(self, chat_turn_id: int, highlights: List[str]) -> bool:
+        """Persist judge output only on the linked minister message."""
+        payload = json.dumps(list(highlights), ensure_ascii=False)
+        cur = self.conn.execute(
+            "UPDATE chat_messages SET highlights=? WHERE role='minister' AND id=("
+            "SELECT minister_message_id FROM chat_turns WHERE id=?)",
+            (payload, int(chat_turn_id)),
+        )
+        self.conn.commit()
+        return bool(cur.rowcount)
+
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
         if not ids:
@@ -7619,7 +7633,7 @@ class GameDB:
         if message_ids:
             placeholders = ",".join("?" for _ in message_ids)
             msgs = self.conn.execute(
-                f"SELECT id, role, content FROM chat_messages WHERE id IN ({placeholders}) ORDER BY id",
+                f"SELECT id, role, content, highlights FROM chat_messages WHERE id IN ({placeholders}) ORDER BY id",
                 message_ids,
             ).fetchall()
         else:
@@ -7639,7 +7653,9 @@ class GameDB:
             mid = int(m["id"])
             turn_id = msg_turn.get(mid, 0)
             projection.append(
-                {"role": m["role"], "content": m["content"], "chat_turn_id": turn_id}
+                {"role": m["role"], "content": m["content"], "chat_turn_id": turn_id,
+                 "highlights": (json.loads(m["highlights"] or "[]")
+                                if m["role"] == "minister" else [])}
             )
             # 读心紧随该轮大臣回话归位（一个轮次可有多条读心，按 id 顺序）
             if mid in minister_msg_turn:

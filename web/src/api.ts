@@ -82,6 +82,8 @@ export type StreamChatOptions = {
   onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
   onDone?: (payload: ChatResponse) => void;
+  /** 判官补挂后仅使既有公共卷轴失效；清单仍从卷轴事实源读取。 */
+  onHighlights?: () => void;
   /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
   onEnd?: () => void;
 };
@@ -137,6 +139,8 @@ export const streamChat = async (
         // 回话先可见：不结束流，等 end；兼容旧服务端（仅 done 无 end）则缓存后继续
         donePayload = payload as ChatResponse;
         options.onDone?.(donePayload);
+      } else if (parsed.event === "highlights") {
+        options.onHighlights?.();
       } else if (parsed.event === "mindreading") {
         options.onMindreading?.({
           mindreading: (payload?.mindreading ?? null) as MindreadingRecord | null,
