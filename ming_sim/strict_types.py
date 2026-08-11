@@ -49,13 +49,29 @@ def validate_rejection_verdict(
         )
     )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
-    numeric_contamination = any(
-        key not in {"dossier_id", "midzhi_unpromulgatable"}
-        and isinstance(value, (int, float, bool))
-        for key, value in verdict.items()
-    )
+    allowed_numeric_paths = {
+        ("dossier_id",),
+        ("midzhi_unpromulgatable",),
+        ("criteria_snapshot", "endorsement_entry_ids", "[]"),
+    }
+
+    def has_numeric_contamination(value: object, path: tuple[str, ...] = ()) -> bool:
+        if isinstance(value, (int, float, bool)):
+            return path not in allowed_numeric_paths
+        if isinstance(value, dict):
+            return any(
+                has_numeric_contamination(item, (*path, str(key)))
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(has_numeric_contamination(item, (*path, "[]")) for item in value)
+        return False
+
+    dossier_id = verdict.get("dossier_id")
     if (
-        numeric_contamination
+        has_numeric_contamination(verdict)
+        or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0
+        or not isinstance(verdict.get("midzhi_unpromulgatable"), bool)
         or verdict.get("blocked_layer") not in blocked_layers
         or not faction_opponents
         or "gatekeeper_id" not in verdict

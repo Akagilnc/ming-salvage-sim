@@ -3202,6 +3202,7 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
     )
     verdict = _rejected_verdict(dossier_id)
     verdict["gatekeeper_id"] = _active_minister(db)
+    verdict["criteria_snapshot"]["endorsement_entry_ids"] = [1]
     db.apply_dossier_verdicts(state, [verdict])
 
     restored = GameDB(db.path, content=content)
@@ -3269,9 +3270,16 @@ def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_valu
         db.apply_dossier_verdicts(state, [verdict])
 
 
-@pytest.mark.parametrize("bad_value", [1, 1.5, True])
+@pytest.mark.parametrize("contamination", [
+    {"primary_opponents": [{"kind": "faction", "key": 1}]},
+    {"primary_opponents": [{"kind": "faction", "key": 1.5}]},
+    {"primary_opponents": [{"kind": "faction", "key": True}]},
+    {"resistance_scores": [99.5]},
+    {"resistance_detail": {"score": 99.5}},
+    {"resistance_detail": {"nested": [{"blocked": True}]}},
+])
 def test_rejection_contract_rejects_numeric_contamination_without_history(
-    game, bad_value,
+    game, contamination,
 ):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -3279,9 +3287,7 @@ def test_rejection_contract_rejects_numeric_contamination_without_history(
         target_kind="issue", target_id="river-works",
     )
     verdict = _rejected_verdict(dossier_id)
-    verdict["primary_opponents"] = [
-        {"kind": "faction", "key": bad_value},
-    ]
+    verdict.update(contamination)
 
     with pytest.raises(ValueError, match="打回判决缺少"):
         db.apply_dossier_verdicts(state, [verdict])
