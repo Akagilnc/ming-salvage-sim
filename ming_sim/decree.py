@@ -521,6 +521,7 @@ def resolve_directives(
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
     rejected_verdict_batch: object = None
+    reviewed_dossier_ids: Optional[set[int]] = None
     try:
         if proposed_dossiers:
             # A validated batch is durable before any simulator work.  Recovery is
@@ -539,6 +540,7 @@ def resolve_directives(
                         dossier.get("action_type"), payload,
                     )["external_review"] else exempt).append(dossier)
                 provider = promulgation_verdict_provider or stub_promulgation_verdicts
+                reviewed_dossier_ids = {int(row["id"]) for row in reviewed}
                 generated = provider(reviewed, state) if reviewed else []
                 rejected_verdict_batch = generated
                 if not isinstance(generated, list):
@@ -557,14 +559,22 @@ def resolve_directives(
             rejected_items = [exc.raw_value]
         elif isinstance(rejected_verdict_batch, list):
             rejected_items = []
+            seen_provider_ids: set[int] = set()
             for candidate in rejected_verdict_batch:
                 try:
-                    _validate_promulgation_verdict_item(candidate, db)
+                    valid_candidate = _validate_promulgation_verdict_item(candidate, db)
                 except LLMContractError:
                     rejected_items.append(candidate)
-            # A pure coverage/duplicate failure belongs to the provider batch.
+                    continue
+                if reviewed_dossier_ids is not None:
+                    dossier_id = int(valid_candidate["dossier_id"])
+                    if dossier_id not in reviewed_dossier_ids or dossier_id in seen_provider_ids:
+                        rejected_items.append(candidate)
+                    seen_provider_ids.add(dossier_id)
+            # Missing coverage has no guilty item: retain the provider batch once
+            # as raw batch evidence instead of mislabelling every valid verdict.
             if not rejected_items:
-                rejected_items = rejected_verdict_batch
+                rejected_items = [{"raw_value": rejected_verdict_batch}]
         else:
             rejected_items = [rejected_verdict_batch]
         collector = RejectionCollector(attempt=_next_attempt(state.turn))
