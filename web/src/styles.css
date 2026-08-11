@@ -3593,13 +3593,13 @@ button:disabled {
   border-color: rgba(74, 45, 20, 0.18) !important;
 }
 
-/* 浅色背景图上文字一律黑色 */
+/* 浅色背景图上文字一律黑色，召对舞台提示保留淡化色 */
 .modal-bg-state,
 .modal-bg-chat,
 .modal-bg-edict,
 .modal-bg-long-goal,
 .modal-bg-state *,
-.modal-bg-chat *,
+.modal-bg-chat *:not(.action),
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   color: #1a1410 !important;
@@ -3732,6 +3732,10 @@ button:disabled {
 
 .modal-bg-chat .chat-message.minister {
   border-color: rgba(122, 180, 150, 0.4);
+}
+
+.modal-bg-chat .chat-message.aside {
+  border-style: dashed;
 }
 
 /* 终章弹窗：整层盖掉 bg_state.png 黄底，统一深墨色（含顶栏）*/
