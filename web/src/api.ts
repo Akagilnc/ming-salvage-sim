@@ -84,8 +84,6 @@ export type StreamChatOptions = {
   onDone?: (payload: ChatResponse) => void;
   /** 判官补挂携持久 turn identity；公共卷轴仍是 audience 模式事实源。 */
   onHighlights?: (payload: { chat_turn_id: number; highlights: string[] }) => void;
-  /** 已完成回话的装饰落库故障；不得升级为聊天失败。 */
-  onDecorationError?: (error: Error) => void;
   /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
   onEnd?: () => void;
 };
@@ -146,9 +144,6 @@ export const streamChat = async (
           chat_turn_id: Number(payload?.chat_turn_id || 0),
           highlights: Array.isArray(payload?.highlights) ? payload.highlights.map(String) : [],
         });
-      } else if (parsed.event === "decoration_error") {
-        const detail = normalizeApiError(payload, "高亮落库失败。");
-        options.onDecorationError?.(new Error(detail.message));
       } else if (parsed.event === "mindreading") {
         options.onMindreading?.({
           mindreading: (payload?.mindreading ?? null) as MindreadingRecord | null,

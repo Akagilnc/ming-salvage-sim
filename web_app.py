@@ -1676,7 +1676,6 @@ class WebGame:
                 self._settle_reply_highlights(answer_text, chat_turn_id, gate)
             except Exception as error:  # durable reply is already history; decoration cannot roll it back
                 tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
-                payload["decoration_error"] = str(error)
             payload["history"] = self.chat_projection(minister_name)
             return payload
         except Exception:
@@ -1755,7 +1754,6 @@ class WebGame:
                 self._settle_reply_highlights(answer_text, chat_turn_id, gate)
             except Exception as error:  # completed retry remains a durable reply
                 tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
-                payload["decoration_error"] = str(error)
             payload["history"] = self.chat_projection(minister_name)
             return payload
         except Exception:
@@ -2391,9 +2389,8 @@ class WebGame:
                                 "type": "highlights", "chat_turn_id": chat_turn_id,
                                 "highlights": highlights,
                             })
-                    except Exception as error:  # reply is durable: report decoration failure without chat identity
+                    except Exception as error:  # reply is durable; decoration failure degrades silently
                         tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
-                        ev_queue.put({"type": "decoration_error", "message": str(error)})
 
                 judge_thread = threading.Thread(
                     target=settle_highlights, daemon=True, name="audience-highlight-settlement",
@@ -3585,8 +3582,6 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                     "chat_turn_id": item.get("chat_turn_id") or 0,
                     "highlights": item.get("highlights") or [],
                 })
-            elif item_type == "decoration_error":
-                yield sse_event("decoration_error", {"message": item.get("message", "")})
             elif item_type == "mindreading":
                 yield sse_event("mindreading", {
                     "mindreading": item.get("payload"),

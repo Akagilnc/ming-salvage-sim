@@ -529,10 +529,6 @@ export function App() {
         setChatNotice("已离开实时回话；大臣会继续回奏，稍后重开可见。");
         setError("");
       },
-      onDecorationError: (err) => {
-        const detail = err instanceof Error ? err.message : String(err);
-        setChatNotice(`回话已完成，但高亮标注保存失败：${detail}`);
-      },
       onError: (err) => {
         if (fromComposer) {
           setInput(message);
