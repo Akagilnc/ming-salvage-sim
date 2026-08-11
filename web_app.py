@@ -1880,7 +1880,8 @@ class WebGame:
                     if draft_text:
                         # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
                         pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text)
+                            self.state.turn, character.name, draft_text, mode=message_text,
+                        )
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
