@@ -44,7 +44,7 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     } for row in context["gatekeepers"])
     assert context["dossiers"][0]["criteria_snapshot_source"] == {
         "imperial_authority_band": context["imperial_authority_band"],
-        "involved_office_types": ["未指定"], "authorization_ids": [],
+        "appointment_tenure": "", "authorization_ids": [],
         "endorsement_entry_ids": [],
     }
 
@@ -116,6 +116,17 @@ def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
     db, _state, _content = game
     with pytest.raises(decree_mod.LLMContractError, match="颁布判官 verdicts 必须为列表"):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
+
+
+def test_promulgated_verdict_rejects_rejection_only_fields(game):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+
+    with pytest.raises(decree_mod.LLMContractError, match="不得携带打回专属字段"):
+        decree_mod.validate_promulgation_verdicts([
+            {"dossier_id": dossier_id, "decision": "promulgated", "reason": "已封驳"},
+        ], dossiers, db)
 
 
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
@@ -206,7 +217,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
         "reason": "触犯钱粮命门，科臣封驳。",
         "criteria_snapshot": {
             "imperial_authority_band": authority_band,
-            "involved_office_types": ["未指定"],
+            "appointment_tenure": "",
             "authorization_ids": [],
             "endorsement_entry_ids": [],
         },
@@ -263,7 +274,7 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     ("snapshot_key", "forged"),
     [
         ("imperial_authority_band", "极弱"),
-        ("involved_office_types", ["六部"]),
+        ("appointment_tenure", "署理"),
         ("authorization_ids", ["forged-auth"]),
         ("endorsement_entry_ids", [1]),
     ],
@@ -279,6 +290,40 @@ def test_rejected_snapshot_must_equal_the_prepared_judge_input(
     verdict["criteria_snapshot"][snapshot_key] = forged
 
     with pytest.raises(decree_mod.LLMContractError, match="输入原值不一致"):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )
+
+
+def test_appointment_tenure_is_the_rejection_snapshot_value(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="署理某官",
+        target_kind="character", target_id="candidate", payload={"任别": "署理"},
+    )
+
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    assert context["dossiers"][0]["criteria_snapshot_source"]["appointment_tenure"] == "署理"
+    assert context["dossiers"][0]["id"] == dossier_id
+
+
+def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    gatekeepers = {row["name"] for row in context["gatekeepers"]}
+    outsider = next(
+        row["name"] for row in db.conn.execute("SELECT name FROM characters ORDER BY name")
+        if row["name"] not in gatekeepers
+    )
+    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
+    verdict["gatekeeper_id"] = outsider
+
+    with pytest.raises(decree_mod.LLMContractError, match="完整 typed 判据快照"):
         decree_mod.validate_promulgation_verdicts(
             [verdict], dossiers, db, prepared_context=context,
         )

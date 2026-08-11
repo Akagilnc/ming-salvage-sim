@@ -145,17 +145,7 @@ def build_promulgation_judge_context(
         if not isinstance(payload, dict):
             payload = json.loads(str(row.get("payload_json") or "{}"))
         target_id = row.get("target_id")
-        involved = payload.get("involved_office_types")
-        if not isinstance(involved, list):
-            involved = []
-        if str(row.get("target_kind") or "") == "character" and target_id:
-            target = db.conn.execute(
-                "SELECT office_type FROM characters WHERE name=?", (str(target_id),)
-            ).fetchone()
-            if target is not None and str(target["office_type"] or ""):
-                involved = [*involved, str(target["office_type"])]
-        if not involved:
-            involved = ["未指定"]
+        appointment_tenure = str(payload.get("任别") or "")
         authorization_ids = payload.get("authorization_ids", [])
         if not isinstance(authorization_ids, list):
             authorization_ids = []
@@ -172,11 +162,11 @@ def build_promulgation_judge_context(
             "target_kind": str(row.get("target_kind") or ""),
             "target_id": target_id,
             "mode": str(payload.get("mode") or "regular"),
-            "appointment_tenure": str(payload.get("任别") or ""),
+            "appointment_tenure": appointment_tenure,
             "break_rank": break_rank.get(int(row["id"])),
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
-                "involved_office_types": sorted(set(map(str, involved))),
+                "appointment_tenure": appointment_tenure,
                 "authorization_ids": sorted(set(map(str, authorization_ids))),
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
@@ -284,8 +274,18 @@ def validate_promulgation_verdicts(
         if not isinstance(payload, dict):
             payload = json.loads(str(dossier.get("payload_json") or "{}"))
         proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "regular")
+    rejection_only_fields = {
+        "blocked_layer", "primary_opponents", "gatekeeper_id", "reason",
+        "criteria_snapshot", "midzhi_unpromulgatable",
+    }
+    gatekeeper_ids = {
+        str(item["name"]) for item in context.get("gatekeepers", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
     try:
         for row in generated:
+            if row.get("decision") == "promulgated" and rejection_only_fields & row.keys():
+                raise ValueError("顺颁判决不得携带打回专属字段")
             marker = row.get("midzhi_unpromulgatable", False)
             if not isinstance(marker, bool):
                 raise ValueError("中旨亦不可颁标记必须为 bool")
@@ -297,6 +297,8 @@ def validate_promulgation_verdicts(
             )
             if needs_affected and "affected_parties" not in row:
                 raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
+            if not needs_affected and "affected_parties" in row:
+                raise ValueError("普通顺颁判决不得携带受损方")
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
@@ -321,10 +323,7 @@ def validate_promulgation_verdicts(
                 validate_rejection_verdict(
                     row, {"cabinet_drafting", "palace_rescript", "six_offices"},
                     faction_names=faction_names,
-                    character_ids={
-                        str(item["name"])
-                        for item in db.conn.execute("SELECT name FROM characters")
-                    },
+                    character_ids=gatekeeper_ids,
                 )
                 source_snapshot = context_dossiers.get(dossier_id, {}).get(
                     "criteria_snapshot_source"

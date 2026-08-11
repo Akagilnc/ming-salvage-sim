@@ -18,7 +18,7 @@ def _rejected_verdict(dossier_id):
         ],
         "midzhi_unpromulgatable": False,
         "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_office_types": ["未指定"],
+            "imperial_authority_band": "偏弱", "appointment_tenure": "",
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
     }
@@ -3294,7 +3294,7 @@ def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_
 
 @pytest.mark.parametrize(("field", "bad_value"), [
     ("imperial_authority_band", "low"),
-    ("involved_office_types", [1]),
+    ("appointment_tenure", "临时"),
     ("authorization_ids", [{}]),
     ("endorsement_entry_ids", [True]),
     ("endorsement_entry_ids", ["1"]),
