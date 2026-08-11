@@ -125,14 +125,41 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     assert (row["power_id"], row["office"], strength) == expected
 
 
-def test_pacification_rejects_dead_and_unknown_targets(game):
-    db, _state, content = game
+@pytest.mark.parametrize(
+    ("target", "mark_dead"),
+    [("张献忠", True), ("并不存在的人", False)],
+    ids=["dead", "unknown"],
+)
+def test_pacification_rejects_dead_and_unknown_targets(game, target, mark_dead):
+    db, state, content = game
     _make_enemy(db, content)
-    db.conn.execute("UPDATE characters SET status='dead' WHERE name='张献忠'")
-    db.conn.commit()
-    for target in ("张献忠", "并不存在的人"):
-        with pytest.raises(ValueError, match="canonical target"):
-            _stage_pacification(db, _state.turn, target)
+    if mark_dead:
+        db.conn.execute("UPDATE characters SET status='dead' WHERE name='张献忠'")
+        db.conn.commit()
+    person_before = dict(db.conn.execute(
+        "SELECT power_id,status,office,office_type FROM characters WHERE name='张献忠'"
+    ).fetchone())
+    power_before = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_522'"
+    ).fetchone())
+
+    ctx = _stage_pacification(db, state.turn, target)
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    assert db.commit_pending_actions(state, content=content) == []
+
+    pending = db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()
+    assert pending["status"] == "failed"
+    assert not [d for d in db.list_decree_dossiers()
+                if d["action_type"] == "pacification"]
+    assert dict(db.conn.execute(
+        "SELECT power_id,status,office,office_type FROM characters WHERE name='张献忠'"
+    ).fetchone()) == person_before
+    assert dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_522'"
+    ).fetchone()) == power_before
 
 
 def test_scripted_action_classes_are_mutually_exclusive(game):
