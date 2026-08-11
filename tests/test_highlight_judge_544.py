@@ -1,10 +1,8 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
-import json
 import threading
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
 from ming_sim.highlight_judge import judge_highlights, parse_highlights
@@ -123,8 +121,7 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         reopened.close()
 
 
-def test_web_chat_highlight_persistence_failure_preserves_completed_reply(game, monkeypatch):
-    """A loud decoration failure cannot roll back an already durable reply."""
+def test_web_chat_highlight_persistence_failure_silently_preserves_completed_reply(game, monkeypatch):
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
@@ -135,12 +132,11 @@ def test_web_chat_highlight_persistence_failure_preserves_completed_reply(game, 
     monkeypatch.setattr(db, "set_minister_message_highlights", _raise_disk_full)
 
     payload = runtime.chat("温体仁", "钱粮如何？")
-    assert payload["decoration_error"] == "disk full"
-    assert any(m["role"] == "minister" for m in payload["history"])
+    assert "decoration_error" not in payload
+    assert next(m for m in payload["history"] if m["role"] == "minister")["highlights"] == []
 
 
-def test_chat_stream_highlight_persistence_failure_is_decoration_only(game, monkeypatch):
-    """After done, a loud decoration error has no chat identity and the stream still ends."""
+def test_chat_stream_highlight_persistence_failure_silently_reaches_end(game, monkeypatch):
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
@@ -152,37 +148,8 @@ def test_chat_stream_highlight_persistence_failure_is_decoration_only(game, monk
 
     events = list(runtime.chat_stream("温体仁", "钱粮如何？"))
     kinds = [event["type"] for event in events]
-    assert kinds[-3:] == ["done", "decoration_error", "end"]
-    assert events[-2] == {"type": "decoration_error", "message": "disk full"}
-
-
-def test_fastapi_stream_relays_decoration_error_and_continues_to_end(monkeypatch):
-    """真实 ASGI 流入口按序保留完成回话、独立装饰错误和正常结尾。"""
-    import web_app
-
-    class Runtime:
-        def chat_stream(self, _minister, _message):
-            yield {"type": "done", "payload": {"history": [{"role": "minister", "content": "已成回话"}]}}
-            yield {"type": "decoration_error", "message": "disk full"}
-            yield {"type": "end"}
-
-    monkeypatch.setattr(web_app, "_require_active_minister", lambda _name: None)
-    monkeypatch.setattr(web_app, "get_game", lambda: Runtime())
-    response = TestClient(web_app.app).post(
-        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
-        json={"message": "问"},
-    )
-    events = [
-        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
-        for block in response.text.strip().split("\n\n")
-    ]
-
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert events == [
-        ("done", {"history": [{"role": "minister", "content": "已成回话"}]}),
-        ("decoration_error", {"message": "disk full"}),
-        ("end", {}),
-    ]
+    assert kinds[-2:] == ["done", "end"]
+    assert all(event["type"] != "highlights" for event in events)
 
 
 def test_highlights_persist_on_message_and_restore_only_for_minister(game):

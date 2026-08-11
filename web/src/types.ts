@@ -468,8 +468,6 @@ export type ChatResponse = {
   proposed_directive?: ProposedDirective | null;
   secret_order_id?: number;
   pending_action_failures?: PendingActionFailure[];
-  /** 回话已完成，但高亮装饰落库失败；不代表聊天失败。 */
-  decoration_error?: string;
   // #502 AC5：多道准驳含糊态（候选 id/摘要）供前端展示大臣追问哪一道；无则缺席/null。
   directive_confirmation_ambiguous?: DirectiveConfirmationAmbiguous | null;
 };

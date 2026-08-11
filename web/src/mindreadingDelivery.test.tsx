@@ -135,7 +135,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(hookRef.current!.chat.find((m) => m.role === "minister")?.highlights).toEqual(["答"]);
   });
 
-  it("生产 App 消费 done→decoration_error→end：保留回话且只显示独立告警", async () => {
+  it("生产 App 消费 done→end：保留回话、清空输入并解锁", async () => {
     const account = { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 };
     const gameState = {
       turn: { year: 1627, period: 10, turn: 1, phase: "summoning" }, metrics: {}, previous_summary: "",
@@ -172,7 +172,6 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
         completed = true;
         return sse([
         { event: "done", data: { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] } },
-        { event: "decoration_error", data: { message: "disk full" } },
         { event: "end", data: {} },
         ]);
       }
@@ -198,8 +197,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(host.textContent).toContain("已成回话");
     expect(composer.value).toBe("");
     expect(host.querySelector(".chat-system-note.danger[role='alert']")).toBeNull();
-    expect(Array.from(host.querySelectorAll(".chat-system-note")).some((node) =>
-      node.textContent?.includes("回话已完成，但高亮标注保存失败：disk full"))).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>(".primary-action")?.disabled).toBe(false);
   });
 
   it("迟到 highlights 抵抗下一轮陈旧 history，撤回归属轮时仍删除", () => {
