@@ -1,8 +1,10 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
+import json
 import threading
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
 from ming_sim.highlight_judge import judge_highlights, parse_highlights
@@ -154,9 +156,8 @@ def test_chat_stream_highlight_persistence_failure_is_decoration_only(game, monk
     assert events[-2] == {"type": "decoration_error", "message": "disk full"}
 
 
-@pytest.mark.asyncio
-async def test_fastapi_stream_relays_decoration_error_and_continues_to_end(monkeypatch):
-    """生产 FastAPI 适配层不能丢掉 WebGame 已发出的独立装饰错误。"""
+def test_fastapi_stream_relays_decoration_error_and_continues_to_end(monkeypatch):
+    """真实 ASGI 流入口按序保留完成回话、独立装饰错误和正常结尾。"""
     import web_app
 
     class Runtime:
@@ -167,13 +168,21 @@ async def test_fastapi_stream_relays_decoration_error_and_continues_to_end(monke
 
     monkeypatch.setattr(web_app, "_require_active_minister", lambda _name: None)
     monkeypatch.setattr(web_app, "get_game", lambda: Runtime())
-    response = await web_app.api_chat_stream("温体仁", web_app.ChatRequest(message="问"))
-    body = "".join([chunk async for chunk in response.body_iterator])
-    assert "event: done" in body
-    assert 'event: decoration_error' in body
-    assert '"message": "disk full"' in body
-    assert body.index("event: done") < body.index("event: decoration_error") < body.index("event: end")
-    assert "event: error\n" not in body
+    response = TestClient(web_app.app).post(
+        "/api/ministers/%E6%B8%A9%E4%BD%93%E4%BB%81/chat/stream",
+        json={"message": "问"},
+    )
+    events = [
+        (block.splitlines()[0].removeprefix("event: "), json.loads(block.splitlines()[1].removeprefix("data: ")))
+        for block in response.text.strip().split("\n\n")
+    ]
+
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert events == [
+        ("done", {"history": [{"role": "minister", "content": "已成回话"}]}),
+        ("decoration_error", {"message": "disk full"}),
+        ("end", {}),
+    ]
 
 
 def test_highlights_persist_on_message_and_restore_only_for_minister(game):

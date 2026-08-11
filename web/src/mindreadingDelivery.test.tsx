@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { App } from "./main";
 import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
 import { chatReducer } from "./mindreading";
 import { ChatModal } from "./components/modals";
@@ -9,6 +10,8 @@ import { retryAudienceStoryExtraction } from "./extractionRetry";
 import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+class _RO { observe() {} unobserve() {} disconnect() {} }
+(globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver = _RO;
 
 const MINISTER: Minister = {
   name: "温体仁", office: "礼部尚书", office_type: "礼部", faction: "浙党",
@@ -132,32 +135,71 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(hookRef.current!.chat.find((m) => m.role === "minister")?.highlights).toEqual(["答"]);
   });
 
-  it.each([
-    ["done payload", { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [], decoration_error: "disk full" }, []],
-    ["SSE event", { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] }, [
-      { event: "decoration_error", data: { message: "disk full" } },
-    ]],
-  ])("%s 装饰失败走独立告警边界，不触发聊天失败消费", async (_label, done, tail) => {
-    vi.stubGlobal("fetch", vi.fn(async () => sse([
-      { event: "done", data: done },
-      ...(tail as SseEvent[]),
-      { event: "end", data: {} },
-    ])));
-    const { hookRef } = mount("legacy", true);
-    const decorationErrors: string[] = [];
-    const chatErrors: string[] = [];
-    let composer = "";
-    await act(async () => {
-      await hookRef.current!.sendChat("温体仁", "问", {
-        onDecorationError: (error) => decorationErrors.push(String(error)),
-        onError: (error) => { composer = "问"; chatErrors.push(String(error)); },
+  it("生产 App 消费 done→decoration_error→end：保留回话且只显示独立告警", async () => {
+    const account = { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 };
+    const gameState = {
+      turn: { year: 1627, period: 10, turn: 1, phase: "summoning" }, metrics: {}, previous_summary: "",
+      treasury: "", issues: [], legacies: [], closed_this_turn: [], budget: { 国库: account, 内库: account },
+      region_warning: "", army_warning: "", power_warning: "", powers: [], victory_status: { status: "", summary: "" },
+      ending: null, events: [], regions: [], armies: [], map_nodes: [], ministers: [MINISTER], consorts: [],
+      directives: [], pending_count: 0, last_decree: "", last_report: "",
+    };
+    let completed = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url), "http://t.local").pathname;
+      if (path === "/api/menu/status") return jsonResp({
+        has_api_key: true, has_running_game: true, has_main_db: true, saves: [],
+        llm: { base_url: "x", model: "m", has_api_key: true, max_tokens: 1, timeout_seconds: 1,
+          thinking_level: "", advanced_model: "", advanced_base_url: "", has_advanced_api_key: false,
+          advanced_thinking_level: "" },
       });
+      if (path === "/api/game/state") return jsonResp(gameState);
+      if (path === "/api/secret_orders") return jsonResp({ orders: [] });
+      if (path === "/api/saves") return jsonResp({ saves: [] });
+      if (path === "/api/audience/scroll") return jsonResp({
+        night_id: 24, status: "open",
+        messages: completed ? [
+          { role: "user", speaker: "圣上", content: "问", chat_turn_id: 11 },
+          { role: "minister", speaker: "温体仁", content: "已成回话", chat_turn_id: 11 },
+        ] : [],
+      });
+      if (path === "/api/audience/extraction/pending") return jsonResp({ count: 0 });
+      if (path.endsWith("/chat") && init?.method !== "POST") return jsonResp({
+        minister: MINISTER, history: [], suggestions: [], can_undo_last_chat: false,
+        campaign_id: "c1", night_id: 24,
+      });
+      if (path.endsWith("/chat/stream")) {
+        completed = true;
+        return sse([
+        { event: "done", data: { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] } },
+        { event: "decoration_error", data: { message: "disk full" } },
+        { event: "end", data: {} },
+        ]);
+      }
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="朝堂·召见大臣"]')?.click(); });
+    await act(async () => { host.querySelector<HTMLButtonElement>(".minister-card")?.click(); });
+    await tick();
+    const composer = host.querySelector<HTMLTextAreaElement>(".chat-input textarea")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(composer, "问");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(decorationErrors.join(" ")).toContain("disk full");
-    expect(chatErrors).toEqual([]);
-    expect(composer).toBe("");
-    expect(hookRef.current!.failedIdentity).toBeNull();
-    expect(hookRef.current!.chat.some((m) => m.content === "已成回话")).toBe(true);
+    await act(async () => { host.querySelector<HTMLButtonElement>(".primary-action")?.click(); });
+    await tick();
+
+    expect(host.textContent).toContain("已成回话");
+    expect(composer.value).toBe("");
+    expect(host.querySelector(".chat-system-note.danger[role='alert']")).toBeNull();
+    expect(Array.from(host.querySelectorAll(".chat-system-note")).some((node) =>
+      node.textContent?.includes("回话已完成，但高亮标注保存失败：disk full"))).toBe(true);
   });
 
   it("迟到 highlights 抵抗下一轮陈旧 history，撤回归属轮时仍删除", () => {
