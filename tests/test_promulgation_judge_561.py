@@ -82,6 +82,37 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     ]
 
 
+def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    original_factions = {row["name"]: row for row in first["factions"]}
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    assert [row["name"] for row in second["gatekeepers"]] == ["黄立极", "王体乾"]
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name='许誉卿'"
+    ).fetchone()["status"] == "dismissed"
+    second_factions = {row["name"]: row for row in second["factions"]}
+    assert second_factions["东林"] == {
+        "name": "东林", "leverage": 5, "agenda": "失去许誉卿封驳支点，转入复议",
+    }
+    assert {
+        name: facts for name, facts in second_factions.items() if name != "东林"
+    } == {
+        name: facts for name, facts in original_factions.items() if name != "东林"
+    }
+    assert second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        "御笔特准清丈不经部议",
+    ]
+    assert second["imperial_authority_band"] == "强盛"
+
+
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
 
