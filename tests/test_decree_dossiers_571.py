@@ -1936,6 +1936,36 @@ def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
     assert not getattr(session, "last_decree", "")
 
 
+def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
+    game, monkeypatch, capsys,
+):
+    import ming_sim.cli.terminal as terminal
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "着修河工", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "river-works",
+        },
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.enter_review = lambda: None
+    session.back_to_summoning = lambda: None
+    answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    assert session.list_directives() == []
+    assert terminal.review_directives(session) == "back"
+    assert capsys.readouterr().out.count("没有这条草案。") == 2
+    assert db.get_dossier_for_directive(directive_id) is not None
+    assert db.list_directives(state)[0]["text"] == "着修河工"
+
+
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     from ming_sim.session import GameSession
 

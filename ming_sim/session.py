@@ -1973,6 +1973,7 @@ class GameSession:
                 actor=str(r["actor"] or ""),
             )
             for r in rows
+            if self.db.get_dossier_for_directive(int(r["id"])) is None
         ]
 
     @staticmethod

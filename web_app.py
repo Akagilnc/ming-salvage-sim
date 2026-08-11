@@ -1064,12 +1064,15 @@ class WebGame:
         }
 
     def directive_rows(self):
-        """Player desk projection: only current-turn directives not yet made dossiers."""
+        """Player desk projection shared with the CLI: undossiered candidates only."""
+        visible_ids = {
+            item.id for item in self.session.list_directives(include_pending=True)
+        }
         return [
             row for row in self.db.list_directives(
                 self.state, statuses=("pending", "draft"),
             )
-            if self.db.get_dossier_for_directive(int(row["id"])) is None
+            if int(row["id"]) in visible_ids
         ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
@@ -3631,19 +3634,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
-
-
-@app.post("/api/decree/write")
-async def api_write_decree() -> Dict[str, Any]:
-    game = get_game()
-    try:
-        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
-        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
-        with _serialized_web_write(game):
-            decree = game.session.write_decree()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"decree": decree}
 
 
 @app.post("/api/decree/advance_without_edict")

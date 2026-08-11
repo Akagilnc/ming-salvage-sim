@@ -1065,48 +1065,6 @@ export function EdictModal({
 }
 
 
-// 明黄诏书卷轴：竖排右起，古制体例。editable 时点开变 textarea 改稿。
-export function DecreeScroll({
-  text,
-  editable,
-  sealed,
-  onChange,
-}: {
-  text: string;
-  editable?: boolean;
-  sealed?: boolean;
-  onChange?: (value: string) => void;
-}) {
-  const [editing, setEditing] = React.useState(false);
-  return (
-    <div className={`decree-scroll${sealed ? " sealed" : ""}`}>
-      <div className="decree-scroll-knob top" aria-hidden="true" />
-      <div className="decree-scroll-paper">
-        {editable && editing ? (
-          <textarea
-            className="decree-scroll-edit"
-            value={text}
-            autoFocus
-            onChange={(event) => onChange?.(event.target.value)}
-            onBlur={() => setEditing(false)}
-          />
-        ) : (
-          <div
-            className="decree-scroll-body"
-            onClick={editable ? () => setEditing(true) : undefined}
-            title={editable ? "点此朱笔改稿" : undefined}
-          >
-            {text || "（诏文待拟）"}
-          </div>
-        )}
-        {sealed ? <div className="decree-seal-mark" aria-hidden="true">勅</div> : null}
-      </div>
-      <div className="decree-scroll-knob bottom" aria-hidden="true" />
-    </div>
-  );
-}
-
-
 // 官职品级权重，数字越小品级越高（排越前）
 export function officeRank(office: string): number {
   if (/首辅/.test(office)) return 1;

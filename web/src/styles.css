@@ -3154,80 +3154,6 @@ button:disabled {
   font-family: "Noto Serif SC", "Songti SC", serif;
 }
 
-/* ── 幕二/三 诏书卷轴 ── */
-.edict-stage-review,
-.edict-stage-issued {
-  align-items: center;
-  gap: 14px;
-}
-
-.decree-scroll {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  width: min(620px, 92%);
-  flex: 1;
-  min-height: 0;
-  margin: 0 auto;
-}
-
-.decree-scroll-knob {
-  height: 16px;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, #6e4a22, #3f2a12);
-  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4);
-}
-
-.decree-scroll-knob.top { margin-bottom: -4px; }
-.decree-scroll-knob.bottom { margin-top: -4px; }
-
-/* 明黄绢纸 */
-.decree-scroll-paper {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 28px 26px;
-  border-left: 2px solid rgba(150, 36, 28, 0.30);
-  border-right: 2px solid rgba(150, 36, 28, 0.30);
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg, #f6e6b0, #f0d894);
-  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18);
-}
-
-/* 竖排右起 */
-.decree-scroll-body,
-.decree-scroll-edit {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  height: 100%;
-  line-height: 2;
-  letter-spacing: 0.12em;
-  font-size: 1.02rem;
-  font-family: "Noto Serif SC", "Songti SC", serif;
-  color: #3a2410 !important;
-  white-space: pre-wrap;
-}
-
-.decree-scroll-body {
-  cursor: text;
-}
-
-.decree-scroll[class*="sealed"] .decree-scroll-body {
-  cursor: default;
-}
-
-.decree-scroll-edit {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent !important;
-}
-
 /* 朱印 */
 .decree-seal-mark {
   position: absolute;
@@ -3418,17 +3344,6 @@ button:disabled {
     rgba(250, 242, 219, 0.82) !important;
   border-radius: 3px;
 }
-.modal-bg-edict .decree-scroll-paper {
-  background:
-    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg, #f6e6b0, #f0d894) !important;
-  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18) !important;
-}
-.modal-bg-edict .decree-scroll-knob {
-  background: linear-gradient(180deg, #6e4a22, #3f2a12) !important;
-  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4) !important;
-}
-
 .modal-bg-state .summary-table th {
   background: rgba(158, 42, 43, 0.16) !important;
 }
@@ -4247,9 +4162,6 @@ button:disabled {
   .desk-columns {
     grid-template-columns: 1fr;
     overflow-y: auto;
-  }
-  .decree-scroll {
-    width: 100%;
   }
 }
 
