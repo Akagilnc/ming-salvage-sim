@@ -90,8 +90,8 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda dossiers, _state, **_kwargs: [
             {"dossier_id": row["id"], "decision": "promulgated"}
             for row in dossiers
         ],

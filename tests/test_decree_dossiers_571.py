@@ -1058,7 +1058,7 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     db, state, content = game
     monkeypatch.setattr(
         decree_mod,
-        "stub_promulgation_verdicts",
+        "llm_promulgation_verdicts",
         lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判决 seam"),
     )
 
@@ -1102,8 +1102,8 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(dossier["id"]) if state.turn == 1 else
             {"dossier_id": dossier["id"], "decision": "promulgated"}
         ],
@@ -1186,8 +1186,8 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [_rejected_verdict(dossier["id"])],
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [_rejected_verdict(dossier["id"])],
     )
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
@@ -1271,8 +1271,8 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
     seen = {}
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(rejected["id"]),
             {"dossier_id": promulgated["id"], "decision": "promulgated"},
         ],
@@ -2709,7 +2709,7 @@ def test_invalid_promulgation_decision_stops_before_simulation(
         target_kind="issue", target_id="river-works",
     )
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
+        decree_mod, "llm_promulgation_verdicts",
         lambda *_a, **_k: [{"dossier_id": bad_id, "decision": bad_decision}],
     )
     forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
