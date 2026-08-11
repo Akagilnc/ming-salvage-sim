@@ -3027,35 +3027,6 @@ button:disabled {
   min-height: 0;
 }
 
-.pending-directives {
-  display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid rgba(170, 50, 36, 0.55);
-  border-left: 4px solid rgba(170, 50, 36, 0.85);
-  border-radius: 3px;
-  background:
-    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04));
-  max-height: 38vh;
-  overflow-y: auto;
-}
-
-.pending-directives h3 {
-  margin: 0;
-  font-size: 1rem;
-  letter-spacing: 0.08em;
-  color: #a8321f;
-  font-family: "Noto Serif SC", "Songti SC", serif;
-}
-
-.directive-item.pending {
-  border-color: rgba(170, 50, 36, 0.42);
-  border-left: 3px solid rgba(170, 50, 36, 0.7);
-  background:
-    linear-gradient(95deg, rgba(176, 58, 40, 0.10), transparent 55%),
-    rgba(252, 244, 222, 0.82);
-}
-
 .directive-list {
   display: grid;
   align-content: start;
@@ -3123,14 +3094,6 @@ button:disabled {
   padding: 3px 10px;
   font-size: 0.82rem;
   border-radius: 3px;
-}
-
-/* 朱批准驳：朱砂红，仪式感 */
-.directive-tools .vermilion-yes,
-.directive-tools .vermilion-no {
-  font-weight: 700;
-  font-family: "Noto Serif SC", "Songti SC", serif;
-  letter-spacing: 0.05em;
 }
 
 .directive-edit {
@@ -3455,15 +3418,6 @@ button:disabled {
     rgba(250, 242, 219, 0.82) !important;
   border-radius: 3px;
 }
-.modal-bg-edict .directive-item.pending {
-  background:
-    linear-gradient(95deg, rgba(176, 58, 40, 0.12), transparent 55%),
-    rgba(252, 244, 222, 0.86) !important;
-}
-.modal-bg-edict .pending-directives {
-  background:
-    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04)) !important;
-}
 .modal-bg-edict .decree-scroll-paper {
   background:
     repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
@@ -3648,26 +3602,6 @@ button:disabled {
 .modal-bg-edict .seal-btn-ghost:hover,
 .modal-bg-edict .seal-btn-save:hover {
   background: rgba(255, 240, 210, 0.96) !important;
-}
-
-/* 朱批·准：朱砂红实底 */
-.modal-bg-edict .directive-tools .vermilion-yes {
-  background: linear-gradient(180deg, #c0432f, #8a261b) !important;
-  color: #ffe9d8 !important;
-  border-color: rgba(150, 36, 28, 0.6) !important;
-}
-.modal-bg-edict .directive-tools .vermilion-yes:hover {
-  background: linear-gradient(180deg, #d24c36, #9a2c1f) !important;
-}
-
-/* 朱批·驳：朱砂红描边 */
-.modal-bg-edict .directive-tools .vermilion-no {
-  background: rgba(252, 244, 236, 0.9) !important;
-  color: #9a2c1f !important;
-  border: 1px solid rgba(150, 36, 28, 0.7) !important;
-}
-.modal-bg-edict .directive-tools .vermilion-no:hover {
-  background: rgba(176, 58, 40, 0.14) !important;
 }
 
 /* 拟诏 / 盖玺颁布：玉玺红大钮 */

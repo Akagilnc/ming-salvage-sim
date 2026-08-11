@@ -98,6 +98,8 @@ export function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
+  const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const sendAudienceCommandRef = React.useRef<(text: string) => Promise<void>>(async () => {});
   const suppressNextReportRef = React.useRef(false);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
@@ -418,6 +420,11 @@ export function App() {
       setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
       return;
     }
+    const isConsort = (state.consorts || []).some((consort) => consort.name === minister.name);
+    if (activeModal === "chat" && currentNightId > 0 && !isConsort) {
+      void sendAudienceCommandRef.current(`宣${minister.name}`);
+      return;
+    }
     const switchingMinister = selectedMinister !== minister.name;
     if (switchingMinister) {
       resetPanel();
@@ -538,6 +545,9 @@ export function App() {
       },
     });
   };
+
+  // Roster accelerators and typed commands share this exact audience-turn function.
+  sendAudienceCommandRef.current = sendChat;
 
   const undoLastChat = async () => {
     if (busy || !activeMinister || !canUndoLastChat) return;
@@ -767,34 +777,6 @@ export function App() {
       if (editingDirectiveId === directiveId) {
         cancelEditDirective();
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const confirmDirective = async (directiveId: number) => {
-    setBusy("核定大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/confirm`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const rejectDirective = async (directiveId: number) => {
-    setBusy("驳回大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1228,7 +1210,8 @@ export function App() {
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={() => toggleFavorite(activeMinister)}
-            onOpenEdict={() => setActiveModal("edict")}
+            scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
+            onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
           />
@@ -1268,8 +1251,6 @@ export function App() {
             onAdvanceWithoutEdict={advanceWithoutEdict}
             onResetDecree={resetDecree}
             onIssueDecree={issueDecree}
-            onConfirmDirective={confirmDirective}
-            onRejectDirective={rejectDirective}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
