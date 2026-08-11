@@ -1,6 +1,6 @@
 {
   "issue": 540,
-  "capture": "Production build served through a same-origin static/API proxy; archive captured by continuing the saved game and opening the real HistoryModal/起居注 path. CDP Fetch interception at /api/history/turns, /api/history/turn/11, and /api/audience/scroll supplies one deterministic archived scene with scene/user/minister/attendant roles. PNG bytes are unmodified Page.captureScreenshot output from current HEAD.",
+  "capture": "Production build served through Vite preview; archive captured by continuing the saved game and opening the real App command-slot → AudienceArchiveModal/起居注 path. CDP Fetch interception at /api/menu/status, /api/game/state, /api/history/turns, and /api/audience/scroll supplies the production roster and one deterministic archived scene with scene/user/minister/attendant roles. PNG bytes are unmodified Page.captureScreenshot output from current HEAD.",
   "payloadRoles": [
     "scene",
     "user",
@@ -24,11 +24,11 @@
       ]
     },
     "archive-north-star.png": {
-      "sha256": "a9f4c8089e308287f2cd6cf338edd4d251a448cbfa794408f1ea0e7a98d3fbf1",
-      "bytes": 2238344,
+      "sha256": "fcea666c1c98005b8ca43b6293397cd907e85b22dd6320d4ca416d4c1e64bfd5",
+      "bytes": 495507,
       "dimensions": [
         1440,
-        1113
+        1026
       ]
     }
   }

@@ -1287,11 +1287,11 @@ export function App() {
       ) : null}
 
       {activeModal === "history" ? (
-        <HistoryModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
+        <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "audience_archive" ? (
-        <AudienceArchiveModal onClose={guardClose(() => setActiveModal("none"))} />
+        <AudienceArchiveModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (

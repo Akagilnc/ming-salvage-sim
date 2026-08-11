@@ -300,7 +300,7 @@ export function ClosedGroup({ title, items, cls }: { title: string; items: Close
   );
 }
 
-export function HistoryModal({ onClose, ministers = [] }: { onClose: () => void; ministers?: Minister[] }) {
+export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
