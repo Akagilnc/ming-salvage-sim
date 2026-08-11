@@ -53,7 +53,7 @@ def _cfg(args: argparse.Namespace) -> LLMConfig:
     return LLMConfig(
         api_key="", base_url="", model=args.model, channel="cli",
         cli_runner=args.runner, cli_model=args.model, cli_timeout_seconds=600,
-        max_tokens=6000, reasoning_strength="medium",
+        max_tokens=6000, reasoning_strength="high",
     )
 
 
@@ -75,6 +75,13 @@ def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[d
         chosen.append({"event_id": decision["event_id"], "choice": choice})
     db.conn.commit()
     return chosen
+
+
+def _judge_context_for_dossier(db: GameDB, state, dossier_id: int) -> dict:
+    """Build evidence from the same fresh dossier row production will consume."""
+    return build_promulgation_judge_context(
+        db, state, [db.get_decree_dossier(dossier_id)],
+    )
 
 
 def _select_second_verdict(
@@ -145,17 +152,18 @@ def main() -> int:
         held_history = db.list_decree_dossier_decisions(hostile)
         text_after_hold = str(held["decree_text"])
 
-        # Change only actual reconsideration facts.  The held decree text is immutable here.
-        db.conn.execute(
-            "UPDATE factions SET leverage=5, agenda='支持清丈以均平田赋、奉行御旨'"
-        )
-        # Changing the gatekeeping bench is a production board fact.  The first
-        # judgment's officials now belong to the pro-decree coalition and lack
-        # the resolve to turn the unchanged procedural defect into a veto.
+        # Replace the opposition board: its gatekeeping bench and faction
+        # posture, plus the explicit authorization and authority needed to cure
+        # the unchanged wording's procedural defect.
         first_gatekeepers = [row["name"] for row in first_context["gatekeepers"]]
+        if not first_gatekeepers:
+            raise RuntimeError("first judgment must have a gatekeeping bench")
         db.conn.executemany(
-            "UPDATE characters SET faction='皇党',courage=5,integrity=5 WHERE name=?",
+            "UPDATE characters SET status='dismissed' WHERE name=?",
             [(name,) for name in first_gatekeepers],
+        )
+        db.conn.execute(
+            "UPDATE factions SET leverage=5,agenda='接受清丈复议结论、奉旨办理'"
         )
         held_payload = json.loads(str(held["payload_json"] or "{}"))
         held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
@@ -166,7 +174,7 @@ def main() -> int:
         state.metrics["皇威"] = 100
         db.save_state(state)
         db.conn.commit()
-        second_context = build_promulgation_judge_context(db, state, [held])
+        second_context = _judge_context_for_dossier(db, state, hostile)
         second_turn = state.turn
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
@@ -236,12 +244,16 @@ def main() -> int:
                     "factions": [first_context["factions"], second_context["factions"]],
                     "皇威": [first_context["imperial_authority_band"],
                              second_context["imperial_authority_band"]],
-                    "gatekeepers": [
-                        [row["name"] for row in first_context["gatekeepers"]],
-                        [row["name"] for row in second_context["gatekeepers"]],
+                    "gatekeepers": [first_context["gatekeepers"],
+                                    second_context["gatekeepers"]],
+                    "authorization_ids": [
+                        first_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"],
+                        second_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"],
                     ],
-                    "authorization_ids": [[], ["御笔特准清丈不经部议"]],
-                    "decree_text": [hostile_text, text_after_hold],
+                    "decree_text": [
+                        first_context["dossiers"][0]["decree_text"],
+                        second_context["dossiers"][0]["decree_text"],
+                    ],
                 },
             },
             "judge_first": {"input": first_context, "output": first_verdicts},
