@@ -343,6 +343,24 @@ def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
     assert writeoff["army_changes"][0]["category"] == "missing_origin_ref"
     assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
 
+    valid_writeoff = issue_engine.apply_score_extraction(
+        db, state,
+        {"army_delta": {army_id: {"manpower": 0, "origin_ref": SPONTANEOUS}}},
+        content=content,
+    )
+    assert valid_writeoff["army_changes"] == []
+    arrears = db.conn.execute(
+        "SELECT arrears, province_pay_arrears, central_pay_arrears FROM armies WHERE id=?",
+        (army_id,),
+    ).fetchone()
+    assert tuple(arrears) == (0, 0, 0)
+    log = db.conn.execute(
+        "SELECT old_value, new_value, origin_ref FROM army_logs "
+        "WHERE army_id=? AND field='arrears' ORDER BY id DESC LIMIT 1",
+        (army_id,),
+    ).fetchone()
+    assert tuple(log) == ("5.0", "0.0", SPONTANEOUS)
+
 
 def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
     db, state, content = game
