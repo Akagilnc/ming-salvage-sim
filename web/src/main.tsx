@@ -19,7 +19,7 @@ import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { retryAudienceStoryExtraction } from "./extractionRetry";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatResponse, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -592,13 +592,17 @@ export function App() {
     setError("");
     setChatNotice("");
     try {
-      await api(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+      const data = await api<ChatResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
         method: "POST",
       });
       if (selectedMinisterRef.current !== initiatingPanelName) return;
+      applyHistory(data.history);
+      setSuggestions(data.suggestions);
+      setCanUndoLastChat(!!data.can_undo_last_chat);
+      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
       setReplyRetry(null);
       setChatNotice("已重新生成回话。");
-      await loadMinisterChat(targetMinisterName, { mergeFailures: true });
+      invalidateAudienceScroll();
       void refreshDurableProjection({ secretOrders: true });
       void refreshExtractionPending();
     } catch (err) {
