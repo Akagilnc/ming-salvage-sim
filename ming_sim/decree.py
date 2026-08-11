@@ -518,12 +518,14 @@ def resolve_directives(
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
+    rejected_verdict_batch: object = None
     try:
         if proposed_dossiers:
             # A validated batch is durable before any simulator work.  Recovery is
             # turn-scoped: an old hold verdict can never suppress this month's call.
             stored = db.get_pending_promulgation_verdicts(state.turn)
             if stored:
+                rejected_verdict_batch = stored
                 verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
             else:
                 reviewed, exempt = [], []
@@ -541,11 +543,30 @@ def resolve_directives(
                 generated = generated + (
                     stub_promulgation_verdicts(exempt, state) if exempt else []
                 )
+                rejected_verdict_batch = generated
                 verdict_rows = validate_promulgation_verdicts(
                     generated, proposed_dossiers, db,
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
+        # Verdict contract failures use the existing rejection ledger.  Keep the
+        # provider item verbatim; the failed batch never reaches pending/history.
+        if isinstance(rejected_verdict_batch, list):
+            collector = RejectionCollector(attempt=_next_attempt(state.turn))
+            with atomic(db):
+                for rejected_verdict in rejected_verdict_batch:
+                    collector.record(
+                        "promulgation_verdicts",
+                        RejectedItem(
+                            item=rejected_verdict,
+                            reason=str(exc),
+                            category="invalid_shape",
+                            source=Provenance(source),
+                        ),
+                        state.turn,
+                    )
+                collector.flush_to_db(db)
+            _mirror_rejections_after_commit(db, collector)
         try:
             pack_path = write_error_pack(
                 db, state, exc=exc, extracted=None,

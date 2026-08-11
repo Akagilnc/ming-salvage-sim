@@ -10733,7 +10733,7 @@ class GameDB:
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
         blocked_layer: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         commit: bool = True,
@@ -10912,7 +10912,7 @@ class GameDB:
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
         blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
