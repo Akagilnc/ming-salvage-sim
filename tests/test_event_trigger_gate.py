@@ -1011,6 +1011,44 @@ def test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item(game):
     assert any(item.get("rejected") for item in out["army_changes"])
 
 
+def test_strategic_event_missing_origin_rejects_whole_result_envelope(game):
+    """ADR0014/#558：来源拒收也必须在战略战果预检中令整个信封原子失败。"""
+    db, state, content = game
+    issues.bind_content(content)
+    state.year = 1629
+    state.period = 11
+    db.conn.execute("UPDATE regions SET military_pressure = 20 WHERE id = 'beizhili'")
+    db.conn.execute("UPDATE armies SET morale = 50 WHERE id = 'jingying'")
+
+    out = issues.apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
+            "事件结局": {"jisi_lubian": "入塞被遏"},
+            "region_delta": {"beizhili": {
+                "origin_ref": "盘面自发", "military_pressure": 35,
+                "reason": "己巳之变软判敌逼京畿",
+            }},
+            "army_delta": {"jingying": {
+                "morale": -8, "reason": "己巳之变勤王战损",
+            }},
+        },
+        content=content,
+    )
+
+    issue = out["issue_summary"]["new_issues"][0]
+    assert issue["rejected"] is True
+    assert "来源" in issue["reason"]
+    assert not db.has_event_triggered("jisi_lubian")
+    assert db.conn.execute(
+        "SELECT military_pressure FROM regions WHERE id='beizhili'"
+    ).fetchone()[0] == 20
+    assert db.conn.execute(
+        "SELECT morale FROM armies WHERE id='jingying'"
+    ).fetchone()[0] == 50
+
+
 def test_strategic_foreign_event_lands_new_army_soft_result_delta(game):
     """ship-pre CMR：战略战事软判结果可落新军主账，并驱动事件触发。"""
     db, state, content = game

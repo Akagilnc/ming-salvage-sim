@@ -4477,6 +4477,22 @@ def _strategic_event_result_preflight_error(
                 if err:
                     return err
 
+    origin_items = (
+        [("地区", item) for item in region_deltas.values()]
+        + [("军队", item) for item in army_deltas.values()]
+        + [("势力", item) for item in power_updates.values()]
+        + [("人物", item) for item in person_changes]
+        + [("新军", item) for item in new_armies]
+    )
+    for kind, item in origin_items:
+        origin_ref = item.get("origin_ref") if isinstance(item, dict) else None
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if origin_error:
+            return (
+                f"战略/外敌事件「{event_title or event_id}」{kind}战果来源拒收："
+                f"{origin_error.get('reason') or origin_error.get('category') or ''}"
+            )
+
     return ""
 
 

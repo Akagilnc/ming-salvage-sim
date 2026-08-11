@@ -880,10 +880,10 @@ def build_board_query_tools(context: CourtContext):
 
     def get_active_ministers() -> str:
         """查当前在朝（active）官员名单：姓名、官职、派系。
-        写 office_changes / character_status_changes 前必查，核实人物是否确实在朝。"""
+        写 canonical 人物变更前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
             # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫、非宗藩
-            # （宗室就藩非朝堂命官，PR#121；写 office_changes 前查此名单不应见宗藩，cmr R3 cross-section）。
+            # （宗室就藩非朝堂命官，PR#121；写 canonical 人物变更前查此名单不应见宗藩，cmr R3 cross-section）。
             "SELECT name,office,faction FROM characters WHERE status='active' "
             "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
         ).fetchall()
@@ -958,8 +958,8 @@ def build_simulator_tools(context: CourtContext):
 
         ══ 末章固定 ══
         「人事除目」（有人事变动时必列，无则不列）：
-          任官：旧职→新职 or 起用姓名为官职  → 档房抽office_changes
-          去职：姓名+去职缘由（革/狱/流/仕/卒）  → 档房抽character_status_changes
+          任官：旧职→新职 or 起用姓名为官职  → 档房抽「人物变更」任命/调任
+          去职：姓名+去职缘由（革/狱/流/仕/卒）  → 档房抽「人物变更」罢黜/处置
         「待办未解」：只列active_issues在册局势，逐条状态短语（已具题待覆/已近结案/按其本然推移等），
         每条一句话点局势名与id，不写bar数字，不写from→to。
         「建筑只叙事」：不代标数值、不代立新建筑；新建/扩建走局势effect落地，不在邸报直造。

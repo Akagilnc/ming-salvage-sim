@@ -307,6 +307,43 @@ def test_entity_origin_gate_does_not_replace_reference_shape_or_noop_classificat
     assert db.conn.execute("SELECT COUNT(*) FROM region_logs").fetchone()[0] == before_logs
 
 
+def test_zero_manpower_origin_gate_matches_actual_arrears_writeoff(game):
+    db, state, content = game
+    row = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()
+    army_id = row["id"]
+    db.conn.execute(
+        "UPDATE armies SET manpower=0, arrears=5, province_pay_arrears=3, central_pay_arrears=2 WHERE id=?",
+        (army_id,),
+    )
+    db.conn.execute(
+        "INSERT OR REPLACE INTO fiscal_config (key,value,kind,note) VALUES "
+        "('__army_pay_source_cutover',0,'meta','test legacy no-op')"
+    )
+
+    legacy_noop = issue_engine.apply_score_extraction(
+        db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content
+    )
+    assert legacy_noop["army_changes"] == []
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
+
+    db.conn.execute(
+        "UPDATE fiscal_config SET value=1 WHERE key='__army_pay_source_cutover'"
+    )
+    db.conn.execute("UPDATE armies SET owner_power='houjin' WHERE id=?", (army_id,))
+    non_ming_noop = issue_engine.apply_score_extraction(
+        db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content
+    )
+    assert non_ming_noop["army_changes"] == []
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
+
+    db.conn.execute("UPDATE armies SET owner_power='ming' WHERE id=?", (army_id,))
+    writeoff = issue_engine.apply_score_extraction(
+        db, state, {"army_delta": {army_id: {"manpower": 0}}}, content=content
+    )
+    assert writeoff["army_changes"][0]["category"] == "missing_origin_ref"
+    assert db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()[0] == 5
+
+
 def test_army_pay_source_classifies_before_origin_gate_and_never_writes_without_origin(game):
     db, state, content = game
     row = db.conn.execute(
