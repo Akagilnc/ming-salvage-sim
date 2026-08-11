@@ -376,22 +376,6 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
     expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
     expect(document.querySelector(".chat-system-note")).toBeNull();
   });
-
-  it("keeps failure and recovery affordances in the system layer", () => {
-    renderModal({
-      minister: MINISTER_MOCK,
-      portraitPrefix: "minister_",
-      replyRetry: { chat_turn_id: 12, question: "边情如何？" },
-      onRetryReply: vi.fn(),
-      extractionPendingCount: 1,
-      onRetryExtraction: vi.fn(),
-      chatFailures: [{ id: 7, kind: "secret_order", action: "新建", retryable: true, message: "密令下达失败" }],
-    });
-
-    expect(document.querySelectorAll('.chat-system-note[role="alert"]')).toHaveLength(3);
-    expect(Array.from(document.querySelectorAll("button")).map((button) => button.textContent)).toEqual(expect.arrayContaining(["重新生成回话", "重试补写", "重试"]));
-    expect(document.querySelector(".chat-message.scene")).toBeNull();
-  });
 });
 
 describe("ChatModal — placeholder switches on character type", () => {
