@@ -6822,8 +6822,8 @@ button:disabled {
   box-shadow: none;
 }
 
-.chat-message.scene p {
-  color: #7a6a4d;
+.modal-bg-chat .chat-message.scene p {
+  color: #7a6a4d !important;
   font-style: normal;
   line-height: 1.8;
   white-space: pre-wrap;

@@ -40,6 +40,7 @@ const CONSORT_MOCK: Minister = {
 
 function renderModal(props: {
   minister: Minister;
+  ministers?: Minister[];
   portraitPrefix: string;
   scrollMode?: "audience" | "legacy";
   currentNightId?: number;
@@ -87,6 +88,7 @@ function renderModal(props: {
     return (
       <ChatModal
         minister={props.minister}
+        ministers={props.ministers}
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
         currentCampaignId="test-campaign"
@@ -482,17 +484,35 @@ describe("ChatModal — four diegetic roles (#540)", () => {
       { role: "scene", speaker: "", content: "殿门徐启", beat: "scene", audibility: "殿上公开" },
       { role: "user", speaker: "朕", content: "（搁笔）卿且直言。", beat: "dialogue", audibility: "殿上公开" },
       { role: "minister", speaker: "周延儒", content: "臣谨奏。", beat: "dialogue", audibility: "殿上公开" },
-      { role: "attendant", speaker: "王承恩", content: "圣上，他有所隐瞒。", beat: "aside", audibility: "御前低语" },
+      { role: "attendant", speaker: "曹化淳", content: "圣上，他有所隐瞒。", beat: "aside", audibility: "御前低语" },
+      { role: "attendant", speaker: "王承恩", content: "容臣低声禀报。", beat: "aside", audibility: "御前低语" },
       { role: "attendant", speaker: "王承恩", content: "公开传话。", beat: "aside", audibility: "殿上公开" },
     ] }) }));
 
-    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23 });
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      ministers: [
+        { ...MINISTER_MOCK, id: "attendant-current", name: "曹化淳", portrait_id: "custom:8" },
+        { ...MINISTER_MOCK, id: "attendant-former", name: "王承恩", portrait_id: "portrait_court_03" },
+      ],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+    });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(host.querySelector(".chat-message.scene")?.textContent).toBe("殿门徐启");
     expect(host.querySelector(".chat-message.user .action")?.textContent).toBe("（搁笔）");
+    expect(host.querySelector(".chat-message.user p")?.textContent).toBe("卿且直言。");
     expect(host.querySelector(".chat-message.minister")?.textContent).toContain("臣谨奏。");
     expect(host.querySelector(".chat-message.aside")?.textContent).toContain("有所隐瞒");
+    const avatars = Array.from(host.querySelectorAll<HTMLImageElement>(".aside-avatar"));
+    expect(avatars[0]?.alt).toBe("曹化淳");
+    expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
+    expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
+    act(() => avatars[1]?.dispatchEvent(new Event("error")));
+    expect(host.querySelectorAll<HTMLImageElement>(".aside-avatar")[1]?.getAttribute("src")).toBe("/portraits/portrait_court_03.png");
+    act(() => host.querySelectorAll<HTMLImageElement>(".aside-avatar")[1]?.dispatchEvent(new Event("error")));
+    expect(host.querySelectorAll(".aside-avatar.minister-card-portrait-placeholder")).toHaveLength(1);
     expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
   });
 });
