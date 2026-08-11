@@ -3419,9 +3419,8 @@ button:disabled {
     url("/bg_state.png") center / cover no-repeat;
 }
 
-/* 弹窗内所有元素背景一律透明（通配），文字直贴背景图 */
-.modal-bg-state *,
-.modal-bg-chat *,
+/* 诏书/长期目标仍是文字直贴底图；state/chat 由各承载块自己的样式控制，
+   避免通配 important 抹掉卷轴内 action/aside/scene 的角色语义。 */
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   background: transparent !important;
@@ -3437,7 +3436,7 @@ button:disabled {
 }
 
 /* 大臣奏对 + 奏疏：白底 80% */
-.modal-bg-chat .chat-message,
+.modal-bg-chat .chat-message:not(.aside),
 .modal-bg-chat .chat-system-note,
 .modal-bg-chat .modal-pane,
 .modal-bg-edict .modal-pane {
@@ -3587,19 +3586,20 @@ button:disabled {
   border-color: rgba(255, 232, 170, 0.22) !important;
 }
 
-/* 大臣奏对白底：边线用浅灰，看得见 */
+/* 大臣奏对白底：边线用浅灰，看得见；aside 保留自己的虚线与边色。 */
 .modal-bg-chat .modal-pane,
-.modal-bg-chat .chat-message {
+.modal-bg-chat .chat-message:not(.aside) {
   border-color: rgba(74, 45, 20, 0.18) !important;
 }
 
-/* 浅色背景图上文字一律黑色，召对舞台提示保留淡化色 */
+/* 浅色容器提供默认深墨色；子节点显式角色色自然覆盖继承值。 */
 .modal-bg-state,
 .modal-bg-chat,
 .modal-bg-edict,
-.modal-bg-long-goal,
-.modal-bg-state *,
-.modal-bg-chat *:not(.action),
+.modal-bg-long-goal {
+  color: #1a1410 !important;
+}
+
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   color: #1a1410 !important;
@@ -3755,7 +3755,7 @@ button:disabled {
   border-bottom-color: rgba(201, 162, 92, 0.2) !important;
 }
 
-/* 覆盖 .modal-bg-state * 的「文字一律深墨」通配 —— 深底必须浅色字 */
+/* 终章深底使用专属浅色字。 */
 .modal-bg-ending .ending-document,
 .modal-bg-ending .ending-hero-copy p,
 .modal-bg-ending .ending-section-kicker {
@@ -3770,7 +3770,7 @@ button:disabled {
 .modal-bg-ending .ending-timeline-decree { color: #c9a572 !important; }
 .modal-bg-ending .ending-timeline-effect { color: #9ec7aa !important; }
 
-/* 终章弹窗：覆盖 .modal-bg-state * 的透明通配，恢复深色国史馆样式 */
+/* 终章弹窗恢复深色国史馆样式。 */
 .modal-bg-ending .ending-document {
   background:
     radial-gradient(130% 100% at 50% -8%, rgba(150, 44, 32, 0.30), transparent 56%),
