@@ -77,6 +77,22 @@ def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[d
     return chosen
 
 
+def _select_second_verdict(
+    awaiting: bool, hostile: int, pending: list[dict], history: list[dict],
+) -> dict:
+    """Read the second judgment from the production owner for its current phase."""
+    source = pending if awaiting else history
+    matches = [row for row in source if int(row.get("dossier_id", -1)) == hostile]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"second judgment must contain hostile dossier exactly once; got {len(matches)}"
+        )
+    verdict = matches[0]
+    if verdict.get("decision") not in {"promulgated", "rejected"}:
+        raise RuntimeError("second judgment has an empty or illegal decision")
+    return verdict
+
+
 def main() -> int:
     args = _args()
     content = GameContent.load()
@@ -133,6 +149,17 @@ def main() -> int:
         db.conn.execute(
             "UPDATE factions SET leverage=5, agenda='支持清丈以均平田赋' WHERE name='东林'"
         )
+        # A changed gatekeeping bench is a production board fact: with the
+        # formerly resolute censor dismissed and his peers unwilling to seal
+        # the objection, the same held wording can receive a different judgment.
+        db.conn.execute(
+            "UPDATE characters SET courage=5, integrity=5 WHERE status='active' "
+            "AND power_id='ming' AND (office LIKE '%首辅%' OR office LIKE '%掌印%' "
+            "OR office LIKE '%给事中%' OR office_type='六科')"
+        )
+        db.conn.execute(
+            "UPDATE characters SET status='dismissed' WHERE name='许誉卿'"
+        )
         state.metrics["皇威"] = 100
         db.save_state(state)
         db.conn.commit()
@@ -141,11 +168,14 @@ def main() -> int:
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
         )
+        second_pending = db.get_pending_promulgation_verdicts(second_turn)
         second_history = [
             row for row in db.list_decree_dossier_decisions(hostile)
             if int(row["turn"]) == second_turn and not row.get("rescript_action")
         ]
-        second_verdict = second_history[-1] if second_history else {}
+        second_verdict = _select_second_verdict(
+            second_result.awaiting, hostile, second_pending, second_history,
+        )
         second_ctx = db.get_resolve_context(second_turn) or {}
         second_narrative = (
             str(second_ctx.get("narrative") or "")
@@ -172,7 +202,8 @@ def main() -> int:
             ),
             "held_decree_text_unchanged": text_after_hold == hostile_text,
             "held_land_changes_after_board_change": (
-                second_verdict.get("decision") != by_id[hostile]["decision"]
+                second_verdict["decision"] == "promulgated"
+                and second_verdict["decision"] != by_id[hostile]["decision"]
             ),
             "administrative_midzhi_promulgated_with_stigma": (
                 by_id[admin_midzhi]["decision"] == "promulgated"
@@ -203,6 +234,7 @@ def main() -> int:
                     "东林.agenda": ["反对清丈，维护田赋旧例", "支持清丈以均平田赋"],
                     "皇威": [first_context["imperial_authority_band"],
                              second_context["imperial_authority_band"]],
+                    "gatekeepers": ["seed bench", "许誉卿 dismissed; remainder courage/integrity 5"],
                     "decree_text": [hostile_text, text_after_hold],
                 },
             },
