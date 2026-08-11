@@ -814,13 +814,24 @@ describe("HistoryModal — scene-level closed-night archive", () => {
       ] }) });
       if (url === "/api/history/turn/7") return Promise.resolve({ ok: true, json: async () => ({ turn: 7, exists: false }) });
       const id = url.endsWith("31") ? 31 : 32;
-      return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "user", content: `场次${id}` }] }) });
+      return Promise.resolve({ ok: true, json: async () => ({ messages: id === 32 ? [
+        { role: "user", content: `场次${id}` },
+        { role: "attendant", speaker: "退场近臣", content: "旧臣御前低语", audibility: "御前低语" },
+      ] : [{ role: "user", content: `场次${id}` }] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { root.render(<HistoryModal ministers={[
+      { ...MINISTER_MOCK, id: "former-attendant", name: "退场近臣", portrait_id: "portrait_court_03" },
+    ]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
     expect(document.body.textContent).toContain("场次32");
+    const archivedAvatar = document.querySelector<HTMLImageElement>(".aside-avatar");
+    expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
+    act(() => archivedAvatar?.dispatchEvent(new Event("error")));
+    expect(document.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src")).toBe("/portraits/portrait_court_03.png");
+    act(() => document.querySelector<HTMLImageElement>(".aside-avatar")?.dispatchEvent(new Event("error")));
+    expect(document.querySelector(".aside-avatar.minister-card-portrait-placeholder")).toBeTruthy();
     expect(document.body.textContent).toContain("乾清宫戌时 · 第 1 场");
     expect(document.body.textContent).toContain("乾清宫戌时 · 第 2 场");
     const buttons = Array.from(document.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
