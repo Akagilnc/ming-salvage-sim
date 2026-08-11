@@ -118,6 +118,25 @@ def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
         decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
 
 
+@pytest.mark.parametrize("decision", ["promulgated", "rejected"])
+def test_promulgation_verdict_rejects_unknown_fields(game, decision):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    verdict = (
+        {"dossier_id": dossier_id, "decision": "promulgated"}
+        if decision == "promulgated"
+        else _rejected_verdict(dossier_id, context["imperial_authority_band"])
+    )
+    verdict["foo"] = "bar"
+
+    with pytest.raises(decree_mod.LLMContractError, match="未知字段"):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )
+
+
 def test_promulgated_verdict_rejects_rejection_only_fields(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
@@ -226,6 +245,32 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
         ],
         **({"midzhi_unpromulgatable": True} if midzhi else {}),
     }
+
+
+@pytest.mark.parametrize(
+    ("mode", "decision"),
+    [("regular", "promulgated"), ("中旨", "promulgated"),
+     ("regular", "rejected"), ("中旨", "rejected")],
+)
+def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decision):
+    db, state, _content = game
+    dossier_id = _dossier(db, state, mode=mode)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    if decision == "promulgated":
+        verdict = {"dossier_id": dossier_id, "decision": decision}
+        if mode == "中旨":
+            verdict["affected_parties"] = [
+                {"kind": "faction", "key": "东林", "severity": "不满"},
+            ]
+    else:
+        verdict = _rejected_verdict(
+            dossier_id, context["imperial_authority_band"], midzhi=mode == "中旨",
+        )
+
+    assert decree_mod.validate_promulgation_verdicts(
+        [verdict], dossiers, db, prepared_context=context,
+    ) == [verdict]
 
 
 def _stop_after_promulgation(db, monkeypatch):

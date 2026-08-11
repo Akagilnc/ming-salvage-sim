@@ -16,7 +16,6 @@ def _rejected_verdict(dossier_id):
         "affected_parties": [
             {"kind": "faction", "key": "东林", "severity": "不满"},
         ],
-        "midzhi_unpromulgatable": False,
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱", "appointment_tenure": "",
             "authorization_ids": [], "endorsement_entry_ids": [],
