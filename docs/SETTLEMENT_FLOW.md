@@ -118,7 +118,7 @@
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
-     ↳ 白名单外字段仍被沉默裁掉；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
+     ↳ 未知顶层字段响亮中止；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
        落 `rejection_reports`（坏一项不带走整批，不再印 [WARN]），commit 成功后镜像到
        rejections.jsonl 副本。机制细节（RejectionCollector / attempt / 桥接）见 ADR 0008 PR2。
      ↳ 返回 applied.issue_summary.advances → 用来算 touched_ids

@@ -81,9 +81,10 @@ def ready_payload_digest(payload: object) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def complete_error_packs_for_ready(turn: int, payload: object) -> list[Path]:
-    """Return only complete packs produced for this exact ready payload."""
+def complete_error_packs_for_ready(db_path: object, turn: int, payload: object) -> list[Path]:
+    """Return complete packs for this database, turn, and exact ready payload."""
     expected = ready_payload_digest(payload)
+    expected_db_path = str(db_path)
     required = {"traceback.txt", "delta.json", "resolve_context.json", "save_backup.db", "manifest.json"}
     root = error_packs_root()
     if not root.exists():
@@ -96,7 +97,13 @@ def complete_error_packs_for_ready(turn: int, payload: object) -> list[Path]:
             manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
-        if manifest.get("ready_payload_digest") == expected:
+        if not isinstance(manifest, dict):
+            continue
+        if (
+            str(manifest.get("db_path")) == expected_db_path
+            and manifest.get("turn") == int(turn)
+            and manifest.get("ready_payload_digest") == expected
+        ):
             matches.append(path)
     return matches
 

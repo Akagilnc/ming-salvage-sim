@@ -10,6 +10,7 @@ from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.qualitative import qualitative_band
+from ming_sim.strict_types import strict_int
 from ming_sim.token_stats import tlog
 
 _STATUS_CN = {
@@ -612,11 +613,17 @@ def build_minister_tools(character: Character, context: CourtContext,
         }
         dossier_links = []
         for link in raw_links if isinstance(raw_links, list) else []:
-            if not isinstance(link, dict) or isinstance(link.get("target_dossier_id"), bool):
+            if not isinstance(link, dict):
+                continue
+            raw_target_id = link.get("target_dossier_id")
+            if not (
+                isinstance(raw_target_id, int) and not isinstance(raw_target_id, bool)
+                or isinstance(raw_target_id, str) and raw_target_id.isdecimal()
+            ):
                 continue
             try:
-                target_id = int(link.get("target_dossier_id"))
-            except (TypeError, ValueError):
+                target_id = strict_int(raw_target_id)
+            except (TypeError, ValueError, OverflowError):
                 continue
             relation = str(link.get("relation_type") or "").strip()
             note = str(link.get("note") or "").strip()
@@ -1062,14 +1069,9 @@ def build_extractor_tools(context: CourtContext):
                             宗室禄米_base/宗室禄米_rate/官俸_base/官俸_rate/工程_base/工程_rate/
                             赈灾_base/赈灾_rate/宫廷_base/宫廷_rate/
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
-        appointments        仅后宫纳妃 [{name,office,office_type:"后宫",reason,approved}]
-                            decree_text明文"纳/册封/封/选 某某 为 位号"才立；朝臣一律不进此字段
-        character_status_changes  大臣状态变更 [{name,status,reason}]
-                            status∈dismissed/imprisoned/exiled/retired/dead/offstage
-                            邸报明文写到此人此事才立；既已dismissed/dead的不重复
-        office_changes      朝臣官职变更 [{name,new_office,reason,可选faction/new_office_type}]
-                            任何人任某官（新进朝堂/调任/升迁）一律走此字段，不分新旧任
-                            new_office必须是明制实官名；去职走character_status_changes
+        人物变更            ADR0009 人事档案唯一生产入口；每项必须含 name、动作、origin_ref。
+                            动作∈任命/罢黜/调任/处置/易主/册封/行止/评定；按动作补 office、
+                            office_type、status、new_power、location、transit_to、loyalty、reason。
 
         ══ 档位判定标准 ══
         极端：屠戮全族/抄家灭门/决定性战胜败  bar±40~50  metric±20~30  faction±20~40
@@ -1084,17 +1086,17 @@ def build_extractor_tools(context: CourtContext):
         ══ 输出 JSON 骨架示例 ══
         {
           "metric_delta": {"民心": -3, "皇威": 2},
-          "economy_moves": [{"account":"国库","delta":-15,"category":"赈灾","reason":"陕西赈粮"}],
+          "economy_moves": [{"account":"国库","delta":-15,"category":"赈灾","reason":"陕西赈粮","origin_ref":"dossier:17"}],
           "faction_delta": {"阉党": -5, "东林": 4},
           "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
-          "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}},
-          "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
+          "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3, "origin_ref":"盘面自发"}},
+          "army_delta": {"guanning": {"morale": -3, "arrears": 5, "origin_ref":"dossier:17"}},
           "new_armies": [{"id":"qin_army","name":"秦军新营","owner_power":"ming",
                           "manpower":8000,"station":"陕西/西安","commander":"孙传庭",
                           "troop_type":"募兵步骑","pay_source_region":"shaanxi",
                           "province_pay_share":0.65,"central_pay_share":0.35,
-                          "status":"新募，亟待操练"}],
-          "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
+                          "status":"新募，亟待操练","origin_ref":"dossier:17"}],
+          "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2, "origin_ref":"盘面自发"}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
           "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"},
@@ -1102,9 +1104,8 @@ def build_extractor_tools(context: CourtContext):
           "cancels": [],
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],
-          "appointments": [],
-          "character_status_changes": [{"name":"魏忠贤","status":"exiled","reason":"发配凤阳"}],
-          "office_changes": [{"name":"孙传庭","new_office":"陕西总督","new_office_type":"督抚","reason":"永城知县擢用"}]
+          "人物变更": [{"name":"魏忠贤","动作":"处置","status":"exiled","reason":"发配凤阳","origin_ref":"dossier:17"},
+                       {"name":"孙传庭","动作":"任命","office":"陕西总督","office_type":"督抚","reason":"永城知县擢用","origin_ref":"dossier:17"}]
         }
         """
         _captured.append(json_str)

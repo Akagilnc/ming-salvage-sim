@@ -5186,6 +5186,18 @@ def apply_issue_tracker_output(
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。
         # #63 已在 SQLite-bind 序列化点统一用「保中文、净孤代理」helper 治理；本段不局部吞
         # UnicodeEncodeError，仍让非编码类代码/DB 异常按 ADR 0005 fail-loud 上抛。
+        # Validate provenance only after item-shape validation, so malformed
+        # fields retain their precise rejection category without ever reaching a write.
+        origin_error = db.effect_origin_rejection(origin_ref)
+        if not re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) or origin_error:
+            applied_new.append({
+                "rejected": True, "category": "missing_ref", "item": ni,
+                "title": title,
+                "reason": (origin_error or {}).get(
+                    "reason", "new decree issue origin_ref 须为已颁 dossier:<id>"
+                ),
+            })
+            continue
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5428,7 +5440,11 @@ def apply_issue_tracker_output(
         cost = cn.get("applied_cost") or {}
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
-            entity_rejections.extend(r for r in _apply_economy_list(db, state, cost.get("economy") or [], commit=commit_now) if r.get("rejected"))  # economy 拒收不蒸发（#14）
+            parent_origin_ref = _canonical_issue_origin(db, row)
+            entity_rejections.extend(r for r in _apply_economy_list(
+                db, state, cost.get("economy") or [], commit=commit_now,
+                origin_ref=parent_origin_ref, require_origin=True,
+            ) if r.get("rejected"))  # economy 拒收不蒸发（#14）
             entity_rejections.extend(_apply_faction_dict(db, cost.get("factions") or {}, commit=commit_now).rejections)  # 派系拒收不蒸发（#14/#63 cmr r2）
         db.cancel_issue(
             state, issue_id,
@@ -7612,7 +7628,7 @@ def apply_score_extraction(
                 "category": "invalid_enum", "item": change,
             })
             continue
-        db.set_fiscal_config(key, new_val, commit=commit_now)
+        db.set_fiscal_config(key, new_val, commit=False)
         db.conn.execute("UPDATE fiscal_config SET origin_ref=? WHERE key=?", (origin_ref, key))
         db.record_fiscal_config_change(
             turn=state.turn, key=key, old_value=current, new_value=new_val,
@@ -7624,9 +7640,9 @@ def apply_score_extraction(
         if stem in db._DYNAMIC_REGION_FIELD or stem == "田赋":
             ratio = (new_val / current) if current > 0 else (1.0 if new_val == 0 else 0.0)
             if stem == "田赋":
-                db.scale_tian_fu(ratio, commit=commit_now)
+                db.scale_tian_fu(ratio, commit=False)
             else:
-                db.apply_dynamic_fiscal_scale(stem, ratio, commit=commit_now)
+                db.apply_dynamic_fiscal_scale(stem, ratio, commit=False)
         applied_fiscal.append({
             "key": key, "old": current, "new": new_val, "delta": delta,
             "reason": str(change.get("reason") or ""),
@@ -7637,7 +7653,7 @@ def apply_score_extraction(
             if change["pair"] == loss_pair
         ]
         try:
-            db.set_fiscal_config_batch(final_values, commit=commit_now)
+            db.set_fiscal_config_batch(final_values, commit=False)
         except ValueError as exc:
             for change in pair_changes:
                 applied_fiscal.append({
@@ -7664,137 +7680,16 @@ def apply_score_extraction(
                 "delta": change["delta"],
                 "reason": change["reason"],
             })
+    if commit_now and (applied_fiscal or deferred_loss_pair_changes):
+        db.conn.commit()
 
-    # 8) appointments：仅收「后宫纳妃」（office_type=后宫）。朝臣的新任/调任已统一
-    #    并入 office_changes（section 10），LLM 误把朝臣塞这里的项一律转去 office_changes 处理。
+    # ADR0009 legacy aliases are canonicalized above and written only through
+    # the canonical person-change applier.  Keep response keys for compatibility,
+    # but do not retain a second set of direct writers here.
     applied_appointments: List[Dict[str, object]] = []
-    spillover_office_changes: List[Dict[str, object]] = []
-    if use_legacy_person_keys and content is not None:
-        from ming_sim.session import apply_appointment  # 延迟导入避循环
-        for item in extracted.get("appointments") or []:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("office_type") or "").strip() != "后宫":
-                # 朝臣项转交 office_changes：name + new_office 形态
-                spillover_office_changes.append({
-                    "name": str(item.get("name") or ""),
-                    "new_office": str(item.get("office") or ""),
-                    "faction": str(item.get("faction") or "中立"),
-                    "reason": str(item.get("reason") or ""),
-                })
-                continue
-            name, displaced = apply_appointment(
-                db,
-                state,
-                content,
-                registry,
-                item,
-                llm_config=llm_config,
-                commit=commit_now,
-            )
-            if name:
-                applied_appointments.append({
-                    "name": name,
-                    "office": str(item.get("office") or ""),
-                    "faction": str(item.get("faction") or "中立"),
-                    "reason": str(item.get("reason") or ""),
-                    "displaced": displaced,
-                })
-            else:
-                rejected_name = str(item.get("name") or "").strip()
-                if rejected_name:
-                    approved = bool(item.get("approved", True))
-                    applied_appointments.append({
-                        "name": rejected_name,
-                        "office": str(item.get("office") or ""),
-                        "rejected": True,
-                        # reason=拒收原因（apply_appointment 不回传具体因，枚举已知拒因；
-                        # LLM 的任命理由另存 appointment_reason，不顶替拒因——cmr S0 r3）。
-                        "reason": ("未获准（approved=false）" if not approved
-                                   else "纳妃建档被拒（重名/已在册/字段不合）"),
-                        "category": "appointment_rejected",
-                        "appointment_reason": str(item.get("reason") or ""),
-                        "approved": approved,
-                    })
-
-    # 9) character_status_changes：LLM 判定的既有大臣去向（罢/狱/流/致仕/死）
     applied_status_changes: List[Dict[str, object]] = []
-    valid_status = {"dismissed", "imprisoned", "exiled", "retired", "dead", "offstage"}
-    for item in (extracted.get("character_status_changes") or []) if use_legacy_person_keys else []:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        status = str(item.get("status") or "").strip().lower()
-        reason = str(item.get("reason") or "").strip()
-        if not name or status not in valid_status:
-            applied_status_changes.append({
-                "name": name, "status": status, "rejected": True,
-                "reason": "name 空 或 status 非白名单",
-            })
-            continue
-        if content is not None and name not in content.characters:
-            applied_status_changes.append({
-                "name": name, "status": status, "rejected": True,
-                "reason": "非既有大臣或妃嫔（新任走 appointments）",
-            })
-            continue
-        cur_status, _ = db.get_character_status(name)
-        if cur_status != "active":
-            applied_status_changes.append({
-                "name": name, "status": status, "rejected": True,
-                "reason": f"当前非 active（{cur_status}）",
-            })
-            continue
-        try:
-            db.set_character_status(state, name, status, reason, commit=commit_now)
-        except Exception as exc:
-            applied_status_changes.append({
-                "name": name, "status": status, "rejected": True, "reason": f"落库失败：{exc}",
-            })
-            continue
-        # 同步 content 内存对象：去职即削职，与 db 清空 office 保持一致
-        if content is not None and name in content.characters:
-            ch = content.characters[name]
-            ch.status = status
-            if status in {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}:
-                ch.office = ""
-            ch.transit_to = ""
-        applied_status_changes.append({
-            "name": name, "status": status, "reason": reason,
-        })
-
-    # 9b) character_power_changes：人物易主（降将/叛臣/归正）
-    # ADR 0008 决定 1:不再整段吞——脏数据(查无此人/未知 power/缺字段)在
-    # apply_character_power_changes 内逐项拒收留痕;代码异常上抛到 settle 回滚。
-    applied_power_changes: List[Dict[str, object]] = db.apply_character_power_changes(
-        (extracted.get("character_power_changes") or []) if use_legacy_person_keys else [],
-        commit=commit_now,
-    )
-
-    # 10) office_changes：朝臣官职变更——统一吃「新任（建档）」与「调任（改职）」。
-    #     extractor 不再分新任/调任，代码按 name 在不在册自判：
-    #       在册且未死 → 任命/调任；不在册 → 建新档。
-    #     后宫纳妃仍走 appointments（语义不同，见 section 8）。
-    #     落地核统一为 apply_office_appointment（与 CLI 自然语言任免 commit 共用，CMR R2 reground）。
+    applied_power_changes: List[Dict[str, object]] = []
     applied_office_changes: List[Dict[str, object]] = []
-    # office_changes 本体 + 从 appointments 转来的朝臣项（spillover）
-    office_change_items = (
-        list(extracted.get("office_changes") or []) + spillover_office_changes
-        if use_legacy_person_keys
-        else []
-    )
-    for item in office_change_items:
-        if not isinstance(item, dict):
-            continue
-        applied_office_changes.append(apply_office_appointment(
-            db, state, content, registry,
-            str(item.get("name") or ""), str(item.get("new_office") or ""),
-            reason=str(item.get("reason") or ""),
-            new_office_type=str(item.get("new_office_type") or ""),
-            faction=str(item.get("faction") or "中立"),
-            llm_config=llm_config,
-            commit=commit_now,
-        ))
 
     # 11) secret_order_updates：推演写 active 密令副作用（泄漏/反弹）到 sim_note。结案不走这里。
     applied_secret_orders: List[Dict[str, object]] = []

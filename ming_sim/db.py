@@ -6728,7 +6728,11 @@ class GameDB:
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
-                    origin_error = self.effect_origin_rejection(origin_ref) if require_origin and delta != 0 else None
+                    will_write_off_arrears = (
+                        new_value <= 0
+                        and float(row["arrears"] or 0) > 1e-9
+                    )
+                    origin_error = self.effect_origin_rejection(origin_ref) if require_origin and (delta != 0 or will_write_off_arrears) else None
                     if origin_error:
                         changes.append({"army": row["name"], "field": field, **origin_error,
                                         "item": {"army_id": army_id, "field": field, "value": value}})
