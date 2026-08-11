@@ -136,6 +136,11 @@ def test_public_resolve_seam_wraps_corrupt_durable_verdict_on_real_recovery(
     assert isinstance(abort.__cause__, LLMContractError)
     assert isinstance(abort.__cause__.__cause__, ValueError)
     assert provider_calls == [[dossier_id]]
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == {"raw_value": stored_json}
     assert tuple(db.conn.execute(
         "SELECT turn, turn_phase FROM game_state WHERE id=1"
     ).fetchone()) == baseline_state
@@ -162,6 +167,30 @@ def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
     assert exc_info.value.stage == "promulgation"
     assert exc_info.value.error_pack_path
     assert db.get_pending_promulgation_verdicts(state.turn) == []
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == {
+        "decision": "promulgated",
+    }
+
+
+def test_public_resolve_seam_wraps_scalar_verdict_item_for_audit(game):
+    db, state, content = game
+    _stage_policy_dossier(db, state)
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [None],
+        )
+
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == {"raw_value": None}
 
 
 def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(game):
@@ -190,6 +219,271 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
     assert exc_info.value.stage == "promulgation"
     assert db.get_pending_promulgation_verdicts(state.turn) == []
     assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+@pytest.mark.parametrize("contamination", [
+    {"affected_parties": [{"kind": "faction", "key": "不存在", "severity": "不满"}]},
+    {"legal_reason_code": "statute-42"},
+    {"legal_reason_code": 0},
+    {"legal_reason_code": False},
+    {"legal_reason_code": []},
+    {"legal_reason_code": {}},
+])
+def test_public_resolve_seam_rejects_reserved_or_malformed_rejection_before_pending(
+    game, contamination,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    baseline = db.get_decree_dossier(dossier_id)
+    verdict = {
+        "dossier_id": dossier_id,
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "gatekeeper_id": None,
+        "reason": "科臣封驳。",
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "severity": "不满"},
+        ],
+        "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": ["言官"],
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        **contamination,
+    }
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [verdict],
+        )
+
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id DESC LIMIT 1",
+        (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == verdict
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.get_decree_dossier(dossier_id) == baseline
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+def test_public_resolve_seam_preserves_each_invalid_items_contract_reason(game):
+    db, state, content = game
+    first_id = _stage_policy_dossier(db, state)
+    second_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬漕运",
+        target_kind="issue", target_id="canal",
+    )
+    invalid = [
+        {"dossier_id": first_id, "decision": "unknown"},
+        {"dossier_id": True, "decision": "promulgated"},
+    ]
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运", content=content,
+            promulgation_verdict_provider=lambda *_: invalid,
+        )
+
+    reports = db.conn.execute(
+        "SELECT item_json,reason FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == invalid
+    assert [row["reason"] for row in reports] == [
+        "颁布判决 decision 只能为 promulgated 或 rejected",
+        "颁布判决 dossier_id 必须为有效 SQLite 正整数",
+    ]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.list_decree_dossier_decisions(first_id) == []
+    assert db.list_decree_dossier_decisions(second_id) == []
+
+
+@pytest.mark.parametrize("contamination", [
+    {"resistance_score": 99.5},
+    {"resistance_score": "99.5"},
+    {"resistance_detail": {"score": 99.5}},
+    {"resistance_detail": {"score": "99.5"}},
+])
+def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contamination):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    raw = {
+        "dossier_id": dossier_id,
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "gatekeeper_id": None,
+        "reason": "科臣封驳。",
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "severity": "不满"},
+        ],
+        "criteria_snapshot": {
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": ["言官"],
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        **contamination,
+    }
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [raw],
+        )
+
+    assert exc_info.value.stage == "promulgation"
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+    report = db.conn.execute(
+        "SELECT section,item_json,category,source FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert report["section"] == "promulgation_verdicts"
+    assert __import__("json").loads(report["item_json"]) == raw
+    assert report["category"] == "invalid_shape"
+    assert report["source"] == "player_decree"
+
+
+@pytest.mark.parametrize("contamination", [
+    {"resistance_score": 99.5},
+    {"affected_parties": "东林"},
+])
+def test_public_resolve_seam_rejects_polluted_promulgated_verdict_without_mutation(
+    game, contamination,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    baseline = db.get_decree_dossier(dossier_id)
+    raw = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        **contamination,
+    }
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [raw],
+        )
+
+    assert exc_info.value.stage == "promulgation"
+    reports = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == [raw]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.get_decree_dossier(dossier_id) == baseline
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+def test_public_resolve_seam_audits_only_invalid_provider_item_not_valid_or_exempt(game):
+    db, state, content = game
+    valid_id = _stage_policy_dossier(db, state)
+    invalid_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬漕运",
+        target_kind="issue", target_id="canal",
+    )
+    exempt_id = db.create_decree_dossier(
+        state, action_type="secret_authorization", decree_text="密授查仓之权",
+        target_kind="issue", target_id="granary",
+    )
+    valid = {"dossier_id": valid_id, "decision": "promulgated"}
+    invalid = {"dossier_id": invalid_id, "decision": "unknown"}
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+            promulgation_verdict_provider=lambda dossiers, _state: (
+                [valid, invalid] if {row["id"] for row in dossiers} == {valid_id, invalid_id}
+                else pytest.fail("provider 只能收到实际外廷审查案卷")
+            ),
+        )
+
+    reports = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == [invalid]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.list_decree_dossier_decisions(valid_id) == []
+    assert db.list_decree_dossier_decisions(invalid_id) == []
+    assert db.list_decree_dossier_decisions(exempt_id) == []
+
+
+def test_public_resolve_seam_audits_only_provider_overreach_in_mixed_coverage_failure(game):
+    db, state, content = game
+    first_id = _stage_policy_dossier(db, state)
+    missing_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬漕运",
+        target_kind="issue", target_id="canal",
+    )
+    exempt_id = db.create_decree_dossier(
+        state, action_type="secret_authorization", decree_text="密授查仓之权",
+        target_kind="issue", target_id="granary",
+    )
+    valid = {"dossier_id": first_id, "decision": "promulgated"}
+    overreach = {"dossier_id": exempt_id, "decision": "promulgated"}
+    dossier_baseline = {
+        dossier_id: db.get_decree_dossier(dossier_id)
+        for dossier_id in (first_id, missing_id, exempt_id)
+    }
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+            promulgation_verdict_provider=lambda dossiers, _state: (
+                [valid, overreach]
+                if {row["id"] for row in dossiers} == {first_id, missing_id}
+                else pytest.fail("provider 只能收到实际外廷审查案卷")
+            ),
+        )
+
+    assert exc_info.value.stage == "promulgation"
+    reports = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == [overreach]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    for dossier_id, baseline in dossier_baseline.items():
+        assert db.get_decree_dossier(dossier_id) == baseline
+        assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+def test_public_resolve_seam_records_missing_coverage_as_one_batch_evidence(game):
+    db, state, content = game
+    first_id = _stage_policy_dossier(db, state)
+    second_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="整饬漕运",
+        target_kind="issue", target_id="canal",
+    )
+    provider_batch = [{"dossier_id": first_id, "decision": "promulgated"}]
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工并整饬漕运",
+            content=content,
+            promulgation_verdict_provider=lambda *_: provider_batch,
+        )
+
+    reports = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == [
+        {"raw_value": provider_batch},
+    ]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.list_decree_dossier_decisions(first_id) == []
+    assert db.list_decree_dossier_decisions(second_id) == []
 
 
 def test_public_resolve_seam_rejects_incomplete_persisted_batch(game):
