@@ -11208,6 +11208,10 @@ class GameDB:
                             str(row["name"])
                             for row in self.conn.execute("SELECT name FROM factions")
                         },
+                        class_names={
+                            str(row["name"])
+                            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
+                        },
                         character_ids={
                             str(row["name"])
                             for row in self.conn.execute("SELECT name FROM characters")

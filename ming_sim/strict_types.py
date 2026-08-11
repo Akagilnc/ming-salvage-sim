@@ -30,6 +30,7 @@ def validate_rejection_verdict(
     blocked_layers: object,
     *,
     faction_names: object,
+    class_names: object,
     character_ids: object,
 ) -> None:
     """Validate the complete ADR 0066 shape against authoritative DB identities."""
@@ -55,11 +56,28 @@ def validate_rejection_verdict(
     )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
     dossier_id = verdict.get("dossier_id")
+    affected = verdict.get("affected_parties")
+    typed_affected = (
+        isinstance(affected, list)
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"kind", "key", "severity"}
+            and item.get("kind") in {"faction", "class"}
+            and isinstance(item.get("key"), str)
+            and item["key"] in (
+                faction_names if item.get("kind") == "faction" else class_names
+            )
+            and item.get("severity") in {"大怒", "不满"}
+            for item in affected
+        )
+    )
     if (
         not set(verdict).issubset(REJECTION_VERDICT_KEYS)
         or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0
         or ("midzhi_unpromulgatable" in verdict
             and not isinstance(verdict["midzhi_unpromulgatable"], bool))
+        or bool(str(verdict.get("legal_reason_code") or "").strip())
+        or not typed_affected
         or verdict.get("blocked_layer") not in blocked_layers
         or not faction_opponents
         or "gatekeeper_id" not in verdict

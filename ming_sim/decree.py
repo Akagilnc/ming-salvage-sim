@@ -138,27 +138,13 @@ def _validate_promulgation_verdict_item(
         marker = row.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
-        if row.get("decision") == "rejected" and "affected_parties" not in row:
-            raise ValueError("打回判决必须携带受损方 typed 清单")
-        affected = row.get("affected_parties", [])
-        if not isinstance(affected, list):
-            raise ValueError("受损方必须为 typed 清单")
-        for party in affected:
-            if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
-                raise ValueError("受损方须且仅含 kind/key/severity")
-            kind, key = party.get("kind"), str(party.get("key") or "")
-            if kind not in {"faction", "class"}:
-                raise ValueError("受损方 kind 只能为 faction 或 class")
-            if party.get("severity") not in {"大怒", "不满"}:
-                raise ValueError("受损方程度只能为大怒或不满")
-            if key not in (faction_names if kind == "faction" else class_names):
-                raise ValueError(f"未知受损方：{kind}:{key}")
         if marker and row.get("decision") != "rejected":
             raise ValueError("中旨亦不可颁只能标记打回判决")
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},
                 faction_names=faction_names,
+                class_names=class_names,
                 character_ids={
                     str(item["name"])
                     for item in db.conn.execute("SELECT name FROM characters")
@@ -556,30 +542,30 @@ def resolve_directives(
         # Attribute item failures through the same validator used above.  Synthetic
         # exempt stubs never enter this provider audit input.
         if exc.raw_value is not None:
-            rejected_items = [exc.raw_value]
+            rejected_items = [(exc.raw_value, str(exc))]
         elif isinstance(rejected_verdict_batch, list):
             rejected_items = []
             seen_provider_ids: set[int] = set()
             for candidate in rejected_verdict_batch:
                 try:
                     valid_candidate = _validate_promulgation_verdict_item(candidate, db)
-                except LLMContractError:
-                    rejected_items.append(candidate)
+                except LLMContractError as item_exc:
+                    rejected_items.append((candidate, str(item_exc)))
                     continue
                 if reviewed_dossier_ids is not None:
                     dossier_id = int(valid_candidate["dossier_id"])
                     if dossier_id not in reviewed_dossier_ids or dossier_id in seen_provider_ids:
-                        rejected_items.append(candidate)
+                        rejected_items.append((candidate, str(exc)))
                     seen_provider_ids.add(dossier_id)
             # Missing coverage has no guilty item: retain the provider batch once
             # as raw batch evidence instead of mislabelling every valid verdict.
             if not rejected_items:
-                rejected_items = [{"raw_value": rejected_verdict_batch}]
+                rejected_items = [({"raw_value": rejected_verdict_batch}, str(exc))]
         else:
-            rejected_items = [rejected_verdict_batch]
+            rejected_items = [(rejected_verdict_batch, str(exc))]
         collector = RejectionCollector(attempt=_next_attempt(state.turn))
         with atomic(db):
-            for rejected_verdict in rejected_items:
+            for rejected_verdict, rejection_reason in rejected_items:
                 collector.record(
                     "promulgation_verdicts",
                     RejectedItem(
@@ -587,7 +573,7 @@ def resolve_directives(
                             rejected_verdict if isinstance(rejected_verdict, dict)
                             else {"raw_value": rejected_verdict}
                         ),
-                        reason=str(exc),
+                        reason=rejection_reason,
                         category="invalid_shape",
                         source=Provenance(source),
                     ),
