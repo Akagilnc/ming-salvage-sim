@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -968,7 +970,7 @@ def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
 
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "gpt-configured"
-    assert captured["timeout"] == 123
+    assert 0 < captured["timeout"] <= 123
 
 
 def test_run_codex_reasoning_env_optional(monkeypatch):
@@ -1046,7 +1048,7 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
 
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "claude-configured"
-    assert captured["timeout"] == 234
+    assert 0 < captured["timeout"] <= 234
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
@@ -1244,7 +1246,7 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
 def test_run_codex_execs_resolved_abspath(monkeypatch):
     """_run_codex 用解析出的绝对路径当 argv[0]（修 GUI 启动找不到 codex）。"""
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/codex")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/Users/x/.local/bin/codex")
     captured = {}
 
     class _P:
@@ -1260,7 +1262,7 @@ def test_run_codex_execs_resolved_abspath(monkeypatch):
 
 def test_run_claude_execs_resolved_abspath(monkeypatch):
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/opt/homebrew/bin/claude")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/opt/homebrew/bin/claude")
     captured = {}
 
     class _P:
@@ -1275,7 +1277,7 @@ def test_run_claude_execs_resolved_abspath(monkeypatch):
 
 def test_run_agy_execs_resolved_abspath(monkeypatch):
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/agy")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/Users/x/.local/bin/agy")
     seen = {}
 
     def fake_run(cmd, **kw):
@@ -1286,6 +1288,32 @@ def test_run_agy_execs_resolved_abspath(monkeypatch):
     monkeypatch.setattr(cb.subprocess, "run", fake_run)
     cb._run_agy("p")
     assert seen["cmd"][0] == "/Users/x/.local/bin/agy"
+
+
+@pytest.mark.parametrize("runner", ["agy", "codex", "claude"])
+def test_runner_deadline_includes_slow_login_shell_resolution(monkeypatch, runner):
+    """真实 adapter 的唯一 deadline 封住 cache-miss 登录 shell，且到期后不 spawn runner。"""
+    cb._BIN_CACHE.clear()
+    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
+    monkeypatch.setattr(cb.shutil, "which", lambda *args, **kwargs: None)
+    runner_spawns = []
+
+    def slow_login(cmd, **kwargs):
+        time.sleep(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    def no_runner(cmd, **kwargs):
+        runner_spawns.append(cmd)
+        raise AssertionError("deadline 到期后不得启动 runner")
+
+    monkeypatch.setattr(cb, "_RAW_RUN", slow_login)
+    monkeypatch.setattr(cb.subprocess, "run", no_runner)
+    invoke = {"agy": cb._run_agy, "codex": cb._run_codex, "claude": cb._run_claude}[runner]
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="超时"):
+        invoke("p", timeout=0.02)
+    assert time.monotonic() - started < 0.08
+    assert runner_spawns == []
 
 
 # ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──

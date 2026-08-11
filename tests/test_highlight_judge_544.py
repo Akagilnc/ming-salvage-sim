@@ -154,6 +154,28 @@ def test_chat_stream_highlight_persistence_failure_is_decoration_only(game, monk
     assert events[-2] == {"type": "decoration_error", "message": "disk full"}
 
 
+@pytest.mark.asyncio
+async def test_fastapi_stream_relays_decoration_error_and_continues_to_end(monkeypatch):
+    """生产 FastAPI 适配层不能丢掉 WebGame 已发出的独立装饰错误。"""
+    import web_app
+
+    class Runtime:
+        def chat_stream(self, _minister, _message):
+            yield {"type": "done", "payload": {"history": [{"role": "minister", "content": "已成回话"}]}}
+            yield {"type": "decoration_error", "message": "disk full"}
+            yield {"type": "end"}
+
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda _name: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: Runtime())
+    response = await web_app.api_chat_stream("温体仁", web_app.ChatRequest(message="问"))
+    body = "".join([chunk async for chunk in response.body_iterator])
+    assert "event: done" in body
+    assert 'event: decoration_error' in body
+    assert '"message": "disk full"' in body
+    assert body.index("event: done") < body.index("event: decoration_error") < body.index("event: end")
+    assert "event: error\n" not in body
+
+
 def test_highlights_persist_on_message_and_restore_only_for_minister(game):
     db, state, _ = game
     night_id = int(an.open_night(db, state, time_of_day="戌时", location="乾清宫")["id"])
