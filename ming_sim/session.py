@@ -1753,6 +1753,10 @@ class GameSession:
         if action == "任命" and not office:
             return 0
         staged_payload = {"name": name, "office": office, "appointer": appointer.name}
+        from ming_sim.cli_backend import _directive_mode
+        mode = _directive_mode(data.get("mode") or data.get("颁布方式"))
+        if mode is not None:
+            staged_payload["mode"] = mode
         metadata_aliases = {
             "office_type": "官署类别",
             "faction": "派系",

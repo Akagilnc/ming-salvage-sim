@@ -17,15 +17,21 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     )
 
 
-def test_real_midzhi_entry_reaches_provider_and_persists_stigma(game, monkeypatch):
+@pytest.mark.parametrize("extractor_result", ["missing-mode", "failure"])
+def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
+    game, monkeypatch, extractor_result,
+):
     db, state, content = game
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
-        "目标ID": "river-works", "颁布方式": "中旨直发",
+        "目标ID": "river-works",
     }, ensure_ascii=False)
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
-    )
+    if extractor_result == "missing-mode":
+        backend = lambda *_args, **_kwargs: (extracted, {})
+    else:
+        def backend(*_args, **_kwargs):
+            raise RuntimeError("extractor unavailable")
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
     payload = cli_backend.capture_manual_directive_payload("中旨直发，清核河工")
     directive_id = db.add_directive(
         state, None, "中旨直发，清核河工", "手动新增", dossier_payload=payload,
@@ -174,6 +180,12 @@ def test_presence_aware_mode_preserves_draft_until_explicit_override(game):
         if row["id"] == candidate_id
     )
     assert json.loads(pending["payload_json"])["mode"] == "ordinary"
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == "ordinary"
 
 
 def test_held_dossier_rejection_stigma_is_idempotent_across_months(game):
