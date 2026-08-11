@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal } from "./modals";
+import { ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal, parseLeadingStageDirection } from "./modals";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -473,6 +473,37 @@ describe("ChatModal — organic markdown display cleanup", () => {
     const messages = Array.from(document.querySelectorAll(".chat-message p"));
     expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
     expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
+  });
+});
+
+describe("ChatModal — four diegetic roles (#540)", () => {
+  it("renders role variants and derives the private aside only from audibility", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
+      { role: "scene", speaker: "", content: "殿门徐启", beat: "scene", audibility: "殿上公开" },
+      { role: "user", speaker: "朕", content: "（搁笔）卿且直言。", beat: "dialogue", audibility: "殿上公开" },
+      { role: "minister", speaker: "周延儒", content: "臣谨奏。", beat: "dialogue", audibility: "殿上公开" },
+      { role: "attendant", speaker: "王承恩", content: "圣上，他有所隐瞒。", beat: "aside", audibility: "御前低语" },
+      { role: "attendant", speaker: "王承恩", content: "公开传话。", beat: "aside", audibility: "殿上公开" },
+    ] }) }));
+
+    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector(".chat-message.scene")?.textContent).toBe("殿门徐启");
+    expect(host.querySelector(".chat-message.user .action")?.textContent).toBe("（搁笔）");
+    expect(host.querySelector(".chat-message.minister")?.textContent).toContain("臣谨奏。");
+    expect(host.querySelector(".chat-message.aside")?.textContent).toContain("有所隐瞒");
+    expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
+  });
+});
+
+describe("parseLeadingStageDirection", () => {
+  it.each([
+    ["（搁笔）卿且直言。", { action: "（搁笔）", content: "卿且直言。" }],
+    ["卿且（搁笔）直言。", { action: null, content: "卿且（搁笔）直言。" }],
+    ["卿且直言。", { action: null, content: "卿且直言。" }],
+  ])("recognises only an explicit leading full-width parenthetical in %s", (source, expected) => {
+    expect(parseLeadingStageDirection(source)).toEqual(expected);
   });
 });
 

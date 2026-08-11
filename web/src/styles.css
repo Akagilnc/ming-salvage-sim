@@ -2712,6 +2712,39 @@ select:focus-visible {
   border: 1px solid rgba(49, 93, 71, 0.26);
 }
 
+.chat-message.aside {
+  position: relative;
+  align-self: flex-start;
+  margin-left: 62px;
+  max-width: min(680px, 72%);
+  border: 1px dashed rgba(111, 83, 46, 0.5);
+  background: rgba(255, 238, 198, 0.5);
+}
+
+.aside-avatar {
+  position: absolute;
+  left: -54px;
+  top: 2px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(111, 83, 46, 0.4);
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.chat-message.aside p { font-style: italic; }
+
+.chat-message .action {
+  display: block;
+  margin-bottom: 6px;
+  color: #94805d;
+  font-size: 0.9rem;
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
 .chat-message.pending {
   opacity: 0.76;
 }
@@ -6775,19 +6808,26 @@ button:disabled {
 
 /* #539 单卷轴 scene：无气泡通栏；divider 保持柔和且可继续上滚回读。 */
 .modal-bg-chat .chat-message.scene {
+  align-self: stretch;
   width: 100%;
+  max-width: 100%;
   display: block;
-  padding: 10px 8%;
-  text-align: center;
+  margin: 10px 0;
+  padding: 4px 6px;
+  text-align: left;
   color: rgba(224, 211, 181, 0.72);
-  font-style: italic;
   background: transparent !important;
   border: 0 !important;
   border-radius: 0;
   box-shadow: none;
 }
 
-.chat-message.scene p { white-space: pre-wrap; }
+.chat-message.scene p {
+  color: #7a6a4d;
+  font-style: normal;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
 .chat-message.scene hr {
   width: 58%;
   border: 0;
