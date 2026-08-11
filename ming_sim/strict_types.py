@@ -71,7 +71,8 @@ def validate_rejection_verdict(
     if (
         has_numeric_contamination(verdict)
         or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0
-        or not isinstance(verdict.get("midzhi_unpromulgatable"), bool)
+        or ("midzhi_unpromulgatable" in verdict
+            and not isinstance(verdict["midzhi_unpromulgatable"], bool))
         or verdict.get("blocked_layer") not in blocked_layers
         or not faction_opponents
         or "gatekeeper_id" not in verdict

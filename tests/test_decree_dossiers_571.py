@@ -3218,6 +3218,21 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         restored.close()
 
 
+def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.pop("midzhi_unpromulgatable")
+
+    db.apply_dossier_verdicts(state, [verdict])
+
+    row = db.list_decree_dossier_decisions(dossier_id)[-1]
+    assert row["midzhi_unpromulgatable"] is False
+
+
 @pytest.mark.parametrize("missing", [
     "blocked_layer", "primary_opponents", "gatekeeper_id", "reason", "criteria_snapshot",
 ])
