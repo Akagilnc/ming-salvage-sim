@@ -59,6 +59,9 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
         (regular, "rejected", "force_promulgated"),
         (midzhi_pass, "promulgated", ""),
         (midzhi_reject, "rejected", ""),
+        (midzhi_reject, "rejected", "hold"),
+        (midzhi_reject, "rejected", "withdrawn"),
+        (midzhi_reject, "rejected", "force_promulgated"),
     ):
         db.conn.execute(
             "INSERT INTO decree_dossier_decisions "
@@ -74,7 +77,22 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
          "marker": "中旨", "outcome": "promulgated"},
         {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "中旨",
          "marker": "中旨", "outcome": "rejected"},
+        {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "中旨",
+         "marker": "批红强颁", "outcome": "promulgated"},
     ]
+
+
+def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
+    from scripts.promulgation_gate_561 import _select_second_verdict
+
+    rejected = {"dossier_id": 7, "decision": "rejected"}
+    promoted = {"dossier_id": 7, "decision": "promulgated"}
+    assert _select_second_verdict(True, 7, [promoted], [rejected]) == promoted
+    assert _select_second_verdict(False, 7, [rejected], [promoted]) == promoted
+    for rows in ([], [{"dossier_id": 7, "decision": ""}],
+                 [promoted, promoted], [{"dossier_id": 8, "decision": "promulgated"}]):
+        with pytest.raises(RuntimeError):
+            _select_second_verdict(True, 7, rows, [])
 
 
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):

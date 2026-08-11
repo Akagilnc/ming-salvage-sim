@@ -195,8 +195,11 @@ def build_promulgation_judge_context(
     ).fetchall():
         payload = json.loads(str(item["payload_json"] or "{}"))
         mode = str(payload.get("mode") or "regular")
-        forced = str(item["rescript_action"] or "") == "force_promulgated"
-        if not forced and mode != "中旨":
+        rescript_action = str(item["rescript_action"] or "")
+        forced = rescript_action == "force_promulgated"
+        # A rescript disposition is not another promulgation attempt.  Force is
+        # retained independently because it is itself a durable history marker.
+        if not forced and (mode != "中旨" or rescript_action):
             continue
         history.append({
             "dossier_id": int(item["dossier_id"]), "turn": int(item["turn"]),
