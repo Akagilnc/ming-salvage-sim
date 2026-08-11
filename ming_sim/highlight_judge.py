@@ -4,6 +4,8 @@ from __future__ import annotations
 import copy
 import json
 import multiprocessing
+import os
+import signal
 import time
 from typing import Any, Callable, List
 
@@ -54,13 +56,34 @@ _DEFAULT_INVOKE = invoke_highlight_judge
 
 def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
                       llm_config: Any, timeout: float) -> None:
-    """Child half of the deadline seam; only JSON-like results cross the pipe."""
+    """Own the adapter and every subprocess it starts in one cancellable process group."""
     try:
-        send.send((True, invoke(reply, llm_config, timeout=timeout)))
+        # The parent establishes our private group before releasing real adapter work,
+        # closing the process-start/setpgid race where a runner could otherwise escape.
+        send.recv()
+        send.send(("ready",))
+        send.send(("result", True, invoke(reply, llm_config, timeout=timeout)))
     except BaseException as error:
-        send.send((False, type(error).__name__, str(error)))
+        send.send(("result", False, type(error).__name__, str(error)))
     finally:
         send.close()
+
+
+def _cancel_owned_work(process: Any, owns_session: bool) -> None:
+    """Gracefully cancel the one owned work tree; the direct child is joined by its caller."""
+    if not process.is_alive():
+        return
+    if owns_session:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            # Explicitly terminate the direct worker too: multiprocessing may
+            # install signal behavior independent of the adapter descendants.
+            process.terminate()
+            return
+        except ProcessLookupError:
+            return
+    # No adapter can have started before the worker announces its session.
+    process.terminate()
 
 
 def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
@@ -74,30 +97,45 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
     # isolated test worker uses fork; they never initialize the real provider stack.
     method = "spawn" if invoke is _DEFAULT_INVOKE else "fork"
     context = multiprocessing.get_context(method)
-    receive, send = context.Pipe(duplex=False)
+    receive, send = context.Pipe(duplex=True)
     process = context.Process(
         target=_invoke_in_worker,
         args=(send, invoke, reply, llm_config, budget),
         name="audience-highlight-judge",
     )
-    deadline = time.monotonic() + budget
+    # Reserve a small cancellation/reap slice inside the public deadline.  In
+    # particular this makes the owner, not subprocess.run's hard timeout path,
+    # win the race and deliver graceful SIGTERM to CLI descendants.
+    reap_margin = min(0.05, budget * 0.1)
+    deadline = time.monotonic() + budget - reap_margin
     started = False
+    owns_session = False
     try:
         process.start()
         started = True
+        if invoke is _DEFAULT_INVOKE:
+            try:
+                os.setpgid(process.pid, process.pid)
+            except PermissionError:
+                if os.getpgid(process.pid) != process.pid:
+                    raise
+            owns_session = True
+        receive.send(("run",))
         send.close()
-        remaining = max(0.0, deadline - time.monotonic())
-        if not receive.poll(remaining):
-            raise TimeoutError("highlight judge deadline exceeded")
-        message = receive.recv()
-        if message[0]:
-            return message[1]
-        raise RuntimeError(f"{message[1]}: {message[2]}")
+        while True:
+            remaining = max(0.0, deadline - time.monotonic())
+            if not receive.poll(remaining):
+                raise TimeoutError("highlight judge deadline exceeded")
+            message = receive.recv()
+            if message[0] == "ready":
+                continue
+            if message[1]:
+                return message[2]
+            raise RuntimeError(f"{message[2]}: {message[3]}")
     finally:
         receive.close()
         if started:
-            if process.is_alive():
-                process.terminate()
+            _cancel_owned_work(process, owns_session)
             process.join()
 
 
