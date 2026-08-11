@@ -391,7 +391,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function AudienceArchiveModal({ onClose, ministers = [] }: { onClose: () => void; ministers?: Minister[] }) {
+export function AudienceArchiveModal({ onClose, ministers }: { onClose: () => void; ministers: Minister[] }) {
   const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
   const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
   const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
@@ -594,7 +594,7 @@ function ScrollMessages({ messages, ministerName, ministers }: { messages: Array
 export function ChatModal({
   minister,
   portraitPrefix,
-  ministers = [],
+  ministers,
   scrollMode = "audience",
   currentCampaignId,
   currentNightId,
@@ -630,7 +630,7 @@ export function ChatModal({
 }: {
   minister: Minister;
   portraitPrefix: string;
-  ministers?: Minister[];
+  ministers: Minister[];
   scrollMode?: "audience" | "legacy";
   /** Complete ownership of the currently open scroll. */
   currentCampaignId: string;
