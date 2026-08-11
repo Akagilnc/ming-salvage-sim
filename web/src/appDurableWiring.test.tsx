@@ -62,10 +62,13 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     const entry = findButton(host, "起居注");
     expect(entry).toBeTruthy();
     await click(entry);
-    await tick();
-    expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
-    expect(host.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src"))
-      .toBe("/portraits/minister_王承恩.png");
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
+        expect(host.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src"))
+          .toBe("/portraits/minister_王承恩.png");
+      });
+    });
   });
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;

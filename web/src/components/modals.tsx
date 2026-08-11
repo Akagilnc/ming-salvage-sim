@@ -431,7 +431,7 @@ export function AudienceArchiveModal({ onClose, ministers = [] }: { onClose: () 
           <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
         </button>
       </li>)}</ul>{!nights.length && !error ? <p className="long-copy">尚无召对记录。</p> : null}</aside>
-      <article className="history-detail modal-scroll">
+      <article className="history-detail modal-scroll scroll-messages">
         {error ? <p className="long-copy">加载失败：{error}</p> : null}
         {messages ? <ScrollMessages messages={messages} ministerName="" ministers={ministers} /> : null}
       </article>
@@ -572,7 +572,7 @@ function portraitSources(minister: Minister, portraitPrefix = "minister_") {
 }
 
 function ScrollMessages({ messages, ministerName, ministers }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string; ministers: Minister[] }) {
-  return <div className="scroll-messages">{messages.map((message, index) => {
+  return <>{messages.map((message, index) => {
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
@@ -588,7 +588,7 @@ function ScrollMessages({ messages, ministerName, ministers }: { messages: Array
       {action ? <em className="action">{action}</em> : null}
       <p>{content}</p>
     </div>;
-  })}</div>;
+  })}</>;
 }
 
 export function ChatModal({
