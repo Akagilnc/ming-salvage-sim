@@ -39,7 +39,9 @@ export type SendChatCallbacks = {
   onDone?: (data: ChatResponse) => void;
   /** 观察者离开实时流（AbortError） */
   onLeave?: () => void;
-  /** 失败（非 Abort） */
+  /** 已完成回话的装饰落账失败；不得复用聊天发送失败语义。 */
+  onDecorationError?: (err: unknown) => void;
+  /** 聊天发送/流失败（非 Abort） */
   onError?: (err: unknown) => void;
 };
 
@@ -187,7 +189,9 @@ export function useAudienceChat(
               }
               // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
               cb.onDone?.(doneData);
-              if (doneData.decoration_error) cb.onError?.(new Error(doneData.decoration_error));
+              if (doneData.decoration_error) {
+                cb.onDecorationError?.(new Error(doneData.decoration_error));
+              }
             },
             onHighlights: (highlight) => {
               // legacy/consort renders this same reducer; audience additionally refreshes its scroll projection.
@@ -200,7 +204,7 @@ export function useAudienceChat(
               }
               onScrollSettled?.();
             },
-            onDecorationError: (error) => cb.onError?.(error),
+            onDecorationError: (error) => cb.onDecorationError?.(error),
             onMindreading: (mind) => {
               // 持久 turn-identified 事件：仅认当前面板即入 reducer（不按 token/gen；迟到旧流读心仍归其轮）
               if (panelMatches() && mind.mindreading) {

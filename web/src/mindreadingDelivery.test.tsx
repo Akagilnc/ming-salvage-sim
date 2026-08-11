@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
+import { chatReducer } from "./mindreading";
 import { ChatModal } from "./components/modals";
 import { retryAudienceStoryExtraction } from "./extractionRetry";
 import type { ChatResponse, Minister, ServerChatMessage } from "./types";
@@ -131,22 +132,43 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     expect(hookRef.current!.chat.find((m) => m.role === "minister")?.highlights).toEqual(["答"]);
   });
 
-  it("done 后装饰失败响亮回调但不标记或隐藏已完成回话", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => sse([
-      { event: "done", data: { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] } },
+  it.each([
+    ["done payload", { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [], decoration_error: "disk full" }, []],
+    ["SSE event", { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] }, [
       { event: "decoration_error", data: { message: "disk full" } },
+    ]],
+  ])("%s 装饰失败走独立告警边界，不触发聊天失败消费", async (_label, done, tail) => {
+    vi.stubGlobal("fetch", vi.fn(async () => sse([
+      { event: "done", data: done },
+      ...(tail as SseEvent[]),
       { event: "end", data: {} },
     ])));
     const { hookRef } = mount("legacy", true);
-    const errors: string[] = [];
+    const decorationErrors: string[] = [];
+    const chatErrors: string[] = [];
+    let composer = "";
     await act(async () => {
       await hookRef.current!.sendChat("温体仁", "问", {
-        onError: (error) => errors.push(String(error)),
+        onDecorationError: (error) => decorationErrors.push(String(error)),
+        onError: (error) => { composer = "问"; chatErrors.push(String(error)); },
       });
     });
-    expect(errors.join(" ")).toContain("disk full");
+    expect(decorationErrors.join(" ")).toContain("disk full");
+    expect(chatErrors).toEqual([]);
+    expect(composer).toBe("");
     expect(hookRef.current!.failedIdentity).toBeNull();
     expect(hookRef.current!.chat.some((m) => m.content === "已成回话")).toBe(true);
+  });
+
+  it("迟到 highlights 抵抗下一轮陈旧 history，撤回归属轮时仍删除", () => {
+    const staleNext = [U("问一", 1), M("答一", 1), U("问二", 2), M("答二", 2)];
+    let chat = chatReducer([], { type: "history", history: [U("问一", 1), M("答一", 1)] });
+    chat = chatReducer(chat, { type: "highlights", chatTurnId: 1, highlights: ["答一"] });
+    chat = chatReducer(chat, { type: "history", history: staleNext });
+    expect(chat.find((m) => m.role === "minister" && m.chatTurnId === 1)?.highlights).toEqual(["答一"]);
+
+    chat = chatReducer(chat, { type: "history", history: [U("问二", 2), M("答二", 2)] });
+    expect(chat.some((m) => m.chatTurnId === 1)).toBe(false);
   });
 
   it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {

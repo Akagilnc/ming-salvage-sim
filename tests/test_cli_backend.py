@@ -1562,6 +1562,39 @@ def test_run_agy_all_timeout_raises(monkeypatch):
         cb._run_agy("p")
 
 
+def test_run_agy_retries_share_one_deadline_including_keychain(monkeypatch):
+    clock = {"now": 10.0}
+    budgets = []
+
+    def monotonic():
+        return clock["now"]
+
+    def fake_run(cmd, **kw):
+        budgets.append((cmd[0], kw["timeout"]))
+        clock["now"] += 0.4
+        if cmd[0] == "security":
+            return _Proc()
+        return _Proc(stdout="Authentication required")
+
+    monkeypatch.setattr(cb.time, "monotonic", monotonic)
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="整体期限"):
+        cb._run_agy("p", timeout=1.0)
+
+    assert budgets[0][0] == "security"
+    assert budgets[1][0].endswith("agy")
+    assert budgets[2][0] == "security"
+    assert budgets[0][1] == pytest.approx(1.0)
+    assert budgets[1][1] == pytest.approx(0.6)
+    assert budgets[2][1] == pytest.approx(0.2)
+
+
+def test_run_agy_zero_deadline_starts_no_warmup_or_attempt(monkeypatch):
+    monkeypatch.setattr(cb.subprocess, "run", lambda *a, **kw: pytest.fail("must not spawn"))
+    with pytest.raises(RuntimeError, match="整体期限"):
+        cb._run_agy("p", timeout=0)
+
+
 def test_run_agy_all_auth_fail_raises(monkeypatch):
     fake, state = _agy_fake([("auth", "Authentication required")])
     monkeypatch.setattr(cb.subprocess, "run", fake)
