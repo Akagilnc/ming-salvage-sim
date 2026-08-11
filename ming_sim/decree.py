@@ -52,7 +52,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
-from ming_sim.qualitative import qualitative_band
+from ming_sim.qualitative import qualitative_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -171,12 +171,19 @@ def build_promulgation_judge_context(
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
         })
-    gatekeepers = [dict(row) for row in db.conn.execute(
-        "SELECT name,office,office_type,faction,courage,integrity FROM characters "
-        "WHERE status='active' AND power_id='ming' AND "
-        "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
-        "OR office_type='六科') ORDER BY office_type,office,name"
-    ).fetchall()]
+    gatekeepers = [
+        {
+            **dict(row),
+            "courage": qualitative_character_axis("courage", row["courage"]),
+            "integrity": qualitative_character_axis("integrity", row["integrity"]),
+        }
+        for row in db.conn.execute(
+            "SELECT name,office,office_type,faction,courage,integrity FROM characters "
+            "WHERE status='active' AND power_id='ming' AND "
+            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
+            "OR office_type='六科') ORDER BY office_type,office,name"
+        ).fetchall()
+    ]
     history = []
     for item in db.conn.execute(
         "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "

@@ -7,6 +7,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import audience_night
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import LLMConfig
+from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 
 
@@ -42,6 +43,21 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert all(set(row) == {
         "name", "office", "office_type", "faction", "courage", "integrity",
     } for row in context["gatekeepers"])
+    raw_axes = {
+        row["name"]: (row["courage"], row["integrity"])
+        for row in db.conn.execute("SELECT name,courage,integrity FROM characters")
+    }
+    assert all(
+        row["courage"] == qualitative_character_axis(
+            "courage", raw_axes[row["name"]][0]
+        )
+        and row["integrity"] == qualitative_character_axis(
+            "integrity", raw_axes[row["name"]][1]
+        )
+        and isinstance(row["courage"], str)
+        and isinstance(row["integrity"], str)
+        for row in context["gatekeepers"]
+    )
     assert context["dossiers"][0]["criteria_snapshot_source"] == {
         "imperial_authority_band": context["imperial_authority_band"],
         "appointment_tenure": "", "authorization_ids": [],
