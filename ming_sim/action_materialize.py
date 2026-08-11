@@ -361,7 +361,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             or (committed_draft is not None and not has_pending_directive)
         )
         mechanical_fields = (
-            "dossier_action_type", "target_kind", "target_id", "amount", "account",
+            "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "authorization_id", "deadline_months",
         )
         for field_name in mechanical_fields:

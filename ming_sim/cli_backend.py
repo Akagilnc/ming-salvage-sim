@@ -1023,7 +1023,8 @@ def extract_draft_intent(
             f"拟了内容。请从完整语义中整理出恰好 {draft_count} 道彼此可区分、可独立暂存的成品旨稿。"
             "只输出一个 JSON 对象（无代码围栏、无多余字）：\n"
             '{"成品旨稿": ['
-            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"..."},'
+            '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
+            '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","授权ID":"","期限月数":3,'
@@ -1073,6 +1074,7 @@ def extract_draft_intent(
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
+                "mode": "midzhi" if str(value.get("颁布方式") or "").strip() == "中旨直发" else "ordinary",
                 "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
@@ -1106,6 +1108,7 @@ def extract_draft_intent(
         'revoke_decree|revoke_authority|dismiss_assignment|military_order",\n'
         '  "目标类型": "policy|character|office|army|region|issue|account",\n'
         '  "目标ID": "",\n'
+        '  "颁布方式": "普通|中旨直发", // 皇帝预先声明中旨直发时选后者\n'
         '  "金额": null,             // 奉旨拨付额填正整数；非拨帑留 null\n'
         '  "账户": "",\n'
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
@@ -1173,6 +1176,7 @@ def extract_draft_intent(
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
+        "mode": "midzhi" if str(obj.get("颁布方式") or "").strip() == "中旨直发" else "ordinary",
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
@@ -1243,7 +1247,7 @@ def capture_manual_directive_payload(
         "target_id": captured.get("target_id"),
     }
     for field in (
-        "amount", "account", "execution_surface", "assignee",
+        "mode", "amount", "account", "execution_surface", "assignee",
         "authorization_id", "deadline_months", "participant_roster",
     ):
         if captured.get(field) not in (None, ""):

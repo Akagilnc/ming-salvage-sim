@@ -9938,10 +9938,7 @@ class GameDB:
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
         normalized = dict(payload)
-        mode = str(normalized.get("mode") or "ordinary").strip()
-        if mode not in {"ordinary", "midzhi"}:
-            raise ValueError(f"旨意 mode 非法：{mode}")
-        normalized["mode"] = mode
+        normalized["mode"] = self._normalize_dossier_mode(normalized.get("mode"))
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
             try:
@@ -10029,8 +10026,17 @@ class GameDB:
         ) == 0:
             self.conn.commit()
 
-    @staticmethod
-    def _dossier_row(row: Any) -> Dict[str, object]:
+    DOSSIER_MODES = frozenset({"ordinary", "midzhi"})
+
+    @classmethod
+    def _normalize_dossier_mode(cls, value: object) -> str:
+        mode = str(value or "ordinary").strip()
+        if mode not in cls.DOSSIER_MODES:
+            raise ValueError(f"案卷 mode 非法：{mode}")
+        return mode
+
+    @classmethod
+    def _dossier_row(cls, row: Any) -> Dict[str, object]:
         out = dict(row)
         out["id"] = int(out["id"])
         for key in (
@@ -10044,16 +10050,18 @@ class GameDB:
         out["rescript_pending"] = bool(out.get("rescript_pending"))
         try:
             payload = json.loads(out.get("payload_json") or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        out["payload"] = payload if isinstance(payload, dict) else {}
-        mode = str(out["payload"].get("mode") or "ordinary").strip()
-        out["mode"] = mode if mode in {"ordinary", "midzhi"} else "ordinary"
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
+        out["mode"] = cls._normalize_dossier_mode(payload.get("mode"))
         try:
             stigma = json.loads(out.get("stigma_json") or "[]")
-        except (TypeError, ValueError):
-            stigma = []
-        out["stigma"] = stigma if isinstance(stigma, list) else []
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
+        if not isinstance(stigma, list):
+            raise ValueError(f"案卷#{out['id']} stigma_json 非列表")
+        out["stigma"] = stigma
         try:
             roster = json.loads(out.get("participant_roster") or "[]")
         except (TypeError, ValueError):
@@ -10219,10 +10227,9 @@ class GameDB:
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
-        mode = str(normalized_payload.get("mode") or "ordinary").strip()
-        if mode not in {"ordinary", "midzhi"}:
-            raise ValueError(f"案卷 mode 非法：{mode}")
-        normalized_payload["mode"] = mode
+        normalized_payload["mode"] = self._normalize_dossier_mode(
+            normalized_payload.get("mode")
+        )
         if action == "appointment":
             normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
             normalized_payload.pop("appointment_tenure", None)
@@ -10404,23 +10411,26 @@ class GameDB:
         ).fetchone()
         return None if row is None else self._dossier_row(row)
 
-    def append_dossier_stigma(
-        self, dossier_id: int, *, kind: str, reason: str, turn: int,
-        source_action: str, commit: bool = True,
+    def _append_midzhi_stigma(
+        self, dossier_id: int, *, decision: str, turn: int, commit: bool = True,
     ) -> None:
-        """Append one stable stigma marker; exact replay is idempotent."""
+        """Append the ticket's fixed midzhi marker; exact replay is idempotent."""
+        marker_fields = {
+            "rejected": ("predeclared", "rejected"),
+            "promulgated": ("predeclared", "promulgated"),
+            "force_promulgated": ("rescript", "force_promulgated"),
+        }
+        if decision not in marker_fields:
+            raise ValueError(f"中旨 stigma 判决非法：{decision}")
         row = self.get_decree_dossier(dossier_id)
         if row is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
+        reason, source_action = marker_fields[decision]
         marker = {
-            "kind": str(kind or "").strip(),
-            "reason": str(reason or "").strip(),
-            "turn": int(turn),
-            "source_action": str(source_action or "").strip(),
+            "kind": "midzhi", "reason": reason, "turn": int(turn),
+            "source_action": source_action,
         }
-        if not all((marker["kind"], marker["reason"], marker["source_action"])):
-            raise ValueError("案卷 stigma 缺少 kind/reason/source_action")
-        stigma = list(row.get("stigma") or [])
+        stigma = list(row["stigma"])
         if marker not in stigma:
             stigma.append(marker)
             self.conn.execute(
@@ -10977,9 +10987,8 @@ class GameDB:
                     criteria_snapshot=criteria_snapshot, commit=False,
                 )
                 if predeclared_midzhi and decision == "rejected":
-                    self.append_dossier_stigma(
-                        dossier_id, kind="midzhi", reason="predeclared",
-                        turn=state.turn, source_action="rejected", commit=False,
+                    self._append_midzhi_stigma(
+                        dossier_id, decision="rejected", turn=state.turn, commit=False,
                     )
                 return
             if decision == "force_promulgated":
@@ -11017,9 +11026,9 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                self.append_dossier_stigma(
-                    dossier_id, kind="midzhi", reason="rescript",
-                    turn=state.turn, source_action="force_promulgated", commit=False,
+                self._append_midzhi_stigma(
+                    dossier_id, decision="force_promulgated", turn=state.turn,
+                    commit=False,
                 )
             else:
                 self.record_dossier_decision(
@@ -11027,9 +11036,8 @@ class GameDB:
                     reason=reason, legal_reason_code=legal_reason_code, commit=False,
                 )
             if predeclared_midzhi and decision == "promulgated":
-                self.append_dossier_stigma(
-                    dossier_id, kind="midzhi", reason="predeclared",
-                    turn=state.turn, source_action="promulgated", commit=False,
+                self._append_midzhi_stigma(
+                    dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
