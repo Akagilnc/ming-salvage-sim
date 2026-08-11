@@ -224,6 +224,10 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
 @pytest.mark.parametrize("contamination", [
     {"affected_parties": [{"kind": "faction", "key": "不存在", "severity": "不满"}]},
     {"legal_reason_code": "statute-42"},
+    {"legal_reason_code": 0},
+    {"legal_reason_code": False},
+    {"legal_reason_code": []},
+    {"legal_reason_code": {}},
 ])
 def test_public_resolve_seam_rejects_reserved_or_malformed_rejection_before_pending(
     game, contamination,
