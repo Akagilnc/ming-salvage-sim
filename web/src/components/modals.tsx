@@ -545,13 +545,28 @@ export function BriefReport({ title, items }: { title: string; items: string[] }
 }
 
 
+export function parseLeadingStageDirection(source: string): { action: string | null; content: string } {
+  const match = source.match(/^（[^（）\r\n]+）/);
+  return match
+    ? { action: match[0], content: source.slice(match[0].length) }
+    : { action: null, content: source };
+}
+
 function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string }) {
   return <>{messages.map((message, index) => {
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
     if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
-    return <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}><span>{speaker}</span><p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p></div>;
+    const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
+    const text = message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content;
+    const { action, content } = parseLeadingStageDirection(text);
+    return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
+      {isAside ? <img className="aside-avatar" src={`/portraits/minister_${encodeURIComponent(speaker)}.png`} alt={speaker} /> : null}
+      <span>{speaker}</span>
+      {action ? <em className="action">{action}</em> : null}
+      <p>{content}</p>
+    </div>;
   })}</>;
 }
 
