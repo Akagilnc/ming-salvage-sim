@@ -35,11 +35,23 @@ def validate_rejection_verdict(
     string_list = lambda value: (isinstance(value, list) and all(
         isinstance(item, str) and bool(item.strip()) for item in value
     ))
+    faction_opponents = (
+        isinstance(opponents, list)
+        and bool(opponents)
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"kind", "key"}
+            and item.get("kind") == "faction"
+            and isinstance(item.get("key"), str)
+            and bool(item["key"].strip())
+            and item["key"] in faction_names
+            for item in opponents
+        )
+    )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
     if (
         verdict.get("blocked_layer") not in blocked_layers
-        or not string_list(opponents) or not opponents
-        or any(opponent not in faction_names for opponent in opponents)
+        or not faction_opponents
         or "gatekeeper_id" not in verdict
         or (verdict.get("gatekeeper_id") is not None and
             (not isinstance(verdict["gatekeeper_id"], str)
