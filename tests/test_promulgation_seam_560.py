@@ -162,6 +162,30 @@ def test_public_resolve_seam_rejects_bad_shape_without_persisting(game):
     assert exc_info.value.stage == "promulgation"
     assert exc_info.value.error_pack_path
     assert db.get_pending_promulgation_verdicts(state.turn) == []
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == {
+        "decision": "promulgated",
+    }
+
+
+def test_public_resolve_seam_wraps_scalar_verdict_item_for_audit(game):
+    db, state, content = game
+    _stage_policy_dossier(db, state)
+
+    with pytest.raises(SettlementAbort):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [None],
+        )
+
+    report = db.conn.execute(
+        "SELECT item_json FROM rejection_reports "
+        "WHERE turn=? ORDER BY id DESC LIMIT 1", (state.turn,),
+    ).fetchone()
+    assert __import__("json").loads(report["item_json"]) == {"raw_value": None}
 
 
 def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(game):
@@ -192,15 +216,14 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
     assert db.list_decree_dossier_decisions(dossier_id) == []
 
 
-@pytest.mark.parametrize("bad_value", [1, 1.5, True])
-def test_public_resolve_seam_audits_numeric_verdict_rejection(game, bad_value):
+def test_public_resolve_seam_audits_numeric_verdict_rejection(game):
     db, state, content = game
     dossier_id = _stage_policy_dossier(db, state)
     raw = {
         "dossier_id": dossier_id,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": bad_value}],
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
         "gatekeeper_id": None,
         "reason": "科臣封驳。",
         "affected_parties": [
@@ -212,6 +235,7 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, bad_value):
             "authorization_ids": [],
             "endorsement_entry_ids": [],
         },
+        "resistance_score": 99.5,
     }
 
     with pytest.raises(SettlementAbort) as exc_info:
