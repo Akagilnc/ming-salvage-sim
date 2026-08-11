@@ -50,13 +50,13 @@ def _rejected_verdict(dossier_id):
     }
 
 
-def _make_enemy(db, content, name="张献忠", power_id="bandit_522"):
+def _make_enemy(db, content, name="张献忠", power_id="bandit_522", stance="敌对"):
     db.conn.execute(
         """INSERT INTO powers
         (id,name,kind,leader,stance,leverage,satisfaction,military_strength,cohesion,
          supply,agenda,status,last_action,aliases)
-        VALUES (?,?,'内乱',?,'敌对',25,20,55,30,22,'招抚纵切','小股啸聚','','[]')""",
-        (power_id, "招抚纵切测试股", name),
+        VALUES (?,?,'内乱',?,?,25,20,55,30,22,'招抚纵切','小股啸聚','','[]')""",
+        (power_id, "招抚纵切测试股", name, stance),
     )
     db.conn.execute(
         "UPDATE characters SET power_id=?,status='active',office=?,office_type='外臣' WHERE name=?",
@@ -162,44 +162,77 @@ def test_pacification_rejects_dead_and_unknown_targets(game, target, mark_dead):
     ).fetchone()) == power_before
 
 
-def test_scripted_action_classes_are_mutually_exclusive(game):
-    """#515 OWNER：锁结构化路由，不考真实 LLM 自然语言分类率。"""
+@pytest.mark.parametrize("stance", ["中立", "倾明"])
+def test_pacification_rejects_active_non_enemy_targets(game, stance):
+    db, state, content = game
+    _make_enemy(db, content, stance=stance)
+    person_before = dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='张献忠'"
+    ).fetchone())
+    power_before = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_522'"
+    ).fetchone())
+
+    ctx = _stage_pacification(db, state.turn)
+    pending_id = ctx.out["pending_action_id"]
+    assert db.commit_pending_actions(state, content=content) == []
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()["status"] == "failed"
+    assert not [d for d in db.list_decree_dossiers()
+                if d["action_type"] == "pacification"]
+    assert dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='张献忠'"
+    ).fetchone()) == person_before
+    assert dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_522'"
+    ).fetchone()) == power_before
+
+
+@pytest.mark.parametrize(
+    ("classified", "draft_payload", "expected"),
+    [
+        ({"kind": "pacification", "target_id": "张献忠"}, None, "pacification"),
+        ({"kind": "draft"}, {
+            "dossier_action_type": "punishment", "target_kind": "character",
+        }, "punishment"),
+        ({"kind": "draft"}, {
+            "dossier_action_type": "military_order", "target_kind": "region",
+            "target_id": "shaanxi", "deadline_months": 3,
+        }, "military_order"),
+    ],
+    ids=["pacification", "punishment", "military_order"],
+)
+def test_scripted_action_classes_are_mutually_exclusive(
+    game, monkeypatch, classified, draft_payload, expected,
+):
+    """三类均由 #515 判词入口消费，并只交给本类既有 owner。"""
     db, state, content = game
     _make_enemy(db, content)
-    ctx = _stage_pacification(db, state.turn)
-    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
-    assert payload["dossier_action_type"] == "pacification"
-    assert payload["target_id"] == "张献忠"
-
-    # 惩处由既有 dossier owner 成案，不借道 action-cluster classifier。
-    punishment_id = db.create_decree_dossier(
-        state, action_type="punishment", decree_text="命查其罪",
-        target_kind="character", target_id="张献忠",
-        executor_kind="character", executor_id=ctx.character.name,
-    )
-    punishment = db.get_decree_dossier(punishment_id)
-    assert punishment["action_type"] == "punishment"
-
-    # 军令由既有结构化旨稿 owner 成案，并保留合法承办人与外部旨稿。
-    directive_id = db.add_directive(
-        state, None, "命整军进剿", "脚本化判词", actor=ctx.character.name,
-        dossier_payload={
-            "dossier_action_type": "military_order",
-            "target_kind": "region", "target_id": "shaanxi",
-            "assignee": ctx.character.name, "deadline_months": 3,
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    payload = dict(draft_payload or {})
+    payload.setdefault("target_id", actor)
+    payload.setdefault("assignee", actor)
+    monkeypatch.setattr(
+        "ming_sim.cli_backend.extract_draft_intent",
+        lambda *a, **k: {
+            "draft_action": "拟旨", "draft_text": "脚本化旨稿",
+            "target_candidate": "", **payload,
         },
     )
-    db.ensure_dossiers_for_draft_directives(state)
-    directive = next(d for d in db.list_directives(state) if d["id"] == directive_id)
-    military = db.get_dossier_for_directive(directive_id)
-    assert json.loads(directive["dossier_payload_json"])["dossier_action_type"] == "military_order"
-    assert military["action_type"] == "military_order"
-    assert military["executor_id"] == ctx.character.name
+    candidates = candidates_from_classifier_payload(classified, soft=False)
+    ctx = _ctx(db, actor, candidates, state.turn)
+    run_materialize_pipeline(ctx)
 
-    dossiers = db.list_decree_dossiers()
-    assert {d["action_type"] for d in dossiers if d["id"] in {
-        punishment_id, military["id"],
-    }} == {"punishment", "military_order"}
-    assert len([d for d in dossiers if d["action_type"] == "pacification"]) == 0
-    assert len([p for p in db.list_pending_actions(state.turn)
-                if json.loads(p["payload_json"]).get("dossier_action_type") == "pacification"]) == 1
+    pending_id = ctx.out["pending_action_id"]
+    pending_payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()["payload_json"])
+    assert pending_payload["dossier_action_type"] == expected
+    assert db.commit_pending_actions(state, content=content)
+    produced = [d["action_type"] for d in db.list_decree_dossiers()]
+    assert produced == [expected]
+    assert all(produced.count(kind) == (1 if kind == expected else 0)
+               for kind in ("pacification", "punishment", "military_order"))

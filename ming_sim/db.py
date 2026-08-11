@@ -10086,6 +10086,11 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active" or row["power_id"] in (None, "ming"):
             return None
+        power = self.conn.execute(
+            "SELECT stance FROM powers WHERE id=?", (row["power_id"],),
+        ).fetchone()
+        if power is None or power["stance"] != "敌对":
+            return None
         character = content.characters[matched]
         if character.status == "candidate" or character.office_type == "后宫":
             return None
