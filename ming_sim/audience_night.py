@@ -318,8 +318,11 @@ def night_archive_metadata(
             name = str(raw_name or "").strip()
             if name and name not in people:
                 people.append(name)
+    summon_method = summon_methods[0] if summon_methods else ""
     return {
-        "audience_type": summon_methods[0] if summon_methods else "召对",
+        # Summon methods remain machine tags; the container contract exposes the
+        # player-facing audience type from this single production source.
+        "audience_type": "越次召对" if summon_method == METHOD_YUECI else "召对",
         "involved_people": people,
     }
 
