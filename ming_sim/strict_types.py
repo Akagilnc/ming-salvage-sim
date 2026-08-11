@@ -49,8 +49,14 @@ def validate_rejection_verdict(
         )
     )
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
+    numeric_contamination = any(
+        key not in {"dossier_id", "midzhi_unpromulgatable"}
+        and isinstance(value, (int, float, bool))
+        for key, value in verdict.items()
+    )
     if (
-        verdict.get("blocked_layer") not in blocked_layers
+        numeric_contamination
+        or verdict.get("blocked_layer") not in blocked_layers
         or not faction_opponents
         or "gatekeeper_id" not in verdict
         or (verdict.get("gatekeeper_id") is not None and

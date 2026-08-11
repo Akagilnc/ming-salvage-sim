@@ -538,6 +538,7 @@ def resolve_directives(
                     )["external_review"] else exempt).append(dossier)
                 provider = promulgation_verdict_provider or stub_promulgation_verdicts
                 generated = provider(reviewed, state) if reviewed else []
+                rejected_verdict_batch = generated
                 if not isinstance(generated, list):
                     raise LLMContractError("颁布判官 verdicts 必须为列表")
                 generated = generated + (
@@ -549,24 +550,31 @@ def resolve_directives(
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
-        # Verdict contract failures use the existing rejection ledger.  Keep the
-        # provider item verbatim; the failed batch never reaches pending/history.
-        if isinstance(rejected_verdict_batch, list):
-            collector = RejectionCollector(attempt=_next_attempt(state.turn))
-            with atomic(db):
-                for rejected_verdict in rejected_verdict_batch:
-                    collector.record(
-                        "promulgation_verdicts",
-                        RejectedItem(
-                            item=rejected_verdict,
-                            reason=str(exc),
-                            category="invalid_shape",
-                            source=Provenance(source),
+        # Verdict contract failures use the existing rejection ledger.  Keep each
+        # dict verbatim and apply ADR 0015 F1 wrapping to every non-dict raw value.
+        rejected_items = (
+            rejected_verdict_batch
+            if isinstance(rejected_verdict_batch, list)
+            else [rejected_verdict_batch]
+        )
+        collector = RejectionCollector(attempt=_next_attempt(state.turn))
+        with atomic(db):
+            for rejected_verdict in rejected_items:
+                collector.record(
+                    "promulgation_verdicts",
+                    RejectedItem(
+                        item=(
+                            rejected_verdict if isinstance(rejected_verdict, dict)
+                            else {"raw_value": rejected_verdict}
                         ),
-                        state.turn,
-                    )
-                collector.flush_to_db(db)
-            _mirror_rejections_after_commit(db, collector)
+                        reason=str(exc),
+                        category="invalid_shape",
+                        source=Provenance(source),
+                    ),
+                    state.turn,
+                )
+            collector.flush_to_db(db)
+        _mirror_rejections_after_commit(db, collector)
         try:
             pack_path = write_error_pack(
                 db, state, exc=exc, extracted=None,

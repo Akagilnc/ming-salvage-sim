@@ -10,7 +10,7 @@
 
 打回判决沿用同一 verdict/历史 seam，并严格携带：`blocked_layer` 三值之一（`cabinet_drafting` / `palace_rescript` / `six_offices`）、非空 `primary_opponents` typed 清单（每项须且仅为 `{"kind":"faction","key":<在册派系>}`）、`gatekeeper_id`（null 或在册人物 id）、非空缘由及完整 `criteria_snapshot`。快照只保存判决时的皇威档位、涉事任别、在持授权 id、背书条目 id；盘面后来变化不回写、不重算历史。部院与场外 class 不能成为主否决方。
 
-判决结构或引用非法时，整批不进入 pending/history/案卷状态，按 `SettlementAbort(stage="promulgation")` 响亮中止；原 verdict 及原因沿用 `RejectionCollector → rejection_reports` 留痕。除快照中的正整数背书条目 id 外，判决字段混入 int/float/bool 均拒收；不新增 verdict 审计表。
+判决结构或引用非法时，整批不进入 pending/history/案卷状态，按 `SettlementAbort(stage="promulgation")` 响亮中止；原 verdict 及原因沿用 `RejectionCollector → rejection_reports` 留痕。阻力数值字段均拒收；合法 typed 数值/布尔位仅包括正整数 `dossier_id`、快照中的正整数 `endorsement_entry_ids`，以及 bool `midzhi_unpromulgatable`。不新增 verdict 审计表。
 
 这段只描述 #571 S1 与 #609 已实现的案卷判决与执行闸；其它案卷扩展不属于本契约。
 
