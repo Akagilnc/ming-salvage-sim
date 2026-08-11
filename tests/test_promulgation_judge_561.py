@@ -82,6 +82,29 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     ]
 
 
+def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
+    from scripts.promulgation_gate_561 import _judge_context_for_dossier
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    stale = db.get_decree_dossier(dossier_id)
+    payload = json.loads(stale["payload_json"])
+    payload["authorization_ids"] = ["fresh-authorization"]
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
+        (json.dumps(payload), dossier_id),
+    )
+    db.conn.commit()
+
+    stale_context = decree_mod.build_promulgation_judge_context(db, state, [stale])
+    fresh_context = _judge_context_for_dossier(db, state, dossier_id)
+
+    assert stale_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
+    assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        "fresh-authorization",
+    ]
+
+
 def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
     from scripts.promulgation_gate_561 import _select_second_verdict
 
