@@ -2689,6 +2689,12 @@ select:focus-visible {
   padding: 4px 6px 4px 4px;
 }
 
+.scroll-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .chat-message {
   display: grid;
   gap: 4px;

@@ -566,7 +566,7 @@ function portraitSources(minister: Minister, portraitPrefix = "minister_") {
 }
 
 function ScrollMessages({ messages, ministerName, ministers }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string; ministers: Minister[] }) {
-  return <>{messages.map((message, index) => {
+  return <div className="scroll-messages">{messages.map((message, index) => {
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
@@ -582,7 +582,7 @@ function ScrollMessages({ messages, ministerName, ministers }: { messages: Array
       {action ? <em className="action">{action}</em> : null}
       <p>{content}</p>
     </div>;
-  })}</>;
+  })}</div>;
 }
 
 export function ChatModal({
