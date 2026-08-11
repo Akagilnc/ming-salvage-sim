@@ -1,6 +1,5 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
 import threading
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -14,14 +13,32 @@ def test_bad_judge_output_silently_degrades_to_no_highlights():
         assert parse_highlights(raw) == []
 
 
+@pytest.mark.parametrize("channel,runner", [("api", ""), ("cli", "codex")])
+def test_judge_deadline_overrides_real_api_and_cli_adapters(monkeypatch, channel, runner):
+    from ming_sim.llm_model import create_chat_model
+    from ming_sim.models import LLMConfig
+
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test" if channel == "api" else "", base_url="https://api.example/v1",
+        model="gpt-test", channel=channel, cli_runner=runner, cli_timeout_seconds=300,
+        timeout_seconds=120,
+    )
+    model = create_chat_model(cfg, request_timeout=.03, max_retries=0)
+    assert model.timeout == .03
+    assert model.max_retries == 0
+
+
 def test_judge_success_and_timeout_are_bounded_without_real_llm():
     assert judge_highlights("臣请核账", object(), timeout=.1,
-                            invoke=lambda *_: '["核账"]') == ["核账"]
-    started = time.monotonic()
-    result = judge_highlights("臣请核账", object(), timeout=.02,
-                              invoke=lambda *_: (time.sleep(.2), '["核账"]')[1])
-    assert result == []
-    assert time.monotonic() - started < .12
+                            invoke=lambda *_, **__: '["核账"]') == ["核账"]
+    captured = {}
+    def timed_out(*_args, **kwargs):
+        captured.update(kwargs)
+        raise TimeoutError("adapter stopped the request")
+    assert judge_highlights("臣请核账", object(), timeout=.02, invoke=timed_out) == []
+    assert captured == {"timeout": .02}
+    assert not any(t.name == "audience-highlight-judge" for t in threading.enumerate())
 
 
 def _chat_result(answer):
@@ -50,7 +67,7 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
     mind_started = threading.Event()
     extraction_started = threading.Event()
 
-    def slow_judge(*_args):
+    def slow_judge(*_args, **_kwargs):
         judge_started.set()
         release_judge.wait(timeout=2)
         return '["据实核账"]'
@@ -87,7 +104,7 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
     minister = "温体仁"
     runtime = _web_game(db, state, content, _FakeAgent())
     runtime.session.chat = lambda *_a, **_k: _chat_result("臣请据实核账。")
-    runtime.highlight_judge_invoke = lambda *_a: '["据实核账"]'
+    runtime.highlight_judge_invoke = lambda *_a, **_k: '["据实核账"]'
     runtime._start_reply_tail_tasks = lambda *_a: None
     payload = runtime.chat(minister, "钱粮如何？")
     night_id = int(payload["night_id"])
@@ -104,37 +121,37 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         reopened.close()
 
 
-def test_web_chat_highlight_persistence_failure_is_loud(game, monkeypatch):
-    """A DB failure is not an authorized silent judge failure on the non-streaming entry."""
+def test_web_chat_highlight_persistence_failure_preserves_completed_reply(game, monkeypatch):
+    """A loud decoration failure cannot roll back an already durable reply."""
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     runtime = _web_game(db, state, content, _FakeAgent())
     runtime.session.chat = lambda *_a, **_k: _chat_result("臣请核账。")
-    runtime.highlight_judge_invoke = lambda *_a: '["核账"]'
+    runtime.highlight_judge_invoke = lambda *_a, **_k: '["核账"]'
     runtime._start_reply_tail_tasks = lambda *_a: None
     monkeypatch.setattr(db, "set_minister_message_highlights", _raise_disk_full)
 
-    with pytest.raises(RuntimeError, match="disk full"):
-        runtime.chat("温体仁", "钱粮如何？")
+    payload = runtime.chat("温体仁", "钱粮如何？")
+    assert payload["decoration_error"] == "disk full"
+    assert any(m["role"] == "minister" for m in payload["history"])
 
 
-def test_chat_stream_highlight_persistence_failure_emits_terminal_error(game, monkeypatch):
-    """The streaming entry sends done then an explicit terminal error, never hangs awaiting end."""
+def test_chat_stream_highlight_persistence_failure_is_decoration_only(game, monkeypatch):
+    """After done, a loud decoration error has no chat identity and the stream still ends."""
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣请核账。"]))
-    runtime.highlight_judge_invoke = lambda *_a: '["核账"]'
+    runtime.highlight_judge_invoke = lambda *_a, **_k: '["核账"]'
     runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
     runtime._trail_extraction_after_reply = lambda *_a, **_k: None
     monkeypatch.setattr(db, "set_minister_message_highlights", _raise_disk_full)
 
     events = list(runtime.chat_stream("温体仁", "钱粮如何？"))
     kinds = [event["type"] for event in events]
-    assert kinds[-2:] == ["done", "error"]
-    assert events[-1]["message"] == "disk full"
-    assert "end" not in kinds
+    assert kinds[-3:] == ["done", "decoration_error", "end"]
+    assert events[-2] == {"type": "decoration_error", "message": "disk full"}
 
 
 def test_highlights_persist_on_message_and_restore_only_for_minister(game):

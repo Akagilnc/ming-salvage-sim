@@ -96,7 +96,7 @@ def test_chat_stream_starts_all_reply_tails_after_done_without_waiting_for_judge
     mind_started = threading.Event()
     extraction_started = threading.Event()
 
-    def slow_judge(*_args):
+    def slow_judge(*_args, **_kwargs):
         judge_started.set()
         release_judge.wait(timeout=2)
         return '["核账"]'

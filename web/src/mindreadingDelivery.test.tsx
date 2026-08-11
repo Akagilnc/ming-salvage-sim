@@ -105,7 +105,7 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
-  it("done 先清 busy 解锁，慢到的 highlights 只刷新卷轴", async () => {
+  it("done 先清 busy 解锁，迟到 highlights 按 turn 补挂 legacy history", async () => {
     let releaseHighlights!: () => void;
     const gate = new Promise<void>((resolve) => { releaseHighlights = resolve; });
     let doneCalls = 0;
@@ -128,6 +128,25 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     releaseHighlights();
     await act(async () => { await sending; });
     expect(busyRef.current).toBe("");
+    expect(hookRef.current!.chat.find((m) => m.role === "minister")?.highlights).toEqual(["答"]);
+  });
+
+  it("done 后装饰失败响亮回调但不标记或隐藏已完成回话", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sse([
+      { event: "done", data: { history: [U("问", 11), M("已成回话", 11)], suggestions: [], directives: [] } },
+      { event: "decoration_error", data: { message: "disk full" } },
+      { event: "end", data: {} },
+    ])));
+    const { hookRef } = mount("legacy", true);
+    const errors: string[] = [];
+    await act(async () => {
+      await hookRef.current!.sendChat("温体仁", "问", {
+        onError: (error) => errors.push(String(error)),
+      });
+    });
+    expect(errors.join(" ")).toContain("disk full");
+    expect(hookRef.current!.failedIdentity).toBeNull();
+    expect(hookRef.current!.chat.some((m) => m.content === "已成回话")).toBe(true);
   });
 
   it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {
