@@ -707,17 +707,13 @@ def review_directives(session: GameSession) -> str:
                                 session.state, statuses=("draft",),
                             ) if int(r["id"]) == target_id
                         )
-                        try:
-                            existing_payload = json.loads(row["dossier_payload_json"] or "{}")
-                        except (TypeError, ValueError):
-                            existing_payload = {}
+                        existing_payload = session.db.read_directive_dossier_payload(row)
                         session.update_directive(
                             target_id,
                             new_text,
                             dossier_payload=capture_manual_directive_payload(
                                 new_text, session.llm_config,
-                                existing_mode=(existing_payload.get("mode")
-                                               if isinstance(existing_payload, dict) else None),
+                                existing_mode=existing_payload.get("mode"),
                                 **({"db": session.db, "content": session.content}
                                    if getattr(session, "content", None) is not None else {}),
                             ),

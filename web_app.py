@@ -3603,16 +3603,7 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             if not text.strip():
                 raise HTTPException(status_code=400, detail="指令内容不能为空。")
             capture_turn = int(game.state.turn)
-            try:
-                existing_payload = json.loads(
-                    (row["dossier_payload_json"] if "dossier_payload_json" in row.keys() else "{}")
-                    or "{}"
-                )
-            except (TypeError, ValueError):
-                existing_payload = {}
-            existing_mode = (
-                existing_payload.get("mode") if isinstance(existing_payload, dict) else None
-            )
+            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,

@@ -35,6 +35,10 @@ class _RecordingDB:
     def list_pending_actions(self, *a, **k):
         return []
 
+    def read_directive_dossier_payload(self, row):
+        assert row["id"] == 7
+        return {"mode": "midzhi"}
+
     def get_character_status(self, *a, **k):
         return ("active", "")
 
