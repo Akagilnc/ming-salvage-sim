@@ -50,26 +50,33 @@ def _rejected_verdict(dossier_id):
     }
 
 
-def _make_enemy(db, content, name="张献忠", power_id="bandit_522", stance="敌对"):
+def _activate_canonical_bandit(db, content, name="张献忠"):
+    """Apply the production debut transition without rewriting power authority."""
+    db.conn.execute("UPDATE characters SET status='active' WHERE name=?", (name,))
+    content.characters[name].status = "active"
+    db.conn.commit()
+
+
+def _make_non_enemy(db, content, stance, name="张献忠", power_id="bandit_522"):
     db.conn.execute(
         """INSERT INTO powers
         (id,name,kind,leader,stance,leverage,satisfaction,military_strength,cohesion,
          supply,agenda,status,last_action,aliases)
-        VALUES (?,?,'内乱',?,?,25,20,55,30,22,'招抚纵切','小股啸聚','','[]')""",
-        (power_id, "招抚纵切测试股", name, stance),
+        VALUES (?,?,'内乱',?,?,25,20,55,30,22,'招抚负向测试','小股啸聚','','[]')""",
+        (power_id, "不可招抚测试股", name, stance),
     )
     db.conn.execute(
-        "UPDATE characters SET power_id=?,status='active',office=?,office_type='外臣' WHERE name=?",
-        (power_id, f"{name}流寇首领", name),
+        "UPDATE characters SET power_id=?,status='active',office_type='外臣' WHERE name=?",
+        (power_id, name),
     )
     ch = content.characters[name]
-    ch.power_id, ch.status, ch.office, ch.office_type = power_id, "active", f"{name}流寇首领", "外臣"
+    ch.power_id, ch.status, ch.office_type = power_id, "active", "外臣"
     db.conn.commit()
 
 
-def test_enemy_pacification_forms_proposed_dossier_without_world_effect(game):
+def test_canonical_bandit_pacification_forms_proposed_dossier_without_world_effect(game):
     db, state, content = game
-    _make_enemy(db, content)
+    _activate_canonical_bandit(db, content)
     before = dict(db.conn.execute(
         "SELECT power_id,office FROM characters WHERE name='张献忠'"
     ).fetchone())
@@ -89,7 +96,7 @@ def test_enemy_pacification_forms_proposed_dossier_without_world_effect(game):
 @pytest.mark.parametrize("decision", ["rejected", "promulgated"])
 def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     db, state, content = game
-    _make_enemy(db, content)
+    _activate_canonical_bandit(db, content)
     ctx = _stage_pacification(db, state.turn)
     db.commit_pending_actions(state, content=content)
     dossier = next(d for d in db.list_decree_dossiers(status="proposed")
@@ -102,7 +109,7 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     applied = issues.apply_score_extraction(db, state, {"人物变更": [
         {"name": "张献忠", "origin_ref": origin, "动作": "易主",
          "new_power": "ming", "方式": "主动归附",
-         "反噬": {"bandit_522": {"military_strength": -5, "reason": "受抚散众"}},
+         "反噬": {"bandit_zhang_xianzhong": {"military_strength": -5, "reason": "受抚散众"}},
          "reason": "受抚归明"},
         {"name": "张献忠", "origin_ref": origin, "动作": "任命",
          "office": "游击将军", "reason": "旨授游击将军"},
@@ -111,16 +118,16 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     accepted = [x["动作"] for x in changes if not x.get("rejected")]
     if decision == "promulgated":
         assert accepted == ["易主", "任命"]
-        expected = ("ming", "游击将军", 50)
+        expected = ("ming", "游击将军", 19)
     else:
         assert accepted == []
-        expected = ("bandit_522", "张献忠流寇首领", 55)
+        expected = ("bandit_zhang_xianzhong", "边兵,潜在流寇首领", 24)
 
     row = db.conn.execute(
         "SELECT power_id,office FROM characters WHERE name='张献忠'"
     ).fetchone()
     strength = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id='bandit_522'"
+        "SELECT military_strength FROM powers WHERE id='bandit_zhang_xianzhong'"
     ).fetchone()["military_strength"]
     assert (row["power_id"], row["office"], strength) == expected
 
@@ -132,7 +139,7 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
 )
 def test_pacification_rejects_dead_and_unknown_targets(game, target, mark_dead):
     db, state, content = game
-    _make_enemy(db, content)
+    _activate_canonical_bandit(db, content)
     if mark_dead:
         db.conn.execute("UPDATE characters SET status='dead' WHERE name='张献忠'")
         db.conn.commit()
@@ -140,7 +147,7 @@ def test_pacification_rejects_dead_and_unknown_targets(game, target, mark_dead):
         "SELECT power_id,status,office,office_type FROM characters WHERE name='张献忠'"
     ).fetchone())
     power_before = dict(db.conn.execute(
-        "SELECT * FROM powers WHERE id='bandit_522'"
+        "SELECT * FROM powers WHERE id='bandit_zhang_xianzhong'"
     ).fetchone())
 
     ctx = _stage_pacification(db, state.turn, target)
@@ -158,14 +165,14 @@ def test_pacification_rejects_dead_and_unknown_targets(game, target, mark_dead):
         "SELECT power_id,status,office,office_type FROM characters WHERE name='张献忠'"
     ).fetchone()) == person_before
     assert dict(db.conn.execute(
-        "SELECT * FROM powers WHERE id='bandit_522'"
+        "SELECT * FROM powers WHERE id='bandit_zhang_xianzhong'"
     ).fetchone()) == power_before
 
 
 @pytest.mark.parametrize("stance", ["中立", "倾明"])
 def test_pacification_rejects_active_non_enemy_targets(game, stance):
     db, state, content = game
-    _make_enemy(db, content, stance=stance)
+    _make_non_enemy(db, content, stance)
     person_before = dict(db.conn.execute(
         "SELECT * FROM characters WHERE name='张献忠'"
     ).fetchone())
@@ -208,7 +215,7 @@ def test_scripted_action_classes_are_mutually_exclusive(
 ):
     """三类均由 #515 判词入口消费，并只交给本类既有 owner。"""
     db, state, content = game
-    _make_enemy(db, content)
+    _activate_canonical_bandit(db, content)
     actor = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
     ).fetchone()["name"]
