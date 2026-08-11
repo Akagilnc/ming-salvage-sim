@@ -25,12 +25,10 @@ jobs:
           cache: pip
       - name: 安装依赖
         # pytest 不在 requirements.txt(dev-only),单独装。
-        # python-multipart 显式 pin:web_app 上传路由(File(...))需要它,
-        # 现仅靠 agno 传递依赖带入,显式装防 agno 哪天不带它。
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest python-multipart
+          pip install pytest
       - name: 跑 pytest（tests/ 从仓库根,ming_sim 可导入）
         run: python -m pytest tests/ -q
 
