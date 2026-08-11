@@ -520,11 +520,20 @@ def _iter_codex_stream_chunks(
     except OSError as exc:
         raise RuntimeError(f"codex 流式调用启动失败：{exc}") from exc
 
-    assert proc.stdout is not None
-    if proc.stdin is not None:
-        proc.stdin.write(prompt)
-        proc.stdin.close()
+    # Popen 自身也属于同一个绝对期限；spawn 返回后必须重新扣除其耗时。
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        raise RuntimeError("codex 流式调用超时")
 
+    assert proc.stdout is not None
     pieces: List[str] = []
     final_text = ""
     stderr = ""
@@ -543,10 +552,8 @@ def _iter_codex_stream_chunks(
                 pass
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-    stderr_thread.start()
-    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
-    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
-    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
+    # 看门狗：stdin 写入和 stdout 流式读取都可能阻塞。必须在二者之前启动，并使用 spawn
+    # 返回后按绝对 deadline 重算的预算，使 kill 覆盖同一次调用的全部阻塞点。
     def _kill_on_timeout() -> None:
         nonlocal timed_out
         timed_out = True
@@ -559,6 +566,10 @@ def _iter_codex_stream_chunks(
     watchdog.daemon = True
     watchdog.start()
     try:
+        stderr_thread.start()
+        if proc.stdin is not None:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
         for raw_line in proc.stdout:
             line = raw_line.strip()
             if not line:
@@ -582,6 +593,11 @@ def _iter_codex_stream_chunks(
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         raise RuntimeError("codex 流式调用超时") from exc
+    except Exception as exc:
+        # watchdog kill 可能把阻塞的 stdin.write/close 以 BrokenPipeError 等形式唤醒。
+        if timed_out:
+            raise RuntimeError("codex 流式调用超时") from exc
+        raise
     finally:
         watchdog.cancel()
         # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。

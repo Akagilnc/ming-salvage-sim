@@ -923,17 +923,21 @@ def test_codex_stream_zero_timeout_does_not_spawn(monkeypatch):
 
 
 def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
-    """integrated cmr Gate2 codex correctness：流式读阻塞在 `for raw_line in proc.stdout`，若
-    codex 卡死且不关 stdout，proc.wait(timeout) 永远到不了。看门狗须在 run_timeout 到点 kill
-    进程，让阻塞读拿到 EOF 退出并抛超时（而非无限挂起）。"""
+    """解析消耗部分预算后，watchdog 仍须在原绝对 deadline 解除阻塞的 stdin 写入。"""
     import threading as _t
 
     killed = _t.Event()
+    reaped = _t.Event()
+    timer_budgets = []
+    real_timer = _t.Timer
+
+    def slow_resolve(name, configured, deadline=None):
+        time.sleep(0.05)
+        return "/usr/bin/codex"
 
     class _HangStdout:
         def __iter__(self):
-            killed.wait(5.0)      # 模拟「永不关 stdout」的卡死进程，直到被 kill 才解除
-            return iter(())       # kill 后 stdout 给 EOF，读循环结束
+            return iter(())
 
         def close(self):
             pass
@@ -941,7 +945,8 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     class _Proc:
         class _Stdin:
             def write(self, text):
-                pass
+                killed.wait(5.0)
+                raise BrokenPipeError("killed while writing")
 
             def close(self):
                 pass
@@ -952,18 +957,30 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
         returncode = 0
 
         def wait(self, timeout=None):
+            reaped.set()
             return ("", "")
+
+        def terminate(self):
+            pass
 
         def kill(self):
             killed.set()
             self.returncode = -9
 
+    def recording_timer(interval, function):
+        timer_budgets.append(interval)
+        return real_timer(interval, function)
+
+    monkeypatch.setattr(cb, "_resolve_cli_bin", slow_resolve)
     monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb.threading, "Timer", recording_timer)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
     with pytest.raises(RuntimeError, match="超时"):
-        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
-    assert killed.is_set()        # 看门狗确实 kill 了卡死进程
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.15))
+    assert timer_budgets[0] < 0.13  # resolver 的耗时已从 watchdog 预算扣除
+    assert killed.is_set()
+    assert reaped.is_set()
 
 
 def test_codex_final_text_handles_item_completed_shape():
