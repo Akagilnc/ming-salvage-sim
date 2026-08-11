@@ -157,6 +157,28 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert scroll[-1]["content"] == ""
 
 
+def test_presence_commands_project_to_diegetic_scene_beats(game):
+    db, state, _ = game
+    night_id = _night(db, state)
+    baseline = len([
+        message for message in an.read_night_scroll(db, night_id)
+        if message["beat"] in {"entrance", "exit"}
+    ])
+    an.summon_enter(db, night_id, "杨嗣昌")
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+
+    scroll = an.read_night_scroll(db, night_id)
+    presence = [
+        message for message in scroll if message["beat"] in {"entrance", "exit"}
+    ][baseline:]
+
+    assert [(message["role"], message["beat"]) for message in presence] == [
+        ("scene", "entrance"),
+        ("scene", "exit"),
+    ]
+    assert all(message["content"] for message in presence)
+
+
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     db, state, _ = game
     night_id = _night(db, state)
