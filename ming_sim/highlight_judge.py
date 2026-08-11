@@ -58,10 +58,14 @@ def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
                       llm_config: Any, timeout: float) -> None:
     """Own the adapter and every subprocess it starts in one cancellable process group."""
     try:
-        # The parent establishes our private group before releasing real adapter work,
-        # closing the process-start/setpgid race where a runner could otherwise escape.
-        send.recv()
-        send.send(("ready",))
+        # The owner establishes and proves its group before the parent can release
+        # adapter work, so every subsequently spawned runner inherits this group.
+        os.setpgid(0, 0)
+        if os.getpgrp() != os.getpid():
+            raise RuntimeError("highlight judge worker has no private process group")
+        send.send(("ready", os.getpid()))
+        if send.recv() != ("run",):
+            raise RuntimeError("highlight judge worker was not released")
         send.send(("result", True, invoke(reply, llm_config, timeout=timeout)))
     except BaseException as error:
         send.send(("result", False, type(error).__name__, str(error)))
@@ -69,21 +73,18 @@ def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
         send.close()
 
 
-def _cancel_owned_work(process: Any, owns_session: bool) -> None:
-    """Gracefully cancel the one owned work tree; the direct child is joined by its caller."""
+def _cancel_owned_work(process: Any, owns_group: bool) -> None:
+    """SIGTERM the owned work tree; the caller always reaps the direct worker."""
     if not process.is_alive():
         return
-    if owns_session:
-        try:
+    try:
+        if owns_group:
             os.killpg(process.pid, signal.SIGTERM)
-            # Explicitly terminate the direct worker too: multiprocessing may
-            # install signal behavior independent of the adapter descendants.
-            process.terminate()
-            return
-        except ProcessLookupError:
-            return
-    # No adapter can have started before the worker announces its session.
-    process.terminate()
+        else:
+            # Adapter work is never released until group ownership is confirmed.
+            os.kill(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
 
 
 def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
@@ -109,18 +110,10 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
     reap_margin = min(0.05, budget * 0.1)
     deadline = time.monotonic() + budget - reap_margin
     started = False
-    owns_session = False
+    owns_group = False
     try:
         process.start()
         started = True
-        if invoke is _DEFAULT_INVOKE:
-            try:
-                os.setpgid(process.pid, process.pid)
-            except PermissionError:
-                if os.getpgid(process.pid) != process.pid:
-                    raise
-            owns_session = True
-        receive.send(("run",))
         send.close()
         while True:
             remaining = max(0.0, deadline - time.monotonic())
@@ -128,6 +121,10 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
                 raise TimeoutError("highlight judge deadline exceeded")
             message = receive.recv()
             if message[0] == "ready":
+                if message[1] != process.pid:
+                    raise RuntimeError("highlight judge worker group identity mismatch")
+                owns_group = True
+                receive.send(("run",))
                 continue
             if message[1]:
                 return message[2]
@@ -135,7 +132,7 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
     finally:
         receive.close()
         if started:
-            _cancel_owned_work(process, owns_session)
+            _cancel_owned_work(process, owns_group)
             process.join()
 
 

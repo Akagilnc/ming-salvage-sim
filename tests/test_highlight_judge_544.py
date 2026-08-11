@@ -2,6 +2,7 @@
 import multiprocessing
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,63 @@ def _pid_exists(pid):
         return False
 
 
+def _assert_real_adapter_cancelled(cfg, started, pid_paths=(), timeout=3.0):
+    """Shared ownership contract for every real adapter: bounded and fully reaped."""
+    before = {process.pid for process in multiprocessing.active_children()}
+    began = time.monotonic()
+    assert judge_highlights("臣请核账", cfg, timeout=timeout) == []
+    assert time.monotonic() - began < timeout + 1.0
+    assert started()
+    pids = [int(path.read_text()) for path in pid_paths]
+    deadline = time.monotonic() + 1.0
+    while any(_pid_exists(pid) for pid in pids) and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert not any(_pid_exists(pid) for pid in pids)
+    assert {process.pid for process in multiprocessing.active_children()} == before
+
+
+def test_real_api_adapter_deadline_terminates_and_reaps_worker(monkeypatch):
+    """Drive Agent.run -> OpenAIChat into a delayed local HTTP response."""
+    from ming_sim.models import LLMConfig
+
+    request_started = threading.Event()
+    release = threading.Event()
+
+    class DelayedOpenAI(BaseHTTPRequestHandler):
+        def do_POST(self):
+            request_started.set()
+            release.wait(30)
+            body = b'{"choices":[{"message":{"role":"assistant","content":"[]"}}]}'
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DelayedOpenAI)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    cfg = LLMConfig(
+        api_key="sk-test", base_url=f"http://127.0.0.1:{server.server_port}/v1",
+        model="gpt-test", channel="api",
+    )
+    try:
+        # Full-suite load can make a fresh spawn import the provider stack slowly;
+        # this budget still proves cancellation after the real HTTP request begins.
+        _assert_real_adapter_cancelled(cfg, request_started.is_set, timeout=8.0)
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(1)
+
+
 def test_real_cli_adapter_deadline_terminates_runner_and_descendant(tmp_path, monkeypatch):
     """Drive the production CliChat entry and prove its whole process group is gone."""
     import os
@@ -68,15 +126,10 @@ def test_real_cli_adapter_deadline_terminates_runner_and_descendant(tmp_path, mo
         cli_runner="codex", cli_model="fake",
     )
 
-    started = time.monotonic()
-    assert judge_highlights("臣请核账", cfg, timeout=3.0) == []
-    assert time.monotonic() - started < 4.0
-    assert runner_pid.exists() and descendant_pid.exists()
-    pids = [int(runner_pid.read_text()), int(descendant_pid.read_text())]
-    deadline = time.monotonic() + 1.0
-    while any(_pid_exists(pid) for pid in pids) and time.monotonic() < deadline:
-        time.sleep(.01)
-    assert not any(_pid_exists(pid) for pid in pids)
+    _assert_real_adapter_cancelled(
+        cfg, lambda: runner_pid.exists() and descendant_pid.exists(),
+        (runner_pid, descendant_pid),
+    )
 
 
 def test_judge_success_and_timeout_are_bounded_without_real_llm():
