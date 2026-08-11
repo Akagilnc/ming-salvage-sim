@@ -347,9 +347,6 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
         try:
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
             # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
@@ -436,8 +433,9 @@ def _codex_cmd(
     *,
     json_events: bool = False,
     reasoning_strength: Optional[str] = None,
+    deadline: Optional[float] = None,
 ) -> List[str]:
-    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN, deadline), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
@@ -499,8 +497,17 @@ def _iter_codex_stream_chunks(
     reasoning_strength: Optional[str] = None,
 ) -> Iterator[str]:
     """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
     run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
+    deadline = time.monotonic() + run_timeout
+    try:
+        cmd = _codex_cmd(
+            model, json_events=True, reasoning_strength=reasoning_strength, deadline=deadline,
+        )
+    except TimeoutError:
+        raise RuntimeError("codex 流式调用超时") from None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("codex 流式调用超时")
     try:
         proc = subprocess.Popen(
             cmd,
@@ -548,7 +555,7 @@ def _iter_codex_stream_chunks(
         except Exception:
             pass
 
-    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
+    watchdog = threading.Timer(remaining, _kill_on_timeout)
     watchdog.daemon = True
     watchdog.start()
     try:
@@ -568,7 +575,10 @@ def _iter_codex_stream_chunks(
             maybe_final = _codex_final_text(obj)
             if maybe_final:
                 final_text = maybe_final
-        proc.wait(timeout=run_timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(cmd, 0)
+        proc.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         raise RuntimeError("codex 流式调用超时") from exc
