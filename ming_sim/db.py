@@ -9938,6 +9938,10 @@ class GameDB:
     ) -> Dict[str, object]:
         """机械旨意的唯一结构边界；不完整载荷响亮拒绝。"""
         normalized = dict(payload)
+        mode = str(normalized.get("mode") or "ordinary").strip()
+        if mode not in {"ordinary", "midzhi"}:
+            raise ValueError(f"旨意 mode 非法：{mode}")
+        normalized["mode"] = mode
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
             try:
@@ -10038,6 +10042,18 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
+        try:
+            payload = json.loads(out.get("payload_json") or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        out["payload"] = payload if isinstance(payload, dict) else {}
+        mode = str(out["payload"].get("mode") or "ordinary").strip()
+        out["mode"] = mode if mode in {"ordinary", "midzhi"} else "ordinary"
+        try:
+            stigma = json.loads(out.get("stigma_json") or "[]")
+        except (TypeError, ValueError):
+            stigma = []
+        out["stigma"] = stigma if isinstance(stigma, list) else []
         try:
             roster = json.loads(out.get("participant_roster") or "[]")
         except (TypeError, ValueError):
@@ -10203,6 +10219,10 @@ class GameDB:
         action = str(action_type or "").strip()
         text = str(decree_text or "").strip()
         normalized_payload = dict(payload or {})
+        mode = str(normalized_payload.get("mode") or "ordinary").strip()
+        if mode not in {"ordinary", "midzhi"}:
+            raise ValueError(f"案卷 mode 非法：{mode}")
+        normalized_payload["mode"] = mode
         if action == "appointment":
             normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
             normalized_payload.pop("appointment_tenure", None)
@@ -10383,6 +10403,31 @@ class GameDB:
             "SELECT * FROM decree_dossiers WHERE id=?", (int(dossier_id),)
         ).fetchone()
         return None if row is None else self._dossier_row(row)
+
+    def append_dossier_stigma(
+        self, dossier_id: int, *, kind: str, reason: str, turn: int,
+        source_action: str, commit: bool = True,
+    ) -> None:
+        """Append one stable stigma marker; exact replay is idempotent."""
+        row = self.get_decree_dossier(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        marker = {
+            "kind": str(kind or "").strip(),
+            "reason": str(reason or "").strip(),
+            "turn": int(turn),
+            "source_action": str(source_action or "").strip(),
+        }
+        if not all((marker["kind"], marker["reason"], marker["source_action"])):
+            raise ValueError("案卷 stigma 缺少 kind/reason/source_action")
+        stigma = list(row.get("stigma") or [])
+        if marker not in stigma:
+            stigma.append(marker)
+            self.conn.execute(
+                "UPDATE decree_dossiers SET stigma_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(stigma, ensure_ascii=False), int(dossier_id)),
+            )
+        self._commit_dossier_write(commit)
 
     def get_dossier_for_directive(
         self, directive_id: int,
@@ -10919,6 +10964,10 @@ class GameDB:
     ) -> None:
         """判决注入 seam：结构化载荷只在顺颁后从同一案卷物化。"""
         with atomic(self):
+            row = self.get_decree_dossier(dossier_id)
+            if row is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            predeclared_midzhi = row.get("mode") == "midzhi"
             if decision not in {"promulgated", "force_promulgated"}:
                 self.record_dossier_decision(
                     dossier_id, decision, blocked_layer=blocked_layer,
@@ -10927,10 +10976,12 @@ class GameDB:
                     gatekeeper_id=gatekeeper_id,
                     criteria_snapshot=criteria_snapshot, commit=False,
                 )
+                if predeclared_midzhi and decision == "rejected":
+                    self.append_dossier_stigma(
+                        dossier_id, kind="midzhi", reason="predeclared",
+                        turn=state.turn, source_action="rejected", commit=False,
+                    )
                 return
-            row = self.get_decree_dossier(dossier_id)
-            if row is None:
-                raise KeyError(f"案卷不存在：{dossier_id}")
             if decision == "force_promulgated":
                 turn_row = self.conn.execute(
                     "SELECT turn FROM game_state WHERE id=1"
@@ -10966,10 +11017,19 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
+                self.append_dossier_stigma(
+                    dossier_id, kind="midzhi", reason="rescript",
+                    turn=state.turn, source_action="force_promulgated", commit=False,
+                )
             else:
                 self.record_dossier_decision(
                     dossier_id, "promulgated", blocked_layer=blocked_layer,
                     reason=reason, legal_reason_code=legal_reason_code, commit=False,
+                )
+            if predeclared_midzhi and decision == "promulgated":
+                self.append_dossier_stigma(
+                    dossier_id, kind="midzhi", reason="predeclared",
+                    turn=state.turn, source_action="promulgated", commit=False,
                 )
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
