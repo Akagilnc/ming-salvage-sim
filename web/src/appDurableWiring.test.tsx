@@ -57,11 +57,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
     await act(async () => { createRoot(host).render(<App />); });
-    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "起居注")).toBeTruthy());
+    });
 
-    const entry = findButton(host, "起居注");
-    expect(entry).toBeTruthy();
-    await click(entry);
+    await click(findButton(host, "起居注"));
     await act(async () => {
       await vi.waitFor(() => {
         expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
