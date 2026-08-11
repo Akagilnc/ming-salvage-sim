@@ -349,6 +349,39 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contaminatio
     assert report["source"] == "player_decree"
 
 
+@pytest.mark.parametrize("contamination", [
+    {"resistance_score": 99.5},
+    {"affected_parties": "东林"},
+])
+def test_public_resolve_seam_rejects_polluted_promulgated_verdict_without_mutation(
+    game, contamination,
+):
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    baseline = db.get_decree_dossier(dossier_id)
+    raw = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        **contamination,
+    }
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [raw],
+        )
+
+    assert exc_info.value.stage == "promulgation"
+    reports = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id",
+        (state.turn,),
+    ).fetchall()
+    assert [__import__("json").loads(row["item_json"]) for row in reports] == [raw]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
+    assert db.get_decree_dossier(dossier_id) == baseline
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
 def test_public_resolve_seam_audits_only_invalid_provider_item_not_valid_or_exempt(game):
     db, state, content = game
     valid_id = _stage_policy_dossier(db, state)

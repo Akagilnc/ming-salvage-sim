@@ -140,6 +140,21 @@ def _validate_promulgation_verdict_item(
             raise ValueError("中旨亦不可颁标记必须为 bool")
         if marker and row.get("decision") != "rejected":
             raise ValueError("中旨亦不可颁只能标记打回判决")
+        if any(isinstance(key, str) and key.startswith("resistance_") for key in row):
+            raise ValueError("颁布判决不得携带阻力数值字段")
+        affected = row.get("affected_parties", [])
+        if not isinstance(affected, list):
+            raise ValueError("受损方必须为 typed 清单")
+        for party in affected:
+            if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
+                raise ValueError("受损方须且仅含 kind/key/severity")
+            kind, key = party.get("kind"), str(party.get("key") or "")
+            if kind not in {"faction", "class"}:
+                raise ValueError("受损方 kind 只能为 faction 或 class")
+            if party.get("severity") not in {"大怒", "不满"}:
+                raise ValueError("受损方程度只能为大怒或不满")
+            if key not in (faction_names if kind == "faction" else class_names):
+                raise ValueError(f"未知受损方：{kind}:{key}")
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},
