@@ -995,7 +995,6 @@ export function EdictModal({
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
-  const hasPending = false;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
@@ -1079,15 +1078,15 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
-            {!draftDirectives.length && !hasPending && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && hasFailedSecretOrders && (
+            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
+            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，点「拟诏」即可正式成稿。</div>}
+            {!draftDirectives.length && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
                 <span>尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
               </div>
             )}
-            {!draftDirectives.length && !hasPending && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
+            {!draftDirectives.length && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
               <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
             )}
           </div>
@@ -1113,7 +1112,7 @@ export function EdictModal({
           <button
             className="seal-btn-compose"
             onClick={onAdvanceWithoutEdict}
-            disabled={!!busy || hasPending}
+            disabled={!!busy}
           >
             退朝 →
           </button>
@@ -1121,7 +1120,7 @@ export function EdictModal({
           <button
             className="seal-btn-compose"
             onClick={onWriteDecree}
-            disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft) || hasPending}
+            disabled={!!busy || (!draftDirectives.length && !hasPendingConversationalDraft)}
           >
             拟诏 →
           </button>
