@@ -302,29 +302,42 @@ def _trace(record: Dict[str, Any]) -> None:
         _log(f"trace 写盘失败：{exc}")
 
 
-def _warm_keychain() -> None:
-    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
+def _warm_keychain(timeout: float = 5) -> None:
+    """暖 macOS keychain；调用方可把它限制在同一次 Agy 调用的剩余预算内。"""
+    if timeout <= 0:
+        return
     try:
         subprocess.run(
             ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=min(5, timeout),
         )
     except Exception:
         pass
 
 
 def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
-    """调 agy -p --sandbox，warm + retry。返回 (纯文本, 实际尝试次数)。"""
-    run_timeout = timeout or _AGY_TIMEOUT
-    last = ""
+    """调 agy -p --sandbox；warm 与全部 retry 共用一个端到端 deadline。"""
+    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
+    deadline = time.monotonic() + run_timeout
+    last = "agy timeout"
     for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
-        _warm_keychain()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        _warm_keychain(remaining)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        executable = _resolve_cli_bin("agy", _AGY_BIN)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
             # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
             proc = subprocess.run(
-                [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"],
-                input=prompt, capture_output=True, text=True, timeout=run_timeout,
+                [executable, "-p", "--sandbox"],
+                input=prompt, capture_output=True, text=True, timeout=remaining,
                 cwd=_AGY_CWD,
             )
         except subprocess.TimeoutExpired:
@@ -344,7 +357,7 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
             continue
         _log(f"attempt {attempt}: ok（{len(out)} chars）")
         return out, attempt
-    raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
+    raise RuntimeError(f"agy 调用失败（整体期限内 warm+retry 最多 4 次仍不成）：{last[:200]}")
 
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
@@ -376,7 +389,8 @@ def _run_codex(
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
+            cmd, input=prompt, capture_output=True, text=True,
+            timeout=_AGY_TIMEOUT if timeout is None else max(0.0, float(timeout)),
             cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
@@ -460,7 +474,7 @@ def _iter_codex_stream_chunks(
 ) -> Iterator[str]:
     """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
     cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
-    run_timeout = timeout or _AGY_TIMEOUT
+    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
     try:
         proc = subprocess.Popen(
             cmd,
@@ -605,7 +619,8 @@ def _run_claude(
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD, env=env,
+            timeout=_AGY_TIMEOUT if timeout is None else max(0.0, float(timeout)),
+            cwd=_AGY_CWD, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -641,7 +656,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
     model = (getattr(llm_config, "cli_model", "") or "").strip()
     raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
     try:
-        timeout = float(raw_timeout) if raw_timeout else None
+        timeout = float(raw_timeout) if raw_timeout is not None else None
     except (TypeError, ValueError):
         timeout = None
     reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
