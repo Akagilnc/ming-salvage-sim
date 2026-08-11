@@ -661,11 +661,11 @@ export function ChatModal({
   /** #501：本夜待补叙事抽取条数。 */
   extractionPendingCount?: number;
   onInput: (value: string) => void;
-  onSend: (text?: string) => void;
+  onSend: (ministerName: string, text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
-  onRetryReply?: () => void;
+  onRetryReply?: (ministerName: string) => void;
   onRetryExtraction?: () => void;
-  onUndo: () => void;
+  onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
   onFavorite: (minister: Minister) => void;
   onOpenEdict: () => void;
@@ -797,13 +797,13 @@ export function ChatModal({
   };
 
   const handleSend = () => {
-    onSend(input);
+    onSend(currentMinister.name, input);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    onSend(input);
+    onSend(currentMinister.name, input);
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
@@ -812,7 +812,7 @@ export function ChatModal({
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
-      onSend(suggestion.text);
+      onSend(currentMinister.name, suggestion.text);
     }
   };
 
@@ -875,7 +875,7 @@ export function ChatModal({
           {replyRetry && onRetryReply && (
             <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
               <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
-              <button type="button" onClick={onRetryReply} disabled={!!busy}>
+              <button type="button" onClick={() => onRetryReply(currentMinister.name)} disabled={!!busy}>
                 重新生成回话
               </button>
             </div>
@@ -935,7 +935,7 @@ export function ChatModal({
               <Send size={15} />
               发送
             </button>
-            <button className="secondary-action composer-undo" onClick={onUndo} disabled={!!busy || !canUndoLastChat}>
+            <button className="secondary-action composer-undo" onClick={() => onUndo(currentMinister.name)} disabled={!!busy || !canUndoLastChat}>
               <RotateCcw size={15} />
               撤回本轮
             </button>

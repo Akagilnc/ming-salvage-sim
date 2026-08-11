@@ -51,12 +51,14 @@ function renderModal(props: {
   chatFailures?: PendingActionFailure[];
   onRetryFailure?: (failure: PendingActionFailure) => void;
   replyRetry?: { chat_turn_id: number; question: string } | null;
-  onRetryReply?: () => void;
+  onRetryReply?: (ministerName: string) => void;
   extractionPendingCount?: number;
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
-  onSend?: (text?: string) => void;
+  onSend?: (ministerName: string, text?: string) => void;
+  onUndo?: (ministerName: string) => void;
+  canUndoLastChat?: boolean;
   onFavorite?: (minister: Minister) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
@@ -105,7 +107,7 @@ function renderModal(props: {
         streamingMinisterMessage=""
         chatNotice=""
         chatFailures={props.chatFailures ?? []}
-        canUndoLastChat={false}
+        canUndoLastChat={props.canUndoLastChat ?? false}
         composerHint=""
         input={input}
         error=""
@@ -117,7 +119,7 @@ function renderModal(props: {
         onRetryFailure={props.onRetryFailure ?? (() => {})}
         onRetryReply={props.onRetryReply}
         onRetryExtraction={props.onRetryExtraction}
-        onUndo={() => {}}
+        onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
         onFavorite={props.onFavorite ?? (() => {})}
         onOpenEdict={() => {}}
@@ -518,6 +520,9 @@ describe("ChatModal — four diegetic roles (#540)", () => {
 describe("ChatModal — soft scenes and current audience (#543)", () => {
   it("keeps a side interjection distinct while the whole sidebar follows the current audience", async () => {
     const favorite = vi.fn();
+    const send = vi.fn();
+    const undo = vi.fn();
+    const retryReply = vi.fn();
     const yang = { ...MINISTER_MOCK, id: "yang", name: "杨嗣昌", summary: "兵部旧臣", favorite: false };
     const hong = { ...MINISTER_MOCK, id: "hong", name: "洪承畴", office: "三边总督", summary: "边臣", favorite: true };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [
@@ -534,6 +539,12 @@ describe("ChatModal — soft scenes and current audience (#543)", () => {
       portraitPrefix: "minister_",
       currentNightId: 23,
       onFavorite: favorite,
+      onSend: send,
+      onUndo: undo,
+      canUndoLastChat: true,
+      replyRetry: { chat_turn_id: 12, question: "辽饷何解？" },
+      onRetryReply: retryReply,
+      suggestions: [{ label: "追问", text: "细奏边情" }],
       secretOrders: [{ id: 9, minister_name: "洪承畴", title: "密察边饷", content: "暗访欠饷", status: "active", turn_issued: 1, due_turn: 2, year_issued: 1, period_issued: 11, tags: [], importance: 1, result: "", sim_note: "", turn_closed: null }],
     });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -548,6 +559,13 @@ describe("ChatModal — soft scenes and current audience (#543)", () => {
     expect(favoriteButton?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
     act(() => favoriteButton?.click());
     expect(favorite).toHaveBeenCalledWith(hong);
+    const clickButton = (text: string) => act(() => Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes(text))?.click());
+    clickButton("追问");
+    clickButton("撤回本轮");
+    clickButton("重新生成回话");
+    expect(send).toHaveBeenCalledWith("洪承畴", "细奏边情");
+    expect(undo).toHaveBeenCalledWith("洪承畴");
+    expect(retryReply).toHaveBeenCalledWith("洪承畴");
     const divisions = Array.from(host.querySelectorAll(".beat-divider"));
     expect(divisions).toHaveLength(2);
     expect(divisions[0]?.textContent).toContain("洪承畴");
