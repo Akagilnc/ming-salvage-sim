@@ -157,6 +157,28 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     assert scroll[-1]["content"] == ""
 
 
+def test_presence_commands_project_to_diegetic_scene_beats(game):
+    db, state, _ = game
+    night_id = _night(db, state)
+    baseline = len([
+        message for message in an.read_night_scroll(db, night_id)
+        if message["beat"] in {"entrance", "exit"}
+    ])
+    an.summon_enter(db, night_id, "杨嗣昌")
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+
+    scroll = an.read_night_scroll(db, night_id)
+    presence = [
+        message for message in scroll if message["beat"] in {"entrance", "exit"}
+    ][baseline:]
+
+    assert [(message["role"], message["beat"]) for message in presence] == [
+        ("scene", "entrance"),
+        ("scene", "exit"),
+    ]
+    assert all(message["content"] for message in presence)
+
+
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     db, state, _ = game
     night_id = _night(db, state)
@@ -220,14 +242,19 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
 
 
-def test_scroll_container_uses_persisted_summon_method(game):
+def test_scroll_container_presents_audience_type_from_persisted_summon_method(game):
     db, state, _ = game
-    night_id = _night(db, state)
-    an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
+    yueci_night = _night(db, state)
+    an.summon_enter(db, yueci_night, "杨嗣昌", method=an.METHOD_YUECI)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (yueci_night,))
+    ordinary_night = _night(db, state)
+    an.summon_enter(db, ordinary_night, "洪承畴", method=an.METHOD_XUANRU)
 
-    scroll = an.read_night_scroll(db, night_id)
+    yueci_scroll = an.read_night_scroll(db, yueci_night)
+    ordinary_scroll = an.read_night_scroll(db, ordinary_night)
 
-    assert scroll[0]["container"]["audience_type"] == an.METHOD_YUECI
+    assert yueci_scroll[0]["container"]["audience_type"] == "越次召对"
+    assert ordinary_scroll[0]["container"]["audience_type"] == "召对"
 
 
 def test_scroll_without_next_entrance_has_unnamed_boundary(game):
@@ -303,10 +330,10 @@ def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
 
     assert [item["night_id"] for item in entries] == [first, second]
     assert [item["title"] for item in entries] == [
-        f"{state.year}年{state.period}月 · 戌时乾清宫 · 越次 · 第1场",
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 越次召对 · 第1场",
         f"{state.year}年{state.period}月 · 戌时乾清宫 · 召对 · 第2场",
     ]
-    assert entries[0]["audience_type"] == an.METHOD_YUECI
+    assert entries[0]["audience_type"] == "越次召对"
     assert entries[0]["involved_people"] == ["王承恩", "杨嗣昌", "洪承畴", "孙传庭"]
     assert entries[1]["involved_people"] == ["王承恩", "洪承畴"]
     assert all("messages" not in item and "content" not in item for item in entries)
@@ -345,7 +372,7 @@ def test_read_night_scroll_reads_each_metadata_store_once(game):
 
     db.conn.set_trace_callback(None)
     selects = [" ".join(statement.lower().split()) for statement in statements if statement.lstrip().lower().startswith("select")]
-    assert scroll[0]["container"]["audience_type"] == an.METHOD_YUECI
+    assert scroll[0]["container"]["audience_type"] == "越次召对"
     assert sum(" from story_ledger_entries " in statement for statement in selects) == 1
     assert sum(" from chat_turns " in statement for statement in selects) == 1
 
