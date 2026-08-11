@@ -287,6 +287,31 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     assert all("has_extraction" not in item for item in entries)
 
 
+def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
+    db, state, _ = game
+    first = _night(db, state)
+    an.summon_enter(db, first, "杨嗣昌", method=an.METHOD_YUECI)
+    an.append_ledger_entry(db, first, body="密议边饷。", tags=["军务"], person_names=["洪承畴", "杨嗣昌"])
+    _chat(db, state, first, "孙传庭", "边饷如何？", "尚可支应。", 10)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first,))
+    second = _night(db, state)
+    _chat(db, state, second, "洪承畴", "再议。", "臣遵旨。", 10)
+    db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
+    db.conn.commit()
+
+    entries = db.list_closed_night_archives()
+
+    assert [item["night_id"] for item in entries] == [first, second]
+    assert [item["title"] for item in entries] == [
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 越次 · 第1场",
+        f"{state.year}年{state.period}月 · 戌时乾清宫 · 召对 · 第2场",
+    ]
+    assert entries[0]["audience_type"] == an.METHOD_YUECI
+    assert entries[0]["involved_people"] == ["王承恩", "杨嗣昌", "洪承畴", "孙传庭"]
+    assert entries[1]["involved_people"] == ["王承恩", "洪承畴"]
+    assert all("messages" not in item and "content" not in item for item in entries)
+
+
 def test_personal_projection_only_reads_the_current_open_night(game):
     db, state, _ = game
     old_night = _night(db, state)
