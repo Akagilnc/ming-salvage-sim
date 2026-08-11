@@ -219,10 +219,15 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     assert first_reply not in updated_payload["text"]
 
 
-@pytest.mark.parametrize("landing", ["pending_upsert", "pending_candidate", "committed"])
+@pytest.mark.parametrize("landing, player_message, expected_mode", [
+    ("pending_upsert", "再补一条。", "midzhi"),
+    ("pending_candidate", "再补一条。", "midzhi"),
+    ("committed", "再补一条。", "midzhi"),
+    ("committed", "普通", "ordinary"),
+])
 @pytest.mark.parametrize("supplement", ["omitted", "empty", "append"])
 def test_real_conversation_draft_supplement_preserves_and_appends_roster(
-    game, monkeypatch, landing, supplement,
+    game, monkeypatch, landing, supplement, player_message, expected_mode,
 ):
     db, state, content = game
     names = [
@@ -235,7 +240,7 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
     character = next(ch for ch in content.characters.values() if ch.name == minister)
     initial = [{"character_id": existing, "tier": "主办", "role": "总理"}]
     payload = {
-        **_POLICY_FIELDS, "text": "初稿", "actor": minister,
+        **_POLICY_FIELDS, "text": "初稿", "actor": minister, "mode": "midzhi",
         "participant_roster": initial,
     }
     target = ""
@@ -266,16 +271,18 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
             db=db, state=state, content=content, registry=None,
             llm_config=types.SimpleNamespace(channel="cli"),
         ),
-        character, player_message="再补一条。", answer="臣已补妥。",
+        character, player_message=player_message, answer="臣已补妥。",
         has_directive=False, secret_order_id=None,
         preclassified_intent={"kind": "draft"},
     )
 
     if landing == "committed":
         row = db.list_directives(state, statuses=("draft",))[-1]
-        stored = json.loads(row["dossier_payload_json"])["participant_roster"]
+        stored_payload = json.loads(row["dossier_payload_json"])
     else:
-        stored = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])["participant_roster"]
+        stored_payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    stored = stored_payload["participant_roster"]
+    assert stored_payload["mode"] == expected_mode
     expected = ([{**initial[0], "delegator_id": None}, {
         "character_id": added, "tier": "协办", "role": "核账", "delegator_id": None,
     }] if supplement == "append" else initial)
