@@ -1672,7 +1672,11 @@ class WebGame:
             # launching mindreading or story extraction.
             answer_text = str(getattr(result, "answer", "") or "")
             self._start_reply_tail_tasks(minister_name, answer_text, chat_turn_id)
-            self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            try:
+                self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            except Exception as error:  # durable reply is already history; decoration cannot roll it back
+                tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
+                payload["decoration_error"] = str(error)
             payload["history"] = self.chat_projection(minister_name)
             return payload
         except Exception:
@@ -1747,7 +1751,11 @@ class WebGame:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
             self._start_reply_tail_tasks(minister_name, answer_text, chat_turn_id)
-            self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            try:
+                self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            except Exception as error:  # completed retry remains a durable reply
+                tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
+                payload["decoration_error"] = str(error)
             payload["history"] = self.chat_projection(minister_name)
             return payload
         except Exception:
@@ -2375,8 +2383,6 @@ class WebGame:
                 # start together; decoration may arrive later but cannot hold the UI busy.
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
-                judge_failed = threading.Event()
-
                 def settle_highlights() -> None:
                     try:
                         highlights = self._settle_reply_highlights(answer, chat_turn_id, write_gate)
@@ -2385,9 +2391,9 @@ class WebGame:
                                 "type": "highlights", "chat_turn_id": chat_turn_id,
                                 "highlights": highlights,
                             })
-                    except Exception as error:  # persistence failures are terminal, not decoration failures
-                        judge_failed.set()
-                        ev_queue.put({"type": "error", "message": str(error), **identity})
+                    except Exception as error:  # reply is durable: report decoration failure without chat identity
+                        tlog(f"[audience-highlights] 落库失败（回话已保留）：{error}")
+                        ev_queue.put({"type": "decoration_error", "message": str(error)})
 
                 judge_thread = threading.Thread(
                     target=settle_highlights, daemon=True, name="audience-highlight-settlement",
@@ -2415,8 +2421,6 @@ class WebGame:
                     })
                 extraction_thread.join()
                 judge_thread.join()
-                if judge_failed.is_set():
-                    return
                 ev_queue.put({"type": "end"})
             finally:
                 self._complete_pending_write()

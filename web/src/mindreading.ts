@@ -63,11 +63,13 @@ export const insertMindreadingByTurn = (
  * - reset：切人/清屏
  * - history：/chat 历史、回话 done、撤回——统一映射 turn-identified 投影（含既往读心）
  * - mindreading：实时 SSE / 固定轮轮询增量——按归属轮定位插入、按 (turn,id) 去重
+ * - highlights：迟到判官结果按持久 turn identity 补到同一聊天串，不另建 store
  */
 export type ChatAction =
   | { type: "reset" }
   | { type: "history"; history: ServerChatMessage[] }
-  | { type: "mindreading"; chatTurnId: number; records: MindreadingRecord[] };
+  | { type: "mindreading"; chatTurnId: number; records: MindreadingRecord[] }
+  | { type: "highlights"; chatTurnId: number; highlights: string[] };
 
 export const chatReducer = (state: ChatMessage[], action: ChatAction): ChatMessage[] => {
   switch (action.type) {
@@ -77,6 +79,12 @@ export const chatReducer = (state: ChatMessage[], action: ChatAction): ChatMessa
       return reconcileHistory(state, projectServerHistory(action.history));
     case "mindreading":
       return insertMindreadingByTurn(state, action.chatTurnId, action.records);
+    case "highlights":
+      return state.map((message) =>
+        message.role === "minister" && message.chatTurnId === action.chatTurnId
+          ? { ...message, highlights: action.highlights }
+          : message,
+      );
     default:
       return state;
   }

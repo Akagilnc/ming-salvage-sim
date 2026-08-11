@@ -187,8 +187,20 @@ export function useAudienceChat(
               }
               // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
               cb.onDone?.(doneData);
+              if (doneData.decoration_error) cb.onError?.(new Error(doneData.decoration_error));
             },
-            onHighlights: onScrollSettled,
+            onHighlights: (highlight) => {
+              // legacy/consort renders this same reducer; audience additionally refreshes its scroll projection.
+              if (panelMatches()) {
+                dispatchChat({
+                  type: "highlights",
+                  chatTurnId: highlight.chat_turn_id,
+                  highlights: highlight.highlights,
+                });
+              }
+              onScrollSettled?.();
+            },
+            onDecorationError: (error) => cb.onError?.(error),
             onMindreading: (mind) => {
               // 持久 turn-identified 事件：仅认当前面板即入 reducer（不按 token/gen；迟到旧流读心仍归其轮）
               if (panelMatches() && mind.mindreading) {
