@@ -18,7 +18,7 @@ def _rejected_verdict(dossier_id):
         ],
         "midzhi_unpromulgatable": False,
         "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
+            "imperial_authority_band": "偏弱", "involved_office_types": ["未指定"],
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
     }

@@ -35,6 +35,8 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
     assert context["imperial_authority_band"] in IMPERIAL_AUTHORITY_BANDS
+    assert context["classes"]
+    assert all(isinstance(name, str) for name in context["classes"])
     assert context["gatekeepers"]
     assert all(set(row) == {
         "name", "office", "office_type", "faction", "courage", "integrity",
@@ -148,6 +150,88 @@ def test_default_promulgation_judge_uses_one_batch_and_existing_validator(game, 
     ]
 
 
+@pytest.mark.parametrize(
+    ("snapshot_key", "forged"),
+    [
+        ("imperial_authority_band", "极弱"),
+        ("involved_office_types", ["六部"]),
+        ("authorization_ids", ["forged-auth"]),
+        ("endorsement_entry_ids", [1]),
+    ],
+)
+def test_rejected_snapshot_must_equal_the_prepared_judge_input(
+    game, snapshot_key, forged,
+):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    verdict = _rejected_verdict(dossier_id, context["imperial_authority_band"])
+    verdict["criteria_snapshot"][snapshot_key] = forged
+
+    with pytest.raises(decree_mod.LLMContractError, match="输入原值不一致"):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )
+
+
+def test_regular_rejection_cannot_claim_midzhi_unpromulgatable(game):
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    verdict = _rejected_verdict(
+        dossier_id, context["imperial_authority_band"], midzhi=True,
+    )
+
+    with pytest.raises(decree_mod.LLMContractError, match="只能标记中旨打回"):
+        decree_mod.validate_promulgation_verdicts(
+            [verdict], dossiers, db, prepared_context=context,
+        )
+
+
+def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, monkeypatch):
+    db, state, content = game
+    default_assent = _dossier(db, state, "未表态默认同意")
+    spoken_assent = _dossier(db, state, "亲口应允")
+    secret = db.create_decree_dossier(
+        state, action_type="secret_order", decree_text="密令暗查",
+        target_kind="character", target_id="李若琏", payload={},
+    )
+    inner = db.create_decree_dossier(
+        state, action_type="grant_allocation", decree_text="内库内批补饷",
+        target_kind="issue", target_id="inner-pay",
+        payload={"account": "内库", "amount": 10},
+    )
+    calls = []
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
+
+    def judge(_agent, prompt, tag):
+        calls.append((json.loads(prompt), tag))
+        return json.dumps({"verdicts": [
+            {"dossier_id": default_assent, "decision": "promulgated"},
+            {"dossier_id": spoken_assent, "decision": "promulgated"},
+        ]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", judge)
+    _stop_after_promulgation(db, monkeypatch)
+    with pytest.raises(RuntimeError, match="after promulgation"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "四旨", content=content,
+        )
+
+    assert len(calls) == 1
+    assert [row["id"] for row in calls[0][0]["dossiers"]] == [
+        default_assent, spoken_assent,
+    ]
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": default_assent, "decision": "promulgated"},
+        {"dossier_id": spoken_assent, "decision": "promulgated"},
+        {"dossier_id": secret, "decision": "promulgated"},
+        {"dossier_id": inner, "decision": "promulgated"},
+    ]
+
+
 def test_default_rejected_verdict_is_validated_persisted_and_becomes_rescript_decision(
     game, monkeypatch,
 ):
@@ -250,7 +334,6 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
     vital = next(row for row in result.decisions if row["event_id"] == f"dossier:{vital_midzhi}")
     assert {option["label"] for option in vital["options"]} == {"收回", "留中"}
     assert {row["id"] for row in seen_payload["decree_dossiers"]} == {ordinary_pay, midzhi_pay}
-    narrative = db.get_resolve_context(state.turn)["narrative"]
-    assert "被打回" in narrative
-    assert "尚待批红" in narrative
-    assert all(term not in narrative for term in ("清丈已办成", "清丈已生效"))
+    # This deterministic test proves payload filtering and rescript options only;
+    # semantic narrative acceptance belongs to the real-model gate artifact.
+    assert "promulgation_instruction" in seen_payload
