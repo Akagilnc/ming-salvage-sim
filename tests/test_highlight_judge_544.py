@@ -1,5 +1,7 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
 import multiprocessing
+import signal
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -130,6 +132,40 @@ def test_real_cli_adapter_deadline_terminates_runner_and_descendant(tmp_path, mo
         cfg, lambda: runner_pid.exists() and descendant_pid.exists(),
         (runner_pid, descendant_pid),
     )
+
+
+def test_sigterm_resistant_judge_returns_on_budget_then_is_reaped():
+    def ignores_term(*_args, **_kwargs):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        time.sleep(.25)
+        return '[]'
+
+    before = {process.pid for process in multiprocessing.active_children()}
+    started = time.monotonic()
+    assert judge_highlights("臣请核账", object(), timeout=.05, invoke=ignores_term) == []
+    assert time.monotonic() - started < .15
+    deadline = time.monotonic() + 1
+    while {process.pid for process in multiprocessing.active_children()} != before:
+        assert time.monotonic() < deadline
+        time.sleep(.01)
+
+
+def _windows_success(*_args, **_kwargs):
+    return '["核账"]'
+
+
+def _windows_slow(*_args, **_kwargs):
+    time.sleep(1)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process boundary")
+def test_windows_worker_supports_success_and_bounded_timeout():
+    assert judge_highlights("臣请核账", object(), timeout=5,
+                            invoke=_windows_success) == ["核账"]
+    started = time.monotonic()
+    assert judge_highlights("臣请核账", object(), timeout=.05,
+                            invoke=_windows_slow) == []
+    assert time.monotonic() - started < .2
 
 
 def test_judge_success_and_timeout_are_bounded_without_real_llm():
