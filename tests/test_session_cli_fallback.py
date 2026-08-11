@@ -713,6 +713,59 @@ def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
         assert dossiers[0]["mode"] == "midzhi"
 
 
+@pytest.mark.parametrize(
+    ("lifecycle", "kind", "raw_payload"),
+    [
+        ("immediate", "directive", "{malformed"),
+        ("night", "office", "[]"),
+        ("recovery", "directive", "null"),
+    ],
+)
+def test_confirmation_preserves_invalid_payload_for_terminal_failure_owner(
+        game, lifecycle, kind, raw_payload):
+    """确认只写有效对象的元数据；坏载荷由各生命周期的提交端判 failed。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state) if lifecycle == "night" else None
+    if lifecycle == "recovery":
+        state.turn_phase = "settling"
+    pending_id = db.stage_pending_action(
+        state.turn, kind=kind, action="拟旨" if kind == "directive" else "任命",
+        minister_name=minister, payload={"placeholder": True},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        (raw_payload, pending_id),
+    )
+    db.conn.commit()
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+
+    row = db.conn.execute(
+        "SELECT status, payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert row["payload_json"] == raw_payload
+    if lifecycle == "night":
+        assert row["status"] == "pending"
+        audience_night.close_night(db, state, night_id=night["id"], content=content)
+    elif lifecycle == "recovery":
+        assert row["status"] == "pending"
+        db.commit_pending_actions(state, content=content)
+
+    terminal = db.conn.execute(
+        "SELECT status, payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert terminal["status"] == "failed"
+    assert terminal["payload_json"] == raw_payload
+
+
 def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
