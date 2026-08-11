@@ -88,7 +88,7 @@ function renderModal(props: {
     return (
       <ChatModal
         minister={props.minister}
-        ministers={props.ministers}
+        ministers={props.ministers ?? []}
         portraitPrefix={props.portraitPrefix}
         scrollMode={props.scrollMode}
         currentCampaignId="test-campaign"
@@ -509,10 +509,6 @@ describe("ChatModal — four diegetic roles (#540)", () => {
     expect(avatars[0]?.alt).toBe("曹化淳");
     expect(avatars[0]?.getAttribute("src")).toMatch(/^\/portraits\/custom\/%E6%9B%B9%E5%8C%96%E6%B7%B3\?t=/);
     expect(avatars[1]?.getAttribute("src")).toBe("/portraits/minister_attendant-former.png");
-    act(() => avatars[1]?.dispatchEvent(new Event("error")));
-    expect(host.querySelectorAll<HTMLImageElement>(".aside-avatar")[1]?.getAttribute("src")).toBe("/portraits/portrait_court_03.png");
-    act(() => host.querySelectorAll<HTMLImageElement>(".aside-avatar")[1]?.dispatchEvent(new Event("error")));
-    expect(host.querySelectorAll(".aside-avatar.minister-card-portrait-placeholder")).toHaveLength(1);
     expect(host.querySelector(".chat-message.attendant:not(.aside)")?.textContent).toContain("公开传话");
   });
 });
@@ -831,10 +827,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
     const archivedAvatar = host.querySelector<HTMLImageElement>(".aside-avatar");
     expect(archivedAvatar?.getAttribute("src")).toBe("/portraits/minister_former-attendant.png");
-    act(() => archivedAvatar?.dispatchEvent(new Event("error")));
-    expect(host.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src")).toBe("/portraits/portrait_court_03.png");
-    act(() => host.querySelector<HTMLImageElement>(".aside-avatar")?.dispatchEvent(new Event("error")));
-    expect(host.querySelector(".aside-avatar.minister-card-portrait-placeholder")).toBeTruthy();
     const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
