@@ -760,7 +760,13 @@ def resolve_directives(
     }
     simulation_visible_dossiers = [
         {
-            **row,
+            **(
+                {
+                    key: value for key, value in row.items()
+                    if key != "promulgation_decision"
+                }
+                if int(row["id"]) in verdict_by_id else row
+            ),
             **(
                 {"settlement_verdict": verdict_by_id[int(row["id"])]}
                 if int(row["id"]) in verdict_by_id else {}

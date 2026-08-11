@@ -2276,6 +2276,52 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 
+def test_promoted_held_dossier_exposes_only_current_verdict_to_simulator(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="着核边饷",
+        target_kind="issue", target_id="frontier-pay",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.record_dossier_decision(dossier_id, "hold")
+    state.next_period()
+    db.save_state(state)
+    monkeypatch.setattr(
+        decree_mod, "llm_promulgation_verdicts",
+        lambda *_args, **_kwargs: [
+            {"dossier_id": dossier_id, "decision": "promulgated"},
+        ],
+    )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+
+    seen = {}
+
+    def inspect_payload(*_args, **kwargs):
+        seen.update(next(
+            row for row in kwargs["simulator_payload"]["decree_dossiers"]
+            if row["id"] == dossier_id
+        ))
+        return "本月邸报。", kwargs["simulator_payload"]
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", inspect_payload)
+    monkeypatch.setattr(
+        decree_mod, "create_json_sanitizer_agent",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("payload inspected")),
+    )
+    with pytest.raises(RuntimeError, match="payload inspected"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "留中重判", content=content,
+        )
+    assert seen["settlement_verdict"] == "promulgated"
+    assert "promulgation_decision" not in seen
+
+
 def test_interim_verdict_rejects_reserved_legal_reason_code(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
