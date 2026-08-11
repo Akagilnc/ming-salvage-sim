@@ -22,6 +22,16 @@ from ming_sim.simulation import (
 from tests.conftest import active_ming_character
 
 
+def _promulgated_dossier(db, state, decree_text, target_id="毛文龙"):
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=decree_text,
+        target_kind="character", target_id=target_id,
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    db.transition_decree_dossier(dossier_id, "executing")
+    return f"dossier:{dossier_id}"
+
+
 def test_normalize_person_changes_keeps_new_key_items():
     extracted = {
         "人物变更": [
@@ -107,6 +117,21 @@ def test_normalize_person_changes_translates_legacy_keys_in_replay_order():
     assert normalized[-1]["legacy_spillover"] == "appointments（朝臣 spillover）"
 
 
+@pytest.mark.parametrize(
+    ("section", "item"),
+    [
+        ("appointments", {"name": "某氏", "office": "贵人", "office_type": "后宫"}),
+        ("character_status_changes", {"name": "洪承畴", "status": "imprisoned"}),
+        ("character_power_changes", {"name": "孔有德", "new_power": "houjin"}),
+        ("office_changes", {"name": "毕自严", "new_office": "户部尚书"}),
+    ],
+)
+def test_normalize_legacy_person_changes_preserves_origin(section, item):
+    item["origin_ref"] = "dossier:17"
+
+    assert normalize_person_changes({section: [item]})[0]["origin_ref"] == "dossier:17"
+
+
 def test_normalize_person_changes_ignores_non_item_shapes():
     assert normalize_person_changes({"人物变更": ["bad", {"name": "毕自严"}]}) == [
         {"name": "毕自严"}
@@ -150,7 +175,7 @@ def test_apply_score_extraction_applies_person_change_power_move(game):
     old_power = content.characters[name].power_id
     item = {
         "name": name,
-        "动作": "易主",
+        "origin_ref": "盘面自发", "动作": "易主",
         "new_power": "houjin",
         "方式": "主动投敌",
         "反噬": {"houjin": {"leverage": 2}},
@@ -178,7 +203,7 @@ def test_apply_score_extraction_applies_person_change_power_move(game):
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "易主",
+                "origin_ref": "盘面自发", "动作": "易主",
                 "old_power": old_power,
                 "new_power": "houjin",
                 "new_title": "降臣",
@@ -199,7 +224,7 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     applied = issues.apply_score_extraction(
         db,
         state,
-        {"人物变更": [{"name": name, "动作": "易主", "new_power": "houjin", "reason": "漏方式"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"}]},
         content=content,
     )
 
@@ -209,11 +234,11 @@ def test_apply_score_extraction_rejects_person_change_power_move_without_way(rea
     assert applied["applied_person_changes"] == [
         {
             "name": name,
-            "动作": "易主",
+            "origin_ref": "盘面自发", "动作": "易主",
             "rejected": True,
             "reason": "易主 缺 方式",
             "category": "missing_field",
-            "item": {"name": name, "动作": "易主", "new_power": "houjin", "reason": "漏方式"},
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin", "reason": "漏方式"},
         }
     ]
 
@@ -223,6 +248,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     before = db.conn.execute(
         "SELECT loyalty FROM characters WHERE name='毛文龙'"
     ).fetchone()["loyalty"]
+    origin_ref = _promulgated_dossier(db, state, "安抚毛文龙")
 
     applied = issues.apply_score_extraction(
         db,
@@ -231,7 +257,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:appease-mao",
+                    "origin_ref": origin_ref,
                     "kind": "initiative",
                     "title": "安抚毛文龙·进行中",
                     "bar_value": 20,
@@ -240,7 +266,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
                         "人物变更": [
                             {
                                 "name": "毛文龙",
-                                "动作": "评定",
+                                "origin_ref": origin_ref, "动作": "评定",
                                 "loyalty": 2,
                                 "reason": "奉旨持续安抚",
                             }
@@ -253,7 +279,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
             "人物变更": [
                 {
                     "name": "毛文龙",
-                    "动作": "评定",
+                    "origin_ref": origin_ref, "动作": "评定",
                     "loyalty": 8,
                     "reason": "奉旨安抚，软判其观望稍解",
                 }
@@ -279,7 +305,7 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     assert applied["applied_person_changes"] == [
         {
             "name": "毛文龙",
-            "动作": "评定",
+            "origin_ref": origin_ref, "动作": "评定",
             "loyalty": 8,
             "old_loyalty": before,
             "new_loyalty": after,
@@ -292,32 +318,32 @@ def test_apply_score_extraction_records_mao_appeasement_commitment_and_loyalty_d
     ("item", "category", "reason"),
     [
         (
-            {"name": "不存在的人", "动作": "评定", "loyalty": 5},
+            {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 5},
             "hallucinated_id",
             "非既有人物",
         ),
         (
-            {"name": "毛文龙", "动作": "评定", "loyalty": 0},
+            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": 0},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
         ),
         (
-            {"name": "毛文龙", "动作": "评定", "loyalty": True},
+            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": True},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
         ),
         (
-            {"name": "毛文龙", "动作": "评定"},
+            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定"},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
         ),
         (
-            {"name": "毛文龙", "动作": "评定", "loyalty": None},
+            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": None},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
         ),
         (
-            {"name": "毛文龙", "动作": "评定", "loyalty": "8"},
+            {"name": "毛文龙", "origin_ref": "盘面自发", "动作": "评定", "loyalty": "8"},
             "invalid_enum",
             "评定 loyalty 须为非零整数增量",
         ),
@@ -343,7 +369,7 @@ def test_apply_score_extraction_rejects_invalid_loyalty_assessment(game, item, c
     assert applied["applied_person_changes"] == [
         {
             "name": item["name"],
-            "动作": "评定",
+            "origin_ref": "盘面自发", "动作": "评定",
             "rejected": True,
             "reason": reason,
             "category": category,
@@ -372,7 +398,7 @@ def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, del
             "人物变更": [
                 {
                     "name": "毛文龙",
-                    "动作": "评定",
+                    "origin_ref": "盘面自发", "动作": "评定",
                     "loyalty": delta,
                     "reason": "边界软判",
                 }
@@ -389,7 +415,7 @@ def test_apply_score_extraction_clamps_loyalty_assessment_delta(game, start, del
     assert applied["applied_person_changes"] == [
         {
             "name": "毛文龙",
-            "动作": "评定",
+            "origin_ref": "盘面自发", "动作": "评定",
             "loyalty": delta,
             "old_loyalty": start,
             "new_loyalty": expected,
@@ -411,7 +437,7 @@ def test_apply_score_extraction_loyalty_assessment_does_not_commit_inside_batch(
         [
             {
                 "name": "毛文龙",
-                "动作": "评定",
+                "origin_ref": "盘面自发", "动作": "评定",
                 "loyalty": 8,
                 "reason": "事务内软判",
             }
@@ -449,7 +475,7 @@ def test_apply_person_changes_disposition_does_not_commit_inside_batch(game):
             [
                 {
                     "name": name,
-                    "动作": "处置",
+                    "origin_ref": "盘面自发", "动作": "处置",
                     "status": "exiled",
                     "reason": "事务内处置",
                 }
@@ -525,7 +551,7 @@ def test_apply_score_extraction_one_time_grant_and_assessment_do_not_create_comm
             "人物变更": [
                 {
                     "name": "毛文龙",
-                    "动作": "评定",
+                    "origin_ref": "盘面自发", "动作": "评定",
                     "loyalty": 3,
                     "reason": "一次性赏赐后略有感念",
                 }
@@ -556,7 +582,7 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     old_office_type = content.characters[name].office_type
     item = {
         "name": name,
-        "动作": "易主",
+        "origin_ref": "盘面自发", "动作": "易主",
         "new_power": "houjin",
         "方式": "主动投敌",
         "反噬": {"houjin": "bad-shape"},
@@ -580,7 +606,7 @@ def test_apply_score_extraction_rejects_malformed_power_move_backlash_before_wri
     assert applied["applied_person_changes"] == [
         {
             "name": name,
-            "动作": "易主",
+            "origin_ref": "盘面自发", "动作": "易主",
             "rejected": True,
             "reason": "易主 反噬 项必须是 object(dict)",
             "category": "invalid_enum",
@@ -605,7 +631,7 @@ def test_legacy_status_change_rejects_non_active_target_before_transition_matrix
             state,
             {
                 "character_status_changes": [
-                    {"name": name, "status": "exiled", "reason": "legacy should gate"}
+                    {"name": name, "status": "exiled", "reason": "legacy should gate", "origin_ref": "盘面自发"}
                 ]
             },
             content=content,
@@ -620,14 +646,14 @@ def test_legacy_status_change_rejects_non_active_target_before_transition_matrix
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "rejected": True,
                 "reason": "当前非 active（dismissed）",
                 "category": "invalid_transition",
                 "status": "exiled",
                 "item": {
                     "name": name,
-                    "动作": "处置",
+                    "origin_ref": "盘面自发", "动作": "处置",
                     "status": "exiled",
                     "reason": "legacy should gate",
                     "legacy_gate": True,
@@ -653,7 +679,7 @@ def test_apply_score_extraction_rejects_forged_legacy_partial_power_way(game):
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "houjin",
                         "方式": "乱写方式",
                         "反噬": {},
@@ -687,7 +713,7 @@ def test_apply_score_extraction_rejects_power_move_without_backlash_side_effect(
             "人物变更": [
                 {
                     "name": name,
-                    "动作": "易主",
+                    "origin_ref": "盘面自发", "动作": "易主",
                     "new_power": "not_a_power",
                     "方式": "主动投敌",
                     "反噬": {"houjin": {"leverage": 2}},
@@ -719,7 +745,7 @@ def test_apply_score_extraction_applies_person_change_office_action(game):
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "调任",
+                        "origin_ref": "盘面自发", "动作": "调任",
                         "office": "测试巡抚",
                         "office_type": "督抚",
                         "reason": "移镇测试",
@@ -756,7 +782,7 @@ def test_apply_score_extraction_rejects_unknown_person_change_new_appointment(re
             "人物变更": [
                 {
                     "name": name,
-                    "动作": "任命",
+                    "origin_ref": "盘面自发", "动作": "任命",
                     "office": "工部主事",
                     "office_type": "工部",
                     "faction": "中立",
@@ -791,7 +817,7 @@ def test_apply_score_extraction_rejects_trapped_prisoner_appointment(game):
             state,
             {
                 "人物变更": [
-                    {"name": name, "动作": "任命", "office": "陕西总督", "reason": "狱中拜将"}
+                    {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "狱中拜将"}
                 ]
             },
             content=content,
@@ -862,7 +888,7 @@ def test_apply_score_extraction_materializes_derived_release_before_appointment(
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
                         "reason": "查明旧案后起用",
                     }
@@ -938,7 +964,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
                 "人物变更": [
                     {
                         "name": new_holder,
-                        "动作": "调任",
+                        "origin_ref": "盘面自发", "动作": "调任",
                         "office": target_office,
                         "reason": "顶替旧任",
                     }
@@ -961,7 +987,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
         assert content.characters[old_holder].office_type == "身名分"
         assert applied["applied_person_changes"] == [
             {
-                "动作": "调任",
+                "origin_ref": "盘面自发", "动作": "调任",
                 "name": new_holder,
                 "old_status": "active",
                 "old_office": old_new[1],
@@ -972,7 +998,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
             },
             {
                 "name": old_holder,
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "status": "active",
                 "reason": "被顶替",
                 "reason_code": "被顶替",
@@ -1030,7 +1056,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": new_holder, "动作": "调任", "office": target_office}]},
+            {"人物变更": [{"name": new_holder, "origin_ref": "盘面自发", "动作": "调任", "office": target_office}]},
             content=content,
         )
         displaced = db.conn.execute(
@@ -1051,7 +1077,7 @@ def test_apply_score_extraction_clears_displaced_reason_when_reappointed(game):
                 "人物变更": [
                     {
                         "name": old_holder,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "office": reappointed_office,
                         "reason": "重新授实职",
                     }
@@ -1102,7 +1128,7 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "reason": "漏填官职",
                     }
                 ]
@@ -1120,14 +1146,14 @@ def test_apply_score_extraction_does_not_release_when_derived_appointment_is_inv
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "任命",
+                "origin_ref": "盘面自发", "动作": "任命",
                 "new_office": "",
                 "rejected": True,
                 "reason": "name 或 new_office 空",
                 "category": "missing_field",
                 "item": {
                     "name": name,
-                    "动作": "任命",
+                    "origin_ref": "盘面自发", "动作": "任命",
                     "reason": "漏填官职",
                 },
             }
@@ -1151,7 +1177,7 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "处置",
+                        "origin_ref": "盘面自发", "动作": "处置",
                         "status": "dismissed",
                         "status_reason": "契约允许的说明",
                     }
@@ -1168,7 +1194,7 @@ def test_apply_score_extraction_accepts_status_reason_as_person_reason(game):
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "status": "dismissed",
                 "reason": "契约允许的说明",
             }
@@ -1202,7 +1228,7 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
                         "reason": "查明旧案后起用",
                     }
@@ -1222,7 +1248,7 @@ def test_apply_score_extraction_rolls_back_derived_release_when_office_write_fai
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
         assert applied["applied_person_changes"] == [
             {
-                "动作": "任命",
+                "origin_ref": "盘面自发", "动作": "任命",
                 "name": name,
                 "new_office": "陕西总督",
                 "rejected": True,
@@ -1273,10 +1299,10 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
                 state,
                 {
                     "人物变更": [
-                        {"name": first, "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
+                        {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
                         {
                             "name": second,
-                            "动作": "任命",
+                            "origin_ref": "盘面自发", "动作": "任命",
                             "office": "陕西总督",
                             "reason": "查明旧案后起用",
                         },
@@ -1302,9 +1328,9 @@ def test_derived_release_rejection_keeps_prior_person_change_in_atomic_batch(
             (first, second),
         ).fetchone()[0] == before_logs + 1
         assert applied["applied_person_changes"] == [
-            {"name": first, "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
+            {"name": first, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "先罢一人"},
             {
-                "动作": "任命",
+                "origin_ref": "盘面自发", "动作": "任命",
                 "name": second,
                 "new_office": "陕西总督",
                 "rejected": True,
@@ -1341,7 +1367,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
                         "reason": "查明旧案后起用",
                     }
@@ -1361,7 +1387,7 @@ def test_derived_release_restores_when_post_office_helper_raises(game, monkeypat
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
         assert applied["applied_person_changes"] == [
             {
-                "动作": "任命",
+                "origin_ref": "盘面自发", "动作": "任命",
                 "name": name,
                 "new_office": "陕西总督",
                 "rejected": True,
@@ -1396,7 +1422,7 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
 
         raw_item = {
             "name": name,
-            "动作": "任命",
+            "origin_ref": "盘面自发", "动作": "任命",
             "office": "陕西总督",
             "reason": "错误任明官",
         }
@@ -1417,7 +1443,7 @@ def test_apply_score_extraction_does_not_release_non_ming_when_derived_appointme
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs
         assert applied["applied_person_changes"] == [
             {
-                "动作": "任命",
+                "origin_ref": "盘面自发", "动作": "任命",
                 "name": name,
                 "new_office": "陕西总督",
                 "rejected": True,
@@ -1462,7 +1488,7 @@ def test_apply_score_extraction_applies_person_change_consort_title(game):
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "册封",
+                        "origin_ref": "盘面自发", "动作": "册封",
                         "office": "贵人",
                         "office_type": "后宫",
                         "reason": "册封测试",
@@ -1524,6 +1550,7 @@ def test_apply_score_extraction_preserves_legacy_consort_appointment_rejection(g
                         "office_type": "后宫",
                         "reason": "旧键未获准",
                         "approved": False,
+                        "origin_ref": "盘面自发",
                     }
                 ]
             },
@@ -1538,13 +1565,13 @@ def test_apply_score_extraction_preserves_legacy_consort_appointment_rejection(g
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "册封",
+                "origin_ref": "盘面自发", "动作": "册封",
                 "rejected": True,
                 "reason": "册封建档被拒",
                 "category": "appointment_rejected",
                 "item": {
                     "name": name,
-                    "动作": "册封",
+                    "origin_ref": "盘面自发", "动作": "册封",
                     "office": "贵人",
                     "office_type": "后宫",
                     "reason": "旧键未获准",
@@ -1570,7 +1597,7 @@ def test_apply_score_extraction_rejects_consort_title_for_unknown_candidate(read
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "册封",
+                        "origin_ref": "盘面自发", "动作": "册封",
                         "office": "贵人",
                         "office_type": "后宫",
                         "reason": "幻觉册封",
@@ -1586,13 +1613,13 @@ def test_apply_score_extraction_rejects_consort_title_for_unknown_candidate(read
         assert applied["applied_person_changes"] == [
             {
                 "name": name,
-                "动作": "册封",
+                "origin_ref": "盘面自发", "动作": "册封",
                 "rejected": True,
                 "reason": "非既有 candidate",
                 "category": "hallucinated_id",
                 "item": {
                     "name": name,
-                    "动作": "册封",
+                    "origin_ref": "盘面自发", "动作": "册封",
                     "office": "贵人",
                     "office_type": "后宫",
                     "reason": "幻觉册封",
@@ -1615,7 +1642,7 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
             state,
             {
                 "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
+                    {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
                 ]
             },
             content=content,
@@ -1626,7 +1653,7 @@ def test_apply_score_extraction_applies_person_change_disposition(game):
         assert content.characters[name].office == ""
         assert applied["person_changes"][0]["动作"] == "处置"
         assert applied["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
+            {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "削职听勘"}
         ]
     finally:
         content.characters[name].status = old_status
@@ -1643,7 +1670,7 @@ def test_apply_score_extraction_applies_person_change_banish(game):
         applied = issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "罢黜", "reason": "廷议罢官"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "廷议罢官"}]},
             content=content,
         )
 
@@ -1651,7 +1678,7 @@ def test_apply_score_extraction_applies_person_change_banish(game):
         assert content.characters[name].status == "dismissed"
         assert content.characters[name].office == ""
         assert applied["applied_person_changes"] == [
-            {"name": name, "动作": "罢黜", "status": "dismissed", "reason": "廷议罢官"}
+            {"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "status": "dismissed", "reason": "廷议罢官"}
         ]
     finally:
         content.characters[name].status = old_status
@@ -1671,7 +1698,7 @@ def test_apply_score_extraction_rejects_banish_from_imprisoned(game):
         applied = issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "罢黜", "reason": "狱中追夺"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "狱中追夺"}]},
             content=content,
         )
 
@@ -1693,7 +1720,7 @@ def test_apply_score_extraction_offstage_disposition_clears_db_and_content_offic
         applied = issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "处置", "status": "offstage"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage"}]},
             content=content,
         )
 
@@ -1703,7 +1730,7 @@ def test_apply_score_extraction_offstage_disposition_clears_db_and_content_offic
         assert content.characters[name].status == "offstage"
         assert content.characters[name].office == ""
         assert applied["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "offstage", "reason": ""}
+            {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": ""}
         ]
     finally:
         content.characters[name].status = old_status
@@ -1722,7 +1749,7 @@ def test_apply_score_extraction_persists_reason_code_and_person_log(game):
             "人物变更": [
                 {
                     "name": name,
-                    "动作": "处置",
+                    "origin_ref": "盘面自发", "动作": "处置",
                     "status": "imprisoned",
                     "reason_code": "陷虏",
                     "reason": "兵败被执",
@@ -1769,7 +1796,7 @@ def test_apply_score_extraction_allegiance_change_rebinds_identity_title(game):
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "方式": "主动投敌",
                         "new_power": "houjin",
                         "new_title": "降臣",
@@ -1813,7 +1840,7 @@ def test_apply_score_extraction_treats_active_identity_title_as_unappointed(game
                 "人物变更": [
                     {
                         "name": name,
-                        "动作": "任命",
+                        "origin_ref": "盘面自发", "动作": "任命",
                         "office": "陕西总督",
                         "office_type": "督抚",
                         "reason": "收叙任用",
@@ -1950,50 +1977,50 @@ def test_set_character_office_person_title_survives_stem_collision(game):
     ("item", "expected"),
     [
         (
-            {"name": "", "动作": "处置", "status": "dismissed"},
+            {"name": "", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
             {
                 "name": "",
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "rejected": True,
                 "reason": "name 或 动作 缺失",
                 "category": "missing_field",
-                "item": {"name": "", "动作": "处置", "status": "dismissed"},
+                "item": {"name": "", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
             },
         ),
         (
-            {"name": "孔有德", "动作": "处置", "status": "unknown"},
+            {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "unknown"},
             {
                 "name": "孔有德",
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "status": "unknown",
                 "rejected": True,
                 "reason": "status 非白名单",
                 "category": "invalid_enum",
-                "item": {"name": "孔有德", "动作": "处置", "status": "unknown"},
+                "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "unknown"},
             },
         ),
         (
-            {"name": "孔有德", "动作": "处置", "status": "active"},
+            {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "active"},
             {
                 "name": "孔有德",
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "status": "active",
                 "rejected": True,
                 "reason": "处置 不直接迁入 active/candidate，走任命/册封级联",
                 "category": "invalid_transition",
-                "item": {"name": "孔有德", "动作": "处置", "status": "active"},
+                "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "active"},
             },
         ),
         (
-            {"name": "孔有德", "动作": "处置", "status": "candidate"},
+            {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "candidate"},
             {
                 "name": "孔有德",
-                "动作": "处置",
+                "origin_ref": "盘面自发", "动作": "处置",
                 "status": "candidate",
                 "rejected": True,
                 "reason": "处置 不直接迁入 active/candidate，走任命/册封级联",
                 "category": "invalid_transition",
-                "item": {"name": "孔有德", "动作": "处置", "status": "candidate"},
+                "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "处置", "status": "candidate"},
             },
         ),
     ],
@@ -2014,7 +2041,7 @@ def test_apply_score_extraction_rejects_invalid_person_dispositions(read_game, i
 @pytest.mark.parametrize("with_content", [True, False])
 def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_content):
     db, state, content = read_game
-    item = {"name": "不存在的人", "动作": "处置", "status": "dismissed"}
+    item = {"name": "不存在的人", "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}
 
     applied = issues.apply_score_extraction(
         db,
@@ -2026,7 +2053,7 @@ def test_apply_score_extraction_rejects_unknown_person_change(read_game, with_co
     assert applied["applied_person_changes"] == [
         {
             "name": "不存在的人",
-            "动作": "处置",
+            "origin_ref": "盘面自发", "动作": "处置",
             "status": "dismissed",
             "rejected": True,
             "reason": "非既有人物",
@@ -2044,19 +2071,19 @@ def test_apply_score_extraction_rejects_dead_status_outbound(game):
     applied = issues.apply_score_extraction(
         db,
         state,
-        {"人物变更": [{"name": name, "动作": "处置", "status": "dismissed"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}]},
         content=content,
     )
 
     assert applied["applied_person_changes"] == [
         {
             "name": name,
-            "动作": "处置",
+            "origin_ref": "盘面自发", "动作": "处置",
             "status": "dismissed",
             "rejected": True,
             "reason": "dead 无 status 出边",
             "category": "invalid_transition",
-            "item": {"name": name, "动作": "处置", "status": "dismissed"},
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"},
         }
     ]
 
@@ -2071,7 +2098,7 @@ def test_apply_score_extraction_applies_person_travel_and_exposes_transit_to(gam
         applied = issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
             content=content,
         )
 
@@ -2084,7 +2111,7 @@ def test_apply_score_extraction_applies_person_travel_and_exposes_transit_to(gam
         assert content.characters[name].location == old_location
         assert getattr(content.characters[name], "transit_to", "") == "liaodong"
         assert applied["applied_person_changes"] == [
-            {"name": name, "动作": "行止", "location": old_location, "transit_to": "liaodong"}
+            {"name": name, "origin_ref": "盘面自发", "动作": "行止", "location": old_location, "transit_to": "liaodong"}
         ]
 
         payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
@@ -2410,7 +2437,7 @@ def test_person_log_normalized_not_truncated(game):
     import json as _json
     db, state, content = game
     person_name = active_ming_character(db, content)
-    big = {"name": "甲" * 300, "动作": "处置", "status": "dismissed",
+    big = {"name": "甲" * 300, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed",
            "reason": "乙" * 300, "extra": list(range(40))}
     db.record_person_log(state, person_name, "处置", payload_summary="s", normalized=big)
     row = db.conn.execute(
@@ -2431,8 +2458,8 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
         state,
         {
             "人物变更": [
-                {"name": "孔有德", "动作": "行止"},
-                {"name": name, "动作": "行止", "transit_to": "liaodong"},
+                {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"},
             ]
         },
         content=None,
@@ -2441,19 +2468,19 @@ def test_apply_score_extraction_rejects_invalid_person_travel(game):
     assert applied["applied_person_changes"] == [
         {
             "name": "孔有德",
-            "动作": "行止",
+            "origin_ref": "盘面自发", "动作": "行止",
             "rejected": True,
             "reason": "location 或 transit_to 缺失",
             "category": "missing_field",
-            "item": {"name": "孔有德", "动作": "行止"},
+            "item": {"name": "孔有德", "origin_ref": "盘面自发", "动作": "行止"},
         },
         {
             "name": name,
-            "动作": "行止",
+            "origin_ref": "盘面自发", "动作": "行止",
             "rejected": True,
             "reason": "行止 仅适用于 active 人物",
             "category": "invalid_transition",
-            "item": {"name": name, "动作": "行止", "transit_to": "liaodong"},
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"},
         },
     ]
 
@@ -2467,7 +2494,7 @@ def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
         state,
         {
             "人物变更": [
-                {"name": name, "动作": "行止", "transit_to": "not_a_region"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
             ]
         },
         content=content,
@@ -2476,11 +2503,11 @@ def test_apply_score_extraction_rejects_unknown_person_travel_region(read_game):
     assert applied["applied_person_changes"] == [
         {
             "name": name,
-            "动作": "行止",
+            "origin_ref": "盘面自发", "动作": "行止",
             "rejected": True,
             "reason": "transit_to 地区不存在",
             "category": "missing_ref",
-            "item": {"name": name, "动作": "行止", "transit_to": "not_a_region"},
+            "item": {"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "not_a_region"},
         }
     ]
 
@@ -2497,13 +2524,13 @@ def test_person_disposition_clears_existing_transit_to(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
             content=content,
         )
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "处置", "status": "dismissed"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed"}]},
             content=content,
         )
 
@@ -2529,7 +2556,7 @@ def test_set_character_status_clears_transit_to_when_leaving_active(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
             content=content,
         )
         db.set_character_status(state, name, "dismissed", "legacy direct status")
@@ -2592,7 +2619,7 @@ def test_legacy_status_change_clears_transit_to_after_person_travel(game):
         issues.apply_score_extraction(
             db,
             state,
-            {"人物变更": [{"name": name, "动作": "行止", "transit_to": "liaodong"}]},
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "行止", "transit_to": "liaodong"}]},
             content=content,
         )
         applied = issues.apply_score_extraction(
@@ -2600,7 +2627,7 @@ def test_legacy_status_change_clears_transit_to_after_person_travel(game):
             state,
             {
                 "character_status_changes": [
-                    {"name": name, "status": "dismissed", "reason": "legacy status"}
+                    {"name": name, "status": "dismissed", "reason": "legacy status", "origin_ref": "盘面自发"}
                 ]
             },
             content=content,
@@ -2615,7 +2642,7 @@ def test_legacy_status_change_clears_transit_to_after_person_travel(game):
         assert content.characters[name].transit_to == ""
         assert applied["character_status_changes"] == []
         assert applied["applied_person_changes"] == [
-            {"name": name, "动作": "处置", "status": "dismissed", "reason": "legacy status"}
+            {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "dismissed", "reason": "legacy status"}
         ]
     finally:
         content.characters[name].status = old_status
@@ -2646,7 +2673,7 @@ def test_apply_score_extraction_new_person_changes_shadow_legacy_person_keys(gam
             db,
             state,
             {
-                "人物变更": [{"name": new_name, "动作": "罢黜", "reason": "新 key"}],
+                "人物变更": [{"name": new_name, "origin_ref": "盘面自发", "动作": "罢黜", "reason": "新 key"}],
                 "character_status_changes": [
                     {"name": legacy_name, "status": "dismissed", "reason": "旧 key"}
                 ],
@@ -2752,7 +2779,7 @@ def test_political_marker_is_audit_only_no_status_premigration(game):
         issues.apply_score_extraction(
             db, state,
             {"人物变更": [{
-                "name": name, "动作": "任命",
+                "name": name, "origin_ref": "盘面自发", "动作": "任命",
                 "office": "都察院左都御史", "reason": "起用获罪诸臣",
             }]},
             content=content,
@@ -2789,7 +2816,7 @@ def test_reappoint_nonactive_syncs_character_reason_to_db(game):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "任命",
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命",
                       "office": "都察院左都御史", "reason": "起用获罪诸臣"}]},
         content=content,
     )
@@ -2825,7 +2852,7 @@ def test_reappoint_rollback_restores_character_reason(game, monkeypatch):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
         content=content,
     )
 
@@ -2857,7 +2884,7 @@ def test_disposition_manual_rollback_restores_memory_reason_fields(game, monkeyp
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
         content=content,
     )
 
@@ -2885,7 +2912,7 @@ def test_unified_appointment_resolves_alias_before_hallucinated_guard(game):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": alias, "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
+        {"人物变更": [{"name": alias, "origin_ref": "盘面自发", "动作": "任命", "office": "陕西总督", "reason": "起用"}]},
         content=content,
     )
 
@@ -3142,7 +3169,7 @@ def test_yizhu_sets_active_in_new_master_service(game):
     issues.apply_score_extraction(
         db, state,
         {"人物变更": [{
-            "name": name, "动作": "易主",
+            "name": name, "origin_ref": "盘面自发", "动作": "易主",
             "new_power": "houjin", "方式": "被俘而降", "反噬": {},
         }]},
         content=content,
@@ -3172,7 +3199,7 @@ def test_apply_score_extraction_consort_candidate_falls_out_to_offstage(game):
         applied = issues.apply_score_extraction(
             db, state,
             {"人物变更": [{
-                "name": name, "动作": "处置",
+                "name": name, "origin_ref": "盘面自发", "动作": "处置",
                 "status": "offstage", "reason_code": "落选", "reason": "未获册封,出宫",
             }]},
             content=content,
@@ -3215,7 +3242,7 @@ def test_disposition_syncs_reason_code_to_content_in_txn(game):
     issues.apply_score_extraction(
         db, state,
         {"人物变更": [{
-            "name": name, "动作": "处置",
+            "name": name, "origin_ref": "盘面自发", "动作": "处置",
             "status": "dismissed", "reason_code": "获罪削籍", "reason": "忤逆案削籍",
         }]},
         content=content,
@@ -3245,7 +3272,7 @@ def test_reappointment_clears_displaced_mark_in_both_db_and_content(game):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "任命", "office": "兵部尚书", "reason": "起复任事"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "兵部尚书", "reason": "起复任事"}]},
         content=content,
     )
 
@@ -3285,7 +3312,7 @@ def test_yizhu_clears_status_reason_in_db(game):
 
     issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "易主", "new_power": "houjin",
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "houjin",
                       "方式": "被俘而降", "反噬": {}, "reason": "剃发降清"}]},
         content=content,
     )
@@ -3305,7 +3332,7 @@ def test_yizhu_clears_status_reason_in_db(game):
 def _appoint(db, state, content, name, office, reason):
     return issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "任命", "office": office, "reason": reason}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": office, "reason": reason}]},
         content=content,
     )
 
@@ -3392,7 +3419,7 @@ def test_person_change_rejects_unknown_action_not_silent(game):
     before_office_mem = content.characters[name].office
     applied = issues.apply_score_extraction(
         db, state,
-        {"人物变更": [{"name": name, "动作": "瞎搞一通", "office": "兵部尚书", "reason": "非法动作"}]},
+        {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "瞎搞一通", "office": "兵部尚书", "reason": "非法动作"}]},
         content=content,
     )
     pcs = applied["applied_person_changes"]
@@ -3424,7 +3451,7 @@ def test_s9_consort_leaves_palace_clears_office(game):
         db.set_character_status(state, name, "active", "在宫")
         applied = issues.apply_score_extraction(
             db, state,
-            {"人物变更": [{"name": name, "动作": "处置", "status": "offstage",
+            {"人物变更": [{"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage",
                           "reason_code": "出宫", "reason": "出宫居家"}]},
             content=content,
         )
@@ -3456,9 +3483,9 @@ def test_s15_amnesty_to_ming_then_appoint(game):
         applied = issues.apply_score_extraction(
             db, state,
             {"人物变更": [
-                {"name": name, "动作": "易主", "new_power": "ming", "方式": "主动归附",
+                {"name": name, "origin_ref": "盘面自发", "动作": "易主", "new_power": "ming", "方式": "主动归附",
                  "反噬": {}, "reason": "受抚归明"},
-                {"name": name, "动作": "任命", "office": "福建游击", "reason": "授游击"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "福建游击", "reason": "授游击"},
             ]},
             content=content,
         )
@@ -3536,13 +3563,13 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression(game):
                 "人物变更": [
                     {
                         "name": zhang,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
                         "反噬": {zhang_power: {"military_strength": -5, "reason": "谷城就抚拆散其股"}},
                         "reason": "谷城受抚归明",
                     },
-                    {"name": zhang, "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
                 ],
             },
             content=content,
@@ -3631,13 +3658,13 @@ def test_bandit_amnesty_rejects_same_power_top_level_suppression_when_backlash_e
                 "人物变更": [
                     {
                         "name": zhang,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
                         "反噬": {},
                         "reason": "谷城受抚归明",
                     },
-                    {"name": zhang, "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
+                    {"name": zhang, "origin_ref": "盘面自发", "动作": "任命", "office": "游击将军", "reason": "授武将名分"},
                 ],
             },
             content=content,
@@ -3718,12 +3745,12 @@ def test_rejected_bandit_amnesty_does_not_block_same_power_suppression(game):
             state,
             {
                 "power_updates": {
-                    zhang_power: {"military_strength": -7, "reason": "剿张献忠股"},
+                    zhang_power: {"military_strength": -7, "reason": "剿张献忠股", "origin_ref": "盘面自发"},
                 },
                 "人物变更": [
                     {
                         "name": zhang,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
                         "new_title": "乱填非白名单",
@@ -3808,12 +3835,12 @@ def test_orphan_bandit_power_can_be_suppressed_when_dead_leader_amnesty_is_rejec
             state,
             {
                 "power_updates": {
-                    zhang_power: {"military_strength": -9, "reason": "剿灭张献忠遗股"},
+                    zhang_power: {"military_strength": -9, "reason": "剿灭张献忠遗股", "origin_ref": "盘面自发"},
                 },
                 "人物变更": [
                     {
                         "name": zhang,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
                         "反噬": {zhang_power: {"military_strength": -5, "reason": "误写招安死头目"}},
@@ -3908,7 +3935,7 @@ def test_bandit_amnesty_rejects_backlash_targeting_another_bandit_power(game):
                 "人物变更": [
                     {
                         "name": zhang,
-                        "动作": "易主",
+                        "origin_ref": "盘面自发", "动作": "易主",
                         "new_power": "ming",
                         "方式": "主动归附",
                         "反噬": {li_power: {"military_strength": -5, "reason": "误削李自成股"}},
@@ -3957,8 +3984,8 @@ def test_s8_demotion_release_then_lower_appointment_derives_qifu(game):
         applied = issues.apply_score_extraction(
             db, state,
             {"人物变更": [
-                {"name": name, "动作": "处置", "status": "offstage", "reason": "查明释放"},
-                {"name": name, "动作": "任命", "office": "知县", "reason": "贬三级任用"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "处置", "status": "offstage", "reason": "查明释放"},
+                {"name": name, "origin_ref": "盘面自发", "动作": "任命", "office": "知县", "reason": "贬三级任用"},
             ]},
             content=content,
         )

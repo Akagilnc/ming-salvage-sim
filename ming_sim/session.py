@@ -43,6 +43,7 @@ from ming_sim.decree import (
     resolve_settling_recovery,
     write_decree_with_agno,
 )
+from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.knowledge import render_character_knowledge
@@ -2112,6 +2113,13 @@ class GameSession:
         recovered_source = None
         if self.state.turn_phase == TurnPhase.SETTLING.value:
             ctx = self.db.get_resolve_context(self.state.turn)
+            if (
+                ctx is not None
+                and ctx.get("extracted") is not None
+                and int(ctx.get("resolve_contract_version") or 0) == 0
+            ):
+                clear_for_resimulation(self.db, self.state.turn)
+                ctx = self.db.get_resolve_context(self.state.turn)
             if ctx is not None and ctx.get("extracted") is not None:
                 # 与正常路同守门：恢复期大臣新拟的 pending 旨未核定不得推进——
                 # 重放跳过守门会把它孤儿在旧回合（cmr S7 r8）。

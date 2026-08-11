@@ -112,7 +112,7 @@ def test_engine_extractor_path_stamps_player_decree(game, monkeypatch, tmp_path)
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
-            {"name": "查无此人丁", "status": "dead", "reason": "测试"}]}, "out", "in"))
+            {"origin_ref": "盘面自发", "name": "查无此人丁", "status": "dead", "reason": "测试"}]}, "out", "in"))
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
@@ -216,7 +216,7 @@ def test_rejected_appointment_carries_rejection_cause(game, monkeypatch, tmp_pat
     existing = next(iter(content.characters))  # 重名 → apply_appointment 拒
 
     run_settle(db, state, content, {
-        "appointments": [{"name": existing, "office": "贵妃", "office_type": "后宫",
+        "appointments": [{"origin_ref": "盘面自发", "name": existing, "office": "贵妃", "office_type": "后宫",
                           "reason": "椒房之选"}],
     }, narrative="x", decree_text="y")
 
@@ -259,7 +259,7 @@ def test_inertia_tolerated_rejections_reach_reports(game, monkeypatch, tmp_path)
         origin_ref="", bar_value=99, bar_good_meaning="成", bar_bad_meaning="败",
         inertia=5, stage_text="", severity=50, region_hint="", faction_hint="",
         tags=[], ongoing_effects={}, cancellable="decree", cancel_cost={},
-        effect_on_resolve={"army_delta": {aid: {"morale": 1, "士气大振": 9}}},
+        effect_on_resolve={"army_delta": {aid: {"origin_ref": "盘面自发", "morale": 1, "士气大振": 9}}},
         effect_on_fail={}, resolve_condition="", fail_condition="",
     )
     db.conn.commit()
@@ -283,7 +283,7 @@ def test_item_json_is_original_delta_item_when_producer_carries_it(game, monkeyp
     turn = state.turn
 
     run_settle(db, state, content, {
-        "power_updates": {"查无此势力": {"leverage": 5}},
+        "power_updates": {"查无此势力": {"origin_ref": "盘面自发", "leverage": 5}},
     }, narrative="x", decree_text="y")
 
     row = db.conn.execute(
@@ -457,7 +457,7 @@ def test_power_move_backlash_rejection_lands_in_reports(game, monkeypatch, tmp_p
             {
                 "人物变更": [
                     {
-                        "name": name,
+                        "origin_ref": "盘面自发", "name": name,
                         "动作": "易主",
                         "new_power": "houjin",
                         "方式": "主动投敌",
@@ -512,7 +512,7 @@ def test_issue_close_power_move_backlash_rejection_is_not_duplicated(game, monke
         effect_on_resolve={
             "人物变更": [
                 {
-                    "name": name,
+                    "origin_ref": "盘面自发", "name": name,
                     "动作": "易主",
                     "new_power": "houjin",
                     "方式": "主动投敌",
@@ -576,7 +576,7 @@ def test_inertia_power_move_backlash_rejection_lands_in_reports(game, monkeypatc
         effect_on_resolve={
             "人物变更": [
                 {
-                    "name": name,
+                    "origin_ref": "盘面自发", "name": name,
                     "动作": "易主",
                     "new_power": "houjin",
                     "方式": "主动投敌",
@@ -634,7 +634,7 @@ def test_resimulation_inherits_player_source_from_ctx(game, monkeypatch, tmp_pat
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
-            {"name": "查无此人辛", "status": "dead", "reason": "测试"}]}, "out", "in"))
+            {"origin_ref": "盘面自发", "name": "查无此人辛", "status": "dead", "reason": "测试"}]}, "out", "in"))
 
     decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
 
@@ -660,7 +660,7 @@ def test_player_decree_rejection_surfaces_prompt_in_turn_report(game, monkeypatc
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
-            {"name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
+            {"origin_ref": "盘面自发", "name": "查无此人壬", "status": "dead", "reason": "测试"}]}, "out", "in"))
 
     decree_mod.resolve_directives(state, db, None, None, [1], "减赋诏",
                                   content=content, registry=None)
@@ -698,7 +698,7 @@ def test_system_rejection_stays_silent_and_keeps_system_provenance(game, monkeyp
     monkeypatch.setattr(
         decree_mod, "extract_scores_by_modules_with_agno",
         lambda *a, **k: ({"character_status_changes": [
-            {"name": "查无此人癸", "status": "dead", "reason": "测试"}]}, "out", "in"))
+            {"origin_ref": "盘面自发", "name": "查无此人癸", "status": "dead", "reason": "测试"}]}, "out", "in"))
 
     decree_mod.resolve_decisions_phase2(state, db, None, None, content=content, registry=None)
 
@@ -783,7 +783,7 @@ def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path
         monkeypatch.setattr(
             decree_mod, "extract_scores_by_modules_with_agno",
             lambda *a, **k: ({"character_status_changes": [
-                {"name": "查无此人子", "status": "dead", "reason": "测试"}]}, "out", "in"))
+                {"origin_ref": "盘面自发", "name": "查无此人子", "status": "dead", "reason": "测试"}]}, "out", "in"))
 
         sess.resolve_turn()
 

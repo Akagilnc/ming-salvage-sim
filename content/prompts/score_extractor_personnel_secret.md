@@ -2,6 +2,8 @@
 
 按 shared 的「抽取流程」五步走。本档房在各步的重点：
 
+本档房同样受 shared 的 canonical 来源总契约约束；不得输出无 `来源引用` 的 durable 条目。财政三段虽非本档房所有权，也不得代写或绕过其逐项来源要求。
+
 - **第 1 步（贴标签）**：`court_roster.status` 已是下狱/罢黜/流放/致仕/已故者，本{{TURN_UNIT}}邸报再提即背景复述，不重复写 `人物变更`；只有状态升级（dismissed→imprisoned→dead 等）才写。
 - **第 2 步（列候选）**：只列 `人物变更`/`new_issues`（仅经常性密令拨款承诺）/`密令副作用`/`密令结案`/`dossier_progress_reports`/`崇祯结局`，其余字段不碰。罢官清党的派系影响交内政档房。
 - **第 3 步（核契约）**：所有朝臣任免、去职、易主、后宫册封、行止去向、人物忠诚软判都走 `人物变更`；`动作`/`status`/`new_power`/`office`/`location`/`transit_to` 取受控枚举与合法 id 集；密令编号只取 `secret_orders` 两组（`在办`/`待核议`）中真实密令条目的 `id`；`entry_kind:"due_commitment"` 是到期待裁承诺，不是密令，不能写 `密令结案`；`崇祯结局` 非明写退位/身死一律 `null`。
@@ -80,7 +82,7 @@
 
 - 诏书、承办或邸报明确改变某人在朝廷眼中的忠诚倾向，但不是任免/处置/易主/行止时，写 `人物变更` 的 `评定`。
 - 字段：`name`、`动作:"评定"`、`loyalty`、`reason`。`loyalty` 是增量 integer，正为转向朝廷，负为离心；不要填新值。
-- 例：奉旨安抚毛文龙，裁判判断其观望稍解，可写 `{"name":"毛文龙","动作":"评定","loyalty":8,"reason":"奉旨安抚，软判其观望稍解"}`。
+- 例：input 已列出并颁布案卷 `dossier:17`，奉旨安抚毛文龙后裁判判断其观望稍解，可写 `{"name":"毛文龙","动作":"评定","loyalty":8,"reason":"奉旨安抚，软判其观望稍解","来源引用":"dossier:17"}`。
 - 一次性赏赐/抚恤若只造成当月态度变化，只写本项；是否另立持续承诺 issue 由局势档房按“是否多回合承诺”判断。
 
 ## 密令
@@ -120,17 +122,17 @@
 
 ## 输出 JSON
 
-六个字段必须出现，列表字段无内容填 `[]`，`崇祯结局` 无内容填 `null`：
+六个字段必须出现，列表字段无内容填 `[]`，`崇祯结局` 无内容填 `null`。以下完整示例的 input 已列出并颁布案卷 `dossier:17`（册封田氏、安抚毛文龙）；由该旨意产生的人物效果必须回指此案卷：
 
 ```json
 {
   "人物变更": [
-    {"name": "孙传庭", "动作": "任命", "office": "陕西总督", "office_type": "督抚", "reason": "陕西事急"},
-    {"name": "魏忠贤", "动作": "处置", "status": "exiled", "reason": "发配凤阳"},
-    {"name": "祖大寿", "动作": "易主", "new_power": "houjin", "方式": "被俘而降", "反噬": {}, "reason": "大凌河降清"},
-    {"name": "田氏", "动作": "册封", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封"},
-    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽"},
-    {"name": "毛文龙", "动作": "评定", "loyalty": 8, "reason": "奉旨安抚，软判其观望稍解"}
+    {"name": "孙传庭", "动作": "任命", "office": "陕西总督", "office_type": "督抚", "reason": "陕西事急", "来源引用": "盘面自发"},
+    {"name": "魏忠贤", "动作": "处置", "status": "exiled", "reason": "发配凤阳", "来源引用": "盘面自发"},
+    {"name": "祖大寿", "动作": "易主", "new_power": "houjin", "方式": "被俘而降", "反噬": {}, "reason": "大凌河降清", "来源引用": "盘面自发"},
+    {"name": "田氏", "动作": "册封", "office": "贵妃", "office_type": "后宫", "reason": "诏书明文册封", "来源引用": "dossier:17"},
+    {"name": "袁崇焕", "动作": "行止", "transit_to": "liaodong", "reason": "启程赴辽", "来源引用": "盘面自发"},
+    {"name": "毛文龙", "动作": "评定", "loyalty": 8, "reason": "奉旨安抚，软判其观望稍解", "来源引用": "dossier:17"}
   ],
   "new_issues": [
     {"origin_kind": "decree", "origin_ref": "secret_order:5", "kind": "initiative", "title": "内库月拨安抚诸将", "ongoing_effects": {"economy": [{"account": "内库", "delta": -20, "category": "安抚诸将", "reason": "密令每月拨给诸将"}]}, "commitment_kind": "until_stop"}

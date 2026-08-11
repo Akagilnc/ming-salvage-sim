@@ -10,6 +10,15 @@ from ming_sim.issues import (
 from ming_sim.simulation import _extractor_context_payload, build_simulator_payload
 
 
+def _promulgated_commitment_origin(db, state, token: str) -> str:
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text=f"测试承诺：{token}",
+        target_kind="issue", target_id=token, payload={"token": token},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
+
 def _army_arrears(db, army_id: str) -> int:
     row = db.conn.execute("SELECT arrears FROM armies WHERE id=?", (army_id,)).fetchone()
     assert row is not None
@@ -83,7 +92,7 @@ def test_created_future_limited_duration_commitment_applies_first_month(game, mo
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:future-monthly-authority",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "future-monthly-authority"),
                     "kind": "initiative",
                     "title": "连续两月宣示皇威",
                     "stage_text": "连续两月遣使宣示皇威。",
@@ -1109,7 +1118,7 @@ def test_commitment_missing_purpose_still_routes_arrears_budget(game):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:missing-purpose",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "missing-purpose"),
                     "kind": "initiative",
                     "title": "每月补关宁欠饷直到补齐",
                     "ongoing_effects": {
@@ -1354,7 +1363,7 @@ def test_end_turn_without_ongoing_is_not_expired_by_settlement_tick(game):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:future-review",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "future-review"),
                     "kind": "initiative",
                     "title": "三月后复试",
                     "ongoing_effects": {},

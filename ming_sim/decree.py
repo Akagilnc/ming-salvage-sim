@@ -32,6 +32,7 @@ from ming_sim.db import GameDB
 from ming_sim.error_pack import (
     _next_attempt,
     clear_for_resimulation,
+    complete_error_packs_for_ready,
     rejections_jsonl_path,
     settlement_abort_message,
     write_error_pack,
@@ -830,15 +831,16 @@ def resolve_settling_recovery(
             content=content, registry=registry, _emit=_emit, source=source,
         )
     except SettlementAbort as abort_exc:
-        # 重放炸 = 值级毒 delta（shape 门挡不住）。不清 context 的话每次重试同样重放
-        # 同样炸=永久软死锁（ADR 决定 6 预言）；原 delta 已在错误包留档不丢证据，
-        # 降级让下次重试自然走重新推演（决定 6 逃生口在此接线，cmr S7 r2/r3）。
-        # 逃生口自身炸不得顶替 SettlementAbort——terminal 只接它，顶替=玩家指引丢失
-        # （cmr S7 r4，与本文件链式惯例一致）。
-        try:
-            clear_for_resimulation(db, before_turn)
-        except Exception as clear_exc:
-            raise abort_exc from clear_exc
+        # First failure keeps the ready context for an ordinary atomic retry.
+        # A repeated failure of that same ready payload may downgrade only after
+        # both attempts have produced ADR0008 error packs.  If pack creation
+        # failed, no matching directories exist and the evidence is preserved.
+        packed_attempts = complete_error_packs_for_ready(db.path, before_turn, extracted)
+        if len(packed_attempts) >= 2:
+            try:
+                clear_for_resimulation(db, before_turn)
+            except Exception as clear_exc:
+                raise abort_exc from clear_exc
         raise
     return ResolveResult(awaiting=False, report=report)
 

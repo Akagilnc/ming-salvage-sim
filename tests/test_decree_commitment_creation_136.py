@@ -9,6 +9,19 @@ from ming_sim.simulation import _extractor_context_payload
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _promulgated_commitment_origin(db, state, token: str) -> str:
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text=f"测试承诺：{token}",
+        target_kind="issue",
+        target_id=token,
+        payload={"token": token},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
+
 def _issue_by_title(db, title: str):
     return db.conn.execute("SELECT * FROM issues WHERE title=?", (title,)).fetchone()
 
@@ -25,7 +38,7 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:pay-guanning-arrears",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-guanning-arrears"),
                     "kind": "initiative",
                     "title": "每月补关宁军饷直到补齐",
                     "bar_value": 20,
@@ -56,7 +69,8 @@ def test_until_stop_commitment_issue_is_created_with_carrier_fields(game, monkey
     row = _issue_by_title(db, "每月补关宁军饷直到补齐")
     assert row is not None
     assert row["origin_kind"] == "decree"
-    assert row["origin_ref"] == "decree:turn-1:pay-guanning-arrears"
+    assert row["origin_ref"].startswith("dossier:")
+    assert db.dossier_authorizes_effects(int(row["origin_ref"].split(":", 1)[1]))
     assert row["kind"] == "initiative"
     assert row["commitment_kind"] == "until_stop"
     assert row["inertia"] == 0
@@ -90,7 +104,7 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
                     "kind": "initiative",
                     "title": "每月拨西学经费",
                     "stage_text": "太仓每月拨银五十万两办西学。",
@@ -115,6 +129,7 @@ def test_decree_commitment_dedups_same_batch_fiscal_create_carrier(game, monkeyp
                     "init_value": 50,
                     "display": "西学经费",
                     "reason": "同批 extractor 误产的重复月支",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -146,7 +161,7 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
                     "kind": "initiative",
                     "title": "每月拨西学经费",
                     "stage_text": "太仓每月拨银五十万两办西学。",
@@ -168,6 +183,7 @@ def test_decree_commitment_does_not_dedup_same_name_income_fiscal_create(game, m
                     "init_value": 50,
                     "display": "西学经费",
                     "reason": "新设西学专项捐输（收入）",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -194,7 +210,7 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
                     "kind": "initiative",
                     "title": "每月拨西学经费",
                     "stage_text": "太仓每月拨银五十万两办西学。",
@@ -220,6 +236,7 @@ def test_decree_commitment_same_account_alias_miss_emits_residual_signal(game, m
                     "init_value": 50,
                     "display": "徐光启三务公费",
                     "reason": "月支",
+                    "origin_ref": "盘面自发",
                 }
             ],
         },
@@ -252,7 +269,7 @@ def test_decree_commitment_unrelated_account_no_residual_signal(game, monkeypatc
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:xixue-monthly",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "xixue-monthly"),
                     "kind": "initiative",
                     "title": "每月拨西学经费",
                     "stage_text": "太仓每月拨银五十万两办西学。",
@@ -456,7 +473,7 @@ def test_future_one_shot_commitment_issue_is_created_with_deadline_only(game, mo
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:sunchengzong-review",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "sunchengzong-review"),
                     "kind": "initiative",
                     "title": "三月后复试孙承宗",
                     "stage_text": "孙承宗暂听候政，三月后复试军国大计。",
@@ -494,7 +511,7 @@ def test_open_ended_ongoing_commitment_issue_is_created_with_explicit_marker(gam
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:open-ended-appeasement",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "open-ended-appeasement"),
                     "kind": "initiative",
                     "title": "长期安抚毛文龙",
                     "stage_text": "遣臣常驻皮岛安抚，未设硬时限。",
@@ -712,7 +729,7 @@ def test_until_stop_commitment_supports_character_loyalty_condition(game, monkey
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:appease-mao",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "appease-mao"),
                     "kind": "initiative",
                     "title": "安抚毛文龙直到效顺",
                     "stage_text": "遣臣赴皮岛安抚",
@@ -964,7 +981,7 @@ def test_until_stop_commitment_rejects_direct_resolved_close(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:pay-liao-close-guard",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-close-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防误结案",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -1003,7 +1020,7 @@ def test_until_stop_commitment_rejects_direct_failed_close_without_effects(game,
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:pay-liao-fail-guard",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-fail-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防失败误结案",
                     "ongoing_effects": {"economy": [{"account": "国库", "delta": -50, "reason": "每月补饷"}]},
@@ -1047,7 +1064,7 @@ def test_until_stop_commitment_advance_to_full_stays_active(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:pay-liao-advance-guard",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-advance-guard"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐防推进误结案",
                     "bar_value": 90,
@@ -1157,7 +1174,7 @@ def test_commitment_skips_cli_resolve_effect_enrich(game, monkeypatch):
             "new_issues": [
                 {
                     "origin_kind": "decree",
-                    "origin_ref": "decree:turn-1:pay-liao-arrears",
+                    "origin_ref": _promulgated_commitment_origin(db, state, "pay-liao-arrears"),
                     "kind": "initiative",
                     "title": "每月补辽饷直到补齐",
                     "ongoing_effects": {
@@ -1193,6 +1210,7 @@ def test_one_shot_appeasement_economy_move_does_not_create_commitment_issue(game
                     "delta": -20,
                     "category": "一次性赏赐",
                     "reason": "赏毛文龙银二十万安其心",
+                    "origin_ref": "盘面自发",
                 }
             ]
         },

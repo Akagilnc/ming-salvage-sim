@@ -54,6 +54,8 @@ from ming_sim.relations import (
 from ming_sim.strict_types import strict_int, validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
+CURRENT_RESOLVE_CONTRACT_VERSION = 1
+
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
 # create_armies_from_extraction 的内循环每项重算同一常量集合，cmr PR2 R1 gemini perf）。
 _REGION_DIRECT_TUPLE = REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS + REGION_TEXT_FIELDS
@@ -843,6 +845,7 @@ class GameDB:
                 derived_from TEXT NOT NULL DEFAULT '',
                 normalized TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT '',
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(person_name) REFERENCES characters(name)
             );
@@ -883,6 +886,7 @@ class GameDB:
                 new_value TEXT NOT NULL,
                 delta INTEGER,
                 reason TEXT NOT NULL,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(power_id) REFERENCES powers(id)
             );
@@ -940,6 +944,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(region_id) REFERENCES regions(id)
             );
@@ -991,6 +996,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(army_id) REFERENCES armies(id)
             );
@@ -1027,6 +1033,7 @@ class GameDB:
                 event_id TEXT,
                 edict_id INTEGER,
                 actor TEXT,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1055,6 +1062,7 @@ class GameDB:
                 target_kind TEXT,
                 target_id TEXT,
                 dossier_id INTEGER,
+                origin_ref TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(account) REFERENCES economy_accounts(account)
             );
@@ -1137,6 +1145,7 @@ class GameDB:
                 simulator_payload_json TEXT NOT NULL DEFAULT '{}',
                 secret_orders_json TEXT NOT NULL DEFAULT '[]',
                 relevant_memories_json TEXT NOT NULL DEFAULT '[]',
+                resolve_contract_version INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -1454,6 +1463,49 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_economy_ledger_turn
             ON economy_ledger(turn, account);
+
+            CREATE TABLE IF NOT EXISTS fiscal_config_tombstones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                removed_turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                removed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_tombstones_origin
+            ON fiscal_config_tombstones(origin_ref, removed_turn);
+
+            CREATE TABLE IF NOT EXISTS fiscal_config_creations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                value INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_creations_origin
+            ON fiscal_config_creations(origin_ref, turn, id);
+
+            CREATE TABLE IF NOT EXISTS fiscal_config_changes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL DEFAULT 0,
+                key TEXT NOT NULL,
+                old_value INTEGER NOT NULL,
+                new_value INTEGER NOT NULL,
+                delta INTEGER NOT NULL,
+                origin_ref TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fiscal_config_changes_origin
+            ON fiscal_config_changes(origin_ref, turn, id);
 
             CREATE TABLE IF NOT EXISTS fiscal_config (
                 key   TEXT PRIMARY KEY,
@@ -1922,6 +1974,22 @@ class GameDB:
         self.ensure_column("economy_ledger", "target_kind", "TEXT")
         self.ensure_column("economy_ledger", "target_id", "TEXT")
         self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
+        self.ensure_column(
+            "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
+        )
+        # Rolling upgrades may already have the column while interrupted/older
+        # migrations left individual rows blank.  Re-scan idempotently; only a
+        # real dossier is authoritative and an existing origin is never replaced.
+        self.conn.execute(
+            """UPDATE economy_ledger
+               SET origin_ref='dossier:' || dossier_id
+               WHERE origin_ref=''
+                 AND dossier_id > 0
+                 AND EXISTS (SELECT 1 FROM decree_dossiers d WHERE d.id=economy_ledger.dossier_id)"""
+        )
+        self.ensure_column("fiscal_config", "origin_ref", "TEXT NOT NULL DEFAULT ''")
+        for table in ("region_logs", "army_logs", "power_logs", "person_logs", "building_logs"):
+            self.ensure_column(table, "origin_ref", "TEXT NOT NULL DEFAULT ''")
         # 开局负面帝国修正：clear_gate(机器消除条件)、legacy_key(对应 opening_legacies.key，开局修正去重用)
         self.ensure_column("legacies", "clear_gate", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("legacies", "legacy_key", "TEXT NOT NULL DEFAULT ''")
@@ -1949,6 +2017,8 @@ class GameDB:
         # 判别位：1=extractor 真产出过（'{}' 即真空 delta），0=占位（phase1 未跑/失败未存）。
         # 没有它 '{}' 三义不可分，恢复入口会把占位当真 delta 重放（cmr S2+S3 F1）。
         self.ensure_column("pending_resolve_context", "extracted_ready", "INTEGER NOT NULL DEFAULT 0")
+        # ready replay 契约版本：升级前在途行缺列后取 0，仅重推演一次；本版 ready 写 1。
+        self.ensure_column("pending_resolve_context", "resolve_contract_version", "INTEGER NOT NULL DEFAULT 0")
         # 拒收 provenance source（#144 / ADR 0008 决定 5）：崩溃恢复重放须用原始来源，否则玩家
         # 来源(player_decree/hitl)的拒收被恢复路记成 system_simulation、静默不提示。老档缺省
         # 'system_simulation'（与原 resolve_settling_recovery 硬编值一致，行为不变）。
@@ -2285,6 +2355,8 @@ class GameDB:
         display: str,
         init_value: int,
         note: str = "",
+        origin_ref: str = "",
+        turn: int = 0,
         commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
@@ -2315,15 +2387,23 @@ class GameDB:
         ).fetchone()[0]
         self.conn.execute(
             "INSERT INTO fiscal_config "
-            "(key, value, kind, budget_role, account, direction, display, sort_order, note) "
-            "VALUES (?, ?, 'base', 'fixed', ?, ?, ?, ?, ?)",
-            (base_key, max(0, init_value), account, direction, display, sort_order, note),
+            "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
+            "VALUES (?, ?, 'base', 'fixed', ?, ?, ?, ?, ?, ?)",
+            (base_key, max(0, init_value), account, direction, display, sort_order, note, origin_ref),
         )
         self.conn.execute(
             "INSERT INTO fiscal_config "
-            "(key, value, kind, budget_role, account, direction, display, sort_order, note) "
-            "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?)",
-            (rate_key, account, direction, display, sort_order, f"{display}实收率%"),
+            "(key, value, kind, budget_role, account, direction, display, sort_order, note, origin_ref) "
+            "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?, ?)",
+            (rate_key, account, direction, display, sort_order, f"{display}实收率%", origin_ref),
+        )
+        self.conn.executemany(
+            "INSERT INTO fiscal_config_creations "
+            "(turn, key, value, kind, origin_ref, reason) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240]),
+                (int(turn), rate_key, 100, "rate", origin_ref, note[:240]),
+            ],
         )
         if commit:
             self.conn.commit()
@@ -2518,7 +2598,10 @@ class GameDB:
             self.conn.commit()
         return touched
 
-    def remove_fiscal_item(self, key: str, commit: bool = True) -> Optional[str]:
+    def remove_fiscal_item(
+        self, key: str, commit: bool = True, *, origin_ref: str = "",
+        reason: str = "", turn: int = 0,
+    ) -> Optional[str]:
         """彻底裁撤一个月固定收支项（罢税/裁俸）：删 base+rate 两行。
 
         完全放开——含 dynamic（田赋/辽饷/盐税/商税/皇庄），后果玩家自负。
@@ -2546,6 +2629,16 @@ class GameDB:
         ).fetchone()
         if exists is None:
             return None
+        # The live catalogue cannot retain provenance after DELETE.  Preserve the
+        # removed rows in a narrow append-only audit so origin -> removal is a
+        # single indexed lookup rather than an inference from unrelated logs.
+        self.conn.execute(
+            """INSERT INTO fiscal_config_tombstones
+               (removed_turn, key, value, kind, origin_ref, reason)
+               SELECT ?, key, value, kind, ?, ? FROM fiscal_config
+               WHERE key IN (?, ?)""",
+            (int(turn), origin_ref, reason[:240], base_key, rate_key),
+        )
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
         )
@@ -3628,6 +3721,8 @@ class GameDB:
         raw_changes: Dict[str, object],
         reason: str,
         changes: List[Dict[str, object]],
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> None:
         normalized = {
             ARMY_FIELD_ALIASES.get(str(k).strip(), str(k).strip()): v
@@ -3727,6 +3822,13 @@ class GameDB:
         changed_fields = [field for field, new in new_values.items() if old_values[field] != new]
         if not changed_fields:
             return
+        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+        if origin_error:
+            changes.append({
+                "army": row["name"], "field": "pay_source", **origin_error,
+                "item": {"army_id": army_id, "changes": raw_changes},
+            })
+            return
         wrote_owner_transfer_writeoff = (
             str(old_values["owner_power"]) == "ming"
             and owner_power != "ming"
@@ -3737,14 +3839,14 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, army_id,
                     str(old_values["arrears"]), -float(old_values["arrears"]),
                     f"owner易主核销：{reason}",
-                    event.id, edict_id, actor,
+                    event.id, edict_id, actor, origin_ref,
                 ),
             )
             changed_fields = [field for field in changed_fields if field != "arrears"]
@@ -3770,13 +3872,13 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                 """,
                 (
                     state.turn, state.year, state.period, army_id, field,
                     str(old_values[field]), str(new_values[field]), reason,
-                    event.id, edict_id, actor,
+                    event.id, edict_id, actor, origin_ref,
                 ),
             )
             changes.append({
@@ -4710,6 +4812,7 @@ class GameDB:
         normalized: str | Dict[str, object] = "",
         source: str = "",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> None:
         if isinstance(normalized, dict):
             normalized_text = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -4718,8 +4821,8 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO person_logs
-            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (turn, year, period, person_name, action, payload_summary, derived_from, normalized, source, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.turn,
@@ -4731,6 +4834,7 @@ class GameDB:
                 str(derived_from or "")[:120],
                 normalized_text,  # 全量存：normalized 是结构化审计 JSON，[:500] 会从中间切断成不可解析（PR #106 CodeRabbit）
                 str(source or "")[:80],
+                str(origin_ref or ""),
             ),
         )
         if commit:
@@ -5480,11 +5584,33 @@ class GameDB:
             for row in rows
         )
 
+    def effect_origin_rejection(self, origin_ref: str) -> Dict[str, object] | None:
+        """Authorize extractor provenance immediately before a durable write."""
+        value = str(origin_ref or "").strip()
+        valid = value == "盘面自发"
+        if value.startswith("dossier:"):
+            try:
+                dossier_id = int(value.split(":", 1)[1])
+                valid = dossier_id > 0 and self.get_decree_dossier(dossier_id) is not None \
+                    and self.dossier_authorizes_effects(dossier_id)
+            except (OverflowError, TypeError, ValueError):
+                valid = False
+        if valid:
+            return None
+        return {
+            "rejected": True,
+            "category": "missing_origin_ref" if not value else "invalid_origin_ref",
+            "reason": ("效果缺 origin_ref；盘面自然演化须显式标为「盘面自发」"
+                       if not value else f"origin_ref 非法：{value}"),
+        }
+
     def apply_power_deltas(
         self,
         state: GameState,
         updates: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         allowed_fields = {"leverage", "military_strength", "supply"}
         changes: List[Dict[str, object]] = []
@@ -5522,7 +5648,7 @@ class GameDB:
             reason = (reason or "势力推演")[:120]
             for raw_field, value in raw_changes.items():
                 field = POWER_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field in ("reason", "last_action"):
+                if field in ("reason", "last_action", "origin_ref"):
                     # reason/last_action（含 近动 等别名）是本函数上方消费的 reason
                     # 载体键——跳过，不得记成 invalid_enum 假阳（cmr S1 r2）。
                     continue
@@ -5556,6 +5682,14 @@ class GameDB:
                 actual_delta = new_value - int(old_value)
                 if actual_delta == 0:
                     continue
+                origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                if origin_error:
+                    changes.append({
+                        "power": row["name"], "field": str(raw_field),
+                        **origin_error,
+                        "item": {"power_id": power_id, "field": str(raw_field), "value": value},
+                    })
+                    continue
                 stored_new: object = new_value
                 log_delta: int | None = actual_delta
                 self.conn.execute(
@@ -5565,8 +5699,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO power_logs
-                    (turn, year, period, power_id, field, old_value, new_value, delta, reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, power_id, field, old_value, new_value, delta, reason, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn,
@@ -5578,6 +5712,7 @@ class GameDB:
                         str(stored_new),
                         log_delta,
                         reason,
+                        origin_ref,
                     ),
                 )
                 changes.append({
@@ -5815,6 +5950,8 @@ class GameDB:
         actor: str,
         region_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for region_id, raw_changes in region_deltas.items():
@@ -5835,7 +5972,7 @@ class GameDB:
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             for raw_field, value in raw_changes.items():
                 field = REGION_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "origin_ref"):
                     continue
 
                 # ── 城防炮（城头红夷炮）：另挂 region.cannon，走 apply_region_cannon（clamp city_level×8），
@@ -5858,6 +5995,12 @@ class GameDB:
                         })
                         continue
                     old_value = int(row["cannon"])
+                    if cannon_delta != 0 and require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     new_value = self.apply_region_cannon(state, region_id, cannon_delta)
                     actual_delta = new_value - old_value
                     if actual_delta == 0:
@@ -5881,12 +6024,12 @@ class GameDB:
                             self.conn.execute(
                                 """
                                 INSERT INTO region_logs
-                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 (state.turn, state.year, state.period, region_id,
                                  field, str(old_value), str(new_value), 0,
-                                 _clamp_reason, event.id, edict_id, actor),
+                                 _clamp_reason, event.id, edict_id, actor, origin_ref),
                             )
                             changes.append({
                                 "region": row["name"], "field": field,
@@ -5898,12 +6041,12 @@ class GameDB:
                     self.conn.execute(
                         """
                         INSERT INTO region_logs
-                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (state.turn, state.year, state.period, region_id,
                          field, str(old_value), str(new_value), actual_delta,
-                         reason, event.id, edict_id, actor),
+                         reason, event.id, edict_id, actor, origin_ref),
                     )
                     changes.append({
                         "region": row["name"], "field": field,
@@ -5962,6 +6105,12 @@ class GameDB:
                     actual_delta = new_value - int(old_value)
                     if actual_delta == 0:
                         continue
+                    if require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     fiscal[field] = new_value
                     self.conn.execute(
                         "UPDATE regions SET fiscal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -5970,12 +6119,12 @@ class GameDB:
                     self.conn.execute(
                         """
                         INSERT INTO region_logs
-                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (state.turn, state.year, state.period, region_id,
                          field, str(old_value), str(new_value), actual_delta,
-                         reason, event.id, edict_id, actor),
+                         reason, event.id, edict_id, actor, origin_ref),
                     )
                     changes.append({
                         "region": row["name"], "field": field,
@@ -6032,8 +6181,20 @@ class GameDB:
                             continue
                     if not text_value or text_value == str(old_value):
                         continue
+                    if require_origin:
+                        origin_error = self.effect_origin_rejection(origin_ref)
+                        if origin_error:
+                            changes.append({"region": row["name"], "field": field, **origin_error,
+                                            "item": {"region_id": region_id, "field": field, "value": value}})
+                            continue
                     stored_new = text_value
                     log_delta = None
+                if require_origin and field not in REGION_TEXT_FIELDS:
+                    origin_error = self.effect_origin_rejection(origin_ref)
+                    if origin_error:
+                        changes.append({"region": row["name"], "field": field, **origin_error,
+                                        "item": {"region_id": region_id, "field": field, "value": value}})
+                        continue
                 self.conn.execute(
                     f"UPDATE regions SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, region_id),
@@ -6041,13 +6202,13 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO region_logs
-                    (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn, state.year, state.period, region_id,
                         field, str(old_value), str(stored_new), log_delta,
-                        reason, event.id, edict_id, actor,
+                        reason, event.id, edict_id, actor, origin_ref,
                     ),
                 )
                 changes.append(
@@ -6065,7 +6226,10 @@ class GameDB:
                     and str(stored_new) == "ming"
                     and str(old_value) != "ming"
                 ):
-                    extra = self._apply_on_restore(state, region_id, event, edict_id, actor, reason)
+                    extra = self._apply_on_restore(
+                        state, region_id, event, edict_id, actor, reason,
+                        origin_ref=origin_ref,
+                    )
                     changes.extend(extra)
         if commit:
             self.conn.commit()
@@ -6079,6 +6243,7 @@ class GameDB:
         edict_id: int | None,
         actor: str,
         reason: str,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         """收复瞬间用 region.on_restore 覆盖主字段，记 region_logs。"""
         region_def = self.content.regions.get(region_id)
@@ -6104,11 +6269,11 @@ class GameDB:
                         continue
                     fiscal[sub_field] = new_sub
                     self.conn.execute(
-                        "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (state.turn, state.year, state.period, region_id,
                          sub_field, str(old_sub), str(new_sub), new_sub - int(old_sub),
-                         f"收复重置：{reason}", event.id, edict_id, actor),
+                         f"收复重置：{reason}", event.id, edict_id, actor, origin_ref),
                     )
                     out.append({
                         "region": row["name"], "field": sub_field,
@@ -6138,11 +6303,11 @@ class GameDB:
             )
             log_delta = (int(new_val) - int(old_val)) if raw_field in (REGION_SCORE_FIELDS + REGION_QUANTITY_FIELDS) else None
             self.conn.execute(
-                "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO region_logs (turn, year, period, region_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (state.turn, state.year, state.period, region_id,
                  raw_field, str(old_val), str(new_val), log_delta,
-                 f"收复重置：{reason}", event.id, edict_id, actor),
+                 f"收复重置：{reason}", event.id, edict_id, actor, origin_ref),
             )
             out.append({
                 "region": row["name"], "field": raw_field,
@@ -6375,6 +6540,8 @@ class GameDB:
         actor: str,
         army_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         changes: List[Dict[str, object]] = []
         for army_id, raw_changes in army_deltas.items():
@@ -6393,12 +6560,13 @@ class GameDB:
             reason = str(raw_changes.get("reason") or raw_changes.get("原因") or event.title).strip()[:80]
             if self.is_army_pay_source_cutover_enabled():
                 self._apply_army_pay_source_delta(
-                    state, event, edict_id, actor, row, raw_changes, reason, changes
+                    state, event, edict_id, actor, row, raw_changes, reason, changes,
+                    origin_ref=origin_ref, require_origin=require_origin,
                 )
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
             for raw_field, value in raw_changes.items():
                 field = ARMY_FIELD_ALIASES.get(str(raw_field).strip(), str(raw_field).strip())
-                if field == "reason":
+                if field in ("reason", "origin_ref"):
                     continue
                 if self.is_army_pay_source_cutover_enabled() and field in _ARMY_PAY_SOURCE_DELTA_FIELDS:
                     continue
@@ -6487,6 +6655,11 @@ class GameDB:
                         new_province = float(row["province_pay_arrears"] or 0) + province_delta
                         new_central = float(row["central_pay_arrears"] or 0) + central_delta
                         new_value = new_province + new_central
+                        origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                        if origin_error:
+                            changes.append({"army": row["name"], "field": field, **origin_error,
+                                            "item": {"army_id": army_id, "field": field, "value": value}})
+                            continue
                         self.conn.execute(
                             """
                             UPDATE armies
@@ -6499,13 +6672,13 @@ class GameDB:
                         self.conn.execute(
                             """
                             INSERT INTO army_logs
-                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                            VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?)
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                            VALUES (?, ?, ?, ?, 'arrears', ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 state.turn, state.year, state.period, army_id,
                                 str(old_value), str(new_value), delta,
-                                reason, event.id, edict_id, actor,
+                                reason, event.id, edict_id, actor, origin_ref,
                             ),
                         )
                         self._reconcile_army_pay_source_region_container(str(row["pay_source_region"] or ""))
@@ -6555,25 +6728,31 @@ class GameDB:
                     delta = int(value)
                     new_value = max(0, int(old_value) + delta)
                     actual_delta = new_value - int(old_value)
-                    if (
+                    will_write_off_arrears = (
                         self.is_army_pay_source_cutover_enabled()
                         and new_value == 0
                         and str(row["owner_power"]) == "ming"
                         and float(row["arrears"] or 0) > 1e-9
-                    ):
+                    )
+                    origin_error = self.effect_origin_rejection(origin_ref) if require_origin and (delta != 0 or will_write_off_arrears) else None
+                    if origin_error:
+                        changes.append({"army": row["name"], "field": field, **origin_error,
+                                        "item": {"army_id": army_id, "field": field, "value": value}})
+                        continue
+                    if will_write_off_arrears:
                         old_arrears = float(row["arrears"] or 0)
                         old_source = str(row["pay_source_region"] or "")
                         self.conn.execute(
                             """
                             INSERT INTO army_logs
-                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                            VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?)
+                            (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                            VALUES (?, ?, ?, ?, 'arrears', ?, '0.0', ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 state.turn, state.year, state.period, army_id,
                                 str(old_arrears), -old_arrears,
                                 f"兵力归零核销：{reason}",
-                                event.id, edict_id, actor,
+                                event.id, edict_id, actor, origin_ref,
                             ),
                         )
                         self.conn.execute(
@@ -6597,12 +6776,12 @@ class GameDB:
                             self.conn.execute(
                                 """
                                 INSERT INTO army_logs
-                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?)
+                                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                                VALUES (?, ?, ?, ?, 'manpower', ?, ?, 0, ?, ?, ?, ?, ?)
                                 """,
                                 (state.turn, state.year, state.period, army_id,
                                  str(old_value), str(new_value),
-                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor),
+                                 f"{reason}（请求 {delta:+d} 经 clamp 后无净变化）", event.id, edict_id, actor, origin_ref),
                             )
                         continue
                     stored_new = new_value
@@ -6618,6 +6797,11 @@ class GameDB:
                     # 分支处理=代码漏接(往 ARMY_*_FIELDS 加了字段却忘了 dispatch)。
                     # 按 ADR 0008 决定 1：代码 bug 响亮上抛触发回滚，不静默丢一个合法 delta。
                     raise RuntimeError(f"army_delta 合法字段 '{field}' 无落库分支（代码漏接）")
+                origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+                if origin_error:
+                    changes.append({"army": row["name"], "field": field, **origin_error,
+                                    "item": {"army_id": army_id, "field": field, "value": value}})
+                    continue
                 self.conn.execute(
                     f"UPDATE armies SET {field} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (stored_new, army_id),
@@ -6627,8 +6811,8 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO army_logs
-                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn,
@@ -6643,6 +6827,7 @@ class GameDB:
                         event.id,
                         edict_id,
                         actor,
+                        origin_ref,
                     ),
                 )
                 changes.append(
@@ -6666,6 +6851,8 @@ class GameDB:
         new_armies: List[Dict[str, object]],
         actor: str = "档房",
         commit: bool = True,
+        origin_ref: str = "",
+        require_origin: bool = False,
     ) -> List[Dict[str, object]]:
         """据 extractor 输出建新军队。同 id/name 已存在 → 把 manpower 当扩军增量。owner_power 必须是已知 power。"""
         valid_powers = {r["id"] for r in self.conn.execute("SELECT id FROM powers").fetchall()}
@@ -6735,15 +6922,18 @@ class GameDB:
                     continue
                 reason = str(item.get("reason") or item.get("status") or "扩军")[:80]
                 pseudo_event = type("E", (), {"id": "season", "title": reason})()
-                self.apply_army_deltas(
+                merge_results = self.apply_army_deltas(
                     state,
                     pseudo_event,
                     None,
                     actor,
                     {existing["id"]: {"manpower": delta, "reason": reason}},
-                    commit=False,
+                    commit=False, origin_ref=origin_ref, require_origin=require_origin,
                 )
-                created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
+                if any(result.get("rejected") for result in merge_results):
+                    created.extend(result for result in merge_results if result.get("rejected"))
+                else:
+                    created.append({"army": existing["name"], "manpower_added": delta, "merged_into_existing": True})
                 continue
             # 必填字段：manpower 缺/非法 = LLM 脏数据,逐项拒收留痕(invalid_enum),不再 raise
             # 崩整月(ADR 0008 决定 1);同信封好军照建。bool/float 显式拒(对称 S1)。
@@ -6852,6 +7042,10 @@ class GameDB:
                         "item": raw,
                     })
                     continue
+            origin_error = self.effect_origin_rejection(origin_ref) if require_origin else None
+            if origin_error:
+                created.append({"id": aid, **origin_error, "item": raw})
+                continue
             commander = str(item.get("commander") or "")
             row = (
                 aid,
@@ -6906,10 +7100,10 @@ class GameDB:
             self.conn.execute(
                 """
                 INSERT INTO army_logs
-                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                VALUES (?, ?, ?, ?, 'created', '', ?, ?, ?, 'season', NULL, ?)
+                (turn, year, period, army_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                VALUES (?, ?, ?, ?, 'created', '', ?, ?, ?, 'season', NULL, ?, ?)
                 """,
-                (state.turn, state.year, state.period, aid, str(manpower), manpower, reason, actor),
+                (state.turn, state.year, state.period, aid, str(manpower), manpower, reason, actor, origin_ref),
             )
             created.append({
                 "army": name,
@@ -6941,6 +7135,7 @@ class GameDB:
         status: str = "",
         origin: str = "decree",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> str:
         """运行时新立建筑（玩家诏书）。category / output_metric 走白名单硬校验，违规 ValueError。"""
         if category not in BUILDING_CATEGORIES:
@@ -6983,10 +7178,10 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor)
-            VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房')
+            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
+            VALUES (?, ?, ?, ?, 'create', '', ?, NULL, ?, '档房', ?)
             """,
-            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑"),
+            (state.turn, state.year, state.period, building_id, name.strip()[:60], "诏书新立建筑", origin_ref),
         )
         if commit:
             self.conn.commit()
@@ -6998,6 +7193,7 @@ class GameDB:
         building_id: str,
         reason: str = "",
         commit: bool = True,
+        origin_ref: str = "",
     ) -> bool:
         """拆除/废止建筑（issue 失败或撤销结案）。返回是否真删了一行。"""
         row = self.conn.execute("SELECT name FROM buildings WHERE id = ?", (building_id,)).fetchone()
@@ -7006,11 +7202,11 @@ class GameDB:
         self.conn.execute(
             """
             INSERT INTO building_logs
-            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor)
-            VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房')
+            (turn, year, period, building_id, field, old_value, new_value, delta, reason, actor, origin_ref)
+            VALUES (?, ?, ?, ?, 'remove', ?, '', NULL, ?, '档房', ?)
             """,
             (state.turn, state.year, state.period, building_id,
-             str(row["name"]), (reason or "建筑废止").strip()[:80]),
+             str(row["name"]), (reason or "建筑废止").strip()[:80], origin_ref),
         )
         self.conn.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
         if commit:
@@ -7025,6 +7221,7 @@ class GameDB:
         actor: str,
         building_deltas: Dict[str, Dict[str, object]],
         commit: bool = True,
+        origin_ref: str = "",
     ) -> List[Dict[str, object]]:
         """改既有建筑。仿 apply_army_deltas。供 issue effect 落地复用。"""
         changes: List[Dict[str, object]] = []
@@ -7088,13 +7285,13 @@ class GameDB:
                 self.conn.execute(
                     """
                     INSERT INTO building_logs
-                    (turn, year, period, building_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (turn, year, period, building_id, field, old_value, new_value, delta, reason, event_id, edict_id, actor, origin_ref)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         state.turn, state.year, state.period, building_id, field,
                         str(old_value), str(stored_new), log_delta, reason,
-                        event.id, edict_id, actor,
+                        event.id, edict_id, actor, origin_ref,
                     ),
                 )
                 changes.append({
@@ -10105,7 +10302,7 @@ class GameDB:
                 str(canonical_payload.get("reason") or text),
                 purpose=str(canonical_payload.get("purpose") or "") or None,
                 target_kind=canonical_target_kind, target_id=canonical_target_id,
-                dossier_id=dossier_id, commit=False,
+                origin_ref=f"dossier:{dossier_id}", commit=False,
             )
         if roster and action != "secret_order":
             self.register_character_knowledge_source(
@@ -10847,7 +11044,7 @@ class GameDB:
                     purpose=str(payload.get("purpose") or "") or None,
                     target_kind=str(payload.get("target_kind") or "") or None,
                     target_id=str(payload.get("target_id") or "") or None,
-                    dossier_id=int(dossier_id),
+                    origin_ref=f"dossier:{dossier_id}",
                     commit=False,
                 )
                 if actual != -amount:
@@ -12149,8 +12346,8 @@ class GameDB:
             """INSERT INTO pending_resolve_context
                (turn, decree_text, narrative, simulator_payload_json,
                 secret_orders_json, relevant_memories_json, extracted_delta_json,
-                extracted_ready, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_ready, resolve_contract_version, source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(turn) DO UPDATE SET
                    decree_text = excluded.decree_text,
                    narrative = excluded.narrative,
@@ -12159,6 +12356,7 @@ class GameDB:
                    relevant_memories_json = excluded.relevant_memories_json,
                    extracted_delta_json = excluded.extracted_delta_json,
                    extracted_ready = excluded.extracted_ready,
+                   resolve_contract_version = excluded.resolve_contract_version,
                    source = excluded.source""",
             (
                 int(turn), sanitize_sqlite_text(decree_text), sanitize_sqlite_text(narrative),
@@ -12169,6 +12367,7 @@ class GameDB:
                 safe_json_dumps(relevant_memories or [], ensure_ascii=False),
                 safe_json_dumps(extracted if extracted is not None else {}, ensure_ascii=False),
                 1 if extracted is not None else 0,
+                CURRENT_RESOLVE_CONTRACT_VERSION if extracted is not None else 0,
                 # source 显式归一为枚举「值」字符串：Provenance 是 (str, Enum)，str(member) 在多数
                 # Python 版本落 'Provenance.player_decree' 而非 'player_decree'——重抽时
                 # Provenance(...) 不匹配 → 静默退回 system_simulation 丢源（Sourcery #175 bug_risk）。
@@ -12183,7 +12382,7 @@ class GameDB:
         row = self.conn.execute(
             "SELECT decree_text, narrative, simulator_payload_json, "
             "secret_orders_json, relevant_memories_json, extracted_delta_json, "
-            "extracted_ready, source "
+            "extracted_ready, resolve_contract_version, source "
             "FROM pending_resolve_context WHERE turn = ?",
             (int(turn),),
         ).fetchone()
@@ -12217,6 +12416,7 @@ class GameDB:
             "secret_orders": _load(row["secret_orders_json"], {}, "secret_orders"),
             "relevant_memories": _load(row["relevant_memories_json"], [], "relevant_memories"),
             "extracted": _load_extracted(),
+            "resolve_contract_version": int(row["resolve_contract_version"] or 0),
             "source": row["source"] or "system_simulation",  # 拒收来源，恢复重放用（#144）
         }
 
@@ -13212,7 +13412,7 @@ class GameDB:
         purpose: str | None = None,
         target_kind: str | None = None,
         target_id: str | None = None,
-        dossier_id: int | None = None,
+        origin_ref: str = "",
         commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
@@ -13243,22 +13443,55 @@ class GameDB:
             """
             INSERT INTO economy_ledger
             (turn, year, period, account, delta, balance_after, category, reason,
-             event_id, edict_id, actor, purpose, target_kind, target_id,dossier_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, ?)
+             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, origin_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?)
             """,
             (state.turn, state.year, state.period, account, actual, after,
-             category, reason, purpose, target_kind, target_id, dossier_id),
+             category, reason, purpose, target_kind, target_id, origin_ref),
         )
         self.sync_economy_accounts(state)
         if commit:
             self.conn.commit()
         return actual
 
+    def record_fiscal_config_change(
+        self, *, turn: int, key: str, old_value: int, new_value: int,
+        origin_ref: str, reason: str = "",
+    ) -> None:
+        """Append immutable provenance for a fiscal value change.
+
+        The caller owns the surrounding transaction so the history row and live
+        configuration can never commit separately.
+        """
+        self.conn.execute(
+            """INSERT INTO fiscal_config_changes
+               (turn, key, old_value, new_value, delta, origin_ref, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (int(turn), key, int(old_value), int(new_value),
+             int(new_value) - int(old_value), origin_ref, reason[:240]),
+        )
+
+    def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
+        origin = f"dossier:{int(dossier_id)}"
+        rows: List[Dict[str, object]] = []
+        for effect_kind, table, order in (
+            ("create", "fiscal_config_creations", "id"),
+            ("change", "fiscal_config_changes", "id"),
+            ("remove", "fiscal_config_tombstones", "id"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT * FROM {table} WHERE origin_ref=? ORDER BY {order}", (origin,)
+            ).fetchall():
+                item = dict(row)
+                item["effect_kind"] = effect_kind
+                rows.append(item)
+        return rows
+
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         return [
             dict(row) for row in self.conn.execute(
-                "SELECT * FROM economy_ledger WHERE dossier_id=? ORDER BY id",
-                (int(dossier_id),),
+                "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
+                (f"dossier:{int(dossier_id)}",),
             ).fetchall()
         ]
 

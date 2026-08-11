@@ -36,14 +36,14 @@ def _appointment_to_person_change(
             "name": item.get("name", ""),
             ACTION_KEY: "册封",
             "office": item.get("office", ""),
-            **_copy_present(item, "office_type", "faction", "reason", "approved", "准许"),
+            **_copy_present(item, "office_type", "faction", "reason", "approved", "准许", "origin_ref"),
             "legacy_appointment": True,
         }, False
     return {
         "name": item.get("name", ""),
         ACTION_KEY: "任命",
         "office": item.get("office", ""),
-        **_copy_present(item, "office_type", "faction", "reason"),
+        **_copy_present(item, "office_type", "faction", "reason", "origin_ref"),
         "legacy_spillover": LEGACY_SPILLOVER,
     }, True
 
@@ -52,7 +52,7 @@ def _status_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
     return {
         "name": item.get("name", ""),
         ACTION_KEY: "处置",
-        **_copy_present(item, "status", "reason_code", "reason"),
+        **_copy_present(item, "status", "reason_code", "reason", "origin_ref"),
         "legacy_gate": True,
     }
 
@@ -64,7 +64,7 @@ def _power_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
         "new_power": item.get("new_power", ""),
         "方式": "不明",
         "反噬": {},
-        **_copy_present(item, "reason"),
+        **_copy_present(item, "reason", "origin_ref"),
         "legacy_partial": True,
     }
 
@@ -74,7 +74,7 @@ def _office_to_person_change(item: Mapping[str, object]) -> dict[str, object]:
         "name": item.get("name", ""),
         ACTION_KEY: "任命",
         "office": item.get("new_office", ""),
-        **_copy_present(item, "faction", "reason"),
+        **_copy_present(item, "faction", "reason", "origin_ref"),
     }
     if "new_office_type" in item:
         translated["office_type"] = item["new_office_type"]

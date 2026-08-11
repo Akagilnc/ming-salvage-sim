@@ -1558,7 +1558,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         '    "buildings": [{"action":"create","region_id":"省拼音码","name":"","category":"财政/军事/民生/科技/交通/内廷","output_metric":"国库/内库/民心/皇威/","output_amount":int}],\n'
         '    "new_armies": [{"id":"英文小写id","name":"军名","owner_power":"ming","manpower":兵额(整数,如18000),"pay_source_region":"饷源省region_id如shaanxi","province_pay_share":省份额0到1,"central_pay_share":中央份额0到1,"commander":"主将姓名或空","station":"驻地","troop_type":"步/骑/水/车营","火器":0到100整数(火器局/神机营/火器新军给高),"随军大炮":0到12整数门数(炮营/红夷炮新军给几门)}],   // 明军必须给饷源省+省/中央份额(和=1)，月饷总额由引擎按 manpower 派生，勿列饷额\n'
         '    "army_delta": {"既有军id":{"manpower":增兵整数,"火器":增量,"随军大炮":门数增量,"reason":""}},\n'
-        '    "character_status_changes": [{"name":"必须是确切人名","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
+        '    "人物变更": [{"name":"必须是确切人名","动作":"处置","status":"dead/exiled/imprisoned/dismissed/retired","reason":""}]\n'
         "  },\n"
         '  "ongoing_effects": {"economy": [{"account":"国库/内库","delta":负数月度开销,"category":"","reason":""}]},\n'
         '  "effect_on_fail": {"metrics": {"民心": 负int}}\n'
@@ -1567,7 +1567,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
         "- 营建/办厂/设局/筑堡/设仓/建坞/立学 → buildings.create（科技/军事厂局让推演认军备能力，别只给民心）\n"
         "- 练兵/募营/建新军 → new_armies（给合理兵额/主将/驻地；owner_power=\"ming\" 的普通明军必须给 pay_source_region + province_pay_share + central_pay_share，份额和=1；月饷总额由引擎按 manpower 派生）\n"
         "- 给既有军扩编/补员 → army_delta\n"
-        "- 暗杀/处决/罢黜/流放/下狱某个**确切人物**(含敌酋如皇太极) → character_status_changes(name 必须确切、status 取白名单)\n"
+        "- 暗杀/处决/罢黜/流放/下狱某个**确切人物**(含敌酋如皇太极) → 人物变更(name 必须确切、动作=处置、status 取白名单)\n"
         "- 整顿提威/安民/财政新政 → metrics / economy\n"
         "规则：① 数值朴素(个位到一二十/兵额按史实体量)；② 只有确需周期烧钱的实体才给 ongoing_effects.economy(负)，否则 {}；"
         "③ 不相关的类型留空，别硬塞；④ region_id 拼音码：京师=beizhili 陕西=shaanxi 辽东=liaodong 山东=shandong "
@@ -1604,6 +1604,7 @@ def enrich_initiative_effects(title: str, stage: str = "", llm_config: Any = Non
     for b in _bld:
         if isinstance(b, dict) and str(b.get("action") or "").lower() == "create" and not b.get("region_id"):
             b["region_id"] = "beizhili"
+
     return {
         "effect_on_resolve": resolve,
         "ongoing_effects": _d(norm.get("ongoing_effects")),
@@ -2134,6 +2135,11 @@ def _extract_secret_order(
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
+    finally:
+        # The confirmation future remains readable after shutdown.  Owning the
+        # executor here guarantees cleanup even if any later normalization raises.
+        if confirmation_pool is not None:
+            confirmation_pool.shutdown(wait=True)
     obj = _loads_lenient(raw) or {}
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
@@ -2224,8 +2230,6 @@ def _extract_secret_order(
         except Exception as exc:
             _log(f"案卷关联确认失败：{exc}")
             confirmed = set()
-        finally:
-            confirmation_pool.shutdown(wait=True)
         dossier_links = [
             item for identity, item in proposals.items() if identity in confirmed
         ]
