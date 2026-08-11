@@ -11,7 +11,8 @@ from ming_sim.session import GameSession
 def _rejected_verdict(dossier_id):
     return {
         "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices", "primary_opponents": ["东林"],
+        "blocked_layer": "six_offices",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
         "gatekeeper_id": None, "reason": "科臣封驳。",
         "affected_parties": [
             {"kind": "faction", "key": "东林", "severity": "不满"},
@@ -3200,19 +3201,36 @@ def test_complete_rejection_verdict_is_restoreable_audit_record(game):
         target_kind="issue", target_id="river-works",
     )
     verdict = _rejected_verdict(dossier_id)
+    verdict["gatekeeper_id"] = _active_minister(db)
+    verdict["criteria_snapshot"]["endorsement_entry_ids"] = [1]
     db.apply_dossier_verdicts(state, [verdict])
 
     restored = GameDB(db.path, content=content)
     try:
         row = restored.list_decree_dossier_decisions(dossier_id)[-1]
         assert row["primary_opponents"] == verdict["primary_opponents"]
-        assert row["gatekeeper_id"] is None
+        assert row["gatekeeper_id"] == verdict["gatekeeper_id"]
         assert row["criteria_snapshot"] == verdict["criteria_snapshot"]
         assert row["affected_parties"] == verdict["affected_parties"]
         assert row["midzhi_unpromulgatable"] is False
         assert restored.get_decree_dossier(dossier_id)["promulgation_reason"] == verdict["reason"]
     finally:
         restored.close()
+
+
+def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.pop("midzhi_unpromulgatable")
+
+    db.apply_dossier_verdicts(state, [verdict])
+
+    row = db.list_decree_dossier_decisions(dossier_id)[-1]
+    assert row["midzhi_unpromulgatable"] is False
 
 
 @pytest.mark.parametrize("missing", [
@@ -3231,7 +3249,9 @@ def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
 
 
 @pytest.mark.parametrize(("field", "bad_value"), [
-    ("primary_opponents", ["not-a-real-faction"]),
+    ("primary_opponents", [{"kind": "faction", "key": "not-a-real-faction"}]),
+    ("primary_opponents", [{"kind": "class", "key": "士绅"}]),
+    ("primary_opponents", [{"kind": "faction", "key": "东林", "score": 1}]),
     ("gatekeeper_id", "not-a-real-character"),
 ])
 def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_value):
@@ -3263,3 +3283,29 @@ def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_valu
     verdict["criteria_snapshot"][field] = bad_value
     with pytest.raises(ValueError, match="typed 判据快照"):
         db.apply_dossier_verdicts(state, [verdict])
+
+
+@pytest.mark.parametrize("contamination", [
+    {"primary_opponents": [{"kind": "faction", "key": 1}]},
+    {"primary_opponents": [{"kind": "faction", "key": 1.5}]},
+    {"primary_opponents": [{"kind": "faction", "key": True}]},
+    {"resistance_scores": [99.5]},
+    {"resistance_detail": {"score": 99.5}},
+    {"resistance_detail": {"nested": [{"blocked": True}]}},
+])
+def test_rejection_contract_rejects_numeric_contamination_without_history(
+    game, contamination,
+):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    verdict = _rejected_verdict(dossier_id)
+    verdict.update(contamination)
+
+    with pytest.raises(ValueError, match="打回判决缺少"):
+        db.apply_dossier_verdicts(state, [verdict])
+
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"

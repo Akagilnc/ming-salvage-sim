@@ -10796,7 +10796,7 @@ class GameDB:
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
         blocked_layer: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         commit: bool = True,
@@ -10975,7 +10975,7 @@ class GameDB:
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
         blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
@@ -11188,12 +11188,15 @@ class GameDB:
         ).fetchall()
         result = []
         for row in rows:
+            raw_value = row["verdict_json"]
             try:
-                value = json.loads(row["verdict_json"])
+                value = json.loads(raw_value)
                 if not isinstance(value, dict):
                     raise ValueError("待应用颁布判决须为对象")
             except ValueError as exc:
-                raise LLMContractError(f"待应用颁布判决读取失败：{exc}") from exc
+                raise LLMContractError(
+                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
+                ) from exc
             result.append(value)
         return result
 
@@ -11220,6 +11223,10 @@ class GameDB:
                         faction_names={
                             str(row["name"])
                             for row in self.conn.execute("SELECT name FROM factions")
+                        },
+                        class_names={
+                            str(row["name"])
+                            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
                         },
                         character_ids={
                             str(row["name"])

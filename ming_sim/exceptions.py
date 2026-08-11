@@ -24,7 +24,9 @@ class LLMUnavailable(Exception):
 
 
 class LLMContractError(Exception):
-    pass
+    def __init__(self, message: str, *, raw_value: object = None) -> None:
+        super().__init__(message)
+        self.raw_value = raw_value
 
 
 class SettlementAbort(Exception):
