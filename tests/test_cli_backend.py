@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -892,51 +890,15 @@ def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
     assert chunks == ["邸报", "增量", "到达"]
 
 
-def test_codex_stream_resolution_exhausts_deadline_without_spawn(monkeypatch):
-    """Executable resolution is part of the streaming deadline, not pre-work outside it."""
-    now = iter((10.0, 10.3))
-    spawned = []
-
-    monkeypatch.setattr(cb.time, "monotonic", lambda: next(now))
-    monkeypatch.setattr(
-        cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/usr/bin/codex",
-    )
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: spawned.append(a))
-
-    with pytest.raises(RuntimeError, match="超时"):
-        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
-    assert spawned == []
-
-
-def test_codex_stream_zero_timeout_does_not_spawn(monkeypatch):
-    spawned = []
-
-    monkeypatch.setattr(cb.time, "monotonic", lambda: 10.0)
-    monkeypatch.setattr(
-        cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/usr/bin/codex",
-    )
-    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: spawned.append(a))
-
-    with pytest.raises(RuntimeError, match="超时"):
-        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0))
-    assert spawned == []
-
-
-def test_codex_stream_watchdog_terminates_hung_process(monkeypatch):
-    """解析消耗部分预算后，watchdog 仍须在原绝对 deadline 温和解除阻塞。"""
+def test_codex_stream_watchdog_gracefully_terminates_hung_process(monkeypatch):
+    """The watchdog unblocks a hung stdout reader without SIGKILL escalation."""
     import threading as _t
 
     terminated = _t.Event()
-    reaped = _t.Event()
-    timer_budgets = []
-    real_timer = _t.Timer
-
-    def slow_resolve(name, configured, deadline=None):
-        time.sleep(0.05)
-        return "/usr/bin/codex"
 
     class _HangStdout:
         def __iter__(self):
+            terminated.wait(5.0)
             return iter(())
 
         def close(self):
@@ -945,8 +907,7 @@ def test_codex_stream_watchdog_terminates_hung_process(monkeypatch):
     class _Proc:
         class _Stdin:
             def write(self, text):
-                terminated.wait(5.0)
-                raise BrokenPipeError("terminated while writing")
+                pass
 
             def close(self):
                 pass
@@ -954,30 +915,24 @@ def test_codex_stream_watchdog_terminates_hung_process(monkeypatch):
         stdin = _Stdin()
         stdout = _HangStdout()
         stderr = None
-        returncode = None
+        returncode = 0
 
         def wait(self, timeout=None):
-            reaped.set()
             return ("", "")
 
         def terminate(self):
             terminated.set()
             self.returncode = -15
 
-    def recording_timer(interval, function):
-        timer_budgets.append(interval)
-        return real_timer(interval, function)
+        def kill(self):
+            raise AssertionError("SIGKILL escalation is forbidden")
 
-    monkeypatch.setattr(cb, "_resolve_cli_bin", slow_resolve)
     monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
-    monkeypatch.setattr(cb.threading, "Timer", recording_timer)
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
 
     with pytest.raises(RuntimeError, match="超时"):
-        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.15))
-    assert timer_budgets[0] < 0.13  # resolver 的耗时已从 watchdog 预算扣除
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
     assert terminated.is_set()
-    assert reaped.is_set()
 
 
 def test_codex_final_text_handles_item_completed_shape():
@@ -1014,7 +969,7 @@ def test_run_codex_accepts_config_model_and_timeout(monkeypatch):
 
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "gpt-configured"
-    assert 0 < captured["timeout"] <= 123
+    assert captured["timeout"] == 123
 
 
 def test_run_codex_reasoning_env_optional(monkeypatch):
@@ -1092,7 +1047,7 @@ def test_run_claude_accepts_config_model_and_timeout(monkeypatch):
 
     assert out == "臣领旨。"
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "claude-configured"
-    assert 0 < captured["timeout"] <= 234
+    assert captured["timeout"] == 234
 
 
 def test_run_claude_maps_reasoning_strength_to_thinking_tokens(monkeypatch):
@@ -1290,7 +1245,7 @@ def test_resolve_cli_bin_absolutizes_relative_result(monkeypatch):
 def test_run_codex_execs_resolved_abspath(monkeypatch):
     """_run_codex 用解析出的绝对路径当 argv[0]（修 GUI 启动找不到 codex）。"""
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/Users/x/.local/bin/codex")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/codex")
     captured = {}
 
     class _P:
@@ -1306,7 +1261,7 @@ def test_run_codex_execs_resolved_abspath(monkeypatch):
 
 def test_run_claude_execs_resolved_abspath(monkeypatch):
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/opt/homebrew/bin/claude")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/opt/homebrew/bin/claude")
     captured = {}
 
     class _P:
@@ -1321,7 +1276,7 @@ def test_run_claude_execs_resolved_abspath(monkeypatch):
 
 def test_run_agy_execs_resolved_abspath(monkeypatch):
     cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/Users/x/.local/bin/agy")
+    monkeypatch.setattr(cb, "_resolve_cli_bin", lambda name, configured: "/Users/x/.local/bin/agy")
     seen = {}
 
     def fake_run(cmd, **kw):
@@ -1332,32 +1287,6 @@ def test_run_agy_execs_resolved_abspath(monkeypatch):
     monkeypatch.setattr(cb.subprocess, "run", fake_run)
     cb._run_agy("p")
     assert seen["cmd"][0] == "/Users/x/.local/bin/agy"
-
-
-@pytest.mark.parametrize("runner", ["agy", "codex", "claude"])
-def test_runner_deadline_includes_slow_login_shell_resolution(monkeypatch, runner):
-    """真实 adapter 的唯一 deadline 封住 cache-miss 登录 shell，且到期后不 spawn runner。"""
-    cb._BIN_CACHE.clear()
-    monkeypatch.setattr(cb, "_DISCOVERED_LOGIN_PATH", None)
-    monkeypatch.setattr(cb.shutil, "which", lambda *args, **kwargs: None)
-    runner_spawns = []
-
-    def slow_login(cmd, **kwargs):
-        time.sleep(kwargs["timeout"])
-        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
-
-    def no_runner(cmd, **kwargs):
-        runner_spawns.append(cmd)
-        raise AssertionError("deadline 到期后不得启动 runner")
-
-    monkeypatch.setattr(cb, "_RAW_RUN", slow_login)
-    monkeypatch.setattr(cb.subprocess, "run", no_runner)
-    invoke = {"agy": cb._run_agy, "codex": cb._run_codex, "claude": cb._run_claude}[runner]
-    started = time.monotonic()
-    with pytest.raises(RuntimeError, match="超时"):
-        invoke("p", timeout=0.02)
-    assert time.monotonic() - started < 0.08
-    assert runner_spawns == []
 
 
 # ── extract_minister_actions：LLM 判会话动作（取代关键字白名单）──
@@ -1632,39 +1561,6 @@ def test_run_agy_all_timeout_raises(monkeypatch):
     monkeypatch.setattr(cb.subprocess, "run", fake)
     with pytest.raises(RuntimeError, match="warm\\+retry"):
         cb._run_agy("p")
-
-
-def test_run_agy_retries_share_one_deadline_including_keychain(monkeypatch):
-    clock = {"now": 10.0}
-    budgets = []
-
-    def monotonic():
-        return clock["now"]
-
-    def fake_run(cmd, **kw):
-        budgets.append((cmd[0], kw["timeout"]))
-        clock["now"] += 0.4
-        if cmd[0] == "security":
-            return _Proc()
-        return _Proc(stdout="Authentication required")
-
-    monkeypatch.setattr(cb.time, "monotonic", monotonic)
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
-    with pytest.raises(RuntimeError, match="整体期限"):
-        cb._run_agy("p", timeout=1.0)
-
-    assert budgets[0][0] == "security"
-    assert budgets[1][0].endswith("agy")
-    assert budgets[2][0] == "security"
-    assert budgets[0][1] == pytest.approx(1.0)
-    assert budgets[1][1] == pytest.approx(0.6)
-    assert budgets[2][1] == pytest.approx(0.2)
-
-
-def test_run_agy_zero_deadline_starts_no_warmup_or_attempt(monkeypatch):
-    monkeypatch.setattr(cb.subprocess, "run", lambda *a, **kw: pytest.fail("must not spawn"))
-    with pytest.raises(RuntimeError, match="整体期限"):
-        cb._run_agy("p", timeout=0)
 
 
 def test_run_agy_all_auth_fail_raises(monkeypatch):

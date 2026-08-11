@@ -6,6 +6,8 @@ import json
 import multiprocessing
 import os
 import signal
+import sys
+import threading
 import time
 from typing import Any, Callable, List
 
@@ -58,12 +60,14 @@ def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
                       llm_config: Any, timeout: float) -> None:
     """Own the adapter and every subprocess it starts in one cancellable process group."""
     try:
-        # The owner establishes and proves its group before the parent can release
-        # adapter work, so every subsequently spawned runner inherits this group.
-        os.setpgid(0, 0)
-        if os.getpgrp() != os.getpid():
-            raise RuntimeError("highlight judge worker has no private process group")
-        send.send(("ready", os.getpid()))
+        # POSIX descendants inherit a private process group. Windows has no setpgid;
+        # the spawned worker itself remains the supported cancellation boundary.
+        owns_group = sys.platform != "win32"
+        if owns_group:
+            os.setpgid(0, 0)
+            if os.getpgrp() != os.getpid():
+                raise RuntimeError("highlight judge worker has no private process group")
+        send.send(("ready", os.getpid(), owns_group))
         if send.recv() != ("run",):
             raise RuntimeError("highlight judge worker was not released")
         send.send(("result", True, invoke(reply, llm_config, timeout=timeout)))
@@ -74,17 +78,33 @@ def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
 
 
 def _cancel_owned_work(process: Any, owns_group: bool) -> None:
-    """SIGTERM the owned work tree; the caller always reaps the direct worker."""
+    """Gracefully cancel owned work without ever escalating to SIGKILL."""
     if not process.is_alive():
         return
     try:
         if owns_group:
             os.killpg(process.pid, signal.SIGTERM)
+        elif sys.platform == "win32":
+            process.terminate()
         else:
-            # Adapter work is never released until group ownership is confirmed.
             os.kill(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+
+def _reap_later(process: Any) -> None:
+    """Reap a SIGTERM-resistant worker off the latency-critical caller path."""
+    process.join()
+
+
+def _bounded_reap(process: Any, deadline: float) -> None:
+    process.join(max(0.0, deadline - time.monotonic()))
+    if process.is_alive():
+        tlog("[audience-highlights] 判官忽略温和终止；已脱离回话路径等待回收")
+        threading.Thread(
+            target=_reap_later, args=(process,), daemon=True,
+            name="audience-highlight-reaper",
+        ).start()
 
 
 def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
@@ -96,7 +116,7 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
     # Production uses spawn: forking the multi-threaded web process can inherit locked
     # provider/runtime state.  Injected test doubles may be local callables, so their
     # isolated test worker uses fork; they never initialize the real provider stack.
-    method = "spawn" if invoke is _DEFAULT_INVOKE else "fork"
+    method = "spawn" if sys.platform == "win32" or invoke is _DEFAULT_INVOKE else "fork"
     context = multiprocessing.get_context(method)
     receive, send = context.Pipe(duplex=True)
     process = context.Process(
@@ -123,7 +143,7 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
             if message[0] == "ready":
                 if message[1] != process.pid:
                     raise RuntimeError("highlight judge worker group identity mismatch")
-                owns_group = True
+                owns_group = bool(message[2])
                 receive.send(("run",))
                 continue
             if message[1]:
@@ -133,7 +153,7 @@ def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
         receive.close()
         if started:
             _cancel_owned_work(process, owns_group)
-            process.join()
+            _bounded_reap(process, time.monotonic() + reap_margin)
 
 
 def judge_highlights(

@@ -148,7 +148,7 @@ _DISCOVERED_LOGIN_PATH: Optional[str] = None  # 登录 shell PATH，懒发现一
 _RAW_RUN = subprocess.run
 
 
-def _login_shell_path(deadline: Optional[float] = None) -> Optional[str]:
+def _login_shell_path() -> Optional[str]:
     """问用户登录 shell 要真实 PATH（GUI/.app 不继承 shell PATH 的**最后**一级兜底）。
     用 sentinel 包裹 printf "$PATH"，正则只取 sentinel 之间的真实 PATH——rc 噪声行
     （含冒号/斜杠的告警）不会被误当 PATH，单目录 PATH（无分隔符）也不会被漏掉。
@@ -164,18 +164,13 @@ def _login_shell_path(deadline: Optional[float] = None) -> Optional[str]:
         # printenv 是外部命令，读到的是登录 shell 导出的 env PATH（恒冒号分隔）。
         # flag 分开传 -l -i -c：组合形式 -lic 在 fish 等 shell 报错（不支持组合单字符
         # 选项）；分开形式各 shell 通吃，仍由外层 try 兜底（gemini PR#115 high）。
-        timeout = 8.0 if deadline is None else deadline - time.monotonic()
-        if timeout <= 0:
-            raise TimeoutError("CLI executable resolution timed out")
         proc = _RAW_RUN(
             [shell, "-l", "-i", "-c", 'printf "<<<CMRPATH>>>"; printenv PATH; printf "<<<ENDPATH>>>"'],
-            capture_output=True, text=True, timeout=min(8.0, timeout),
+            capture_output=True, text=True, timeout=8,
         )
         m = re.search(r"<<<CMRPATH>>>(.*?)<<<ENDPATH>>>", proc.stdout or "", re.S)
         if m:
             discovered = m.group(1).strip()
-    except (TimeoutError, subprocess.TimeoutExpired):
-        raise TimeoutError("CLI executable resolution timed out") from None
     except Exception:
         discovered = ""
     _DISCOVERED_LOGIN_PATH = discovered
@@ -204,9 +199,7 @@ def _static_search_path() -> str:
     return _dedup_path(chunks)
 
 
-def _resolve_cli_bin(
-    name: str, configured: str, deadline: Optional[float] = None,
-) -> str:
+def _resolve_cli_bin(name: str, configured: str) -> str:
     """runner（agy/codex/claude）解析成可执行绝对路径，**命中才缓存**。分级兜底，
     登录 shell 是最后一级（仅前两级都 miss 才 spawn zsh）：
     1) 现有 PATH which（含 MING_SIM_*_BIN 给的绝对路径）。
@@ -216,13 +209,7 @@ def _resolve_cli_bin(
        binary 之后才装上时下次仍能重新解析（不被裸名负缓存毒住）。"""
     # 锁护缓存读改写：#83 并发首解时只让一个线程跑解析（含可能 spawn 登录 shell），余者待后命中
     # 缓存，免重复 spawn / 竞态写缓存。命中后是一次性开销，串行路径无竞争。
-    if deadline is None:
-        acquired = _BIN_CACHE_LOCK.acquire()
-    else:
-        acquired = _BIN_CACHE_LOCK.acquire(timeout=max(0.0, deadline - time.monotonic()))
-    if not acquired:
-        raise TimeoutError("CLI executable resolution timed out")
-    try:
+    with _BIN_CACHE_LOCK:
         cached = _BIN_CACHE.get(name)
         if cached:
             return cached
@@ -230,7 +217,7 @@ def _resolve_cli_bin(
         if not found:
             found = shutil.which(configured, path=_static_search_path())
         if not found:
-            login = _login_shell_path() if deadline is None else _login_shell_path(deadline)
+            login = _login_shell_path()
             if login:
                 found = shutil.which(configured, path=_dedup_path([_static_search_path(), login]))
         if found:
@@ -242,8 +229,6 @@ def _resolve_cli_bin(
             _BIN_CACHE[name] = found
             return found
         return configured
-    finally:
-        _BIN_CACHE_LOCK.release()
 
 
 _VERBOSE = os.environ.get("MING_SIM_LLM_DEBUG", "") not in ("", "0", "false")
@@ -317,42 +302,29 @@ def _trace(record: Dict[str, Any]) -> None:
         _log(f"trace 写盘失败：{exc}")
 
 
-def _warm_keychain(timeout: float = 5) -> None:
-    """暖 macOS keychain；调用方可把它限制在同一次 Agy 调用的剩余预算内。"""
-    if timeout <= 0:
-        return
+def _warm_keychain() -> None:
+    """暖 macOS keychain 路径，缓解 agy headless auth 的 1s race（见 wiki）。"""
     try:
         subprocess.run(
             ["security", "find-generic-password", "-s", "Antigravity Safe Storage"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=min(5, timeout),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
         )
     except Exception:
         pass
 
 
 def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
-    """调 agy -p --sandbox；warm 与全部 retry 共用一个端到端 deadline。"""
-    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
-    deadline = time.monotonic() + run_timeout
-    last = "agy timeout"
-    try:
-        executable = _resolve_cli_bin("agy", _AGY_BIN, deadline)
-    except TimeoutError:
-        raise RuntimeError("agy 调用超时") from None
+    """调 agy -p --sandbox，warm + retry。返回 (纯文本, 实际尝试次数)。"""
+    run_timeout = timeout or _AGY_TIMEOUT
+    last = ""
     for attempt in range(1, 5):  # 初试 1 + 最多 retry 3 = 4
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        _warm_keychain(remaining)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
+        _warm_keychain()
         try:
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
             # 安全审计(Sourcery):list-form argv、无 shell=True → 不经 shell 解析,无注入面。prompt 走 stdin。
             proc = subprocess.run(
-                [executable, "-p", "--sandbox"],
-                input=prompt, capture_output=True, text=True, timeout=remaining,
+                [_resolve_cli_bin("agy", _AGY_BIN), "-p", "--sandbox"],
+                input=prompt, capture_output=True, text=True, timeout=run_timeout,
                 cwd=_AGY_CWD,
             )
         except subprocess.TimeoutExpired:
@@ -372,7 +344,7 @@ def _run_agy(prompt: str, timeout: Optional[float] = None) -> Tuple[str, int]:
             continue
         _log(f"attempt {attempt}: ok（{len(out)} chars）")
         return out, attempt
-    raise RuntimeError(f"agy 调用失败（整体期限内 warm+retry 最多 4 次仍不成）：{last[:200]}")
+    raise RuntimeError(f"agy 调用失败（warm+retry×4 仍不成）：{last[:200]}")
 
 
 def _codex_reasoning_effort(reasoning_strength: Optional[str]) -> str:
@@ -395,26 +367,17 @@ def _run_codex(
     - 干净最终回话在 **stdout**，诊断/日志在 stderr —— 只取 stdout，绝不合并（合并会把
       "OpenAI Codex v…/tokens used" 等日志混进角色回话）。stdout 空时兜底从合并流剥壳。
     reasoning：默认不强加，尊重用户 ~/.codex/config.toml；设 MING_SIM_CODEX_REASONING 才传 -c。"""
-    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
-    deadline = time.monotonic() + run_timeout
-    try:
-        executable = _resolve_cli_bin("codex", _CODEX_BIN, deadline)
-    except TimeoutError:
-        raise RuntimeError("codex 调用超时") from None
-    cmd = [executable, "exec", "--model", (model or _CODEX_MODEL)]
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
     cmd += ["--ephemeral", "--skip-git-repo-check", "-"]
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("codex 调用超时")
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True,
-            timeout=remaining, cwd=_AGY_CWD,
+            cmd, input=prompt, capture_output=True, text=True, timeout=timeout or _AGY_TIMEOUT,
+            cwd=_AGY_CWD,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("codex 调用超时") from exc
@@ -433,9 +396,8 @@ def _codex_cmd(
     *,
     json_events: bool = False,
     reasoning_strength: Optional[str] = None,
-    deadline: Optional[float] = None,
 ) -> List[str]:
-    cmd = [_resolve_cli_bin("codex", _CODEX_BIN, deadline), "exec", "--model", (model or _CODEX_MODEL)]
+    cmd = [_resolve_cli_bin("codex", _CODEX_BIN), "exec", "--model", (model or _CODEX_MODEL)]
     reasoning = _codex_reasoning_effort(reasoning_strength)
     if reasoning:
         cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
@@ -489,15 +451,14 @@ def _codex_final_text(obj: object) -> str:
     return ""
 
 
+
 def _terminate_and_reap(proc: Any, timeout: float = 5.0) -> None:
     """Best-effort graceful subprocess shutdown; never escalate to SIGKILL."""
     try:
-        if getattr(proc, "returncode", None) is None:
-            proc.terminate()
+        proc.terminate()
         proc.wait(timeout=timeout)
-    except Exception as error:
-        _log(f"子进程温和终止/回收失败：{type(error).__name__}: {error}")
-
+    except Exception:
+        pass
 
 def _iter_codex_stream_chunks(
     prompt: str,
@@ -507,17 +468,8 @@ def _iter_codex_stream_chunks(
     reasoning_strength: Optional[str] = None,
 ) -> Iterator[str]:
     """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
-    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
-    deadline = time.monotonic() + run_timeout
-    try:
-        cmd = _codex_cmd(
-            model, json_events=True, reasoning_strength=reasoning_strength, deadline=deadline,
-        )
-    except TimeoutError:
-        raise RuntimeError("codex 流式调用超时") from None
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("codex 流式调用超时")
+    cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
+    run_timeout = timeout or _AGY_TIMEOUT
     try:
         proc = subprocess.Popen(
             cmd,
@@ -530,13 +482,11 @@ def _iter_codex_stream_chunks(
     except OSError as exc:
         raise RuntimeError(f"codex 流式调用启动失败：{exc}") from exc
 
-    # Popen 自身也属于同一个绝对期限；spawn 返回后必须重新扣除其耗时。
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        _terminate_and_reap(proc)
-        raise RuntimeError("codex 流式调用超时")
-
     assert proc.stdout is not None
+    if proc.stdin is not None:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+
     pieces: List[str] = []
     final_text = ""
     stderr = ""
@@ -555,21 +505,19 @@ def _iter_codex_stream_chunks(
                 pass
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-    # 看门狗：stdin 写入和 stdout 流式读取都可能阻塞。必须在二者之前启动，并使用 spawn
-    # 返回后按绝对 deadline 重算的预算，使温和终止覆盖同一次调用的全部阻塞点。
-    def _terminate_on_timeout() -> None:
+    stderr_thread.start()
+    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
+    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
+    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
+    def _kill_on_timeout() -> None:
         nonlocal timed_out
         timed_out = True
         _terminate_and_reap(proc)
 
-    watchdog = threading.Timer(remaining, _terminate_on_timeout)
+    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
     watchdog.daemon = True
     watchdog.start()
     try:
-        stderr_thread.start()
-        if proc.stdin is not None:
-            proc.stdin.write(prompt)
-            proc.stdin.close()
         for raw_line in proc.stdout:
             line = raw_line.strip()
             if not line:
@@ -586,23 +534,16 @@ def _iter_codex_stream_chunks(
             maybe_final = _codex_final_text(obj)
             if maybe_final:
                 final_text = maybe_final
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise subprocess.TimeoutExpired(cmd, 0)
-        proc.wait(timeout=remaining)
+        proc.wait(timeout=run_timeout)
     except subprocess.TimeoutExpired as exc:
         _terminate_and_reap(proc)
         raise RuntimeError("codex 流式调用超时") from exc
-    except Exception as exc:
-        # watchdog kill 可能把阻塞的 stdin.write/close 以 BrokenPipeError 等形式唤醒。
-        if timed_out:
-            raise RuntimeError("codex 流式调用超时") from exc
-        raise
     finally:
         watchdog.cancel()
-        # consumer 提前弃用时也温和终止并回收；不以 SIGKILL 越过进程清理契约。
+        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
+        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
         _terminate_and_reap(proc)
-        # 进程已退 → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
+        # 进程已退/被温和终止 → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
         stderr_thread.join(timeout=2)
         stderr = "".join(stderr_parts)
 
@@ -646,13 +587,7 @@ def _run_claude(
     与 codex 不同：claude -p 干净最终回话在 **stdout**，日志/诊断在 stderr，
     故只取 stdout、不合并 stderr（合并会把日志混进角色回话）。
     未配置 reasoning_strength 时继承父进程 env；配置后显式设置 MAX_THINKING_TOKENS。"""
-    run_timeout = _AGY_TIMEOUT if timeout is None else max(0.0, float(timeout))
-    deadline = time.monotonic() + run_timeout
-    try:
-        executable = _resolve_cli_bin("claude", _CLAUDE_BIN, deadline)
-    except TimeoutError:
-        raise RuntimeError("claude 调用超时") from None
-    cmd = [executable, "-p", "--model", (model or _CLAUDE_MODEL),
+    cmd = [_resolve_cli_bin("claude", _CLAUDE_BIN), "-p", "--model", (model or _CLAUDE_MODEL),
            "--output-format", "text", "--disallowed-tools", *_CLAUDE_DISALLOWED]
     env = None
     if reasoning_strength is not None:
@@ -663,15 +598,12 @@ def _run_claude(
             env["MAX_THINKING_TOKENS"] = tokens
         else:
             env.pop("MAX_THINKING_TOKENS", None)
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise RuntimeError("claude 调用超时")
     try:
         # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
         # 安全审计(Sourcery):list-form argv、无 shell=True;runner 已 allowlist、model 为独立 argv、prompt 走 stdin → 无注入面。
         proc = subprocess.run(
             cmd, input=prompt, capture_output=True, text=True,
-            timeout=remaining, cwd=_AGY_CWD, env=env,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD, env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("claude 调用超时") from exc
@@ -707,7 +639,7 @@ def _cli_config_parts(llm_config: Any = None) -> Optional[Tuple[str, str, Option
     model = (getattr(llm_config, "cli_model", "") or "").strip()
     raw_timeout = getattr(llm_config, "cli_timeout_seconds", None)
     try:
-        timeout = float(raw_timeout) if raw_timeout is not None else None
+        timeout = float(raw_timeout) if raw_timeout else None
     except (TypeError, ValueError):
         timeout = None
     reasoning_strength = str(getattr(llm_config, "reasoning_strength", "") or "").strip().lower()
