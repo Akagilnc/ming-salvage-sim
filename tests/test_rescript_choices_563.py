@@ -75,7 +75,7 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
             "dossier_id": dossier_id,
             "decision": "rejected",
             "blocked_layer": "six_offices",
-            "primary_opponents": ["东林"],
+            "primary_opponents": [{"kind": "faction", "key": "东林"}],
             "affected_parties": [
                 {"kind": "faction", "key": "东林", "severity": "不满"},
             ],
