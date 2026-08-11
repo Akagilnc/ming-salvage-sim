@@ -11591,12 +11591,7 @@ class GameDB:
         self, existing_json: object, new_payload: Dict[str, object],
     ) -> Dict[str, object]:
         """改草保留未修改的机械字段；显式新值覆盖后统一校验。"""
-        try:
-            old = json.loads(existing_json or "{}")
-        except (ValueError, TypeError) as exc:
-            raise ValueError("既有旨稿结构化载荷损坏") from exc
-        if not isinstance(old, dict):
-            raise ValueError("既有旨稿结构化载荷必须为对象")
+        old = self._decode_directive_dossier_payload(existing_json)
         incoming = dict(new_payload or {})
         old_roster = self._normalize_participant_roster(old.get("participant_roster") or [])
         new_roster = self._normalize_participant_roster(incoming.get("participant_roster") or [])
@@ -12763,6 +12758,25 @@ class GameDB:
             (state.turn, *statuses),
         ).fetchall()
 
+    @staticmethod
+    def _decode_directive_dossier_payload(
+        raw: object, *, directive_id: Optional[int] = None,
+    ) -> Dict[str, object]:
+        label = f"旨稿#{directive_id}" if directive_id is not None else "既有旨稿"
+        try:
+            payload = json.loads(raw or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} 结构化载荷损坏") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"{label} 结构化载荷必须为对象")
+        return payload
+
+    def read_directive_dossier_payload(self, row: object) -> Dict[str, object]:
+        """Strictly decode a durable turn_directives payload at the DB read seam."""
+        return self._decode_directive_dossier_payload(
+            row["dossier_payload_json"], directive_id=int(row["id"]),
+        )
+
     def confirm_directive(self, directive_id: int, state: GameState) -> None:
         """大臣拟旨经皇帝核定：pending → draft（进入颁诏候选池）。"""
         with atomic(self):
@@ -12775,32 +12789,24 @@ class GameDB:
                 (directive_id,),
             )
             row = self.conn.execute(
-                "SELECT status,text,dossier_payload_json FROM turn_directives WHERE id=?",
+                "SELECT id,status,text,dossier_payload_json FROM turn_directives WHERE id=?",
                 (int(directive_id),),
             ).fetchone()
             if row is None:
                 raise KeyError(f"旨稿不存在：{directive_id}")
             if int(changed.rowcount or 0) > 0:
-                try:
-                    payload = json.loads(row["dossier_payload_json"] or "{}")
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"旨稿#{directive_id} 结构化载荷损坏") from exc
                 self._ensure_directive_dossier(
                     state, int(directive_id), str(row["text"]),
-                    payload if isinstance(payload, dict) else {}, commit=False,
+                    self.read_directive_dossier_payload(row), commit=False,
                 )
 
     def ensure_dossiers_for_draft_directives(self, state: GameState) -> None:
         """结束边界成案：只读最新 draft 正文/载荷，按 directive_id 幂等创建。"""
         with atomic(self):
             for row in self.list_directives(state, statuses=("draft",)):
-                try:
-                    payload = json.loads(row["dossier_payload_json"] or "{}")
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"旨稿#{row['id']} 结构化载荷损坏") from exc
                 self._ensure_directive_dossier(
                     state, int(row["id"]), str(row["text"]),
-                    payload if isinstance(payload, dict) else {}, commit=False,
+                    self.read_directive_dossier_payload(row), commit=False,
                 )
 
     def reject_directive(self, directive_id: int) -> None:

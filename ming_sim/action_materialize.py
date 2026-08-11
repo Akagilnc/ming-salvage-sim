@@ -374,14 +374,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             if pending_target is not None:
                 existing_mode = pending_target.get("mode")
             elif committed_draft is not None:
-                try:
-                    existing_payload = json.loads(
-                        committed_draft["dossier_payload_json"] or "{}"
-                    )
-                except (TypeError, ValueError):
-                    existing_payload = {}
-                if isinstance(existing_payload, dict):
-                    existing_mode = existing_payload.get("mode")
+                existing_mode = session.db.read_directive_dossier_payload(
+                    committed_draft
+                ).get("mode")
         draft_res["mode"] = resolve_directive_mode(
             ctx.player_message, draft_res.get("mode"), existing_mode,
         )
