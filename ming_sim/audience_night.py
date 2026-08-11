@@ -318,8 +318,11 @@ def night_archive_metadata(
             name = str(raw_name or "").strip()
             if name and name not in people:
                 people.append(name)
+    summon_method = summon_methods[0] if summon_methods else ""
     return {
-        "audience_type": summon_methods[0] if summon_methods else "召对",
+        # Summon methods remain machine tags; the container contract exposes the
+        # player-facing audience type from this single production source.
+        "audience_type": "越次召对" if summon_method == METHOD_YUECI else "召对",
         "involved_people": people,
     }
 
@@ -760,6 +763,7 @@ def summon_enter(
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_XUANRU)
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
@@ -1156,6 +1160,7 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
