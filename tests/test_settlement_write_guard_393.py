@@ -88,7 +88,10 @@ class _FakeGame:
         return "ming"
 
     def directive_rows(self):
-        return [{"id": 7, "text": "旧稿", "status": "draft"}]
+        return [{
+            "id": 7, "text": "旧稿", "status": "draft",
+            "dossier_payload_json": '{"mode":"midzhi"}',
+        }]
 
     def directive_payload(self, row):
         return row
@@ -126,7 +129,10 @@ def test_directive_capture_runs_outside_write_gate(
         "target_kind": "issue", "target_id": "land-survey",
     }
 
-    def capture(text, llm_config, **_context):
+    captured_context = []
+
+    def capture(text, llm_config, **context):
+        captured_context.append(context)
         with web_app._serialized_web_write(game):
             game.db.writes.append("unrelated-write")
         return payload
@@ -151,6 +157,7 @@ def test_directive_capture_runs_outside_write_gate(
             7, web_app.DirectivePatch(text="重定清丈田亩"),
         ))
         assert calls == [("update", 7, "重定清丈田亩", payload)]
+        assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
 

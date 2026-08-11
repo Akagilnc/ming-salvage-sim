@@ -130,6 +130,22 @@ def test_manual_mode_declaration_overrides_extractor(monkeypatch, emperor_text, 
     assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
 
 
+def test_manual_edit_preserves_existing_mode_when_text_and_extractor_are_silent(monkeypatch):
+    extracted = json.dumps({
+        "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+        "目标ID": "granary",
+    }, ensure_ascii=False)
+    monkeypatch.setattr(
+        cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
+    )
+
+    payload = cli_backend.capture_manual_directive_payload(
+        "增列核验期限", existing_mode="midzhi",
+    )
+
+    assert payload["mode"] == "midzhi"
+
+
 def test_missing_dossier_mode_defaults_to_ordinary(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)

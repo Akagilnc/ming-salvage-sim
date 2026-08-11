@@ -1974,6 +1974,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
             "amount": 10,
             "account": "国库",
             "execution_surface": "immediate",
+            "mode": "midzhi",
         },
     )
     revised_text = "改拨二十五两赈济"
@@ -1984,11 +1985,12 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
         "amount": 25,
         "account": "国库",
         "execution_surface": "immediate",
+        "mode": "midzhi",
     }
     captured = []
 
-    def capture(text, llm_config):
-        captured.append((text, llm_config))
+    def capture(text, llm_config, *, existing_mode=None):
+        captured.append((text, llm_config, existing_mode))
         return revised_payload
 
     monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
@@ -1998,7 +2000,7 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
     before = state.metrics["国库"]
 
     assert terminal.review_directives(session) == "issue"
-    assert captured == [(revised_text, None)]
+    assert captured == [(revised_text, None, "midzhi")]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)

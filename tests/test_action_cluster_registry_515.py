@@ -228,7 +228,7 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
     sess = _bind_apply(db, state, content)
     before = _count_pending(db, state.turn)
     scripted = candidates_from_classifier_payload({
-        "kind": "appointment", "appoint_action": "任命",
+        "kind": "appointment", "appoint_action": "任命", "mode": "ordinary",
         "name": "测试候选人甲", "office": "陕西巡抚",
     }, soft=False)
     out = sess.apply_cli_conversation_actions(
