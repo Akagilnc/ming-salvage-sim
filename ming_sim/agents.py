@@ -306,17 +306,26 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
     return Agent(
         name="颁布判官",
         id="promulgation-judge",
-        model=create_chat_model(cfg, temperature=0.2, max_tokens=max(1200, cfg.max_tokens)),
+        model=create_chat_model(cfg, temperature=0.2, max_tokens=cfg.max_tokens),
         instructions=[
             "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
+            "颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、"
+            "勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。",
+            "合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
+            "gatekeepers 官员名单形成的把关关口三类触发才可打回。皇威越高触发面"
+            "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
+            "courage、integrity 判断，不按派系首领意志判断。",
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
             "primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。"
-            "affected_parties 每项须为 {kind:faction|class,key,severity:大怒|不满}。"
-            "mode=中旨 无论顺颁打回均须给 affected_parties；命门类可打回并置 "
-            "midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。",
+            "criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键："
+            "imperial_authority_band、involved_office_types、authorization_ids、"
+            "endorsement_entry_ids，不得缺键。affected_parties 每项须为 "
+            "{kind:faction|class,key,severity:大怒|不满}。mode=中旨 无论顺颁打回"
+            "均须给 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
+            "普通中旨从严但不得机械地一概打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
         ],
         add_history_to_context=False,

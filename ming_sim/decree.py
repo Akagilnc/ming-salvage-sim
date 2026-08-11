@@ -62,7 +62,7 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-from ming_sim.strict_types import validate_rejection_verdict
+from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -131,27 +131,75 @@ def build_promulgation_judge_context(
         "SELECT name,leverage,agenda FROM factions ORDER BY name"
     ).fetchall()
     issue_rows = db.list_active_issues()
+    authority = int(state.metrics.get("皇威", 0))
+    authority_band = qualitative_band(
+        authority, ("极弱", "偏弱", "中等", "偏强", "强盛")
+    )
+    assert authority_band in IMPERIAL_AUTHORITY_BANDS
     dossier_rows: List[Dict[str, object]] = []
     for row in sorted(dossiers, key=lambda item: int(item["id"])):
         payload = row.get("payload")
         if not isinstance(payload, dict):
             payload = json.loads(str(row.get("payload_json") or "{}"))
+        target_id = row.get("target_id")
+        involved = payload.get("involved_office_types")
+        if not isinstance(involved, list):
+            involved = []
+        if str(row.get("target_kind") or "") == "character" and target_id:
+            target = db.conn.execute(
+                "SELECT office_type FROM characters WHERE name=?", (str(target_id),)
+            ).fetchone()
+            if target is not None and str(target["office_type"] or ""):
+                involved = [*involved, str(target["office_type"])]
+        if not involved:
+            involved = ["未指定"]
+        authorization_ids = payload.get("authorization_ids", [])
+        if not isinstance(authorization_ids, list):
+            authorization_ids = []
+        authorization_id = payload.get("authorization_id")
+        if authorization_id and str(authorization_id) not in authorization_ids:
+            authorization_ids = [*authorization_ids, str(authorization_id)]
+        endorsement_ids = payload.get("endorsement_entry_ids", [])
+        if not isinstance(endorsement_ids, list):
+            endorsement_ids = []
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
             "decree_text": str(row.get("decree_text") or ""),
             "target_kind": str(row.get("target_kind") or ""),
-            "target_id": row.get("target_id"),
+            "target_id": target_id,
             "mode": str(payload.get("mode") or "regular"),
+            "appointment_tenure": str(payload.get("任别") or ""),
             "break_rank": break_rank.get(int(row["id"])),
+            "criteria_snapshot_source": {
+                "imperial_authority_band": authority_band,
+                "involved_office_types": sorted(set(map(str, involved))),
+                "authorization_ids": sorted(set(map(str, authorization_ids))),
+                "endorsement_entry_ids": endorsement_ids,
+            },
         })
-    authority = int(state.metrics.get("皇威", 0))
-    history = [dict(row) for row in db.conn.execute(
-        "SELECT dossier_id,turn,decision,rescript_action,reason "
-        "FROM decree_dossier_decisions "
-        "WHERE decision='rejected' OR rescript_action='force_promulgated' "
-        "ORDER BY turn,dossier_id,id"
+    gatekeepers = [dict(row) for row in db.conn.execute(
+        "SELECT name,office,office_type,faction,courage,integrity FROM characters "
+        "WHERE status='active' AND power_id='ming' AND "
+        "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
+        "OR office_type='六科') ORDER BY office_type,office,name"
     ).fetchall()]
+    history = []
+    for item in db.conn.execute(
+        "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
+        "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
+        "ORDER BY d.turn,d.dossier_id,d.id"
+    ).fetchall():
+        payload = json.loads(str(item["payload_json"] or "{}"))
+        mode = str(payload.get("mode") or "regular")
+        forced = str(item["rescript_action"] or "") == "force_promulgated"
+        if not forced and mode != "中旨":
+            continue
+        history.append({
+            "dossier_id": int(item["dossier_id"]), "turn": int(item["turn"]),
+            "mode": mode, "marker": "批红强颁" if forced else "中旨",
+            "outcome": "promulgated" if forced else str(item["decision"]),
+        })
     return {
         "turn": {"turn": state.turn, "year": state.year, "period": state.period},
         "dossiers": dossier_rows,
@@ -160,9 +208,8 @@ def build_promulgation_judge_context(
              "agenda": str(row["agenda"] or "")}
             for row in faction_rows
         ],
-        "imperial_authority_band": qualitative_band(
-            authority, ("衰微", "偏弱", "中平", "偏强", "鼎盛")
-        ),
+        "imperial_authority_band": authority_band,
+        "gatekeepers": gatekeepers,
         "promulgation_history": history,
         "current_events": [
             {key: row[key] for key in ("id", "title", "status") if key in row.keys()}
@@ -608,6 +655,7 @@ def resolve_directives(
 
     proposed_dossiers = db.list_decree_dossiers(status="proposed")
     verdict_rows: List[Dict[str, object]] = []
+    rejected_verdict_batch: object = []
     try:
         if proposed_dossiers:
             # A validated batch is durable before any simulator work.  Recovery is
@@ -632,6 +680,7 @@ def resolve_directives(
                         llm_config=llm_config,
                     )
                 ) if reviewed else []
+                rejected_verdict_batch = generated
                 if not isinstance(generated, list):
                     raise LLMContractError("颁布判官 verdicts 必须为列表")
                 generated = generated + (
@@ -642,6 +691,24 @@ def resolve_directives(
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
+        rejected_items = (
+            rejected_verdict_batch if isinstance(rejected_verdict_batch, list)
+            else [rejected_verdict_batch]
+        )
+        collector = RejectionCollector(attempt=_next_attempt(state.turn))
+        with atomic(db):
+            for item in rejected_items:
+                collector.record(
+                    "promulgation_verdicts",
+                    RejectedItem(
+                        item=item if isinstance(item, dict) else {"raw_value": item},
+                        reason=str(exc), category="invalid_shape",
+                        source=Provenance(source),
+                    ),
+                    state.turn,
+                )
+            collector.flush_to_db(db)
+        _mirror_rejections_after_commit(db, collector)
         try:
             pack_path = write_error_pack(
                 db, state, exc=exc, extracted=None,
