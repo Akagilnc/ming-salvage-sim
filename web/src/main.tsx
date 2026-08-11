@@ -790,22 +790,6 @@ export function App() {
     }
   };
 
-  const writeDecree = async () => {
-    setBusy("拟写正式诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
-      setDecree(data.decree);
-      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
-      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const advanceWithoutEdict = async () => {
     setBusy("退朝");
     setError("");
@@ -828,12 +812,6 @@ export function App() {
     }
   };
   advanceWithoutEdictRef.current = advanceWithoutEdict;
-
-  const resetDecree = () => {
-    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
-    setDecree("");
-    setError("");
-  };
 
   // 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
   // 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。

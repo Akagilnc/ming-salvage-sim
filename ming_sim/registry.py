@@ -617,7 +617,12 @@ class MinisterRegistry:
 
     def build_draft_line(self) -> str:
         """实时查本回合已核定草案，供需要展示草案列表的调用方使用。"""
-        draft_rows = self.context.db.list_directives(self.context.state, statuses=("draft",))
+        draft_rows = [
+            row for row in self.context.db.list_directives(
+                self.context.state, statuses=("draft",),
+            )
+            if self.context.db.get_dossier_for_directive(int(row["id"])) is None
+        ]
         if not draft_rows:
             return "无"
         return "；".join(
