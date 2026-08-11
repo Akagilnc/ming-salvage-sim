@@ -2,7 +2,7 @@
 
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
-用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
+用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
 v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 23 字段，别指望守门人帮忙兜。
 
 ## 顶层 23 字段（容器类型固定）
@@ -42,7 +42,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 }
 ```
 
-中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`。**未列出的 key 会被裁掉。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
+中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`。**未知顶层 key 按本文开头的唯一规则，经 `validate_delta_shape` 响亮中止。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
 
 ---
 
@@ -63,7 +63,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
-| `origin_ref` | 可选 `dossier:<id>` | S1 会校验案卷已颁；`grant_allocation` 的案卷载荷已物化，带同源回指的 extractor move 不再重复扣账，非此类来源仍按原有 economy 校验处理 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发` | 案卷引用必须存在且已颁；自然演化必须写精确哨兵。缺失、伪前缀及未授权案卷逐项拒收 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
 > 「太仓岁亏三十万」是困境描述，不是本月一笔收支，**别照写成 economy_moves**。
@@ -78,6 +78,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 值：int 增量 〔⚠️ 与实码不符：实际为嵌套结构 `{类:{satisfaction/leverage: int}}`，扁平值被 `_apply_class_dict` 静默跳过，见 ADR 0056〕
 
 ### `region_delta` — 地区变化
+- 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
@@ -93,6 +94,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `key` | **必须**非空（key 在 `fiscal_config` 表里，如 `liao_xiang_rate`）|
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
 
 ### `fiscal_creates` — 新立月度收支
 | 字段 | 约束 |
@@ -103,14 +105,17 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `init_value` | 非负 int（无损整数串 `"300"` 可）；缺省/null = 0；在场负值或非 int（bool/float/坏串）→ 整项拒收留痕（rejection_reports），不再静默 clamp（v0.8.x PR2-S3） |
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
 - `key` 非空 + `reason` ≤120
+- `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
 
 ### `army_delta` — 军队变化
+- 每个 army value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
 - key：army_id（看 `content/armies.json`，如 `guanning` `dadong` 等）
 - value 字段（来自 `ARMY_*` 常量）：
   - score（0-100）：`supply` `morale` `training` `equipment` `arrears` `mobility` `loyalty`
@@ -121,10 +126,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。
 
 ### `new_armies` — 建军
+每项必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`），创建日志以此提供一跳反查。
 ⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
 全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status` `pay_source_region` `province_pay_share` `central_pay_share` `is_tusi` `self_funded_pay`…（参考 `ARMY_FIELD_ALIASES`）。普通明军（`owner_power="ming"` 且非土司/自养）必填 `pay_source_region`（明控省 region_id）+ `province_pay_share` + `central_pay_share`，两份额和必须为 1；土司/自养明军才可写 `is_tusi`/`self_funded_pay`，且饷源省为空、两份额为 0/0。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
 
 ### `power_updates` — 外部势力变化
+- 每个 power value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
 - key：非 `ming` 的 power_id，必须来自输入盘面 `power_ids`（如 `houjin` / `mongol` / `korea` / `bandits` / `bandit_li_zicheng` / `bandit_zhang_xianzhong` 等）；禁止写 `ming`。
 - value 字段只允许三项整数增量：`威望` / `leverage`、`实力` / `military_strength`、`经济` / `supply`；其余字段一律逐项拒收留痕。
 - #190 流寇分股：李自成股 / 张献忠股等必须写各自 power_id（如 `bandit_li_zicheng`、`bandit_zhang_xianzhong`），不是全局 `bandits`。
@@ -163,7 +170,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 {
   "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
   "事件结局": {"jisi_lubian": "入塞被遏"},
-  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}}
+  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿", "origin_ref": "盘面自发"}}
 }
 ```
 

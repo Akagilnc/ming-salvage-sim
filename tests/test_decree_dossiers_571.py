@@ -812,7 +812,8 @@ def test_allocation_rejected_is_zero_effect_and_force_promulgation_keeps_rejecti
     assert dossier["promulgation_decision"] == "rejected"
     moves = db.list_economy_moves_for_dossier(dossier_id)
     assert len(moves) == 1
-    assert moves[0]["dossier_id"] == dossier_id
+    assert moves[0]["dossier_id"] is None
+    assert moves[0]["origin_ref"] == f"dossier:{dossier_id}"
 
 
 def test_assignment_promulgation_tracks_executor_until_terminal_state(game):
@@ -1022,8 +1023,8 @@ def test_real_resolve_entry_applies_promulgation_verdict_and_payload_effect(
     )
     assert db.get_decree_dossier(staged["id"])["status"] == "executing"
     assert db.conn.execute(
-        "SELECT delta FROM economy_ledger WHERE dossier_id=?",
-        (staged["id"],),
+        "SELECT delta FROM economy_ledger WHERE origin_ref=?",
+        (f"dossier:{staged['id']}",),
     ).fetchone()["delta"] == -10
     assert db.get_decree_dossier(rejected["id"])["status"] == "closed"
     assert db.get_decree_dossier(rejected["id"])["promulgation_decision"] == "rejected"
@@ -1462,6 +1463,114 @@ def test_structured_dossier_origin_deduplicates_extractor_but_narrative_applies(
 
     assert state.metrics["国库"] == before - 15
     assert len(db.list_economy_moves_for_dossier(structured_id)) == 1
+
+
+def test_payload_owned_appointment_dedup_removes_only_exact_mechanical_effect(game):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "office": "兵部尚书",
+            "office_type": "central",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [{
+            "name": person["name"], "动作": "调任", "office": "兵部尚书",
+            "office_type": "central", "任别": "真除",
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content=content)
+
+    assert result["applied_person_changes"] == []
+
+
+def test_payload_owned_appointment_dedup_uses_prior_item_runtime_office_type(game):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name FROM characters "
+        "WHERE status='active' AND office_type != '地方' LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授未知官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "office": "同名未知官",
+            "office_type": "地方",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [
+            {
+                "name": person["name"], "动作": "调任", "office": "前置异官",
+                "office_type": "地方", "任别": "真除",
+                "origin_ref": f"dossier:{dossier_id}",
+            },
+            {
+                "name": person["name"], "动作": "调任", "office": "同名未知官",
+                "任别": "真除", "origin_ref": f"dossier:{dossier_id}",
+            },
+        ],
+    }, content=content)
+
+    assert [item["new_office"] for item in result["applied_person_changes"]] == ["前置异官"]
+    assert content.characters[person["name"]].office == "前置异官"
+    assert content.characters[person["name"]].office_type == "地方"
+    persisted = db.conn.execute(
+        "SELECT office, office_type FROM characters WHERE name=?", (person["name"],)
+    ).fetchone()
+    assert (persisted["office"], persisted["office_type"]) == ("前置异官", "地方")
+
+
+def test_payload_owned_appointment_dedup_preserves_same_person_different_effect(game):
+    db, state, content = game
+    person = db.conn.execute(
+        "SELECT name, loyalty FROM characters WHERE status='active' AND loyalty < 100 LIMIT 1"
+    ).fetchone()
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="appointment",
+        decree_text="授官",
+        target_kind="person",
+        target_id=person["name"],
+        payload={
+            "_minister_name": person["name"],
+            "_office_action": "任命",
+            "name": person["name"],
+            "office": "兵部尚书",
+        },
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "人物变更": [{
+            "name": person["name"], "动作": "评定", "loyalty": 1,
+            "origin_ref": f"dossier:{dossier_id}",
+        }],
+    }, content=content)
+
+    assert result["applied_person_changes"][0]["动作"] == "评定"
+    assert db.conn.execute(
+        "SELECT loyalty FROM characters WHERE name=?", (person["name"],)
+    ).fetchone()[0] == person["loyalty"] + 1
 
 
 def test_executing_execution_record_never_closes_or_stamps_closed_turn(game):
@@ -2577,7 +2686,7 @@ def test_malformed_dossier_origin_is_rejected_fail_closed(game, origin_ref):
 
     assert state.metrics["国库"] == before
     assert result["economy_moves"] == []
-    assert result["validate_shape_rejections"][0]["category"] == "missing_ref"
+    assert '"category": "invalid_origin_ref"' in json.dumps(result, ensure_ascii=False)
 
 
 @pytest.mark.parametrize("bad_id,bad_decision,match", [

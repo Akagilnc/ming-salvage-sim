@@ -130,7 +130,7 @@ def test_run_settle_normalizes_chinese_delta_and_advances(game):
         "SELECT unrest FROM regions WHERE id='shanxi'"
     ).fetchone()[0]
 
-    raw_delta = {"地区变化": {"shanxi": {"动乱": 5}}}
+    raw_delta = {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 5}}}
     run_settle(db, state, content, raw_delta)
 
     new_unrest = db.conn.execute(
@@ -147,7 +147,7 @@ def test_run_settle_persists_narrative_and_applied_extraction_trace(saved_game):
     before = state.turn
     narrative = "【邸报·测试】山西动乱微升，余无大事。"
 
-    run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}}, narrative=narrative)
+    run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}}, narrative=narrative)
 
     report = db.conn.execute(
         "SELECT report FROM turn_reports WHERE turn=?", (before,)
@@ -182,7 +182,7 @@ def test_run_settle_persists_applied_person_results_for_player_visible_extractio
         {
             "人物变更": [
                 {
-                    "name": "不存在的人",
+                    "origin_ref": "盘面自发", "name": "不存在的人",
                     "动作": "任命",
                     "office": "首辅",
                     "reason": "测试拒收可见性",
@@ -206,6 +206,7 @@ def test_run_settle_persists_applied_person_results_for_player_visible_extractio
             "rejected": True,
             "reason": "非既有人物",
             "category": "hallucinated_id",
+            "origin_ref": "盘面自发",
         }
     ]
 
@@ -226,7 +227,7 @@ def test_run_settle_preserves_legacy_person_key_order_after_issue_close(game):
         bar_value=50,
         effect_on_resolve={
             "character_status_changes": [
-                {"name": name, "status": "imprisoned", "reason": "结案下狱"}
+                {"origin_ref": "盘面自发", "name": name, "status": "imprisoned", "reason": "结案下狱"}
             ]
         },
     )
@@ -240,7 +241,7 @@ def test_run_settle_preserves_legacy_person_key_order_after_issue_close(game):
             {
                 "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
                 "character_status_changes": [
-                    {"name": name, "status": "dead", "reason": "同月处死"}
+                    {"origin_ref": "盘面自发", "name": name, "status": "dead", "reason": "同月处死"}
                 ],
             },
             narrative="x",
@@ -280,7 +281,7 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
         bar_value=50,
         effect_on_resolve={
             "人物变更": [
-                {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"}
+                {"origin_ref": "盘面自发", "name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"}
             ]
         },
     )
@@ -294,7 +295,7 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
             {
                 "close_issues": [{"issue_id": issue_id, "reason": "resolved", "narrative": "测试结案"}],
                 "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dead", "reason": "同月处死"}
+                    {"origin_ref": "盘面自发", "name": name, "动作": "处置", "status": "dead", "reason": "同月处死"}
                 ],
             },
             narrative="x",
@@ -309,9 +310,8 @@ def test_run_settle_preserves_unified_person_key_order_after_issue_close(game):
         assert {"name": name, "动作": "处置", "status": "imprisoned", "reason": "结案下狱"} in out[
             "applied_person_changes"
         ]
-        assert {"name": name, "动作": "处置", "status": "dead", "reason": "同月处死"} in out[
-            "applied_person_changes"
-        ]
+        assert {"name": name, "动作": "处置", "status": "dead", "reason": "同月处死",
+                "origin_ref": "盘面自发"} in out["applied_person_changes"]
     finally:
         ch.status = old_status
         ch.office = old_office
@@ -335,7 +335,7 @@ def test_cli_settle_applies_delta_file(game, tmp_path, capsys):
     ).fetchone()[0]
     delta_file = tmp_path / "delta.json"
     delta_file.write_text(
-        json.dumps({"地区变化": {"shanxi": {"动乱": 3}}}), encoding="utf-8"
+        json.dumps({"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 3}}}), encoding="utf-8"
     )
 
     rc = driver.main(["settle", "--delta", str(delta_file)], game=game)
@@ -355,7 +355,7 @@ def test_cli_settle_envelope_persists_narrative(game, tmp_path):
     narrative = "【邸报·信封测试】京师城防新增红夷炮数门。"
     env_file = tmp_path / "turn.json"
     env_file.write_text(
-        json.dumps({"narrative": narrative, "delta": {"地区变化": {"beizhili": {"城防炮": 3}}}}),
+        json.dumps({"narrative": narrative, "delta": {"地区变化": {"beizhili": {"origin_ref": "盘面自发", "城防炮": 3}}}}),
         encoding="utf-8",
     )
 
@@ -399,7 +399,7 @@ def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch, tm
         raise RuntimeError("simulated apply crash")
     monkeypatch.setattr(driver, "apply_score_extraction", _boom)
 
-    raw = {"地区变化": {"shanxi": {"动乱": 3}}}
+    raw = {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 3}}}
     with pytest.raises(SettlementAbort) as ei:
         run_settle(db, state, content, raw, narrative="邸报", decree_text="诏")
     assert ei.value.stage == "settle"
@@ -408,7 +408,7 @@ def test_run_settle_persists_resolve_context_before_settle(game, monkeypatch, tm
     ctx = db.get_resolve_context(before_turn)
     assert ctx is not None
     # 顶层 key 已 canonical（地区变化→region_delta）；区域内层字段保持原样由 apply 解析。
-    assert ctx["extracted"] == {"region_delta": {"shanxi": {"动乱": 3}}}
+    assert ctx["extracted"] == {"region_delta": {"shanxi": {"origin_ref": "盘面自发", "动乱": 3}}}
     db.clear_resolve_context(before_turn)
 
 
@@ -416,7 +416,7 @@ def test_run_settle_clears_resolve_context_on_completion(game):
     """正常完成后 context 已清（settle 内 clear 对 driver 同样生效）。"""
     db, state, content = game
     before_turn = state.turn
-    run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+    run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
     assert db.get_resolve_context(before_turn) is None
 
 
@@ -435,7 +435,7 @@ def test_crash_inside_pre_settle_leaves_no_ready_context(game, monkeypatch):
     monkeypatch.setattr(driver, "pre_settle", _boom)
 
     with pytest.raises(RuntimeError, match="pre_settle crash"):
-        run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+        run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
 
     assert db.get_resolve_context(before_turn) is None
 
@@ -549,8 +549,8 @@ def test_canonicalize_extraction_public_api():
     assert sim.canonicalize_extraction is sim._canonicalize_extraction
     # 公有 API 真归一：验完整结构——顶层中文 key → 英文 canonical（地区变化→region_delta）；
     # 嵌套字段(动乱)此层不动，由 apply 层 REGION_FIELD_ALIASES 转（Sourcery R1：验全结构非仅 key 存在）。
-    assert sim.canonicalize_extraction({"地区变化": {"shanxi": {"动乱": 1}}}) == {
-        "region_delta": {"shanxi": {"动乱": 1}}
+    assert sim.canonicalize_extraction({"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}}) == {
+        "region_delta": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}
     }
     import driver as drv
     assert drv.canonicalize_extraction is sim.canonicalize_extraction
@@ -564,7 +564,7 @@ def test_run_settle_player_sourced_rejection_surfaces_diegetic_hint(game):
     db, state, content = game
     before = state.turn
     report = run_settle(db, state, content,
-        {"人物变更": [{"name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]})
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人甲", "动作": "任命", "office": "首辅", "reason": "测试拒收"}]})
     assert "有司奏" in report, "player_decree 来源的拒收须在邸报给玩家一句提示（决定 5）"
     assert "查无此人甲" not in report, "提示只一句 in-world，不暴露拒收明细（明细进 DB/jsonl）"
     # 持久化：turn_reports（web/history 读它）也须含提示，非仅 run_settle 即时返回
@@ -576,7 +576,7 @@ def test_run_settle_no_rejection_no_hint(game):
     """无拒收 → 无提示（避免噪声）；且不误持久化进 turn_report（Sourcery R1）。"""
     db, state, content = game
     before = state.turn
-    report = run_settle(db, state, content, {"地区变化": {"shanxi": {"动乱": 1}}})
+    report = run_settle(db, state, content, {"地区变化": {"shanxi": {"origin_ref": "盘面自发", "动乱": 1}}})
     assert "有司奏" not in report
     persisted = db.conn.execute("SELECT report FROM turn_reports WHERE turn=?", (before,)).fetchone()[0]
     assert "有司奏" not in persisted, "无拒收不应把提示误持久化进 turn_report"
@@ -587,6 +587,6 @@ def test_run_settle_system_source_rejection_stays_silent(game):
     from ming_sim.applier import Provenance
     db, state, content = game
     report = run_settle(db, state, content,
-        {"人物变更": [{"name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "查无此人乙", "动作": "任命", "office": "首辅", "reason": "测试"}]},
         source=Provenance.system_simulation)
     assert "有司奏" not in report, "系统推演来源的拒收对玩家安静"
