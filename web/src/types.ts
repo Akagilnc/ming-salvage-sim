@@ -339,7 +339,7 @@ export type ServerChatMessage = {
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
 
-export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "menu" | "secret_orders" | "ending" | "long_goals";
+export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending" | "long_goals";
 
 export type SaveEntry = { name: string; size: number; mtime: number };
 
@@ -566,6 +566,9 @@ export type HistoryTurnItem = {
   /** Stable sequence among same-turn, same-place, same-time closed scenes. */
   scene_number?: number;
   scene_count?: number;
+  audience_type?: string;
+  title?: string;
+  involved_people?: string[];
 };
 
 export type HistoryDirective = {
