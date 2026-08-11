@@ -892,6 +892,36 @@ def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
     assert chunks == ["邸报", "增量", "到达"]
 
 
+def test_codex_stream_resolution_exhausts_deadline_without_spawn(monkeypatch):
+    """Executable resolution is part of the streaming deadline, not pre-work outside it."""
+    now = iter((10.0, 10.3))
+    spawned = []
+
+    monkeypatch.setattr(cb.time, "monotonic", lambda: next(now))
+    monkeypatch.setattr(
+        cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/usr/bin/codex",
+    )
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+
+    with pytest.raises(RuntimeError, match="超时"):
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
+    assert spawned == []
+
+
+def test_codex_stream_zero_timeout_does_not_spawn(monkeypatch):
+    spawned = []
+
+    monkeypatch.setattr(cb.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(
+        cb, "_resolve_cli_bin", lambda name, configured, deadline=None: "/usr/bin/codex",
+    )
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+
+    with pytest.raises(RuntimeError, match="超时"):
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0))
+    assert spawned == []
+
+
 def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     """integrated cmr Gate2 codex correctness：流式读阻塞在 `for raw_line in proc.stdout`，若
     codex 卡死且不关 stdout，proc.wait(timeout) 永远到不了。看门狗须在 run_timeout 到点 kill
