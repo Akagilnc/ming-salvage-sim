@@ -1504,17 +1504,11 @@ class WebGame:
         """Run #544's bounded decoration and persist through the message seam."""
         if not chat_turn_id or not answer:
             return []
-        from ming_sim.highlight_judge import DEFAULT_TIMEOUT_SECONDS, judge_highlights
-        invoke = getattr(self, "highlight_judge_invoke", None)
-        kwargs: Dict[str, Any] = {
-            "timeout": getattr(self, "highlight_judge_timeout", DEFAULT_TIMEOUT_SECONDS),
-        }
-        if invoke is not None:
-            kwargs["invoke"] = invoke
+        from ming_sim.highlight_judge import judge_highlights
         llm_config = getattr(self.session, "llm_config", None)
-        if llm_config is None and invoke is None:
+        if llm_config is None:
             return []
-        highlights = judge_highlights(answer, llm_config, **kwargs)
+        highlights = judge_highlights(answer, llm_config)
         if highlights:
             with gate:
                 self.db.set_minister_message_highlights(chat_turn_id, highlights)
@@ -1526,12 +1520,21 @@ class WebGame:
         """Start output-independent reply tails before waiting for decoration."""
         if not chat_turn_id or not answer:
             return
-        self._spawn_pending_write_thread(
-            self._trail_mindreading_after_reply,
-            (minister_name, answer, chat_turn_id),
-            "audience-p5-mindreading",
+        tails = (
+            ("mindreading", lambda: self._spawn_pending_write_thread(
+                self._trail_mindreading_after_reply,
+                (minister_name, answer, chat_turn_id),
+                "audience-p5-mindreading",
+            )),
+            ("extraction", lambda: self._spawn_extraction_trail(
+                minister_name, answer, chat_turn_id,
+            )),
         )
-        self._spawn_extraction_trail(minister_name, answer, chat_turn_id)
+        for stage, start in tails:
+            try:
+                start()
+            except Exception as error:
+                tlog(f"[audience-tail] {stage} 启动失败（回话已保留）：{type(error).__name__}: {error}")
 
     def _chat_payload(
         self,
@@ -2401,24 +2404,30 @@ class WebGame:
                     daemon=True,
                     name="audience-p5-extraction",
                 )
-                judge_thread.start()
-                extraction_thread.start()
-                mind_payload: Optional[Dict[str, Any]] = None
+                started_threads: List[threading.Thread] = []
                 try:
-                    mind_payload = self._trail_mindreading_after_reply(
-                        minister_name, answer, chat_turn_id, owns_pending=False,
-                    )
-                except Exception:
-                    mind_payload = None
-                if mind_payload:
-                    ev_queue.put({
-                        "type": "mindreading",
-                        "payload": mind_payload,
-                        "chat_turn_id": chat_turn_id,
-                    })
-                extraction_thread.join()
-                judge_thread.join()
-                ev_queue.put({"type": "end"})
+                    for stage, tail_thread in (("highlights", judge_thread), ("extraction", extraction_thread)):
+                        try:
+                            tail_thread.start()
+                            started_threads.append(tail_thread)
+                        except Exception as error:
+                            tlog(f"[audience-tail] {stage} 启动失败（回话已保留）：{type(error).__name__}: {error}")
+                    mind_payload: Optional[Dict[str, Any]] = None
+                    try:
+                        mind_payload = self._trail_mindreading_after_reply(
+                            minister_name, answer, chat_turn_id, owns_pending=False,
+                        )
+                    except Exception as error:
+                        tlog(f"[audience-tail] mindreading 执行失败（回话已保留）：{type(error).__name__}: {error}")
+                    if mind_payload:
+                        ev_queue.put({
+                            "type": "mindreading", "payload": mind_payload,
+                            "chat_turn_id": chat_turn_id,
+                        })
+                    for tail_thread in started_threads:
+                        tail_thread.join()
+                finally:
+                    ev_queue.put({"type": "end"})
             finally:
                 self._complete_pending_write()
 

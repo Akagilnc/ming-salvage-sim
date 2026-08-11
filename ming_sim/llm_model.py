@@ -94,7 +94,6 @@ def create_chat_model(
     thinking_budget: Optional[int] = None,
     top_p: Optional[float] = None,
     force_json_output: bool = False,
-    request_timeout: Optional[float] = None,
     max_retries: int = 1,
 ) -> OpenAIChat:
     install_token_stats_patch()
@@ -131,7 +130,7 @@ def create_chat_model(
         "base_url": llm_config.base_url,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "timeout": llm_config.timeout_seconds if request_timeout is None else request_timeout,
+        "timeout": llm_config.timeout_seconds,
         "max_retries": max_retries,
         "role_map": {"system": "system", "user": "user", "assistant": "assistant", "tool": "tool"},
         "extra_body": extra_body,
@@ -176,7 +175,7 @@ def create_chat_model(
         else:
             kwargs["id"] = ""
         cli_timeout = getattr(llm_config, "cli_timeout_seconds", None)
-        if request_timeout is None and cli_timeout:
+        if cli_timeout:
             kwargs["timeout"] = cli_timeout
         # 占位符只在这一刻注入：满足 OpenAIChat 父类构造（非空 api_key），
         # CliChat 走 CLI 从不用它。LLMConfig.api_key 对 CLI 通道永远是空串，

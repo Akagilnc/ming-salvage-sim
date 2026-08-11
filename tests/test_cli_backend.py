@@ -922,11 +922,11 @@ def test_codex_stream_zero_timeout_does_not_spawn(monkeypatch):
     assert spawned == []
 
 
-def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
-    """解析消耗部分预算后，watchdog 仍须在原绝对 deadline 解除阻塞的 stdin 写入。"""
+def test_codex_stream_watchdog_terminates_hung_process(monkeypatch):
+    """解析消耗部分预算后，watchdog 仍须在原绝对 deadline 温和解除阻塞。"""
     import threading as _t
 
-    killed = _t.Event()
+    terminated = _t.Event()
     reaped = _t.Event()
     timer_budgets = []
     real_timer = _t.Timer
@@ -945,8 +945,8 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     class _Proc:
         class _Stdin:
             def write(self, text):
-                killed.wait(5.0)
-                raise BrokenPipeError("killed while writing")
+                terminated.wait(5.0)
+                raise BrokenPipeError("terminated while writing")
 
             def close(self):
                 pass
@@ -954,18 +954,15 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
         stdin = _Stdin()
         stdout = _HangStdout()
         stderr = None
-        returncode = 0
+        returncode = None
 
         def wait(self, timeout=None):
             reaped.set()
             return ("", "")
 
         def terminate(self):
-            pass
-
-        def kill(self):
-            killed.set()
-            self.returncode = -9
+            terminated.set()
+            self.returncode = -15
 
     def recording_timer(interval, function):
         timer_budgets.append(interval)
@@ -979,7 +976,7 @@ def test_codex_stream_watchdog_kills_hung_process(monkeypatch):
     with pytest.raises(RuntimeError, match="超时"):
         list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.15))
     assert timer_budgets[0] < 0.13  # resolver 的耗时已从 watchdog 预算扣除
-    assert killed.is_set()
+    assert terminated.is_set()
     assert reaped.is_set()
 
 

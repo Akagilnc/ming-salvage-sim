@@ -489,6 +489,16 @@ def _codex_final_text(obj: object) -> str:
     return ""
 
 
+def _terminate_and_reap(proc: Any, timeout: float = 5.0) -> None:
+    """Best-effort graceful subprocess shutdown; never escalate to SIGKILL."""
+    try:
+        if getattr(proc, "returncode", None) is None:
+            proc.terminate()
+        proc.wait(timeout=timeout)
+    except Exception as error:
+        _log(f"子进程温和终止/回收失败：{type(error).__name__}: {error}")
+
+
 def _iter_codex_stream_chunks(
     prompt: str,
     *,
@@ -523,14 +533,7 @@ def _iter_codex_stream_chunks(
     # Popen 自身也属于同一个绝对期限；spawn 返回后必须重新扣除其耗时。
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+        _terminate_and_reap(proc)
         raise RuntimeError("codex 流式调用超时")
 
     assert proc.stdout is not None
@@ -553,16 +556,13 @@ def _iter_codex_stream_chunks(
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
     # 看门狗：stdin 写入和 stdout 流式读取都可能阻塞。必须在二者之前启动，并使用 spawn
-    # 返回后按绝对 deadline 重算的预算，使 kill 覆盖同一次调用的全部阻塞点。
-    def _kill_on_timeout() -> None:
+    # 返回后按绝对 deadline 重算的预算，使温和终止覆盖同一次调用的全部阻塞点。
+    def _terminate_on_timeout() -> None:
         nonlocal timed_out
         timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _terminate_and_reap(proc)
 
-    watchdog = threading.Timer(remaining, _kill_on_timeout)
+    watchdog = threading.Timer(remaining, _terminate_on_timeout)
     watchdog.daemon = True
     watchdog.start()
     try:
@@ -591,7 +591,7 @@ def _iter_codex_stream_chunks(
             raise subprocess.TimeoutExpired(cmd, 0)
         proc.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        proc.kill()
+        _terminate_and_reap(proc)
         raise RuntimeError("codex 流式调用超时") from exc
     except Exception as exc:
         # watchdog kill 可能把阻塞的 stdin.write/close 以 BrokenPipeError 等形式唤醒。
@@ -600,23 +600,14 @@ def _iter_codex_stream_chunks(
         raise
     finally:
         watchdog.cancel()
-        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
-        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-        # 进程已退/被 kill → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
+        # consumer 提前弃用时也温和终止并回收；不以 SIGKILL 越过进程清理契约。
+        _terminate_and_reap(proc)
+        # 进程已退 → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
         stderr_thread.join(timeout=2)
         stderr = "".join(stderr_parts)
 
     if timed_out:
-        raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已 kill）")
+        raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已温和终止）")
     text = "".join(pieces).strip() or final_text.strip()
     if proc.returncode != 0 or not text:
         raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")

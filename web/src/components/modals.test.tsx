@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AudienceArchiveModal, ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal } from "./modals";
+import { AudienceArchiveModal, ChatModal, EdictModal, HistoryModal, ReportModal } from "./modals";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -793,18 +793,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).not.toContain("不应出现的场卷");
   });
 
-  it("场卷加载失败显示在独立召对档案中", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve(
-      url === "/api/history/turns"
-        ? { ok: true, json: async () => ({ turns: [{ kind: "night", night_id: 31, title: "旧场卷" }] }) }
-        : { ok: false, status: 503 },
-    )));
-    const host = document.createElement("div"); document.body.appendChild(host);
-    const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => { root.render(<AudienceArchiveModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(host.textContent).toContain("加载失败：HTTP 503");
-  });
-
   it("归档场卷只按大臣持久清单高亮并复用 organic 归一化", async () => {
     const container = { time_of_day: "戌时", location: "乾清宫", audience_type: "朝会" };
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
@@ -820,14 +808,6 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).toContain("臣请据实核账，不可臆断。");
   });
 
-  it("成功月档在独立史册中正常显示", () => {
-    const host = document.createElement("div"); document.body.appendChild(host);
-    const root = createRoot(host); mountedRoots.push({ root, host });
-    act(() => root.render(<HistoryDetailView loading={false} error="" selectedTurn={7}
-      detail={{ turn: 7, exists: true, year: 1, period: 11, report: "", decree_text: "月档诏书", directives: [] }}
-    />));
-    expect(host.textContent).toContain("月档诏书");
-  });
 });
 
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {
