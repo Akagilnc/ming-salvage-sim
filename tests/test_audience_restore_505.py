@@ -15,6 +15,7 @@ reconcile 保留问话消息行（区别于 fail_chat_turn 的删问话善后）
 from __future__ import annotations
 
 from types import SimpleNamespace
+import threading
 
 import pytest
 from fastapi import HTTPException
@@ -292,6 +293,59 @@ def test_retry_regenerates_reply_without_duplicate_question(restore_env):
     assert row["minister_message_id"]
     # 重试后该轮不再挂在待重试面板。
     assert db.get_interrupted_reply_retries(minister) == []
+
+
+@pytest.mark.parametrize("failed_name", ["audience-p5-mindreading", "audience-p5-extraction"])
+def test_retry_tail_start_failure_preserves_restored_active_reply_and_drains_pending(
+    restore_env, monkeypatch, failed_name,
+):
+    env = restore_env
+    db, state, content = env.db, env.state, env.content
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    chat_turn_id = _start_generating_turn(db, state, minister, "剿抚孰先？")
+    db.reconcile_interrupted_chat_turns()
+    rt = _retry_runtime(db, state, minister)
+    rt._drain_cond = threading.Condition()
+    rt._pending_writes_count = 0
+    rt._draining = False
+    rt._mark_pending_write = web_app.WebGame._mark_pending_write.__get__(rt)
+    rt._complete_pending_write = web_app.WebGame._complete_pending_write.__get__(rt)
+
+    def completed_tail(*_args, owns_pending=False, **_kwargs):
+        if owns_pending:
+            rt._complete_pending_write()
+
+    rt._trail_mindreading_after_reply = completed_tail
+    rt._trail_extraction_after_reply = completed_tail
+    rt._spawn_extraction_trail = web_app.WebGame._spawn_extraction_trail.__get__(rt)
+    rt._settle_reply_highlights = lambda *_a, **_k: []
+    original_start = threading.Thread.start
+    attempted = []
+    started = []
+
+    def traced_start(thread):
+        attempted.append(thread.name)
+        if thread.name == failed_name:
+            raise RuntimeError(f"cannot start {failed_name}")
+        started.append(thread.name)
+        return original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", traced_start)
+    payload = rt.retry_interrupted_reply(minister)
+
+    assert attempted == ["audience-p5-mindreading", "audience-p5-extraction"]
+    assert failed_name not in started
+    with rt._drain_cond:
+        assert rt._drain_cond.wait_for(lambda: rt._pending_writes_count == 0, timeout=1)
+    row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (chat_turn_id,),
+    ).fetchone()
+    assert row["status"] == "active"
+    assert db.get_interrupted_reply_retries(minister) == []
+    projection = db.build_chat_projection(minister)
+    assert [message["content"] for message in projection][-2:] == ["剿抚孰先？", "臣重奏：剿为先。"]
+    assert payload["chat_turn_id"] == chat_turn_id
 
 
 def test_retry_without_interrupted_turn_is_rejected(restore_env):

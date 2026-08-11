@@ -99,6 +99,82 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
     assert next(m for m in history if m["role"] == "minister")["highlights"] == ["据实核账"]
 
 
+def _fail_named_thread_start(monkeypatch, failed_name):
+    """Trace the public Thread.start boundary without adding runtime test hooks."""
+    original_start = threading.Thread.start
+    attempted = []
+    started = []
+
+    def traced_start(thread):
+        attempted.append(thread.name)
+        if thread.name == failed_name:
+            raise RuntimeError(f"cannot start {failed_name}")
+        started.append(thread.name)
+        return original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", traced_start)
+    return attempted, started
+
+
+@pytest.mark.parametrize("failed_name", ["audience-p5-mindreading", "audience-p5-extraction"])
+def test_real_chat_tail_start_failure_preserves_active_reply_and_drains_pending(
+    game, monkeypatch, failed_name,
+):
+    from tests.test_audience_background import _FakeAgent, _web_game, _wait_for
+
+    db, state, content = game
+    minister = "温体仁"
+    runtime = _web_game(db, state, content, _FakeAgent())
+    runtime.session.chat = lambda *_a, **_k: _chat_result("臣请核账。")
+    def completed_tail(*_args, owns_pending=False, **_kwargs):
+        if owns_pending:
+            runtime._complete_pending_write()
+
+    runtime._trail_mindreading_after_reply = completed_tail
+    runtime._trail_extraction_after_reply = completed_tail
+    runtime._settle_reply_highlights = lambda *_a, **_k: []
+    attempted, started = _fail_named_thread_start(monkeypatch, failed_name)
+
+    payload = runtime.chat(minister, "钱粮如何？")
+
+    assert attempted == ["audience-p5-mindreading", "audience-p5-extraction"]
+    assert failed_name not in started
+    assert _wait_for(lambda: runtime._pending_writes_count == 0)
+    row = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE id=?", (payload["chat_turn_id"],),
+    ).fetchone()
+    assert row["status"] == "active"
+    projection = db.build_chat_projection(minister, payload["night_id"])
+    assert [message["content"] for message in projection][-2:] == ["钱粮如何？", "臣请核账。"]
+
+
+@pytest.mark.parametrize("failed_name", ["audience-highlight-settlement", "audience-p5-extraction"])
+def test_real_chat_stream_tail_start_failure_only_joins_started_threads_and_ends(
+    game, monkeypatch, failed_name,
+):
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    minister = "温体仁"
+    runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣请核账。"]))
+    runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
+    runtime._trail_extraction_after_reply = lambda *_a, **_k: None
+    runtime._settle_reply_highlights = lambda *_a, **_k: []
+    attempted, started = _fail_named_thread_start(monkeypatch, failed_name)
+
+    events = list(runtime.chat_stream(minister, "钱粮如何？"))
+
+    tail_names = ["audience-highlight-settlement", "audience-p5-extraction"]
+    assert [name for name in attempted if name in tail_names] == tail_names
+    assert failed_name not in started
+    assert [event["type"] for event in events][-2:] == ["done", "end"]
+    assert runtime._pending_writes_count == 0
+    chat_turn_id = next(event for event in events if event["type"] == "done")["payload"]["chat_turn_id"]
+    row = db.conn.execute("SELECT status FROM chat_turns WHERE id=?", (chat_turn_id,)).fetchone()
+    assert row["status"] == "active"
+    assert db.build_chat_projection(minister)
+
+
 def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_path, monkeypatch):
     """Persist through WebGame.chat, close the save, then observe both restored public projections."""
     from ming_sim.db import GameDB
