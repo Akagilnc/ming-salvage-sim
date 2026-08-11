@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -84,15 +85,15 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     assert db.list_mindreading_records(chat_turn_id) == []
 
 
-def test_chat_stream_starts_all_reply_tails_after_done_without_waiting_for_judge(game):
+def test_chat_stream_starts_all_reply_tails_after_done_without_waiting_for_judge(game, monkeypatch):
     """#544 production stream: slow successful judge cannot serialize the other tails."""
     from tests.test_audience_background import _FakeAgent, _web_game
 
     db, state, content = game
     minister = "温体仁"
     runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣请核账。"]))
-    judge_started = threading.Event()
-    release_judge = threading.Event()
+    judge_started = multiprocessing.Event()
+    release_judge = multiprocessing.Event()
     mind_started = threading.Event()
     extraction_started = threading.Event()
 
@@ -101,8 +102,7 @@ def test_chat_stream_starts_all_reply_tails_after_done_without_waiting_for_judge
         release_judge.wait(timeout=2)
         return '["核账"]'
 
-    runtime.highlight_judge_invoke = slow_judge
-    runtime.highlight_judge_timeout = 1
+    monkeypatch.setattr("ming_sim.highlight_judge.invoke_highlight_judge", slow_judge)
     runtime._trail_mindreading_after_reply = lambda *_a, **_k: mind_started.set()
     runtime._trail_extraction_after_reply = lambda *_a, **_k: extraction_started.set()
 
