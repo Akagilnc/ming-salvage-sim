@@ -301,6 +301,29 @@ _DIALOGUE_CARRIED_LEDGER_TAGS = frozenset({
 })
 
 
+def night_archive_metadata(
+    ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Purely derive archive labels from already-loaded durable-store rows."""
+    summon_methods = [
+        method
+        for entry in ledgers if _is_command_entry(entry)
+        for method in SUMMON_METHODS if method in (entry.get("tags") or [])
+    ]
+    people: List[str] = []
+    candidate_groups = [entry.get("person_names") or [] for entry in ledgers]
+    candidate_groups.extend([turn.get("minister_name")] for turn in turns)
+    for names in candidate_groups:
+        for raw_name in names:
+            name = str(raw_name or "").strip()
+            if name and name not in people:
+                people.append(name)
+    return {
+        "audience_type": summon_methods[0] if summon_methods else "召对",
+        "involved_people": people,
+    }
+
+
 def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Read one audience night as the shared live/archive scroll contract.
 
@@ -312,14 +335,10 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     if night is None:
         raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
     ledgers = list_ledger(db, night_id)
+    turns = list_chat_turns_for_night(db, night_id)
     # 召法已由引擎作为结构化常量 tag 落在入殿口令账上；它是当前夜容器可用的
     # 真实召对类型来源。抽取账的开放 tags 绝不参与该投影。
-    summon_methods = [
-        method
-        for entry in ledgers if _is_command_entry(entry)
-        for method in SUMMON_METHODS if method in (entry.get("tags") or [])
-    ]
-    audience_type = summon_methods[0] if summon_methods else "召对"
+    audience_type = night_archive_metadata(ledgers, turns)["audience_type"]
     container = {
         "time_of_day": night["time_of_day"],
         "location": night["location"],
@@ -342,7 +361,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             result["record_id"] = int(record_id)
         return result
 
-    turns = list_chat_turns_for_night(db, night_id)
     dialogue_by_turn: Dict[int, set[str]] = {}
     events: List[tuple[float, int, Dict[str, Any]]] = []
     for turn in turns:

@@ -308,9 +308,6 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
-  const [archivedScroll, setArchivedScroll] = React.useState<AudienceScrollMessage[] | null>(null);
-  const [scrollLoading, setScrollLoading] = React.useState(false);
-  const [scrollError, setScrollError] = React.useState("");
 
   React.useEffect(() => {
     let alive = true;
@@ -320,7 +317,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         if (!alive) return;
-        const list: HistoryTurnItem[] = data.turns || [];
+        const list: HistoryTurnItem[] = (data.turns || []).filter((item: HistoryTurnItem) => item.kind === "month");
         setTurns(list);
         if (list.length) setSelectedArchive(list[list.length - 1]);
       } catch (e: any) {
@@ -339,9 +336,6 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
     setDetailLoading(true);
     setDetailError("");
     setDetail(null);
-    setArchivedScroll(null);
-    setScrollError("");
-    setScrollLoading(!!selectedArchive.night_id);
     void fetch(`/api/history/turn/${selectedTurn}`)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -350,24 +344,10 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
       .then((data) => { if (alive) setDetail(data); })
       .catch((error) => { if (alive) setDetailError(error?.message || "加载失败"); })
       .finally(() => { if (alive) setDetailLoading(false); });
-    if (selectedArchive.night_id) {
-      void fetch(`/api/audience/scroll?night_id=${selectedArchive.night_id}`)
-        .then((response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.json();
-        })
-        .then((data) => { if (alive) setArchivedScroll(data?.messages || []); })
-        .catch((error) => { if (alive) setScrollError(error?.message || "加载失败"); })
-        .finally(() => { if (alive) setScrollLoading(false); });
-    } else {
-      setScrollLoading(false);
-    }
     return () => { alive = false; };
   }, [selectedArchive]);
 
-  const monthCount = turns.filter((item) => item.kind === "month").length;
-  const nightCount = turns.filter((item) => item.kind === "night").length;
-  const subtitle = turns.length ? `共 ${monthCount} 月档 · ${nightCount} 场档` : "尚无存档";
+  const subtitle = turns.length ? `共 ${turns.length} 月档 · 仅收奏报与诏书` : "尚无奏报或诏书";
 
   return (
     <FullscreenModal title="史册：历代奏报与诏书" subtitle={subtitle} bgClass="modal-bg-state" onClose={onClose}>
@@ -390,10 +370,8 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
                     className={`history-turn-item ${active ? "active" : ""}`}
                     onClick={() => setSelectedArchive(t)}
                   >
-                    <b>{t.kind === "night"
-                      ? `${t.location || "召对"}${t.time_of_day || "场"}${(t.scene_count || 0) > 1 ? ` · 第 ${t.scene_number} 场` : ""}`
-                      : `${t.year} 年 ${t.period} 月`}</b>
-                    <small>第 {t.turn} 回合 · {t.kind === "night" ? "场档" : (tags.join(" / ") || "月档")}</small>
+                    <b>{t.year} 年 {t.period} 月</b>
+                    <small>第 {t.turn} 回合 · {tags.join(" / ") || "月档"}</small>
                   </button>
                 </li>
               );
@@ -406,9 +384,6 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             error={detailError}
             detail={detail}
             selectedTurn={selectedArchive?.turn ?? null}
-            archivedScroll={archivedScroll}
-            scrollLoading={scrollLoading}
-            scrollError={scrollError}
           />
         </article>
       </div>
@@ -416,22 +391,64 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+export function AudienceArchiveModal({ onClose }: { onClose: () => void }) {
+  const [nights, setNights] = React.useState<HistoryTurnItem[]>([]);
+  const [selected, setSelected] = React.useState<HistoryTurnItem | null>(null);
+  const [messages, setMessages] = React.useState<AudienceScrollMessage[] | null>(null);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    let alive = true;
+    void fetch("/api/history/turns").then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((data) => {
+      if (!alive) return;
+      const list = ((data.turns || []) as HistoryTurnItem[]).filter((item) => item.kind === "night");
+      setNights(list);
+      setSelected(list[list.length - 1] || null);
+    }).catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
+    return () => { alive = false; };
+  }, []);
+
+  React.useEffect(() => {
+    if (!selected?.night_id) return;
+    let alive = true;
+    setMessages(null);
+    setError("");
+    void fetch(`/api/audience/scroll?night_id=${selected.night_id}`).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((data) => { if (alive) setMessages(data.messages || []); })
+      .catch((reason) => { if (alive) setError(reason?.message || "加载失败"); });
+    return () => { alive = false; };
+  }, [selected]);
+
+  return <FullscreenModal title="起居注：召对记录" subtitle="退朝后同源只读，不可编辑" bgClass="modal-bg-chat" onClose={onClose}>
+    <div className="history-modal-body">
+      <aside className="history-turn-list"><ul>{nights.slice().reverse().map((night) => <li key={night.night_id}>
+        <button className={`history-turn-item ${night.night_id === selected?.night_id ? "active" : ""}`} onClick={() => setSelected(night)}>
+          <b>{night.title}</b><small>涉及人物：{night.involved_people?.join("、") || "无载"}</small>
+        </button>
+      </li>)}</ul>{!nights.length && !error ? <p className="long-copy">尚无召对记录。</p> : null}</aside>
+      <article className="history-detail modal-scroll">
+        {error ? <p className="long-copy">加载失败：{error}</p> : null}
+        {messages ? <ScrollMessages messages={messages} ministerName="" /> : null}
+      </article>
+    </div>
+  </FullscreenModal>;
+}
+
 export function HistoryDetailView({
   loading,
   error,
   detail,
   selectedTurn,
-  archivedScroll = null,
-  scrollLoading = false,
-  scrollError = "",
 }: {
   loading: boolean;
   error: string;
   detail: HistoryDetail | null;
   selectedTurn: number | null;
-  archivedScroll?: AudienceScrollMessage[] | null;
-  scrollLoading?: boolean;
-  scrollError?: string;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
 
@@ -439,17 +456,9 @@ export function HistoryDetailView({
     <>
       {loading ? <section className="document-section"><p className="long-copy">月档加载中…</p></section> : null}
       {error ? <section className="document-section"><p className="long-copy">月档加载失败：{error}</p></section> : null}
-      {!loading && !error && (!detail || !detail.exists) && !archivedScroll && !scrollLoading && !scrollError
+      {!loading && !error && (!detail || !detail.exists)
         ? <section className="document-section"><p className="long-copy">该回合无存档。</p></section>
         : null}
-      {scrollLoading ? <section className="document-section"><p className="long-copy">场档加载中…</p></section> : null}
-      {scrollError ? <section className="document-section"><p className="long-copy">场档加载失败：{scrollError}</p></section> : null}
-      {archivedScroll ? (
-        <section className="document-section modal-bg-chat">
-          <h3 className="extraction-section-title">召对记录</h3>
-          <ScrollMessages messages={archivedScroll} ministerName="" />
-        </section>
-      ) : null}
       {detail?.decree_text ? (
         <section className="document-section">
           <h3 className="extraction-section-title">本月诏书</h3>

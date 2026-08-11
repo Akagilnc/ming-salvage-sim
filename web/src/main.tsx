@@ -10,7 +10,7 @@ import { GameMenuModal } from "./components/gameMenu";
 import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, LongGoalsModal, QuadFrame } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
-import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
+import { AudienceArchiveModal, ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
@@ -331,7 +331,7 @@ export function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "audience_archive" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -1107,7 +1107,7 @@ export function App() {
         <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
           caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => setActiveModal("state")} />
         <CommandSlot slotKey="邸报" img="邸报"
-          caption="邸报" sub="本月奏报" onClick={() => setActiveModal("report")} />
+          caption="起居注" sub="历次召对记录" onClick={() => setActiveModal("audience_archive")} />
         <CommandSlot slotKey="密令" img="密令"
           badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
           caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
@@ -1290,6 +1290,10 @@ export function App() {
 
       {activeModal === "history" ? (
         <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
+      ) : null}
+
+      {activeModal === "audience_archive" ? (
+        <AudienceArchiveModal onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (
