@@ -2135,6 +2135,11 @@ def _extract_secret_order(
         raw, _attempts = _run_json_extractor_for_config(prompt, llm_config, tag="secret_extract")
     except Exception as exc:  # 提取失败不阻断：退回默认（trace 已在咽喉记下，含 error）
         _log(f"密令提取失败：{exc}")
+    finally:
+        # The confirmation future remains readable after shutdown.  Owning the
+        # executor here guarantees cleanup even if any later normalization raises.
+        if confirmation_pool is not None:
+            confirmation_pool.shutdown(wait=True)
     obj = _loads_lenient(raw) or {}
     _content_llm = str(obj.get("内容") or "").strip()
     _assignee_llm = str(obj.get("承办人") or "").strip()
@@ -2225,8 +2230,6 @@ def _extract_secret_order(
         except Exception as exc:
             _log(f"案卷关联确认失败：{exc}")
             confirmed = set()
-        finally:
-            confirmation_pool.shutdown(wait=True)
         dossier_links = [
             item for identity, item in proposals.items() if identity in confirmed
         ]

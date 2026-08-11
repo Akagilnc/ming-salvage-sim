@@ -14,6 +14,12 @@ from ming_sim.memories import effect_brief
 from tests.conftest import active_ming_character
 
 
+
+def _decree_origin(db, state) -> str:
+    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
 def _army_count(db) -> int:
     return db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
 
@@ -393,7 +399,7 @@ def test_new_issue_nondict_effect_fields_do_not_crash(game, monkeypatch):
     before = db.conn.execute("SELECT COUNT(*) FROM issues").fetchone()[0]
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
-            "origin_kind": "decree", "title": "效果字段畸形国策", "kind": "initiative",
+            "origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "效果字段畸形国策", "kind": "initiative",
             "effect_on_resolve": "这是字符串不是dict",   # 恶意非 dict（旧码 dict() 会抛 ValueError）
             "ongoing_effects": ["也不是dict"],
             "effect_on_fail": None,
@@ -413,7 +419,7 @@ def test_initiative_floor_applies_when_enrich_empty(game, monkeypatch):
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     I.apply_issue_tracker_output(db, state, {
-        "new_issues": [{"origin_kind": "decree", "title": "空回报国策", "kind": "initiative"}],
+        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "空回报国策", "kind": "initiative"}],
     })
     row = db.conn.execute(
         "SELECT effect_on_resolve FROM issues WHERE title='空回报国策'").fetchone()
@@ -443,7 +449,7 @@ def test_runtime_cli_initiative_floor_applies_without_backend_env(game, monkeypa
     )
 
     I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "title": "runtime空回报国策", "kind": "initiative"}],
+        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "runtime空回报国策", "kind": "initiative"}],
     }, llm_config=cfg)
 
     row = db.conn.execute(
@@ -475,7 +481,7 @@ def test_api_channel_initiative_does_not_use_backend_env_floor(game, monkeypatch
     )
 
     I.apply_score_extraction(db, state, {
-        "new_issues": [{"origin_kind": "decree", "title": "api空回报国策", "kind": "initiative"}],
+        "new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "api空回报国策", "kind": "initiative"}],
     }, llm_config=cfg)
 
     row = db.conn.execute(

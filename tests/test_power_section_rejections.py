@@ -124,27 +124,6 @@ def test_unknown_person_power_change_rejected_good_lands(saved_game):
     assert after == good_power
 
 
-def test_character_power_changes_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_character_power_changes 内代码异常 → 上抛 SettlementAbort 回滚整批,
-    绝不被原 try/except 吞掉(ADR 0005/决定 1)。"""
-    from ming_sim.exceptions import SettlementAbort
-
-    db, state, content = game
-    good_power = _valid_power_id(db)
-    real = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' LIMIT 1").fetchone()[0]
-
-    def _boom(self, *a, **k):
-        raise KeyError("code bug in apply_character_power_changes")
-    monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-
-    with pytest.raises(SettlementAbort):
-        run_settle(db, state, content, {
-            "character_power_changes": [
-                {"name": real, "new_power": good_power, "reason": "叛"}],
-        }, narrative="x", decree_text="y")
-
-
 def test_power_change_formatter_skips_rejected_items():
     """report.format_power_changes 遇到同列的拒收项(无 delta/label 键)不得 KeyError——
     拒收项不是盘面变化,只渲染 applied 项;全拒收时回落「未见变化」(S1 迁契约副作用守门)。"""

@@ -246,6 +246,7 @@ def test_decree_initiative_cap_allows_fifteen_active_issues(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "第十五条承诺地基",
             "effect_on_resolve": {"metrics": {"民心": 1}},
@@ -335,6 +336,7 @@ def test_decree_initiative_cap_rejects_sixteenth_with_updated_message(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "第十六条应拒",
             "effect_on_resolve": {"metrics": {"民心": 1}},

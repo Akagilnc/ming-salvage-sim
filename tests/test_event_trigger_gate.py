@@ -3957,6 +3957,7 @@ def test_event_pool_rechecks_after_prior_event_effect_closes_gate(game):
 def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game):
     """post-merge CMR R5：decree 新立 issue 也不得由 insert_issue 提前提交外层事务。"""
     db, state, _content = game
+    origin_ref = _promulgated_dossier(db, state, "测试 decree 新立事务")
     db.conn.commit()
 
     db.conn.execute("BEGIN")
@@ -3967,6 +3968,7 @@ def test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback(game
             "new_issues": [
                 {
                     "origin_kind": "decree",
+                    "origin_ref": origin_ref,
                     "kind": "situation",
                     "title": "测试·decree 新立事务",
                     "bar_value": 25,

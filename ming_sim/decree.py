@@ -835,7 +835,7 @@ def resolve_settling_recovery(
         # A repeated failure of that same ready payload may downgrade only after
         # both attempts have produced ADR0008 error packs.  If pack creation
         # failed, no matching directories exist and the evidence is preserved.
-        packed_attempts = complete_error_packs_for_ready(before_turn, extracted)
+        packed_attempts = complete_error_packs_for_ready(db.path, before_turn, extracted)
         if len(packed_attempts) >= 2:
             try:
                 clear_for_resimulation(db, before_turn)
