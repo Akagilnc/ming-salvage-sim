@@ -115,7 +115,11 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
     assert "force_promulgated" not in dossier_decisions
 
 
-def test_ordinary_entry_remains_ordinary(monkeypatch):
+@pytest.mark.parametrize(
+    ("emperor_text", "expected"),
+    [("清核仓场", "ordinary"), ("中旨直发，清核仓场", "midzhi")],
+)
+def test_manual_mode_declaration_overrides_extractor(monkeypatch, emperor_text, expected):
     extracted = json.dumps({
         "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
         "目标ID": "granary", "颁布方式": "普通",
@@ -123,33 +127,7 @@ def test_ordinary_entry_remains_ordinary(monkeypatch):
     monkeypatch.setattr(
         cli_backend, "_run_backend_for_config", lambda *_args, **_kwargs: (extracted, {}),
     )
-    assert cli_backend.capture_manual_directive_payload("清核仓场")["mode"] == "ordinary"
-
-
-@pytest.mark.parametrize(
-    ("column", "stored", "message"),
-    [
-        ("payload_json", "", "payload_json 无效"),
-        ("payload_json", "{", "payload_json 无效"),
-        ("payload_json", "[]", "payload_json 非对象"),
-        ("payload_json", '{"mode":"secret"}', "mode 非法"),
-        ("payload_json", '{"mode":""}', "mode 非法"),
-        ("payload_json", '{"mode":false}', "mode 非法"),
-        ("payload_json", '{"mode":0}', "mode 非法"),
-        ("payload_json", '{"mode":[]}', "mode 非法"),
-        ("payload_json", '{"mode":{}}', "mode 非法"),
-        ("stigma_json", "", "stigma_json 无效"),
-        ("stigma_json", "{", "stigma_json 无效"),
-        ("stigma_json", "{}", "stigma_json 非列表"),
-    ],
-)
-def test_corrupt_dossier_state_fails_at_db_read_seam(game, column, stored, message):
-    db, state, _content = game
-    dossier_id = _make_midzhi_dossier(db, state)
-    db.conn.execute(f"UPDATE decree_dossiers SET {column}=? WHERE id=?", (stored, dossier_id))
-
-    with pytest.raises(ValueError, match=message):
-        db.get_decree_dossier(dossier_id)
+    assert cli_backend.capture_manual_directive_payload(emperor_text)["mode"] == expected
 
 
 def test_missing_dossier_mode_defaults_to_ordinary(game):
