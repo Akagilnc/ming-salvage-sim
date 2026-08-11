@@ -500,13 +500,8 @@ export function App() {
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
         const responseFailures = data.pending_action_failures || [];
-        if (data.secret_order_id) {
-          setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
-        }
+        // 成功的密令与拟旨由各自持久投影自然显现；系统层只承载失败/重试/恢复。
         setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-        if (data.proposed_directive) {
-          setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
-        }
         if (data.next_minister && !responseFailures.length) {
           // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。
           resetPanel();
@@ -516,13 +511,11 @@ export function App() {
           setReplyRetry(null);
           setSelectedMinister(data.next_minister);
           setActiveModal("chat");
-          setChatNotice(`已传${data.next_minister}入殿。`);
         }
         // 正常回话完成后刷新待补抽取状态（可能有新的失败待补）。
         void refreshExtractionPending();
         if (data.court_action === "dismiss") {
           clearPendingText();
-          setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
         }
       },
       // 观察者离开实时流：召对在后台续跑，重开经历史重入。
