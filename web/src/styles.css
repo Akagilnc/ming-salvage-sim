@@ -3424,7 +3424,7 @@ button:disabled {
 }
 
 /* state/诏书/长期目标的文字直贴底图；归档卷轴保留 action/aside/scene 的角色语义。 */
-.modal-bg-state :not(.modal-bg-chat, .modal-bg-chat *),
+.modal-bg-state *,
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   background: transparent !important;
@@ -3604,7 +3604,7 @@ button:disabled {
   color: #1a1410 !important;
 }
 
-.modal-bg-state :not(.modal-bg-chat, .modal-bg-chat *),
+.modal-bg-state *,
 .modal-bg-edict *,
 .modal-bg-long-goal * {
   color: #1a1410 !important;
