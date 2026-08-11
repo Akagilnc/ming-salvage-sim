@@ -3590,22 +3590,35 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
 
 @app.patch("/api/directives/{directive_id}")
 async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    rows = get_game().directive_rows()
-    row = next((item for item in rows if int(item["id"]) == directive_id), None)
-    if row is None:
-        raise HTTPException(status_code=404, detail="未找到草案。")
-    text = request.text if request.text is not None else str(row["text"])
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
         with _serialized_web_write(game):
+            row = next(
+                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
+                None,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="未找到草案。")
+            text = request.text if request.text is not None else str(row["text"])
+            if not text.strip():
+                raise HTTPException(status_code=400, detail="指令内容不能为空。")
             capture_turn = int(game.state.turn)
+            try:
+                existing_payload = json.loads(
+                    (row["dossier_payload_json"] if "dossier_payload_json" in row.keys() else "{}")
+                    or "{}"
+                )
+            except (TypeError, ValueError):
+                existing_payload = {}
+            existing_mode = (
+                existing_payload.get("mode") if isinstance(existing_payload, dict) else None
+            )
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
             text.strip(),
             game.session.llm_config,
+            existing_mode=existing_mode,
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
         )

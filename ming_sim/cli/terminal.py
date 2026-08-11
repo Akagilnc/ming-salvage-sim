@@ -6,6 +6,7 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 
 from __future__ import annotations
 
+import json
 import re
 from typing import List, Optional
 
@@ -701,11 +702,22 @@ def review_directives(session: GameSession) -> str:
                     new_text = input("新的指令内容：").strip()
                     if new_text:
                         from ming_sim.cli_backend import capture_manual_directive_payload
+                        row = next(
+                            r for r in session.db.list_directives(
+                                session.state, statuses=("draft",),
+                            ) if int(r["id"]) == target_id
+                        )
+                        try:
+                            existing_payload = json.loads(row["dossier_payload_json"] or "{}")
+                        except (TypeError, ValueError):
+                            existing_payload = {}
                         session.update_directive(
                             target_id,
                             new_text,
                             dossier_payload=capture_manual_directive_payload(
                                 new_text, session.llm_config,
+                                existing_mode=(existing_payload.get("mode")
+                                               if isinstance(existing_payload, dict) else None),
                                 **({"db": session.db, "content": session.content}
                                    if getattr(session, "content", None) is not None else {}),
                             ),

@@ -359,16 +359,20 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             draft_res["participant_roster"] = roster
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
+        pending_target = next(
+            (c for c in dir_candidates if c["id"] == _target_id), None,
+        ) if _target_id is not None else None
+        # 单候选且抽取器未回目标时，下面的真实落点仍是 upsert 该候选，不是新建。
+        if pending_target is None and len(dir_candidates) == 1 and _target != "新":
+            pending_target = dir_candidates[0]
         is_existing_update = (
-            (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
+            pending_target is not None
             or (committed_draft is not None and not has_pending_directive)
         )
         existing_mode = None
         if is_existing_update:
-            if _target_id is not None:
-                existing_mode = next(
-                    (c.get("mode") for c in dir_candidates if c["id"] == _target_id), None,
-                )
+            if pending_target is not None:
+                existing_mode = pending_target.get("mode")
             elif committed_draft is not None:
                 try:
                     existing_payload = json.loads(
