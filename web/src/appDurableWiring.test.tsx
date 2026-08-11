@@ -131,6 +131,45 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }
   });
 
+  it("退朝按钮与手输下朝都走既有 advance 服务，普通问话仍走 chat stream", async () => {
+    const paths: string[] = [];
+    const roster = [{ id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" }];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      paths.push(`${init?.method || "GET"} ${u.pathname}`);
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
+      if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2), pending_action_failures: [] });
+      if (u.pathname.endsWith("/chat/stream")) return sseResp({ response: "臣在", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [] });
+      if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77, pending_turn_ids: [] });
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      return jsonResp({});
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("温体仁")));
+    await tick();
+
+    await click(findButton(host, "退朝"));
+    await tick();
+    const textarea = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(textarea, "下朝");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await tick();
+
+    expect(paths.filter((path) => path === "POST /api/decree/advance_without_edict")).toHaveLength(2);
+    expect(paths.some((path) => path.endsWith("/chat/stream"))).toBe(false);
+  });
+
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
     const staleGate = new Promise<void>((r) => { releaseStale = r; });

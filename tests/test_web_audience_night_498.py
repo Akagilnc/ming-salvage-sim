@@ -295,6 +295,55 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
 
 
+def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
+    """Legacy saves with only turn_directives.status=pending remain operable at the
+    same end-turn service seam; retired player confirm/reject routes stay absent."""
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn_before = int(game.state.turn)
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    directive_id = game.db.add_directive(
+        game.state, None, "着户部核边饷", "legacy-chat", actor=minister,
+        status="pending", dossier_payload={**_POLICY_FIELDS},
+    )
+    dossiered_id = game.db.add_directive(
+        game.state, None, "已成案旨", "legacy-approved", actor=minister,
+        status="draft", dossier_payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "already-dossiered",
+        },
+    )
+    game.db._ensure_directive_dossier(
+        game.state, dossiered_id, "已成案旨", {
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "already-dossiered",
+        },
+    )
+
+    async def scenario():
+        async with _client() as client:
+            state = (await client.get("/api/game/state")).json()
+            confirm = await client.post(f"/api/directives/{directive_id}/confirm")
+            reject = await client.post(f"/api/directives/{directive_id}/reject")
+            advance = await client.post("/api/decree/advance_without_edict")
+            return state, confirm.status_code, reject.status_code, advance
+
+    state_payload, confirm_status, reject_status, response = asyncio.run(scenario())
+    assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
+    assert (confirm_status, reject_status) == (405, 405)
+    assert response.status_code == 200
+    assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
+    closes = [
+        row for row in an.list_ledger(game.db, int(night["id"]))
+        if an.TAG_CLOSE_NIGHT in (row.get("tags") or [])
+    ]
+    assert len(closes) == 1
+    dossier = game.db.get_dossier_for_directive(directive_id)
+    assert dossier is not None
+    assert int(game.db.load_state().turn) == turn_before + 1
+
+
 # ── ③ AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
 def test_asgi_hanging_chat_makes_issue_fail_closed(web_game, monkeypatch):
     game = web_game
