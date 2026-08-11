@@ -6739,12 +6739,7 @@ class GameDB:
                         changes.append({"army": row["name"], "field": field, **origin_error,
                                         "item": {"army_id": army_id, "field": field, "value": value}})
                         continue
-                    if (
-                        self.is_army_pay_source_cutover_enabled()
-                        and new_value == 0
-                        and str(row["owner_power"]) == "ming"
-                        and float(row["arrears"] or 0) > 1e-9
-                    ):
+                    if will_write_off_arrears:
                         old_arrears = float(row["arrears"] or 0)
                         old_source = str(row["pay_source_region"] or "")
                         self.conn.execute(
