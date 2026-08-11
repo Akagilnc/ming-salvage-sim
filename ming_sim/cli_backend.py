@@ -1016,8 +1016,8 @@ def _directive_mode(value: object) -> Optional[str]:
 def resolve_directive_mode(
     emperor_text: object = None, extracted: object = None, existing: object = None,
 ) -> str:
-    """Own mode authority: emperor declaration > extraction > existing > compatibility default."""
-    for value in (emperor_text, extracted, existing, "ordinary"):
+    """Own mode authority: emperor declaration > existing > extraction > compatibility default."""
+    for value in (emperor_text, existing, extracted, "ordinary"):
         mode = _directive_mode(value)
         if mode is not None:
             return mode

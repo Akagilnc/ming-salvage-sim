@@ -271,7 +271,7 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
 
     extracted = {
         "draft_action": "拟旨", "draft_text": "补充后的草稿",
-        **_POLICY_FIELDS, "target_candidate": target,
+        **_POLICY_FIELDS, "target_candidate": target, "mode": "ordinary",
     }
     if supplement == "empty":
         extracted["participant_roster"] = []
