@@ -284,12 +284,27 @@ def validate_promulgation_verdicts(
     }
     try:
         for row in generated:
-            if row.get("decision") == "promulgated" and rejection_only_fields & row.keys():
+            decision = row.get("decision")
+            if decision == "promulgated" and rejection_only_fields & row.keys():
                 raise ValueError("顺颁判决不得携带打回专属字段")
             marker = row.get("midzhi_unpromulgatable", False)
             if not isinstance(marker, bool):
                 raise ValueError("中旨亦不可颁标记必须为 bool")
             dossier_id = row.get("dossier_id")
+            mode = proposed_modes.get(dossier_id) if isinstance(dossier_id, int) else None
+            if marker and (decision != "rejected" or mode != "中旨"):
+                raise ValueError("中旨亦不可颁只能标记中旨打回判决")
+            allowed_keys = {"dossier_id", "decision"}
+            if decision == "promulgated" and mode == "中旨":
+                allowed_keys.add("affected_parties")
+            elif decision == "rejected":
+                allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
+                allowed_keys.add("affected_parties")
+                if mode == "中旨":
+                    allowed_keys.add("midzhi_unpromulgatable")
+            unknown_keys = set(row) - allowed_keys
+            if unknown_keys:
+                raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
             needs_affected = (
                 row.get("decision") == "rejected"
                 or (isinstance(dossier_id, int) and not isinstance(dossier_id, bool)
@@ -314,11 +329,6 @@ def validate_promulgation_verdicts(
                     raise ValueError("受损方程度只能为大怒或不满")
                 if key not in (faction_names if kind == "faction" else class_names):
                     raise ValueError(f"未知受损方：{kind}:{key}")
-            if marker and (
-                row.get("decision") != "rejected"
-                or proposed_modes.get(dossier_id) != "中旨"
-            ):
-                raise ValueError("中旨亦不可颁只能标记中旨打回判决")
             if row.get("decision") == "rejected":
                 validate_rejection_verdict(
                     row, {"cabinet_drafting", "palace_rescript", "six_offices"},
