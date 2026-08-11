@@ -428,3 +428,34 @@ def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["version"] == "unknown"
+
+
+def test_complete_ready_packs_match_database_turn_digest_and_manifest_shape(game, monkeypatch, tmp_path):
+    """Ready retry evidence is scoped by db path + turn + digest; malformed manifests are ignored."""
+    from ming_sim.error_pack import complete_error_packs_for_ready, ready_payload_digest
+
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    from ming_sim.error_pack import error_packs_root
+    root = error_packs_root()
+    root.mkdir(parents=True)
+    payload = {"metric_delta": {"民心": 1}}
+    required = ("traceback.txt", "delta.json", "resolve_context.json", "save_backup.db")
+
+    def pack(name, manifest):
+        path = root / name
+        path.mkdir()
+        for filename in required:
+            (path / filename).write_text("x", encoding="utf-8")
+        (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    good = pack(f"turn{state.turn}_attempt1", {"db_path": db.path, "turn": state.turn,
+                         "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt2", {"db_path": db.path + ".other", "turn": state.turn,
+                      "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt3", {"db_path": db.path, "turn": state.turn + 1,
+                        "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt4", ["not", "an", "object"])
+
+    assert complete_error_packs_for_ready(db.path, state.turn, payload) == [good]
