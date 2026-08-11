@@ -45,7 +45,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [
-        { id: "wang-chengen", name: "王承恩", portrait_id: "portrait_court_03" },
+        { name: "王承恩", portrait_id: "portrait_court_03" },
       ]));
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [
         { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
@@ -65,7 +65,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
     expect(host.querySelector<HTMLImageElement>(".aside-avatar")?.getAttribute("src"))
-      .toBe("/portraits/minister_wang-chengen.png");
+      .toBe("/portraits/minister_王承恩.png");
   });
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
