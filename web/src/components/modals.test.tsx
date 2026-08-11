@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal } from "./modals";
+import { AudienceArchiveModal, ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal } from "./modals";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 
@@ -754,50 +754,43 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
   });
 });
 
-describe("HistoryModal — scene-level closed-night archive", () => {
-  it("selects both nights in one turn through the shared scroll endpoint", async () => {
+describe("AudienceArchiveModal — read-only scene archive", () => {
+  it("selects closed scenes through the shared scroll endpoint without a composer", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url === "/api/history/turns") return Promise.resolve({ ok: true, json: async () => ({ turns: [
-        { kind: "night", turn: 7, year: 1, period: 11, has_report: false, has_directive: false, night_id: 31, location: "乾清宫", time_of_day: "戌时", scene_number: 1, scene_count: 2 },
-        { kind: "night", turn: 7, year: 1, period: 11, has_report: false, has_directive: false, night_id: 32, location: "乾清宫", time_of_day: "戌时", scene_number: 2, scene_count: 2 },
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "1年11月 · 戌时乾清宫 · 越次 · 第1场", involved_people: ["杨嗣昌"] },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 32, title: "1年11月 · 戌时乾清宫 · 召对 · 第2场", involved_people: ["洪承畴"] },
       ] }) });
-      if (url === "/api/history/turn/7") return Promise.resolve({ ok: true, json: async () => ({ turn: 7, exists: false }) });
       const id = url.endsWith("31") ? 31 : 32;
       return Promise.resolve({ ok: true, json: async () => ({ messages: [{ role: "user", content: `场次${id}` }] }) });
     });
     vi.stubGlobal("fetch", fetchMock);
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
-    await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.textContent).toContain("场次32");
-    expect(document.body.textContent).toContain("乾清宫戌时 · 第 1 场");
-    expect(document.body.textContent).toContain("乾清宫戌时 · 第 2 场");
-    const buttons = Array.from(document.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
+    await act(async () => { root.render(<AudienceArchiveModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("召对记录");
+    expect(host.textContent).toContain("涉及人物：洪承畴");
+    expect(host.textContent).toContain("场次32");
+    expect(host.querySelector("textarea, input, .chat-composer")).toBeNull();
+    const buttons = Array.from(host.querySelectorAll(".history-turn-item")) as HTMLButtonElement[];
     await act(async () => { buttons[1].click(); await Promise.resolve(); await Promise.resolve(); });
     expect(fetchMock).toHaveBeenCalledWith("/api/audience/scroll?night_id=31");
-    expect(document.body.textContent).toContain("场次31");
+    expect(host.textContent).toContain("场次31");
   });
 
-  it("月档失败不遮蔽成功场卷", () => {
+  it("史册 filters out scene rows and keeps the public-document boundary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
+      url === "/api/history/turns" ? { turns: [
+        { kind: "month", turn: 7, year: 1, period: 11, has_report: true, has_directive: false },
+        { kind: "night", turn: 7, year: 1, period: 11, night_id: 31, title: "不应出现的场卷" },
+      ] } : { turn: 7, exists: true, report: "月档奏报", directives: [] }
+    })));
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });
-    act(() => root.render(<HistoryDetailView
-      loading={false} error="HTTP 500" detail={null} selectedTurn={7}
-      archivedScroll={[{ role: "user", content: "场卷仍在", speaker: "圣上", audibility: "public", time: null, soft_boundary: false, beat: "dialogue", highlights: [], container: { time_of_day: "戌时", location: "乾清宫", audience_type: "朝会" } }]}
-    />));
-    expect(host.textContent).toContain("月档加载失败：HTTP 500");
-    expect(host.textContent).toContain("场卷仍在");
-  });
-
-  it("场卷失败不遮蔽成功月档", () => {
-    const host = document.createElement("div"); document.body.appendChild(host);
-    const root = createRoot(host); mountedRoots.push({ root, host });
-    act(() => root.render(<HistoryDetailView
-      loading={false} error="" selectedTurn={7} archivedScroll={null} scrollError="HTTP 503"
-      detail={{ turn: 7, exists: true, year: 1, period: 11, report: "", decree_text: "月档诏书", directives: [] }}
-    />));
-    expect(host.textContent).toContain("场档加载失败：HTTP 503");
-    expect(host.textContent).toContain("月档诏书");
+    await act(async () => { root.render(<HistoryModal onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain("奏报与诏书");
+    expect(host.textContent).not.toContain("不应出现的场卷");
   });
 });
 

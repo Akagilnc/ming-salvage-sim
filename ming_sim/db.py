@@ -9479,12 +9479,26 @@ class GameDB:
             FROM audience_nights WHERE status='closed' ORDER BY turn,id
             """
         ).fetchall()
-        return [{
-            "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
-            "year": int(r["year"]), "period": int(r["period"]),
-            "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
-            "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
-        } for r in rows]
+        from ming_sim.audience_night import night_archive_metadata
+
+        archives: List[Dict[str, object]] = []
+        for r in rows:
+            metadata = night_archive_metadata(self, int(r["id"]))
+            scene_suffix = f" · 第{int(r['scene_number'])}场" if int(r["scene_count"]) > 1 else ""
+            title = (
+                f"{int(r['year'])}年{int(r['period'])}月 · "
+                f"{str(r['time_of_day'] or '')}{str(r['location'] or '')} · "
+                f"{metadata['audience_type']}{scene_suffix}"
+            )
+            archives.append({
+                "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
+                "year": int(r["year"]), "period": int(r["period"]),
+                "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+                "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
+                "audience_type": metadata["audience_type"], "title": title,
+                "involved_people": metadata["involved_people"],
+            })
+        return archives
 
     def list_archived_turns(self) -> List[Dict[str, object]]:
         """兼容组合读面：月档和场档保持独立条目，不再以 SQL join 互相复制。"""
