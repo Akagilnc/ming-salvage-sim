@@ -160,11 +160,17 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
 def test_presence_commands_project_to_diegetic_scene_beats(game):
     db, state, _ = game
     night_id = _night(db, state)
+    baseline = len([
+        message for message in an.read_night_scroll(db, night_id)
+        if message["beat"] in {"entrance", "exit"}
+    ])
     an.summon_enter(db, night_id, "杨嗣昌")
     an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
 
     scroll = an.read_night_scroll(db, night_id)
-    presence = [message for message in scroll if message["beat"] in {"entrance", "exit"}]
+    presence = [
+        message for message in scroll if message["beat"] in {"entrance", "exit"}
+    ][baseline:]
 
     assert [(message["role"], message["beat"]) for message in presence] == [
         ("scene", "entrance"),
