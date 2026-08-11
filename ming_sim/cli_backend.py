@@ -998,7 +998,7 @@ def classify_cli_action_intent(
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def _directive_mode(value: object) -> Optional[str]:
-    """Canonical presence-aware mode normalization for every directive entry seam."""
+    """Normalize one mode value; authority precedence belongs to resolve_directive_mode."""
     normalized = str(value or "").strip()
     if not normalized:
         return None
@@ -1011,6 +1011,17 @@ def _directive_mode(value: object) -> Optional[str]:
     if normalized in {"普通", "ordinary"}:
         return "ordinary"
     return None
+
+
+def resolve_directive_mode(
+    emperor_text: object = None, extracted: object = None, existing: object = None,
+) -> str:
+    """Own mode authority: emperor declaration > extraction > existing > compatibility default."""
+    for value in (emperor_text, extracted, existing, "ordinary"):
+        mode = _directive_mode(value)
+        if mode is not None:
+            return mode
+    return "ordinary"
 
 
 def extract_draft_intent(
@@ -1251,22 +1262,22 @@ def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, db: Any = None, content: Any = None,
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
-    declared_mode = _directive_mode(text)
     captured = extract_draft_intent(
         str(text or ""), "请据此拟旨", llm_config=llm_config,
     )
+    declared_mode = resolve_directive_mode(text, captured.get("mode"))
     if captured.get("draft_action") != "拟旨":
         return {
             "dossier_action_type": "special_decree",
             "target_kind": "policy",
             "target_id": "manual-directive",
-            **({"mode": declared_mode} if declared_mode else {}),
+            "mode": declared_mode,
         }
     payload = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),
         "target_id": captured.get("target_id"),
-        **({"mode": declared_mode} if declared_mode else {}),
+        "mode": declared_mode,
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
@@ -1274,8 +1285,6 @@ def capture_manual_directive_payload(
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
-    if declared_mode is None and captured.get("mode") not in (None, ""):
-        payload["mode"] = captured["mode"]
     roster = payload.get("participant_roster")
     if roster is not None and db is not None and content is not None:
         if not isinstance(roster, list):
@@ -1308,7 +1317,7 @@ def capture_manual_directive_payload(
             "dossier_action_type": "special_decree",
             "target_kind": "policy",
             "target_id": "manual-directive",
-            **({"mode": declared_mode} if declared_mode else {}),
+            "mode": declared_mode,
         }
     return payload
 

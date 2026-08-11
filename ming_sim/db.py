@@ -11081,10 +11081,13 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                self._append_midzhi_stigma(
-                    dossier_id, decision="force_promulgated", turn=state.turn,
-                    commit=False,
-                )
+                # A predeclared midzhi rejection already stigmatized this one attempt;
+                # force-promulgation only adds the imperial-authority cost (ADR 0056).
+                if not predeclared_midzhi:
+                    self._append_midzhi_stigma(
+                        dossier_id, decision="force_promulgated", turn=state.turn,
+                        commit=False,
+                    )
             else:
                 self.record_dossier_decision(
                     dossier_id, "promulgated", blocked_layer=blocked_layer,
@@ -11511,14 +11514,13 @@ class GameDB:
         CLI 非流式 + web streaming 共用，杜绝双路径漂移）。显式拟旨每次都是**新拟独立一道**：
         该大臣已有 ≥1 道 pending directive 时 INSERT 新候选（不 upsert 压扁前一道）；无候选时
         走 upsert（首道 INSERT，行为与旧路等价）。返回候选行 id。"""
-        from ming_sim.cli_backend import _directive_mode
+        from ming_sim.cli_backend import resolve_directive_mode
 
-        declared_mode = _directive_mode(mode)
-        if declared_mode is None:
-            declared_mode = _directive_mode(text)
-        payload = {"text": text, "actor": minister_name}
-        if declared_mode is not None:
-            payload["mode"] = declared_mode
+        payload = {
+            "text": text,
+            "actor": minister_name,
+            "mode": resolve_directive_mode(text, mode),
+        }
         existing = [
             p for p in self.list_pending_actions(int(turn), minister_name=minister_name)
             if p["kind"] == "directive"
