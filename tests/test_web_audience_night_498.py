@@ -263,7 +263,39 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     assert int(game.db.load_state().turn) == turn_before + 1
 
 
-# ── ② AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
+# ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
+def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn_before = int(game.state.turn)
+    text = "着户部核边饷，限三月完报"
+
+    # #502 的真实「对话内已应允」持久态：候选仍 pending，但归属本夜且 night_approved=1；
+    # 本 tracer 从该依赖交付态起，经玩家真实收夜/月末入口验证后半链，不直接 commit。
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    directive_id = game.db.stage_directive_candidate(
+        game.state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": text, "actor": minister},
+    )
+    assert an.mark_actions_night_approved(game.db, [directive_id], night_id=int(night["id"])) == 1
+
+    async def scenario():
+        async with _client() as client:
+            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+
+    events = asyncio.run(scenario())
+
+    assert events[-1]["event"] == "done"
+    assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
+    assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
+    settled = game.db.list_directives_by_turn(turn_before)
+    assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
+
+
+# ── ③ AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
 def test_asgi_hanging_chat_makes_issue_fail_closed(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)

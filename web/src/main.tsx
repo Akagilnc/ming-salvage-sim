@@ -512,7 +512,7 @@ export function App() {
         }
         setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
         if (data.proposed_directive) {
-          setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
+          setChatNotice(`${targetMinisterName}已拟旨一道；对话内应允后，收夜提交即准旨。`);
         }
         if (data.next_minister && !responseFailures.length) {
           // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。

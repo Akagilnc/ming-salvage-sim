@@ -15,6 +15,10 @@ vi.mock("./settlementPresentation", () => ({
 }));
 
 const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);
+const sseResp = (payload: unknown): Response => {
+  const body = `event: done\ndata: ${JSON.stringify(payload)}\n\nevent: end\ndata: {}\n\n`;
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+};
 
 const MENU_STATUS = {
   has_api_key: true, has_running_game: true, has_main_db: true, saves: [],
@@ -70,6 +74,63 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       });
     });
   });
+  it("名册点人只代发精确「宣X」，人物切换只消费服务端 next_minister", async () => {
+    const requests: Array<{ minister: string; message: string }> = [];
+    let streamCall = 0;
+    const roster = [
+      { id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" },
+      { id: "b", name: "周延儒", office: "次辅", summary: "", status: "active" },
+    ];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
+      if (u.pathname.endsWith("/chat/stream")) {
+        requests.push({
+          minister: decodeURIComponent(u.pathname.split("/").at(-3) || ""),
+          message: JSON.parse(String(init?.body || "{}")).message,
+        });
+        streamCall += 1;
+        return sseResp({
+          response: "臣遵旨", directives: [], pending_count: 0, suggestions: [],
+          can_undo_last_chat: false, pending_action_failures: [],
+          ...(streamCall === 1 ? { proposed_directive: { text: "着户部核饷" } } : {}),
+          ...(streamCall === 2 ? { next_minister: "周延儒" } : {}),
+        });
+      }
+      if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) {
+        const name = decodeURIComponent(u.pathname.split("/").at(-2) || "");
+        return jsonResp({ minister: roster.find((m) => m.name === name), history: [], suggestions: [], campaign_id: "c1", night_id: 77, pending_turn_ids: [] });
+      }
+      if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+    await tick();
+    await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("温体仁")));
+    await tick();
+    expect(host.querySelector('[aria-label="召对：温体仁"]')).not.toBeNull();
+
+    for (let i = 0; i < 2; i += 1) {
+      await click(host.querySelector('[aria-label="朝堂·召见大臣"]'));
+      await tick();
+      await click(Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.includes("周延儒")));
+      await tick();
+      expect(requests[i]).toEqual({ minister: "温体仁", message: "宣周延儒" });
+      expect(host.querySelector(`[aria-label="召对：${i === 0 ? "温体仁" : "周延儒"}"]`)).not.toBeNull();
+      if (i === 0) {
+        expect(host.textContent).toContain("对话内应允后，收夜提交即准旨");
+        expect(host.textContent).not.toContain("核定（准/驳）");
+      }
+    }
+  });
+
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
     const staleGate = new Promise<void>((r) => { releaseStale = r; });
