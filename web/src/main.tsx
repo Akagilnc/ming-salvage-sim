@@ -1217,7 +1217,7 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
+            secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
             onInput={setInput}
