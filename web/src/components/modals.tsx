@@ -300,7 +300,7 @@ export function ClosedGroup({ title, items, cls }: { title: string; items: Close
   );
 }
 
-export function HistoryModal({ onClose }: { onClose: () => void }) {
+export function HistoryModal({ onClose, ministers = [] }: { onClose: () => void; ministers?: Minister[] }) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
@@ -407,6 +407,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             detail={detail}
             selectedTurn={selectedArchive?.turn ?? null}
             archivedScroll={archivedScroll}
+            ministers={ministers}
             scrollLoading={scrollLoading}
             scrollError={scrollError}
           />
@@ -422,6 +423,7 @@ export function HistoryDetailView({
   detail,
   selectedTurn,
   archivedScroll = null,
+  ministers = [],
   scrollLoading = false,
   scrollError = "",
 }: {
@@ -430,6 +432,7 @@ export function HistoryDetailView({
   detail: HistoryDetail | null;
   selectedTurn: number | null;
   archivedScroll?: AudienceScrollMessage[] | null;
+  ministers?: Minister[];
   scrollLoading?: boolean;
   scrollError?: string;
 }) {
@@ -447,7 +450,7 @@ export function HistoryDetailView({
       {archivedScroll ? (
         <section className="document-section modal-bg-chat">
           <h3 className="extraction-section-title">召对记录</h3>
-          <ScrollMessages messages={archivedScroll} ministerName="" />
+          <ScrollMessages messages={archivedScroll} ministerName="" ministers={ministers} />
         </section>
       ) : null}
       {detail?.decree_text ? (
@@ -552,17 +555,29 @@ export function parseLeadingStageDirection(source: string): { action: string | n
     : { action: null, content: source };
 }
 
-function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string }) {
+function portraitSources(minister: Minister, portraitPrefix = "minister_") {
+  const isCustom = minister.portrait_id?.startsWith("custom:");
+  return {
+    primary: isCustom
+      ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
+      : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`,
+    fallback: !isCustom && minister.portrait_id ? `/portraits/${minister.portrait_id}.png` : undefined,
+  };
+}
+
+function ScrollMessages({ messages, ministerName, ministers }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string; ministers: Minister[] }) {
   return <>{messages.map((message, index) => {
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
     if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
     const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
+    const attendant = isAside ? ministers.find((candidate) => candidate.name === speaker) : undefined;
+    const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
     const text = message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content;
     const { action, content } = parseLeadingStageDirection(text);
     return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
-      {isAside ? <img className="aside-avatar" src={`/portraits/minister_${encodeURIComponent(speaker)}.png`} alt={speaker} /> : null}
+      {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
       <span>{speaker}</span>
       {action ? <em className="action">{action}</em> : null}
       <p>{content}</p>
@@ -573,6 +588,7 @@ function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDispla
 export function ChatModal({
   minister,
   portraitPrefix,
+  ministers = [],
   scrollMode = "audience",
   currentCampaignId,
   currentNightId,
@@ -608,6 +624,7 @@ export function ChatModal({
 }: {
   minister: Minister;
   portraitPrefix: string;
+  ministers?: Minister[];
   scrollMode?: "audience" | "legacy";
   /** Complete ownership of the currently open scroll. */
   currentCampaignId: string;
@@ -647,13 +664,7 @@ export function ChatModal({
   onClose: () => void;
   onCancel?: () => void;
 }) {
-  const isCustom = minister.portrait_id?.startsWith("custom:");
-  const portraitPrimary = isCustom
-    ? `/portraits/custom/${encodeURIComponent(minister.name)}?t=${cacheBust(minister.portrait_id!)}`
-    : `/portraits/${portraitPrefix}${minister.id ?? minister.name}.png`;
-  const portraitFallback = !isCustom && minister.portrait_id
-    ? `/portraits/${minister.portrait_id}.png`
-    : undefined;
+  const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(minister, portraitPrefix);
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
@@ -825,7 +836,7 @@ export function ChatModal({
 
       <section className="modal-pane chat-main">
         <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
-          <ScrollMessages messages={displayMessages} ministerName={minister.name} />
+          <ScrollMessages messages={displayMessages} ministerName={minister.name} ministers={ministers} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}

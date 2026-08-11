@@ -1196,6 +1196,7 @@ export function App() {
         <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
           <ChatModal
             minister={activeMinister}
+            ministers={state.ministers}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
             currentCampaignId={currentCampaignId}
@@ -1285,7 +1286,7 @@ export function App() {
       ) : null}
 
       {activeModal === "history" ? (
-        <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
+        <HistoryModal ministers={state.ministers} onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (
