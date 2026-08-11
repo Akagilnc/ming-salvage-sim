@@ -72,9 +72,17 @@ def test_ordinary_entry_remains_ordinary(monkeypatch):
 @pytest.mark.parametrize(
     ("column", "stored", "message"),
     [
+        ("payload_json", "", "payload_json 无效"),
         ("payload_json", "{", "payload_json 无效"),
         ("payload_json", "[]", "payload_json 非对象"),
         ("payload_json", '{"mode":"secret"}', "mode 非法"),
+        ("payload_json", '{"mode":""}', "mode 非法"),
+        ("payload_json", '{"mode":false}', "mode 非法"),
+        ("payload_json", '{"mode":0}', "mode 非法"),
+        ("payload_json", '{"mode":[]}', "mode 非法"),
+        ("payload_json", '{"mode":{}}', "mode 非法"),
+        ("stigma_json", "", "stigma_json 无效"),
+        ("stigma_json", "{", "stigma_json 无效"),
         ("stigma_json", "{}", "stigma_json 非列表"),
     ],
 )
@@ -87,15 +95,28 @@ def test_corrupt_dossier_state_fails_at_db_read_seam(game, column, stored, messa
         db.get_decree_dossier(dossier_id)
 
 
+def test_missing_dossier_mode_defaults_to_ordinary(game):
+    db, state, _content = game
+    dossier_id = _make_midzhi_dossier(db, state)
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json='{}' WHERE id=?", (dossier_id,)
+    )
+
+    assert db.get_decree_dossier(dossier_id)["mode"] == "ordinary"
+
+
 def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     db, state, _content = game
     dossier_id = _make_midzhi_dossier(db, state)
 
-    db.apply_dossier_promulgation(
-        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳"
-    )
+    for _ in range(2):
+        db.apply_dossier_promulgation(
+            state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳"
+        )
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
-    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    with pytest.raises(ValueError, match="强颁只可承接"):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [
         {"kind": "midzhi", "reason": "predeclared", "turn": state.turn,
