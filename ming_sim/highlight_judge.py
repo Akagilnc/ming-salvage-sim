@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 import json
+import multiprocessing
+import time
 from typing import Any, Callable, List
 
 from ming_sim.token_stats import tlog
@@ -47,6 +49,58 @@ def invoke_highlight_judge(
     return extract_agent_text(agent.run(reply))
 
 
+_DEFAULT_INVOKE = invoke_highlight_judge
+
+
+def _invoke_in_worker(send: Any, invoke: Callable[..., Any], reply: str,
+                      llm_config: Any, timeout: float) -> None:
+    """Child half of the deadline seam; only JSON-like results cross the pipe."""
+    try:
+        send.send((True, invoke(reply, llm_config, timeout=timeout)))
+    except BaseException as error:
+        send.send((False, type(error).__name__, str(error)))
+    finally:
+        send.close()
+
+
+def _invoke_before_deadline(reply: str, llm_config: Any, timeout: float,
+                            invoke: Callable[..., Any]) -> Any:
+    """Run even an uncooperative adapter in work that can be stopped and reaped."""
+    budget = max(0.0, float(timeout))
+    if budget == 0:
+        raise TimeoutError("highlight judge deadline exceeded")
+    # Production uses spawn: forking the multi-threaded web process can inherit locked
+    # provider/runtime state.  Injected test doubles may be local callables, so their
+    # isolated test worker uses fork; they never initialize the real provider stack.
+    method = "spawn" if invoke is _DEFAULT_INVOKE else "fork"
+    context = multiprocessing.get_context(method)
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_invoke_in_worker,
+        args=(send, invoke, reply, llm_config, budget),
+        name="audience-highlight-judge",
+    )
+    deadline = time.monotonic() + budget
+    started = False
+    try:
+        process.start()
+        started = True
+        send.close()
+        remaining = max(0.0, deadline - time.monotonic())
+        if not receive.poll(remaining):
+            raise TimeoutError("highlight judge deadline exceeded")
+        message = receive.recv()
+        if message[0]:
+            return message[1]
+        raise RuntimeError(f"{message[1]}: {message[2]}")
+    finally:
+        receive.close()
+        if started:
+            if process.is_alive():
+                process.terminate()
+            process.join()
+
+
 def judge_highlights(
     reply: str, llm_config: Any, *, timeout: float = DEFAULT_TIMEOUT_SECONDS,
     invoke: Callable[..., Any] | None = None,
@@ -54,7 +108,7 @@ def judge_highlights(
     """Bound the real adapter invocation; failures and malformed output are decoration-only."""
     invoke = invoke or invoke_highlight_judge
     try:
-        result = invoke(reply, llm_config, timeout=max(0.0, float(timeout)))
+        result = _invoke_before_deadline(reply, llm_config, timeout, invoke)
     except Exception as error:  # provider timeout / unavailable judge are best-effort
         tlog(f"[audience-highlights] 判官调用失败：{type(error).__name__}: {error}")
         return []

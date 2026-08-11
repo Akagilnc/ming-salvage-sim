@@ -1,5 +1,7 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
+import multiprocessing
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -32,14 +34,18 @@ def test_judge_deadline_overrides_real_api_and_cli_adapters(monkeypatch, channel
 
 
 def test_judge_success_and_timeout_are_bounded_without_real_llm():
-    assert judge_highlights("臣请核账", object(), timeout=.1,
+    assert judge_highlights("臣请核账", object(), timeout=.5,
                             invoke=lambda *_, **__: '["核账"]') == ["核账"]
-    captured = {}
-    def timed_out(*_args, **kwargs):
-        captured.update(kwargs)
-        raise TimeoutError("adapter stopped the request")
-    assert judge_highlights("臣请核账", object(), timeout=.02, invoke=timed_out) == []
-    assert captured == {"timeout": .02}
+
+    def uncooperative(*_args, **_kwargs):
+        time.sleep(2)
+        return '["核账"]'
+
+    before = {process.pid for process in multiprocessing.active_children()}
+    started = time.monotonic()
+    assert judge_highlights("臣请核账", object(), timeout=.03, invoke=uncooperative) == []
+    assert time.monotonic() - started < .5
+    assert {process.pid for process in multiprocessing.active_children()} == before
     assert not any(t.name == "audience-highlight-judge" for t in threading.enumerate())
 
 
@@ -64,8 +70,8 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
     minister = "温体仁"
     runtime = _web_game(db, state, content, _FakeAgent())
     runtime.session.chat = lambda *_a, **_k: _chat_result("臣请据实核账。")
-    judge_started = threading.Event()
-    release_judge = threading.Event()
+    judge_started = multiprocessing.Event()
+    release_judge = multiprocessing.Event()
     mind_started = threading.Event()
     extraction_started = threading.Event()
 
