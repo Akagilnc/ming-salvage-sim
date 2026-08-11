@@ -467,16 +467,14 @@ export function App() {
     setMapIntelOpen(true);
   };
 
-  const sendChat = async (text = input) => {
+  const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
-    if (!activeMinister) return;
     const message = text.trim();
     if (!message) {
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }
 
-    const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
     setError("");
     setComposerHint("");
@@ -539,9 +537,8 @@ export function App() {
     });
   };
 
-  const undoLastChat = async () => {
-    if (busy || !activeMinister || !canUndoLastChat) return;
-    const targetMinisterName = activeMinister.name;
+  const undoLastChat = async (targetMinisterName: string) => {
+    if (busy || !canUndoLastChat) return;
     const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
     if (!ok) return;
     setBusy("撤回召对");
@@ -584,10 +581,9 @@ export function App() {
     }
   };
 
-  const retryInterruptedReply = async () => {
+  const retryInterruptedReply = async (targetMinisterName: string) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
-    if (busy || !activeMinister || !replyRetry) return;
-    const targetMinisterName = activeMinister.name;
+    if (busy || !replyRetry) return;
     setBusy("重新生成回话");
     setError("");
     setChatNotice("");
