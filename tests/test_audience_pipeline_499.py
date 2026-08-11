@@ -84,6 +84,42 @@ def test_run_mindreading_for_turn_persists_and_survives_failed_turn_guard(game):
     assert db.list_mindreading_records(chat_turn_id) == []
 
 
+def test_chat_stream_starts_all_reply_tails_after_done_without_waiting_for_judge(game):
+    """#544 production stream: slow successful judge cannot serialize the other tails."""
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    db, state, content = game
+    minister = "温体仁"
+    runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣请核账。"]))
+    judge_started = threading.Event()
+    release_judge = threading.Event()
+    mind_started = threading.Event()
+    extraction_started = threading.Event()
+
+    def slow_judge(*_args):
+        judge_started.set()
+        release_judge.wait(timeout=2)
+        return '["核账"]'
+
+    runtime.highlight_judge_invoke = slow_judge
+    runtime.highlight_judge_timeout = 1
+    runtime._trail_mindreading_after_reply = lambda *_a, **_k: mind_started.set()
+    runtime._trail_extraction_after_reply = lambda *_a, **_k: extraction_started.set()
+
+    stream = runtime.chat_stream(minister, "钱粮如何？")
+    seen = []
+    while not seen or seen[-1]["type"] != "done":
+        seen.append(next(stream))
+    assert judge_started.wait(.5)
+    assert mind_started.wait(.5)
+    assert extraction_started.wait(.5)
+    release_judge.set()
+    seen.extend(stream)
+
+    kinds = [event["type"] for event in seen]
+    assert kinds.index("done") < kinds.index("highlights") < kinds.index("end")
+
+
 def test_chat_stream_done_before_mindreading_and_delivers_event(game, monkeypatch):
     """真实 chat_stream：done 先于 mindreading；读心事件可浮现；输入为完整回话。"""
     import web_app as web_app_mod

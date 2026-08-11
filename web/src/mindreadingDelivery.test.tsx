@@ -105,6 +105,31 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
+  it("done 先清 busy 解锁，慢到的 highlights 只刷新卷轴", async () => {
+    let releaseHighlights!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseHighlights = resolve; });
+    let doneCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => gatedSse(
+      [{ event: "done", data: { history: [U("问", 10), M("答", 10)], suggestions: [], directives: [] } }],
+      gate,
+      [{ event: "highlights", data: { chat_turn_id: 10, highlights: ["答"] } }, { event: "end", data: {} }],
+    )));
+    const { hookRef, busyRef } = mount("legacy", true);
+    let sending!: Promise<void>;
+    act(() => {
+      sending = hookRef.current!.sendChat("温体仁", "问", {
+        onDone: () => { doneCalls += 1; },
+        onError: () => {},
+      });
+    });
+    await tick();
+    expect(doneCalls).toBe(1);
+    expect(busyRef.current).toBe("");
+    releaseHighlights();
+    await act(async () => { await sending; });
+    expect(busyRef.current).toBe("");
+  });
+
   it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {
     let scrollCalls = 0;
     let resolveEnd!: () => void;

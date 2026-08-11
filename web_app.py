@@ -1516,12 +1516,22 @@ class WebGame:
             return []
         highlights = judge_highlights(answer, llm_config, **kwargs)
         if highlights:
-            try:
-                with gate:
-                    self.db.set_minister_message_highlights(chat_turn_id, highlights)
-            except Exception:
-                return []
+            with gate:
+                self.db.set_minister_message_highlights(chat_turn_id, highlights)
         return highlights
+
+    def _start_reply_tail_tasks(
+        self, minister_name: str, answer: str, chat_turn_id: int,
+    ) -> None:
+        """Start output-independent reply tails before waiting for decoration."""
+        if not chat_turn_id or not answer:
+            return
+        self._spawn_pending_write_thread(
+            self._trail_mindreading_after_reply,
+            (minister_name, answer, chat_turn_id),
+            "audience-p5-mindreading",
+        )
+        self._spawn_extraction_trail(minister_name, answer, chat_turn_id)
 
     def _chat_payload(
         self,
@@ -1657,20 +1667,13 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            # Non-streaming folds the bounded judge into the response window.
+            # All three output-independent tails start at the completed-reply seam. The
+            # non-streaming response waits only for the bounded judge, never before
+            # launching mindreading or story extraction.
             answer_text = str(getattr(result, "answer", "") or "")
+            self._start_reply_tail_tasks(minister_name, answer_text, chat_turn_id)
             self._settle_reply_highlights(answer_text, chat_turn_id, gate)
             payload["history"] = self.chat_projection(minister_name)
-            # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
-            # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
-            if chat_turn_id and answer_text:
-                self._spawn_pending_write_thread(
-                    self._trail_mindreading_after_reply,
-                    (minister_name, answer_text, chat_turn_id),
-                    "audience-p5-mindreading",
-                )
-                # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
-                self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
             with gate:
@@ -1743,15 +1746,9 @@ class WebGame:
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
+            self._start_reply_tail_tasks(minister_name, answer_text, chat_turn_id)
             self._settle_reply_highlights(answer_text, chat_turn_id, gate)
             payload["history"] = self.chat_projection(minister_name)
-            if chat_turn_id and answer_text:
-                self._spawn_pending_write_thread(
-                    self._trail_mindreading_after_reply,
-                    (minister_name, answer_text, chat_turn_id),
-                    "audience-p5-mindreading",
-                )
-                self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
             # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
@@ -2374,24 +2371,34 @@ class WebGame:
                         ev_queue.put({"type": "error", "message": str(error), **identity})
                     return
 
-                # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
+                # Publish the durable reply first. Judge, mindreading, and extraction then
+                # start together; decoration may arrive later but cannot hold the UI busy.
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
-                highlights = self._settle_reply_highlights(answer, chat_turn_id, write_gate)
-                if highlights:
-                    ev_queue.put({
-                        "type": "highlights", "chat_turn_id": chat_turn_id,
-                        "highlights": highlights,
-                    })
-                # #501：叙事抽取落账与读心并行（二者皆只依赖已完成回话，P5）——无玩家可见 SSE
-                # 事件（静默落账）。在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮
-                # pending ownership 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
+                judge_failed = threading.Event()
+
+                def settle_highlights() -> None:
+                    try:
+                        highlights = self._settle_reply_highlights(answer, chat_turn_id, write_gate)
+                        if highlights:
+                            ev_queue.put({
+                                "type": "highlights", "chat_turn_id": chat_turn_id,
+                                "highlights": highlights,
+                            })
+                    except Exception as error:  # persistence failures are terminal, not decoration failures
+                        judge_failed.set()
+                        ev_queue.put({"type": "error", "message": str(error), **identity})
+
+                judge_thread = threading.Thread(
+                    target=settle_highlights, daemon=True, name="audience-highlight-settlement",
+                )
                 extraction_thread = threading.Thread(
                     target=self._trail_extraction_after_reply,
                     args=(minister_name, answer, chat_turn_id),
                     daemon=True,
                     name="audience-p5-extraction",
                 )
+                judge_thread.start()
                 extraction_thread.start()
                 mind_payload: Optional[Dict[str, Any]] = None
                 try:
@@ -2407,6 +2414,9 @@ class WebGame:
                         "chat_turn_id": chat_turn_id,
                     })
                 extraction_thread.join()
+                judge_thread.join()
+                if judge_failed.is_set():
+                    return
                 ev_queue.put({"type": "end"})
             finally:
                 self._complete_pending_write()
