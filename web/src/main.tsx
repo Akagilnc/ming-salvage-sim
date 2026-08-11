@@ -401,6 +401,7 @@ export function App() {
     ? (state.talent_pool || [])  // 在野人才池（offstage 罢居前臣，#120）单独走 talent_pool
     : filterMinisters(state.ministers, ministerGroup);
   const consorts = filterConsorts(state.consorts || [], haremGroup);
+  const audienceRoster = [...state.ministers, ...(state.talent_pool || [])];
   const allCharacters = [...state.ministers, ...(state.consorts || [])];
   const activeMinister = selectedMinister
     ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
@@ -1196,6 +1197,7 @@ export function App() {
         <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
           <ChatModal
             minister={activeMinister}
+            ministers={audienceRoster}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
             currentCampaignId={currentCampaignId}
@@ -1289,7 +1291,7 @@ export function App() {
       ) : null}
 
       {activeModal === "audience_archive" ? (
-        <AudienceArchiveModal onClose={guardClose(() => setActiveModal("none"))} />
+        <AudienceArchiveModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (

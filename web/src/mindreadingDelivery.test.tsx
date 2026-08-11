@@ -67,7 +67,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} portraitPrefix="minister_" scrollMode={scrollMode}
+        minister={MINISTER} ministers={[]} portraitPrefix="minister_" scrollMode={scrollMode}
         currentCampaignId={hook.currentCampaignId}
         currentNightId={hook.currentNightId}
         undoneChatIdentity={null}
