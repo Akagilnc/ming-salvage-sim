@@ -33,6 +33,52 @@ def test_judge_deadline_overrides_real_api_and_cli_adapters(monkeypatch, channel
     assert model.max_retries == 0
 
 
+def _pid_exists(pid):
+    try:
+        import os
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+def test_real_cli_adapter_deadline_terminates_runner_and_descendant(tmp_path, monkeypatch):
+    """Drive the production CliChat entry and prove its whole process group is gone."""
+    import os
+    from ming_sim.models import LLMConfig
+
+    runner_pid = tmp_path / "runner.pid"
+    descendant_pid = tmp_path / "descendant.pid"
+    executable = tmp_path / "codex"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, subprocess, sys, time\n"
+        "open(os.environ['JUDGE_RUNNER_PID'], 'w').write(str(os.getpid()))\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(os.environ['JUDGE_DESCENDANT_PID'], 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("MING_SIM_CODEX_BIN", str(executable))
+    monkeypatch.setenv("JUDGE_RUNNER_PID", str(runner_pid))
+    monkeypatch.setenv("JUDGE_DESCENDANT_PID", str(descendant_pid))
+    cfg = LLMConfig(
+        api_key="", base_url="", model="", channel="cli",
+        cli_runner="codex", cli_model="fake",
+    )
+
+    started = time.monotonic()
+    assert judge_highlights("臣请核账", cfg, timeout=3.0) == []
+    assert time.monotonic() - started < 4.0
+    assert runner_pid.exists() and descendant_pid.exists()
+    pids = [int(runner_pid.read_text()), int(descendant_pid.read_text())]
+    deadline = time.monotonic() + 1.0
+    while any(_pid_exists(pid) for pid in pids) and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert not any(_pid_exists(pid) for pid in pids)
+
+
 def test_judge_success_and_timeout_are_bounded_without_real_llm():
     assert judge_highlights("臣请核账", object(), timeout=.5,
                             invoke=lambda *_, **__: '["核账"]') == ["核账"]
@@ -102,8 +148,10 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
 def _fail_named_thread_start(monkeypatch, failed_name):
     """Trace the public Thread.start boundary without adding runtime test hooks."""
     original_start = threading.Thread.start
+    original_join = threading.Thread.join
     attempted = []
     started = []
+    joined = []
 
     def traced_start(thread):
         attempted.append(thread.name)
@@ -112,8 +160,13 @@ def _fail_named_thread_start(monkeypatch, failed_name):
         started.append(thread.name)
         return original_start(thread)
 
+    def traced_join(thread, *args, **kwargs):
+        joined.append(thread.name)
+        return original_join(thread, *args, **kwargs)
+
     monkeypatch.setattr(threading.Thread, "start", traced_start)
-    return attempted, started
+    monkeypatch.setattr(threading.Thread, "join", traced_join)
+    return attempted, started, joined
 
 
 @pytest.mark.parametrize("failed_name", ["audience-p5-mindreading", "audience-p5-extraction"])
@@ -133,7 +186,7 @@ def test_real_chat_tail_start_failure_preserves_active_reply_and_drains_pending(
     runtime._trail_mindreading_after_reply = completed_tail
     runtime._trail_extraction_after_reply = completed_tail
     runtime._settle_reply_highlights = lambda *_a, **_k: []
-    attempted, started = _fail_named_thread_start(monkeypatch, failed_name)
+    attempted, started, _joined = _fail_named_thread_start(monkeypatch, failed_name)
 
     payload = runtime.chat(minister, "钱粮如何？")
 
@@ -160,13 +213,16 @@ def test_real_chat_stream_tail_start_failure_only_joins_started_threads_and_ends
     runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
     runtime._trail_extraction_after_reply = lambda *_a, **_k: None
     runtime._settle_reply_highlights = lambda *_a, **_k: []
-    attempted, started = _fail_named_thread_start(monkeypatch, failed_name)
+    attempted, started, joined = _fail_named_thread_start(monkeypatch, failed_name)
 
     events = list(runtime.chat_stream(minister, "钱粮如何？"))
 
     tail_names = ["audience-highlight-settlement", "audience-p5-extraction"]
     assert [name for name in attempted if name in tail_names] == tail_names
     assert failed_name not in started
+    assert [name for name in joined if name in tail_names] == [
+        name for name in tail_names if name != failed_name
+    ]
     assert [event["type"] for event in events][-2:] == ["done", "end"]
     assert runtime._pending_writes_count == 0
     chat_turn_id = next(event for event in events if event["type"] == "done")["payload"]["chat_turn_id"]
