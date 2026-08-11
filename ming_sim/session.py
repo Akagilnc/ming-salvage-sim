@@ -1374,6 +1374,29 @@ class GameSession:
                         self.db.flag_directive_needs_clarification(int(p["id"]))
                     return out
             if confirm == "应允":
+                # 确认轮仍是皇帝权威：在即时提交、夜内应允或恢复窗延迟提交分流前，
+                # 把本轮明确 mode 写回所选拟旨/任免候选。普通确认则由 existing 保持原值。
+                from ming_sim.cli_backend import resolve_directive_mode
+                for pending in confirm_targets:
+                    if pending["kind"] not in {"directive", "office"}:
+                        continue
+                    try:
+                        payload = json.loads(pending.get("payload_json") or "{}")
+                    except (ValueError, TypeError):
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    payload["mode"] = resolve_directive_mode(
+                        player_message, existing=payload.get("mode"),
+                    )
+                    encoded_payload = json.dumps(payload, ensure_ascii=False)
+                    self.db.conn.execute(
+                        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                        (encoded_payload, int(pending["id"])),
+                    )
+                    pending["payload_json"] = encoded_payload
+                if any(p["kind"] in {"directive", "office"} for p in confirm_targets):
+                    self.db.conn.commit()
                 if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
                     # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
                     # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
