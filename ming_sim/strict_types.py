@@ -76,7 +76,9 @@ def validate_rejection_verdict(
         or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0
         or ("midzhi_unpromulgatable" in verdict
             and not isinstance(verdict["midzhi_unpromulgatable"], bool))
-        or bool(str(verdict.get("legal_reason_code") or "").strip())
+        or ("legal_reason_code" in verdict
+            and (not isinstance(verdict["legal_reason_code"], str)
+                 or verdict["legal_reason_code"] != ""))
         or not typed_affected
         or verdict.get("blocked_layer") not in blocked_layers
         or not faction_opponents
