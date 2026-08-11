@@ -711,3 +711,40 @@ def test_garbage_key_category_consistent_across_sections(game):
     assert cats.get("fiscal_creates") == "invalid_enum"
     assert cats.get("fiscal_removes") == "invalid_enum"  # 非法 key ≠ 不存在
     assert cats.get("fiscal_changes") == "invalid_enum"  # 三段同口径(ship-pre r5)
+
+
+def test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows(game):
+    """A standalone fiscal change persists its live value, provenance, history and scaling together."""
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    key = "商税_base"
+    before = db.get_fiscal_config()[key]
+    fiscal_before = {
+        row["id"]: __import__("json").loads(row["fiscal"] or "{}").get("commerce_tax", 0)
+        for row in db.conn.execute("SELECT id,fiscal FROM regions")
+    }
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": before, "reason": "重开核验"}],
+    }, narrative="x", decree_text="y")
+
+    reopened = GameDB(db.path, content)
+    try:
+        row = reopened.conn.execute(
+            "SELECT value, origin_ref FROM fiscal_config WHERE key=?", (key,)
+        ).fetchone()
+        history = reopened.conn.execute(
+            "SELECT old_value,new_value,origin_ref FROM fiscal_config_changes WHERE key=? ORDER BY id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        assert (row["value"], row["origin_ref"]) == (before * 2, "盘面自发")
+        assert (history["old_value"], history["new_value"], history["origin_ref"]) == (
+            before, before * 2, "盘面自发",
+        )
+        fiscal_after = {
+            row["id"]: __import__("json").loads(row["fiscal"] or "{}").get("commerce_tax", 0)
+            for row in reopened.conn.execute("SELECT id,fiscal FROM regions")
+        }
+        assert any(fiscal_after[rid] != value for rid, value in fiscal_before.items() if value > 0)
+    finally:
+        reopened.close()

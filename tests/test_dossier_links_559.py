@@ -287,6 +287,8 @@ def test_real_cli_materialize_path_commits_only_semantically_confirmed_link(
      lambda target: [{"target_dossier_id": target, "relation_type": "越权"}], False),
     (lambda _target: {"target_dossier_id": 999999, "relation_type": "护卫", "note": "不可见"},
      lambda _target: [{"target_dossier_id": 999999, "relation_type": "护卫"}], False),
+    (lambda target: {"target_dossier_id": float(target), "relation_type": "护卫", "note": "浮点截断"},
+     lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], False),
     (lambda target: {"target_dossier_id": target, "relation_type": "护卫", "note": "   "},
      lambda target: [{"target_dossier_id": target, "relation_type": "护卫"}], False),
 ])

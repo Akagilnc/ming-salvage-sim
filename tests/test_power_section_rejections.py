@@ -124,6 +124,28 @@ def test_unknown_person_power_change_rejected_good_lands(saved_game):
     assert after == good_power
 
 
+def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeypatch):
+    """Canonical 人物变更 writer 的代码异常必须上抛；legacy aliases 不再有第二写路。"""
+    db, state, content = game
+    target_power = _valid_power_id(db)
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()[0]
+
+    def _boom(self, *args, **kwargs):
+        raise KeyError("canonical person power writer bug")
+
+    monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
+    with pytest.raises(KeyError, match="canonical person power writer bug"):
+        import ming_sim.issues as issues
+        issues.apply_score_extraction(db, state, {
+            "人物变更": [{
+                "name": name, "动作": "易主", "方式": "主动投敌", "反噬": {},
+                "new_power": target_power, "reason": "叛", "origin_ref": "盘面自发",
+            }],
+        }, content=content)
+
+
 def test_power_change_formatter_skips_rejected_items():
     """report.format_power_changes 遇到同列的拒收项(无 delta/label 键)不得 KeyError——
     拒收项不是盘面变化,只渲染 applied 项;全拒收时回落「未见变化」(S1 迁契约副作用守门)。"""
