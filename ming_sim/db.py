@@ -10090,8 +10090,7 @@ class GameDB:
             "SELECT kind, stance FROM powers WHERE id=?", (row["power_id"],),
         ).fetchone()
         if power is None or not (
-            power["stance"] == "敌对"
-            or (power["kind"] == "内乱" and power["stance"] == "潜伏")
+            power["kind"] == "内乱" and power["stance"] in {"敌对", "潜伏"}
         ):
             return None
         character = content.characters[matched]
