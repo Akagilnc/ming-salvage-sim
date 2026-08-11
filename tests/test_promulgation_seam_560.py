@@ -180,7 +180,7 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
                 "reason": "科臣封驳。",
                 "criteria_snapshot": {
                     "imperial_authority_band": "偏弱",
-                    "involved_office_types": ["言官"],
+                    "appointment_tenure": "",
                     "authorization_ids": [],
                     "endorsement_entry_ids": [],
                 },
