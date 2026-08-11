@@ -211,6 +211,21 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     assert db.get_decree_dossier(dossier_id)["stigma"] == [
         {"kind": "midzhi", "reason": "predeclared", "turn": state.turn,
          "source_action": "rejected"},
-        {"kind": "midzhi", "reason": "rescript", "turn": state.turn,
-         "source_action": "force_promulgated"},
     ]
+
+
+def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
+    db, state, _content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works", payload={"mode": "ordinary"},
+    )
+    db.apply_dossier_promulgation(
+        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    assert db.get_decree_dossier(dossier_id)["stigma"] == [{
+        "kind": "midzhi", "reason": "rescript", "turn": state.turn,
+        "source_action": "force_promulgated",
+    }]

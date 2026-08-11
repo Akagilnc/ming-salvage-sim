@@ -237,7 +237,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import _directive_mode, extract_draft_intent
+    from ming_sim.cli_backend import extract_draft_intent, resolve_directive_mode
 
     session = ctx.session
     minister_name = ctx.character.name
@@ -363,9 +363,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
             or (committed_draft is not None and not has_pending_directive)
         )
-        declared_mode = _directive_mode(ctx.player_message)
+        existing_mode = None
         if is_existing_update:
-            existing_mode = None
             if _target_id is not None:
                 existing_mode = next(
                     (c.get("mode") for c in dir_candidates if c["id"] == _target_id), None,
@@ -379,10 +378,9 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                     existing_payload = {}
                 if isinstance(existing_payload, dict):
                     existing_mode = existing_payload.get("mode")
-            if declared_mode is not None:
-                draft_res["mode"] = declared_mode
-            elif existing_mode is not None:
-                draft_res["mode"] = existing_mode
+        draft_res["mode"] = resolve_directive_mode(
+            ctx.player_message, draft_res.get("mode"), existing_mode,
+        )
 
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
@@ -433,7 +431,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_appointment_action
+    from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
         _appointment_intent_is_current_office_noop,
         _cancel_staged_opposing_office,
@@ -478,7 +476,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             payload={
                 "name": appt["name"], "office": appt.get("office", ""),
                 "appointer": minister_name,
-                **({"mode": appt["mode"]} if appt.get("mode") else {}),
+                "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
             },
         )
 

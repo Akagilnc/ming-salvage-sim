@@ -232,7 +232,7 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
         "name": "测试候选人甲", "office": "陕西巡抚",
     }, soft=False)
     out = sess.apply_cli_conversation_actions(
-        minister, "着测试候选人甲为陕西巡抚。", "臣遵旨拟任。",
+        minister, "中旨直发，着测试候选人甲为陕西巡抚。", "臣遵旨拟任。",
         has_directive=False, secret_order_id=None, preclassified_intent=scripted,
     )
     assert out.get("pending_action_id")
@@ -245,6 +245,7 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
     payload = json.loads(office_rows[0]["payload_json"] or "{}")
     assert payload.get("name") == "测试候选人甲"
     assert payload.get("office") == "陕西巡抚"
+    assert payload.get("mode") == "midzhi"
     assert _count_pending(db, state.turn) == before + 1
 
 

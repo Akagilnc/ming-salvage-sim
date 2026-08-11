@@ -113,6 +113,21 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
+def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeypatch):
+    db, state, content = game
+    _run_conversational_draft(
+        db, state, content, monkeypatch,
+        player_message="中旨直发，拟一道清查辽饷的旨。",
+        minister_reply="着户部清查辽饷。",
+        canned={
+            "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+            "目标ID": "liao-pay", "颁布方式": "普通",
+        },
+    )
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["mode"] == "midzhi"
+
+
 def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
     """LLM 判出「无」拟旨意图 → 不 stage；闲谈不应触发草案。"""
     db, state, content = read_game
