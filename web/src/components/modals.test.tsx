@@ -789,6 +789,20 @@ describe("HistoryModal — scene-level closed-night archive", () => {
     expect(host.textContent).toContain("场卷仍在");
   });
 
+  it("归档场卷只按大臣持久清单高亮并复用 organic 归一化", () => {
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    const container = { time_of_day: "戌时", location: "乾清宫", audience_type: "朝会" };
+    act(() => root.render(<HistoryDetailView loading={false} error="" detail={null} selectedTurn={7}
+      archivedScroll={[
+        { role: "user", content: "不可标", speaker: "朕", audibility: "public", time: null, soft_boundary: false, beat: "dialogue", highlights: ["不可标"], container },
+        { role: "minister", content: "臣请**据实核账**，不可臆断。", speaker: "杨嗣昌", audibility: "public", time: null, soft_boundary: false, beat: "dialogue", highlights: ["**据实核账**", "未命中"], container },
+      ]}
+    />));
+    expect(Array.from(host.querySelectorAll("mark")).map((node) => node.textContent)).toEqual(["据实核账"]);
+    expect(host.textContent).toContain("臣请据实核账，不可臆断。");
+  });
+
   it("场卷失败不遮蔽成功月档", () => {
     const host = document.createElement("div"); document.body.appendChild(host);
     const root = createRoot(host); mountedRoots.push({ root, host });

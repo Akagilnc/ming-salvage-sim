@@ -1498,6 +1498,31 @@ class WebGame:
             "pending_action_failures": self.pending_action_failures_for(minister_name),
         }
 
+    def _settle_reply_highlights(
+        self, answer: str, chat_turn_id: int, gate: Any,
+    ) -> List[str]:
+        """Run #544's bounded decoration and persist through the message seam."""
+        if not chat_turn_id or not answer:
+            return []
+        from ming_sim.highlight_judge import DEFAULT_TIMEOUT_SECONDS, judge_highlights
+        invoke = getattr(self, "highlight_judge_invoke", None)
+        kwargs: Dict[str, Any] = {
+            "timeout": getattr(self, "highlight_judge_timeout", DEFAULT_TIMEOUT_SECONDS),
+        }
+        if invoke is not None:
+            kwargs["invoke"] = invoke
+        llm_config = getattr(self.session, "llm_config", None)
+        if llm_config is None and invoke is None:
+            return []
+        highlights = judge_highlights(answer, llm_config, **kwargs)
+        if highlights:
+            try:
+                with gate:
+                    self.db.set_minister_message_highlights(chat_turn_id, highlights)
+            except Exception:
+                return []
+        return highlights
+
     def _chat_payload(
         self,
         minister_name: str,
@@ -1632,9 +1657,12 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            # Non-streaming folds the bounded judge into the response window.
+            answer_text = str(getattr(result, "answer", "") or "")
+            self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            payload["history"] = self.chat_projection(minister_name)
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
             # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
-            answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -1715,6 +1743,8 @@ class WebGame:
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
+            self._settle_reply_highlights(answer_text, chat_turn_id, gate)
+            payload["history"] = self.chat_projection(minister_name)
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -2347,6 +2377,12 @@ class WebGame:
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
+                highlights = self._settle_reply_highlights(answer, chat_turn_id, write_gate)
+                if highlights:
+                    ev_queue.put({
+                        "type": "highlights", "chat_turn_id": chat_turn_id,
+                        "highlights": highlights,
+                    })
                 # #501：叙事抽取落账与读心并行（二者皆只依赖已完成回话，P5）——无玩家可见 SSE
                 # 事件（静默落账）。在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮
                 # pending ownership 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
@@ -3530,6 +3566,11 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
                 yield sse_event("done", item.get("payload", {}))
+            elif item_type == "highlights":
+                yield sse_event("highlights", {
+                    "chat_turn_id": item.get("chat_turn_id") or 0,
+                    "highlights": item.get("highlights") or [],
+                })
             elif item_type == "mindreading":
                 yield sse_event("mindreading", {
                     "mindreading": item.get("payload"),

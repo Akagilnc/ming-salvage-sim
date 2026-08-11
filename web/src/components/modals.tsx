@@ -545,13 +545,34 @@ export function BriefReport({ title, items }: { title: string; items: string[] }
 }
 
 
+function highlightedMinisterText(message: ChatDisplayMessage | AudienceScrollMessage): React.ReactNode {
+  const text = stripOrganicMarkdown(message.content);
+  const phrases = (message.highlights || [])
+    .map(stripOrganicMarkdown)
+    .filter((phrase) => phrase && text.includes(phrase));
+  if (!phrases.length) return text;
+  const ranges = phrases
+    .map((phrase) => ({ start: text.indexOf(phrase), phrase }))
+    .sort((a, b) => a.start - b.start || b.phrase.length - a.phrase.length);
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach(({ start, phrase }) => {
+    if (start < cursor) return;
+    if (start > cursor) nodes.push(text.slice(cursor, start));
+    nodes.push(<mark key={`${start}-${phrase}`}>{text.slice(start, start + phrase.length)}</mark>);
+    cursor = start + phrase.length;
+  });
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 function ScrollMessages({ messages, ministerName }: { messages: Array<ChatDisplayMessage | AudienceScrollMessage>; ministerName: string }) {
   return <>{messages.map((message, index) => {
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
     if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
-    return <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}><span>{speaker}</span><p>{message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content}</p></div>;
+    return <div className={`chat-message ${message.role} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}><span>{speaker}</span><p>{message.role === "minister" ? highlightedMinisterText(message) : message.content}</p></div>;
   })}</>;
 }
 

@@ -309,6 +309,7 @@ export type ChatMessage = {
   /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
   chatTurnId?: number;
   recordId?: number;
+  highlights?: string[];
 };
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
@@ -335,6 +336,7 @@ export type ServerChatMessage = {
   content: string;
   chat_turn_id?: number;
   record_id?: number;
+  highlights?: string[];
 };
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };

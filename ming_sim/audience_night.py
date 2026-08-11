@@ -328,11 +328,13 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     def message(*, role: str, speaker: str, audibility: str, time: Any,
                 content: str, beat: str, soft_boundary: bool = False,
-                chat_turn_id: int = 0, record_id: int = 0) -> Dict[str, Any]:
+                chat_turn_id: int = 0, record_id: int = 0,
+                highlights: Optional[List[str]] = None) -> Dict[str, Any]:
         result = {
             "role": role, "speaker": speaker, "audibility": audibility,
             "time": time, "content": content, "soft_boundary": soft_boundary,
-            "beat": beat, "highlights": [], "container": dict(container),
+            "beat": beat, "highlights": list(highlights or []) if role == "minister" else [],
+            "container": dict(container),
         }
         if chat_turn_id:
             result["chat_turn_id"] = int(chat_turn_id)
@@ -353,7 +355,7 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             if not message_id:
                 continue
             row = db.conn.execute(
-                "SELECT content,created_at FROM chat_messages WHERE id=?", (message_id,),
+                "SELECT content,created_at,highlights FROM chat_messages WHERE id=?", (message_id,),
             ).fetchone()
             if row is None:
                 continue
@@ -363,7 +365,9 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                 float(int(turn.get("night_seq") or 0)), 20 + rank,
                 message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
                         time=row["created_at"], content=content, beat="dialogue",
-                        chat_turn_id=int(turn["id"])),
+                        chat_turn_id=int(turn["id"]),
+                        highlights=(json.loads(row["highlights"] or "[]")
+                                    if role == "minister" else [])),
             ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):

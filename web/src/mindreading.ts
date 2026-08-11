@@ -14,7 +14,7 @@ export const projectServerHistory = (history: ServerChatMessage[]): ChatMessage[
           chatTurnId: m.chat_turn_id,
           recordId: m.record_id,
         }
-      : { role: m.role, content: m.content, chatTurnId: m.chat_turn_id },
+      : { role: m.role, content: m.content, chatTurnId: m.chat_turn_id, highlights: m.highlights || [] },
   );
 
 /** 后端读心记录：`id` 为持久主键（mindreading_records.id），narration 为自由文本正文。 */
