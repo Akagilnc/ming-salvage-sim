@@ -38,6 +38,26 @@ const findButton = (host: HTMLElement, text: string) =>
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
+  it("第二命令槽 opens the read-only 起居注 instead of 邸报", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1));
+      if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [] });
+      return jsonResp({});
+    }));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+
+    const entry = findButton(host, "起居注");
+    expect(entry).toBeTruthy();
+    await click(entry);
+    await tick();
+    expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull();
+  });
   it("延迟刷新竞争：草案删除后旧 state 刷新迟到不覆盖——新 DOM 权威（beginDurableMutation 代次归属）", async () => {
     let releaseStale!: () => void;
     const staleGate = new Promise<void>((r) => { releaseStale = r; });
