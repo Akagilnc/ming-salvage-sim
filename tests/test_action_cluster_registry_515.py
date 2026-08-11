@@ -323,6 +323,7 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
             "金额": 100000,
             "账户": "国库",
             "执行面": "in_transit",
+            "颁布方式": "普通",
         },
         {
             "正文": "着孙传庭巡抚陕西，整饬军政。",
@@ -330,6 +331,7 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
             "目标类型": "region",
             "目标ID": "shaanxi",
             "承办人": "孙传庭",
+            "颁布方式": "普通",
         },
     ]
     calls = []

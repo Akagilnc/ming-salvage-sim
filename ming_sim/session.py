@@ -1104,7 +1104,7 @@ class GameSession:
                 if draft_text:
                     # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
                     result.pending_action_id = self.db.stage_explicit_directive(
-                        self.state.turn, character.name, draft_text)
+                        self.state.turn, character.name, draft_text, mode=message_text)
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1511,7 +1511,7 @@ class GameSession:
         if not has_directive and acts["decree_text"]:
             # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
             out["pending_action_id"] = self.db.stage_explicit_directive(
-                self.state.turn, minister_name, acts["decree_text"])
+                self.state.turn, minister_name, acts["decree_text"], mode=message_text)
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             return self.db.stage_pending_action(

@@ -997,8 +997,20 @@ def classify_cli_action_intent(
 # 对话式拟旨意图抽取（ADR 0006 自然语言路径）：玩家口头「拟旨吧/帮我拟一道旨」时，
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
-def _directive_mode(value: object) -> str:
-    return "midzhi" if str(value or "").strip() == "中旨直发" else "ordinary"
+def _directive_mode(value: object) -> Optional[str]:
+    """Canonical presence-aware mode normalization for every directive entry seam."""
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    if (
+        normalized in {"中旨直发", "midzhi"}
+        or normalized.startswith("中旨直发")
+        or any(normalized.startswith(f"{prefix}中旨直发") for prefix in _DRAFT_PREFIXES)
+    ):
+        return "midzhi"
+    if normalized in {"普通", "ordinary"}:
+        return "ordinary"
+    return None
 
 
 def extract_draft_intent(
@@ -1031,7 +1043,7 @@ def extract_draft_intent(
             '"颁布方式":"普通|中旨直发"},'
             f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
-            '"承办人":"...","授权ID":"","期限月数":3,'
+            '"承办人":"...","授权ID":"","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
             "【皇帝】" + (player_message or "（无）") + "\n"
@@ -1053,9 +1065,10 @@ def extract_draft_intent(
                 break
             text = str(value.get("正文") or "").strip()
             action = str(value.get("动作类型") or "").strip()
+            mode = _directive_mode(value.get("颁布方式"))
             target_kind = str(value.get("目标类型") or "").strip()
             target_id = str(value.get("目标ID") or "").strip()
-            if not text or not action or not target_kind or not target_id or text in seen_texts:
+            if not text or not action or not target_kind or not target_id or mode is None or text in seen_texts:
                 invalid_batch = True
                 break
             seen_texts.add(text)
@@ -1078,7 +1091,7 @@ def extract_draft_intent(
                 "draft_action": "拟旨", "draft_text": text,
                 "dossier_action_type": action, "target_kind": target_kind,
                 "target_id": target_id, "target_candidate": "",
-                "mode": _directive_mode(value.get("颁布方式")),
+                "mode": mode,
                 "participant_roster": value["参与人"] if "参与人" in value else [], **mechanical,
             })
         if invalid_batch or not any(draft is not None for draft in drafts):
@@ -1180,12 +1193,14 @@ def extract_draft_intent(
         target_kind = "policy"
     target_id_value = str(obj.get("目标ID") or "").strip()
     mechanical = {
-        "mode": _directive_mode(obj.get("颁布方式")),
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
         "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
         "deadline_months": obj.get("期限月数"),
     }
+    mode = _directive_mode(obj.get("颁布方式"))
+    if mode is not None:
+        mechanical["mode"] = mode
     merged = str(obj.get("合并草案") or "").strip()
     if _action == "无":
         return {"draft_action": "无", "draft_text": "", "target_candidate": ""}
@@ -1237,7 +1252,7 @@ def capture_manual_directive_payload(
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
     captured = extract_draft_intent(
-        "请据此拟旨", str(text or ""), llm_config=llm_config,
+        str(text or ""), "请据此拟旨", llm_config=llm_config,
     )
     if captured.get("draft_action") != "拟旨":
         return {
@@ -1309,7 +1324,8 @@ def extract_appointment_action(
         "{\n"
         '  "任免动作": "无|任命|罢免",  // 皇帝命某人任/升/调某官=任命；命革/罢/黜某人=罢免；都不是=无\n'
         '  "姓名": "",                 // 被任/被免者确切姓名\n'
-        '  "官职": ""                  // 任命时所授官职；罢免可空\n'
+        '  "官职": "",                 // 任命时所授官职；罢免可空\n'
+        '  "颁布方式": "普通|中旨直发" // 皇帝明确预声明中旨时选后者\n'
         "}\n"
         "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X/拿X」即任免；闲谈、议事、"
         "下密令、拟旨都不算。语义判断，别拘字面。无任免 → 任免动作填「无」、其余留空。\n\n"
@@ -1327,11 +1343,15 @@ def extract_appointment_action(
     # 与 extractor 的 office_changes 同一机制（CMR R3：收而不用=capture-but-ignore 不一致）。
     _raw_action = str(obj.get("任免动作") or "无").strip()
     _action = _raw_action if _raw_action in {"无", "任命", "罢免"} else "无"
-    return {
+    result = {
         "appoint_action": _action,
         "name": str(obj.get("姓名") or "").strip()[:20],
         "office": str(obj.get("官职") or "").strip()[:40],
     }
+    mode = _directive_mode(obj.get("颁布方式"))
+    if mode is not None:
+        result["mode"] = mode
+    return result
 
 
 def extract_confirmation_intent(

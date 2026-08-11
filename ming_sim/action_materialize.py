@@ -454,6 +454,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             payload={
                 "name": appt["name"], "office": appt.get("office", ""),
                 "appointer": minister_name,
+                **({"mode": appt["mode"]} if appt.get("mode") else {}),
             },
         )
 
@@ -508,6 +509,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
             ),
             materialize_fn=_materialize_appointment,
         ),
