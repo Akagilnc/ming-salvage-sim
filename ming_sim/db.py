@@ -10057,14 +10057,39 @@ class GameDB:
         if target_id in {"narrative", "policy"}:
             target_id = ""
         if target_kind == "character" and target_id and content is not None:
-            from ming_sim.session import _find_existing_minister
-            target_id = _find_existing_minister(content, target_id, self) or ""
+            if action == "pacification":
+                target_id = self._find_pacification_target(content, target_id) or ""
+            else:
+                from ming_sim.session import _find_existing_minister
+                target_id = _find_existing_minister(content, target_id, self) or ""
         if target_id:
             normalized["target_id"] = target_id
         else:
             normalized.pop("target_id", None)
             raise ValueError("旨意缺少 canonical target")
         return normalized
+
+    def _find_pacification_target(self, content, name: str) -> Optional[str]:
+        """Resolve an existing live non-Ming person for the pacification dossier only."""
+        matched = None
+        if name in content.characters:
+            matched = name
+        else:
+            matched = next((
+                key for key, character in content.characters.items()
+                if name in (character.aliases or [])
+            ), None)
+        if not matched:
+            return None
+        row = self.conn.execute(
+            "SELECT status, power_id FROM characters WHERE name=?", (matched,),
+        ).fetchone()
+        if row is None or row["status"] != "active" or row["power_id"] in (None, "ming"):
+            return None
+        character = content.characters[matched]
+        if character.status == "candidate" or character.office_type == "后宫":
+            return None
+        return matched
 
     def _commit_dossier_write(self, commit: bool) -> None:
         if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
