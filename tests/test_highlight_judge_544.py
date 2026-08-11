@@ -24,7 +24,9 @@ def test_judge_deadline_overrides_real_api_and_cli_adapters(monkeypatch, channel
         model="gpt-test", channel=channel, cli_runner=runner, cli_timeout_seconds=300,
         timeout_seconds=120,
     )
-    model = create_chat_model(cfg, request_timeout=.03, max_retries=0)
+    cfg.timeout_seconds = .03
+    cfg.cli_timeout_seconds = .03
+    model = create_chat_model(cfg, max_retries=0)
     assert model.timeout == .03
     assert model.max_retries == 0
 
@@ -54,7 +56,7 @@ def _raise_disk_full(*_args):
     raise RuntimeError("disk full")
 
 
-def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_history(game):
+def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_history(game, monkeypatch):
     """Real non-streaming entry waits only for the bounded judge, after starting both tails."""
     from tests.test_audience_background import _FakeAgent, _web_game
 
@@ -72,8 +74,7 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
         release_judge.wait(timeout=2)
         return '["据实核账"]'
 
-    runtime.highlight_judge_invoke = slow_judge
-    runtime.highlight_judge_timeout = 1
+    monkeypatch.setattr("ming_sim.highlight_judge.invoke_highlight_judge", slow_judge)
     runtime._trail_mindreading_after_reply = lambda *_a, **_k: mind_started.set()
     runtime._trail_extraction_after_reply = lambda *_a, **_k: extraction_started.set()
     outcome = {}
@@ -92,7 +93,7 @@ def test_web_chat_slow_success_starts_other_tails_and_returns_highlighted_histor
     assert next(m for m in history if m["role"] == "minister")["highlights"] == ["据实核账"]
 
 
-def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_path):
+def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_path, monkeypatch):
     """Persist through WebGame.chat, close the save, then observe both restored public projections."""
     from ming_sim.db import GameDB
     from tests.test_audience_background import _FakeAgent, _web_game
@@ -104,7 +105,7 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
     minister = "温体仁"
     runtime = _web_game(db, state, content, _FakeAgent())
     runtime.session.chat = lambda *_a, **_k: _chat_result("臣请据实核账。")
-    runtime.highlight_judge_invoke = lambda *_a, **_k: '["据实核账"]'
+    monkeypatch.setattr("ming_sim.highlight_judge.invoke_highlight_judge", lambda *_a, **_k: '["据实核账"]')
     runtime._start_reply_tail_tasks = lambda *_a: None
     payload = runtime.chat(minister, "钱粮如何？")
     night_id = int(payload["night_id"])
@@ -127,7 +128,7 @@ def test_web_chat_highlight_persistence_failure_silently_preserves_completed_rep
     db, state, content = game
     runtime = _web_game(db, state, content, _FakeAgent())
     runtime.session.chat = lambda *_a, **_k: _chat_result("臣请核账。")
-    runtime.highlight_judge_invoke = lambda *_a, **_k: '["核账"]'
+    monkeypatch.setattr("ming_sim.highlight_judge.invoke_highlight_judge", lambda *_a, **_k: '["核账"]')
     runtime._start_reply_tail_tasks = lambda *_a: None
     monkeypatch.setattr(db, "set_minister_message_highlights", _raise_disk_full)
 
@@ -141,7 +142,7 @@ def test_chat_stream_highlight_persistence_failure_silently_reaches_end(game, mo
 
     db, state, content = game
     runtime = _web_game(db, state, content, _FakeAgent(chunks=["臣请核账。"]))
-    runtime.highlight_judge_invoke = lambda *_a, **_k: '["核账"]'
+    monkeypatch.setattr("ming_sim.highlight_judge.invoke_highlight_judge", lambda *_a, **_k: '["核账"]')
     runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
     runtime._trail_extraction_after_reply = lambda *_a, **_k: None
     monkeypatch.setattr(db, "set_minister_message_highlights", _raise_disk_full)
