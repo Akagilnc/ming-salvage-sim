@@ -462,12 +462,20 @@ def test_propose_directive_tool_arguments_stages_draft(game):
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
-    result = GameSession.chat(sess, minister, "拟一道清查辽饷的旨。")
+    result = GameSession.chat(sess, minister, "中旨直发，拟一道清查辽饷的旨。")
 
     assert result.pending_action_id
     pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert len(pending) == 1
-    assert json.loads(pending[0]["payload_json"])["text"] == "着户部清核辽饷。"
+    pending_payload = json.loads(pending[0]["payload_json"])
+    assert pending_payload["text"] == "着户部清核辽饷。"
+    assert pending_payload["mode"] == "midzhi"
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == "midzhi"
 
 
 def test_api_channel_rejects_existing_pending_action(game):
@@ -909,6 +917,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
         "action": "任命",
         "faction": "阉党",
         "reason": "吏部举荐",
+        "mode": "midzhi",
     }, ensure_ascii=False)
 
     class Agent:
@@ -958,11 +967,18 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     assert pending_payload["name"] == appointee
     assert pending_payload["faction"] == "阉党"
     assert pending_payload["reason"] == "吏部举荐"
+    assert pending_payload["mode"] == "midzhi"
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None
 
     db.commit_pending_actions(state, content=content, registry=sess.registry)
+    appointment_dossiers = [
+        row for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+    ]
+    assert len(appointment_dossiers) == 1
+    assert appointment_dossiers[0]["mode"] == "midzhi"
     promulgate_proposed_appointments(
         db, state, content, registry=sess.registry,
     )

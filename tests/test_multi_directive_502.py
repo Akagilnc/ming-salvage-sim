@@ -152,24 +152,39 @@ def test_two_new_decrees_stage_as_independent_candidates(game, monkeypatch):
     # 第一道：无现存候选 → 新
     _draft_turn(sess, ch, monkeypatch,
                 player_message="拟旨吧", reply=text_a,
-                draft_result={"拟旨意图": "拟旨"})
+                draft_result={"拟旨意图": "拟旨", "颁布方式": "普通"})
     pend = _pending_directives(db, state.turn)
     assert len(pend) == 1
 
     # 第二道：皇帝另请一道**新**旨 → 抽取器指向「新」→ 独立第二条候选
     _draft_turn(sess, ch, monkeypatch,
                 player_message="另拟一道旨，着兵部核饷", reply=text_b,
-                draft_result={"拟旨意图": "拟旨", "目标草案": "新", "合并草案": ""})
+                draft_result={
+                    "拟旨意图": "拟旨", "目标草案": "新", "合并草案": "",
+                    "颁布方式": "中旨直发",
+                })
 
     pend = _pending_directives(db, state.turn)
     assert len(pend) == 2, f"两道独立新旨应各自成条，实际 {len(pend)} 条"
     ids = {p["id"] for p in pend}
     assert len(ids) == 2
-    texts = [json.loads(p["payload_json"])["text"] for p in pend]
+    payloads = [json.loads(p["payload_json"]) for p in pend]
+    texts = [payload["text"] for payload in payloads]
     assert any(text_a in t for t in texts)
     assert any(text_b in t for t in texts)
+    assert {payload["text"]: payload["mode"] for payload in payloads} == {
+        text_a: "ordinary", text_b: "midzhi",
+    }
     # 各自独立：无任何一条把两道正文并进去
     assert not any(text_a in t and text_b in t for t in texts), "两道旨被并进了同一条"
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    assert {
+        row["decree_text"]: row["mode"] for row in db.list_decree_dossiers()
+    } == {
+        text_a: "ordinary", text_b: "midzhi",
+    }
 
 
 def _stage_two_night_candidates(db, state, name):

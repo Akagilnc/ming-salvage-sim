@@ -1251,6 +1251,7 @@ def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, db: Any = None, content: Any = None,
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
+    declared_mode = _directive_mode(text)
     captured = extract_draft_intent(
         str(text or ""), "请据此拟旨", llm_config=llm_config,
     )
@@ -1259,11 +1260,13 @@ def capture_manual_directive_payload(
             "dossier_action_type": "special_decree",
             "target_kind": "policy",
             "target_id": "manual-directive",
+            **({"mode": declared_mode} if declared_mode else {}),
         }
     payload = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),
         "target_id": captured.get("target_id"),
+        **({"mode": declared_mode} if declared_mode else {}),
     }
     for field in (
         "mode", "amount", "account", "execution_surface", "assignee",
@@ -1303,6 +1306,7 @@ def capture_manual_directive_payload(
             "dossier_action_type": "special_decree",
             "target_kind": "policy",
             "target_id": "manual-directive",
+            **({"mode": declared_mode} if declared_mode else {}),
         }
     return payload
 
