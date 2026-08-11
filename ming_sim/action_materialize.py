@@ -373,7 +373,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             elif committed_draft is not None:
                 try:
                     existing_payload = json.loads(
-                        committed_draft.get("dossier_payload_json") or "{}"
+                        committed_draft["dossier_payload_json"] or "{}"
                     )
                 except (TypeError, ValueError):
                     existing_payload = {}
