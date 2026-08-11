@@ -84,6 +84,41 @@ def _judge_context_for_dossier(db: GameDB, state, dossier_id: int) -> dict:
     )
 
 
+def _prepare_reconsideration_facts(
+    db: GameDB, state, dossier_id: int, first_context: dict,
+) -> dict:
+    """Remove the first named blocker while retaining the production-derived bench."""
+    first_names = {str(row["name"]) for row in first_context["gatekeepers"]}
+    named_opponent = "许誉卿"
+    if named_opponent not in first_names:
+        raise RuntimeError("reconsideration requires 许誉卿 on the first gatekeeping bench")
+    db.conn.execute(
+        "UPDATE characters SET status='dismissed' WHERE name=?",
+        (named_opponent,),
+    )
+    db.conn.execute(
+        "UPDATE factions SET leverage=5,agenda='失去许誉卿封驳支点，转入复议' WHERE name='东林'"
+    )
+    held = db.get_decree_dossier(dossier_id)
+    held_payload = json.loads(str(held["payload_json"] or "{}"))
+    held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
+        (json.dumps(held_payload, ensure_ascii=False), dossier_id),
+    )
+    state.metrics["皇威"] = 100
+    db.save_state(state)
+    db.conn.commit()
+
+    second_context = _judge_context_for_dossier(db, state, dossier_id)
+    second_names = {str(row["name"]) for row in second_context["gatekeepers"]}
+    if not second_names:
+        raise RuntimeError("reconsideration must retain a real gatekeeping bench")
+    if named_opponent in second_names or not (second_names & (first_names - {named_opponent})):
+        raise RuntimeError("reconsideration must remove only the named blocker from the bench")
+    return second_context
+
+
 def _select_second_verdict(
     awaiting: bool, hostile: int, pending: list[dict], history: list[dict],
 ) -> dict:
@@ -152,29 +187,11 @@ def main() -> int:
         held_history = db.list_decree_dossier_decisions(hostile)
         text_after_hold = str(held["decree_text"])
 
-        # Replace the opposition board: its gatekeeping bench and faction
-        # posture, plus the explicit authorization and authority needed to cure
-        # the unchanged wording's procedural defect.
-        first_gatekeepers = [row["name"] for row in first_context["gatekeepers"]]
-        if not first_gatekeepers:
-            raise RuntimeError("first judgment must have a gatekeeping bench")
-        db.conn.executemany(
-            "UPDATE characters SET status='dismissed' WHERE name=?",
-            [(name,) for name in first_gatekeepers],
+        # Change only the first named blocker and its faction posture.  The
+        # other production-derived gatekeepers remain a real reconsideration bench.
+        second_context = _prepare_reconsideration_facts(
+            db, state, hostile, first_context,
         )
-        db.conn.execute(
-            "UPDATE factions SET leverage=5,agenda='接受清丈复议结论、奉旨办理'"
-        )
-        held_payload = json.loads(str(held["payload_json"] or "{}"))
-        held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
-        db.conn.execute(
-            "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
-            (json.dumps(held_payload, ensure_ascii=False), hostile),
-        )
-        state.metrics["皇威"] = 100
-        db.save_state(state)
-        db.conn.commit()
-        second_context = _judge_context_for_dossier(db, state, hostile)
         second_turn = state.turn
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
