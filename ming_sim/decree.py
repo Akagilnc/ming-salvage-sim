@@ -227,6 +227,13 @@ def build_promulgation_judge_context(
     }
 
 
+def _require_promulgation_verdict_list(generated: object) -> List[Dict[str, object]]:
+    """Canonical top-level shape authority for every promulgation verdict batch."""
+    if not isinstance(generated, list):
+        raise LLMContractError("颁布判官 verdicts 必须为列表")
+    return generated
+
+
 def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
@@ -243,10 +250,7 @@ def llm_promulgation_verdicts(
         tag="promulgation-judge",
     )
     parsed = parse_agent_json(raw, "颁布判官")
-    verdicts = parsed.get("verdicts")
-    if not isinstance(verdicts, list):
-        raise LLMContractError("颁布判官 verdicts 必须为列表")
-    return verdicts
+    return _require_promulgation_verdict_list(parsed.get("verdicts"))
 
 
 def validate_promulgation_verdicts(
@@ -254,8 +258,7 @@ def validate_promulgation_verdicts(
     *, prepared_context: Optional[Dict[str, object]] = None,
 ) -> List[Dict[str, object]]:
     """Validate one injected batch before it can reach simulation or persistence."""
-    if not isinstance(generated, list):
-        raise LLMContractError("颁布判官 verdicts 必须为列表")
+    generated = _require_promulgation_verdict_list(generated)
     if any(
         not isinstance(row, dict)
         or str(row.get("decision") or "") not in {"promulgated", "rejected"}
@@ -713,9 +716,7 @@ def resolve_directives(
                     )
                 ) if reviewed else []
                 rejected_verdict_batch = generated
-                if not isinstance(generated, list):
-                    raise LLMContractError("颁布判官 verdicts 必须为列表")
-                generated = generated + (
+                generated = _require_promulgation_verdict_list(generated) + (
                     stub_promulgation_verdicts(exempt, state) if exempt else []
                 )
                 verdict_rows = validate_promulgation_verdicts(

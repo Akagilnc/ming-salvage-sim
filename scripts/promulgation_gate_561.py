@@ -4,7 +4,8 @@ Runs the production ``resolve_directives`` judge/simulator assembly, the product
 rescript hold transition, and the next-month production reconsideration rail.
 No model provider or production collaborator is replaced.
 
-  ../Ming_LLM/.venv/bin/python scripts/promulgation_gate_561.py \
+  MING_SIM_TRACE_PATH=/tmp/issue-561-trace.jsonl \
+    ../Ming_LLM/.venv/bin/python scripts/promulgation_gate_561.py \
       --runner codex --model gpt-5.6-sol --output docs/evidence/issue-561-gate.json
 """
 from __future__ import annotations
@@ -77,6 +78,65 @@ def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[d
     return chosen
 
 
+def _trace_records(path: Path, start: int) -> tuple[list[dict], int]:
+    """Read complete records appended by the existing real-CLI trace seam."""
+    if not path.exists():
+        raise RuntimeError(f"CLI trace was not created: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        handle.seek(start)
+        chunk = handle.read()
+        end = handle.tell()
+    try:
+        records = [json.loads(line) for line in chunk.splitlines() if line.strip()]
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("CLI trace contains an incomplete or invalid record") from exc
+    return records, end
+
+
+def _judge_payload_from_prompt(prompt: object) -> dict:
+    """Decode the user JSON exactly as serialized into the real CLI prompt."""
+    if not isinstance(prompt, str):
+        raise RuntimeError("CLI judge trace has no prompt")
+    marker = "【皇帝/输入】\n"
+    positions = [index for index in range(len(prompt)) if prompt.startswith(marker, index)]
+    if len(positions) != 1:
+        raise RuntimeError(f"CLI judge prompt must have one user payload; got {len(positions)}")
+    start = positions[0] + len(marker)
+    try:
+        payload, consumed = json.JSONDecoder().raw_decode(prompt[start:])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("CLI judge prompt user payload is not complete JSON") from exc
+    remainder = prompt[start + consumed:]
+    if not remainder.startswith("\n\n【") or not isinstance(payload, dict):
+        raise RuntimeError("CLI judge prompt user payload boundary is invalid")
+    return payload
+
+
+def _captured_judge_payload(records: list[dict], expected: dict) -> tuple[dict, dict]:
+    """Select exactly one successful real judge call by its complete input payload."""
+    matches = []
+    for record in records:
+        try:
+            payload = _judge_payload_from_prompt(record.get("prompt"))
+        except RuntimeError:
+            continue
+        if payload == expected:
+            matches.append((payload, record))
+    if len(matches) != 1:
+        raise RuntimeError(f"expected exactly one matching real CLI judge call; got {len(matches)}")
+    payload, record = matches[0]
+    if record.get("error") is not None or record.get("attempts") != 1:
+        raise RuntimeError("real CLI judge call must succeed in exactly one attempt")
+    if record.get("prompt_chars") != len(record.get("prompt", "")):
+        raise RuntimeError("real CLI judge prompt was truncated in trace")
+    provenance = {
+        "source": "MING_SIM_TRACE_PATH real CliChat.invoke prompt",
+        "seq": record.get("seq"), "attempts": record.get("attempts"),
+        "error": record.get("error"), "matches_builder_expectation": True,
+    }
+    return payload, provenance
+
+
 def _judge_context_for_dossier(db: GameDB, state, dossier_id: int) -> dict:
     """Build evidence from the same fresh dossier row production will consume."""
     return build_promulgation_judge_context(
@@ -141,6 +201,14 @@ def main() -> int:
     bind_content(content)
     bind_issue_content(content)
     bind_agent_content(content)
+    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {"0", "false", "no"}:
+        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
+    trace_path = Path(trace_setting).resolve()
+    if trace_path.exists():
+        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    trace_offset = 0
+
     with tempfile.TemporaryDirectory(prefix="ming-561-gate-") as tmp:
         db = GameDB(os.path.join(tmp, "gate.db"), content)
         db.seed_static_data()
@@ -172,6 +240,10 @@ def main() -> int:
         )
         if not first_result.awaiting:
             raise RuntimeError("real gate expected rejected dossiers to reach rescript")
+        trace_records, trace_offset = _trace_records(trace_path, trace_offset)
+        first_actual_input, first_provenance = _captured_judge_payload(
+            trace_records, first_context,
+        )
         first_turn = state.turn
         first_ctx = db.get_resolve_context(first_turn) or {}
         first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
@@ -195,6 +267,10 @@ def main() -> int:
         second_turn = state.turn
         second_result = resolve_directives(
             state, db, agno, cfg, [], "留中案下月重判", content=content,
+        )
+        trace_records, trace_offset = _trace_records(trace_path, trace_offset)
+        second_actual_input, second_provenance = _captured_judge_payload(
+            trace_records, second_context,
         )
         second_pending = db.get_pending_promulgation_verdicts(second_turn)
         second_history = [
@@ -273,9 +349,13 @@ def main() -> int:
                     ],
                 },
             },
-            "judge_first": {"input": first_context, "output": first_verdicts},
+            "judge_first": {
+                "input": first_actual_input, "input_provenance": first_provenance,
+                "output": first_verdicts,
+            },
             "judge_after_hold_and_board_change": {
-                "input": second_context, "output": second_verdict,
+                "input": second_actual_input, "input_provenance": second_provenance,
+                "output": second_verdict,
             },
             "simulator": {
                 "assembly": "resolve_directives production simulator_payload",

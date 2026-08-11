@@ -82,6 +82,42 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     ]
 
 
+def test_gate_extracts_actual_cli_judge_payload_and_rejects_ambiguous_capture():
+    from scripts.promulgation_gate_561 import (
+        _captured_judge_payload,
+        _judge_payload_from_prompt,
+    )
+
+    expected = {"turn": {"turn": 7}, "dossiers": [{"id": 11}]}
+    encoded = json.dumps(expected, ensure_ascii=False, sort_keys=True)
+    prompt = f"【系统设定】\njudge\n\n【皇帝/输入】\n{encoded}\n\n【执行约束·必读】done"
+    record = {
+        "seq": 3, "attempts": 1, "error": None, "prompt": prompt,
+        "prompt_chars": len(prompt),
+    }
+
+    assert _judge_payload_from_prompt(prompt) == expected
+    actual, provenance = _captured_judge_payload([record], expected)
+    assert actual == expected
+    assert provenance == {
+        "source": "MING_SIM_TRACE_PATH real CliChat.invoke prompt",
+        "seq": 3, "attempts": 1, "error": None,
+        "matches_builder_expectation": True,
+    }
+    for records in ([], [record, record], [{**record, "attempts": 2}],
+                    [{**record, "prompt_chars": len(prompt) - 1}]):
+        with pytest.raises(RuntimeError):
+            _captured_judge_payload(records, expected)
+    with pytest.raises(RuntimeError):
+        _judge_payload_from_prompt(prompt.replace(encoded, encoded[:-1]))
+
+
+def test_promulgation_verdict_list_shape_has_one_canonical_authority(game):
+    db, _state, _content = game
+    with pytest.raises(decree_mod.LLMContractError, match="颁布判官 verdicts 必须为列表"):
+        decree_mod.validate_promulgation_verdicts({"verdicts": []}, [], db)
+
+
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):
     from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
 

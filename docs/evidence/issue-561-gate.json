@@ -35,8 +35,8 @@
       {
         "event_id": "",
         "choice": {
-          "label": "发内帑银三十万两至陕西巡抚衙门赈济灾民，命练国事督办",
-          "hint": "可争取饥民，使盗众失其来路，然已成之寇未必即散"
+          "label": "发内库银三十万两赈陕西",
+          "hint": "赈济可速行，亦可表明天子恤民，然内帑由此开支，内廷必多怨言。"
         }
       }
     ],
@@ -50,11 +50,11 @@
           "decision": "rejected",
           "blocked_layer": "six_offices",
           "rescript_action": "",
-          "reason": "明令不经部议，绕过常规程序清丈追田；皇威偏弱，六科把关者勇气与操守俱高，足以封驳。",
+          "reason": "不经部议即清丈追田，既属绕程序越制，又直接触犯东林及士绅田产命门；许誉卿勇气与操守俱高，足以在六科封驳。",
           "legal_reason_code": "",
           "gatekeeper_id": "许誉卿",
           "midzhi_unpromulgatable": false,
-          "created_at": "2026-08-11 14:25:03",
+          "created_at": "2026-08-11 16:05:24",
           "primary_opponents": [
             "东林"
           ],
@@ -90,7 +90,7 @@
           "legal_reason_code": "",
           "gatekeeper_id": null,
           "midzhi_unpromulgatable": false,
-          "created_at": "2026-08-11 14:25:03",
+          "created_at": "2026-08-11 16:05:24",
           "primary_opponents": [],
           "criteria_snapshot": {},
           "affected_parties": []
@@ -238,123 +238,6 @@
   },
   "judge_first": {
     "input": {
-      "turn": {
-        "turn": 1,
-        "year": 1627,
-        "period": 10
-      },
-      "dossiers": [
-        {
-          "id": 1,
-          "action_type": "policy",
-          "decree_text": "不经部议，清丈天下田亩并追夺士绅隐田",
-          "target_kind": "issue",
-          "target_id": "gate-561-1-不经部议，清",
-          "mode": "regular",
-          "appointment_tenure": "",
-          "break_rank": null,
-          "criteria_snapshot_source": {
-            "imperial_authority_band": "偏弱",
-            "involved_office_types": [
-              "未指定"
-            ],
-            "authorization_ids": [],
-            "endorsement_entry_ids": []
-          }
-        },
-        {
-          "id": 2,
-          "action_type": "policy",
-          "decree_text": "循户部成例补发边军一月欠饷",
-          "target_kind": "issue",
-          "target_id": "gate-561-1-循户部成例补",
-          "mode": "regular",
-          "appointment_tenure": "",
-          "break_rank": null,
-          "criteria_snapshot_source": {
-            "imperial_authority_band": "偏弱",
-            "involved_office_types": [
-              "未指定"
-            ],
-            "authorization_ids": [],
-            "endorsement_entry_ids": []
-          }
-        },
-        {
-          "id": 3,
-          "action_type": "policy",
-          "decree_text": "中旨命内廷整理既有文册，不动外廷钱权",
-          "target_kind": "issue",
-          "target_id": "gate-561-1-中旨命内廷整",
-          "mode": "中旨",
-          "appointment_tenure": "",
-          "break_rank": null,
-          "criteria_snapshot_source": {
-            "imperial_authority_band": "偏弱",
-            "involved_office_types": [
-              "未指定"
-            ],
-            "authorization_ids": [],
-            "endorsement_entry_ids": []
-          }
-        },
-        {
-          "id": 4,
-          "action_type": "policy",
-          "decree_text": "中旨绕开户部，强夺太仓全部钱粮交内廷支配",
-          "target_kind": "issue",
-          "target_id": "gate-561-1-中旨绕开户部",
-          "mode": "中旨",
-          "appointment_tenure": "",
-          "break_rank": null,
-          "criteria_snapshot_source": {
-            "imperial_authority_band": "偏弱",
-            "involved_office_types": [
-              "未指定"
-            ],
-            "authorization_ids": [],
-            "endorsement_entry_ids": []
-          }
-        }
-      ],
-      "factions": [
-        {
-          "name": "东林",
-          "leverage": 95,
-          "agenda": "反对清丈，维护田赋旧例"
-        },
-        {
-          "name": "中立",
-          "leverage": 45,
-          "agenda": "部院实务、避党争、按章办事"
-        },
-        {
-          "name": "军队",
-          "leverage": 38,
-          "agenda": "补饷、守边、少受外朝掣肘"
-        },
-        {
-          "name": "宗室",
-          "leverage": 40,
-          "agenda": "保宗禄、护藩国田产、拒削藩与清核"
-        },
-        {
-          "name": "皇党",
-          "leverage": 38,
-          "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
-        },
-        {
-          "name": "西学",
-          "leverage": 20,
-          "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
-        },
-        {
-          "name": "阉党",
-          "leverage": 78,
-          "agenda": "保住厂卫旧线、内廷人脉和清算余地"
-        }
-      ],
-      "imperial_authority_band": "偏弱",
       "classes": [
         "军户",
         "农民",
@@ -364,57 +247,181 @@
         "宗藩",
         "官僚"
       ],
-      "gatekeepers": [
-        {
-          "name": "许誉卿",
-          "office": "兵科给事中",
-          "office_type": "六科",
-          "faction": "东林",
-          "courage": 76,
-          "integrity": 78
-        },
-        {
-          "name": "黄立极",
-          "office": "内阁首辅",
-          "office_type": "内阁",
-          "faction": "阉党",
-          "courage": 40,
-          "integrity": 28
-        },
-        {
-          "name": "王体乾",
-          "office": "司礼监掌印太监",
-          "office_type": "司礼监",
-          "faction": "阉党",
-          "courage": 50,
-          "integrity": 25
-        }
-      ],
-      "promulgation_history": [],
       "current_events": [
         {
           "id": 2,
-          "title": "辽东索饷",
-          "status": "active"
+          "status": "active",
+          "title": "辽东索饷"
         },
         {
           "id": 1,
-          "title": "户部亏空",
-          "status": "active"
+          "status": "active",
+          "title": "户部亏空"
         },
         {
           "id": 3,
-          "title": "陕西流寇起",
-          "status": "active"
+          "status": "active",
+          "title": "陕西流寇起"
         }
-      ]
+      ],
+      "dossiers": [
+        {
+          "action_type": "policy",
+          "appointment_tenure": "",
+          "break_rank": null,
+          "criteria_snapshot_source": {
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": [
+              "未指定"
+            ]
+          },
+          "decree_text": "不经部议，清丈天下田亩并追夺士绅隐田",
+          "id": 1,
+          "mode": "regular",
+          "target_id": "gate-561-1-不经部议，清",
+          "target_kind": "issue"
+        },
+        {
+          "action_type": "policy",
+          "appointment_tenure": "",
+          "break_rank": null,
+          "criteria_snapshot_source": {
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": [
+              "未指定"
+            ]
+          },
+          "decree_text": "循户部成例补发边军一月欠饷",
+          "id": 2,
+          "mode": "regular",
+          "target_id": "gate-561-1-循户部成例补",
+          "target_kind": "issue"
+        },
+        {
+          "action_type": "policy",
+          "appointment_tenure": "",
+          "break_rank": null,
+          "criteria_snapshot_source": {
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": [
+              "未指定"
+            ]
+          },
+          "decree_text": "中旨命内廷整理既有文册，不动外廷钱权",
+          "id": 3,
+          "mode": "中旨",
+          "target_id": "gate-561-1-中旨命内廷整",
+          "target_kind": "issue"
+        },
+        {
+          "action_type": "policy",
+          "appointment_tenure": "",
+          "break_rank": null,
+          "criteria_snapshot_source": {
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+            "imperial_authority_band": "偏弱",
+            "involved_office_types": [
+              "未指定"
+            ]
+          },
+          "decree_text": "中旨绕开户部，强夺太仓全部钱粮交内廷支配",
+          "id": 4,
+          "mode": "中旨",
+          "target_id": "gate-561-1-中旨绕开户部",
+          "target_kind": "issue"
+        }
+      ],
+      "factions": [
+        {
+          "agenda": "反对清丈，维护田赋旧例",
+          "leverage": 95,
+          "name": "东林"
+        },
+        {
+          "agenda": "部院实务、避党争、按章办事",
+          "leverage": 45,
+          "name": "中立"
+        },
+        {
+          "agenda": "补饷、守边、少受外朝掣肘",
+          "leverage": 38,
+          "name": "军队"
+        },
+        {
+          "agenda": "保宗禄、护藩国田产、拒削藩与清核",
+          "leverage": 40,
+          "name": "宗室"
+        },
+        {
+          "agenda": "强化皇帝直控、清账、补库、让圣旨落地",
+          "leverage": 38,
+          "name": "皇党"
+        },
+        {
+          "agenda": "引西法历算、造火器、办水利、修《崇祯历书》",
+          "leverage": 20,
+          "name": "西学"
+        },
+        {
+          "agenda": "保住厂卫旧线、内廷人脉和清算余地",
+          "leverage": 78,
+          "name": "阉党"
+        }
+      ],
+      "gatekeepers": [
+        {
+          "courage": 76,
+          "faction": "东林",
+          "integrity": 78,
+          "name": "许誉卿",
+          "office": "兵科给事中",
+          "office_type": "六科"
+        },
+        {
+          "courage": 40,
+          "faction": "阉党",
+          "integrity": 28,
+          "name": "黄立极",
+          "office": "内阁首辅",
+          "office_type": "内阁"
+        },
+        {
+          "courage": 50,
+          "faction": "阉党",
+          "integrity": 25,
+          "name": "王体乾",
+          "office": "司礼监掌印太监",
+          "office_type": "司礼监"
+        }
+      ],
+      "imperial_authority_band": "偏弱",
+      "promulgation_history": [],
+      "turn": {
+        "period": 10,
+        "turn": 1,
+        "year": 1627
+      }
+    },
+    "input_provenance": {
+      "source": "MING_SIM_TRACE_PATH real CliChat.invoke prompt",
+      "seq": 1,
+      "attempts": 1,
+      "error": null,
+      "matches_builder_expectation": true
     },
     "output": [
       {
         "dossier_id": 1,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "reason": "明令不经部议，绕过常规程序清丈追田；皇威偏弱，六科把关者勇气与操守俱高，足以封驳。",
+        "reason": "不经部议即清丈追田，既属绕程序越制，又直接触犯东林及士绅田产命门；许誉卿勇气与操守俱高，足以在六科封驳。",
         "primary_opponents": [
           "东林"
         ],
@@ -452,6 +459,11 @@
             "kind": "faction",
             "key": "中立",
             "severity": "不满"
+          },
+          {
+            "kind": "class",
+            "key": "官僚",
+            "severity": "不满"
           }
         ]
       },
@@ -459,7 +471,7 @@
         "dossier_id": 4,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "reason": "中旨绕开户部并强夺太仓全部钱粮，既绕程序又触犯钱粮命门；皇威偏弱，六科把关者勇气与操守俱高，足以封驳。",
+        "reason": "中旨绕开户部并强夺太仓全部钱粮，兼具绕程序越制与侵夺部院钱权命门；皇威偏弱，许誉卿勇气与操守俱高，足以在六科封驳。",
         "primary_opponents": [
           "东林",
           "中立"
@@ -496,71 +508,6 @@
   },
   "judge_after_hold_and_board_change": {
     "input": {
-      "turn": {
-        "turn": 2,
-        "year": 1627,
-        "period": 11
-      },
-      "dossiers": [
-        {
-          "id": 1,
-          "action_type": "policy",
-          "decree_text": "不经部议，清丈天下田亩并追夺士绅隐田",
-          "target_kind": "issue",
-          "target_id": "gate-561-1-不经部议，清",
-          "mode": "regular",
-          "appointment_tenure": "",
-          "break_rank": null,
-          "criteria_snapshot_source": {
-            "imperial_authority_band": "强盛",
-            "involved_office_types": [
-              "未指定"
-            ],
-            "authorization_ids": [
-              "御笔特准清丈不经部议"
-            ],
-            "endorsement_entry_ids": []
-          }
-        }
-      ],
-      "factions": [
-        {
-          "name": "东林",
-          "leverage": 5,
-          "agenda": "失去许誉卿封驳支点，转入复议"
-        },
-        {
-          "name": "中立",
-          "leverage": 45,
-          "agenda": "部院实务、避党争、按章办事"
-        },
-        {
-          "name": "军队",
-          "leverage": 38,
-          "agenda": "补饷、守边、少受外朝掣肘"
-        },
-        {
-          "name": "宗室",
-          "leverage": 40,
-          "agenda": "保宗禄、护藩国田产、拒削藩与清核"
-        },
-        {
-          "name": "皇党",
-          "leverage": 38,
-          "agenda": "强化皇帝直控、清账、补库、让圣旨落地"
-        },
-        {
-          "name": "西学",
-          "leverage": 20,
-          "agenda": "引西法历算、造火器、办水利、修《崇祯历书》"
-        },
-        {
-          "name": "阉党",
-          "leverage": 78,
-          "agenda": "保住厂卫旧线、内廷人脉和清算余地"
-        }
-      ],
-      "imperial_authority_band": "强盛",
       "classes": [
         "军户",
         "农民",
@@ -570,52 +517,124 @@
         "宗藩",
         "官僚"
       ],
-      "gatekeepers": [
-        {
-          "name": "黄立极",
-          "office": "内阁首辅",
-          "office_type": "内阁",
-          "faction": "阉党",
-          "courage": 40,
-          "integrity": 28
-        },
-        {
-          "name": "王体乾",
-          "office": "司礼监掌印太监",
-          "office_type": "司礼监",
-          "faction": "阉党",
-          "courage": 50,
-          "integrity": 25
-        }
-      ],
-      "promulgation_history": [
-        {
-          "dossier_id": 3,
-          "turn": 1,
-          "mode": "中旨",
-          "marker": "中旨",
-          "outcome": "promulgated"
-        },
-        {
-          "dossier_id": 4,
-          "turn": 1,
-          "mode": "中旨",
-          "marker": "中旨",
-          "outcome": "rejected"
-        }
-      ],
       "current_events": [
         {
           "id": 2,
-          "title": "辽东索饷",
-          "status": "active"
+          "status": "active",
+          "title": "辽东索饷"
         },
         {
           "id": 3,
-          "title": "陕西流寇起",
-          "status": "active"
+          "status": "active",
+          "title": "陕西流寇起"
         }
-      ]
+      ],
+      "dossiers": [
+        {
+          "action_type": "policy",
+          "appointment_tenure": "",
+          "break_rank": null,
+          "criteria_snapshot_source": {
+            "authorization_ids": [
+              "御笔特准清丈不经部议"
+            ],
+            "endorsement_entry_ids": [],
+            "imperial_authority_band": "强盛",
+            "involved_office_types": [
+              "未指定"
+            ]
+          },
+          "decree_text": "不经部议，清丈天下田亩并追夺士绅隐田",
+          "id": 1,
+          "mode": "regular",
+          "target_id": "gate-561-1-不经部议，清",
+          "target_kind": "issue"
+        }
+      ],
+      "factions": [
+        {
+          "agenda": "失去许誉卿封驳支点，转入复议",
+          "leverage": 5,
+          "name": "东林"
+        },
+        {
+          "agenda": "部院实务、避党争、按章办事",
+          "leverage": 45,
+          "name": "中立"
+        },
+        {
+          "agenda": "补饷、守边、少受外朝掣肘",
+          "leverage": 38,
+          "name": "军队"
+        },
+        {
+          "agenda": "保宗禄、护藩国田产、拒削藩与清核",
+          "leverage": 40,
+          "name": "宗室"
+        },
+        {
+          "agenda": "强化皇帝直控、清账、补库、让圣旨落地",
+          "leverage": 38,
+          "name": "皇党"
+        },
+        {
+          "agenda": "引西法历算、造火器、办水利、修《崇祯历书》",
+          "leverage": 20,
+          "name": "西学"
+        },
+        {
+          "agenda": "保住厂卫旧线、内廷人脉和清算余地",
+          "leverage": 78,
+          "name": "阉党"
+        }
+      ],
+      "gatekeepers": [
+        {
+          "courage": 40,
+          "faction": "阉党",
+          "integrity": 28,
+          "name": "黄立极",
+          "office": "内阁首辅",
+          "office_type": "内阁"
+        },
+        {
+          "courage": 50,
+          "faction": "阉党",
+          "integrity": 25,
+          "name": "王体乾",
+          "office": "司礼监掌印太监",
+          "office_type": "司礼监"
+        }
+      ],
+      "imperial_authority_band": "强盛",
+      "promulgation_history": [
+        {
+          "dossier_id": 3,
+          "marker": "中旨",
+          "mode": "中旨",
+          "outcome": "promulgated",
+          "turn": 1
+        },
+        {
+          "dossier_id": 4,
+          "marker": "中旨",
+          "mode": "中旨",
+          "outcome": "rejected",
+          "turn": 1
+        }
+      ],
+      "turn": {
+        "period": 11,
+        "turn": 2,
+        "year": 1627
+      }
+    },
+    "input_provenance": {
+      "source": "MING_SIM_TRACE_PATH real CliChat.invoke prompt",
+      "seq": 7,
+      "attempts": 1,
+      "error": null,
+      "matches_builder_expectation": true
     },
     "output": {
       "dossier_id": 1,
@@ -659,8 +678,8 @@
           "created_turn": 1,
           "created_year": 1627,
           "created_period": 10,
-          "created_at": "2026-08-11 14:20:04",
-          "updated_at": "2026-08-11 14:20:04",
+          "created_at": "2026-08-11 16:00:50",
+          "updated_at": "2026-08-11 16:00:50",
           "closed_at": null,
           "executable_this_turn": 0,
           "settlement_verdict": "promulgated"
@@ -695,8 +714,8 @@
           "created_turn": 1,
           "created_year": 1627,
           "created_period": 10,
-          "created_at": "2026-08-11 14:20:04",
-          "updated_at": "2026-08-11 14:20:04",
+          "created_at": "2026-08-11 16:00:50",
+          "updated_at": "2026-08-11 16:00:50",
           "closed_at": null,
           "executable_this_turn": 0,
           "settlement_verdict": "promulgated"
@@ -3467,7 +3486,7 @@
           "dossier_id": 1,
           "decision": "rejected",
           "blocked_layer": "six_offices",
-          "reason": "明令不经部议，绕过常规程序清丈追田；皇威偏弱，六科把关者勇气与操守俱高，足以封驳。",
+          "reason": "不经部议即清丈追田，既属绕程序越制，又直接触犯东林及士绅田产命门；许誉卿勇气与操守俱高，足以在六科封驳。",
           "primary_opponents": [
             "东林"
           ],
@@ -3505,6 +3524,11 @@
               "kind": "faction",
               "key": "中立",
               "severity": "不满"
+            },
+            {
+              "kind": "class",
+              "key": "官僚",
+              "severity": "不满"
             }
           ]
         },
@@ -3512,7 +3536,7 @@
           "dossier_id": 4,
           "decision": "rejected",
           "blocked_layer": "six_offices",
-          "reason": "中旨绕开户部并强夺太仓全部钱粮，既绕程序又触犯钱粮命门；皇威偏弱，六科把关者勇气与操守俱高，足以封驳。",
+          "reason": "中旨绕开户部并强夺太仓全部钱粮，兼具绕程序越制与侵夺部院钱权命门；皇威偏弱，许誉卿勇气与操守俱高，足以在六科封驳。",
           "primary_opponents": [
             "东林",
             "中立"
@@ -3548,12 +3572,12 @@
       ],
       "promulgation_instruction": "颁布判决是硬约束：decision=rejected 的案卷本月未颁、不得写成已办成或已生效；只能叙述其被打回并等待批红。decision=promulgated 的案卷才可进入本月办理。"
     },
-    "output": "《边月催饷陇云低》\n天启七年十月 月末奏章\n\n一、边镇发饷\n\n户部尚书郭允厚奉旨循成例，为欠饷边军各补一月。太仓（国库） → 关宁军，十五万两。太仓（国库） → 宣大边军，十万两。太仓（国库） → 蓟镇兵，九万两。太仓（国库） → 陕西边军，六万两。太仓（国库） → 山海关守军，四万两。太仓（国库） → 东江镇，四万两。共发四十八万两，尽由国库支出。京畿近镇得饷稍速，辽海、西北则受转运与旧弊侵蚀，士卒实领约七成，军心暂缓而未安；连同京营、水师诸军，全国积欠仍约一百五十余万两。\n\n二、内廷理册\n\n中旨既下，司礼监掌印王体乾奉命汇整内廷既有文册，曹化淳、王承恩分校御用监、司礼监本年可见簿册，编目、封匣并造副册呈览。然历年旧册或称散佚，或无经手押记，魏忠贤旧属掌握档房钥印，多只交出日常供奉名目，约有六成可核。此次未调户部底簿，未挪太仓分毫，也未借清册干预外廷钱权。部院虽无实损，仍疑内廷翻检旧账别有后图，中立官员颇有不满；所得目前只是目录，尚不足据以追赃定罪。\n\n三、两案封驳\n\n本月另有两道草案未获颁行：一欲不经部议清丈追田，一欲以中旨越过户部、尽夺太仓钱粮。兵科给事中许誉卿据六科封驳，称田赋、钱粮皆有成宪，圣威初立而骤开非常之门，恐天下争以中旨相倾。两案遂止于封还，畿辅未清丈一亩，太仓亦未移出一两。然风声已传至科道与江南，东林诸臣、士绅皆疑朝廷将动免田旧例；阉党则借此讥议新君旨意不能出禁门，朝局观望之气更重。\n\n四、待办未解\n\n一、#1 户部亏空——月常税入虽勉强盖过常支，本月补发旧欠又尽耗余裕；太仓积亏、京运折损与各军陈欠未消，尚不能称钱粮已定。\n\n二、#2 辽东索饷——关宁军本月名拨十五万两，实领仍有折损，账面旧欠尚约四十六万两；宁锦粮秣不足，士卒虽暂止鼓噪，防线仍经不起久拖。\n\n三、#3 陕西流寇起——陕西边军得六万两月饷，军心稍缓，灾民却未得赈粮；王嘉胤已聚饥民、逃卒约三千五百人，出没清涧、绥德山谷，尚未攻城，却正以官府失赈招纳流民。\n\n五、诏书核销\n\n一、循户部成例补发边军一月欠饷 → 受阻折损。国库共发四十八万两，六镇饷司皆已领解，惟转运克扣未绝，士卒实得约七成，只能暂缓鼓噪，不能清偿积欠。\n\n二、中旨命内廷整理既有文册，不动外廷钱权 → 受阻折损。可见簿册已编目封存，历年旧册多有缺失；户部与太仓未受干预，故未酿成内外争夺钱权之变。",
+    "output": "《边饷初沾陕火深》\n天启七年十月 月末奏章\n\n一、户部循例发饷\n\n户部奉旨查照旧额，补发六镇一月欠饷：国库 → 关宁军，十五万两；国库 → 东江镇，四万两；国库 → 蓟镇兵，九万两；国库 → 陕西边军，六万两；国库 → 山海关守军，四万两；国库 → 宣大边军，十万两。合计四十八万两，均由太仓依军册拨付。此举只偿旧欠一月，并非预支新饷；太仓虽尚能支应，辽饷、京营、宗禄、官俸诸项仍环伺其后，尚不可言宽裕。\n\n二、内廷清册\n\n曹化淳、王承恩承中旨，将御前现存奏簿、宫门牌册及内廷供用案卷分类编目，封识存放。旨中明言不动外廷钱权，故户部库册、太仓出纳及各部题本均未索取，六科虽有议论，终未封驳。惟司礼监旧档仍多掌在王体乾及旧日书办手中，彼等以卷帙散乱、交割无凭为辞，迟迟只送副册；本月可见文册已有眉目，内廷旧档尚未尽清。\n\n三、陕西饥火\n\n陕西边军虽领一月欠饷，仍欠约十九万两，军心稍定而饥色未解。西安常平仓几近见底，全省存粮不足支撑大规模赈济；本月又无专项赈银、赈粮下发，延安、清涧一带逃户仍入山求食。王嘉胤已聚饥民、逃卒约三千五百人，兵械粗劣，却熟悉山道。官军补给单薄，若贸然进山追剿，未必能制其众，反可能逼更多饥民投寇。\n\n四、军事\n\n军队变化：六镇兵额、统帅与驻地均未改，仅旧欠各减一月。关宁军尚欠约四十六万两，东江镇约十二万两，蓟镇约五万两，陕西边军约十九万两，山海关守军约二万两，宣大边军约二十一万两。诸镇士卒闻饷稍安，短期哗变之势有所缓和；但京营、登莱兵及闽粤水师不在本次补发之列。合计诸军旧欠仍约一百四十余万两，边军只是暂得喘息，远未清偿。\n\n五、探子回报\n\n辽东细作报称，皇太极本月未大举叩关，仍在整旗休兵，令辽沈降附汉官抄录明边关隘、粮道与军册，又聚炮匠试修火器。满洲八旗约六万余，训练整肃，诸贝勒共议虽牵制汗权，却未见内乱。辽沈另有汉军与辽人降兵约一万八千，战力尚不及八旗，但通译、铸炮、招降之用日重。朝鲜仍暗助皮岛，却因丁卯战后民力未复，不敢公开多运粮械。\n\n六、待办未解\n\n一、户部亏空——本月常入暂能压过常支，又另发边饷四十八万两；仅此一月尚不足证明太仓从此无须挪借。\n\n二、辽东索饷——关宁军补偿旧欠一月，尚欠约四十六万两；军心暂稳，宁锦粮饷根本仍未解决。\n\n三、陕西流寇起——边军得饷而灾民未赈，王嘉胤部约三千五百人盘踞清涧、绥德山谷，尚未攻城，却有继续裹挟逃户之势。\n\n七、诏书核销\n\n一、循户部成例补发边军一月欠饷 → 已办成，太仓向关宁、东江、蓟镇、陕西、山海关、宣大六军共发银四十八万两，各镇旧欠削去一月。\n\n二、中旨命内廷整理既有文册，不动外廷钱权 → 受阻折损，曹化淳、王承恩已将御前可得文册分类封识，户部钱权未受侵夺；司礼监旧档移交迟缓，尚未尽清。",
     "rejected_decree_texts": [
       "不经部议，清丈天下田亩并追夺士绅隐田",
       "中旨绕开户部，强夺太仓全部钱粮交内廷支配"
     ],
-    "reconsideration_output": "《丈田诏下万门惊》\n天启七年十一月 月末奏章\n\n一、月计两库\n\n本月太仓常入二百六十七万两，常支二百二十五万两，月终存银四百二十三万两；内库月入四十万两，月支十八万两，存银四百五十四万两。账面虽见月余，京运折损、太仓侵耗与边镇陈欠皆未消。全国明军积欠军饷仍约一百五十万两，关宁、京营、宣大与陕西所欠最重，现银若无先后之序，仍不足同时清饷、赈荒与修边。\n\n二、清丈出禁\n\n陛下御笔特准，不经部议清丈天下田亩并追夺士绅隐田，诏书本月已出禁门。左都御史张延登奉诏，行文现任巡按及各省布政使衙门，先取黄册、鱼鳞图册、税粮实征簿互勘；户部不得先议兴废，只须供出旧册。皇威方盛，诸司无人敢明拒，然张延登操守清正而行事审慎，不肯仅凭厂卫揭帖或仇家首告夺田，所报隐占须有册契、界址与实耕户相证，故追夺之令已颁，实际断田尚缓。\n\n三、诸省查丈\n\n南直隶、浙江士绅田土最广，地方书吏多以册页散佚、河道改徙、祖契难寻为辞，先交虚册而迟报实亩；江西宗族则以祠田、义庄混入免粮名目。北直隶勋绅庄田犬牙相错，州县畏惧权门，只敢从无主荒田查起。陕西、山西以旱荒、流民与边警为由，请缓实地丈量。至月末，各省大抵仅办到调册、绘界与差役下县，尚未丈出一宗足以定案的隐田，也未追夺一亩入官；风声却已遍传士林，藏契、迁户、串改册籍之事渐多。\n\n四、陕北赈抚\n\n陕西常例赈银已经解至巡抚衙门，练国事督办散赈，先顾清涧、绥德及驿道沿线饥户。然西安常平仓近于枯竭，州县乡里辽阔，赈银虽到省城，尚未尽透穷村；地方胥吏又以保甲、户籍为限，逃户与无籍灾民多不得食。王嘉胤仍聚饥民、逃卒约三千五百人，盘踞山谷，尚未攻陷州县，却以官赈不及招纳来投者。驻陕边军自身欠饷约十九万两，补给单薄、军心不振，暂只能守城护道，未敢轻入山地追剿。\n\n五、待办未解\n\n一、#2 辽东索饷——关宁军旧欠尚约四十六万两，宁锦粮秣不足；士卒暂止鼓噪，若再拖数月，边将亦难约束。\n\n二、#3 陕西流寇起——赈银已到巡抚衙门而未尽入乡，王嘉胤部仍在清涧、绥德山谷聚众，陕西边军无力大举进剿。\n\n三、新立 天下清丈追田——诏书已颁，各省开始调册下县；江南藏契、地方拖册与灾省请缓并起，隐田尚无实数，追夺亦未开端。\n\n六、诏书核销\n\n一、不经部议，清丈天下田亩并追夺士绅隐田 → 进展中。御笔特准已使诏书越过旧有封驳而颁行，都察院与各省已着手调取黄册、鱼鳞图册及实征税簿；但地方士绅串改册籍、官吏畏避权门，灾省又请缓丈量，本月仅完成文册初核，尚未确丈或追夺隐田，须列入下月续办。"
+    "reconsideration_output": "《尺籍初开西火深》\n天启七年十一月 月末奏章\n\n一、中旨越议颁行\n\n上月六科以清丈追田未经部议、径触士绅田产为由封还，本月御笔特准既下，诏令终由司礼监传发。掌印王体乾不敢明抗，依文送交户部、都察院。户部尚书郭允厚与左都御史张延登虽奉旨承办，却皆知天下田籍牵连宗藩、勋贵、官绅，稍有差误便成大狱，故不敢径凭旧册夺田，只先令各省汇报黄册、鱼鳞图册及历年垦荒契据。诏旨已出京师，朝臣无人敢公然抗命，实际差事却转入层层核册。\n\n二、天下清丈初动\n\n户部行文两京十三省，京畿州县先查旧册，外省则由布政司转饬府县造报。惟诏中未定专使、丈量章程与工食银，州县无从同时踏勘阡陌，首批呈报多是照旧册誊录，或将逃户田、荒田、族田混列，难辨真伪。南直隶田粮最重而士绅根基最深，浙江机户、田主交结亦广，地方官多以疆界争讼、灾荒未定为辞迟延；江西宗族则先行合契并户，以避分亩核查。本月仅成调册之始，尚未形成可据以增粮起税的天下新册。\n\n三、隐田追夺未成\n\n追夺隐田须先验明田界、契据、纳粮年月与实际占有人，非凭一道中旨便可径行没官。地方士绅纷以祠田、学田、族田及代佃田为名遮蔽，胥吏又借查契索费，贫户反先受扰。东林在朝势单，只能转请复议；真正阻力来自各省士绅与州县官吏彼此庇护。都察院不肯以传闻定罪，户部亦不敢把未经覆勘之田先计作税粮。因此本月尚无一处隐田经覆勘追入官册，也无追田所得银粮入库，诏令声势虽峻，实效未出京畿文案之外。\n\n四、国计仍悬\n\n户部月计常入暂能压过常支，账面国库尚有四百二十三万两，内库四百五十四万两；然而起运、盐课与商税沿途折损未止，太仓亏空仍在，清丈亦未带来新增田赋。诸军旧欠合计仍约一百五十万两，军心只是勉强维持：关宁军尚欠四十余万两，京营、宣大与陕西边军亦各积欠甚重。陕西赈济、辽东守饷两头催迫，今月账面虽见小盈，尚不足据此称国用已宽。\n\n五、待办未解\n\n一、#2 辽东索饷——关宁军尚欠饷约四十六万两，军心暂稳而宁锦粮饷根本未解，户部仍须逐月挪垫。\n\n二、#3 陕西流寇起——赈银虽已发出，陕西仓粮仍薄，王嘉胤聚众约三千五百人盘踞清涧、绥德山谷，饥民投寇之势未止。\n\n三、新立“清丈天下田亩、追夺士绅隐田”——各省方在汇册，丈量章程、专使与工食皆未定，地方士绅藏契阻查，尚无隐田追入官册。\n\n六、诏书核销\n\n一、不经部议，清丈天下田亩 → 进展中，诏令已经颁行，户部、都察院已令两京十三省汇送田册；本月仅至调册核契，尚未普遍下乡丈量。\n\n二、追夺士绅隐田 → 搁置不行，各省尚无经覆勘定案的隐田，州县不敢凭旧册径夺，本月没有田产或银粮追入官府。"
   },
   "checks": {
     "hostile_land_rejected": true,
