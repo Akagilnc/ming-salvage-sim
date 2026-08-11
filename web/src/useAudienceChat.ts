@@ -146,10 +146,13 @@ export function useAudienceChat(
     async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
+      const initiatingPanelName = selectedMinisterRef.current;
       const abort = new AbortController();
       activeAbortsRef.current.add(abort);
       const ownsEphemeral = () => requestTokenRef.current === token;
-      const panelMatches = () => selectedMinisterRef.current === minister;
+      // The action target can be the scroll's current audience rather than the minister
+      // used to open the modal. Guard ephemeral writes by the initiating panel only.
+      const panelMatches = () => selectedMinisterRef.current === initiatingPanelName;
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
       setPendingUserMessage(message);
       setPendingIdentity(null);

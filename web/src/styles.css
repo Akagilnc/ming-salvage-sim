@@ -6685,6 +6685,34 @@ button:disabled {
   border-top: 1px solid rgba(196, 164, 99, 0.35);
 }
 
+.scene-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.scene-divider hr {
+  margin: 0;
+}
+
+.scene-divider strong,
+.audience-type-label {
+  color: rgba(196, 164, 99, 0.78);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+
+.audience-type-label {
+  align-self: center;
+  padding: 3px 12px;
+  border: 1px solid rgba(196, 164, 99, 0.28);
+  border-radius: 999px;
+}
+
 /* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算 */
 .recovery-banner {
   position: fixed;
