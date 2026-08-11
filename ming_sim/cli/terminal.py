@@ -6,7 +6,6 @@ play_turn 状态机搬入此处；GameSession 持游戏状态，terminal 只做 
 
 from __future__ import annotations
 
-import json
 import re
 from typing import List, Optional
 
