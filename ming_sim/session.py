@@ -1112,7 +1112,9 @@ class GameSession:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
-                result.pending_action_id = self._stage_appointment_candidate(payload, character)
+                result.pending_action_id = self._stage_appointment_candidate(
+                    payload, character, message_text,
+                )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
@@ -1732,7 +1734,9 @@ class GameSession:
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
 
-    def _stage_appointment_candidate(self, payload: str, appointer: Character) -> int:
+    def _stage_appointment_candidate(
+        self, payload: str, appointer: Character, message_text: str,
+    ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
             return 0
@@ -1755,6 +1759,8 @@ class GameSession:
         staged_payload = {"name": name, "office": office, "appointer": appointer.name}
         from ming_sim.cli_backend import _directive_mode
         mode = _directive_mode(data.get("mode") or data.get("颁布方式"))
+        if mode is None:
+            mode = _directive_mode(message_text)
         if mode is not None:
             staged_payload["mode"] = mode
         metadata_aliases = {
