@@ -624,7 +624,8 @@ export function ChatModal({
   onUndo,
   onHint,
   onFavorite,
-  onOpenEdict,
+  scrollPosition,
+  onScrollPositionChange,
   onClose,
   onCancel,
 }: {
@@ -666,7 +667,9 @@ export function ChatModal({
   onUndo: () => void;
   onHint: (value: string) => void;
   onFavorite: () => void;
-  onOpenEdict: () => void;
+  /** Last player-owned position for this campaign/night, if they temporarily left. */
+  scrollPosition?: number;
+  onScrollPositionChange?: (position: number) => void;
   onClose: () => void;
   onCancel?: () => void;
 }) {
@@ -770,13 +773,21 @@ export function ChatModal({
     if (!node) return;
     const nightId = scrollState.kind === "night" ? scrollState.nightId : 0;
     const firstNightRestore = !!nightId && restoredNightRef.current !== nightId;
-    if (firstNightRestore || followsTailRef.current) node.scrollTop = node.scrollHeight;
-    if (firstNightRestore) restoredNightRef.current = nightId;
+    if (firstNightRestore) {
+      node.scrollTop = scrollPosition ?? node.scrollHeight;
+      followsTailRef.current = scrollPosition === undefined || node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+      restoredNightRef.current = nightId;
+    } else if (followsTailRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
   }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
-    if (node) followsTailRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+    if (node) {
+      followsTailRef.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 24;
+      onScrollPositionChange?.(node.scrollTop);
+    }
   };
 
   const handleSend = () => {
@@ -817,10 +828,6 @@ export function ChatModal({
           </button>
         </div>
         <p className="profile-copy">{minister.summary}</p>
-        <button className="secondary-action" onClick={onOpenEdict}>
-          <ScrollText size={15} />
-          转入诏书草案
-        </button>
         <div className="chat-portrait-wrap">
           <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={minister.name} />
         </div>
@@ -929,7 +936,10 @@ export function ChatModal({
             )}
             <button className="secondary-action composer-exit" onClick={onClose}>
               <X size={15} />
-              退出召对
+              暂离
+            </button>
+            <button className="secondary-action composer-retreat" onClick={() => onSend("退朝")} disabled={!!busy}>
+              退朝
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}
           </div>
@@ -959,8 +969,6 @@ export function EdictModal({
   onAdvanceWithoutEdict,
   onResetDecree,
   onIssueDecree,
-  onConfirmDirective,
-  onRejectDirective,
   onOpenFailureRecovery,
 }: {
   state: GameState;
@@ -982,13 +990,12 @@ export function EdictModal({
   onAdvanceWithoutEdict: () => void;
   onResetDecree: () => void;
   onIssueDecree: () => void;
-  onConfirmDirective: (directiveId: number) => void;
-  onRejectDirective: (directiveId: number) => void;
   onOpenFailureRecovery: () => void;
 }) {
-  const pendingDirectives = state.directives.filter((d) => d.status === "pending");
-  const draftDirectives = state.directives.filter((d) => d.status !== "pending");
-  const hasPending = pendingDirectives.length > 0;
+  // Conversational directives are approved when the audience turn settles (ADR 0049).
+  // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
+  const draftDirectives = state.directives;
+  const hasPending = false;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
@@ -1044,25 +1051,6 @@ export function EdictModal({
     <div className="edict-stage edict-stage-desk">
       <div className="desk-columns">
         <section className="desk-pane desk-memorials">
-          {hasPending && (
-            <div className="pending-directives" role="region" aria-label="待核定大臣拟旨">
-              <h3>朱批待定 · 大臣拟旨（{pendingDirectives.length}）</h3>
-              {pendingDirectives.map((directive) => (
-                <div className="directive-item pending" key={directive.id}>
-                  <div className="directive-head">
-                    <b>#{directive.id}</b>
-                    <span>{directive.source}</span>
-                  </div>
-                  <p>{directive.text}</p>
-                  {directive.notes ? <small>{directive.notes}</small> : null}
-                  <div className="directive-tools">
-                    <button className="vermilion-yes" onClick={() => onConfirmDirective(directive.id)} disabled={!!busy}><Check size={14} />准</button>
-                    <button className="vermilion-no" onClick={() => onRejectDirective(directive.id)} disabled={!!busy}><X size={14} />驳</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
           <h2>本月指令{draftDirectives.length ? ` · ${draftDirectives.length} 道` : ""}</h2>
           <div className="directive-list">
             {draftDirectives.map((directive) => (
@@ -1121,7 +1109,6 @@ export function EdictModal({
       </div>
 
       <div className="desk-footer">
-        {hasPending && <small className="pending-hint">尚有 {pendingDirectives.length} 道大臣拟旨待朱批（准/驳），核定后方可拟诏。</small>}
         {canAdvanceWithoutEdict ? (
           <button
             className="seal-btn-compose"
