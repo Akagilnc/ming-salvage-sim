@@ -4,6 +4,7 @@ import pytest
 
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
+from ming_sim import audience_night
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
@@ -192,25 +193,80 @@ def test_regular_rejection_cannot_claim_midzhi_unpromulgatable(game):
 
 def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, monkeypatch):
     db, state, content = game
-    default_assent = _dossier(db, state, "未表态默认同意")
-    spoken_assent = _dossier(db, state, "亲口应允")
-    secret = db.create_decree_dossier(
-        state, action_type="secret_order", decree_text="密令暗查",
-        target_kind="character", target_id="李若琏", payload={},
+    minister = str(db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND office_type!='后宫' ORDER BY name LIMIT 1"
+    ).fetchone()["name"])
+
+    # The unanswered candidate reaches its dossier only through the end-turn
+    # default-approval owner.  Keep it out of an audience night so this is not
+    # accidentally the oral-assent path below.
+    default_pending = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        target_id=None, payload={
+            "text": "未表态默认同意清丈", "actor": minister,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "default-land",
+        },
     )
-    inner = db.create_decree_dossier(
-        state, action_type="grant_allocation", decree_text="内库内批补饷",
-        target_kind="issue", target_id="inner-pay",
-        payload={"account": "内库", "amount": 10},
+
+    # A spoken assent is a different production admission seam: night-approved
+    # first, then the close-night batch commits it.
+    night = audience_night.open_night(db, state, location="乾清宫", time_of_day="夜")
+    spoken_pending = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        target_id=None, payload={
+            "text": "亲口应允补发边饷", "actor": minister,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "spoken-pay",
+        },
+    )
+    db.mark_pending_night_approved([spoken_pending], night_id=night["id"])
+    audience_night.close_night(db, state, night_id=night["id"], content=content)
+    spoken_assent = next(
+        row["id"] for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == spoken_pending
+    )
+
+    # Secret orders use their real pending-action landing seam and are already
+    # promulgated there; an inner-treasury allocation uses the same canonical
+    # directive admission seam as the UI and remains an exempt proposed dossier.
+    secret_pending = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister,
+        target_id=None, payload={
+            "title": "密令暗查", "content": "密查辽饷侵冒。", "assignee": minister,
+            "tags": [], "deadline_months": 0,
+        },
+    )
+    db.commit_pending_actions(state, action_ids=[secret_pending])
+    secret = next(
+        row["id"] for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == secret_pending
+    )
+    inner_pending = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        target_id=None, payload={
+            "text": "内库内批补饷", "actor": minister,
+            "dossier_action_type": "grant_allocation", "target_kind": "issue",
+            "target_id": "inner-pay", "account": "内库", "amount": 10,
+        },
+    )
+    db.commit_pending_actions(state, content=content, action_ids=[inner_pending])
+    inner = next(
+        row["id"] for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == inner_pending
     )
     calls = []
+    admitted = {}
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
 
     def judge(_agent, prompt, tag):
-        calls.append((json.loads(prompt), tag))
+        context = json.loads(prompt)
+        calls.append((context, tag))
+        admitted.update({row["decree_text"]: row["id"] for row in context["dossiers"]})
         return json.dumps({"verdicts": [
-            {"dossier_id": default_assent, "decision": "promulgated"},
-            {"dossier_id": spoken_assent, "decision": "promulgated"},
+            {"dossier_id": admitted["未表态默认同意清丈"], "decision": "promulgated"},
+            {"dossier_id": admitted["亲口应允补发边饷"], "decision": "promulgated"},
         ]})
 
     monkeypatch.setattr(decree_mod, "run_agent_text", judge)
@@ -220,16 +276,20 @@ def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, mo
             state, db, None, None, [object()], "四旨", content=content,
         )
 
+    default_assent = next(
+        row["id"] for row in db.list_decree_dossiers()
+        if row["pending_action_id"] == default_pending
+    )
     assert len(calls) == 1
-    assert [row["id"] for row in calls[0][0]["dossiers"]] == [
+    assert {row["id"] for row in calls[0][0]["dossiers"]} == {
         default_assent, spoken_assent,
-    ]
+    }
     assert db.get_pending_promulgation_verdicts(state.turn) == [
-        {"dossier_id": default_assent, "decision": "promulgated"},
-        {"dossier_id": spoken_assent, "decision": "promulgated"},
-        {"dossier_id": secret, "decision": "promulgated"},
-        {"dossier_id": inner, "decision": "promulgated"},
+        {"dossier_id": dossier_id, "decision": "promulgated"}
+        for dossier_id in sorted((default_assent, spoken_assent, inner))
     ]
+    assert db.get_decree_dossier(secret)["status"] == "promulgated"
+    assert db.get_decree_dossier(inner)["promulgation_decision"] == ""
 
 
 def test_default_rejected_verdict_is_validated_persisted_and_becomes_rescript_decision(
