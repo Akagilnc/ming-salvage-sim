@@ -237,7 +237,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_draft_intent
+    from ming_sim.cli_backend import _directive_mode, extract_draft_intent
 
     session = ctx.session
     minister_name = ctx.character.name
@@ -275,7 +275,10 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         except (ValueError, TypeError):
             _cp = {}
         _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
+        dir_candidates.append({
+            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
+        })
     existing_draft_text = ""
     if dir_candidates:
         existing_draft_text = str(dir_candidates[-1].get("text") or "")
@@ -360,6 +363,27 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
             or (committed_draft is not None and not has_pending_directive)
         )
+        declared_mode = _directive_mode(ctx.player_message)
+        if is_existing_update:
+            existing_mode = None
+            if _target_id is not None:
+                existing_mode = next(
+                    (c.get("mode") for c in dir_candidates if c["id"] == _target_id), None,
+                )
+            elif committed_draft is not None:
+                try:
+                    existing_payload = json.loads(
+                        committed_draft.get("dossier_payload_json") or "{}"
+                    )
+                except (TypeError, ValueError):
+                    existing_payload = {}
+                if isinstance(existing_payload, dict):
+                    existing_mode = existing_payload.get("mode")
+            if declared_mode is not None:
+                draft_res["mode"] = declared_mode
+            elif existing_mode is not None:
+                draft_res["mode"] = existing_mode
+
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "authorization_id", "deadline_months",

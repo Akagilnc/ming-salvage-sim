@@ -1269,11 +1269,13 @@ def capture_manual_directive_payload(
         **({"mode": declared_mode} if declared_mode else {}),
     }
     for field in (
-        "mode", "amount", "account", "execution_surface", "assignee",
+        "amount", "account", "execution_surface", "assignee",
         "authorization_id", "deadline_months", "participant_roster",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
+    if declared_mode is None and captured.get("mode") not in (None, ""):
+        payload["mode"] = captured["mode"]
     roster = payload.get("participant_roster")
     if roster is not None and db is not None and content is not None:
         if not isinstance(roster, list):

@@ -10085,20 +10085,6 @@ class GameDB:
         return mode
 
     @classmethod
-    def _dossier_payload(cls, row: Any) -> Dict[str, object]:
-        dossier_id = dict(row).get("id", "?")
-        try:
-            payload = json.loads(dict(row).get("payload_json"))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"案卷#{dossier_id} payload_json 无效") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"案卷#{dossier_id} payload_json 非对象")
-        cls._normalize_dossier_mode(
-            payload["mode"] if "mode" in payload else "ordinary"
-        )
-        return payload
-
-    @classmethod
     def _dossier_row(cls, row: Any) -> Dict[str, object]:
         out = dict(row)
         out["id"] = int(out["id"])
@@ -10111,12 +10097,17 @@ class GameDB:
         if out.get("secret_order_id") is not None:
             out["secret_order_id"] = int(out["secret_order_id"])
         out["rescript_pending"] = bool(out.get("rescript_pending"))
-        payload = cls._dossier_payload(out)
+        try:
+            payload = json.loads(out.get("payload_json") or "{}")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"案卷#{out['id']} payload_json 无效") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"案卷#{out['id']} payload_json 非对象")
         out["mode"] = cls._normalize_dossier_mode(
             payload["mode"] if "mode" in payload else "ordinary"
         )
         try:
-            stigma = json.loads(out.get("stigma_json"))
+            stigma = json.loads(out.get("stigma_json") or "[]")
         except (TypeError, ValueError) as exc:
             raise ValueError(f"案卷#{out['id']} stigma_json 无效") from exc
         if not isinstance(stigma, list):
@@ -10212,7 +10203,7 @@ class GameDB:
             {
                 "dossier_id": int(row["id"]),
                 "secret_order_id": int(row["secret_order_id"]),
-                "title": self._dossier_payload(row).get("title", ""),
+                "title": json.loads(row["payload_json"] or "{}").get("title", ""),
                 "progress": self.list_dossier_progress(int(row["id"])),
             }
             for row in rows
@@ -10797,7 +10788,7 @@ class GameDB:
         ).fetchall()
         visible = []
         for row in rows:
-            payload = self._dossier_payload(row)
+            payload = json.loads(str(row["payload_json"] or "{}"))
             policy = dossier_action_policy(row["action_type"], payload)
             # Admission-owned effects never run through the simulator again.
             # An in-transit dossier remains visible as execution context until
@@ -10836,7 +10827,7 @@ class GameDB:
         if new_status not in self._DOSSIER_TRANSITIONS[old_status]:
             raise ValueError(f"案卷非法迁移：{old_status} -> {new_status}")
         if old_status == "promulgated" and new_status == "closed":
-            payload = self._dossier_payload(row)
+            payload = json.loads(str(row["payload_json"] or "{}"))
             if self._dossier_has_execution_surface(row["action_type"], payload):
                 raise ValueError("带执行判定面的案卷不得从 promulgated 直接 closed")
             if not str(row["execution_outcome"] or ""):
@@ -10950,7 +10941,7 @@ class GameDB:
             raise KeyError(f"案卷不存在：{dossier_id}")
         if row["status"] == "proposed":
             raise ValueError("待判案卷不能绕过颁布格直接结案")
-        payload = self._dossier_payload(row)
+        payload = json.loads(str(row.get("payload_json") or "{}"))
         immediate = not self._dossier_has_execution_surface(row["action_type"], payload)
         if row["status"] == "promulgated" and not immediate:
             raise ValueError("带执行判定面的案卷必须先进入 executing 并填写执行格")
@@ -11002,7 +10993,7 @@ class GameDB:
             row["status"] == "promulgated"
             and not self._dossier_has_execution_surface(
                 row["action_type"],
-                self._dossier_payload(row),
+                json.loads(str(row.get("payload_json") or "{}")),
             )
         )
         if row["status"] != "executing" and not immediate:
@@ -11103,7 +11094,9 @@ class GameDB:
                 self._append_midzhi_stigma(
                     dossier_id, decision="promulgated", turn=state.turn, commit=False,
                 )
-            payload = self._dossier_payload(row)
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if not isinstance(payload, dict):
+                raise ValueError("案卷 payload 非对象")
             policy = dossier_action_policy(row["action_type"], payload)
             # Narrative-owned effects are deliberately left to the
             # simulator/extractor; immediate-owned effects were staged before
