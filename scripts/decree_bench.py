@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 from ming_sim.session import GameSession            # noqa: E402
 from ming_sim.llm_config import load_llm_config     # noqa: E402
 from ming_sim.token_stats import print_token_summary  # noqa: E402
+from scripts.probe_directive_contract import add_narrative_probe_directive  # noqa: E402
 
 # 轮换问话模板：5 大议题，循环喂给在朝大臣（不依赖具体人名，谁在朝问谁）。
 QUESTION_BANK = [
@@ -136,7 +137,10 @@ def main() -> int:
     # ── M 道诏书草案入档 ──
     for j in range(args.decrees):
         text = DECREE_BANK[j % len(DECREE_BANK)]
-        view = session.add_directive(text, notes="decree-bench")
+        view = add_narrative_probe_directive(
+            session, text, notes="decree-bench",
+            probe_id="decree-bench", sequence=j + 1,
+        )
         print(f"[directive {j+1}/{args.decrees}] id={view.id} {text[:40]}")
 
     # ── 拟诏 + 推演结算（拟诏走 LLM；不传 decree=由 LLM 合并草案）──

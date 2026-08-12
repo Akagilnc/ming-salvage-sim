@@ -18,6 +18,7 @@ import time
 
 from ming_sim.models import LLMConfig
 from ming_sim.session import GameSession, TurnPhase
+from scripts.probe_directive_contract import add_narrative_probe_directive
 
 
 def main() -> int:
@@ -45,8 +46,11 @@ def main() -> int:
     print(f"[turn] {session.state.year}年{session.state.period}月 turn={session.state.turn} "
           f"国库={before.get('国库')} 民心={before.get('民心')} 皇威={before.get('皇威')}")
 
-    for text in ns.directive:
-        v = session.add_directive(text, notes="agy-probe")
+    for sequence, text in enumerate(ns.directive, start=1):
+        v = add_narrative_probe_directive(
+            session, text, notes="agy-probe",
+            probe_id="agy-turn", sequence=sequence,
+        )
         print(f"[directive] id={v.id} {text[:50]}")
 
     session.enter_review()

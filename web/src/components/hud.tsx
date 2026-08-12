@@ -4,18 +4,18 @@ import { Upload, X } from "lucide-react";
 import { formatLegacyEffect, formatMoney, formatSignedMoney } from "../format";
 import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy } from "../types";
 
-export function MinisterPortrait({ primary, fallback, name }: { primary: string; fallback?: string; name: string }) {
+export function MinisterPortrait({ primary, fallback, name, className = "minister-card-portrait" }: { primary: string; fallback?: string; name: string; className?: string }) {
   // 两级 fallback：primary（专属）→ fallback（pool 预设）→ 占位符
   const [stage, setStage] = React.useState<"primary" | "fallback" | "placeholder">(
     fallback ? "primary" : (primary ? "primary" : "placeholder")
   );
   const src = stage === "primary" ? primary : stage === "fallback" ? (fallback ?? "") : "";
   if (stage === "placeholder") {
-    return <div className="minister-card-portrait-placeholder">臣</div>;
+    return <div className={`${className} minister-card-portrait-placeholder`}>臣</div>;
   }
   return (
     <img
-      className="minister-card-portrait"
+      className={className}
       src={src}
       alt={name}
       onError={() => {

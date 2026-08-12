@@ -15,6 +15,7 @@ attempt 计数**从错误目录已有文件推导**（同 turn 既有目录数�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import traceback
 from datetime import datetime, timezone
@@ -72,6 +73,39 @@ def _read_version() -> str:
         return Path(bundled_path("VERSION")).read_text(encoding="utf-8").strip()
     except Exception:
         return "unknown"
+
+
+def ready_payload_digest(payload: object) -> str:
+    """Stable identity for an ADR0008 persisted ready payload."""
+    canonical = safe_json_dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def complete_error_packs_for_ready(db_path: object, turn: int, payload: object) -> list[Path]:
+    """Return complete packs for this database, turn, and exact ready payload."""
+    expected = ready_payload_digest(payload)
+    expected_db_path = str(db_path)
+    required = {"traceback.txt", "delta.json", "resolve_context.json", "save_backup.db", "manifest.json"}
+    root = error_packs_root()
+    if not root.exists():
+        return []
+    matches: list[Path] = []
+    for path in root.glob(f"turn{int(turn)}_attempt*"):
+        if not path.is_dir() or not all((path / name).is_file() for name in required):
+            continue
+        try:
+            manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        if (
+            str(manifest.get("db_path")) == expected_db_path
+            and manifest.get("turn") == int(turn)
+            and manifest.get("ready_payload_digest") == expected
+        ):
+            matches.append(path)
+    return matches
 
 
 def settlement_abort_message(pack_path: str) -> str:
@@ -154,6 +188,7 @@ def write_error_pack(
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "ready_payload_digest": ready_payload_digest(extracted) if extracted is not None else None,
     }
     (pack_dir / "manifest.json").write_text(
         safe_json_dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"

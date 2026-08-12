@@ -1064,8 +1064,16 @@ class WebGame:
         }
 
     def directive_rows(self):
-        # 颁诏候选 = draft；UI 列表含 pending
-        return self.db.list_directives(self.state, statuses=("pending", "draft"))
+        """Player desk projection shared with the CLI: undossiered candidates only."""
+        visible_ids = {
+            item.id for item in self.session.list_directives(include_pending=True)
+        }
+        return [
+            row for row in self.db.list_directives(
+                self.state, statuses=("pending", "draft"),
+            )
+            if int(row["id"]) in visible_ids
+        ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
         region_positions = {
@@ -1351,7 +1359,13 @@ class WebGame:
         递话按轮归位）；临时召见 → 内存历史（无 chat_turn/无读心）。三处出口（历史
         入口 / 回话 done / 撤回）共用它，杜绝 setChat(history) 抹掉读心的覆盖竞争。"""
         if self._persistent_chat_minister(minister_name):
-            return self.db.build_chat_projection(minister_name)
+            # Lightweight stream seams intentionally expose neither a durable connection nor
+            # the night-aware projection signature. Production DBs always use the night owner.
+            if not hasattr(self.db, "conn"):
+                return self.db.build_chat_projection(minister_name)
+            from ming_sim.audience_night import get_open_night
+            night = get_open_night(self.db)
+            return self.db.build_chat_projection(minister_name, int(night["id"]) if night else 0)
         return [
             {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
             for m in self.chat_history.get(minister_name, [])
@@ -1479,6 +1493,8 @@ class WebGame:
         character = self.session._character(minister_name)
         return {
             "minister": minister_name,
+            "campaign_id": str(self.db.kv_get("campaign_id") or ""),
+            "night_id": int(row.get("night_id") or 0),
             "undone_chat_turn_id": int(undone["id"]),
             # #499 同一 turn-identified 投影：撤回后剩余轮的读心仍按轮归位
             "history": self.chat_projection(minister_name),
@@ -1525,9 +1541,17 @@ class WebGame:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
                 self.db.append_chat_message(minister_name, turn, "minister", answer)
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
+        open_night = None
+        if hasattr(self.db, "conn"):
+            from ming_sim.audience_night import get_open_night
+            open_night = get_open_night(self.db)
         return {
             "minister": minister_name,
             "answer": answer,
+            # Persisted identity travels with the real player response; the web client
+            # never infers night ownership from cross-night personal chat history.
+            "campaign_id": str(self.db.kv_get("campaign_id") or "") if hasattr(self.db, "kv_get") else "",
+            "night_id": int(open_night["id"]) if open_night else 0,
             # #499 单一投影：user/minister 带 chat_turn_id、既有读心按轮归位；
             # 前端 setChat 不再抹掉先前浮现的读心递话。
             "history": self.chat_projection(minister_name),
@@ -1864,7 +1888,8 @@ class WebGame:
                     if draft_text:
                         # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
                         pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text)
+                            self.state.turn, character.name, draft_text, mode=message_text,
+                        )
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -1877,7 +1902,9 @@ class WebGame:
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = self.session._stage_appointment_candidate(payload_json, character)
+                    pending_action_id = self.session._stage_appointment_candidate(
+                        payload_json, character, message_text,
+                    )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
@@ -1968,6 +1995,14 @@ class WebGame:
                         except (ValueError, TypeError):
                             payload = {}
                         if isinstance(payload, dict):
+                            from ming_sim.cli_backend import confirm_dossier_links
+                            dossier_links = confirm_dossier_links(
+                                answer,
+                                self.db.list_referenceable_dossiers(
+                                    character.name, self.state.turn),
+                                payload.get("dossier_links"),
+                                llm_config=getattr(self.session, "llm_config", None),
+                            )
                             pending_action_id = self.db.stage_pending_action(
                                 self.state.turn, kind="secret_order", action="新建",
                                 minister_name=character.name, target_id=None,
@@ -1979,6 +2014,7 @@ class WebGame:
                                     "deadline_months": payload.get("deadline_months") or 0,
                                     "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
                                     "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                    "dossier_links": dossier_links,
                                 },
                             )
                             tool_pending_action_id = pending_action_id
@@ -2258,6 +2294,31 @@ class WebGame:
             write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        identity = {
+            "campaign_id": "",
+            "night_id": 0,
+            "chat_turn_id": int(chat_turn_id or 0),
+        }
+        # Identity setup is still between durable prologue and worker ownership. Any failure
+        # must close the durable turn and pending owner through the same terminal path as a
+        # worker failure, rather than escaping this SSE generator.
+        try:
+            if hasattr(self.db, "kv_get"):
+                identity["campaign_id"] = str(self.db.kv_get("campaign_id") or "")
+            if chat_turn_id and hasattr(self.db, "conn"):
+                from ming_sim.audience_night import get_open_night
+                open_night = get_open_night(self.db)
+                identity["night_id"] = int(open_night["id"]) if open_night else 0
+                ev_queue.put({"type": "accepted", **identity})
+        except Exception as error:  # noqa: BLE001
+            try:
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+            except Exception:
+                pass
+            self._complete_pending_write()
+            yield {"type": "error", "message": str(error), **identity}
+            return
 
         def emit_delta(delta: str) -> None:
             ev_queue.put({"type": "delta", "content": delta})
@@ -2289,9 +2350,9 @@ class WebGame:
                     except Exception:
                         pass
                     if isinstance(error, LLMUnavailable):
-                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error)})
+                        ev_queue.put({"type": "error", "detail": _llm_error_detail(error), **identity})
                     else:
-                        ev_queue.put({"type": "error", "message": str(error)})
+                        ev_queue.put({"type": "error", "message": str(error), **identity})
                     return
 
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
@@ -3254,10 +3315,13 @@ async def api_retry_pending_action(action_id: int) -> Dict[str, Any]:
 
 
 @app.get("/api/history/turns")
-async def api_history_turns() -> Dict[str, Any]:
-    """已存档回合列表（turn_reports / turn_extractions / 已颁诏 turn_directives 并集）。"""
+def api_history_turns() -> Dict[str, Any]:
+    """场级归档列表；同步 handler 由 FastAPI 在线程池中执行 SQLite 投影。"""
     turns = get_game().db.list_archived_turns()
-    return {"turns": [{k: v for k, v in item.items() if k != "has_extraction"} for item in turns]}
+    return {"turns": [
+        {k: v for k, v in item.items() if k != "has_extraction"}
+        for item in turns
+    ]}
 
 
 @app.get("/api/history/turn/{turn}")
@@ -3339,14 +3403,34 @@ def _require_active_minister(minister_name: str) -> None:
         raise HTTPException(status_code=409, detail=detail.strip())
 
 
+@app.get("/api/audience/scroll")
+def api_audience_scroll(night_id: int = 0) -> Dict[str, Any]:
+    """Shared live/read-only projection of one persisted audience scroll."""
+    from ming_sim.audience_night import get_night, get_open_night, read_night_scroll
+
+    game = get_game()
+    night = get_night(game.db, night_id) if night_id else get_open_night(game.db)
+    if night is None:
+        return {"night_id": 0, "status": "", "messages": []}
+    return {
+        "night_id": int(night["id"]),
+        "status": night["status"],
+        "messages": read_night_scroll(game.db, int(night["id"])),
+    }
+
+
 @app.get("/api/ministers/{minister_name}/chat")
 async def api_chat_history(minister_name: str) -> Dict[str, Any]:
     _require_active_minister(minister_name)
     game = get_game()
     character = game.session._character(minister_name)
     mind = game.mindreading_for_minister(minister_name)
+    from ming_sim.audience_night import get_open_night
+    open_night = get_open_night(game.db) if hasattr(game.db, "conn") else None
     return {
         "minister": game.public_character(character),
+        "campaign_id": str(game.db.kv_get("campaign_id") or ""),
+        "night_id": int(open_night["id"]) if open_night else 0,
         # #499：turn-identified 单一投影，读心递话（role=attendant）已按轮归位于其中
         "history": game.chat_projection(minister_name),
         "suggestions": game.suggestions_for(character),
@@ -3446,7 +3530,13 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
             if item is None:
                 break
             item_type = str(item.get("type", "message"))
-            if item_type == "delta":
+            if item_type == "accepted":
+                yield sse_event("accepted", {
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
+            elif item_type == "delta":
                 yield sse_event("delta", {"content": item.get("content", "")})
             elif item_type == "done":
                 # 回话先可见；流继续至 end，以便读心就绪后浮现（#499 / ADR 0046 递话）
@@ -3460,7 +3550,14 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("end", {})
                 break
             elif item_type == "error":
-                yield sse_event("error", item.get("detail") or {"message": item.get("message", "流式回复失败。")})
+                detail = item.get("detail") or {"message": item.get("message", "流式回复失败。")}
+                payload = dict(detail) if isinstance(detail, dict) else {"message": str(detail)}
+                payload.update({
+                    "campaign_id": item.get("campaign_id", ""),
+                    "night_id": item.get("night_id", 0),
+                    "chat_turn_id": item.get("chat_turn_id", 0),
+                })
+                yield sse_event("error", payload)
                 break
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -3472,10 +3569,25 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
+        with _serialized_web_write(game):
+            capture_turn = int(game.state.turn)
+        from ming_sim.cli_backend import capture_manual_directive_payload
+        dossier_payload = await asyncio.to_thread(
+            capture_manual_directive_payload,
+            request.text.strip(),
+            game.session.llm_config,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
+        )
         # 会话层 _refuse_if_settling 仅查相位，守不住 pre_settle 原子块在 settling 落定前的窗口；
         # 与直写端点同走 _serialized_web_write 抢 _write_gate（cmr Gate2 F-A 残面：会话写也要串行）。
         with _serialized_web_write(game):
-            dv = game.session.add_directive(request.text.strip(), notes=request.notes)
+            if int(game.state.turn) != capture_turn:
+                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+            dv = game.session.add_directive(
+                request.text.strip(), notes=request.notes,
+                dossier_payload=dossier_payload,
+            )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
     return {
@@ -3486,17 +3598,35 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
 
 @app.patch("/api/directives/{directive_id}")
 async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    rows = get_game().directive_rows()
-    row = next((item for item in rows if int(item["id"]) == directive_id), None)
-    if row is None:
-        raise HTTPException(status_code=404, detail="未找到草案。")
-    text = request.text if request.text is not None else str(row["text"])
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
         with _serialized_web_write(game):
-            game.session.update_directive(directive_id, text.strip())
+            row = next(
+                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
+                None,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="未找到草案。")
+            text = request.text if request.text is not None else str(row["text"])
+            if not text.strip():
+                raise HTTPException(status_code=400, detail="指令内容不能为空。")
+            capture_turn = int(game.state.turn)
+            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
+        from ming_sim.cli_backend import capture_manual_directive_payload
+        dossier_payload = await asyncio.to_thread(
+            capture_manual_directive_payload,
+            text.strip(),
+            game.session.llm_config,
+            existing_mode=existing_mode,
+            **({"db": game.db, "content": game.content}
+               if getattr(game, "content", None) is not None else {}),
+        )
+        with _serialized_web_write(game):
+            if int(game.state.turn) != capture_turn:
+                raise ValueError("旨意抽取期间回合已推进，请在当前回合重新提交。")
+            game.session.update_directive(
+                directive_id, text.strip(), dossier_payload=dossier_payload,
+            )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
@@ -3513,49 +3643,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
-@app.post("/api/directives/{directive_id}/confirm")
-async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
-    """大臣拟旨经皇帝核定：pending → draft。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.confirm_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/directives/{directive_id}/reject")
-async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
-    """皇帝驳回大臣拟旨：pending → rejected。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.reject_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/decree/write")
-async def api_write_decree() -> Dict[str, Any]:
-    game = get_game()
-    try:
-        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
-        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
-        with _serialized_web_write(game):
-            decree = game.session.write_decree()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"decree": decree}
-
-
 @app.post("/api/decree/advance_without_edict")
 def api_advance_without_edict() -> Dict[str, Any]:
     # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
@@ -3564,25 +3651,26 @@ def api_advance_without_edict() -> Dict[str, Any]:
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
+    settlement_result = None
     try:
         # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
         with _serialized_web_write(game):
-            pending_directive_actions = [
-                action for action in game.db.list_pending_actions(turn_before)
-                if action["kind"] == "directive"
-            ]
-            if game.directive_rows() or pending_directive_actions:
-                raise ValueError("尚有未处理拟旨，不能退朝无诏；请先准驳或处理草案。")
-            advance_without_edict(
-                game.state,
-                game.db,
-                content=game.content,
-                registry=getattr(game.session, "registry", None),
-                inflight_wait_s=0.0,
-            )
-            game.refresh_turn()
+            if game.directive_rows():
+                settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
+            else:
+                advanced = advance_without_edict(
+                    game.state,
+                    game.db,
+                    content=game.content,
+                    registry=getattr(game.session, "registry", None),
+                    inflight_wait_s=0.0,
+                )
+                if not advanced:
+                    settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
+            if settlement_result is None or not settlement_result.awaiting:
+                game.refresh_turn()
     except ValueError as e:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
@@ -3596,6 +3684,13 @@ def api_advance_without_edict() -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {
         "state": game.state_payload(),
+        "awaiting_decision": bool(
+            settlement_result is not None and settlement_result.awaiting
+        ),
+        "decisions": (
+            settlement_result.decisions
+            if settlement_result is not None and settlement_result.awaiting else []
+        ),
         "pending_action_failures": _new_secret_order_failure_payloads_for_turn(
             game, turn_before, failed_before),
     }
@@ -3607,11 +3702,11 @@ class EditDecreeRequest(BaseModel):
 
 @app.patch("/api/decree")
 async def api_edit_decree(body: EditDecreeRequest) -> Dict[str, Any]:
-    """皇帝手动改定诏书正文（拟诏后、颁诏前）。"""
+    """兼容入口；存在逐道草案时拒绝以合并正文绕过可执行案卷。"""
     game = get_game()
     try:
-        # set_decree 改 in-memory last_decree（结算读它）；与会话写同走串行门，避免在结算冻结
-        # 窗口里改诏书正文（cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
+        # 与会话写同走串行门，避免在结算冻结窗口里改诏书正文
+        # （cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
         with _serialized_web_write(game):
             decree = game.session.set_decree(body.decree)
     except ValueError as e:

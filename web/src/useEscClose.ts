@@ -11,7 +11,7 @@ export function useEscClose(
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "audience_archive" || activeModal === "report" || activeModal === "secret_orders") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
         return;

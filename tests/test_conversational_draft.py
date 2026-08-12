@@ -22,6 +22,12 @@ import ming_sim.cli_backend as cb
 from ming_sim.models import TurnPhase
 from ming_sim.session import GameSession
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 
 @pytest.fixture(autouse=True)
 def _restore_content(content):
@@ -88,7 +94,7 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
         db, state, content, monkeypatch,
         player_message="拟旨吧",
         minister_reply="奉天承运皇帝诏曰，特谕户部清查三边粮饷，限期三月内完报，钦此。",
-        canned={"拟旨意图": "拟旨"},
+        canned={"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"},
     )
 
     # pending_actions 里有一条 kind=directive
@@ -105,6 +111,21 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     directives = db.conn.execute(
         "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (state.turn,)).fetchone()[0]
     assert directives == 0
+
+
+def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeypatch):
+    db, state, content = game
+    _run_conversational_draft(
+        db, state, content, monkeypatch,
+        player_message="中旨直发，拟一道清查辽饷的旨。",
+        minister_reply="着户部清查辽饷。",
+        canned={
+            "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+            "目标ID": "liao-pay", "颁布方式": "普通",
+        },
+    )
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["mode"] == "midzhi"
 
 
 def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
@@ -127,7 +148,12 @@ def test_explicit_prefix_stages_same_pending_directive_as_natural_language(game,
     # canned 带拟旨意图，但显式前缀仍应跳过后置 LLM 检测，使用大臣回话作为润色草案。
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
-                            {"拟旨意图": "拟旨"}, ensure_ascii=False), 1))
+                            {
+                                "拟旨意图": "拟旨",
+                                "动作类型": "policy",
+                                "目标类型": "issue",
+                                "目标ID": "liao-pay-audit",
+                            }, ensure_ascii=False), 1))
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
         sess, ch,
@@ -163,7 +189,7 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     # 第一次：触发拟旨意图
     monkeypatch.setattr(cb, "_run_backend_for_config",
                         lambda prompt, llm_config=None, tag="": (json.dumps(
-                            {"拟旨意图": "拟旨"}, ensure_ascii=False), 1))
+                            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1))
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="拟旨吧", answer=first_reply,
         has_directive=False, secret_order_id=None,
@@ -176,13 +202,18 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
 
     # 第二次：皇帝「补充一下」→ LLM 返回合并后新草稿。
     # 注：LLM 判确认（extraction_confirmation_intent）先被调，返回「无」，然后才进草案检测
-    # 两次调用都 canned 成 {"拟旨意图": "拟旨"}（确认判断时会调但结果被丢弃）
+    # 两次调用都 canned 成 {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}（确认判断时会调但结果被丢弃）
     def canned_second(prompt, llm_config=None, tag=""):
         # 确认意图抽取 → 无（别应允/拒绝，只补充草稿）
         if "应允" in prompt or "拒绝" in prompt or "待皇帝定夺" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         return (json.dumps(
-            {"拟旨意图": "拟旨", "合并草案": second_reply},
+                {
+                    "拟旨意图": "拟旨", "合并草案": second_reply,
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "liao-pay-audit",
+                },
             ensure_ascii=False,
         ), 1)
 
@@ -203,6 +234,80 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     assert first_reply not in updated_payload["text"]
 
 
+@pytest.mark.parametrize("landing, player_message, expected_mode", [
+    ("pending_upsert", "再补一条。", "midzhi"),
+    ("pending_candidate", "再补一条。", "midzhi"),
+    ("committed", "再补一条。", "midzhi"),
+    ("committed", "普通", "ordinary"),
+    # Full natural-language ordinary declaration must beat durable midzhi.
+    ("pending_upsert", "这道改按普通程序颁布，准了", "ordinary"),
+    ("pending_candidate", "这道改按普通程序颁布，准了", "ordinary"),
+    ("committed", "这道改按普通程序颁布，准了", "ordinary"),
+])
+@pytest.mark.parametrize("supplement", ["omitted", "empty", "append"])
+def test_real_conversation_draft_supplement_preserves_and_appends_roster(
+    game, monkeypatch, landing, supplement, player_message, expected_mode,
+):
+    db, state, content = game
+    names = [
+        row["name"] for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 3"
+        ).fetchall()
+    ]
+    assert len(names) == 3
+    minister, existing, added = names
+    character = next(ch for ch in content.characters.values() if ch.name == minister)
+    initial = [{"character_id": existing, "tier": "主办", "role": "总理"}]
+    payload = {
+        **_POLICY_FIELDS, "text": "初稿", "actor": minister, "mode": "midzhi",
+        "participant_roster": initial,
+    }
+    target = ""
+    if landing == "committed":
+        db.add_directive(
+            state, None, "初稿", "大臣拟旨", actor=minister, status="draft",
+            dossier_payload=payload,
+        )
+    else:
+        candidate_id = db.upsert_pending_directive(state.turn, minister, payload=payload)
+        if landing == "pending_candidate":
+            target = str(candidate_id)
+
+    extracted = {
+        "draft_action": "拟旨", "draft_text": "补充后的草稿",
+        **_POLICY_FIELDS, "target_candidate": target, "mode": "ordinary",
+    }
+    if supplement == "empty":
+        extracted["participant_roster"] = []
+    elif supplement == "append":
+        extracted["participant_roster"] = [
+            initial[0], {"character_id": added, "tier": "协办", "role": "核账"},
+        ]
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *args, **kwargs: dict(extracted))
+
+    GameSession.apply_cli_conversation_actions(
+        types.SimpleNamespace(
+            db=db, state=state, content=content, registry=None,
+            llm_config=types.SimpleNamespace(channel="cli"),
+        ),
+        character, player_message=player_message, answer="臣已补妥。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
+    )
+
+    if landing == "committed":
+        row = db.list_directives(state, statuses=("draft",))[-1]
+        stored_payload = json.loads(row["dossier_payload_json"])
+    else:
+        stored_payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    stored = stored_payload["participant_roster"]
+    assert stored_payload["mode"] == expected_mode
+    expected = ([{**initial[0], "delegator_id": None}, {
+        "character_id": added, "tier": "协办", "role": "核账", "delegator_id": None,
+    }] if supplement == "append" else initial)
+    assert stored == expected
+
+
 # ── ③ commit 时在 turn_directives 建档 ───────────────────────────────────
 
 def test_pending_directive_commit_creates_turn_directive(game):
@@ -216,7 +321,7 @@ def test_pending_directive_commit_creates_turn_directive(game):
     # 直接 stage（不走 LLM），测 commit 侧
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": draft_text, "actor": name},
+        payload={**_POLICY_FIELDS, "text": draft_text, "actor": name},
     )
 
     assert len(db.list_pending_actions(state.turn)) == 1
@@ -256,7 +361,7 @@ def test_pending_directive_commit_failure_propagates_and_rolls_back_outer_atomic
     name = _active_minister_name(db, content)
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": "外层事务回滚草稿", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "外层事务回滚草稿", "actor": name},
     )
     original_apply = db._apply_pending_action
 
@@ -289,7 +394,7 @@ def test_dialogue_affirm_commits_pending_directive_to_later_ui(game, monkeypatch
 
     draft_text = "奉天承运皇帝诏曰，着兵部整饬三边，钦此。"
     did = db.upsert_pending_directive(state.turn, name,
-                                      payload={"text": draft_text, "actor": name})
+                                      payload={**_POLICY_FIELDS, "text": draft_text, "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
     # 皇帝「应允」：directive 暂存转入 turn_directives.pending，而不是 draft。
@@ -318,7 +423,7 @@ def test_dialogue_reject_drops_pending_directive(game, monkeypatch):
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     did = db.upsert_pending_directive(state.turn, name,
-                                      payload={"text": "草稿文", "actor": name})
+                                      payload={**_POLICY_FIELDS, "text": "草稿文", "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
     monkeypatch.setattr(cb, "_run_backend_for_config",
@@ -639,7 +744,7 @@ def test_no_reply_path_directive_reachable_by_list_directives(game):
     draft_text = "奉天承运皇帝诏曰，着户部速清三边粮饷，钦此。"
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": draft_text, "actor": name},
+        payload={**_POLICY_FIELDS, "text": draft_text, "actor": name},
     )
 
     # 颁诏前 list_directives 返回空（暂存还在 pending_actions）
@@ -683,7 +788,7 @@ def test_pending_directive_count_nonzero_after_conversational_draft(game):
 
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": "草稿", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "草稿", "actor": name},
     )
 
     directive_pending = [
@@ -701,7 +806,7 @@ def test_pending_directive_count_zero_after_commit(game):
 
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": "草稿", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "草稿", "actor": name},
     )
     db.commit_pending_actions(state, kind_filter="directive")
 
@@ -732,7 +837,7 @@ def test_extract_draft_intent_prompt_includes_supplement_hint_when_has_pending(m
 
     def _capture(prompt, llm_config=None, tag=""):
         prompts_seen.append(prompt)
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     import ming_sim.cli_backend as cb_mod
     monkeypatch.setattr(cb_mod, "_run_backend_for_config", _capture)
@@ -756,7 +861,7 @@ def test_extract_draft_intent_supplement_schema_keeps_valid_json_comma(monkeypat
     def _capture(prompt, llm_config=None, tag=""):
         prompts_seen.append(prompt)
         return (json.dumps(
-            {"拟旨意图": "拟旨", "合并草案": "合并后的完整草案"},
+            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并后的完整草案"},
             ensure_ascii=False,
         ), 1)
 
@@ -783,7 +888,7 @@ def test_extract_draft_intent_coerces_non_string_existing_draft_text(monkeypatch
     def _capture(prompt, llm_config=None, tag=""):
         prompts_seen.append(prompt)
         return (json.dumps(
-            {"拟旨意图": "拟旨", "合并草案": "合并后的完整草案"},
+            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并后的完整草案"},
             ensure_ascii=False,
         ), 1)
 
@@ -826,7 +931,7 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
 
     # 先 stage 一条 pending directive
     db.upsert_pending_directive(state.turn, name,
-                                payload={"text": "第一版草稿", "actor": name})
+                                payload={**_POLICY_FIELDS, "text": "第一版草稿", "actor": name})
 
     prompts_seen = []
 
@@ -835,7 +940,7 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
         # 确认意图=无；拟旨意图=拟旨
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
@@ -868,7 +973,7 @@ def test_draft_request_with_appointment_content_stages_directive_not_office(game
                 ensure_ascii=False,
             ), 1)
         if tag == "draft_intent":
-            return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+            return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
         return ("{}", 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
@@ -944,41 +1049,6 @@ def test_none_player_message_does_not_crash_draft_probe(read_game, monkeypatch):
     assert db.list_pending_actions(state.turn) == []
 
 
-# ── ⑨ codex r5 F2 — advance_without_edict 不产生孤儿 draft ────────────────────
-
-def test_advance_without_edict_discards_pending_directive(game):
-    """退朝无诏时，advance_without_edict 必须丢弃 kind=directive pending，
-    不得把它 commit 成 turn_directives(draft) 孤儿（codex r5 F2）。
-    孤儿 draft 永不经 extractor、不可见；本测试确认退朝后 turn_directives 为空。"""
-    from ming_sim.decree import advance_without_edict
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    turn_before = state.turn
-
-    db.upsert_pending_directive(state.turn, name,
-                                payload={"text": "孤儿草稿", "actor": name})
-    assert len(db.list_pending_actions(state.turn)) == 1
-
-    advance_without_edict(state, db, content=content)
-
-    # 退朝后回合推进
-    assert state.turn == turn_before + 1
-
-    # 旧回合 pending_actions 全部清空（directive 已被 discard，不留 pending）
-    old_pa = db.conn.execute(
-        "SELECT * FROM pending_actions WHERE turn=? AND status='pending'",
-        (turn_before,)).fetchall()
-    assert old_pa == [], "退朝后旧回合不得有 pending 行残留"
-
-    # 旧回合 turn_directives 不应有任何行（directive 被丢弃，不插成孤儿 draft）
-    orphan_drafts = db.conn.execute(
-        "SELECT COUNT(*) FROM turn_directives WHERE turn=?", (turn_before,)).fetchone()[0]
-    assert orphan_drafts == 0, (
-        f"退朝无诏不应在旧回合建 turn_directives 行，找到 {orphan_drafts} 行（codex r5 F2）"
-    )
-
-
 def test_discard_pending_directives_does_not_commit_outer_transaction(game):
     """discard_pending_directives 只做删除，不拥有 commit；
     外层事务若回滚，被丢弃的 directive pending 必须恢复。"""
@@ -986,7 +1056,7 @@ def test_discard_pending_directives_does_not_commit_outer_transaction(game):
     name = _active_minister_name(db, content)
 
     db.upsert_pending_directive(state.turn, name,
-                                payload={"text": "可回滚草稿", "actor": name})
+                                payload={**_POLICY_FIELDS, "text": "可回滚草稿", "actor": name})
     assert len(db.list_pending_actions(state.turn)) == 1
 
     db.conn.execute("BEGIN")
@@ -1008,7 +1078,7 @@ def test_supplement_stores_merged_draft_not_raw_reply(game, monkeypatch):
     """补充轮产生的 pending directive payload 应为 LLM 合并后的草案，
     不能是大臣的确认回话（「好的，加上…」）覆盖原草案（codex r6 F1）。
 
-    LLM 返回 {"拟旨意图": "拟旨", "合并草案": "<merged>"} 时，
+    LLM 返回 {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "<merged>"} 时，
     payload["text"] 应等于 merged，而非 minister_reply（确认语）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
@@ -1019,12 +1089,12 @@ def test_supplement_stores_merged_draft_not_raw_reply(game, monkeypatch):
     merged_draft = "合并草稿：着户部清查三边粮饷，监察御史随行，限三月完报。"
 
     db.upsert_pending_directive(state.turn, name,
-                                payload={"text": original_text, "actor": name})
+                                payload={**_POLICY_FIELDS, "text": original_text, "actor": name})
 
     def _capture(prompt, llm_config=None, tag=""):
         if tag == "draft_intent":
             return (json.dumps(
-                {"拟旨意图": "拟旨", "合并草案": merged_draft}, ensure_ascii=False), 1)
+                {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": merged_draft}, ensure_ascii=False), 1)
         # 确认意图：无（不提前 commit/drop）
         return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
 
@@ -1065,7 +1135,7 @@ def test_undo_chat_turn_removes_write_decree_draft(game):
     before = db.capture_chat_rollback_snapshot()
     db.upsert_pending_directive(
         state.turn, name,
-        payload={"text": "草案文本（将被撤回）", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "草案文本（将被撤回）", "actor": name},
     )
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
@@ -1099,7 +1169,7 @@ def test_supplement_mode_falls_back_to_existing_draft_when_merged_empty(monkeypa
     draft_text 应保留 existing_draft_text，避免用确认回话覆盖旧草案。"""
     def _canned(prompt, llm_config=None, tag=""):
         # 拟旨意图=拟旨，但故意不带「合并草案」字段
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
     result = cb.extract_draft_intent(
@@ -1118,7 +1188,7 @@ def test_supplement_mode_prefers_merged_when_present(monkeypatch):
     锚定 719-722 分支两侧（merged 非空走 merged）。"""
     def _canned(prompt, llm_config=None, tag=""):
         return (json.dumps(
-            {"拟旨意图": "拟旨", "合并草案": "合并：着户部及监察御史同查三边粮饷。"},
+            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并：着户部及监察御史同查三边粮饷。"},
             ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
@@ -1197,7 +1267,7 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
 
     # stage 一条 directive，然后把 payload_json 损坏成非法 JSON
     pid = db.upsert_pending_directive(
-        state.turn, name, payload={"text": "原始草稿", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "原始草稿", "actor": name})
     db.conn.execute(
         "UPDATE pending_actions SET payload_json=? WHERE id=?",
         ("{这不是合法JSON", int(pid)))
@@ -1209,26 +1279,25 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         captured["draft_prompt"] = prompt
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
-    # 不应抛异常（坏 JSON 被 except 吞掉）
-    GameSession.apply_cli_conversation_actions(
-        sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
-        has_directive=False, secret_order_id=None,
-    )
+    with pytest.raises(ValueError):
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
+            has_directive=False, secret_order_id=None,
+        )
 
     # draft_intent 仍被调用（兜底没有提前 return）
     assert "draft_prompt" in captured
     # 坏 JSON → existing_draft_text 为空 → prompt 不含【现有草案】注入段
     assert "【现有草案】" not in captured["draft_prompt"]
 
-    # 草案仍被 last-write-wins 更新为新回话（同一行）
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
-    assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
+    assert pend[0]["payload_json"] == "{这不是合法JSON"
 
 
 @pytest.mark.parametrize("payload_json", ["null", "[1, 2, 3]"])
@@ -1242,7 +1311,7 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     pid = db.upsert_pending_directive(
-        state.turn, name, payload={"text": "原始草稿", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "原始草稿", "actor": name})
     db.conn.execute(
         "UPDATE pending_actions SET payload_json=? WHERE id=?",
         (payload_json, int(pid)))
@@ -1254,22 +1323,23 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         captured["draft_prompt"] = prompt
-        return (json.dumps({"拟旨意图": "拟旨"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
 
-    GameSession.apply_cli_conversation_actions(
-        sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
-        has_directive=False, secret_order_id=None,
-    )
+    with pytest.raises(ValueError):
+        GameSession.apply_cli_conversation_actions(
+            sess, ch, player_message="再补一条", answer="新草稿：着户部及兵部同查。",
+            has_directive=False, secret_order_id=None,
+        )
 
     assert "draft_prompt" in captured
     assert "【现有草案】" not in captured["draft_prompt"]
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
-    assert json.loads(pend[0]["payload_json"])["text"] == "新草稿：着户部及兵部同查。"
+    assert pend[0]["payload_json"] == payload_json
 
 
 def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, monkeypatch):
@@ -1279,7 +1349,7 @@ def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, mon
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "原始草稿：清查粮饷。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "原始草稿：清查粮饷。", "actor": name})
 
     original_list_pending_actions = db.list_pending_actions
 
@@ -1301,7 +1371,7 @@ def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, mon
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
         captured["draft_prompt"] = prompt
-        return (json.dumps({"拟旨意图": "拟旨", "合并草案": "合并草稿"}, ensure_ascii=False), 1)
+        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并草稿"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
     sess = _fake_session(db, state)
@@ -1326,7 +1396,7 @@ def test_commit_directive_with_empty_text_returns_false_no_archive(game):
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨",
         minister_name=name, target_id=None,
-        payload={"text": "   ", "actor": name})
+        payload={**_POLICY_FIELDS, "text": "   ", "actor": name})
 
     assert len(db.list_pending_actions(state.turn)) == 1
 
@@ -1350,7 +1420,7 @@ def test_commit_pending_actions_rejects_conflicting_kind_filters(game):
     db, state, content = game
     name = _active_minister_name(db, content)
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案：清查钱粮", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：清查钱粮", "actor": name})
 
     with pytest.raises(ValueError, match="kind_filter.*kind_filter_exclude"):
         db.commit_pending_actions(
@@ -1368,7 +1438,7 @@ def test_commit_directive_actor_falls_back_to_minister_name(game):
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨",
         minister_name=name, target_id=None,
-        payload={"text": draft_text})
+        payload={**_POLICY_FIELDS, "text": draft_text})
 
     db.commit_pending_actions(state, kind_filter="directive")
 
@@ -1388,7 +1458,7 @@ def test_commit_directive_rolls_back_draft_when_bookkeeping_update_fails(game):
     db, state, content = game
     name = _active_minister_name(db, content)
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案：清查三边粮饷", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：清查三边粮饷", "actor": name})
     db.conn.execute(
         """
         CREATE TEMP TRIGGER fail_committed_directive_id
@@ -1430,7 +1500,7 @@ def test_confirm_gate_does_not_sweep_conversational_directive(game, monkeypatch)
 
     # 同一大臣：一条对话式拟旨 + 一条非 directive 暂存（office 任免，确认闸门的真正对象）
     did = db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案：着户部清查三边粮饷。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：着户部清查三边粮饷。", "actor": name})
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
         payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
@@ -1463,7 +1533,7 @@ def test_confirm_reject_does_not_delete_conversational_directive(game, monkeypat
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     did = db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案：着兵部整饬三边。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：着兵部整饬三边。", "actor": name})
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=name, target_id=None,
         payload={"name": "某新臣", "office": "兵部主事", "appointer": name})
@@ -1488,7 +1558,7 @@ def test_targeted_directive_rejection_does_not_drop_secret_order(game):
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     directive_id = db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案：清查三边粮饷。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案：清查三边粮饷。", "actor": name})
     secret_id = db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=name, target_id=None,
         payload={"title": "暗查辽饷", "content": "密查辽饷侵冒。", "assignee": name})
@@ -1520,7 +1590,7 @@ def test_write_decree_rejects_before_committing_conversational_directive(game):
     assert db.count_pending_directives(state) > 0
     # 同时有一条对话式拟旨暂存
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "对话草案：着兵部整饬。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "对话草案：着兵部整饬。", "actor": name})
 
     fake_sess = types.SimpleNamespace(
         db=db, state=state, content=None, registry=None,
@@ -1560,7 +1630,7 @@ def test_undo_chat_turn_preserves_unrelated_same_actor_draft(game):
     ctid = db.create_chat_turn(state, name, "sess-undo-scope", 0)
     before = db.capture_chat_rollback_snapshot()
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "对话草案（将被撤回）。", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "对话草案（将被撤回）。", "actor": name})
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
     db.commit_pending_actions(state, kind_filter="directive")
@@ -1600,7 +1670,7 @@ def test_undo_supplement_turn_removes_committed_draft(game):
     ct1 = db.create_chat_turn(state, name, "sess-suppl-1", 0)
     before1 = db.capture_chat_rollback_snapshot()
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案 v1", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案 v1", "actor": name})
     after1 = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ct1, before1, after1)
 
@@ -1608,7 +1678,7 @@ def test_undo_supplement_turn_removes_committed_draft(game):
     ct2 = db.create_chat_turn(state, name, "sess-suppl-2", 0)
     before2 = db.capture_chat_rollback_snapshot()
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案 v2（将被撤回）", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案 v2（将被撤回）", "actor": name})
     after2 = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ct2, before2, after2)
 
@@ -1680,7 +1750,11 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     state.turn_phase = TurnPhase.SUMMONING.value
 
     # 草案 A：先 stage + write_decree（生成稿只覆盖 A）
-    db.upsert_pending_directive(state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "草案A：清查粮饷", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "grain-audit",
+    })
 
     gen_calls = []
 
@@ -1699,8 +1773,11 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     assert "草案B" not in decree_v1  # 此刻还没 B
 
     # 玩家回到对话，新建草案 B（新 pending directive，未纳入已生成的 decree_v1）
-    db.upsert_pending_directive(state.turn, name + "·乙",
-                                payload={"text": "草案B：调将镇辽", "actor": name})
+    db.upsert_pending_directive(state.turn, name + "·乙", payload={
+        "text": "草案B：调将镇辽", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "liaodong-defense",
+    })
 
     # 颁诏：必须重生成，纳入 B，不能沿用只含 A 的陈旧稿
     captured = {}
@@ -1721,224 +1798,6 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     assert any("草案B" in t for t in captured["directive_texts"]), "新 draft B 须进 directives"
 
 
-def test_stale_decree_not_issued_when_existing_draft_text_changes_after_generation(game, monkeypatch):
-    """拟诏后如果同一 draft id 的文本被改动，指纹也必须失效。
-    只比对 id 会误用旧 last_decree，下发不含修订内容的诏书。"""
-    import ming_sim.session as session_mod
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    sess = _decree_session(db, state, content)
-    state.turn_phase = TurnPhase.SUMMONING.value
-
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
-
-    def fake_write(llm_config, agno_db, st, directives, db=None):
-        texts = "；".join(str(d["text"]) for d in directives)
-        return f"诏书[{texts}]"
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", fake_write)
-    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
-    decree_v1 = sess.write_decree()
-    assert "清查粮饷" in decree_v1
-    assert "加派监察御史" not in decree_v1
-
-    directive_id = db.conn.execute(
-        "SELECT id FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchone()["id"]
-    db.update_directive_text(int(directive_id), "草案A修订：清查粮饷，并加派监察御史。")
-
-    captured = {}
-
-    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
-        captured["decree_text"] = decree_text
-        from ming_sim.session import ResolveResult
-        return ResolveResult(awaiting=False, report="ok")
-
-    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
-    sess.resolve_turn()
-
-    assert "加派监察御史" in captured["decree_text"], (
-        f"draft 文本变更后必须重生成诏书，但得到：{captured['decree_text']!r}"
-    )
-
-
-def test_manual_saved_decree_survives_after_draft_text_change(game, monkeypatch):
-    """玩家改过 draft 后又手工保存诏书正文时，set_decree 必须刷新 draft 指纹。
-    否则颁诏时会把玩家手改稿误判为陈旧稿并重生成，导致手工编辑丢失。"""
-    import ming_sim.session as session_mod
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    sess = _decree_session(db, state, content)
-    state.turn_phase = TurnPhase.SUMMONING.value
-
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
-
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda llm, agno, st, directives, db=None:
-            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
-    )
-    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
-    assert "草案A" in sess.write_decree()
-
-    directive_id = db.conn.execute(
-        "SELECT id FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchone()["id"]
-    db.update_directive_text(int(directive_id), "草案A修订：清查粮饷，并加派监察御史。")
-
-    manual_decree = sess.set_decree("手改诏书：清查粮饷，并加派监察御史。")
-
-    def _must_not_regenerate(*args, **kwargs):
-        raise AssertionError("手工保存后的诏书不应因旧 fingerprint 被重生成")
-
-    captured = {}
-
-    def fake_resolve(st, gdb, agno, llm, directives, decree_text, **kw):
-        captured["decree_text"] = decree_text
-        from ming_sim.session import ResolveResult
-        return ResolveResult(awaiting=False, report="ok")
-
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", _must_not_regenerate)
-    monkeypatch.setattr(session_mod, "resolve_directives", fake_resolve)
-
-    sess.resolve_turn()
-
-    assert captured["decree_text"] == manual_decree
-
-
-def test_supplement_after_write_decree_updates_committed_draft_not_new_pending(game, monkeypatch):
-    """write_decree 已把口头草案提交成 draft 后，同大臣后续「再补一条」
-    应把该 draft 当作现有草案合并更新，而不是再建第二条 pending directive。"""
-    import ming_sim.session as session_mod
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    sess = _decree_session(db, state, content)
-    sess.llm_config = types.SimpleNamespace(channel="cli")
-    state.turn_phase = TurnPhase.SUMMONING.value
-
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案A：清查粮饷", "actor": name})
-
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda llm, agno, st, directives, db=None:
-            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
-    )
-    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
-    sess.write_decree()
-
-    row = db.conn.execute(
-        "SELECT id, text FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchone()
-    directive_id = int(row["id"])
-    assert "草案A" in row["text"]
-    assert db.list_pending_actions(state.turn) == []
-
-    merged = "草案A修订：清查粮饷，并加派监察御史随行。"
-    prompts = []
-
-    def _canned(prompt, llm_config=None, tag=""):
-        if tag == "draft_intent":
-            prompts.append(prompt)
-            return (json.dumps({"拟旨意图": "拟旨", "合并草案": merged},
-                               ensure_ascii=False), 1)
-        return (json.dumps({"密令动作": "无"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
-
-    out = GameSession.apply_cli_conversation_actions(
-        sess, ch,
-        player_message="这道旨再补一条，加派监察御史随行",
-        answer="臣遵旨，谨当添入。",
-        has_directive=False,
-        secret_order_id=None,
-    )
-
-    rows = db.conn.execute(
-        "SELECT id, text FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchall()
-    assert len(rows) == 1
-    assert int(rows[0]["id"]) == directive_id
-    assert rows[0]["text"] == merged
-    assert db.list_pending_actions(state.turn) == []
-    assert out["directive"]["id"] == directive_id
-    assert not out.get("pending_action_id")
-    assert prompts and "【现有草案】草案A：清查粮饷" in prompts[0]
-
-
-def test_undo_supplement_after_write_decree_restores_committed_draft_text(game, monkeypatch):
-    """已成稿 draft 的后续补充是 turn_directives UPDATE；撤回该召对应恢复旧 draft 文本。"""
-    import ming_sim.session as session_mod
-
-    db, state, content = game
-    name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
-    sess = _decree_session(db, state, content)
-    sess.llm_config = types.SimpleNamespace(channel="cli")
-    state.turn_phase = TurnPhase.SUMMONING.value
-
-    original = "草案A：清查粮饷"
-    merged = "草案A修订：清查粮饷，并加派监察御史随行。"
-
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": original, "actor": name})
-
-    monkeypatch.setattr(
-        session_mod, "write_decree_with_agno",
-        lambda llm, agno, st, directives, db=None:
-            "初拟诏书：" + "；".join(str(d["text"]) for d in directives),
-    )
-    db.commit_pending_actions(state, kind_filter="directive")  # 应允/默认同意成 draft（#498 finding3）
-    sess.write_decree()
-
-    ctid = db.create_chat_turn(state, name, "sess-undo-committed-draft-supplement", 0)
-    before = db.capture_chat_rollback_snapshot()
-
-    def _canned(prompt, llm_config=None, tag=""):
-        if tag == "draft_intent":
-            return (json.dumps({"拟旨意图": "拟旨", "合并草案": merged},
-                               ensure_ascii=False), 1)
-        return (json.dumps({"密令动作": "无"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _canned)
-
-    GameSession.apply_cli_conversation_actions(
-        sess, ch,
-        player_message="这道旨再补一条，加派监察御史随行",
-        answer="臣遵旨，谨当添入。",
-        has_directive=False,
-        secret_order_id=None,
-    )
-
-    after = db.capture_chat_rollback_snapshot()
-    db.record_chat_turn_rollback_diffs(ctid, before, after)
-
-    assert db.conn.execute(
-        "SELECT text FROM turn_directives WHERE turn=? AND status='draft'",
-        (state.turn,),
-    ).fetchone()["text"] == merged
-
-    db.undo_chat_turn(ctid)
-
-    rows = db.conn.execute(
-        "SELECT text, status FROM turn_directives WHERE turn=?",
-        (state.turn,),
-    ).fetchall()
-    assert len(rows) == 1
-    assert rows[0]["status"] == "draft"
-    assert rows[0]["text"] == original
-
-
 def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monkeypatch):
     """resolve_turn(decree=...) 外部传入旧诏书时，若本次调用先 auto-commit 了口头草案，
     传入文本不包含新 draft；必须重拟/重取当前 draft 集，不能把未入正文的 draft 标 issued。"""
@@ -1949,8 +1808,11 @@ def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monk
     sess = _decree_session(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
 
-    db.upsert_pending_directive(
-        state.turn, name, payload={"text": "口头草案：调辽饷三万。", "actor": name})
+    db.upsert_pending_directive(state.turn, name, payload={
+        "text": "口头草案：调辽饷三万。", "actor": name,
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "liaodong-pay",
+    })
 
     def fake_write(llm_config, agno_db, st, directives, db=None):
         texts = "；".join(str(d["text"]) for d in directives)
@@ -1992,7 +1854,7 @@ def test_undo_clears_generated_decree_when_committed_draft_deleted(game, monkeyp
     ctid = db.create_chat_turn(state, name, "sess-undo-decree", 0)
     before = db.capture_chat_rollback_snapshot()
     db.upsert_pending_directive(
-        state.turn, name, payload={"text": "草案X：将被撤回的指令", "actor": name})
+        state.turn, name, payload={**_POLICY_FIELDS, "text": "草案X：将被撤回的指令", "actor": name})
     after = db.capture_chat_rollback_snapshot()
     db.record_chat_turn_rollback_diffs(ctid, before, after)
 

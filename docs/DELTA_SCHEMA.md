@@ -2,10 +2,10 @@
 
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
-用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**没在白名单里的字段会被沉默裁掉、值不合法的整条丢弃。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 21 字段，别指望守门人帮忙兜。
+用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 23 字段，别指望守门人帮忙兜。
 
-## 顶层 21 字段（容器类型固定）
+## 顶层 23 字段（容器类型固定）
 
 ```jsonc
 {
@@ -31,6 +31,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "事件结局":          {},  // dict[event_id -> 闭合结局标签]
   "cancels":          [],  // 撤销 issue
   "close_issues":     [],  // 结案 issue
+  "dossier_executions": [], // 执行中案卷的明确结局（S1）
+  "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
@@ -40,7 +42,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 }
 ```
 
-中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`。**未列出的 key 会被裁掉。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
+中英文 key 都吃（`钱粮收支`==`economy_moves`），别名表见 `simulation.py:TOP_LEVEL_ALIASES`。**未知顶层 key 按本文开头的唯一规则，经 `validate_delta_shape` 响亮中止。** item 字段同样有中英双语别名表（`ITEM_FIELD_ALIASES`）。
 
 ---
 
@@ -61,6 +63,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `purpose` | 可选 `补饷` / `其它` | 补饷会跟 army arrears 联动 |
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发` | 案卷引用必须存在且已颁；自然演化必须写精确哨兵。缺失、伪前缀及未授权案卷逐项拒收 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
 > 「太仓岁亏三十万」是困境描述，不是本月一笔收支，**别照写成 economy_moves**。
@@ -75,6 +78,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 值：int 增量 〔⚠️ 与实码不符：实际为嵌套结构 `{类:{satisfaction/leverage: int}}`，扁平值被 `_apply_class_dict` 静默跳过，见 ADR 0056〕
 
 ### `region_delta` — 地区变化
+- 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
 - key：region_id（如 `beizhili` / `shaanxi` / `liaodong` 等，看 `content/regions.json` id 列）
 - value：dict，字段（来自 `REGION_*` 常量）：
   - score（0-100，int）：`public_support` `unrest` `gentry_resistance` `military_pressure`
@@ -90,6 +94,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `key` | **必须**非空（key 在 `fiscal_config` 表里，如 `liao_xiang_rate`）|
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
 
 ### `fiscal_creates` — 新立月度收支
 | 字段 | 约束 |
@@ -100,14 +105,17 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `init_value` | 非负 int（无损整数串 `"300"` 可）；缺省/null = 0；在场负值或非 int（bool/float/坏串）→ 整项拒收留痕（rejection_reports），不再静默 clamp（v0.8.x PR2-S3） |
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
+| `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
 - `key` 非空 + `reason` ≤120
+- `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
 
 ### `army_delta` — 军队变化
+- 每个 army value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
 - key：army_id（看 `content/armies.json`，如 `guanning` `dadong` 等）
 - value 字段（来自 `ARMY_*` 常量）：
   - score（0-100）：`supply` `morale` `training` `equipment` `arrears` `mobility` `loyalty`
@@ -118,10 +126,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - ⚠️ `maintenance_per_turn`（维护费）#173 **列已物理删除**：别名（维护费/军费）已移除，写它当非法字段逐项拒收留痕（`invalid_enum`）。月饷由引擎 `army_needed`（=`ceil(manpower × salary_rate / 10000)`，仅 ming）唯一承载；调月饷改 `manpower`。
 
 ### `new_armies` — 建军
+每项必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`），创建日志以此提供一跳反查。
 ⚠️ **`id` 必填**（英文 army_id，如 `tianxiong`）。缺 id 该项逐项拒收留痕（落 `rejection_reports`，不再 print WARN——v0.8.x PR2-S2）。〔崇祯二年八月实测，turn 11〕
 全字段：`id`（必填）`name` `owner_power` `station` `theater` `commander` `controller` `troop_type` `manpower`（必填）`morale` `training` `loyalty` `equipment` `supply` `mobility` `status` `pay_source_region` `province_pay_share` `central_pay_share` `is_tusi` `self_funded_pay`…（参考 `ARMY_FIELD_ALIASES`）。普通明军（`owner_power="ming"` 且非土司/自养）必填 `pay_source_region`（明控省 region_id）+ `province_pay_share` + `central_pay_share`，两份额和必须为 1；土司/自养明军才可写 `is_tusi`/`self_funded_pay`，且饷源省为空、两份额为 0/0。#173：`maintenance_per_turn` 列已删，LLM 若仍塞维护费键当未知键忽略（不入库、不影响建军）；月饷由 `army_needed` 按 `manpower` 派生。
 
 ### `power_updates` — 外部势力变化
+- 每个 power value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）。
 - key：非 `ming` 的 power_id，必须来自输入盘面 `power_ids`（如 `houjin` / `mongol` / `korea` / `bandits` / `bandit_li_zicheng` / `bandit_zhang_xianzhong` 等）；禁止写 `ming`。
 - value 字段只允许三项整数增量：`威望` / `leverage`、`实力` / `military_strength`、`经济` / `supply`；其余字段一律逐项拒收留痕。
 - #190 流寇分股：李自成股 / 张献忠股等必须写各自 power_id（如 `bandit_li_zicheng`、`bandit_zhang_xianzhong`），不是全局 `bandits`。
@@ -160,7 +170,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 {
   "new_issues": [{"origin_kind": "event_pool", "id": "jisi_lubian"}],
   "事件结局": {"jisi_lubian": "入塞被遏"},
-  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿"}}
+  "region_delta": {"beizhili": {"military_pressure": 35, "reason": "己巳之变软判敌逼京畿", "origin_ref": "盘面自发"}}
 }
 ```
 
@@ -196,6 +206,20 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
+### `dossier_participants` — S2 案卷参与人追加
+- 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
+- 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
+
+### `dossier_executions` — S1 案卷执行结局
+- 每项必须带 `dossier_id`、`outcome`、`note`。
+- `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
+- 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
+
+### 颁布 verdict 契约（非 delta 字段）
+打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`appointment_tenure`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。
+
+快照随既有判决历史原样落 JSON，仅供审计，后续盘面变化不回写、不重算。非法 verdict 整批不应用，并把原 item/原因/类别/来源写入既有 `rejection_reports`；不存在第二套 verdict schema 或审计表。
+
 ### `cancels` — 撤销 issue
 - `issue_id` int + `reason` 文本
 - 仅 `cancellable in (decree, by_progress)` 的 issue 可撤；预设 `never` 撤不动。
@@ -218,14 +242,16 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 动作 payload：
 | 动作 | 必填 | 可选 | 说明 |
 |---|---|---|---|
-| `任命` | `office` | `office_type` / `faction` | 身名分入职名分；若目标现持职名分，执行位可归一为 `调任` |
+| `任命` | `office` | `office_type` / `faction` / `任别` | 身名分入职名分；若目标现持职名分，执行位可归一为 `调任` |
 | `罢黜` | — | `reason_code` | 清职名分并落 `dismissed`；政治反应由裁判另产 |
-| `调任` | `office` | `office_type` / `faction` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
+| `调任` | `office` | `office_type` / `faction` / `任别` | 旧职解绑、新职绑定；若目标现无职名分，执行位可归一为 `任命` |
 | `处置` | `status` | `子动作` / `reason_code` | 状态迁移：下狱、流放、致仕、放归、赐死、卒、起复、昭雪、夺情等 |
 | `易主` | `new_power` / `方式` / `反噬` | `new_title` | `方式` ∈ `主动投敌` / `被俘而降` / `主动归附`；`反噬` 为内嵌派系/势力反应；legacy 翻译才可用 `不明` |
 | `册封` | `office` | `office_type` | 后宫 candidate 出边；落选走 `处置(status=offstage, reason_code=落选)` |
 | `行止` | `location` 或 `transit_to` | `reason_code` | 去向变更；`transit_to` 非空表示在途，迁出 active 时会被清空 |
 | `评定` | `loyalty` | — | 人物忠诚软判增量（integer，非新值），用于安抚/离心等叙事裁判后的结构化数值变化 |
+
+`任别` 只收 `真除` / `署理` / `兼署` / `加衔`；缺省按 `真除`，用于兼容旧档且不重判历史任命。非法值逐项拒收留痕。
 
 状态白名单（DB 全集 8 态）：`active` / `candidate` / `offstage` / `dismissed` / `imprisoned` / `exiled` / `retired` / `dead`。其中 **`处置.status` 只可直迁 6 态**（去掉 `active` / `candidate`——二者经 `任命` / `册封` 级联或 applier 起复派生达成；直接 `处置(status=active/candidate)` 被拒 `invalid_transition`，见 `issues.py` `disposition_statuses`）。死人没有 status 出边；追谥、追赠等身后事不进 `人物变更`。
 
@@ -249,7 +275,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---

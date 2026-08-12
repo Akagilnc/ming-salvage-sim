@@ -28,7 +28,7 @@ def test_settle_with_delta_applies_region_and_advances_turn(game):
         "SELECT unrest FROM regions WHERE id='shanxi'"
     ).fetchone()[0]
 
-    extracted = {"region_delta": {"shanxi": {"unrest": 5}}}
+    extracted = {"region_delta": {"shanxi": {"origin_ref": "盘面自发", "unrest": 5}}}
     settle_with_delta(state, db, extracted, before_turn=before_turn, content=content)
 
     new_unrest = db.conn.execute(
@@ -74,7 +74,7 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
             inertia=-1,
             effect_on_fail={
                 "人物变更": [
-                    {"name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
+                    {"origin_ref": "盘面自发", "name": name, "动作": "处置", "status": "dismissed", "reason": "自然失败问责"}
                 ]
             },
         )

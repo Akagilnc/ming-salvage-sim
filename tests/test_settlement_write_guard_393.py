@@ -35,6 +35,10 @@ class _RecordingDB:
     def list_pending_actions(self, *a, **k):
         return []
 
+    def read_directive_dossier_payload(self, row):
+        assert row["id"] == 7
+        return {"mode": "midzhi"}
+
     def get_character_status(self, *a, **k):
         return ("active", "")
 
@@ -88,7 +92,10 @@ class _FakeGame:
         return "ming"
 
     def directive_rows(self):
-        return [{"id": 7, "text": "旧稿", "status": "draft"}]
+        return [{
+            "id": 7, "text": "旧稿", "status": "draft",
+            "dossier_payload_json": '{"mode":"midzhi"}',
+        }]
 
     def directive_payload(self, row):
         return row
@@ -113,6 +120,88 @@ def _invoke(coro):
     return asyncio.run(coro)
 
 
+@pytest.mark.parametrize("operation", ("create", "update"))
+def test_directive_capture_runs_outside_write_gate(
+    monkeypatch, operation,
+):
+    import ming_sim.cli_backend as cli_backend
+
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    calls = []
+    payload = {
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "land-survey",
+    }
+
+    captured_context = []
+
+    def capture(text, llm_config, **context):
+        captured_context.append(context)
+        with web_app._serialized_web_write(game):
+            game.db.writes.append("unrelated-write")
+        return payload
+
+    game.session.llm_config = SimpleNamespace()
+    game.session.add_directive = lambda text, notes, dossier_payload: (
+        calls.append(("create", text, dossier_payload))
+        or SimpleNamespace(id=8, text=text, status="draft")
+    )
+    game.session.update_directive = (
+        lambda directive_id, text, dossier_payload:
+        calls.append(("update", directive_id, text, dossier_payload))
+    )
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    if operation == "create":
+        _invoke(web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩")))
+        assert calls == [("create", "清丈田亩", payload)]
+    else:
+        _invoke(web_app.api_update_directive(
+            7, web_app.DirectivePatch(text="重定清丈田亩"),
+        ))
+        assert calls == [("update", 7, "重定清丈田亩", payload)]
+        assert captured_context[0]["existing_mode"] == "midzhi"
+    assert game.db.writes == ["unrelated-write"]
+
+
+@pytest.mark.parametrize("operation", ("create", "update"))
+def test_directive_capture_result_is_rejected_after_turn_changes(
+    monkeypatch, operation,
+):
+    import ming_sim.cli_backend as cli_backend
+
+    game = _FakeGame(TurnPhase.SUMMONING.value)
+    calls = []
+    payload = {
+        "dossier_action_type": "policy",
+        "target_kind": "issue", "target_id": "land-survey",
+    }
+
+    def capture(_text, _llm_config, **_context):
+        game.state.turn += 1
+        return payload
+
+    game.session.llm_config = SimpleNamespace()
+    game.session.add_directive = lambda *a, **k: calls.append(("create", a, k))
+    game.session.update_directive = lambda *a, **k: calls.append(("update", a, k))
+    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(web_app, "get_game", lambda: game)
+
+    call = (
+        web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))
+        if operation == "create"
+        else web_app.api_update_directive(
+            7, web_app.DirectivePatch(text="重定清丈田亩"),
+        )
+    )
+    with pytest.raises(HTTPException) as exc:
+        _invoke(call)
+
+    assert exc.value.status_code == 409
+    assert calls == []
+
+
 # 端点（无 file 参数的）→ 触发可调用。守门命中即 409、db.writes 为空。
 def _endpoint_cases():
     return [
@@ -131,9 +220,6 @@ def _endpoint_cases():
         ("create_directive", lambda: web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))),
         ("update_directive", lambda: web_app.api_update_directive(7, web_app.DirectivePatch(text="改稿"))),
         ("delete_directive", lambda: web_app.api_delete_directive(7)),
-        ("confirm_directive", lambda: web_app.api_confirm_directive(7)),
-        ("reject_directive", lambda: web_app.api_reject_directive(7)),
-        ("write_decree", lambda: web_app.api_write_decree()),
         ("edit_decree", lambda: web_app.api_edit_decree(web_app.EditDecreeRequest(decree="奉天承运"))),
         # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
         # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。

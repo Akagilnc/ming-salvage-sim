@@ -1,5 +1,4 @@
 import React from "react";
-import { api } from "../api";
 import { FullscreenModal } from "./hud";
 import type { HistoryDetail, HistoryTurnItem } from "../types";
 
@@ -7,7 +6,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
-  const [selectedTurn, setSelectedTurn] = React.useState<number | null>(null);
+  const [selectedArchive, setSelectedArchive] = React.useState<HistoryTurnItem | null>(null);
   const [detail, setDetail] = React.useState<HistoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState("");
@@ -20,9 +19,9 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         if (!alive) return;
-        const list: HistoryTurnItem[] = data.turns || [];
+        const list: HistoryTurnItem[] = (data.turns || []).filter((item: HistoryTurnItem) => item.kind === "month");
         setTurns(list);
-        if (list.length) setSelectedTurn(list[list.length - 1].turn);
+        if (list.length) setSelectedArchive(list[list.length - 1]);
       } catch (e: any) {
         if (alive) setListError(e?.message || "加载失败");
       } finally {
@@ -33,26 +32,24 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   React.useEffect(() => {
-    if (selectedTurn == null) return;
+    if (selectedArchive == null) return;
+    const selectedTurn = selectedArchive.turn;
     let alive = true;
     setDetailLoading(true);
     setDetailError("");
-    (async () => {
-      try {
-        const resp = await fetch(`/api/history/turn/${selectedTurn}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        if (alive) setDetail(data);
-      } catch (e: any) {
-        if (alive) setDetailError(e?.message || "加载失败");
-      } finally {
-        if (alive) setDetailLoading(false);
-      }
-    })();
+    setDetail(null);
+    void fetch(`/api/history/turn/${selectedTurn}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => { if (alive) setDetail(data); })
+      .catch((error) => { if (alive) setDetailError(error?.message || "加载失败"); })
+      .finally(() => { if (alive) setDetailLoading(false); });
     return () => { alive = false; };
-  }, [selectedTurn]);
+  }, [selectedArchive]);
 
-  const subtitle = turns.length ? `共 ${turns.length} 月存档` : "尚无存档";
+  const subtitle = turns.length ? `共 ${turns.length} 月档 · 仅收奏报与诏书` : "尚无奏报或诏书";
 
   return (
     <FullscreenModal title="史册：历代奏报与诏书" subtitle={subtitle} bgClass="modal-bg-state" onClose={onClose}>
@@ -65,18 +62,18 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
           ) : null}
           <ul>
             {turns.slice().reverse().map((t) => {
-              const active = t.turn === selectedTurn;
+              const active = t.turn === selectedArchive?.turn && t.night_id === selectedArchive?.night_id;
               const tags: string[] = [];
               if (t.has_report) tags.push("奏报");
               if (t.has_directive) tags.push("诏");
               return (
-                <li key={t.turn}>
+                <li key={`${t.turn}:${t.night_id ?? "month"}`}>
                   <button
                     className={`history-turn-item ${active ? "active" : ""}`}
-                    onClick={() => setSelectedTurn(t.turn)}
+                    onClick={() => setSelectedArchive(t)}
                   >
                     <b>{t.year} 年 {t.period} 月</b>
-                    <small>第 {t.turn} 回合 · {tags.join(" / ") || "—"}</small>
+                    <small>第 {t.turn} 回合 · {tags.join(" / ") || "月档"}</small>
                   </button>
                 </li>
               );
@@ -88,7 +85,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
             loading={detailLoading}
             error={detailError}
             detail={detail}
-            selectedTurn={selectedTurn}
+            selectedTurn={selectedArchive?.turn ?? null}
           />
         </article>
       </div>
@@ -96,7 +93,7 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function HistoryDetailView({
+export function HistoryDetailView({
   loading,
   error,
   detail,
@@ -108,20 +105,22 @@ function HistoryDetailView({
   selectedTurn: number | null;
 }) {
   if (selectedTurn == null) return <div className="document-section"><p className="long-copy">请从左侧择月。</p></div>;
-  if (loading) return <div className="document-section"><p className="long-copy">加载中…</p></div>;
-  if (error) return <div className="document-section"><p className="long-copy">加载失败：{error}</p></div>;
-  if (!detail || !detail.exists) return <div className="document-section"><p className="long-copy">该回合无存档。</p></div>;
 
   return (
     <>
-      {detail.decree_text ? (
+      {loading ? <section className="document-section"><p className="long-copy">月档加载中…</p></section> : null}
+      {error ? <section className="document-section"><p className="long-copy">月档加载失败：{error}</p></section> : null}
+      {!loading && !error && (!detail || !detail.exists)
+        ? <section className="document-section"><p className="long-copy">该回合无存档。</p></section>
+        : null}
+      {detail?.decree_text ? (
         <section className="document-section">
           <h3 className="extraction-section-title">本月诏书</h3>
           <pre className="memorial-text">{detail.decree_text}</pre>
         </section>
       ) : null}
 
-      {detail.directives.length ? (
+      {detail?.directives?.length ? (
         <section className="document-section">
           <h3 className="extraction-section-title">已颁草案（{detail.directives.length} 道）</h3>
           <ul className="history-directive-list">
@@ -142,7 +141,7 @@ function HistoryDetailView({
         </section>
       ) : null}
 
-      {detail.report ? (
+      {detail?.report ? (
         <section className="document-section">
           <h3 className="extraction-section-title">月末邸报奏报</h3>
           <pre className="memorial-text">{detail.report}</pre>

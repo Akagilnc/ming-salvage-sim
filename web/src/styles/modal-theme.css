@@ -39,7 +39,7 @@
 }
 
 /* 大臣奏对 + 奏疏：白底 80% */
-.modal-bg-chat .chat-message,
+.modal-bg-chat .chat-message:not(.aside),
 .modal-bg-chat .chat-system-note,
 .modal-bg-chat .modal-pane,
 .modal-bg-edict .modal-pane {
@@ -171,9 +171,9 @@
   border-color: rgba(255, 232, 170, 0.22);
 }
 
-/* 大臣奏对白底：边线用浅灰，看得见 */
+/* 大臣奏对白底：边线用浅灰，看得见；aside 保留自己的虚线与边色。 */
 .modal-bg-chat .modal-pane,
-.modal-bg-chat .chat-message {
+.modal-bg-chat .chat-message:not(.aside) {
   border-color: rgba(74, 45, 20, 0.18);
 }
 
@@ -298,8 +298,9 @@
 }
 
 /* 聊天气泡细边：通配年代实际生效的是上面的浅灰边（border-color important），
-   原来的主/客双色边是死规则——摘除 important 后合并回浅灰，避免死规则复活变色。 */
-.modal-bg-chat .chat-message {
+   原来的主/客双色边是死规则——摘除 important 后合并回浅灰，避免死规则复活变色。
+   aside 排除：保留 chat.css 虚线边。 */
+.modal-bg-chat .chat-message:not(.aside) {
   border: 1px solid rgba(74, 45, 20, 0.18);
 }
 
@@ -498,5 +499,62 @@
   background-image: url("/bg_loading.jpg");
   background-size: cover;
   background-position: center;
+}
+
+/* #539 单卷轴 scene：无气泡通栏；divider 保持柔和且可继续上滚回读。 */
+.modal-bg-chat .chat-message.scene {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  margin: 10px 0;
+  padding: 4px 6px;
+  text-align: left;
+  color: rgba(224, 211, 181, 0.72);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.modal-bg-chat .chat-message.scene p {
+  color: #7a6a4d;
+  font-style: normal;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.chat-message.scene hr {
+  width: 58%;
+  border: 0;
+  border-top: 1px solid rgba(196, 164, 99, 0.35);
+}
+
+.scene-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.scene-divider hr {
+  margin: 0;
+}
+
+.scene-divider strong,
+.audience-type-label {
+  color: rgba(196, 164, 99, 0.78);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+
+.audience-type-label {
+  align-self: center;
+  padding: 3px 12px;
+  border: 1px solid rgba(196, 164, 99, 0.28);
+  border-radius: 999px;
 }
 

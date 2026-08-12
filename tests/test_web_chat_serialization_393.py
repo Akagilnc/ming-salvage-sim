@@ -188,6 +188,32 @@ def test_background_stream_completion_waits_for_settlement_gate_and_keeps_accept
     assert runtime.state.turn == 2
 
 
+def test_identity_setup_failure_closes_durable_turn_and_pending_owner_as_terminal_error():
+    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    failed = []
+    completed = []
+    runtime.db.kv_get = lambda _key: (_ for _ in ()).throw(RuntimeError("identity read failed"))
+    runtime._fail_chat_turn_and_reload = lambda turn_id, snapshot: failed.append((turn_id, snapshot))
+    runtime._complete_pending_write = lambda: completed.append(True)
+
+    events = list(runtime.chat_stream(minister_name, "请奏"))
+
+    assert events == [{
+        "type": "error", "message": "identity read failed",
+        "campaign_id": "", "night_id": 0, "chat_turn_id": 7,
+    }]
+    assert failed == [(7, {})]
+    assert completed == [True]
+
+
+def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
+    runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    stream = runtime.chat_stream(minister_name, "请奏")
+    assert next(stream)["type"] == "delta"
+    allow_finish.set()
+    assert next(stream)["type"] == "done"
+
+
 def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     events: list[str] = []
 

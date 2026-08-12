@@ -143,6 +143,14 @@ function SecretOrderDetailDialog({
           </dl>
           <SecretOrderDetailBlock title="密令正文" text={order.content || "未记正文。"} />
           {order.sim_note ? <SecretOrderDetailBlock title="月度动向" text={order.sim_note} tone="green" /> : null}
+          {(order.dossier_progress || []).map((report, index) => (
+            <SecretOrderDetailBlock
+              key={report.id}
+              title={`${report.is_terminal ? "结案密奏" : `第 ${index + 1} 月密奏`} · ${report.progress_band}`}
+              text={report.memorial_text}
+              tone="green"
+            />
+          ))}
           {order.result ? (
             <SecretOrderDetailBlock title={order.status === "active" ? "承办回报" : "执行结果"} text={order.result} tone="green" />
           ) : null}

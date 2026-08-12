@@ -14,6 +14,7 @@ import { FullscreenModal } from "./components/hud";
 import { GameHud } from "./components/gameHud";
 import { NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
+import { AudienceArchiveModal } from "./components/audienceArchiveModal";
 import { ChatModal } from "./components/chatModal";
 import { CheatConsole, useCheatHotkey } from "./components/cheatConsole";
 import { ClosedIssuesModal } from "./components/closedIssues";
@@ -30,7 +31,7 @@ import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
-import type { AppView, ClosedIssue, GameState, MenuStatus, Minister, ModalName, SecretOrder } from "./types";
+import type { AppView, ChatIdentity, ClosedIssue, GameState, MenuStatus, Minister, ModalName, SecretOrder } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -88,13 +89,24 @@ export function App() {
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
   const suppressNextReportRef = React.useRef(false);
+  const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
+  const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
+  const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const advanceWithoutEdictRef = React.useRef<() => Promise<void>>(async () => {});
+  const invalidateAudienceScroll = React.useCallback(() => {
+    setAudienceScrollGeneration((generation) => generation + 1);
+  }, []);
 
   // #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE / 历史 / 读心轮询 / 请求归属
   // (token) / reducer 派发。所有召对显示态写入都过它并按请求归属门控——旧流尾巴绝不改动
   // 更新请求的待答文/流式文/取消句柄/busy。App 只经回调补全外围态。
   const {
     chat,
+    currentCampaignId,
+    currentNightId,
     pendingUserMessage,
+    pendingIdentity,
+    failedIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,
@@ -103,7 +115,7 @@ export function App() {
     sendChat: runAudienceTurn,
     cancelChat,
     // chatOpen=activeModal==="chat"：hook 内置的唯一 chat-exit 归属据此取消流 + 作废 poll-batch。
-  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat");
+  } = useAudienceChat(setBusy, selectedMinisterRef, activeModal === "chat", invalidateAudienceScroll);
 
   // 持久投影落 UI 的稳定 applier（供 latest-wins 协调器代次门控后调用）。
   const applyDurableState = React.useCallback((data: GameState) => {
@@ -158,6 +170,7 @@ export function App() {
     selectedMinisterRef,
     suppressNextReportRef,
     setSecretOrders,
+    setUndoneChatIdentity,
     loadState,
     refreshDurableProjection,
     resetPanel,
@@ -165,6 +178,9 @@ export function App() {
     applyHistory,
     loadHistoryProjection,
     runAudienceTurn,
+    invalidateAudienceScroll,
+    advanceWithoutEdictRef,
+    currentNightId,
   });
 
   // 诏书台动作群（useEdictActions.ts）：草案/诏文的全部 busy 动作与代次推进。
@@ -208,6 +224,8 @@ export function App() {
     surfacePendingActionFailures,
     state,
   });
+  advanceWithoutEdictRef.current = advanceWithoutEdict;
+
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {
     const form = new FormData();
@@ -241,6 +259,7 @@ export function App() {
   }, [refreshMenuStatus, loadState]);
 
   const enterGameAfterMenu = React.useCallback(async () => {
+    setUndoneChatIdentity(null);
     setAppView("game");
     await loadState();
   }, [loadState]);
@@ -251,6 +270,7 @@ export function App() {
     beginDurableMutation();
     await fetch("/api/menu/exit_to_menu", { method: "POST" });
     setState(null);
+    setUndoneChatIdentity(null);
     setAppView("menu");
     await refreshMenuStatus();
   }, [refreshMenuStatus, beginDurableMutation]);
@@ -368,6 +388,7 @@ export function App() {
     ? (state.talent_pool || [])  // 在野人才池（offstage 罢居前臣，#120）单独走 talent_pool
     : filterMinisters(state.ministers, ministerGroup);
   const consorts = filterConsorts(state.consorts || [], haremGroup);
+  const audienceRoster = [...state.ministers, ...(state.talent_pool || [])];
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const selectMapNode = (nodeId: string) => {
@@ -509,10 +530,18 @@ export function App() {
         <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
           <ChatModal
             minister={activeMinister}
+            ministers={audienceRoster}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
+            scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
+            currentCampaignId={currentCampaignId}
+            currentNightId={currentNightId}
+            undoneChatIdentity={undoneChatIdentity}
             chat={chat}
             suggestions={suggestions}
             pendingUserMessage={pendingUserMessage}
+            pendingIdentity={pendingIdentity}
+            failedIdentity={failedIdentity}
+            scrollGeneration={audienceScrollGeneration}
             streamingMinisterMessage={streamingMinisterMessage}
             chatNotice={chatNotice}
             chatFailures={activeChatFailures}
@@ -521,7 +550,7 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
+            secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
             onInput={setInput}
@@ -531,8 +560,9 @@ export function App() {
             onRetryExtraction={retryStoryExtraction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={() => toggleFavorite(activeMinister)}
-            onOpenEdict={() => setActiveModal("edict")}
+            onFavorite={toggleFavorite}
+            scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
+            onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
           />
@@ -593,6 +623,10 @@ export function App() {
 
       {activeModal === "history" ? (
         <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
+      ) : null}
+
+      {activeModal === "audience_archive" ? (
+        <AudienceArchiveModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (

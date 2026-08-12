@@ -13,6 +13,7 @@ def test_prompt_compatible_ming_new_army_pay_source_aliases_land(game):
             "新建军队": [
                 {
                     "id": "prompt_pay_source_army",
+                    "origin_ref": "盘面自发",
                     "name": "饷源契约军",
                     "owner_power": "ming",
                     "station": "陕西/西安",

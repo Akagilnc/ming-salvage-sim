@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useAudienceChat, type SendChatCallbacks } from "./useAudienceChat";
 import { ChatModal } from "./components/chatModal";
+import { retryAudienceStoryExtraction } from "./extractionRetry";
 import type { ChatResponse, Minister, ServerChatMessage } from "./types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,30 +45,42 @@ const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => 
 
 type HookApi = ReturnType<typeof useAudienceChat>;
 
-function mount() {
+function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = false) {
   const hookRef = { current: null as HookApi | null };
   const busyRef = { current: "" };
   const setModalRef = { current: (_m: string) => {} };
+  const invalidateScrollRef = { current: () => {} };
   function Harness() {
     const selectedRef = React.useRef("温体仁");
     const [busy, setBusy] = React.useState("");
     const [activeModal, setActiveModal] = React.useState("chat");
+    const [scrollGeneration, setScrollGeneration] = React.useState(0);
+    const invalidateScroll = React.useCallback(() => setScrollGeneration((value) => value + 1), []);
+    invalidateScrollRef.current = invalidateScroll;
     busyRef.current = busy;
     setModalRef.current = setActiveModal;
     // App 同款消费：chatOpen=activeModal==="chat"。chat-exit 归属逻辑在 hook 内部（生产真实
     // 消费的 controller）；测试只驱动 activeModal，退出取消经 hook 内置 effect，不复制退出胶水。
-    const hook = useAudienceChat(setBusy, selectedRef, activeModal === "chat");
+    const hook = useAudienceChat(
+      setBusy, selectedRef, activeModal === "chat", refreshOnEnd ? invalidateScroll : undefined,
+    );
     hookRef.current = hook;
     return (
       <ChatModal
-        minister={MINISTER} portraitPrefix="minister_"
+        minister={MINISTER} ministers={[]} portraitPrefix="minister_" scrollMode={scrollMode}
+        currentCampaignId={hook.currentCampaignId}
+        currentNightId={hook.currentNightId}
+        undoneChatIdentity={null}
         chat={hook.chat}
         pendingUserMessage={hook.pendingUserMessage}
+        pendingIdentity={hook.pendingIdentity}
+        failedIdentity={hook.failedIdentity}
+        scrollGeneration={scrollGeneration}
         streamingMinisterMessage={hook.streamingMinisterMessage}
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
         onInput={() => {}} onSend={() => {}} onRetryFailure={() => {}} onUndo={() => {}}
-        onHint={() => {}} onFavorite={() => {}} onOpenEdict={() => {}} onClose={() => {}} onCancel={() => {}}
+        onHint={() => {}} onFavorite={() => {}} onClose={() => {}} onCancel={() => {}}
       />
     );
   }
@@ -79,7 +92,11 @@ function mount() {
       const role = ["user", "minister", "attendant"].find((r) => el.classList.contains(r)) || "";
       return `${role}:${el.querySelector("p")?.textContent ?? ""}`;
     });
-  return { hookRef, busyRef, rows, setModal: (m: string) => act(() => setModalRef.current(m)) };
+  return {
+    hookRef, busyRef, rows,
+    setModal: (m: string) => act(() => setModalRef.current(m)),
+    retryExtraction: () => retryAudienceStoryExtraction(invalidateScrollRef.current),
+  };
 }
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -88,6 +105,139 @@ const noCbs: SendChatCallbacks = { onDone: () => {}, onLeave: () => {}, onError:
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () => {
+  it("只在 SSE end 后失效并重读公共卷轴的新落账 scene", async () => {
+    let scrollCalls = 0;
+    let resolveEnd!: () => void;
+    let ended = false;
+    const endGate = new Promise<void>((resolve) => { resolveEnd = resolve; });
+    const releaseEnd = () => { ended = true; resolveEnd(); };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp({
+          night_id: 24,
+          messages: !ended ? [] : [
+            { role: "scene", speaker: "", content: "新落账场景", chat_turn_id: 8 },
+          ],
+        });
+      }
+      return gatedSse(
+        [
+          { event: "accepted", data: { campaign_id: "c1", night_id: 24, chat_turn_id: 8 } },
+          { event: "done", data: { history: [], suggestions: [], directives: [] } },
+        ],
+        endGate,
+        [{ event: "end", data: {} }],
+      );
+    }));
+    const { hookRef, rows } = mount("audience", true);
+    await tick();
+    expect(scrollCalls).toBe(1);
+
+    let sending!: Promise<void>;
+    act(() => { sending = hookRef.current!.sendChat("温体仁", "请奏", noCbs); });
+    await tick();
+    const callsBeforeEnd = scrollCalls;
+    releaseEnd();
+    await act(async () => { await sending; });
+    await tick();
+
+    expect(scrollCalls).toBe(callsBeforeEnd + 1);
+    expect(document.body.textContent).toContain("新落账场景");
+  });
+
+  it("补写成功且 pending 归零后复用同一代次重读公共卷轴", async () => {
+    let scrollCalls = 0;
+    let retried = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/extraction/retry")) {
+        retried = true;
+        return jsonResp({ count: 0 });
+      }
+      if (String(url).includes("/api/ministers/") && String(url).endsWith("/chat")) return jsonResp({
+        minister: MINISTER, history: [], suggestions: [], can_undo_last_chat: false,
+        campaign_id: "c1", night_id: 24,
+      });
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp({
+          night_id: 24,
+          messages: !retried ? [] : [
+            { role: "scene", speaker: "", content: "补写完成场景", chat_turn_id: 8 },
+          ],
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    const { hookRef, retryExtraction } = mount("audience", true);
+    await tick();
+    await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
+    await tick();
+    const callsBeforeRetry = scrollCalls;
+
+    await act(async () => { await retryExtraction(); });
+    await tick();
+
+    expect(scrollCalls).toBe(callsBeforeRetry + 1);
+    expect(document.body.textContent).toContain("补写完成场景");
+  });
+
+  it("accepted 后 provider failure 以持久 identity 淘汰 generating 快照且保留其它轮", async () => {
+    let scrollCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        scrollCalls += 1;
+        return jsonResp(scrollCalls === 1 ? { night_id: 0, messages: [] } : {
+          night_id: 24,
+          messages: [
+            { role: "user", speaker: "圣上", content: "失败问话", chat_turn_id: 8, status: "generating" },
+            { role: "user", speaker: "圣上", content: "保留问话", chat_turn_id: 7 },
+            { role: "minister", speaker: "温体仁", content: "保留答复", chat_turn_id: 7 },
+          ],
+        });
+      }
+      return sse([
+        { event: "accepted", data: { campaign_id: "", night_id: 24, chat_turn_id: 8 } },
+        { event: "error", data: { message: "回话失败", campaign_id: "", night_id: 24, chat_turn_id: 8 } },
+      ]);
+    }));
+    const { hookRef, rows } = mount("audience");
+    await tick();
+
+    await act(async () => { await hookRef.current!.sendChat("温体仁", "失败问话", noCbs); });
+    await tick();
+
+    expect(hookRef.current!.failedIdentity).toEqual({ campaign_id: "", night_id: 24, chat_turn_id: 8 });
+    expect(rows()).not.toContain("user:失败问话");
+    expect(rows()).toContain("user:保留问话");
+    expect(rows()).toContain("minister:保留答复");
+  });
+
+  it("无夜 identity 不接纳猜测出的旧卷，新夜回话失败也不回闪", async () => {
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      call += 1;
+      if (call === 1 && String(url).includes("/api/audience/scroll")) return jsonResp({
+        night_id: 23,
+        messages: [{ role: "minister", speaker: "洪承畴", content: "旧夜他臣", chat_turn_id: 7 }],
+      });
+      return sse([
+        { event: "accepted", data: { night_id: 24 } },
+        { event: "error", data: { message: "回话失败" } },
+      ]);
+    }));
+    const { hookRef, rows } = mount();
+    await tick();
+    expect(hookRef.current!.currentNightId).toBe(0);
+    expect(rows()).not.toContain("minister:旧夜他臣");
+
+    await act(async () => {
+      await hookRef.current!.sendChat("温体仁", "开启新场", noCbs);
+    });
+    expect(hookRef.current!.currentNightId).toBe(24);
+    expect(rows()).not.toContain("minister:旧夜他臣");
+  });
+
   it("迟到的旧流读心：新 send 作废 token 后，旧流 mind1 仍归其轮浮现（不按 token 门控）", async () => {
     const { hookRef, rows } = mount();
     const hook = hookRef.current!;
@@ -95,12 +245,24 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     let releaseTail1!: () => void;
     const gate1 = new Promise<void>((r) => { releaseTail1 = r; });
     let call = 0;
-    vi.stubGlobal("fetch", vi.fn(async () => {
+    let mindReleased = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/api/audience/scroll")) {
+        if (mindReleased) return new Promise<Response>(() => {}); // 权威刷新延迟，交接态须显示 reducer 增量
+        return jsonResp({
+        night_id: 23,
+        messages: [
+          { role: "user", content: "问1", chat_turn_id: 10 }, { role: "minister", content: "答1", chat_turn_id: 10 },
+          { role: "user", content: "问2", chat_turn_id: 11 }, { role: "minister", content: "答2", chat_turn_id: 11 },
+        ],
+      });
+      }
       call += 1;
       if (call === 1) {
         // 流 1：done1 后门控挂起；mind1 尾巴延迟到流 2 完成之后才到
         return gatedSse(
-          [{ event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
+          [{ event: "accepted", data: { night_id: 23 } },
+           { event: "done", data: { history: [U("问1", 10), M("答1", 10)], suggestions: [], directives: [] } }],
           gate1,
           [{ event: "mindreading", data: { mindreading: { id: 1, narration: "近臣低声。" }, chat_turn_id: 10 } },
            { event: "end", data: {} }],
@@ -108,6 +270,7 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
       }
       // 流 2：陈旧 done2（无 a1）后立即结束
       return sse([
+        { event: "accepted", data: { night_id: 23 } },
         { event: "done", data: { history: [U("问1", 10), M("答1", 10), U("问2", 11), M("答2", 11)], suggestions: [], directives: [] } },
         { event: "end", data: {} },
       ]);
@@ -119,9 +282,11 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     await act(async () => { await hook.sendChat("温体仁", "问2", noCbs); });  // 流 2 完成 → [u1,m1,u2,m2]
     expect(rows()).toEqual(["user:问1", "minister:答1", "user:问2", "minister:答2"]);
 
+    mindReleased = true;
     releaseTail1();  // 流 1 迟到的 mind1（turn10）到达——token 已被流 2 作废
     await act(async () => { await p1; });
-    // mind1 仍按归属轮 10 插入（回话之后），未因 token 作废而永久丢失
+    // hook 的真实 reducer 把 mind1 插回旧轮；ChatModal 与权威卷轴交接按身份差集保住它，
+    // 不会因位置水位偏移而漏递话、重复既有尾轮。
     expect(rows()).toEqual(["user:问1", "minister:答1", "attendant:近臣低声。", "user:问2", "minister:答2"]);
   });
 
@@ -398,7 +563,7 @@ describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
       await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
       await advance();
       const before = call;
-      setModal("edict");  // 转入诏书草案
+      setModal("edict");  // 从常驻御案入口打开诏书草案
       await advance(); await advance();
       expect(call).toBe(before);
     } finally { vi.useRealTimers(); }

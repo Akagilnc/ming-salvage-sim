@@ -46,11 +46,6 @@
 ### ~~B14. 召对取消的内存历史按文本剪枝，并发同文本会误删（P3·自愈，family/362-base CMR defer）~~ ✅ 已解决（被 id-based `db.fail_chat_turn(chat_turn_id)` 取代）
 - 原文批评的 `WebGame._fail_incomplete_chat_turn`（按文本签名倒序剪 `chat_history`）与其锁定测试 `tests/test_chat_stream_cancel.py` 均已不存在；取消/失败路径现走 `db.fail_chat_turn(chat_turn_id)`（[db.py](ming_sim/db.py)），按精确 id 操作，原文提出的文本歧义前提不再成立。#505/#506（撤回/续夜）在此 id-based 底座上继续重写 chat-turn 回滚子系统。
 
-### ~~B13. 编排器测试 epicOrchestratorWorkflow 预存失败（P0，非本分支引入）~~ ✅ 已修（v0.15.0.0, 2026-06-27, cf1038f）
-- **现象**：`web/src/epicOrchestratorWorkflow.test.ts` 「merges reviewed commits from different slice worktrees through one dedicated family worktree」断言 `mergeWorktrees[0].startsWith(repoPath) === false` 失败，实得 `true`（merge worktree 路径在 repo 目录内，不是外部 tmpdir）。
-- **定位**：测试假设与当前实现漂移；family merge worktree 现在位于仓库 sibling 的 `.worktrees/.epic-orchestrator/` 下。
-- **修复**：测试改为断言 family worktree 位于 `.worktrees/.epic-orchestrator` 路径，`epicOrchestratorWorkflow.test.ts` 聚焦用例与完整 web Vitest 已通过。
-
 ### B12. 密令状态在游戏画面露英文 enum（active/pending_review/done/failed） → [issue #48](https://github.com/Akagilnc/ming-salvage-sim/issues/48)
 - **现象**：「密旨动向」等展示里密令 status 直接渲染数据库英文 enum「（active）」，明末中文游戏里露英文，出戏。
 - **修法**：在展示层把 status enum 映射成中文（active→在办、pending_review→待核议、done→已结、failed→未成 之类），找密令 status 渲染处（web 前端密令面板 / 邸报或 notes 生成器）统一过一层 label 映射。

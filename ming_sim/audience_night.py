@@ -296,6 +296,178 @@ def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return events
 
 
+_DIALOGUE_CARRIED_LEDGER_TAGS = frozenset({
+    "人际动作", "站台", "作保", "背书", "退侍",
+})
+
+
+def night_archive_metadata(
+    ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Purely derive archive labels from already-loaded durable-store rows."""
+    summon_methods = [
+        method
+        for entry in ledgers if _is_command_entry(entry)
+        for method in SUMMON_METHODS if method in (entry.get("tags") or [])
+    ]
+    people: List[str] = []
+    candidate_groups = [entry.get("person_names") or [] for entry in ledgers]
+    candidate_groups.extend([turn.get("minister_name")] for turn in turns)
+    for names in candidate_groups:
+        for raw_name in names:
+            name = str(raw_name or "").strip()
+            if name and name not in people:
+                people.append(name)
+    summon_method = summon_methods[0] if summon_methods else ""
+    return {
+        # Summon methods remain machine tags; the container contract exposes the
+        # player-facing audience type from this single production source.
+        "audience_type": "越次召对" if summon_method == METHOD_YUECI else "召对",
+        "involved_people": people,
+    }
+
+
+def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    """Read one audience night as the shared live/archive scroll contract.
+
+    The two durable stores remain untouched.  This projection merges them, omits
+    ledger prose already carried verbatim by its dialogue turn, derives scene
+    dividers from exit/next-entry facts, and leaves the coda generation slot empty.
+    """
+    night = get_night(db, night_id)
+    if night is None:
+        raise AudienceNightError(f"夜不存在：{night_id}", code="night_not_found")
+    ledgers = list_ledger(db, night_id)
+    turns = list_chat_turns_for_night(db, night_id)
+    # 召法已由引擎作为结构化常量 tag 落在入殿口令账上；它是当前夜容器可用的
+    # 真实召对类型来源。抽取账的开放 tags 绝不参与该投影。
+    audience_type = night_archive_metadata(ledgers, turns)["audience_type"]
+    container = {
+        "time_of_day": night["time_of_day"],
+        "location": night["location"],
+        "audience_type": audience_type,
+    }
+
+    def message(*, role: str, speaker: str, audibility: str, time: Any,
+                content: str, beat: str, soft_boundary: bool = False,
+                chat_turn_id: int = 0, record_id: int = 0) -> Dict[str, Any]:
+        result = {
+            "role": role, "speaker": speaker, "audibility": audibility,
+            "time": time, "content": content, "soft_boundary": soft_boundary,
+            "beat": beat, "highlights": [], "container": dict(container),
+        }
+        if chat_turn_id:
+            result["chat_turn_id"] = int(chat_turn_id)
+        if record_id:
+            result["record_id"] = int(record_id)
+        return result
+
+    dialogue_by_turn: Dict[int, set[str]] = {}
+    events: List[tuple[float, int, Dict[str, Any]]] = []
+    for turn in turns:
+        texts: set[str] = set()
+        for rank, (column, role, speaker) in enumerate((
+            ("user_message_id", "user", "朕"),
+            ("minister_message_id", "minister", str(turn.get("minister_name") or "")),
+        )):
+            message_id = int(turn.get(column) or 0)
+            if not message_id:
+                continue
+            row = db.conn.execute(
+                "SELECT content,created_at FROM chat_messages WHERE id=?", (message_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            content = str(row["content"] or "")
+            texts.add(content.strip())
+            events.append((
+                float(int(turn.get("night_seq") or 0)), 20 + rank,
+                message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
+                        time=row["created_at"], content=content, beat="dialogue",
+                        chat_turn_id=int(turn["id"])),
+            ))
+        # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
+        if hasattr(db, "list_mindreading_records"):
+            for record_index, record in enumerate(db.list_mindreading_records(int(turn["id"]))):
+                narration = str(record.get("narration") or "").strip()
+                if narration:
+                    events.append((
+                        float(int(turn.get("night_seq") or 0)), 30 + record_index,
+                        message(role="attendant", speaker=str(record.get("reader") or "近臣"),
+                                audibility=AUDIBILITY_PRIVATE, time=None,
+                                content=narration, beat="aside", chat_turn_id=int(turn["id"]),
+                                record_id=int(record.get("id") or 0)),
+                    ))
+        dialogue_by_turn[int(turn["id"])] = texts
+
+    for entry in ledgers:
+        source = int(entry.get("source_chat_turn_id") or 0)
+        tags = set(entry.get("tags") or [])
+        # 轮级抽取中，人际动作本就是该轮对话/表演的结构化索引，不再重复展示；
+        # 普通故事事实即使同轮产生也保留。正文相等只处理旧数据的逐字重复。
+        carried_action = bool(
+            source and (entry.get("presence_effect") in (PRESENCE_ENTER, PRESENCE_EXIT)
+                        or tags & _DIALOGUE_CARRIED_LEDGER_TAGS)
+        )
+        if carried_action or (source and entry["body"].strip() in dialogue_by_turn.get(source, set())):
+            continue
+        command = _is_command_entry(entry)
+        if command and TAG_OPEN_NIGHT in tags:
+            beat = "opening"
+        elif command and TAG_CLOSE_NIGHT in tags:
+            beat = "closing"
+        elif (command and TAG_ENTER in tags) or entry.get("presence_effect") == PRESENCE_ENTER:
+            beat = "entrance"
+        elif (command and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT:
+            beat = "exit"
+        else:
+            beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
+        events.append((
+            _entry_order_key(entry), 10,
+            message(role="attendant" if beat == "aside" else "scene",
+                    speaker=(entry["person_names"][0] if beat == "aside" and entry["person_names"] else ""),
+                    audibility=entry["audibility"], time=entry["created_at"],
+                    content=entry["body"], beat=beat),
+        ))
+
+    # A divider belongs after each exit.  Its optional name is sourced only from
+    # the next entry fact; an unmatched final exit deliberately remains unnamed.
+    facts = sorted(ledgers, key=lambda e: (_entry_order_key(e), int(e["id"])))
+    divided_exits: set[tuple[str, float]] = set()
+    for index, entry in enumerate(facts):
+        tags = set(entry.get("tags") or [])
+        is_exit = (_is_command_entry(entry) and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT
+        if not is_exit:
+            continue
+        person = (entry.get("person_names") or [""])[0]
+        # Command and extractor facts can describe the same actual departure.
+        # Their shared night order is the durable source-turn identity; a later
+        # departure has a different order and must retain its own divider.
+        exit_identity = (person, _entry_order_key(entry))
+        if exit_identity in divided_exits:
+            continue
+        divided_exits.add(exit_identity)
+        next_name = ""
+        for following in facts[index + 1:]:
+            following_tags = set(following.get("tags") or [])
+            if ((_is_command_entry(following) and TAG_ENTER in following_tags)
+                    or following.get("presence_effect") == PRESENCE_ENTER):
+                next_name = (following.get("person_names") or [""])[0]
+                break
+        events.append((
+            _entry_order_key(entry), 90,
+            message(role="scene", speaker=next_name, audibility=AUDIBILITY_PUBLIC,
+                    time=entry["created_at"], content="", beat="divider", soft_boundary=True),
+        ))
+
+    events.sort(key=lambda item: (item[0], item[1]))
+    scroll = [item[2] for item in events]
+    scroll.append(message(role="scene", speaker="", audibility=AUDIBILITY_PUBLIC,
+                          time=night.get("closed_at") or night.get("opened_at"),
+                          content="", beat="coda"))
+    return scroll
+
+
 def _night_direct_write_allowed_tables() -> frozenset:
     allowed: set[str] = set()
     for tables in NIGHT_DIRECT_WRITE_WHITELIST.values():
@@ -591,6 +763,7 @@ def summon_enter(
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_XUANRU)
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
@@ -987,6 +1160,7 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],

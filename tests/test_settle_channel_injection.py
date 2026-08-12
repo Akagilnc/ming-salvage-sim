@@ -26,6 +26,12 @@ from ming_sim.decree import settle_with_delta
 from ming_sim.models import LLMConfig
 
 
+
+def _decree_origin(db, state) -> str:
+    dossier_id = db.create_decree_dossier(state, action_type="policy", decree_text="测试国策来源", target_kind="issue", target_id="test")
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
 def _cli_cfg() -> LLMConfig:
     return LLMConfig(
         api_key="cli-backend",
@@ -47,7 +53,7 @@ def test_real_flow_injects_channel_enrichment_into_settle(game, monkeypatch):
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
     # 绕过真实 extractor LLM：直接喂一份 canonical delta。
-    delta = {"new_issues": [{"origin_kind": "decree", "title": "注入通道国策", "kind": "initiative"}]}
+    delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "注入通道国策", "kind": "initiative"}]}
     monkeypatch.setattr(decree, "build_extractor_shared_context", lambda *a, **k: "")
     monkeypatch.setattr(decree, "create_json_sanitizer_agent", lambda *a, **k: None)
     monkeypatch.setattr(decree, "create_score_extractor_module_agent", lambda *a, **k: None)
@@ -92,7 +98,7 @@ def test_driver_path_no_env_is_deterministic(game, monkeypatch):
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: called.append((a, k)) or {
                             "effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    delta = {"new_issues": [{"origin_kind": "decree", "title": "driver国策", "kind": "initiative"}]}
+    delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "driver国策", "kind": "initiative"}]}
 
     settle_with_delta(state, db, delta, before_turn=state.turn, content=content, registry=None)
 
@@ -113,7 +119,7 @@ def test_settle_none_branch_legacy_env_enriches(game, monkeypatch):
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(_cb, "enrich_initiative_effects",
                         lambda *a, **k: {"effect_on_resolve": {}, "ongoing_effects": {}, "effect_on_fail": {}})
-    delta = {"new_issues": [{"origin_kind": "decree", "title": "none分支国策", "kind": "initiative"}]}
+    delta = {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "none分支国策", "kind": "initiative"}]}
 
     settle_with_delta(state, db, delta, before_turn=state.turn, content=content, registry=None)
 
@@ -150,7 +156,7 @@ def test_driver_run_settle_deterministic_under_legacy_env(game, monkeypatch):
 
     driver.run_settle(
         db, state, content,
-        {"new_issues": [{"origin_kind": "decree", "title": "driver确定性国策", "kind": "initiative"}]},
+        {"new_issues": [{"origin_kind": "decree", "origin_ref": _decree_origin(db, state), "title": "driver确定性国策", "kind": "initiative"}]},
         narrative="本月邸报。",
     )
 

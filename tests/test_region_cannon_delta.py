@@ -22,7 +22,7 @@ def test_cannon_has_chinese_display_label():
 def test_city_cannon_delta_lands_clamped(game):
     """beizhili city_level=5 → 上限 40；投 50 门城防炮应 clamp 落库为 40。"""
     db, state, content = game
-    raw_delta = {"地区变化": {"beizhili": {"城防炮": 50}}}
+    raw_delta = {"地区变化": {"beizhili": {"origin_ref": "盘面自发", "城防炮": 50}}}
 
     run_settle(db, state, content, raw_delta)
 
@@ -37,7 +37,7 @@ def test_city_cannon_capped_at_zero_for_low_city_level(game):
     但请求非 0 被上限拦截时**须留 region_log 痕迹**（delta=0），不静默吞（#18，违 P1 落库铁律）。"""
     db, state, content = game
     before_turn = state.turn  # region_log 按当回合 scope，避免跨 turn 串扰（CodeRabbit R1）
-    raw_delta = {"地区变化": {"dongjiang_area": {"城防炮": 10}}}
+    raw_delta = {"地区变化": {"dongjiang_area": {"origin_ref": "盘面自发", "城防炮": 10}}}
 
     run_settle(db, state, content, raw_delta)
 
@@ -62,7 +62,7 @@ def test_city_cannon_lower_bound_clamp_audited_not_as_cap(game):
     （codex+CodeRabbit R1 concur：原一律写「上限拦截」对减炮 no-op 是错归因）。"""
     db, state, content = game
     before_turn = state.turn
-    run_settle(db, state, content, {"地区变化": {"dongjiang_area": {"城防炮": -5}}})
+    run_settle(db, state, content, {"地区变化": {"dongjiang_area": {"origin_ref": "盘面自发", "城防炮": -5}}})
     rows = db.conn.execute(
         "SELECT delta, reason FROM region_logs "
         "WHERE region_id='dongjiang_area' AND field='cannon' AND turn=?", (before_turn,)
@@ -77,7 +77,7 @@ def test_zero_cannon_request_leaves_no_log(game):
     """真 no-op 请求（城防炮 delta=0，本就没要加炮）不留痕——留痕只针对「请求非 0 却被 clamp」（#18）。"""
     db, state, content = game
     before_turn = state.turn
-    run_settle(db, state, content, {"地区变化": {"dongjiang_area": {"城防炮": 0}}})
+    run_settle(db, state, content, {"地区变化": {"dongjiang_area": {"origin_ref": "盘面自发", "城防炮": 0}}})
     rows = db.conn.execute(
         "SELECT 1 FROM region_logs WHERE region_id='dongjiang_area' AND field='cannon' AND turn=?",
         (before_turn,),
@@ -91,7 +91,7 @@ def test_illegal_region_field_rejected_not_raised(read_game):
     好项照落、坏一项不带走整批。"""
     db, state, content = read_game
     applied = apply_score_extraction(
-        db, state, {"region_delta": {"beizhili": {"不存在的字段": 5}}}, content=content
+        db, state, {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "不存在的字段": 5}}}, content=content
     )
     rejected = [c for c in applied["region_changes"]
                 if isinstance(c, dict) and c.get("rejected")]

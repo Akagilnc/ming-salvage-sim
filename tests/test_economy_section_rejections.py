@@ -37,8 +37,8 @@ def test_top_level_bad_account_rejected_good_lands(game):
 
     run_settle(db, state, content, {
         "economy_moves": [
-            {"account": "金库", "delta": -5, "reason": "非法账户"},
-            {"account": "国库", "delta": -3, "reason": "合法"},
+            {"origin_ref": "盘面自发", "account": "金库", "delta": -5, "reason": "非法账户"},
+            {"origin_ref": "盘面自发", "account": "国库", "delta": -3, "reason": "合法"},
         ],
     }, narrative="x", decree_text="y")
 
@@ -54,7 +54,7 @@ def test_top_level_nonint_delta_rejected(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "economy_moves": [{"account": "国库", "delta": "很多", "reason": "坏 delta"}],
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": "很多", "reason": "坏 delta"}],
     }, narrative="x", decree_text="y")
 
     rows = [r for r in _rejection_rows(db, turn, ECO_REJ) if r[2] == "invalid_enum"]
@@ -69,7 +69,7 @@ def test_valid_economy_still_applies_no_reject(saved_game):
     before = _guoku(db)
 
     run_settle(db, state, content, {
-        "economy_moves": [{"account": "国库", "delta": -7, "reason": "正常"}],
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": -7, "reason": "正常"}],
     }, narrative="x", decree_text="y")
 
     assert _rejection_rows(db, turn, ECO_REJ) == []
@@ -82,7 +82,7 @@ def test_zero_delta_economy_no_reject_no_apply(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "economy_moves": [{"account": "国库", "delta": 0, "reason": "空动作"}],
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "国库", "delta": 0, "reason": "空动作"}],
     }, narrative="x", decree_text="y")
 
     assert _rejection_rows(db, turn, ECO_REJ) == []
@@ -121,8 +121,8 @@ def test_float_and_bool_delta_rejected(game):
 
     run_settle(db, state, content, {
         "economy_moves": [
-            {"account": "国库", "delta": 3.7, "reason": "float"},
-            {"account": "国库", "delta": True, "reason": "bool"},
+            {"origin_ref": "盘面自发", "account": "国库", "delta": 3.7, "reason": "float"},
+            {"origin_ref": "盘面自发", "account": "国库", "delta": True, "reason": "bool"},
         ],
     }, narrative="x", decree_text="y")
 
@@ -138,8 +138,8 @@ def test_noop_bad_account_skipped_not_rejected(game):
 
     run_settle(db, state, content, {
         "economy_moves": [
-            {"account": "金库", "delta": 0, "reason": "空占位非法账户"},  # no-op → 跳
-            {"account": "", "reason": "缺 delta 空账户"},                # no-op → 跳
+            {"origin_ref": "盘面自发", "account": "金库", "delta": 0, "reason": "空占位非法账户"},  # no-op → 跳
+            {"origin_ref": "盘面自发", "account": "", "reason": "缺 delta 空账户"},                # no-op → 跳
         ],
     }, narrative="x", decree_text="y")
 
@@ -178,8 +178,8 @@ def test_economy_rejections_not_in_player_visible(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "economy_moves": [{"account": "金库", "delta": -5, "reason": "非法"},
-                          {"account": "国库", "delta": -3, "reason": "合法"}],
+        "economy_moves": [{"origin_ref": "盘面自发", "account": "金库", "delta": -5, "reason": "非法"},
+                          {"origin_ref": "盘面自发", "account": "国库", "delta": -3, "reason": "合法"}],
     }, narrative="x", decree_text="y")
 
     visible = db.get_turn_extraction(turn)["extractor_output"]

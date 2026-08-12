@@ -20,11 +20,18 @@ import types
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
 import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
 from ming_sim.decree import advance_without_edict, pre_settle
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 @pytest.fixture(autouse=True)
@@ -786,61 +793,198 @@ def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monke
     assert exc.value.detail == "结算中止，可重试。"
 
 
-def test_web_advance_without_edict_refuses_unhandled_directive_action(game, monkeypatch):
-    """web 退朝无诏不得绕过待准驳拟旨。"""
-    import asyncio
-    import pytest
+def test_web_advance_without_edict_default_approves_into_one_dossier(game, monkeypatch):
+    """Web 真实结束入口经生产 resolve/commit，把默认同意拟旨成唯一案卷并推进回合。"""
     import web_app
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession, ResolveResult
 
     db, state, content = game
     name = _active_minister_name(db, content)
+    turn_before = state.turn
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": name},
+        payload={
+            "text": "着户部清核辽饷。", "actor": name,
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        },
     )
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.content = content
+    session.registry = None
+    session.llm_config = None
+    session.agno_db = None
+    session.last_decree = ""
+    session.last_report = ""
+    session.deaths_this_turn = []
+    session.debuts_this_turn = []
+    session.auto_save = lambda _tag: None
+    monkeypatch.setattr(
+        session_mod, "write_decree_with_agno",
+        lambda *_args, **_kwargs: "奉旨清核辽饷",
+    )
+
+    def settle(st, game_db, *_args, **_kwargs):
+        # resolve_turn only builds a read-only candidate view; the settlement owner
+        # receives the durable pending row and materializes it.
+        assert game_db.list_pending_actions(st.turn)[0]["status"] == "pending"
+        assert game_db.list_directives(st, statuses=("draft",)) == []
+        assert game_db.list_decree_dossiers() == []
+        game_db.commit_pending_actions(st, content=content, registry=None)
+        st.next_period()
+        game_db.save_state(st)
+        return ResolveResult(awaiting=False, report="本月已结")
+
+    monkeypatch.setattr(session_mod, "resolve_directives", settle)
+
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=session,
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: [],
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    with pytest.raises(web_app.HTTPException) as exc:
-        web_app.api_advance_without_edict()
+    out = web_app.api_advance_without_edict()
 
-    assert exc.value.status_code == 400
-    assert "未处理拟旨" in str(exc.value.detail)
-    assert state.turn == 1
+    assert out["awaiting_decision"] is False
+    dossiers = db.list_decree_dossiers()
+    assert len([row for row in dossiers if row["pending_action_id"] > 0]) == 1
+    assert state.turn == turn_before + 1
 
 
-def test_web_advance_without_edict_refuses_existing_draft(game, monkeypatch):
-    """已有 draft/pending 圣旨草案时，web 退朝无诏不得直接丢弃推进。"""
+def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, monkeypatch):
+    """真实结算入口只把 DB owner 判定合法的候选送入拟诏与结算。"""
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession, ResolveResult
+
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    legal_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着户部清核辽饷。", "actor": "",
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "liao-pay-audit",
+        },
+    )
+    unclear_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着兵部再议边防。", "_needs_clarification": True,
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "border-defense",
+        },
+    )
+    invalid_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={
+            "text": "着内库拨银。", "dossier_action_type": "grant_allocation",
+            "target_kind": "issue", "target_id": "invalid-allocation",
+        },
+    )
+    malformed_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={"text": "placeholder"},
+    )
+    non_object_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=name,
+        target_id=None, payload={"text": "placeholder"},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        ("{broken", malformed_id),
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        ("[]", non_object_id),
+    )
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = session.llm_config = session.agno_db = None
+    session.last_decree = session.last_report = ""
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.auto_save = lambda _tag: None
+    seen = {}
+
+    def write_decree(_config, _agno, _state, directives, **_kwargs):
+        seen["write"] = list(directives)
+        return "奉旨清核辽饷"
+
+    def settle(st, game_db, _agno, _config, directives, decree_text, **_kwargs):
+        seen["settle"] = list(directives)
+        assert decree_text == "奉旨清核辽饷"
+        game_db.commit_pending_actions(st, content=content, registry=None)
+        st.next_period()
+        game_db.save_state(st)
+        return ResolveResult(awaiting=False, report="本月已结")
+
+    monkeypatch.setattr(session_mod, "write_decree_with_agno", write_decree)
+    monkeypatch.setattr(session_mod, "resolve_directives", settle)
+
+    session.resolve_turn(inflight_wait_s=0.0)
+
+    assert [row["text"] for row in seen["write"]] == ["着户部清核辽饷。"]
+    assert seen["settle"] == seen["write"]
+    assert seen["write"][0]["actor"] == name
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (legal_id,)
+    ).fetchone()["status"] == "committed"
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (unclear_id,)
+    ).fetchone()["status"] == "pending"
+    for rejected_id in (invalid_id, malformed_id, non_object_id):
+        assert db.conn.execute(
+            "SELECT status FROM pending_actions WHERE id=?", (rejected_id,)
+        ).fetchone()["status"] == "failed"
+    directive_texts = [
+        row["text"] for row in db.conn.execute(
+            "SELECT text FROM turn_directives WHERE turn=?", (state.turn - 1,)
+        ).fetchall()
+    ]
+    assert directive_texts == ["着户部清核辽饷。"]
+    dossiers = db.list_decree_dossiers()
+    assert [row["pending_action_id"] for row in dossiers] == [legal_id]
+    joined = "".join(row["text"] for row in seen["settle"])
+    assert "兵部再议" not in joined and "内库拨银" not in joined
+
+
+def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
+    """已有 draft 时 Web 结束回合走正常结算，而不是无诏快进。"""
     import asyncio
     import pytest
     import web_app
 
     db, state, content = game
     db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
+    calls = []
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=types.SimpleNamespace(
+            registry=None,
+            resolve_turn=lambda **_kwargs: (
+                calls.append("resolve")
+                or types.SimpleNamespace(awaiting=False, decisions=[])
+            ),
+        ),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: db.list_directives(state, statuses=("pending", "draft")),
     )
     monkeypatch.setattr(web_app, "web_game", stub)
 
-    with pytest.raises(web_app.HTTPException) as exc:
-        web_app.api_advance_without_edict()
+    out = web_app.api_advance_without_edict()
 
-    assert exc.value.status_code == 400
-    assert "未处理拟旨" in str(exc.value.detail)
+    assert out["awaiting_decision"] is False
+    assert calls == ["resolve"]
     assert state.turn == 1
 
 
@@ -1012,6 +1156,7 @@ def test_commit_appointment_applies_at_decree(game, monkeypatch):
         # 颁诏批量落库(带 content/registry)→ 任命才生效
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(a["kind"] == "office" for a in applied)
+        promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
             "SELECT name, office FROM characters WHERE name=?", (new_name,)).fetchone()
         assert row is not None and row["name"] == new_name
@@ -1321,7 +1466,7 @@ def test_commit_conversational_draft_false_rolls_back_side_effects(game, monkeyp
     name = _active_minister_name(db, content)
     pending_id = db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "严查辽饷。", "actor": name},
+        payload={**_POLICY_FIELDS, "text": "严查辽饷。", "actor": name},
     )
 
     def partial_apply(_state, _pa, _payload, **_kwargs):
@@ -1763,6 +1908,7 @@ def test_dialogue_affirm_commits_office_now(game, monkeypatch):
         GameSession.apply_cli_conversation_actions(
             sess, ch, player_message="准", answer="臣即拟铨。",
             has_directive=False, secret_order_id=None)
+        promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
             "SELECT name FROM characters WHERE name=?", (new_name,)).fetchone()
         assert row is not None and row["name"] == new_name
@@ -1793,11 +1939,9 @@ def test_commit_new_office_action_restores_when_post_create_helper_raises(game, 
     db.conn.commit()
 
     applied = db.commit_pending_actions(state, content=content, registry=None)
-
-    assert applied == []
-    assert db.list_pending_actions(state.turn) == []
-    failed = db.list_pending_actions(state.turn, status="failed")
-    assert len(failed) == 1
+    assert any(item["kind"] == "office" for item in applied)
+    with pytest.raises(ValueError, match="任免案卷载荷物化失败"):
+        promulgate_proposed_appointments(db, state, content)
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (new_name,)
     ).fetchone() is None
@@ -1831,6 +1975,7 @@ def test_commit_appointment_promotes_existing_minister(game, monkeypatch):
             "SELECT office FROM characters WHERE name=?", (name,)).fetchone()["office"] == old_office
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(a["kind"] == "office" for a in applied)   # 落库成功,非 failed
+        promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
             "SELECT office, status FROM characters WHERE name=?", (name,)).fetchone()
         assert row["office"] != old_office and row["office"]   # 改官生效
@@ -1856,6 +2001,13 @@ def test_commit_dismiss_clears_db_and_memory_office(game, monkeypatch):
             _fake_session(db, state), ch, player_message=f"革{name}职拿问",
             answer="臣无可辩,领罪。", has_directive=False, secret_order_id=None)
         db.commit_pending_actions(state, content=content, registry=None)
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": d["id"], "decision": "promulgated"}
+             for d in db.list_decree_dossiers(status="proposed")
+             if d["action_type"] == "dismiss_assignment"],
+            content=content,
+        )
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (name,)).fetchone()
         assert row["status"] == "dismissed"
@@ -1947,6 +2099,7 @@ def test_commit_appointment_consort_gets_office_type(game, monkeypatch):
             _fake_session(db, state), ch, player_message=f"册{new_consort}为贵妃",
             answer="臣为陛下贺。", has_directive=False, secret_order_id=None)
         db.commit_pending_actions(state, content=content, registry=None)
+        promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
             "SELECT office_type, faction FROM characters WHERE name=?", (new_consort,)).fetchone()
         assert row is not None
@@ -2006,6 +2159,7 @@ def test_commit_appointment_existing_minister_by_alias(game, monkeypatch):
             answer="臣领旨。", has_directive=False, secret_order_id=None)
         applied = db.commit_pending_actions(state, content=content, registry=None)
         assert any(x["kind"] == "office" for x in applied)   # 解析别名→在册调任,非拒
+        promulgate_proposed_appointments(db, state, content)
         row = db.conn.execute(
             "SELECT office, status FROM characters WHERE name=?", (target.name,)).fetchone()
         assert row["office"] and row["office"] != saved[0]   # 规范名被改官
@@ -2035,6 +2189,9 @@ def test_commit_reappoint_reactivates_dismissed_minister(game, monkeypatch):
         reg = _FakeRegistry()
         applied = db.commit_pending_actions(state, content=content, registry=reg)
         assert any(x["kind"] == "office" for x in applied)
+        promulgate_proposed_appointments(
+            db, state, content, registry=reg,
+        )
         row = db.conn.execute(
             "SELECT status, office FROM characters WHERE name=?", (b.name,)).fetchone()
         assert row["status"] == "active"        # 起复:改回 active
@@ -2184,6 +2341,14 @@ def test_commit_dismiss_refreshes_registry(game, monkeypatch):
         sess, a, player_message=f"革{b.name}职", answer="臣遵旨。",
         has_directive=False, secret_order_id=None)
     db.commit_pending_actions(state, content=content, registry=reg)
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": d["id"], "decision": "promulgated"}
+         for d in db.list_decree_dossiers(status="proposed")
+         if d["action_type"] == "dismiss_assignment"],
+        content=content,
+        registry=reg,
+    )
     assert b.name in reg.refreshed
     assert db.conn.execute(
         "SELECT status FROM characters WHERE name=?", (b.name,)).fetchone()["status"] == "dismissed"
@@ -2293,14 +2458,18 @@ def test_chat_confirm_defers_commit_at_front_half_done(game, monkeypatch):
     assert title == "原标题"  # 真表未动
 
 
-def test_front_half_done_directive_confirmation_preserves_pending_status(game, monkeypatch):
-    """恢复窗应允 directive 不即时 commit，但终端提交时仍进入 later 准/驳 pending。"""
+def test_front_half_done_directive_confirmation_commits_without_second_review(game, monkeypatch):
+    """恢复窗应允 directive 终端提交后直接成案，不回旧准驳 pending。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=name, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": name},
+        payload={
+            "text": "着户部清核辽饷。", "actor": name,
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "liao-pay-audit",
+        },
     )
     state.turn_phase = "settling"
 
@@ -2320,5 +2489,5 @@ def test_front_half_done_directive_confirmation_preserves_pending_status(game, m
         "SELECT status, text FROM turn_directives WHERE turn=?",
         (state.turn,),
     ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "draft"
     assert row["text"] == "着户部清核辽饷。"
