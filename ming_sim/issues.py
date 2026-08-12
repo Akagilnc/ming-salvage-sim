@@ -5459,7 +5459,15 @@ def apply_issue_tracker_output(
         if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:
             linked_dossier = db.get_decree_dossier(int(origin_ref.split(":", 1)[1]))
         deterministic_breach = bool(
-            linked_dossier and linked_dossier["status"] in {"promulgated", "executing"}
+            linked_dossier
+            and (
+                linked_dossier["status"] in {"promulgated", "executing"}
+                or (
+                    linked_dossier["status"] == "closed"
+                    and bool(row["commitment_kind"])
+                    and db.dossier_authorizes_effects(int(linked_dossier["id"]))
+                )
+            )
         )
         if deterministic_breach:
             db.breach_decree_dossier(

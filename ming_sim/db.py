@@ -1943,6 +1943,7 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
+        self._migrate_legacy_reaction_severity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -11255,6 +11256,54 @@ class GameDB:
     _REACTION_SIGN = {"positive": 1, "negative": -1}
     _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
 
+    @staticmethod
+    def _migrate_reaction_value(value: object) -> tuple[object, bool]:
+        """Translate only the two persisted pre-signed severity spellings."""
+        changed = False
+        if isinstance(value, dict):
+            value = dict(value)
+            severity = value.get("severity")
+            mapped = {"大怒": ("negative", "strong"), "不满": ("negative", "weak")}.get(severity)
+            if mapped is not None:
+                value.pop("severity", None)
+                value["direction"], value["intensity"] = mapped
+                changed = True
+        elif isinstance(value, list):
+            migrated = []
+            for item in value:
+                new_item, item_changed = GameDB._migrate_reaction_value(item)
+                migrated.append(new_item)
+                changed = changed or item_changed
+            value = migrated
+        return value, changed
+
+    def _migrate_legacy_reaction_severity(self) -> None:
+        """Idempotently repair persisted verdict reaction fields, never live payloads."""
+        for table, id_col, json_col in (
+            ("pending_promulgation_verdicts", "rowid", "verdict_json"),
+            ("decree_dossier_decisions", "id", "affected_parties_json"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT {id_col} AS migration_id,{json_col} AS payload FROM {table}"
+            ).fetchall():
+                try:
+                    value = json.loads(str(row["payload"] or ""))
+                except ValueError:
+                    continue
+                if table == "pending_promulgation_verdicts" and isinstance(value, dict):
+                    affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
+                    if changed:
+                        value = dict(value)
+                        value["affected_parties"] = affected
+                else:
+                    value, changed = self._migrate_reaction_value(value)
+                if changed:
+                    self.conn.execute(
+                        f"UPDATE {table} SET {json_col}=? WHERE {id_col}=?",
+                        (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
+                    )
+        self.conn.commit()
+
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
         target_id: str, delta: int, reason: str, *, cost_identity: str,
@@ -11322,12 +11371,16 @@ class GameDB:
         self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
         commit: bool = True,
     ) -> bool:
-        """Withdraw an already promulgated promise and charge ADR 0056 once."""
-        with atomic(self):
+        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        transaction = atomic(self) if commit else contextlib.nullcontext()
+        with transaction:
             dossier = self.get_decree_dossier(dossier_id)
             if dossier is None:
                 raise KeyError(f"案卷不存在：{dossier_id}")
-            if dossier["status"] not in {"promulgated", "executing"}:
+            was_closed = dossier["status"] == "closed"
+            if dossier["status"] not in {"promulgated", "executing"} and not (
+                was_closed and self.dossier_authorizes_effects(dossier_id)
+            ):
                 return False
             if not self._record_decree_cost(
                 dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
@@ -11384,12 +11437,16 @@ class GameDB:
                     _apply_faction_dict(
                         self, {faction: {"satisfaction": breach_delta}}, commit=False,
                     )
-            self.conn.execute(
-                "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
-                (state.turn, reason, int(dossier_id)),
-            )
-        if commit and self.conn.in_transaction:
-            self.conn.commit()
+            if was_closed:
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
+                    (reason, int(dossier_id)),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
+                    (state.turn, reason, int(dossier_id)),
+                )
         return True
 
     def save_pending_promulgation_verdicts(
