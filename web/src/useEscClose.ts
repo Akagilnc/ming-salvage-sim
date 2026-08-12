@@ -2,6 +2,8 @@ import React from "react";
 import type { ModalName } from "./types";
 
 // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。layers 按优先级从高到低传入。
+// ending 故意不进全屏名单：须经 layers 首层 close（同时 setEndingDismissed），
+// 否则仅 setActiveModal("none") 会被 auto-open effect 立刻重开。
 export function useEscClose(
   activeModal: ModalName,
   setActiveModal: (modal: ModalName) => void,

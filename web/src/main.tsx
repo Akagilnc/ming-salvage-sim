@@ -333,8 +333,10 @@ export function App() {
     selectedMinisterRef.current = selectedMinister;
   }, [selectedMinister]);
 
-  // 全局 ESC：按 z-index 优先级，最前面的弹窗先关
+  // 全局 ESC：按 z-index 优先级，最前面的弹窗先关。
+  // ending 须同时 setEndingDismissed，否则自动重开 effect 会立刻弹回。
   useEscClose(activeModal, setActiveModal, [
+    { open: activeModal === "ending", close: () => { setEndingDismissed(true); setActiveModal("none"); } },
     { open: drawerOpen, close: () => setDrawerOpen(false) },
     { open: haremDrawerOpen, close: () => setHaremDrawerOpen(false) },
     { open: armyDrawerOpen, close: () => setArmyDrawerOpen(false) },
