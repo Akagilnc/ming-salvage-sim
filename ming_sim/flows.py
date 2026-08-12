@@ -1707,6 +1707,7 @@ def _apply_class_dict(
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if not isinstance(fields, dict):
+            rejected.append(_value_reject(key, fields, fields))
             continue
         entry: Dict[str, int] = {}
         for fname in ("satisfaction", "leverage"):

@@ -49,7 +49,7 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
     events = db.list_decree_cost_events(dossier_id)
     assert {(x["cost_kind"], x["target_kind"], x["target_id"]) for x in events} == {
         ("authority", "metric", "皇威"), ("satisfaction", "class", "士绅"),
-        ("satisfaction", "faction", "东林"), ("stigma", "dossier", str(dossier_id)),
+        ("satisfaction", "faction", "东林"),
     }
     assert all(x["target_id"] != "阉党" for x in events)
 
@@ -76,10 +76,10 @@ def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_author
     authority = state.metrics["皇威"]
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
-    assert {x["cost_kind"] for x in db.list_decree_cost_events(dossier_id)} == {"satisfaction", "stigma"}
+    assert {x["cost_kind"] for x in db.list_decree_cost_events(dossier_id)} == {"satisfaction"}
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     assert state.metrics["皇威"] == max(0, authority - 5)
-    assert len(db.list_decree_cost_events(dossier_id)) == 4
+    assert len(db.list_decree_cost_events(dossier_id)) == 3
 
 
 def test_costs_are_idempotent_and_survive_restore(game):
@@ -91,15 +91,53 @@ def test_costs_are_idempotent_and_survive_restore(game):
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     db.apply_dossier_verdicts(state, [verdict])
-    assert len(db.list_decree_cost_events(dossier_id)) == 3
+    assert len(db.list_decree_cost_events(dossier_id)) == 2
     path = db.path
     db.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        assert len(restored.list_decree_cost_events(dossier_id)) == 3
+        assert len(restored.list_decree_cost_events(dossier_id)) == 2
     finally:
         restored.close()
+
+
+def test_force_then_breach_charges_each_real_entry_independently(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state, roster=[
+        {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
+    ])
+    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    authority = state.metrics["皇威"]
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+    after_force = _sat(db, "factions", "东林")
+
+    assert db.breach_decree_dossier(state, dossier_id, reason="撤回成命") is True
+    assert state.metrics["皇威"] == max(0, authority - 10)
+    assert _sat(db, "factions", "东林") == max(0, after_force - 4)
+    authority_events = [
+        row for row in db.list_decree_cost_events(dossier_id)
+        if row["cost_kind"] == "authority"
+    ]
+    assert {row["cost_identity"] for row in authority_events} == {"override", "breach"}
+
+
+def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
+    db, state, _ = game
+    roster = [
+        {"character_id": "徐光启", "tier": "主办", "role": "总理"},
+        {"character_id": "毕自严", "tier": "主办", "role": "核账"},
+    ]
+    dossier_id = _dossier(db, state, roster=roster)
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    db.conn.execute("UPDATE characters SET status='dead' WHERE name='徐光启'")
+    db.conn.execute("UPDATE characters SET status='inactive' WHERE name='毕自严'")
+
+    assert db.breach_decree_dossier(state, dossier_id) is True
+    targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
+    assert "徐光启" not in targets
+    assert "毕自严" in targets
+    assert "跳过已故参与者徐光启" in caplog.text
 
 
 def test_breach_charges_authority_ministers_and_related_factions_once(game):
