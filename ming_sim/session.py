@@ -1104,7 +1104,7 @@ class GameSession:
                 if draft_text:
                     # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
                     result.pending_action_id = self.db.stage_explicit_directive(
-                        self.state.turn, character.name, draft_text)
+                        self.state.turn, character.name, draft_text, mode=message_text)
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1112,7 +1112,9 @@ class GameSession:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
-                result.pending_action_id = self._stage_appointment_candidate(payload, character)
+                result.pending_action_id = self._stage_appointment_candidate(
+                    payload, character, message_text,
+                )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
@@ -1372,29 +1374,45 @@ class GameSession:
                         self.db.flag_directive_needs_clarification(int(p["id"]))
                     return out
             if confirm == "应允":
-                if self.state.turn_phase in FRONT_HALF_DONE_PHASES:
-                    # 恢复窗确认不即时落库（事务外落真表，后续 settle 中止不回滚=半写）。
-                    # 动作留 pending，由推进回合的终端 atomic 统一落（所有权规则，ship-pre r2）。
-                    for pending_directive in directive_confirm_targets:
-                        try:
-                            payload = json.loads(pending_directive.get("payload_json") or "{}")
-                        except (ValueError, TypeError):
-                            payload = {}
-                        if not isinstance(payload, dict):
-                            payload = {}
+                # 确认轮仍是皇帝权威：只为有效对象补确认元数据；载荷有效性及失败状态
+                # 仍由 commit_pending_actions 拥有，坏 JSON/非对象必须原样交给该终端。
+                from ming_sim.cli_backend import resolve_directive_mode
+                from ming_sim.audience_night import get_open_night, mark_actions_night_approved
+                recovery_confirmation = self.state.turn_phase in FRONT_HALF_DONE_PHASES
+                open_n = None if recovery_confirmation else get_open_night(self.db)
+                valid_payloads = {}
+                for pending in confirm_targets:
+                    if pending["kind"] not in {"directive", "office"}:
+                        continue
+                    try:
+                        payload = json.loads(pending.get("payload_json"))
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    payload["mode"] = resolve_directive_mode(
+                        player_message, existing=payload.get("mode"),
+                    )
+                    if pending["kind"] == "directive" and (
+                            recovery_confirmation or open_n is not None):
                         payload["_directive_status"] = "pending"
-                        payload.pop("_needs_clarification", None)  # #502 L4：应允该道即消其待澄清标（勿从旧快照回灌）
-                        self.db.conn.execute(
-                            "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                            (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
-                        )
-                    if directive_confirm_targets:
-                        self.db.conn.commit()
-                else:
+                        payload.pop("_needs_clarification", None)
+                    valid_payloads[int(pending["id"])] = (pending, payload)
+                for pending_id, (pending, payload) in valid_payloads.items():
+                    encoded_payload = json.dumps(payload, ensure_ascii=False)
+                    self.db.conn.execute(
+                        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                        (encoded_payload, pending_id),
+                    )
+                    pending["payload_json"] = encoded_payload
+                if valid_payloads:
+                    self.db.conn.commit()
+
+                if not recovery_confirmation:
+                    # 恢复窗确认不进此分支：动作留 pending，由推进回合的终端 atomic 统一落，
+                    # 避免事务外落真表后 settle 中止造成半写（所有权规则，ship-pre r2）。
                     # #498 / ADR 0038：开夜期间 office/consort/directive 应允 = 标 night_approved，
                     # 收夜才提交；密令仍应允即落地（白名单直写）。无开夜则保持历史即时 commit。
-                    from ming_sim.audience_night import get_open_night, mark_actions_night_approved
-                    open_n = get_open_night(self.db)
                     if open_n is not None:
                         defer_ids = {
                             int(p["id"]) for p in confirm_targets
@@ -1402,23 +1420,6 @@ class GameSession:
                         }
                         immediate_ids = confirm_action_ids - defer_ids
                         if defer_ids:
-                            for pending_directive in directive_confirm_targets:
-                                if int(pending_directive["id"]) not in defer_ids:
-                                    continue
-                                try:
-                                    payload = json.loads(pending_directive.get("payload_json") or "{}")
-                                except (ValueError, TypeError):
-                                    payload = {}
-                                if not isinstance(payload, dict):
-                                    payload = {}
-                                payload["_directive_status"] = "pending"
-                                payload.pop("_needs_clarification", None)  # #502 L4：同上（夜内应允路）
-                                self.db.conn.execute(
-                                    "UPDATE pending_actions SET payload_json=? WHERE id=?",
-                                    (json.dumps(payload, ensure_ascii=False), int(pending_directive["id"])),
-                                )
-                            if directive_confirm_targets:
-                                self.db.conn.commit()
                             mark_actions_night_approved(
                                 self.db, sorted(defer_ids), night_id=int(open_n["id"]))
                         if immediate_ids:
@@ -1511,7 +1512,7 @@ class GameSession:
         if not has_directive and acts["decree_text"]:
             # #502 L2：前缀「拟旨如下：」显式拟旨走单一 seam——已有候选则新拟独立一道，不压扁前道。
             out["pending_action_id"] = self.db.stage_explicit_directive(
-                self.state.turn, minister_name, acts["decree_text"])
+                self.state.turn, minister_name, acts["decree_text"], mode=message_text)
         def _stage_secret_order_candidate(so: Dict[str, Any]) -> int:
             assignee = so.get("assignee") or minister_name
             return self.db.stage_pending_action(
@@ -1732,7 +1733,9 @@ class GameSession:
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
 
-    def _stage_appointment_candidate(self, payload: str, appointer: Character) -> int:
+    def _stage_appointment_candidate(
+        self, payload: str, appointer: Character, message_text: str,
+    ) -> int:
         """把吏部 propose_appointment 工具结果接入与口头任免相同的确认闸门。"""
         if GameSession._proposal_blocked(self.state):
             return 0
@@ -1753,6 +1756,10 @@ class GameSession:
         if action == "任命" and not office:
             return 0
         staged_payload = {"name": name, "office": office, "appointer": appointer.name}
+        from ming_sim.cli_backend import resolve_directive_mode
+        staged_payload["mode"] = resolve_directive_mode(
+            message_text, data.get("mode") or data.get("颁布方式"),
+        )
         metadata_aliases = {
             "office_type": "官署类别",
             "faction": "派系",
