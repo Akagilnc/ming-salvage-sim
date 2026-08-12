@@ -52,7 +52,9 @@ from ming_sim.relations import (
     normalize_evidence,
     validate_edge_kind,
 )
-from ming_sim.strict_types import strict_int, validate_rejection_verdict
+from ming_sim.strict_types import (
+    strict_int, validate_rejection_verdict, validate_verdict_affected_parties,
+)
 from ming_sim.token_stats import tlog
 
 CURRENT_RESOLVE_CONTRACT_VERSION = 1
@@ -11328,21 +11330,40 @@ class GameDB:
         value = json.loads(str(row["affected_parties_json"] or "[]"))
         return value if isinstance(value, list) else []
 
+    def _apply_authority_cost(
+        self, state: GameState, dossier_id: int, reason: str, *, cost_identity: str,
+    ) -> None:
+        """Record and apply the shared authority event exactly once."""
+        if not self._record_decree_cost(
+            dossier_id, state.turn, "authority", "metric", "皇威",
+            self._OVERRIDE_AUTHORITY_COST, reason, cost_identity=cost_identity,
+        ):
+            return
+        state.metrics["皇威"] = max(
+            0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST,
+        )
+        self.conn.execute(
+            "INSERT INTO metrics(key,value) VALUES('皇威',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (state.metrics["皇威"],),
+        )
+
     def _apply_override_costs(
         self, state: GameState, dossier_id: int, *, include_authority: bool,
         include_parties: bool, stigma_reason: str, commit: bool = True,
     ) -> None:
         """ADR 0056 narrow rail: authority and typed signed reactions."""
-        if include_authority and self._record_decree_cost(
-            dossier_id, state.turn, "authority", "metric", "皇威",
-            self._OVERRIDE_AUTHORITY_COST, stigma_reason, cost_identity="override",
-        ):
-            state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
-            self.conn.execute(
-                "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (state.metrics["皇威"],),
+        if include_authority:
+            self._apply_authority_cost(
+                state, dossier_id, stigma_reason, cost_identity="override",
             )
-        if include_parties:
+        parties_already_applied = self.conn.execute(
+            """SELECT 1 FROM decree_cost_events
+               WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override'
+               LIMIT 1""",
+            (int(dossier_id),),
+        ).fetchone() is not None
+        if include_parties and not parties_already_applied:
             for party in self._latest_affected_parties(dossier_id):
                 kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
                 magnitude = self._REACTION_INTENSITY.get(str(party.get("intensity") or ""))
@@ -11387,14 +11408,8 @@ class GameDB:
                 cost_identity="breach",
             ):
                 return False
-            self._record_decree_cost(
-                dossier_id, state.turn, "authority", "metric", "皇威",
-                self._OVERRIDE_AUTHORITY_COST, reason, cost_identity="breach",
-            )
-            state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
-            self.conn.execute(
-                "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (state.metrics["皇威"],),
+            self._apply_authority_cost(
+                state, dossier_id, reason, cost_identity="breach",
             )
             roster = dossier.get("participant_roster") or []
             ministers = set()
@@ -11491,34 +11506,39 @@ class GameDB:
         content=None, registry=None,
     ) -> None:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
-        # This public seam is also used outside resolve_directives.  Reuse the
-        # settlement rollback primitive so failed later verdicts restore both
-        # SQLite and the caller's in-memory GameState.
+        # Validate the complete batch before the first write at this public seam.
+        rows = list(verdicts)
+        faction_names = {str(row["name"]) for row in self.conn.execute("SELECT name FROM factions")}
+        class_names = {str(row["name"]) for row in self.conn.execute("SELECT DISTINCT name FROM classes")}
+        character_ids = {str(row["name"]) for row in self.conn.execute("SELECT name FROM characters")}
+        for verdict in rows:
+            if not isinstance(verdict, dict):
+                raise ValueError("案卷 verdict 须为对象")
+            dossier_id = strict_int(verdict.get("dossier_id"))
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            decision = str(verdict.get("decision") or "")
+            validate_verdict_affected_parties(
+                verdict, str(dossier.get("mode") or "ordinary"),
+                faction_names=faction_names, class_names=class_names,
+            )
+            if decision == "rejected":
+                validate_rejection_verdict(
+                    verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
+                    faction_names=faction_names, class_names=class_names,
+                    character_ids=character_ids,
+                )
+
+        # Reuse the settlement rollback primitive so failed later effects restore
+        # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
         with atomic_and_reload(self, state, content=content, registry=registry):
-            for verdict in verdicts:
-                if not isinstance(verdict, dict):
-                    raise ValueError("案卷 verdict 须为对象")
+            for verdict in rows:
                 decision = str(verdict.get("decision") or "")
                 opponents = verdict.get("primary_opponents")
                 snapshot = verdict.get("criteria_snapshot")
-                if decision == "rejected":
-                    validate_rejection_verdict(
-                        verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
-                        faction_names={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT name FROM factions")
-                        },
-                        class_names={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
-                        },
-                        character_ids={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT name FROM characters")
-                        },
-                    )
                 self.apply_dossier_promulgation(
                     state, strict_int(verdict.get("dossier_id")), decision,
                     blocked_layer=str(verdict.get("blocked_layer") or ""),
