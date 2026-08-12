@@ -17,6 +17,7 @@ from ming_sim.agents import (
     _dump_llm_messages,
     create_chapter_memory_agent,
     create_decree_writer_agent,
+    create_promulgation_judge_agent,
     create_ending_summary_agent,
     create_json_sanitizer_agent,
     create_score_extractor_module_agent,
@@ -51,6 +52,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
+from ming_sim.qualitative import qualitative_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -60,7 +62,7 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-from ming_sim.strict_types import validate_rejection_verdict
+from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -108,7 +110,7 @@ class PromulgationVerdictProvider(Protocol):
 def stub_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState,
 ) -> List[Dict[str, object]]:
-    """S5 默认判官：确定性逐案顺颁，零 LLM、零等待。"""
+    """Deterministic auto-promulgation for exempt dossiers and explicit test fixtures."""
     del state
     return [
         {"dossier_id": int(row["id"]), "decision": "promulgated"}
@@ -116,8 +118,148 @@ def stub_promulgation_verdicts(
     ]
 
 
+def build_promulgation_judge_context(
+    db: GameDB,
+    state: GameState,
+    dossiers: Sequence[Dict[str, object]],
+    *,
+    break_rank_by_dossier: Optional[Dict[int, object]] = None,
+) -> Dict[str, object]:
+    """Build the deterministic, satisfaction-free snapshot for the single judge call."""
+    break_rank = break_rank_by_dossier or {}
+    faction_rows = db.conn.execute(
+        "SELECT name,leverage,agenda FROM factions ORDER BY name"
+    ).fetchall()
+    class_rows = db.conn.execute(
+        "SELECT DISTINCT name FROM classes ORDER BY name"
+    ).fetchall()
+    issue_rows = db.list_active_issues()
+    authority = int(state.metrics.get("皇威", 0))
+    authority_band = qualitative_band(
+        authority, ("极弱", "偏弱", "中等", "偏强", "强盛")
+    )
+    assert authority_band in IMPERIAL_AUTHORITY_BANDS
+    dossier_rows: List[Dict[str, object]] = []
+    for row in sorted(dossiers, key=lambda item: int(item["id"])):
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        target_id = row.get("target_id")
+        appointment_tenure = str(payload.get("任别") or "")
+        authorization_ids = payload.get("authorization_ids", [])
+        if not isinstance(authorization_ids, list):
+            authorization_ids = []
+        authorization_id = payload.get("authorization_id")
+        if authorization_id and str(authorization_id) not in authorization_ids:
+            authorization_ids = [*authorization_ids, str(authorization_id)]
+        endorsement_ids = payload.get("endorsement_entry_ids", [])
+        if not isinstance(endorsement_ids, list):
+            endorsement_ids = []
+        dossier_rows.append({
+            "id": int(row["id"]),
+            "action_type": str(row.get("action_type") or ""),
+            "decree_text": str(row.get("decree_text") or ""),
+            "target_kind": str(row.get("target_kind") or ""),
+            "target_id": target_id,
+            "mode": str(payload.get("mode") or "ordinary"),
+            "appointment_tenure": appointment_tenure,
+            "break_rank": break_rank.get(int(row["id"])),
+            "criteria_snapshot_source": {
+                "imperial_authority_band": authority_band,
+                "appointment_tenure": appointment_tenure,
+                "authorization_ids": sorted(set(map(str, authorization_ids))),
+                "endorsement_entry_ids": sorted(set(endorsement_ids)),
+            },
+        })
+    gatekeepers = [
+        {
+            **dict(row),
+            "courage": qualitative_character_axis("courage", row["courage"]),
+            "integrity": qualitative_character_axis("integrity", row["integrity"]),
+        }
+        for row in db.conn.execute(
+            "SELECT name,office,office_type,faction,courage,integrity FROM characters "
+            "WHERE status='active' AND power_id='ming' AND "
+            "(office LIKE '%首辅%' OR office LIKE '%掌印%' OR office LIKE '%给事中%' "
+            "OR office_type='六科') ORDER BY office_type,office,name"
+        ).fetchall()
+    ]
+    history = []
+    for item in db.conn.execute(
+        "SELECT d.dossier_id,d.turn,d.decision,d.rescript_action,x.payload_json "
+        "FROM decree_dossier_decisions d JOIN decree_dossiers x ON x.id=d.dossier_id "
+        "ORDER BY d.turn,d.dossier_id,d.id"
+    ).fetchall():
+        payload = json.loads(str(item["payload_json"] or "{}"))
+        mode = str(payload.get("mode") or "ordinary")
+        rescript_action = str(item["rescript_action"] or "")
+        forced = rescript_action == "force_promulgated"
+        # A rescript disposition is not another promulgation attempt.  Force is
+        # retained independently because it is itself a durable history marker.
+        if not forced and (mode != "midzhi" or rescript_action):
+            continue
+        history.append({
+            "dossier_id": int(item["dossier_id"]), "turn": int(item["turn"]),
+            "mode": mode, "marker": "批红强颁" if forced else "中旨",
+            "outcome": "promulgated" if forced else str(item["decision"]),
+        })
+    return {
+        "turn": {"turn": state.turn, "year": state.year, "period": state.period},
+        "dossiers": dossier_rows,
+        "factions": [
+            {"name": str(row["name"]), "leverage": int(row["leverage"]),
+             "agenda": str(row["agenda"] or "")}
+            for row in faction_rows
+        ],
+        "imperial_authority_band": authority_band,
+        # Enumeration only: classes are valid affected-party keys, never an
+        # extra resistance signal (in particular no satisfaction is exposed).
+        "classes": [str(row["name"]) for row in class_rows],
+        "gatekeepers": gatekeepers,
+        "promulgation_history": history,
+        "current_events": [
+            {key: row[key] for key in ("id", "title", "status") if key in row.keys()}
+            for row in issue_rows
+        ],
+    }
+
+
+def _require_promulgation_verdict_list(
+    generated: object, *, raw_value: object = None,
+) -> List[Dict[str, object]]:
+    """Canonical top-level shape authority for every promulgation verdict batch."""
+    if not isinstance(generated, list):
+        raise LLMContractError(
+            "颁布判官 verdicts 必须为列表", raw_value=raw_value,
+        )
+    return generated
+
+
+def llm_promulgation_verdicts(
+    dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
+    agno_db: SqliteDb, llm_config: LLMConfig,
+    break_rank_by_dossier: Optional[Dict[int, object]] = None,
+    prepared_context: Optional[Dict[str, object]] = None,
+) -> List[Dict[str, object]]:
+    """Run exactly one LLM call for one reviewed promulgation batch."""
+    context = prepared_context or build_promulgation_judge_context(
+        db, state, dossiers, break_rank_by_dossier=break_rank_by_dossier,
+    )
+    agent = create_promulgation_judge_agent(llm_config, agno_db)
+    raw = run_agent_text(
+        agent, json.dumps(context, ensure_ascii=False, sort_keys=True),
+        tag="promulgation-judge",
+    )
+    parsed = parse_agent_json(raw, "颁布判官")
+    verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
+    return _require_promulgation_verdict_list(verdicts, raw_value=parsed)
+
+
 def _validate_promulgation_verdict_item(
     row: object, db: GameDB,
+    *,
+    proposed_modes: Optional[Dict[int, str]] = None,
+    prepared_context: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
     """The single shape/identity authority for one provider verdict."""
     if not isinstance(row, dict):
@@ -128,23 +270,87 @@ def _validate_promulgation_verdict_item(
     if (isinstance(dossier_id, bool) or not isinstance(dossier_id, int)
             or not 0 < dossier_id <= 2 ** 63 - 1):
         raise LLMContractError("颁布判决 dossier_id 必须为有效 SQLite 正整数")
-    faction_names = {
-        str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
-    }
-    class_names = {
-        str(item["name"]) for item in db.conn.execute("SELECT DISTINCT name FROM classes")
+
+    context = prepared_context or {}
+    if prepared_context is not None:
+        faction_names = {
+            str(item["name"]) for item in context.get("factions", [])
+            if isinstance(item, dict)
+        }
+        class_names = {str(item) for item in context.get("classes", [])}
+        gatekeeper_ids = {
+            str(item["name"]) for item in context.get("gatekeepers", [])
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        context_dossiers = {
+            int(item["id"]): item for item in context.get("dossiers", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), int)
+        }
+    else:
+        faction_names = {
+            str(item["name"]) for item in db.conn.execute("SELECT name FROM factions")
+        }
+        class_names = {
+            str(item["name"])
+            for item in db.conn.execute("SELECT DISTINCT name FROM classes")
+        }
+        gatekeeper_ids = {
+            str(item["name"])
+            for item in db.conn.execute("SELECT name FROM characters")
+        }
+        context_dossiers = {}
+
+    modes = proposed_modes or {}
+    rejection_only_fields = {
+        "blocked_layer", "primary_opponents", "gatekeeper_id", "reason",
+        "criteria_snapshot", "midzhi_unpromulgatable",
     }
     try:
+        decision = row.get("decision")
+        if decision == "promulgated" and rejection_only_fields & row.keys():
+            raise ValueError("顺颁判决不得携带打回专属字段")
         marker = row.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
-        if marker and row.get("decision") != "rejected":
-            raise ValueError("中旨亦不可颁只能标记打回判决")
+        mode = modes.get(dossier_id) if isinstance(dossier_id, int) else None
+        if marker:
+            if mode is not None:
+                if decision != "rejected" or mode != "midzhi":
+                    raise ValueError("中旨亦不可颁只能标记中旨打回判决")
+            elif decision != "rejected":
+                raise ValueError("中旨亦不可颁只能标记打回判决")
         if any(isinstance(key, str) and key.startswith("resistance_") for key in row):
             raise ValueError("颁布判决不得携带阻力数值字段")
-        affected = row.get("affected_parties", [])
-        if not isinstance(affected, list):
-            raise ValueError("受损方必须为 typed 清单")
+        # Exact verdict-key enforcement (#561) when mode is known from proposed set.
+        if mode is not None:
+            allowed_keys = {"dossier_id", "decision"}
+            if decision == "promulgated" and mode == "midzhi":
+                allowed_keys.add("affected_parties")
+            elif decision == "rejected":
+                allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
+                allowed_keys.update({"affected_parties", "legal_reason_code"})
+                if mode == "midzhi":
+                    allowed_keys.add("midzhi_unpromulgatable")
+            unknown_keys = set(row) - allowed_keys
+            if unknown_keys:
+                raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
+            needs_affected = (
+                decision == "rejected"
+                or mode == "midzhi"
+            )
+            if needs_affected and "affected_parties" not in row:
+                raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
+            if not needs_affected and "affected_parties" in row:
+                raise ValueError("普通顺颁判决不得携带受损方")
+            affected = row.get("affected_parties", [])
+            if not isinstance(affected, list):
+                raise ValueError("受损方必须为 typed 清单")
+            if needs_affected and not affected:
+                raise ValueError("打回或中旨判决的受损方清单不得为空")
+        else:
+            affected = row.get("affected_parties", [])
+            if not isinstance(affected, list):
+                raise ValueError("受损方必须为 typed 清单")
         for party in affected:
             if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
                 raise ValueError("受损方须且仅含 kind/key/severity")
@@ -160,11 +366,14 @@ def _validate_promulgation_verdict_item(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},
                 faction_names=faction_names,
                 class_names=class_names,
-                character_ids={
-                    str(item["name"])
-                    for item in db.conn.execute("SELECT name FROM characters")
-                },
+                character_ids=gatekeeper_ids,
             )
+            if dossier_id in context_dossiers:
+                source_snapshot = context_dossiers[dossier_id].get(
+                    "criteria_snapshot_source"
+                )
+                if row.get("criteria_snapshot") != source_snapshot:
+                    raise ValueError("打回判决 criteria_snapshot 与判官输入原值不一致")
     except ValueError as exc:
         raise LLMContractError(str(exc)) from exc
     return row
@@ -172,11 +381,50 @@ def _validate_promulgation_verdict_item(
 
 def validate_promulgation_verdicts(
     generated: object, proposed_dossiers: Sequence[Dict[str, object]], db: GameDB,
+    *, prepared_context: Optional[Dict[str, object]] = None,
 ) -> List[Dict[str, object]]:
     """Validate items through one authority, then enforce batch coverage once."""
-    if not isinstance(generated, list):
-        raise LLMContractError("颁布判官 verdicts 必须为列表")
-    rows = [_validate_promulgation_verdict_item(row, db) for row in generated]
+    generated = _require_promulgation_verdict_list(generated)
+    context = prepared_context
+    if context is None:
+        # Minimal identity sets when callers do not pass the judge snapshot.
+        context = {
+            "dossiers": [],
+            "factions": [
+                dict(item) for item in db.conn.execute("SELECT name FROM factions")
+            ],
+            "classes": [
+                str(item["name"]) for item in db.conn.execute(
+                    "SELECT DISTINCT name FROM classes ORDER BY name"
+                )
+            ],
+            "gatekeepers": [
+                {"name": str(item["name"])}
+                for item in db.conn.execute("SELECT name FROM characters")
+            ],
+        }
+    proposed_modes: Dict[int, str] = {}
+    for dossier in proposed_dossiers:
+        payload = dossier.get("payload")
+        if not isinstance(payload, dict):
+            payload = json.loads(str(dossier.get("payload_json") or "{}"))
+        action_type = dossier.get("action_type")
+        external_review = (
+            dossier_action_policy(action_type, payload)["external_review"]
+            if action_type is not None else True
+        )
+        # Exempt actions are deterministic auto-promulgations, not judge
+        # verdicts. Their payload mode cannot require reviewed-only evidence.
+        proposed_modes[int(dossier["id"])] = (
+            str(payload.get("mode") or "ordinary")
+            if external_review else "ordinary"
+        )
+    rows = [
+        _validate_promulgation_verdict_item(
+            row, db, proposed_modes=proposed_modes, prepared_context=context,
+        )
+        for row in generated
+    ]
     verdict_ids = {int(row["dossier_id"]) for row in rows}
     proposed_ids = {int(row["id"]) for row in proposed_dossiers}
     if verdict_ids != proposed_ids or len(rows) != len(proposed_ids):
@@ -523,34 +771,48 @@ def resolve_directives(
     verdict_rows: List[Dict[str, object]] = []
     rejected_verdict_batch: object = None
     reviewed_dossier_ids: Optional[set[int]] = None
+    prepared_context: Optional[Dict[str, object]] = None
+    proposed_modes: Dict[int, str] = {}
     try:
         if proposed_dossiers:
+            reviewed, exempt = [], []
+            for dossier in proposed_dossiers:
+                payload = dossier.get("payload")
+                if not isinstance(payload, dict):
+                    payload = json.loads(str(dossier.get("payload_json") or "{}"))
+                proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
+                (reviewed if dossier_action_policy(
+                    dossier.get("action_type"), payload,
+                )["external_review"] else exempt).append(dossier)
+            # One prepared object is the judge input and validator truth source.
+            # Exempt dossiers are included only for ID/mode validation; they are
+            # never sent to the LLM.
+            prepared_context = build_promulgation_judge_context(db, state, reviewed)
+            reviewed_dossier_ids = {int(row["id"]) for row in reviewed}
             # A validated batch is durable before any simulator work.  Recovery is
             # turn-scoped: an old hold verdict can never suppress this month's call.
             stored = db.get_pending_promulgation_verdicts(state.turn)
             if stored:
                 rejected_verdict_batch = stored
-                verdict_rows = validate_promulgation_verdicts(stored, proposed_dossiers, db)
+                verdict_rows = validate_promulgation_verdicts(
+                    stored, proposed_dossiers, db, prepared_context=prepared_context,
+                )
             else:
-                reviewed, exempt = [], []
-                for dossier in proposed_dossiers:
-                    payload = dossier.get("payload")
-                    if not isinstance(payload, dict):
-                        payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                    (reviewed if dossier_action_policy(
-                        dossier.get("action_type"), payload,
-                    )["external_review"] else exempt).append(dossier)
-                provider = promulgation_verdict_provider or stub_promulgation_verdicts
-                reviewed_dossier_ids = {int(row["id"]) for row in reviewed}
-                generated = provider(reviewed, state) if reviewed else []
+                provider = promulgation_verdict_provider
+                generated = (
+                    provider(reviewed, state) if provider is not None else
+                    llm_promulgation_verdicts(
+                        reviewed, state, db=db, agno_db=agno_db,
+                        llm_config=llm_config, prepared_context=prepared_context,
+                    )
+                ) if reviewed else []
                 rejected_verdict_batch = generated
-                if not isinstance(generated, list):
-                    raise LLMContractError("颁布判官 verdicts 必须为列表")
-                generated = generated + (
+                generated = _require_promulgation_verdict_list(generated) + (
                     stub_promulgation_verdicts(exempt, state) if exempt else []
                 )
                 verdict_rows = validate_promulgation_verdicts(
                     generated, proposed_dossiers, db,
+                    prepared_context=prepared_context,
                 )
                 db.save_pending_promulgation_verdicts(state.turn, verdict_rows)
     except LLMContractError as exc:
@@ -563,7 +825,11 @@ def resolve_directives(
             seen_provider_ids: set[int] = set()
             for candidate in rejected_verdict_batch:
                 try:
-                    valid_candidate = _validate_promulgation_verdict_item(candidate, db)
+                    valid_candidate = _validate_promulgation_verdict_item(
+                        candidate, db,
+                        proposed_modes=proposed_modes,
+                        prepared_context=prepared_context,
+                    )
                 except LLMContractError as item_exc:
                     rejected_items.append((candidate, str(item_exc)))
                     continue
@@ -614,7 +880,13 @@ def resolve_directives(
     }
     simulation_visible_dossiers = [
         {
-            **row,
+            **(
+                {
+                    key: value for key, value in row.items()
+                    if key != "promulgation_decision"
+                }
+                if int(row["id"]) in verdict_by_id else row
+            ),
             **(
                 {"settlement_verdict": verdict_by_id[int(row["id"])]}
                 if int(row["id"]) in verdict_by_id else {}
@@ -710,6 +982,10 @@ def resolve_directives(
         decree_dossiers=dossier_payload,
     )
     simulator_payload["dossier_verdicts"] = verdict_rows
+    simulator_payload["promulgation_instruction"] = (
+        "颁布判决是硬约束：decision=rejected 的案卷本月未颁、不得写成已办成或已生效；"
+        "只能叙述其被打回并等待批红。decision=promulgated 的案卷才可进入本月办理。"
+    )
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
     )
