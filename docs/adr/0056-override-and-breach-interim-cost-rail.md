@@ -7,15 +7,16 @@ Status: Accepted（2026-07-04 随 PR #573 合入；决策：2026-07-03 #474 设�
 ### 反应方机器契约（唯一 canonical · owner 2026-08-12）
 
 - **verdict 字段名**：`affected_parties`（历史字段名保留；语义=**反应方** typed 清单，**不是**「仅受损方/只扣减」）。
-- **每项精确 shape**：恰含三键 `{kind, key, reaction}`，禁止缺键、禁止多余键。
+- **每项精确 shape**：恰含四键 `{kind, key, direction, intensity}`，禁止缺键、禁止多余键。
   - `kind` ∈ `{faction, class}`
   - `key` = 在册名：`faction`→DELTA_SCHEMA 合法七派〔阉党/东林/皇党/军队/宗室/中立/西学〕；`class`→classes 名册（如士绅）。非法 key **拒收**。
-  - `reaction` ∈ `{大怒, 不满, 满意, 大喜}`
-- **合法组合**：上述枚举笛卡尔积（再受 key 名册约束）。**不得**因出现在清单中就默认负向；不同事情各派/阶级反应可正、可负、可零。
-- **零反应**：不进入清单（**已授权省略**；禁止输出零向占位项或空 `reaction`）。
+  - `direction` ∈ `{positive, negative}`
+  - `intensity` ∈ `{weak, strong}`
+- **合法组合**：上述 typed 枚举笛卡尔积（再受 key 名册约束）。**不得**因出现在清单中就默认负向；不同事情各派/阶级反应可正、可负、可零。判官可自由叙述「狂喜／欣慰／震怒」等措辞；机器只消费 `direction` 与 `intensity`，不匹配自然语言词。
+- **零反应**：不进入清单（**已授权省略**；禁止输出零向占位项）。
 - **出场规则**（对齐既有颁布 seam）：`mode=中旨` 无论判向 → 字段必现且非空；正规打回 → 字段必现且非空；普通顺颁 → **不得**携带该字段。
-- **确定性映射**（集中常量、playtest 可调，**数值不进 ADR**）：`大怒`→强负 signed delta；`不满`→弱负；`满意`→弱正；`大喜`→强正。落账 shape：faction→signed int 兼容 `_apply_faction_dict`；class→**必须**嵌套 `{"<class>":{"satisfaction": signed_int}}`——扁平值会被 `_apply_class_dict` 静默跳过，本轨 **shape 拒收**（cmr R9）。
-- **本事件例（非普适公式）**：清丈强颁——士绅 `class`+`大怒`、东林 `faction`+`不满`、阉党旁观为零故**不入清单**（「清流」非合法 key，以东林承载）。此例不把名单机械定义为扣减，也不规定任一派系永远不变。
+- **确定性映射**（集中常量、playtest 可调，**数值不进 ADR**）：`direction` 决定 signed delta 正负，`intensity` 决定强弱。落账 shape：faction→signed int 兼容 `_apply_faction_dict`；class→**必须**嵌套 `{"<class>":{"satisfaction": signed_int}}`——扁平值会被 `_apply_class_dict` 静默跳过，本轨 **shape 拒收**（cmr R9）。
+- **本事件例（非普适公式）**：清丈强颁——士绅 `{kind:class,key:士绅,direction:negative,intensity:strong}`、东林 `{kind:faction,key:东林,direction:negative,intensity:weak}`、阉党旁观为零故**不入清单**（「清流」非合法 key，以东林承载）。此例不把名单机械定义为扣减，也不规定任一派系永远不变。
 
 ### 毁约轨与相关派系源（唯一 canonical）
 
@@ -24,7 +25,7 @@ Status: Accepted（2026-07-04 随 PR #573 合入；决策：2026-07-03 #474 设�
 **毁约**（撤回成命 0041）走同一根轨：皇威＋当事大臣观感＋相关派系各一笔 signed satisfaction 反应——**#226 就此排进本闸**，显式修订 0013「无损可撤」（机械可撤性 cancellable='decree' 不变，新增代价落账）。
 
 - **相关派系（typed 反应数据源 · 确定性 · 最简既有缝）**：取当事大臣集合中每人 `characters.faction` 的非空值，去重后的在册派系 key 集。**不**新调 LLM、**不**新建第二反应清单/关系账、**不**以颁布 `affected_parties` 作毁约源（颁布清单只服务强颁/中旨路径）。
-- **每派一笔**：`reaction` 取集中常量 `BREACH_FACTION_REACTION`（首版固定 `不满`→弱负 signed delta；常量可调，不要求 owner 预拍数值）。无当事大臣或派系皆空 → 派系笔 no-op，只落皇威（+有则观感）。
+- **每派一笔**：typed 反应取集中常量 `BREACH_FACTION_REACTION`（首版=`{direction:negative,intensity:weak}`；常量可调，不要求 owner 预拍数值）。无当事大臣或派系皆空 → 派系笔 no-op，只落皇威（+有则观感）。
 - **人物观感**：interim 落既有 `relation_edge_events`，唯一写口 `record_relation_edge_event`；`event_kind=辜负`，`source=皇帝`→`target=人物`（0080/0081 君臣边）。仅已故者跳过并记日志，在世非现任照落。**禁止**第二套人物观感表。
 
 satisfaction 在**颁布/执行阻力路径**今日零消费方（db 他系统的既有读端如省级/阶层阻力不在此路径——cmr R1 校准口径）——**派系** satisfaction 的牙由 0057 执行走样环装上（执行格判官 canonical 输入=承办人派系 satisfaction×认同深浅，不含阶级）；**阶级** satisfaction 本轨只落账、不入执行走样判定，其消费面=既有读端（省级/阶层侧）＋推演 classes_brief 叙事面（cmr R11 收窄承诺范围）。量级数值不进 ADR，playtest 调参（0011-5 既有口径）。M12 血债棘轮建成后本轨被吸收，标记与反应流水为其账底。P4：呈现全定性（言官哗然/士绅寒心/或欣然），不露数。转 Accepted 时回注靶点：0013 D2/D9 括注、#226 body、#471 词表「撤回成命」词条代价口径。
