@@ -28,8 +28,10 @@ from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.decree import (
     build_promulgation_judge_context,
+    llm_promulgation_verdicts,
     resolve_decisions_phase2,
     resolve_directives,
+    validate_promulgation_verdicts,
 )
 from ming_sim.issues import bind_content as bind_issue_content
 from ming_sim.models import LLMConfig
@@ -58,14 +60,16 @@ def _cfg(args: argparse.Namespace) -> LLMConfig:
     )
 
 
-def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[dict]:
+def _choose_rescripts(
+    db: GameDB, turn: int, hostile: int, vital: int, appointment: int,
+) -> list[dict]:
     """Persist choices exactly as the normal session boundary does, then phase2 owns them."""
     chosen = []
     for decision in db.list_pending_decisions(turn):
         options = decision["options"]
         if decision["event_id"] == f"dossier:{hostile}":
             choice = next(row for row in options if row.get("dossier_decision") == "hold")
-        elif decision["event_id"] == f"dossier:{vital}":
+        elif decision["event_id"] in {f"dossier:{vital}", f"dossier:{appointment}"}:
             choice = next(row for row in options if row.get("dossier_decision") == "withdrawn")
         else:
             choice = options[0]
@@ -135,6 +139,18 @@ def _captured_judge_payload(records: list[dict], expected: dict) -> tuple[dict, 
         "error": record.get("error"), "matches_builder_expectation": True,
     }
     return payload, provenance
+
+
+def _run_judge_batch(db, state, agno, cfg, dossiers: list[dict]) -> tuple[dict, list[dict]]:
+    """Call and validate the production batch judge without replacing a collaborator."""
+    context = build_promulgation_judge_context(db, state, dossiers)
+    verdicts = llm_promulgation_verdicts(
+        dossiers, state, db=db, agno_db=agno, llm_config=cfg,
+        prepared_context=context,
+    )
+    return context, validate_promulgation_verdicts(
+        verdicts, dossiers, db, prepared_context=context,
+    )
 
 
 def _judge_context_for_dossier(db: GameDB, state, dossier_id: int) -> dict:
@@ -219,10 +235,17 @@ def main() -> int:
         db.conn.execute(
             "UPDATE factions SET leverage=95, agenda='反对清丈，维护田赋旧例' WHERE name='东林'"
         )
+        state.metrics["皇威"] = 0
+        db.save_state(state)
         db.conn.commit()
-        hostile_text = "不经部议，清丈天下田亩并追夺士绅隐田"
+        hostile_text = "许誉卿执掌封驳时，不经部议清丈天下田亩并追夺东林士绅隐田"
         hostile = _dossier(db, state, hostile_text)
         ordinary = _dossier(db, state, "循户部成例补发边军一月欠饷")
+        authority_edge = _dossier(db, state, "越一级特授边将虚衔，仍循兵部具题复核")
+        appointment = db.create_decree_dossier(
+            state, action_type="appointment", decree_text="调任许誉卿出京清查东林隐田",
+            target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+        )
         admin_midzhi = _dossier(
             db, state, "中旨命内廷整理既有文册，不动外廷钱权", mode="midzhi",
         )
@@ -248,7 +271,25 @@ def main() -> int:
         first_ctx = db.get_resolve_context(first_turn) or {}
         first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
         by_id = {int(row["dossier_id"]): row for row in first_verdicts}
-        choices = _choose_rescripts(db, first_turn, hostile, vital_midzhi)
+
+        # A leader-only seed mutation is deliberately invisible to the production
+        # payload; high imperial authority is the sole judge-visible change.
+        db.conn.execute(
+            "UPDATE characters SET status='active' WHERE name='钱谦益'"
+        )
+        state.metrics["皇威"] = 100
+        db.save_state(state)
+        db.conn.commit()
+        high_dossiers = db.list_decree_dossiers(status="proposed")
+        high_context, high_verdicts = _run_judge_batch(db, state, agno, cfg, high_dossiers)
+        trace_records, trace_offset = _trace_records(trace_path, trace_offset)
+        high_actual_input, high_provenance = _captured_judge_payload(
+            trace_records, high_context,
+        )
+        high_by_id = {int(row["dossier_id"]): row for row in high_verdicts}
+        choices = _choose_rescripts(
+            db, first_turn, hostile, vital_midzhi, appointment,
+        )
 
         # This is the production hold owner: phase2 reads the persisted choice,
         # applies the verdict batch and rescript action atomically, then advances.
@@ -297,9 +338,47 @@ def main() -> int:
         ]
         first_narrative = str(first_ctx.get("narrative") or "")
         forbidden = ("清丈已经完成", "清丈已完成", "太仓已交内廷", "旨意已生效")
+        all_verdicts = first_verdicts + high_verdicts + [second_verdict]
+        all_payloads = [first_actual_input, high_actual_input, second_actual_input]
         checks = {
             "hostile_land_rejected": by_id[hostile]["decision"] == "rejected",
             "ordinary_pay_promulgated": by_id[ordinary]["decision"] == "promulgated",
+            "three_trigger_faces_reject_at_low_authority": all(
+                by_id[dossier_id]["decision"] == "rejected"
+                for dossier_id in (authority_edge, hostile, appointment)
+            ),
+            "authority_edge_passes_only_at_high_authority": (
+                by_id[authority_edge]["decision"] == "rejected"
+                and high_by_id[authority_edge]["decision"] == "promulgated"
+            ),
+            "vital_exception_still_rejects_at_high_authority": (
+                high_by_id[vital_midzhi]["decision"] == "rejected"
+            ),
+            "leader_change_does_not_remove_named_gatekeeper_block": (
+                high_by_id[hostile]["decision"] == "rejected"
+                and {row["name"] for row in high_context["gatekeepers"]}
+                == {row["name"] for row in first_context["gatekeepers"]}
+            ),
+            "gatekeeper_appointment_is_judged_and_rejected": (
+                by_id[appointment]["decision"] == "rejected"
+                and appointment in {int(row["dossier_id"]) for row in first_verdicts}
+            ),
+            "named_gatekeeper_change_unblocks_same_decree": (
+                second_verdict["decision"] == "promulgated"
+            ),
+            "decisions_are_binary_and_batches_cover_inputs": (
+                {row["decision"] for row in all_verdicts}
+                <= {"promulgated", "rejected"}
+                and {int(row["dossier_id"]) for row in first_verdicts}
+                == {int(row["id"]) for row in first_context["dossiers"]}
+                and {int(row["dossier_id"]) for row in high_verdicts}
+                == {int(row["id"]) for row in high_context["dossiers"]}
+            ),
+            "real_judge_payloads_exclude_satisfaction": all(
+                "satisfaction" not in json.dumps(payload, ensure_ascii=False)
+                and "满意" not in json.dumps(payload, ensure_ascii=False)
+                for payload in all_payloads
+            ),
             "held_by_production_rescript": (
                 int(held["held_turn"]) == first_turn
                 and any(row.get("rescript_action") == "hold" for row in held_history)
@@ -329,6 +408,7 @@ def main() -> int:
                        "reasoning_strength": cfg.reasoning_strength},
             "scenarios": {
                 "ids": {"hostile_land": hostile, "ordinary_pay": ordinary,
+                        "authority_edge": authority_edge, "appointment": appointment,
                         "administrative_midzhi": admin_midzhi,
                         "vital_midzhi": vital_midzhi},
                 "rescript_choices": choices,
@@ -352,6 +432,10 @@ def main() -> int:
             "judge_first": {
                 "input": first_actual_input, "input_provenance": first_provenance,
                 "output": first_verdicts,
+            },
+            "judge_after_authority_and_leader_change": {
+                "input": high_actual_input, "input_provenance": high_provenance,
+                "output": high_verdicts,
             },
             "judge_after_hold_and_board_change": {
                 "input": second_actual_input, "input_provenance": second_provenance,
