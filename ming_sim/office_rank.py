@@ -52,22 +52,31 @@ def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
     return [rule for rule in rules if isinstance(rule, dict)]
 
 
-def _match_rank_rule(title: str, table: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """Longest stem wins so 副总兵/佥都御史 are not captured by 总兵/都御史."""
+def _match_rank_rule(
+    title: str, table: dict[str, Any], required_field: str
+) -> Optional[dict[str, Any]]:
+    """Return the longest matching stem that defines the requested behavior."""
     text = str(title or "").strip()
     if not text:
         return None
     best: Optional[dict[str, Any]] = None
-    best_len = -1
+    best_score = (-1, -1)
     for rule in _iter_rank_rules(table):
+        if required_field not in rule:
+            continue
+        # Leverage-bearing rules describe substantive titles.  Rank-only rules also
+        # contain institutional/category fallbacks such as 翰林院 and 锦衣卫.
+        title_specific = int(
+            required_field == "rank_band" and "leverage_multiplier" in rule
+        )
         for stem in rule.get("stems") or []:
             token = str(stem or "").strip()
             if not token or token not in text:
                 continue
-            token_len = len(token)
-            if token_len > best_len:
+            score = (title_specific, len(token))
+            if score > best_score:
                 best = rule
-                best_len = token_len
+                best_score = score
     return best
 
 
@@ -79,7 +88,7 @@ def office_rank_band(office: object, office_type: object = "") -> int:
     parts = [p.strip() for p in title.replace("，", ",").split(",") if p.strip()] or [title]
     bands: list[int] = []
     for part in parts:
-        matched = _match_rank_rule(part, table)
+        matched = _match_rank_rule(part, table, "rank_band")
         if matched is not None and "rank_band" in matched:
             bands.append(int(matched["rank_band"]))
     if bands:
@@ -119,10 +128,12 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
     for part in (p.strip() for p in text.split(",")):
         if not part:
             continue
-        matched = _match_rank_rule(canonical_office_title(part), table)
-        if matched is None or "leverage_multiplier" not in matched:
+        matched = _match_rank_rule(
+            canonical_office_title(part), table, "leverage_multiplier"
+        )
+        if matched is None:
             # Fall back to raw part so stems still hit inside lightly decorated titles.
-            matched = _match_rank_rule(part, table)
+            matched = _match_rank_rule(part, table, "leverage_multiplier")
         if matched is None or "leverage_multiplier" not in matched:
             continue
         mult = float(matched["leverage_multiplier"])
