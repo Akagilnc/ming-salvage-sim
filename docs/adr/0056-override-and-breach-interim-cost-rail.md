@@ -1,31 +1,9 @@
 # 0056: 强颁与毁约的 interim 代价轨——#226 排进本闸，修订 0013「无损可撤」
 
-Status: Accepted（2026-07-04 随 PR #573 合入；决策：2026-07-03 #474 设计闸 grill 用户拍「强颁还是有点代价吧，扣皇威+分派系满意度，暂时简单粗暴」+「#226 同意排进」；**2026-08-12 owner correction 修订**：satisfaction 反应可正/负/零，入清单不默认负向；**本 ADR 为反应方机器契约与毁约相关派系源的唯一规范真源**，废止「受损方/只扣减」旧断言；#564/#556 只引用本 ADR 并保留验收实例，不维护第二份逐字 canonical）
+Status: Accepted（2026-07-04 随 PR #573 合入；决策：2026-07-03 #474 设计闸 grill 用户拍「强颁还是有点代价吧，扣皇威+分派系满意度，暂时简单粗暴」+「#226 同意排进」；**2026-08-12 owner correction**：satisfaction 反应可正/负/零，入清单不默认负向，废止「受损方/只扣减」；**精确机器 shape / 枚举 / 出场 / 映射 / 毁约派系源 = #564 Implementation Decisions**，本 ADR 只留不可逆政策）
 
-**强颁**（批红页强颁；预先中旨直发经判官 mode=中旨 顺颁时同此——中旨非跳过判决，0055 cmr R2）当回合确定性落三笔：①皇威扣——非意思意思，皇威已有真牙（辽饷到账率随皇威折扣，flows.py:141，扣皇威=真银少收）；②**分派系/阶级 signed satisfaction 反应**——颁布判官产出**反应方 typed 清单**（字段名与 shape 见下方机器契约）→确定性映射为 signed delta（faction 走 faction_delta、阶级走 class_delta——cmr R6；**此映射为确定性代码、不经 extractor LLM**，class 直接产嵌套 class_delta，DELTA_SCHEMA 扁平注释陈旧够不着本代价轨）；③中旨标记（append-only `stigma_json`，项含既有 `reason`——**schema 归 S1 / 写入归 S8**；本轨只与①②齐套消费/验收，**不在本轨新增缘由字段或平行写口**，=proto-血债账底）。**mode=中旨 被打回的 attempt 同样落②③两笔（payload 效果与皇威扣不落）——0011-5「白绕还多担污名」；判官对 mode=中旨 案卷无论判向一律输出非空反应方清单（正规案卷仅打回时输出），S9 数据源恒足。**代价幂等（cmr R3 补、R8 修判据）**：三笔只在**强颁**或 **mode=中旨 attempt** 时落——**正规案卷被打回不落任何代价**（与批红「收回」零代价台阶语义一致）；幂等判据=**代价流水存在性**（该案卷已有②反应记录即不重扣——与中旨标记**解耦**，标记只管污名），已落②③的中旨案卷批红强颁只补①皇威笔；留中重判被再次打回不重复落；判决流水照 append、代价不重刷（防单案多月放血）。
+**强颁**（批红页强颁；预先中旨直发经判官 mode=中旨 顺颁时同此——中旨非跳过判决，0055 cmr R2）当回合确定性落三笔：①皇威扣——皇威已有真牙（辽饷到账率随皇威折扣；扣皇威=真银少收）；②**分派系/阶级 signed satisfaction 反应**——颁布判官产出反应方 typed 清单 → **确定性代码**映射为 signed delta（faction→faction_delta、class→嵌套 class_delta；**不经 extractor LLM**）；③中旨标记（append-only `stigma_json`，项含既有 `reason`——**schema 归 S1 / 写入归 S8**；本轨只与①②齐套消费/验收，**不新增缘由字段或平行写口**）。**mode=中旨 被打回的 attempt 同样落②③（payload 效果与皇威扣不落）**——0011-5「白绕还多担污名」；判官对 mode=中旨 案卷无论判向一律输出非空反应方清单（正规案卷仅打回时输出）。**代价幂等**：三笔只在强颁或 mode=中旨 attempt 时落——正规打回零代价；幂等判据=代价流水存在性（与中旨标记解耦）；已落②③的中旨案卷强颁只补皇威；留中重判被再打回不重复落。
 
-### 反应方机器契约（唯一 canonical · owner 2026-08-12）
+**不可逆语义（owner 2026-08-12）**：反应可正、可负、可零；**不得**因入清单就默认负向；零反应以省略表达。机器只消费 typed `direction`×`intensity`；判官自由叙事措辞**不参与**机器匹配（反盯文）。精确字段名、必填键、枚举、出场规则、确定性映射常量、毁约「当事大臣」与相关派系源 = **#564 Implementation Decisions**（唯一机器契约；#556 只指针、不另维护逐字副本）。
 
-- **verdict 字段名**：`affected_parties`（历史字段名保留；语义=**反应方** typed 清单，**不是**「仅受损方/只扣减」）。
-- **每项精确 shape**：恰含四键 `{kind, key, direction, intensity}`，禁止缺键、禁止多余键。
-  - `kind` ∈ `{faction, class}`
-  - `key` = 在册名：`faction`→DELTA_SCHEMA 合法七派〔阉党/东林/皇党/军队/宗室/中立/西学〕；`class`→classes 名册（如士绅）。非法 key **拒收**。
-  - `direction` ∈ `{positive, negative}`
-  - `intensity` ∈ `{weak, strong}`
-- **合法组合**：上述 typed 枚举笛卡尔积（再受 key 名册约束）。**不得**因出现在清单中就默认负向；不同事情各派/阶级反应可正、可负、可零。判官可自由叙述「狂喜／欣慰／震怒」等措辞；机器只消费 `direction` 与 `intensity`，不匹配自然语言词。
-- **零反应**：不进入清单（**已授权省略**；禁止输出零向占位项）。
-- **出场规则**（对齐既有颁布 seam）：`mode=中旨` 无论判向 → 字段必现且非空；正规打回 → 字段必现且非空；普通顺颁 → **不得**携带该字段。
-- **确定性映射**（集中常量、playtest 可调，**数值不进 ADR**）：`direction` 决定 signed delta 正负，`intensity` 决定强弱。落账 shape：faction→signed int 兼容 `_apply_faction_dict`；class→**必须**嵌套 `{"<class>":{"satisfaction": signed_int}}`——扁平值会被 `_apply_class_dict` 静默跳过，本轨 **shape 拒收**（cmr R9）。
-- **本事件例（非普适公式）**：清丈强颁——士绅 `{kind:class,key:士绅,direction:negative,intensity:strong}`、东林 `{kind:faction,key:东林,direction:negative,intensity:weak}`、阉党旁观为零故**不入清单**（「清流」非合法 key，以东林承载）。此例不把名单机械定义为扣减，也不规定任一派系永远不变。
-
-### 毁约轨与相关派系源（唯一 canonical）
-
-**毁约「当事大臣」判定规则（cmr R3 补、R8 修定义）**：=案卷**主办条目全体**（可多人）∪ **主办/协办条目上的委派人 id**（委派人是名单条目字段非案卷全局字段——0053；**知情档条目及其委派人不入**，追责链纪律）；案卷无个体关联时人物观感笔 no-op。
-
-**毁约**（撤回成命 0041）走同一根轨：皇威＋当事大臣观感＋相关派系各一笔 signed satisfaction 反应——**#226 就此排进本闸**，显式修订 0013「无损可撤」（机械可撤性 cancellable='decree' 不变，新增代价落账）。
-
-- **相关派系（typed 反应数据源 · 确定性 · 最简既有缝）**：取当事大臣集合中每人 `characters.faction` 的非空值，去重后的在册派系 key 集。**不**新调 LLM、**不**新建第二反应清单/关系账、**不**以颁布 `affected_parties` 作毁约源（颁布清单只服务强颁/中旨路径）。
-- **每派一笔**：typed 反应取集中常量 `BREACH_FACTION_REACTION`（首版=`{direction:negative,intensity:weak}`；常量可调，不要求 owner 预拍数值）。无当事大臣或派系皆空 → 派系笔 no-op，只落皇威（+有则观感）。
-- **人物观感**：interim 落既有 `relation_edge_events`，唯一写口 `record_relation_edge_event`；`event_kind=辜负`，`source=皇帝`→`target=人物`（0080/0081 君臣边）。仅已故者跳过并记日志，在世非现任照落。**禁止**第二套人物观感表。
-
-satisfaction 在**颁布/执行阻力路径**今日零消费方（db 他系统的既有读端如省级/阶层阻力不在此路径——cmr R1 校准口径）——**派系** satisfaction 的牙由 0057 执行走样环装上（执行格判官 canonical 输入=承办人派系 satisfaction×认同深浅，不含阶级）；**阶级** satisfaction 本轨只落账、不入执行走样判定，其消费面=既有读端（省级/阶层侧）＋推演 classes_brief 叙事面（cmr R11 收窄承诺范围）。量级数值不进 ADR，playtest 调参（0011-5 既有口径）。M12 血债棘轮建成后本轨被吸收，标记与反应流水为其账底。P4：呈现全定性（言官哗然/士绅寒心/或欣然），不露数。转 Accepted 时回注靶点：0013 D2/D9 括注、#226 body、#471 词表「撤回成命」词条代价口径。
+**毁约**（撤回成命 0041）走同一根轨：皇威＋当事大臣观感＋相关派系各一笔 signed satisfaction 反应——**#226 就此排进本闸**，显式修订 0013「无损可撤」（机械可撤性 cancellable='decree' 不变，新增代价落账）。人物观感 interim 复用既有 `relation_edge_events`（`event_kind=辜负`），禁止第二套人物观感表。satisfaction 在颁布/执行阻力路径今日零消费方；派系 satisfaction 的牙由 0057 执行走样环装上；阶级 satisfaction 本轨只落账。量级数值不进 ADR，playtest 调参。M12 血债棘轮建成后本轨被吸收。P4：呈现全定性，不露数。
