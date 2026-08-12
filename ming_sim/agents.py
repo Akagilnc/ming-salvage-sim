@@ -313,7 +313,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、"
             "勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。",
             "合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
-            "gatekeepers 官员名单形成的把关关口三类触发才可打回。皇威越高触发面"
+            "gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 "
+            "break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，"
+            "须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面"
             "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
             "courage、integrity 判断，不按派系首领意志判断。",
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"

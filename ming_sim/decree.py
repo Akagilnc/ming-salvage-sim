@@ -163,7 +163,9 @@ def build_promulgation_judge_context(
             "target_id": target_id,
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
-            "break_rank": break_rank.get(int(row["id"])),
+            "break_rank": break_rank.get(
+                int(row["id"]), payload.get("break_rank")
+            ),
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
