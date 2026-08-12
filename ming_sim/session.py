@@ -671,6 +671,8 @@ class GameSession:
         self.llm_config = llm_config
         from ming_sim.beat_orchestration import create_llm_beat_generator
         self._beat_generator = create_llm_beat_generator(llm_config)
+        # Scene futures are owned by the durable chat-turn lifecycle, not by Web/CLI entries.
+        self._chat_turn_scene_futures: Dict[int, Future] = {}
         if verify_llm:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
@@ -1019,6 +1021,75 @@ class GameSession:
             return [cand]
         return candidates
 
+    def start_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> None:
+        """Start every scene beat made possible by a newly durable turn.
+
+        The shared session executor lets scene and reply overlap without a request-local pool.
+        Persistence is deliberately deferred to ``join_chat_turn_scene`` so the reply and scene
+        become visible in one transaction.
+        """
+        if not chat_turn_id or chat_turn_id in self._chat_turn_scene_futures:
+            return
+
+        from ming_sim import beat_orchestration as beats
+        from ming_sim.audience_night import (
+            METHOD_XUANRU, TAG_ENTER, TAG_OPEN_NIGHT, get_night, list_ledger,
+        )
+        row = self.db.conn.execute(
+            "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"durable chat turn disappeared: {chat_turn_id}")
+        night_id = int(row["night_id"] or 0)
+        night = get_night(self.db, night_id) or {}
+        entries = list_ledger(self.db, night_id)
+        tasks: list[tuple[int, Any]] = []
+        count = self.db.conn.execute(
+            "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id = ? AND id <= ?",
+            (night_id, int(chat_turn_id)),
+        ).fetchone()["c"]
+        if int(count) == 1:
+            opening = next(e for e in entries if TAG_OPEN_NIGHT in (e.get("tags") or []))
+            tasks.append((int(opening["id"]), beats.assemble_beat_inputs(
+                self.db, self.state, beat_kind=beats.BEAT_OPEN,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""),
+            )))
+        entering = next((
+            e for e in entries
+            if int(e.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+            and TAG_ENTER in (e.get("tags") or [])
+        ), None)
+        if entering is not None:
+            tasks.append((int(entering["id"]), beats.assemble_beat_inputs(
+                self.db, self.state, beat_kind=beats.BEAT_ENTER,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""), night_id=night_id,
+                person_name=minister_name, summon_method=METHOD_XUANRU,
+            )))
+
+        def generate() -> list[tuple[int, str]]:
+            return [(entry_id, beats._run_generator(self._beat_generator, inputs))
+                    for entry_id, inputs in tasks]
+
+        self._chat_turn_scene_futures[int(chat_turn_id)] = _CLI_ACTION_INTENT_EXECUTOR.submit(generate)
+
+    def join_chat_turn_scene(self, chat_turn_id: int) -> None:
+        """Join and persist this turn's scene; caller must share the reply transaction."""
+        future = self._chat_turn_scene_futures.pop(int(chat_turn_id), None)
+        if future is None:
+            return
+        for entry_id, body in future.result():
+            self.db.conn.execute(
+                "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
+                (body, int(entry_id)),
+            )
+
+    def abandon_chat_turn_scene(self, chat_turn_id: int) -> None:
+        future = self._chat_turn_scene_futures.pop(int(chat_turn_id), None)
+        if future is not None:
+            future.cancel()
+
     def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
@@ -1078,6 +1149,7 @@ class GameSession:
                     # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
                     dismiss_from_audience(
                         self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                        state=self.state, beat_generator=self._beat_generator,
                     )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
                 next_name = tool_result.removeprefix("__summon__").strip()
@@ -2373,4 +2445,6 @@ class GameSession:
             return None
 
     def close(self) -> None:
+        for chat_turn_id in list(self._chat_turn_scene_futures):
+            self.abandon_chat_turn_scene(chat_turn_id)
         self.db.close()

@@ -132,20 +132,17 @@ def _blank_generator(inputs):
     return "   \n\t "
 
 
-def test_whitespace_generator_falls_back_to_deterministic_bodies(game):
-    """L3：纯空白产出视同空，不顶掉 #498 确定性兜底正文（开夜/入殿/收夜三处）。"""
+def test_whitespace_generator_fails_loud_without_durable_success(game):
+    """空模型输出不得由模板冒充 scene 成功。"""
     db, state, content = game
     minister = _active_minister(db, content)
-    night_id, cid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id="s", agno_runs_before=0,
-        time_of_day="戌时", location="乾清宫", beat_generator=_blank_generator,
-    )
-    assert _ledger_body(db, night_id, an.TAG_OPEN_NIGHT) == "乾清宫·戌时，召对夜启。"
-    assert _enter_body(db, night_id, minister) == f"{an.METHOD_XUANRU}{minister}入殿。"
-    _land_reply(db, state, minister, cid, night_id)
-    an.close_night(db, state, night_id=night_id, content=content,
-                   beat_generator=_blank_generator)
-    assert _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT) == "退朝，今夜召对到此。"
+    with pytest.raises(RuntimeError, match="blank output"):
+        an.attach_chat_turn_to_night(
+            db, state, minister, agno_session_id="s", agno_runs_before=0,
+            time_of_day="戌时", location="乾清宫", beat_generator=_blank_generator,
+        )
+    assert an.get_open_night(db) is None
+    assert db.conn.execute("SELECT COUNT(*) FROM chat_turns").fetchone()[0] == 0
 
 
 def test_close_night_skips_generator_when_body_given_or_already_closed(game):
@@ -280,6 +277,7 @@ def web_game(tmp_path, monkeypatch):
     game = web_app.WebGame(fresh=False)
     # e2e seam 注入确定性假 scene LLM；测试绝不访问真实模型。
     game._beat_generator = bo.production_beat_generator
+    game.session._beat_generator = bo.production_beat_generator
     yield game
     try:
         game.session.close()
@@ -317,10 +315,9 @@ def test_web_start_chat_turn_wires_production_beat_generator(web_game):
         "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
     ).fetchone()
     night_id = int(row["night_id"])
-    # 身份与确定性垫位先 durable；慢 scene 在回话 worker 同启后才替换。
+    # durable 建轮即由 session 生命周期启动 scene；入口不再手工 generate/persist。
     assert _enter_body(game.db, night_id, minister) == f"宣入{minister}入殿。"
-    entry_id, generated = game._generate_chat_turn_scene(minister, ctid)
-    game._persist_scene_body((entry_id, generated))
+    game.session.join_chat_turn_scene(ctid)
     enter = _enter_body(game.db, night_id, minister)
     open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
     assert enter and minister in enter and enter != f"宣入{minister}入殿。"

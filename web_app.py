@@ -19,7 +19,7 @@ import shutil
 import sys
 import time
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
@@ -1442,39 +1442,9 @@ class WebGame:
                 agno_session_id,
                 runs_before,
             )
+        if chat_turn_id:
+            getattr(self.session, "start_chat_turn_scene", lambda *_: None)(minister_name, chat_turn_id)
         return chat_turn_id, snapshot
-
-    def _generate_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> tuple[int, str]:
-        """只读 durable night/turn 身份生成本轮入殿 scene。"""
-        if not chat_turn_id or getattr(self, "_beat_generator", None) is None:
-            return 0, ""
-        from ming_sim import beat_orchestration as beats
-        from ming_sim.audience_night import get_night, list_ledger, METHOD_XUANRU, TAG_ENTER
-        row = self.db.conn.execute(
-            "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
-        ).fetchone()
-        if row is None:
-            return 0, ""
-        night_id = int(row["night_id"] or 0)
-        entry = next((item for item in list_ledger(self.db, night_id)
-                      if int(item.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
-                      and TAG_ENTER in (item.get("tags") or [])), None)
-        if entry is None:
-            return 0, ""
-        body = beats.generate_enter_beat_body(
-            self.db, self.state, night=get_night(self.db, night_id) or {},
-            person_name=minister_name, summon_method=METHOD_XUANRU,
-            beat_generator=self._beat_generator,
-        )
-        return int(entry["id"]), body
-
-    def _persist_scene_body(self, scene: tuple[int, str]) -> None:
-        entry_id, body = scene
-        if entry_id and body:
-            self.db.conn.execute(
-                "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
-                (str(body), int(entry_id)),
-            )
 
     def _record_chat_rollback_items(
         self,
@@ -1493,6 +1463,7 @@ class WebGame:
         仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。"""
         if not chat_turn_id:
             return
+        getattr(self.session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         self.db.fail_chat_turn(chat_turn_id)
         self.chat_history = {name: [] for name in self.session.content.characters}
@@ -1641,8 +1612,6 @@ class WebGame:
                 message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
-        scene_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audience-scene")
-        scene_future = scene_pool.submit(self._generate_chat_turn_scene, minister_name, chat_turn_id)
         try:
             chat_signature = inspect.signature(self.session.chat)
             try:
@@ -1656,12 +1625,11 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
-            scene = scene_future.result()  # 无上限 join：两份玩家可见内容一起完成。
             with gate:
                 from ming_sim.applier import atomic
                 # scene 与回话全有或全无；既有内层 commit 由 atomic 延后。
                 with atomic(self.db):
-                    self._persist_scene_body(scene)
+                    getattr(self.session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
                     # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
                     payload = self._chat_payload(
                     minister_name, result.answer,
@@ -1699,9 +1667,8 @@ class WebGame:
                     self.chat_history = {name: [] for name in self.session.content.characters}
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
+            getattr(self.session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
             raise
-        finally:
-            scene_pool.shutdown(wait=True)
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -1740,6 +1707,7 @@ class WebGame:
             # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
             # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
             before_snapshot = self.db.capture_chat_rollback_snapshot()
+            getattr(self.session, "start_chat_turn_scene", lambda *_: None)(minister_name, chat_turn_id)
         try:
             result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
             proposed = None
@@ -1747,7 +1715,10 @@ class WebGame:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
             with gate:
-                payload = self._chat_payload(
+                from ming_sim.applier import atomic
+                with atomic(self.db):
+                    getattr(self.session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                    payload = self._chat_payload(
                     minister_name, result.answer,
                     court_action=result.court_action, next_minister=result.next_minister,
                     proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -1762,7 +1733,7 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
-                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
@@ -1777,6 +1748,7 @@ class WebGame:
             # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
             # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
             with gate:
+                getattr(self.session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             raise
@@ -2092,19 +2064,22 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
-        payload = self._chat_payload(
-            minister_name, answer, court_action=court_action, next_minister=next_minister,
-            proposed_directive=proposed, appointed_minister=appointed,
-            registered_minister=registered,
-            displaced_minister=displaced,
-            secret_order_id=secret_order_id,
-            pending_action_id=pending_action_id,
-            pending_action_failures=pending_action_failures,
-            chat_turn_id=chat_turn_id,
-            accepted_turn=accepted_turn,
-            directive_confirmation_ambiguous=directive_ambiguous,
-        )
-        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+        from ming_sim.applier import atomic
+        with atomic(self.db):
+            getattr(self.session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+            payload = self._chat_payload(
+                minister_name, answer, court_action=court_action, next_minister=next_minister,
+                proposed_directive=proposed, appointed_minister=appointed,
+                registered_minister=registered,
+                displaced_minister=displaced,
+                secret_order_id=secret_order_id,
+                pending_action_id=pending_action_id,
+                pending_action_failures=pending_action_failures,
+                chat_turn_id=chat_turn_id,
+                accepted_turn=accepted_turn,
+                directive_confirmation_ambiguous=directive_ambiguous,
+            )
+            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         return payload
 
     def _trail_mindreading_after_reply(

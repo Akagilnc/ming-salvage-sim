@@ -197,7 +197,10 @@ def _record_audience_exit(session: GameSession, name: str) -> None:
     if not hasattr(session.db, "conn"):
         return
     from ming_sim.audience_night import dismiss_from_audience
-    dismiss_from_audience(session.db, name)
+    dismiss_from_audience(
+        session.db, name, state=session.state,
+        beat_generator=getattr(session, "_beat_generator", None),
+    )
 
 
 def _handle_court_command(
@@ -349,10 +352,14 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     try:
+        getattr(session, "start_chat_turn_scene", lambda *_: None)(minister_name, chat_turn_id)
         result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
-            db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
+            from ming_sim.applier import atomic
+            with atomic(db):
+                getattr(session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
             db.update_chat_turn_messages(chat_turn_id, minister_message_id=int(mid))
@@ -374,6 +381,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
                 db.restore_interrupted_after_failed_retry(chat_turn_id)
         except Exception:
             pass
+        getattr(session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
 
 
@@ -506,8 +514,9 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         character.name,
                         agno_session_id=f"cli:{character.name}",
                         agno_runs_before=0,
-                        beat_generator=getattr(session, "_beat_generator", None),
+                        beat_generator=None,
                     )
+                    getattr(session, "start_chat_turn_scene", lambda *_: None)(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )
@@ -520,13 +529,24 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 if chat_turn_id else session.chat(character.name, question)
             )
             if persistent_chat:
-                minister_message_id = session.db.append_chat_message(
-                    character.name, accepted_turn, "minister", result.answer,
-                )
-                if chat_turn_id:
-                    session.db.update_chat_turn_messages(
-                        chat_turn_id, minister_message_id=minister_message_id,
+                if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
+                        and hasattr(session, "join_chat_turn_scene")):
+                    from ming_sim.applier import atomic
+                    with atomic(session.db):
+                        getattr(session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                        session.db.persist_minister_reply(
+                            character.name, accepted_turn, result.answer, chat_turn_id,
+                        )
+                    minister_message_id = 0
+                else:
+                    minister_message_id = session.db.append_chat_message(
+                        character.name, accepted_turn, "minister", result.answer,
                     )
+                if chat_turn_id:
+                    if minister_message_id:
+                        session.db.update_chat_turn_messages(
+                            chat_turn_id, minister_message_id=minister_message_id,
+                        )
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
@@ -538,6 +558,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         except BaseException as original_error:
             try:
                 if chat_turn_id:
+                    getattr(session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),
