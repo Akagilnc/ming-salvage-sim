@@ -210,6 +210,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
+### 背书条目（ADR 0070）
+
+背书条目与参与人名单分立：担名≠办事，不入毁约追责。条目字段为 `form`∈｛会签/当面站台/御笔手敕｝、会签/当面站台的具名 `endorser_id`（在册人物），或御笔手敕的 `imperial=true`（不得具名大臣）。写入只接受已存在案卷（单向新指旧；悬空/未知案卷拒收），并绑定来源 `source_chat_turn_id`；精确重复项幂等。
+
+捕获走收夜叙事抽取管线（#501）：夜内已说出口的会签/当面站台/御笔手敕如实落库，不按皇威二次抑制意愿（意愿调制属 #472）。颁布判官读端投影完整 `endorsements`，并把条目 id 写入 `criteria_snapshot.endorsement_entry_ids`；会签/当面站台降否决阻力，御笔手敕「驳＝抗旨」大降打回倾向。restore 直接读档，判官读端行为一致。
+
 ### `dossier_executions` — S1 案卷执行结局
 - 每项必须带 `dossier_id`、`outcome`、`note`。
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
