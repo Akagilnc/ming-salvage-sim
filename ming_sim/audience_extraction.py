@@ -155,6 +155,24 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
     return facts
 
 
+def _user_message_for_turn(db: Any, chat_turn_id: int) -> str:
+    """读本轮已链接的皇帝问话原文；无链接/无正文 → 空串。"""
+    if not chat_turn_id or not hasattr(db, "conn"):
+        return ""
+    row = db.conn.execute(
+        """
+        SELECT m.content AS content
+        FROM chat_turns t
+        LEFT JOIN chat_messages m ON m.id = t.user_message_id
+        WHERE t.id = ?
+        """,
+        (int(chat_turn_id),),
+    ).fetchone()
+    if row is None:
+        return ""
+    return str(row["content"] or "")
+
+
 def extract_story_facts(
     reply: str,
     *,
@@ -163,13 +181,16 @@ def extract_story_facts(
     llm_config: Any,
     extractor_agent: Any = None,
     dossier_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    emperor_text: str = "",
 ) -> List[Dict[str, Any]]:
-    """调抽取员把一段完整回话结构化成故事事实；空回话返回 []。
+    """调抽取员把一轮君臣对话结构化成故事事实；问话与回话皆空返回 []。
 
     垃圾 shape → ExtractionShapeError（响亮）；模型不可用 → LLMUnavailable。
+    皇帝问话与大臣回话同入一次抽取材料——不二次调用、不按皇威抑制已说出口的事实。
     """
-    text = str(reply or "").strip()
-    if not text:
+    reply_text = str(reply or "").strip()
+    question_text = str(emperor_text or "").strip()
+    if not reply_text and not question_text:
         return []
     agent = extractor_agent
     if agent is None:
@@ -181,7 +202,8 @@ def extract_story_facts(
     materials = {
         "回话大臣": minister_name,
         "当前在场": list(present_names),
-        "回话原文": text,
+        "皇帝问话": question_text,
+        "回话原文": reply_text,
         "可背书案卷": [
             {"id": int(row["id"]), "decree_text": str(row.get("decree_text") or "")}
             for row in (dossier_candidates or [])
@@ -225,8 +247,11 @@ def run_extraction_for_turn(
     if db.get_story_extract_status(cid) == "done":
         return {"status": "done", "chat_turn_id": cid, "already": True}
 
-    # 空白完整回话：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
-    if not str(reply or "").strip():
+    # 皇帝问话从本轮已链接的 user_message 读取（生产路径落库真源）；与回话同入一次抽取。
+    question_text = _user_message_for_turn(db, cid)
+
+    # 问话与回话皆空：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
+    if not str(reply or "").strip() and not question_text.strip():
         return _settle_or_pending(
             db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
             facts=[], source_night_seq=source_night_seq, fact_count=0,
@@ -246,6 +271,7 @@ def run_extraction_for_turn(
             llm_config=llm_config,
             extractor_agent=extractor_agent,
             dossier_candidates=db.list_decree_dossiers(status="proposed"),
+            emperor_text=question_text,
         )
     except Exception as exc:
         return _pending_with_pack(

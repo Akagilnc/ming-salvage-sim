@@ -8,6 +8,7 @@ from ming_sim.audience_extraction import (
     ExtractionShapeError,
     parse_extraction_facts,
     run_extraction_for_turn,
+    trail_extraction_after_reply,
 )
 from ming_sim.db import GameDB
 from ming_sim.decree import build_promulgation_judge_context
@@ -129,6 +130,7 @@ def test_spoken_public_backing_is_persisted_without_joining_participant_roster(g
 
 
 def test_imperial_hand_endorsement_is_captured_without_authority_suppression(game):
+    """皇帝问话「朕亲书手敕」经真实 user-message 生产路径进入 #501 抽取，一次落库且判官可读。"""
     db, state, _content = game
     minister = _minister(db)
     state.metrics["皇威"] = 100
@@ -136,19 +138,49 @@ def test_imperial_hand_endorsement_is_captured_without_authority_suppression(gam
         state, action_type="appointment", decree_text="擢任兵部侍郎",
         target_kind="character", target_id=minister,
     )
-    night_id, chat_turn_id, seq = _night_reply(
-        db, state, minister, reply="朕亲书手敕为此旨作保。",
+    night_id = int(an.open_night(db, state, location="乾清宫", time_of_day="夜")["id"])
+    an.ensure_summon_enter(db, night_id, minister)
+    chat_turn_id = db.create_chat_turn(
+        state, minister, "endorsement-612", 0, night_id=night_id,
     )
-    result = _extract(
-        db, minister=minister, reply="朕亲书手敕为此旨作保。",
-        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
-        fact={
-            "body": "皇帝亲书手敕。", "endorsement": {
-                "dossier_id": dossier_id, "form": "御笔手敕", "imperial": True,
-            },
-        },
+    # 与 CLI/Web 同序：先落皇帝问话并链接，再落大臣回话，最后走共用尾随抽取入口。
+    emperor_text = "朕亲书手敕为此旨作保。"
+    minister_reply = "臣叩领圣恩。"
+    user_message_id = db.append_chat_message(
+        minister, int(state.turn), "user", emperor_text,
     )
-    assert result["status"] == "done"
+    db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
+    db.persist_minister_reply(minister, int(state.turn), minister_reply, chat_turn_id)
+
+    seen_materials: list[str] = []
+
+    class _CaptureAgent:
+        def run(self, materials):
+            seen_materials.append(str(materials))
+            return json.dumps({
+                "facts": [{
+                    "body": "皇帝亲书手敕。",
+                    "endorsement": {
+                        "dossier_id": dossier_id, "form": "御笔手敕",
+                        "endorser_id": "", "imperial": True,
+                    },
+                }],
+            }, ensure_ascii=False)
+
+    result = trail_extraction_after_reply(
+        db=db,
+        minister_name=minister,
+        minister_reply=minister_reply,
+        chat_turn_id=chat_turn_id,
+        llm_config=object(),
+        write_gate=threading.Lock(),
+        extractor_agent=_CaptureAgent(),
+    )
+    assert result is not None and result["status"] == "done"
+    assert len(seen_materials) == 1  # 单次抽取，无第二趟
+    assert emperor_text in seen_materials[0]
+    assert minister_reply in seen_materials[0]
+
     row = db.list_dossier_endorsements(dossier_id)[0]
     assert row == {
         "id": 1, "dossier_id": dossier_id, "form": "御笔手敕",
