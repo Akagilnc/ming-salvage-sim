@@ -1,0 +1,535 @@
+/* 16:9 UI 容器，居中贴合屏幕，所有底部元素在此容器内用 % 定位 */
+
+
+/* 案板容器：fixed 贴底，背景图 */
+
+/* 旧 img 已移除 */
+
+/* 独立定位图标基类 */
+
+
+
+
+
+/* 底部命令按钮：图标 + 竖排小字 */
+
+
+
+
+/* 角标 */
+
+/* 文字说明（竖排小字） */
+
+
+
+
+
+
+
+
+
+
+
+
+
+.overlay-panel,
+.modal-pane {
+  border: 1px solid rgba(226, 180, 86, 0.28);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(245, 229, 184, 0.96), rgba(215, 190, 136, 0.92)),
+    var(--panel);
+  box-shadow:
+    var(--shadow),
+    inset 0 1px 0 rgba(255, 244, 210, 0.28);
+  backdrop-filter: blur(8px);
+}
+
+
+
+
+
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  border: 0;
+  background: rgba(20, 14, 8, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.court-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  padding: 0 28px 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.98);
+  transition: opacity 180ms ease, transform 180ms ease;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.court-drawer.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.drawer-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 4px 6px;
+  margin-bottom: 0;
+  color: #ffe8a0;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+}
+
+.drawer-brand div {
+  min-width: 0;
+  flex: 1;
+}
+
+.drawer-brand strong,
+.drawer-brand span {
+  display: block;
+}
+
+.drawer-brand strong {
+  color: #24170d;
+  font-size: 1.06rem;
+  letter-spacing: 0.04em;
+}
+
+.drawer-brand span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.secondary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border: 1px solid rgba(111, 83, 46, 0.24);
+  border-radius: 6px;
+  color: #573d1f;
+  background: rgba(255, 250, 235, 0.56);
+}
+
+.secondary-action:hover {
+  border-color: rgba(150, 91, 42, 0.48);
+  background: rgba(255, 245, 215, 0.84);
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: 9px;
+  color: #704c1e;
+  font-weight: 700;
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(84, 52, 23, 0.24);
+  border-radius: 4px;
+  background: rgba(55, 35, 16, 0.1);
+}
+
+.segmented button {
+  min-height: 30px;
+  min-width: 56px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.segmented button:hover,
+.segmented button.active {
+  color: #f9e0aa;
+  background:
+    linear-gradient(180deg, #8b382b, #5a241d);
+}
+
+.minister-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 160px);
+  justify-content: start;
+  gap: 10px;
+  min-height: 0;
+  margin-top: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
+  align-content: start;
+}
+
+/* 朝堂全屏可拖拽容器 */
+.minister-list-court {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.minister-list-court .minister-card {
+  width: 11vh;
+}
+
+.minister-list-court .minister-card-portrait-wrap {
+  height: 20vh;
+}
+
+
+.minister-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0;
+  width: 160px;
+  overflow: visible;
+  white-space: normal;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  color: #fff;
+  text-align: center;
+  background: none;
+  transition: transform 150ms ease, filter 150ms ease;
+  cursor: pointer;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.55));
+}
+
+.minister-card-portrait-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 20vh;
+}
+
+.minister-card-portrait {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  border-radius: 4px 4px 0 0;
+  background: rgba(155, 120, 80, 0.18);
+}
+
+.portrait-upload-btn {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(45, 28, 14, 0.55);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 150ms ease, background 150ms ease;
+}
+
+.minister-card:hover .portrait-upload-btn {
+  opacity: 1;
+}
+
+.portrait-upload-btn:hover {
+  background: rgba(143, 47, 37, 0.85);
+}
+
+.portrait-upload-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.minister-card-portrait-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, rgba(100, 65, 30, 0.72), rgba(60, 35, 12, 0.55));
+  color: rgba(255, 220, 150, 0.7);
+  font-size: 2.8rem;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+
+.minister-card-info {
+  width: 100%;
+  padding: 5px 4px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  background: linear-gradient(180deg, rgba(20,10,0,0.72), rgba(20,10,0,0.55));
+  border-radius: 0 0 4px 4px;
+}
+
+.minister-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
+}
+
+.minister-office {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  max-width: 14em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
+  color: rgba(255,220,140,0.85);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+}
+
+/* 状态徽标：去职/罢黜/下狱等。卡片里推到右侧成组，office 跟其后。 */
+.minister-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(120, 90, 60, 0.85);
+}
+.minister-status.status-imprisoned,
+.minister-status.status-dead { background: rgba(120, 30, 24, 0.9); }
+.minister-status.status-dismissed,
+.minister-status.status-exiled { background: rgba(150, 70, 30, 0.9); }
+.minister-status.status-retired { background: rgba(90, 90, 100, 0.85); }
+/* 状态徽标在前时，紧随的 office 不再独占右端 */
+.minister-status + .minister-office { margin-left: 6px; }
+
+/* 去职大臣卡片：灰化提示不可召见 */
+.minister-card.ousted {
+  opacity: 0.62;
+  filter: grayscale(0.35);
+}
+
+/* 详情卡副标题里的官职，与状态徽标并排 */
+.profile-office { margin-left: 6px; }
+
+.minister-bio {
+  display: none;
+}
+
+.minister-card:hover,
+.minister-card.selected {
+  transform: translateY(-8px) scale(1.04);
+  filter: drop-shadow(0 8px 20px rgba(0,0,0,0.75)) brightness(1.08);
+}
+
+.minister-name {
+  color: #ffe8a0;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+
+.favorite-mark {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  color: var(--gold);
+}
+
+
+
+
+
+
+
+.map-intel-panel {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 50;
+  width: min(420px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  padding: 28px 56px 30px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transform-origin: 24px 0;
+  color: #000;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(80, 50, 20, 0.25);
+}
+
+.map-intel-panel > .panel-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  left: auto;
+  bottom: auto;
+  z-index: 3;
+  background: rgba(250, 242, 220, 0.9);
+}
+
+.intel-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 4px;
+  color: #000;
+  font-size: 0.78rem;
+}
+
+.intel-table th,
+.intel-table td {
+  padding: 4px 7px;
+  border: 1px solid rgba(80, 50, 20, 0.35);
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+  color: #000;
+  font-weight: 700;
+  background: transparent;
+}
+
+.intel-table thead th {
+  font-weight: 700;
+  background: rgba(180, 140, 80, 0.22);
+}
+
+.intel-table tbody th {
+  width: 3em;
+  color: #3a2410;
+  font-weight: 700;
+  background: rgba(180, 140, 80, 0.16);
+}
+
+.map-intel-panel > * {
+  position: relative;
+  z-index: 2;
+}
+
+.map-intel-panel::before {
+  content: "";
+  position: absolute;
+  inset: 18px 42px;
+  z-index: 1;
+  border-radius: 4px;
+  background: rgba(250, 242, 220, 0.45);
+  pointer-events: none;
+}
+
+
+
+
+
+
+
+
+.profile-copy,
+.directive-item p,
+.long-copy {
+  margin: 0;
+  color: #6b5d46;
+  white-space: pre-wrap;
+}
+
+
+.map-intel-panel .panel-title,
+.map-intel-panel .garrison-title,
+.map-intel-panel .empty-note,
+.map-intel-panel svg {
+  color: #000;
+}
+
+.map-intel-panel .panel-title {
+  min-height: 20px;
+  margin-bottom: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+
+.garrison-title {
+  margin: 10px 0 4px;
+  color: #3a2410;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+
+
+
+
+
+
+.fullscreen-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+.fullscreen-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 15, 11, 0.18);
+  backdrop-filter: blur(2px);
+}
+
+
+
+/* 后宫卡片：露出简介，减轻副标题截断后的空详情感 */
+.harem-drawer .minister-bio {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  width: 100%;
+  margin-top: 2px;
+  padding: 0 4px 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: rgba(240, 220, 180, 0.88);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.75);
+  text-align: center;
+  white-space: normal;
+}
+.harem-drawer .minister-office {
+  max-width: 100%;
+}

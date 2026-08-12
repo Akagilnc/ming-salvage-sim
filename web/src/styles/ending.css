@@ -1,0 +1,383 @@
+/* ===== 终章定论：国史馆夜阅风（深墨实底 + 金描边 + 朱红字）===== */
+.ending-document {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  height: 100%;
+  min-height: 0;
+  padding: 26px clamp(28px, 8vw, 140px) 44px;
+  color: #f1dcb5;
+  background:
+    radial-gradient(130% 100% at 50% -8%, rgba(150, 44, 32, 0.30), transparent 56%),
+    radial-gradient(100% 80% at 50% 110%, rgba(80, 22, 16, 0.22), transparent 60%),
+    linear-gradient(180deg, rgba(21, 13, 9, 0.92), rgba(13, 9, 7, 0.96)),
+    url("/bg_ending.webp") center / cover no-repeat;
+}
+
+/* hero：印玺 + 庙号大字 */
+.ending-hero {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 28px 36px;
+  border: 1px solid rgba(214, 168, 96, 0.4);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #3a2117, #221410);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 232, 190, 0.12);
+}
+
+.ending-hero::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(214, 168, 96, 0.16);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.ending-seal {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  min-width: 96px;
+  border: 2px solid #c23a2a;
+  border-radius: 50%;
+  color: #f0c98a;
+  background: radial-gradient(circle, rgba(170, 44, 32, 0.7), rgba(50, 22, 16, 0.4));
+  box-shadow: 0 0 26px rgba(190, 60, 40, 0.4), inset 0 0 16px rgba(0, 0, 0, 0.5);
+}
+
+.ending-hero-copy {
+  min-width: 0;
+}
+
+.ending-hero-copy p,
+.ending-section-kicker {
+  margin: 0;
+  color: #d6a85c;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.ending-hero-copy h2 {
+  margin: 6px 0;
+  color: #f0c98a;
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: clamp(2.4rem, 4.6vw, 4rem);
+  line-height: 1.06;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.ending-hero-copy span {
+  color: #b98f63;
+  font-size: 0.94rem;
+  letter-spacing: 0.08em;
+}
+
+.ending-verdict-card,
+.ending-chronicle {
+  flex: 0 0 auto;
+  padding: 26px 30px;
+  border: 1px solid rgba(214, 168, 96, 0.3);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2a1c14, #1a120d);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 232, 190, 0.08);
+}
+
+.ending-chronicle {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ending-section-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(214, 168, 96, 0.24);
+  font-size: 0.84rem;
+  letter-spacing: 0.16em;
+}
+
+.ending-section-kicker svg {
+  color: #d6a85c;
+}
+
+.ending-summary-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  font-size: clamp(1.04rem, 1.4vw, 1.22rem);
+  line-height: 2.05;
+  color: #e8a07f;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* 竖向时间轴：date | 轴道 | body 三列，纵向滚动 */
+.ending-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 4px 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(214, 168, 96, 0.5) rgba(214, 168, 96, 0.10);
+}
+
+.ending-timeline::-webkit-scrollbar {
+  width: 9px;
+}
+
+.ending-timeline::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(214, 168, 96, 0.10);
+}
+
+.ending-timeline::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(214, 168, 96, 0.42);
+}
+
+.ending-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 84px 26px minmax(0, 1fr);
+  gap: 0;
+  padding: 0 0 26px 0;
+}
+
+/* 竖轴线（钉中间轴道列正中）*/
+.ending-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: calc(84px + 13px);
+  top: 10px;
+  bottom: -10px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #c23a2a, rgba(214, 168, 96, 0.25));
+}
+
+/* 节点 */
+.ending-timeline-item::after {
+  content: "";
+  position: absolute;
+  left: calc(84px + 13px);
+  top: 7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #f0c98a;
+  border-radius: 50%;
+  background: #c23a2a;
+  transform: translateX(-50%);
+  box-shadow: 0 0 12px rgba(190, 60, 40, 0.6);
+  z-index: 1;
+}
+
+.ending-timeline-item:last-child {
+  padding-bottom: 4px;
+}
+
+.ending-timeline-item:last-child::before {
+  bottom: auto;
+  height: 16px;
+}
+
+.ending-timeline-date {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 2px;
+  padding-right: 6px;
+  font-family: var(--font-brush), "ZCOOL XiaoWei", serif;
+  color: #f0c98a;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.ending-timeline-date b {
+  font-size: 1.12rem;
+  line-height: 1.1;
+}
+
+.ending-timeline-date span {
+  color: #a98c69;
+  font-size: 0.82rem;
+}
+
+.ending-timeline-body {
+  grid-column: 3;
+  min-width: 0;
+  padding-left: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ending-timeline-body p {
+  margin: 0;
+  line-height: 1.62;
+  word-break: break-word;
+}
+
+.ending-timeline-body p + p {
+  margin-top: 2px;
+}
+
+.ending-timeline-chapter {
+  color: #e0563f;
+  font-size: 1.0rem;
+  font-weight: 700;
+}
+
+.ending-timeline-decree {
+  color: #c9a572;
+  font-size: 0.9rem;
+}
+
+.ending-timeline-effect {
+  color: #9ec7aa;
+  font-size: 0.9rem;
+}
+
+
+
+
+
+.document-section h2 {
+  margin: 0;
+  color: #704c1e;
+  font-size: 1.02rem;
+}
+
+
+
+
+
+
+
+
+.issue-group {
+  display: grid;
+  gap: 8px;
+}
+
+.issue-group h3 {
+  margin: 0;
+  color: #57361e;
+  font-size: 0.92rem;
+}
+
+.issue-list {
+  display: grid;
+  border-top: 1px solid rgba(111, 83, 46, 0.14);
+}
+
+.issue-line {
+  display: grid;
+  gap: 7px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(111, 83, 46, 0.12);
+}
+
+.issue-line.good .issue-progress i {
+  background: linear-gradient(90deg, #b7852c, #3f7a61);
+}
+
+.issue-line.warn .issue-progress i {
+  background: linear-gradient(90deg, #a64036, #b7852c);
+}
+
+.issue-line.danger .issue-progress i {
+  background: linear-gradient(90deg, #7f2e26, #a64036);
+}
+
+.issue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.issue-head b {
+  min-width: 0;
+  color: #673f20;
+}
+
+.issue-head span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.issue-progress {
+  display: grid;
+  grid-template-columns: minmax(48px, auto) minmax(120px, 1fr) minmax(48px, auto);
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.issue-progress div {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(111, 83, 46, 0.16);
+  border-radius: 999px;
+  background: rgba(111, 83, 46, 0.1);
+}
+
+.issue-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #a64036, #b7852c 48%, #3f7a61);
+}
+
+.issue-line p {
+  margin: 0;
+  color: #6b5d46;
+}
+
+.issue-commitment-progress {
+  color: #5b4d35;
+  font-weight: 700;
+}
+
+.issue-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.issue-tags small {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #6d5a3e;
+  background: rgba(111, 83, 46, 0.08);
+}
+
+
+
+
+
+
+
