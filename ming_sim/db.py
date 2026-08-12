@@ -2094,6 +2094,18 @@ class GameDB:
                     "UPDATE character_offices SET office_title=? WHERE character_name=?",
                     (historical, name),
                 )
+        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
+        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
+        for r in self.conn.execute(
+            "SELECT character_name, office_title FROM character_offices"
+        ).fetchall():
+            raw_title = str(r["office_title"] or "")
+            cleaned = canonical_office_title(raw_title)
+            if cleaned and cleaned != raw_title:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (cleaned, r["character_name"]),
+                )
         # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%在途%'"

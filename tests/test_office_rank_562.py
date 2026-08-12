@@ -102,6 +102,26 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     assert returned["break_rank"]["basis"] == "historical_office"
     assert returned["break_rank"]["is_break_rank"] is False
 
+    # AC: 起复跳升 / 听用候铨跳升仍按 upward 公式（现职带−新职带≥2）打标。
+    _jump_id, jumped = _appointment_dossier(db, state, "起复甲", "兵部尚书")
+    assert jumped["break_rank"]["basis"] == "historical_office"
+    assert jumped["break_rank"]["is_break_rank"] is False  # 3→2 only one band
+
+    db.set_character_office("起复甲", "翰林院编修", "翰林院")
+    db.set_character_status(state, "起复甲", "retired", "致仕")
+    _big_id, big = _appointment_dossier(db, state, "起复甲", "兵部尚书")
+    assert big["break_rank"]["basis"] == "historical_office"
+    assert big["break_rank"]["is_break_rank"] is True
+    assert big["break_rank"]["current_rank_band"] - big["break_rank"]["new_rank_band"] >= 2
+
+    db.conn.execute(
+        "UPDATE character_offices SET office_title='翰林院编修',office_type='翰林院' "
+        "WHERE character_name='候铨乙'"
+    )
+    _disp_jump_id, disp_jump = _appointment_dossier(db, state, "候铨乙", "兵部尚书")
+    assert disp_jump["break_rank"]["basis"] == "historical_office"
+    assert disp_jump["break_rank"]["is_break_rank"] is True
+
 
 def test_title_stems_keep_distinct_ming_bands_inside_same_office_type():
     """Owner #562: actual title/stem bands, not one representative band per type."""
@@ -179,3 +199,66 @@ def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
     assert payload["break_rank"]["basis"] == "historical_office"
     assert payload["break_rank"]["is_break_rank"] is False
     assert payload["break_rank"]["current_rank_band"] == 3
+
+    # 革职候勘 / 原任 污染也须在 seed 备档洗净，供起复读最近实职带。
+    hu = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("胡廷宴",),
+    ).fetchone()
+    assert hu is not None
+    assert hu["office_title"] == "三边总督"
+    assert "革职" not in hu["office_title"]
+    assert not hu["office_title"].startswith("原")
+    _hid, hu_payload = _appointment_dossier(db, _state, "胡廷宴", "三边总督")
+    assert hu_payload["break_rank"]["basis"] == "historical_office"
+    assert hu_payload["break_rank"]["is_break_rank"] is False
+    assert hu_payload["break_rank"]["current_rank_band"] == 3
+
+
+def test_promulgation_judge_receives_break_rank_and_is_instructed_to_treat_it_strictly(game):
+    """AC judge-in-loop floor: break_rank 入颁布上下文，prompt 钉死从严审视（无第三判决态）。"""
+    from ming_sim.agents import create_promulgation_judge_agent
+    from ming_sim.models import LLMConfig
+
+    db, state, _content = game
+    _add(db, state, "白身丙", "白身", "布衣")
+    high_id, high = _appointment_dossier(db, state, "白身丙", "陕西巡抚")
+    _add(db, state, "平调丁", "礼部右侍郎", "礼部")
+    ordinary_id, ordinary = _appointment_dossier(db, state, "平调丁", "户部左侍郎")
+    assert high["break_rank"]["is_break_rank"] is True
+    assert ordinary["break_rank"]["is_break_rank"] is False
+
+    rows = [
+        dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (high_id,)).fetchone()),
+        dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (ordinary_id,)).fetchone()),
+    ]
+    context = build_promulgation_judge_context(db, state, rows)
+    by_id = {int(item["id"]): item for item in context["dossiers"]}
+    assert by_id[high_id]["break_rank"]["is_break_rank"] is True
+    assert by_id[ordinary_id]["break_rank"]["is_break_rank"] is False
+
+    captured = {}
+
+    class _Agent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    import ming_sim.agents as agents_mod
+
+    real_agent = agents_mod.Agent
+    real_model = agents_mod.create_chat_model
+    agents_mod.Agent = _Agent
+    agents_mod.create_chat_model = lambda *a, **k: object()
+    try:
+        create_promulgation_judge_agent(
+            LLMConfig(api_key="t", base_url="http://x", model="t"), object()
+        )
+    finally:
+        agents_mod.Agent = real_agent
+        agents_mod.create_chat_model = real_model
+
+    instructions = "\n".join(captured.get("instructions") or [])
+    assert "break_rank.is_break_rank=true" in instructions
+    assert "从严" in instructions
+    assert "promulgated|rejected" in instructions
+    assert "deferred" not in instructions
