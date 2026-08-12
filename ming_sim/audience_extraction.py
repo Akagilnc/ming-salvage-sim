@@ -121,12 +121,36 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
                 f"第 {idx} 条 tags 须为字符串数组",
                 code="extraction_bad_shape", detail={"index": idx},
             )
+        endorsement_raw = item.get("endorsement")
+        endorsement = None
+        if endorsement_raw is not None:
+            if not isinstance(endorsement_raw, Mapping):
+                raise ExtractionShapeError(
+                    f"第 {idx} 条 endorsement 须为对象",
+                    code="extraction_bad_shape", detail={"index": idx},
+                )
+            dossier_id = endorsement_raw.get("dossier_id")
+            form = endorsement_raw.get("form")
+            imperial = endorsement_raw.get("imperial", False)
+            endorser_id = endorsement_raw.get("endorser_id", "")
+            if (isinstance(dossier_id, bool) or not isinstance(dossier_id, int)
+                    or dossier_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}
+                    or not isinstance(imperial, bool) or not isinstance(endorser_id, str)):
+                raise ExtractionShapeError(
+                    f"第 {idx} 条 endorsement 字段非法",
+                    code="extraction_bad_shape", detail={"index": idx},
+                )
+            endorsement = {
+                "dossier_id": dossier_id, "form": form,
+                "endorser_id": endorser_id.strip(), "imperial": imperial,
+            }
         facts.append({
             "person_names": [n.strip() for n in person_names_raw if n.strip()],
             "audibility": str(audibility),
             "body": body.strip(),
             "tags": [t for t in tags_raw if t],
             "presence_effect": str(presence_effect),
+            **({"endorsement": endorsement} if endorsement is not None else {}),
         })
     return facts
 
@@ -138,6 +162,7 @@ def extract_story_facts(
     present_names: Sequence[str],
     llm_config: Any,
     extractor_agent: Any = None,
+    dossier_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """调抽取员把一段完整回话结构化成故事事实；空回话返回 []。
 
@@ -157,6 +182,10 @@ def extract_story_facts(
         "回话大臣": minister_name,
         "当前在场": list(present_names),
         "回话原文": text,
+        "可背书案卷": [
+            {"id": int(row["id"]), "decree_text": str(row.get("decree_text") or "")}
+            for row in (dossier_candidates or [])
+        ],
     }
     output = extract_agent_text(
         agent.run(json.dumps(materials, ensure_ascii=False))
@@ -216,6 +245,7 @@ def run_extraction_for_turn(
             present_names=present_names or [],
             llm_config=llm_config,
             extractor_agent=extractor_agent,
+            dossier_candidates=db.list_decree_dossiers(status="proposed"),
         )
     except Exception as exc:
         return _pending_with_pack(
