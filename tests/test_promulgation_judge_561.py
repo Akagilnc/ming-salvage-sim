@@ -247,7 +247,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
         "dossier_id": dossier_id,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": ["东林"],
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
         "gatekeeper_id": None,
         "reason": "触犯钱粮命门，科臣封驳。",
         "criteria_snapshot": {

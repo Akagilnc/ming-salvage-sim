@@ -10,7 +10,7 @@ import { GameMenuModal } from "./components/gameMenu";
 import { BudgetHover, CommandSlot, FullscreenModal, HUD_BG, HUD_SLOTS, LegacyBar, LongGoalsModal, QuadFrame } from "./components/hud";
 import { GrandMap, NodeIntel } from "./components/map";
 import { MenuPage } from "./components/menuPage";
-import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
+import { AudienceArchiveModal, ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
@@ -19,7 +19,7 @@ import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { retryAudienceStoryExtraction } from "./extractionRetry";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
 import { forwardSteamEvents, type SteamEvent } from "./steamEvents";
-import type { AppView, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
+import type { AppView, ChatResponse, ChatUndoResponse, ClosedIssue, Directive, ExtractionPendingStatus, GameState, MenuStatus, Minister, ModalName, PendingActionFailure, PendingDecision, ReplyRetry, SecretOrder, Suggestion } from "./types";
 import "./styles.css";
 
 export function App() {
@@ -331,7 +331,7 @@ export function App() {
   React.useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
+      if (activeModal === "chat" || activeModal === "edict" || activeModal === "state" || activeModal === "history" || activeModal === "audience_archive" || activeModal === "report" || activeModal === "secret_orders" || activeModal === "long_goals") {
         // 召对/诏书等全屏弹窗最优先
         setActiveModal("none");
       } else if (drawerOpen) {
@@ -401,6 +401,7 @@ export function App() {
     ? (state.talent_pool || [])  // 在野人才池（offstage 罢居前臣，#120）单独走 talent_pool
     : filterMinisters(state.ministers, ministerGroup);
   const consorts = filterConsorts(state.consorts || [], haremGroup);
+  const audienceRoster = [...state.ministers, ...(state.talent_pool || [])];
   const allCharacters = [...state.ministers, ...(state.consorts || [])];
   const activeMinister = selectedMinister
     ? allCharacters.find((m) => m.name === selectedMinister) || temporaryActiveMinister
@@ -466,16 +467,14 @@ export function App() {
     setMapIntelOpen(true);
   };
 
-  const sendChat = async (text = input) => {
+  const sendChat = async (targetMinisterName: string, text = input) => {
     if (busy) return;
-    if (!activeMinister) return;
     const message = text.trim();
     if (!message) {
       setComposerHint("请先问话或点一个奏对题目");
       return;
     }
 
-    const targetMinisterName = activeMinister.name;
     const fromComposer = text === input;
     setError("");
     setComposerHint("");
@@ -485,6 +484,8 @@ export function App() {
     if (fromComposer) {
       setInput("");
     }
+    // 面板归属与卷轴当前奏对者是两种身份：前者只用于判断玩家是否已离开发起面板。
+    const initiatingPanelName = selectedMinisterRef.current;
     // 流式/请求归属/派发由 hook 独占；App 只在 done 到手即幂等消费持久后果 + 面板态。
     await runAudienceTurn(targetMinisterName, message, {
       // 回话 done：done 载荷即含全部持久后果，立即消费——不拖到 SSE end（读心可延后 end 达
@@ -495,17 +496,12 @@ export function App() {
         // 重取型刷新（state + 密令列表）经唯一协调器：撤回/相邻轮等任一新刷新都会作废本次旧响应。
         void refreshDurableProjection({ secretOrders: true });
         // 面板态：仅当前大臣面板未切走才落。
-        if (selectedMinisterRef.current !== targetMinisterName) return;
+        if (selectedMinisterRef.current !== initiatingPanelName) return;
         setSuggestions(data.suggestions);
         setCanUndoLastChat(!!data.can_undo_last_chat);
         const responseFailures = data.pending_action_failures || [];
-        if (data.secret_order_id) {
-          setChatNotice(`密令已秘密交付${targetMinisterName}，编号 #${data.secret_order_id}。`);
-        }
+        // 成功的密令与拟旨由各自持久投影自然显现；系统层只承载失败/重试/恢复。
         setChatFailures((items) => mergePendingActionFailures(items, responseFailures));
-        if (data.proposed_directive) {
-          setChatNotice(`${targetMinisterName}已拟旨一道，待陛下在「诏书草案」核定（准/驳）。`);
-        }
         if (data.next_minister && !responseFailures.length) {
           // 换人：设 selectedMinister 即触发 selected-minister effect 加载新面板（不再显式重复加载）。
           resetPanel();
@@ -515,13 +511,11 @@ export function App() {
           setReplyRetry(null);
           setSelectedMinister(data.next_minister);
           setActiveModal("chat");
-          setChatNotice(`已传${data.next_minister}入殿。`);
         }
         // 正常回话完成后刷新待补抽取状态（可能有新的失败待补）。
         void refreshExtractionPending();
         if (data.court_action === "dismiss") {
           clearPendingText();
-          setChatNotice(`${targetMinisterName}已退下。请从左侧召见下一位大臣。`);
         }
       },
       // 观察者离开实时流：召对在后台续跑，重开经历史重入。
@@ -538,11 +532,11 @@ export function App() {
     });
   };
 
-  const undoLastChat = async () => {
-    if (busy || !activeMinister || !canUndoLastChat) return;
-    const targetMinisterName = activeMinister.name;
+  const undoLastChat = async (targetMinisterName: string) => {
+    if (busy || !canUndoLastChat) return;
     const ok = window.confirm("将撤回最近一轮召对及其政务影响，是否继续？");
     if (!ok) return;
+    const initiatingPanelName = selectedMinisterRef.current;
     setBusy("撤回召对");
     setError("");
     setChatNotice("");
@@ -568,7 +562,7 @@ export function App() {
       await loadState();
       // Read the ref FRESH at the panel-write point (the minister could switch
       // during the awaits above), mirroring sendChat's post-await check.
-      if (selectedMinisterRef.current === targetMinisterName) {
+      if (selectedMinisterRef.current === initiatingPanelName) {
         // #499：撤回后剩余轮的读心递话仍随 turn-identified 投影归位。
         applyHistory(data.history);
         setSuggestions(data.suggestions);
@@ -583,21 +577,25 @@ export function App() {
     }
   };
 
-  const retryInterruptedReply = async () => {
+  const retryInterruptedReply = async (targetMinisterName: string) => {
     // #505：系统层重试——复用已持久问话，不造重复句。
-    if (busy || !activeMinister || !replyRetry) return;
-    const targetMinisterName = activeMinister.name;
+    if (busy || !replyRetry) return;
+    const initiatingPanelName = selectedMinisterRef.current;
     setBusy("重新生成回话");
     setError("");
     setChatNotice("");
     try {
-      await api(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
+      const data = await api<ChatResponse>(`/api/ministers/${encodeURIComponent(targetMinisterName)}/reply/retry`, {
         method: "POST",
       });
-      if (selectedMinisterRef.current !== targetMinisterName) return;
+      if (selectedMinisterRef.current !== initiatingPanelName) return;
+      applyHistory(data.history);
+      setSuggestions(data.suggestions);
+      setCanUndoLastChat(!!data.can_undo_last_chat);
+      setChatFailures((items) => mergePendingActionFailures(items, data.pending_action_failures || []));
       setReplyRetry(null);
       setChatNotice("已重新生成回话。");
-      await loadMinisterChat(targetMinisterName, { mergeFailures: true });
+      invalidateAudienceScroll();
       void refreshDurableProjection({ secretOrders: true });
       void refreshExtractionPending();
     } catch (err) {
@@ -1103,7 +1101,7 @@ export function App() {
         <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
           caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => setActiveModal("state")} />
         <CommandSlot slotKey="邸报" img="邸报"
-          caption="邸报" sub="本月奏报" onClick={() => setActiveModal("report")} />
+          caption="起居注" sub="历次召对记录" onClick={() => setActiveModal("audience_archive")} />
         <CommandSlot slotKey="密令" img="密令"
           badge={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
           caption="密令" sub="进行中密令" onClick={() => setActiveModal("secret_orders")} />
@@ -1196,6 +1194,7 @@ export function App() {
         <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
           <ChatModal
             minister={activeMinister}
+            ministers={audienceRoster}
             portraitPrefix={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "consort_" : "minister_"}
             scrollMode={(state.consorts || []).some((c) => c.name === activeMinister.name) ? "legacy" : "audience"}
             currentCampaignId={currentCampaignId}
@@ -1215,7 +1214,7 @@ export function App() {
             input={input}
             busy={busy}
             error={error}
-            secretOrders={secretOrders.filter((o) => o.minister_name === activeMinister.name && (o.status === "active" || o.status === "pending_review"))}
+            secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
             onInput={setInput}
@@ -1225,7 +1224,7 @@ export function App() {
             onRetryExtraction={retryStoryExtraction}
             onUndo={undoLastChat}
             onHint={setComposerHint}
-            onFavorite={() => toggleFavorite(activeMinister)}
+            onFavorite={toggleFavorite}
             onOpenEdict={() => setActiveModal("edict")}
             onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
@@ -1286,6 +1285,10 @@ export function App() {
 
       {activeModal === "history" ? (
         <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
+      ) : null}
+
+      {activeModal === "audience_archive" ? (
+        <AudienceArchiveModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
       ) : null}
 
       {activeModal === "menu" ? (
