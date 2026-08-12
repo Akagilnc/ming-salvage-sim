@@ -110,6 +110,8 @@ def _apply_authority_change_item(
         scope = str(item.get("scope") or item.get("事域") or "").strip()
         if not holder_id or not privilege or not scope:
             raise ValueError("授予项必须含 holder_id/privilege/scope")
+        if not db.canonical_authority_scope(scope):
+            raise ValueError("invalid_authority_scope")
         effective_raw = item.get("effective_turn", item.get("生效回合"))
         expires_raw = item.get("expires_turn", item.get("失效回合"))
         effective_turn = (
@@ -120,9 +122,25 @@ def _apply_authority_change_item(
             None if expires_raw in (None, "")
             else _parse_sqlite_id(expires_raw)
         )
-        if db.find_active_authority(
+        existing = db.find_active_authority(
             effective_turn, holder_id=holder_id, privilege=privilege, scope=scope,
-        ) is not None:
+        )
+        if existing is not None:
+            existing_dossier = existing.get("dossier_id")
+            if (
+                existing_dossier is not None
+                and int(existing_dossier) == int(dossier_id)
+            ):
+                # Same-dossier replay is origin-idempotent (#611 §2).
+                return {
+                    "动作": "授予",
+                    "authority_id": int(existing["id"]),
+                    "dossier_id": dossier_id,
+                    "holder_id": holder_id,
+                    "privilege": privilege,
+                    "scope": scope,
+                    "reason": "same_dossier_replay",
+                }
             raise ValueError("duplicate_active_authority")
         authority_id = db.grant_authority(
             state, holder_id, privilege, scope,
@@ -6941,6 +6959,7 @@ def apply_score_extraction(
                 "missing_dossier_source",
                 "dossier_not_effect_eligible",
                 "duplicate_active_authority",
+                "invalid_authority_scope",
                 "unknown_authority_id",
                 "already_revoked",
             }:
