@@ -1020,10 +1020,21 @@ def close_night(
     # Only now may the one extraction call resolve same-night spoken endorsements
     # against those real ids. Failure remains loud and leaves the closing cursor
     # resumable; no second LLM pass is introduced.
-    _drain_story_extraction_or_fail_closed(
-        db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-        extractor_agent=extractor_agent,
-    )
+    try:
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            extractor_agent=extractor_agent,
+        )
+    except Exception:
+        # Dossiers/directive lifecycle created above are durable retry prerequisites,
+        # but a failed close is not left deceptively `closing`.  Re-open at the exact
+        # completed transfer cursor so the player can continue the night or retry;
+        # propagate the original extraction error unchanged.
+        _set_night_fields(
+            db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+            close_commit_cursor=CLOSE_STEP_TRANSFER_CANDIDATES,
+        )
+        raise
 
     if cursor < CLOSE_STEP_FINALIZE:
         tags = [TAG_CLOSE_NIGHT]

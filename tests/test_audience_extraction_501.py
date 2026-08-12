@@ -478,8 +478,8 @@ def test_cli_trail_extraction_failure_marks_pending_not_raises(game, monkeypatch
     assert db.get_story_extract_status(ctid) == "pending"
 
 
-def test_web_await_inflight_drains_pending_before_close(web_game, monkeypatch):
-    """收夜前门（_await_audience_inflight_clear）：带待补 → fail-closed 抛，夜保持开（AC10）。"""
+def test_web_await_inflight_does_not_pre_drain_pending(web_game, monkeypatch):
+    """Web 前门只等在飞；待补留给创建案卷后的 close-night 单一 owner。"""
     game = web_game
     minister = _minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
@@ -488,21 +488,11 @@ def test_web_await_inflight_drains_pending_before_close(web_game, monkeypatch):
         "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
     ).fetchone()["night_id"])
 
-    # 持续失败抽取员 → drain fail-closed 中止收夜。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda cfg: _BoomAgent())
-    with pytest.raises(an.AudienceNightError) as ei:
-        web_app._await_audience_inflight_clear(game)
-    assert ei.value.code == "pending_extraction"
-    assert an.get_night(game.db, nid)["status"] != an.NIGHT_STATUS_CLOSED
-
-    # 换好抽取员 → drain 清空、门放行（收夜可继续）。
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda cfg: _FactsAgent(_STAGE_FACT_JSON),
-    )
     web_app._await_audience_inflight_clear(game)
-    assert game.db.count_pending_story_extractions(night_id=nid) == 0
+    assert game.db.count_pending_story_extractions(night_id=nid) == 1
+    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
 
 
 # ── L2 落账走账本唯一入口：closed 夜 / 死账 enter 护栏不被旁路 ──────────────

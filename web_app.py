@@ -73,7 +73,6 @@ from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
-    drain_pending_before_open_night_close,
     trail_extraction_after_reply,
 )
 from ming_sim.token_stats import tlog
@@ -2456,9 +2455,7 @@ def _await_audience_inflight_clear(game) -> None:
 
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
-    #501（ADR 0036 线上 R3）：在飞回话清空后、持 gate 收夜前，强制同步补跑一次清空待补——
-    收夜是史实书写边界，带在场变化的待补账收夜会把过期名单写成史实。仍有待补 → fail-closed
-    抛 AudienceNightError（端点映射 409、夜保持开、可原地重试），与在飞超时熔断同语义。"""
+    抽取由引擎 close_night 单独拥有：Web 这里只等待在飞回话，不在案卷创建前预清待补。"""
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
         return
@@ -2466,11 +2463,6 @@ def _await_audience_inflight_clear(game) -> None:
     open_n = get_open_night(db)
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
-        drain_pending_before_open_night_close(
-            db=db,
-            llm_config=getattr(getattr(game, "session", None), "llm_config", None),
-            write_gate=_game_write_gate(game),
-        )
 
 
 def _game_write_gate(game) -> threading.Lock:
