@@ -12693,6 +12693,24 @@ class GameDB:
         ).fetchall()
         return [{**dict(row), "revoked": False} for row in rows]
 
+    def find_authority_by_origin(
+        self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the stable row for an exact grant origin, regardless of status."""
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? "
+            "AND privilege=? AND scope=? ORDER BY id LIMIT 1",
+            (
+                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+                str(scope).strip(),
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
     def find_active_authority(
         self, turn: int, *, holder_id: str, privilege: str, scope: str,
     ) -> Optional[Dict[str, object]]:

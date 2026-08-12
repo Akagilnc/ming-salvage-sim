@@ -325,6 +325,51 @@ def test_same_dossier_grant_replay_is_idempotent(game):
     ).fetchone()["n"] == 1
 
 
+def test_same_dossier_grant_replay_returns_revoked_origin_without_regrant(game):
+    db, state, content = game
+    holder = _minister(db)
+    dossier = _eligible_dossier(db, state, holder, target_id="revoked-replay")
+    payload = {"authority_changes": [{
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": "issue:revoked-replay", "dossier_id": dossier["id"],
+    }]}
+    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    authority_id = int(first["authority_changes"][0]["authority_id"])
+    assert db.revoke_authority(authority_id, state.turn)
+
+    replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
+
+    assert replay["authority_changes"][0]["authority_id"] == authority_id
+    assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
+    assert db.get_authority(authority_id)["revoked"] is True
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
+
+
+def test_same_dossier_grant_replay_returns_expired_origin_without_regrant(game):
+    db, state, content = game
+    holder = _minister(db)
+    dossier = _eligible_dossier(db, state, holder, target_id="expired-replay")
+    payload = {"authority_changes": [{
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": "issue:expired-replay", "expires_turn": state.turn,
+        "dossier_id": dossier["id"],
+    }]}
+    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    authority_id = int(first["authority_changes"][0]["authority_id"])
+    state.turn += 1
+
+    replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
+
+    assert replay["authority_changes"][0]["authority_id"] == authority_id
+    assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
+    assert db.get_authority(authority_id)["expires_turn"] == state.turn - 1
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
+
+
 def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""
     db, state, content = game
