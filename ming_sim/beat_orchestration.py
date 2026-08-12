@@ -206,11 +206,14 @@ def assemble_beat_inputs(
 def _run_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
     """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。
 
-    strip 后返回：纯空白产出视同空，交调用方 or-兜底（否则空白正文会顶掉 #498 确定性兜底）。
+    生产 scene 的空白输出是失败，不得伪装成模板成功；异常由 chat-turn 生命周期处理。
     """
     if beat_generator is None:
-        return ""
-    return str(beat_generator(inputs) or "").strip()
+        raise RuntimeError("scene generator is required")
+    body = str(beat_generator(inputs) or "").strip()
+    if not body:
+        raise RuntimeError(f"scene generator returned blank output for {inputs.beat_kind}")
+    return body
 
 
 def _identity_snippet(characterization: str) -> str:
