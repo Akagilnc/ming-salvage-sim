@@ -12,14 +12,17 @@ def _add(db, state, name, office, office_type):
     ))
 
 
-def _appointment_dossier(db, state, name, office):
+def _appointment_dossier(db, state, name, office, office_type=""):
+    payload = {"name": name, "office": office}
+    if office_type:
+        payload["office_type"] = office_type
     dossier_id = db.create_decree_dossier(
         state,
         action_type="appointment",
         decree_text=f"任命{name}为{office}",
         target_kind="character",
         target_id=name,
-        payload={"name": name, "office": office},
+        payload=payload,
     )
     row = db.conn.execute(
         "SELECT * FROM decree_dossiers WHERE id=?", (dossier_id,)
@@ -56,6 +59,28 @@ def test_white_body_high_appointment_is_marked_but_regular_first_office_is_not(g
         db, state, [dict(db.conn.execute("SELECT * FROM decree_dossiers WHERE id=?", (high_id,)).fetchone())]
     )
     assert context["dossiers"][0]["break_rank"]["is_break_rank"] is True
+
+
+def test_appointment_dossier_uses_declared_type_for_uncommon_target_title(game):
+    db, state, _content = game
+    for index, type_key in enumerate(("office_type", "new_office_type")):
+        name = f"异衔{index}"
+        _add(db, state, name, "白身", "布衣")
+        dossier_id = db.create_decree_dossier(
+            state,
+            action_type="appointment",
+            decree_text=f"任命{name}为钦定督理西务大臣",
+            target_kind="character",
+            target_id=name,
+            payload={"name": name, "new_office": "钦定督理西务大臣", type_key: "边镇"},
+        )
+        row = db.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+
+        assert payload["break_rank"]["new_rank_band"] == 5
+        assert payload["break_rank"]["is_break_rank"] is False
 
 
 def test_same_rank_demotion_and_two_band_promotion_follow_upward_formula(game):

@@ -10271,6 +10271,8 @@ class GameDB:
                 self,
                 normalized_payload.get("name") or target_id,
                 normalized_payload.get("office") or normalized_payload.get("new_office"),
+                normalized_payload.get("office_type")
+                or normalized_payload.get("new_office_type"),
             )
         if not action or not text:
             raise ValueError("案卷 action_type/decree_text 不能为空")
