@@ -11255,12 +11255,6 @@ class GameDB:
     _REACTION_SIGN = {"positive": 1, "negative": -1}
     _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
 
-    def list_decree_cost_events(self, dossier_id: int) -> List[Dict[str, object]]:
-        return [dict(row) for row in self.conn.execute(
-            "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-            (int(dossier_id),),
-        ).fetchall()]
-
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
         target_id: str, delta: int, reason: str, *, cost_identity: str,
@@ -11335,24 +11329,20 @@ class GameDB:
                 raise KeyError(f"案卷不存在：{dossier_id}")
             if dossier["status"] not in {"promulgated", "executing"}:
                 return False
-            if self.conn.execute(
-                "SELECT 1 FROM decree_cost_events WHERE dossier_id=? AND cost_kind='breach'",
-                (int(dossier_id),),
-            ).fetchone():
-                return False
-            if self._record_decree_cost(
+            if not self._record_decree_cost(
                 dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
                 cost_identity="breach",
             ):
-                self._record_decree_cost(
-                    dossier_id, state.turn, "authority", "metric", "皇威",
-                    self._OVERRIDE_AUTHORITY_COST, reason, cost_identity="breach",
-                )
-                state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
-                self.conn.execute(
-                    "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    (state.metrics["皇威"],),
-                )
+                return False
+            self._record_decree_cost(
+                dossier_id, state.turn, "authority", "metric", "皇威",
+                self._OVERRIDE_AUTHORITY_COST, reason, cost_identity="breach",
+            )
+            state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
+            self.conn.execute(
+                "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (state.metrics["皇威"],),
+            )
             roster = dossier.get("participant_roster") or []
             ministers = set()
             for item in roster:

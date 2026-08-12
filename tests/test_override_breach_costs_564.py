@@ -1,5 +1,4 @@
 """#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
-import json
 
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
@@ -8,6 +7,13 @@ def _dossier(db, state, *, mode="ordinary", roster=None):
         target_kind="issue", target_id="land-survey",
         payload={"mode": mode}, participants=roster or [],
     )
+
+
+def _cost_events(db, dossier_id):
+    return [dict(row) for row in db.conn.execute(
+        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
+        (int(dossier_id),),
+    ).fetchall()]
 
 
 def _sat(db, table, name):
@@ -46,7 +52,7 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
     assert _sat(db, "factions", "东林") == max(0, before["东林"] - 4)
     assert _sat(db, "factions", "阉党") == before["阉党"]
     assert state.metrics["皇威"] == max(0, authority - 5)
-    events = db.list_decree_cost_events(dossier_id)
+    events = _cost_events(db, dossier_id)
     assert {(x["cost_kind"], x["target_kind"], x["target_id"]) for x in events} == {
         ("authority", "metric", "皇威"), ("satisfaction", "class", "士绅"),
         ("satisfaction", "faction", "东林"),
@@ -76,10 +82,10 @@ def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_author
     authority = state.metrics["皇威"]
     db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
     assert state.metrics["皇威"] == authority
-    assert {x["cost_kind"] for x in db.list_decree_cost_events(dossier_id)} == {"satisfaction"}
+    assert {x["cost_kind"] for x in _cost_events(db, dossier_id)} == {"satisfaction"}
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     assert state.metrics["皇威"] == max(0, authority - 5)
-    assert len(db.list_decree_cost_events(dossier_id)) == 3
+    assert len(_cost_events(db, dossier_id)) == 3
 
 
 def test_costs_are_idempotent_and_survive_restore(game):
@@ -91,13 +97,13 @@ def test_costs_are_idempotent_and_survive_restore(game):
     state.turn += 1
     db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
     db.apply_dossier_verdicts(state, [verdict])
-    assert len(db.list_decree_cost_events(dossier_id)) == 2
+    assert len(_cost_events(db, dossier_id)) == 2
     path = db.path
     db.close()
     from ming_sim.db import GameDB
     restored = GameDB(path, content)
     try:
-        assert len(restored.list_decree_cost_events(dossier_id)) == 2
+        assert len(_cost_events(restored, dossier_id)) == 2
     finally:
         restored.close()
 
@@ -116,7 +122,7 @@ def test_force_then_breach_charges_each_real_entry_independently(game):
     assert state.metrics["皇威"] == max(0, authority - 10)
     assert _sat(db, "factions", "东林") == max(0, after_force - 4)
     authority_events = [
-        row for row in db.list_decree_cost_events(dossier_id)
+        row for row in _cost_events(db, dossier_id)
         if row["cost_kind"] == "authority"
     ]
     assert {row["cost_identity"] for row in authority_events} == {"override", "breach"}
@@ -143,7 +149,7 @@ def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
     assert "毕自严" in targets
     assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
     dead_faction_events = [
-        row for row in db.list_decree_cost_events(dossier_id)
+        row for row in _cost_events(db, dossier_id)
         if row["cost_kind"] == "satisfaction"
         and row["target_kind"] == "faction"
         and row["target_id"] == dead_faction
@@ -174,5 +180,5 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
         "倪元璐", "徐光启", "毕自严",
     }
     assert not {"黄道周", "王承恩", "曹化淳"} & {e["target"] for e in edges}
-    faction_targets = {e["target_id"] for e in db.list_decree_cost_events(dossier_id) if e["target_kind"] == "faction"}
+    faction_targets = {e["target_id"] for e in _cost_events(db, dossier_id) if e["target_kind"] == "faction"}
     assert faction_targets == {"东林", "皇党", "西学"}
