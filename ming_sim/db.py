@@ -8307,9 +8307,41 @@ class GameDB:
         if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
             return []
         base = float(int(source_night_seq or 0)) + 0.5
+        accepted: List[Mapping[str, Any]] = []
+        rejected: List[tuple[Mapping[str, Any], str]] = []
+        # Validate model-owned items before opening the all-or-nothing application
+        # transaction. Expected dirty-data failures become item rejections; code
+        # failures during application still raise and roll the transaction back.
+        for fact in facts:
+            if "_rejected_story_fact" in fact:
+                rejected.append((fact.get("_rejected_story_fact") or {}, str(fact.get("_rejection_reason") or "事实形状非法")))
+                continue
+            endorsement = fact.get("endorsement")
+            if isinstance(endorsement, Mapping):
+                try:
+                    self._validate_dossier_endorsement(
+                        endorsement.get("dossier_id"), form=endorsement.get("form"),
+                        endorser_id=endorsement.get("endorser_id", ""),
+                        imperial=endorsement.get("imperial", False), source_chat_turn_id=cid,
+                    )
+                except (TypeError, ValueError) as exc:
+                    rejected.append((fact, str(exc)))
+                    continue
+            accepted.append(fact)
+
         new_ids: List[int] = []
         with atomic(self):
-            for fact in facts:
+            if rejected:
+                from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+                turn_row = self.conn.execute("SELECT turn FROM chat_turns WHERE id=?", (cid,)).fetchone()
+                collector = RejectionCollector()
+                for item, reason in rejected:
+                    collector.record("story_facts", RejectedItem(
+                        item=dict(item), reason=reason, category="invalid_item",
+                        source=Provenance.system_simulation,
+                    ), int(turn_row["turn"] if turn_row is not None else 0))
+                collector.flush_to_db(self)
+            for fact in accepted:
                 persons = [
                     str(n).strip()
                     for n in (fact.get("person_names") or [])
@@ -10432,14 +10464,18 @@ class GameDB:
             if delegator and (delegator == character or delegator not in responsible):
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
 
-    def add_dossier_endorsement(
-        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
-        endorser_id: str = "", imperial: bool = False, commit: bool = True,
-    ) -> int:
-        """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
-        did, cid = int(dossier_id), int(source_chat_turn_id)
-        kind = str(form or "").strip()
-        person = str(endorser_id or "").strip()
+    def _validate_dossier_endorsement(
+        self, dossier_id: object, *, form: object, source_chat_turn_id: object,
+        endorser_id: object = "", imperial: object = False,
+    ) -> tuple[int, int, str, str, bool]:
+        if isinstance(dossier_id, bool) or not isinstance(dossier_id, int):
+            raise ValueError("背书案卷 id 须为整数")
+        if isinstance(source_chat_turn_id, bool) or not isinstance(source_chat_turn_id, int):
+            raise ValueError("背书来源对话轮 id 须为整数")
+        if not isinstance(form, str) or not isinstance(endorser_id, str):
+            raise ValueError("背书形式与人物须为字符串")
+        did, cid = dossier_id, source_chat_turn_id
+        kind, person = form.strip(), endorser_id.strip()
         if not isinstance(imperial, bool):
             raise ValueError("御笔标记须为布尔")
         is_imperial = imperial
@@ -10457,6 +10493,17 @@ class GameDB:
                 raise ValueError("会签/当面站台必须具名背书人")
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
                 raise ValueError("背书人物不存在")
+        return did, cid, kind, person, is_imperial
+
+    def add_dossier_endorsement(
+        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
+        endorser_id: str = "", imperial: bool = False, commit: bool = True,
+    ) -> int:
+        """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
+        did, cid, kind, person, is_imperial = self._validate_dossier_endorsement(
+            dossier_id, form=form, source_chat_turn_id=source_chat_turn_id,
+            endorser_id=endorser_id, imperial=imperial,
+        )
         self.conn.execute(
             "INSERT OR IGNORE INTO decree_dossier_endorsements "
             "(dossier_id,form,endorser_id,imperial,source_chat_turn_id) VALUES (?,?,?,?,?)",

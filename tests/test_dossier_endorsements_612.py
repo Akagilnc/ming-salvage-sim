@@ -273,6 +273,75 @@ def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):
     assert dossier_ctx["criteria_snapshot_source"]["endorsement_entry_ids"] == []
 
 
+def test_bad_endorsement_item_is_rejected_without_rolling_back_valid_sibling(game):
+    db, state, _content = game
+    minister = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核辽饷",
+        target_kind="issue", target_id="mixed-endorsements",
+    )
+    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
+    result = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣愿会签。",
+        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Agent({"facts": [
+            {"body": "合法事实", "person_names": [minister]},
+            {"body": "坏背书", "endorsement": {
+                "dossier_id": "not-an-id", "form": "会签", "endorser_id": minister,
+            }},
+        ]}),
+    )
+    assert result["status"] == "done"
+    assert result["fact_count"] == 1
+    assert [row["body"] for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == ["合法事实"]
+    rejection = db.conn.execute(
+        "SELECT section, reason FROM rejection_reports ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert rejection["section"] == "story_facts"
+    assert "endorsement" in rejection["reason"]
+
+
+def test_close_extracts_endorsement_against_dossier_created_by_same_night_once(game):
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
+    emperor_text = "准此旨，朕亲书手敕作保。"
+    user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
+    db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "same-night-endorsement", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    calls = []
+
+    class _SameNightAgent:
+        def run(self, materials):
+            calls.append(json.loads(materials))
+            candidates = calls[-1]["可背书案卷"]
+            assert len(candidates) == 1
+            return json.dumps({"facts": [{
+                "body": "皇帝亲书手敕。", "endorsement": {
+                    "dossier_id": candidates[0]["id"], "form": "御笔手敕",
+                    "endorser_id": "", "imperial": True,
+                },
+            }]}, ensure_ascii=False)
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_SameNightAgent(),
+    )
+    assert result["closed"] is True
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert len(dossiers) == 1
+    assert len(calls) == 1
+    assert emperor_text == calls[0]["皇帝问话"]
+    assert db.list_dossier_endorsements(int(dossiers[0]["id"]))[0]["imperial"] is True
+
+
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
     facts = parse_extraction_facts({
         "facts": [{

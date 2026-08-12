@@ -214,7 +214,20 @@ def extract_story_facts(
     )
     if not output or not str(output).strip():
         raise LLMUnavailable("抽取员返回空文本")
-    return parse_extraction_facts(output)
+    # A malformed LLM item is a per-item rejection, not a reason to discard valid
+    # siblings.  Keep the rejected raw item for the DB transaction's established
+    # applied/rejected channel; unsplittable top-level output still fails loudly.
+    container = _coerce_facts_container(output)
+    facts: List[Dict[str, Any]] = []
+    for idx, item in enumerate(container):
+        try:
+            facts.extend(parse_extraction_facts({"facts": [item]}))
+        except ExtractionShapeError as exc:
+            facts.append({
+                "_rejected_story_fact": dict(item) if isinstance(item, Mapping) else {"raw": item},
+                "_rejection_reason": f"第 {idx} 条：{exc}",
+            })
+    return facts
 
 
 def run_extraction_for_turn(
@@ -281,7 +294,8 @@ def run_extraction_for_turn(
 
     return _settle_or_pending(
         db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
-        facts=facts, source_night_seq=source_night_seq, fact_count=len(facts),
+        facts=facts, source_night_seq=source_night_seq,
+        fact_count=sum(1 for fact in facts if "_rejected_story_fact" not in fact),
     )
 
 

@@ -877,6 +877,7 @@ def _commit_night_approved(
 
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
+    extractor_agent: Any = None,
 ) -> None:
     """收夜前清空待补抽取（ADR 0036 线上 R3）——引擎侧强制闸，不只挂 web 前门。
 
@@ -909,6 +910,7 @@ def _drain_story_extraction_or_fail_closed(
 
     drain_pending_before_close(
         db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
+        extractor_agent=extractor_agent,
     )
 
 
@@ -928,6 +930,7 @@ def close_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
+    extractor_agent: Any = None,
 ) -> Dict[str, Any]:
     """收夜：在飞守卫 → 收夜前清空待补抽取（引擎侧史实边界闸）→ 仅本夜已应允提交（游标幂等）
     → 收夜账 → closed。
@@ -954,10 +957,6 @@ def close_night(
 
     if night["status"] == NIGHT_STATUS_OPEN:
         wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-        # 史实书写边界：收夜前强制清空待补抽取（fail-closed），先于任何收夜写。
-        _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-        )
         _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
         night = get_night(db, night_id)
         assert night is not None
@@ -1016,6 +1015,15 @@ def close_night(
                     check_dead=False,
                 )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+
+    # Approved directives become real dossiers at the governing commit step above.
+    # Only now may the one extraction call resolve same-night spoken endorsements
+    # against those real ids. Failure remains loud and leaves the closing cursor
+    # resumable; no second LLM pass is introduced.
+    _drain_story_extraction_or_fail_closed(
+        db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+        extractor_agent=extractor_agent,
+    )
 
     if cursor < CLOSE_STEP_FINALIZE:
         tags = [TAG_CLOSE_NIGHT]
