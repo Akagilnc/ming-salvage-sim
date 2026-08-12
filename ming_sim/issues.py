@@ -5454,14 +5454,13 @@ def apply_issue_tracker_output(
             continue
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
         # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
-        linked_dossier = db.conn.execute(
-            """SELECT id FROM decree_dossiers
-               WHERE target_kind='issue' AND target_id=?
-                 AND status IN ('promulgated','executing')
-               ORDER BY id DESC LIMIT 1""",
-            (str(issue_id),),
-        ).fetchone()
-        deterministic_breach = linked_dossier is not None
+        linked_dossier = None
+        origin_ref = str(row["origin_ref"] or "").strip()
+        if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:
+            linked_dossier = db.get_decree_dossier(int(origin_ref.split(":", 1)[1]))
+        deterministic_breach = bool(
+            linked_dossier and linked_dossier["status"] in {"promulgated", "executing"}
+        )
         if deterministic_breach:
             db.breach_decree_dossier(
                 state, int(linked_dossier["id"]),
