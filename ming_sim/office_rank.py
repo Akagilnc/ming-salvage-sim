@@ -1,15 +1,20 @@
 """明制品级带与任命破格标记的确定性领域函数。"""
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from ming_sim.assets import load_json_asset
 
 FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD = 4
+DEFAULT_LEVERAGE_MULTIPLIER = 1.0
 _INACTIVE_STATUSES = frozenset({
     "offstage", "retired", "dismissed", "imprisoned", "exiled",
 })
 _NON_OFFICES = frozenset({"", "待铨", "听用候铨", "白身", "布衣", "进士", "举人", "生员"})
+_TITLE_NOISE_SUFFIXES = (
+    "革职候勘", "革职", "候勘", "闲住", "罢居", "致仕", "赋闲",
+)
 
 
 def _table() -> dict[str, Any]:
@@ -17,20 +22,113 @@ def _table() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def canonical_office_title(office: object) -> str:
+    """Strip 前/原任 markers and 罢居/革职 tails from archived or polluted titles.
+
+    Concurrent real offices joined by comma (尚书,大学士) are preserved; only a trailing
+    pollution segment after comma/， is dropped when it carries 罢居/革职 etc.
+    """
+    raw = str(office or "").strip()
+    if not raw:
+        return ""
+    text = raw.replace("，", ",")
+    if "," in text:
+        head, tail = text.split(",", 1)
+        if any(noise in tail for noise in _TITLE_NOISE_SUFFIXES):
+            text = head.strip()
+        else:
+            text = raw  # keep concurrent offices as-is for rank matching
+    else:
+        text = raw
+    text = re.sub(r"^(?:前|原任|原)", "", text.strip()).strip()
+    for noise in _TITLE_NOISE_SUFFIXES:
+        if noise in text:
+            text = text.split(noise, 1)[0].strip(" ，,")
+    return text or raw
+
+
+def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
+    rules = table.get("rank_rules") or []
+    return [rule for rule in rules if isinstance(rule, dict)]
+
+
+def _match_rank_rule(title: str, table: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Longest stem wins so 副总兵/佥都御史 are not captured by 总兵/都御史."""
+    text = str(title or "").strip()
+    if not text:
+        return None
+    best: Optional[dict[str, Any]] = None
+    best_len = -1
+    for rule in _iter_rank_rules(table):
+        for stem in rule.get("stems") or []:
+            token = str(stem or "").strip()
+            if not token or token not in text:
+                continue
+            token_len = len(token)
+            if token_len > best_len:
+                best = rule
+                best_len = token_len
+    return best
+
+
 def office_rank_band(office: object, office_type: object = "") -> int:
     """Return the deterministic 1(high)-to-9(low) broad Ming rank band."""
-    title = str(office or "").strip()
+    title = canonical_office_title(office)
     table = _table()
-    for rule in table.get("rank_rules", []):
-        if any(str(stem) in title for stem in rule.get("stems", [])):
-            return int(rule["rank_band"])
+    # Concurrent offices: the highest substantive rank (lowest band number) wins.
+    parts = [p.strip() for p in title.replace("，", ",").split(",") if p.strip()] or [title]
+    bands: list[int] = []
+    for part in parts:
+        matched = _match_rank_rule(part, table)
+        if matched is not None and "rank_band" in matched:
+            bands.append(int(matched["rank_band"]))
+    if bands:
+        return min(bands)
+
     declared = str(office_type or "").strip()
+    raw_title = str(office or "").strip()
     for entry in table.get("priority", []):
         if declared == str(entry.get("type") or "") or any(
-            str(stem) in title for stem in entry.get("stems", [])
+            str(stem) in raw_title or str(stem) in title
+            for stem in entry.get("stems", [])
         ):
             return int(entry["rank_band"])
     return int((table.get("fallback") or {}).get("rank_band", 9))
+
+
+def office_leverage_multiplier(office: object, already_normalized: bool = False) -> float:
+    """Map an office title to the faction-leverage rank multiplier via offices.json.
+
+    Comma-separated concurrent titles take the highest recognized multiplier. Titles with
+    no leverage-bearing stem keep the historical conservative default 1.0.
+    """
+    text = str(office or "")
+    if not already_normalized:
+        text = (
+            text.replace("兼掌", ",")
+            .replace("兼署", ",")
+            .replace("兼", ",")
+            .replace("，", ",")
+            .replace("、", ",")
+        )
+    if not text.strip():
+        return DEFAULT_LEVERAGE_MULTIPLIER
+
+    table = _table()
+    best: Optional[float] = None
+    for part in (p.strip() for p in text.split(",")):
+        if not part:
+            continue
+        matched = _match_rank_rule(canonical_office_title(part), table)
+        if matched is None or "leverage_multiplier" not in matched:
+            # Fall back to raw part so stems still hit inside lightly decorated titles.
+            matched = _match_rank_rule(part, table)
+        if matched is None or "leverage_multiplier" not in matched:
+            continue
+        mult = float(matched["leverage_multiplier"])
+        if best is None or mult > best:
+            best = mult
+    return DEFAULT_LEVERAGE_MULTIPLIER if best is None else best
 
 
 def appointment_break_rank(db: Any, name: object, new_office: object) -> dict[str, object]:
@@ -62,7 +160,7 @@ def appointment_break_rank(db: Any, name: object, new_office: object) -> dict[st
             (person,),
         ).fetchone()
         if archived is not None and str(archived["office_title"] or "").strip() not in _NON_OFFICES:
-            current_title = str(archived["office_title"]).strip()
+            current_title = canonical_office_title(archived["office_title"])
             current_type = str(archived["office_type"] or "").strip()
         else:
             # Historical people must never be compared from the 待铨 fallback.
