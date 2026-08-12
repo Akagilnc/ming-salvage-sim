@@ -4,6 +4,7 @@ import pytest
 
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
@@ -76,24 +77,7 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
     dossier_id = _make_midzhi_dossier(db, state)
 
     def provider(_dossiers, _state):
-        return [{
-            "dossier_id": dossier_id,
-            "decision": "rejected",
-            "blocked_layer": "six_offices",
-            "primary_opponents": [{"kind": "faction", "key": "东林"}],
-            "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
-            ],
-            "gatekeeper_id": None,
-            "reason": "科臣封驳。",
-            "midzhi_unpromulgatable": True,
-            "criteria_snapshot": {
-                "imperial_authority_band": "偏弱",
-                "appointment_tenure": "",
-                "authorization_ids": [],
-                "endorsement_entry_ids": [],
-            },
-        }]
+        return [rejected_verdict(dossier_id, midzhi=True)]
 
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: object())
     monkeypatch.setattr(

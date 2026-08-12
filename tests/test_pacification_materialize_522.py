@@ -9,6 +9,7 @@ import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 from ming_sim import issues
 from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
 def _ctx(db, character, candidates, turn):
@@ -33,21 +34,6 @@ def _stage_pacification(db, turn, target="张献忠"):
     ctx = _ctx(db, actor, candidate, turn)
     run_materialize_pipeline(ctx)
     return ctx
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None, "reason": "科臣封驳。",
-        "affected_parties": [{"kind": "faction", "key": "东林", "severity": "不满"}],
-        "midzhi_unpromulgatable": False,
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
 
 
 def _activate_canonical_bandit(db, content, name="张献忠"):
