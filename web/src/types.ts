@@ -255,6 +255,8 @@ export type PendingDecision = {
   event_id?: string;
   title: string;
   context: string;
+  rejection_reason?: string;
+  opposition?: string;
   options: DecisionOption[];
   choice?: DecisionChoice | null;
   status?: string;

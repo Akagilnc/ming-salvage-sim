@@ -1130,6 +1130,8 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     )
     assert result.awaiting is True
     decision = result.decisions[0]
+    assert decision["rejection_reason"] == "科臣封驳。"
+    assert decision["opposition"] == "东林"
     choice = next(
         option for option in decision["options"]
         if option["label"] == choice_label
@@ -1148,6 +1150,11 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     assert restored["status"] == expected_status
     moves = db.list_economy_moves_for_dossier(dossier["id"])
     assert sum(int(move["delta"]) for move in moves) == expected_delta
+    assert restored["stigma"] == (
+        [{"kind": "midzhi", "reason": "rescript", "turn": 1,
+          "source_action": "force_promulgated"}]
+        if choice_label == "强颁" else []
+    )
     if choice_label == "留中":
         assert restored["held_turn"] == 1
         assert restored["rescript_pending"] is False
