@@ -328,6 +328,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "{kind:faction|class,key,direction:positive|negative,intensity:weak|strong}。mode=midzhi 无论顺颁打回"
             "均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
             "普通中旨从严但不得机械地一概打回。",
+            "逐一独立判断各 faction/class 对这道判决的真实反应，不得把受害方机械当作"
+            "默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；反应为零"
+            "就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
         ],
         add_history_to_context=False,

@@ -27,6 +27,23 @@ REJECTION_SNAPSHOT_KEYS = frozenset({
 IMPERIAL_AUTHORITY_BANDS = frozenset({"极弱", "偏弱", "中等", "偏强", "强盛"})
 
 
+def validate_affected_parties(
+    affected: object, *, faction_names: object, class_names: object,
+) -> None:
+    """Validate typed signed reactions; extra explanatory keys remain allowed."""
+    if not isinstance(affected, list) or not all(
+        isinstance(item, dict)
+        and {"kind", "key", "direction", "intensity"}.issubset(item)
+        and item.get("kind") in {"faction", "class"}
+        and isinstance(item.get("key"), str)
+        and item["key"] in (faction_names if item.get("kind") == "faction" else class_names)
+        and item.get("direction") in {"positive", "negative"}
+        and item.get("intensity") in {"weak", "strong"}
+        for item in affected
+    ):
+        raise ValueError("affected_parties 须为在册 typed signed 反应清单")
+
+
 def validate_rejection_verdict(
     verdict: object,
     blocked_layers: object,
@@ -59,21 +76,14 @@ def validate_rejection_verdict(
     endorsement_ids = snapshot.get("endorsement_entry_ids") if isinstance(snapshot, dict) else None
     dossier_id = verdict.get("dossier_id")
     affected = verdict.get("affected_parties")
-    typed_affected = (
-        isinstance(affected, list)
-        and all(
-            isinstance(item, dict)
-            and {"kind", "key", "direction", "intensity"}.issubset(item)
-            and item.get("kind") in {"faction", "class"}
-            and isinstance(item.get("key"), str)
-            and item["key"] in (
-                faction_names if item.get("kind") == "faction" else class_names
-            )
-            and item.get("direction") in {"positive", "negative"}
-            and item.get("intensity") in {"weak", "strong"}
-            for item in affected
+    try:
+        validate_affected_parties(
+            affected, faction_names=faction_names, class_names=class_names,
         )
-    )
+    except ValueError:
+        typed_affected = False
+    else:
+        typed_affected = True
     if (
         not set(verdict).issubset(REJECTION_VERDICT_KEYS)
         or isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0

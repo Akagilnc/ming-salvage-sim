@@ -62,7 +62,9 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
+from ming_sim.strict_types import (
+    IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
+)
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -351,19 +353,9 @@ def _validate_promulgation_verdict_item(
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
-        for party in affected:
-            required = {"kind", "key", "direction", "intensity"}
-            if not isinstance(party, dict) or not required.issubset(party):
-                raise ValueError("反应方须含 kind/key/direction/intensity")
-            kind, key = party.get("kind"), str(party.get("key") or "")
-            if kind not in {"faction", "class"}:
-                raise ValueError("反应方 kind 只能为 faction 或 class")
-            if party.get("direction") not in {"positive", "negative"}:
-                raise ValueError("反应方向只能为 positive 或 negative")
-            if party.get("intensity") not in {"weak", "strong"}:
-                raise ValueError("反应强度只能为 weak 或 strong")
-            if key not in (faction_names if kind == "faction" else class_names):
-                raise ValueError(f"未知反应方：{kind}:{key}")
+        validate_affected_parties(
+            affected, faction_names=faction_names, class_names=class_names,
+        )
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},

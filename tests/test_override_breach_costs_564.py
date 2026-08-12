@@ -1,6 +1,11 @@
 """#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
 
+import json
+
+import pytest
+
 from ming_sim import issues
+from ming_sim.applier import atomic
 
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
@@ -188,6 +193,75 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     assert [(event["cost_kind"], event["cost_identity"]) for event in events] == [
         ("breach", "breach"), ("authority", "breach"),
     ]
+
+
+def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state)
+    legacy = [{"kind": "faction", "key": "东林", "severity": "大怒", "note": "留存"},
+              {"kind": "class", "key": "士绅", "severity": "不满"},
+              {"kind": "class", "key": "农民", "severity": "高兴"}]
+    db.conn.execute(
+        "INSERT INTO decree_dossier_decisions(dossier_id,turn,decision,affected_parties_json) VALUES (?,?,?,?)",
+        (dossier_id, state.turn, "rejected", json.dumps(legacy, ensure_ascii=False)),
+    )
+    pending = {"dossier_id": dossier_id, "decision": "rejected", "affected_parties": legacy}
+    db.conn.execute(
+        "INSERT INTO pending_promulgation_verdicts(turn,dossier_id,verdict_json) VALUES (?,?,?)",
+        (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
+    )
+
+    db._migrate_legacy_reaction_severity()
+    db._migrate_legacy_reaction_severity()
+
+    saved = db.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
+    assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
+    assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
+    assert saved[2]["severity"] == "高兴"
+
+
+def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, monkeypatch):
+    db, state, _ = game
+    dossier_id = _dossier(db, state)
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    issue_id = db.insert_issue(state, kind="initiative", title="清丈", origin_kind="decree",
+                               origin_ref=f"dossier:{dossier_id}", cancellable="decree")
+    before = state.metrics["皇威"]
+    monkeypatch.setattr(db, "cancel_issue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("later")))
+    with pytest.raises(RuntimeError, match="later"):
+        with atomic(db):
+            issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": issue_id}]})
+    assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+    assert _cost_events(db, dossier_id) == []
+    # DB truth rolled back; caller reload owns the in-memory mirror.
+    assert db.conn.execute("SELECT value FROM metrics WHERE key='皇威'").fetchone()[0] == before
+
+
+def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued(game):
+    db, state, _ = game
+    issued = _dossier(db, state)
+    db.apply_dossier_promulgation(state, issued, "promulgated")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason='旧结案' WHERE id=?",
+        (state.turn, issued),
+    )
+    db.conn.commit()
+    closed_turn = db.get_decree_dossier(issued)["closed_turn"]
+    active = db.insert_issue(state, kind="initiative", title="旧诺", origin_kind="decree",
+                             origin_ref=f"dossier:{issued}", cancellable="decree", commitment_kind="funding")
+    never = _dossier(db, state)
+    db.record_dossier_decision(never, "rejected")
+    db.record_dossier_decision(never, "withdrawn")
+    excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
+                               origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
+
+    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
+    with pytest.raises(ValueError, match="canonical origin 非法"):
+        issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
+
+    assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
+    assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
+    assert _cost_events(db, never) == []
 
 
 def test_breach_charges_authority_ministers_and_related_factions_once(game):

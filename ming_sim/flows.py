@@ -1707,7 +1707,11 @@ def _apply_class_dict(
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if not isinstance(fields, dict):
-            rejected.append(_value_reject(key, fields, fields))
+            rejected.append({
+                "name": str(key), "rejected": True, "category": "invalid_enum",
+                "reason": f"「{key}」阶级变化须为对象：{fields!r}",
+                "item": {str(key): fields},
+            })
             continue
         entry: Dict[str, int] = {}
         for fname in ("satisfaction", "leverage"):
