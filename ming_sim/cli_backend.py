@@ -1106,7 +1106,7 @@ def extract_draft_intent(
                 for source, target in (
                     ("金额", "amount"), ("账户", "account"),
                     ("执行面", "execution_surface"), ("承办人", "assignee"),
-                    ("授权ID", "authorization_id"), ("期限月数", "deadline_months"),
+                    ("期限月数", "deadline_months"),
                 )
             }
             drafts.append({
@@ -1152,7 +1152,6 @@ def extract_draft_intent(
         '  "账户": "",\n'
         '  "执行面": "immediate|in_transit", // 仅拨帑：账内即时划转或在途执行\n'
         '  "承办人": "",\n'
-        '  "授权ID": "",\n'
         '  "参与人": [{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}],\n'
         '  "期限月数": null' + (
             "," if (_candidates or _supplement_mode) else ""
@@ -1217,7 +1216,7 @@ def extract_draft_intent(
     mechanical = {
         "amount": obj.get("金额"), "account": obj.get("账户"),
         "execution_surface": obj.get("执行面"),
-        "assignee": obj.get("承办人"), "authorization_id": obj.get("授权ID"),
+        "assignee": obj.get("承办人"),
         "deadline_months": obj.get("期限月数"),
     }
     mode = _directive_mode(obj.get("颁布方式"))
@@ -1296,7 +1295,7 @@ def capture_manual_directive_payload(
     }
     for field in (
         "amount", "account", "execution_surface", "assignee",
-        "authorization_id", "deadline_months", "participant_roster",
+        "deadline_months", "participant_roster",
     ):
         if captured.get(field) not in (None, ""):
             payload[field] = captured[field]
