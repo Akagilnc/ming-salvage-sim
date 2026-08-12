@@ -42,6 +42,8 @@ def test_old_save_schema_init_backfills_bandit_power_split(game):
     db.conn.execute(
         "DELETE FROM powers WHERE id IN ('bandit_li_zicheng', 'bandit_zhang_xianzhong')"
     )
+    # Pre-#522 stock authority still present on old saves.
+    db.conn.execute("UPDATE powers SET leader='王嘉胤等' WHERE id='bandits'")
     db.conn.commit()
 
     db.init_schema()
@@ -59,10 +61,12 @@ def test_old_save_schema_init_backfills_bandit_power_split(game):
     powers = {
         row["id"]: row["leader"]
         for row in db.conn.execute(
-            "SELECT id, leader FROM powers WHERE id IN ('bandit_li_zicheng', 'bandit_zhang_xianzhong')"
+            "SELECT id, leader FROM powers "
+            "WHERE id IN ('bandits', 'bandit_li_zicheng', 'bandit_zhang_xianzhong')"
         ).fetchall()
     }
     assert powers == {
+        "bandits": "王嘉胤",
         "bandit_li_zicheng": "李自成",
         "bandit_zhang_xianzhong": "张献忠",
     }
