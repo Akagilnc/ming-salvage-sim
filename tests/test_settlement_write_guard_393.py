@@ -35,6 +35,10 @@ class _RecordingDB:
     def list_pending_actions(self, *a, **k):
         return []
 
+    def read_directive_dossier_payload(self, row):
+        assert row["id"] == 7
+        return {"mode": "midzhi"}
+
     def get_character_status(self, *a, **k):
         return ("active", "")
 
@@ -88,7 +92,10 @@ class _FakeGame:
         return "ming"
 
     def directive_rows(self):
-        return [{"id": 7, "text": "旧稿", "status": "draft"}]
+        return [{
+            "id": 7, "text": "旧稿", "status": "draft",
+            "dossier_payload_json": '{"mode":"midzhi"}',
+        }]
 
     def directive_payload(self, row):
         return row
@@ -126,7 +133,10 @@ def test_directive_capture_runs_outside_write_gate(
         "target_kind": "issue", "target_id": "land-survey",
     }
 
-    def capture(text, llm_config, **_context):
+    captured_context = []
+
+    def capture(text, llm_config, **context):
+        captured_context.append(context)
         with web_app._serialized_web_write(game):
             game.db.writes.append("unrelated-write")
         return payload
@@ -151,6 +161,7 @@ def test_directive_capture_runs_outside_write_gate(
             7, web_app.DirectivePatch(text="重定清丈田亩"),
         ))
         assert calls == [("update", 7, "重定清丈田亩", payload)]
+        assert captured_context[0]["existing_mode"] == "midzhi"
     assert game.db.writes == ["unrelated-write"]
 
 
@@ -209,9 +220,6 @@ def _endpoint_cases():
         ("create_directive", lambda: web_app.api_create_directive(web_app.DirectiveRequest(text="清丈田亩"))),
         ("update_directive", lambda: web_app.api_update_directive(7, web_app.DirectivePatch(text="改稿"))),
         ("delete_directive", lambda: web_app.api_delete_directive(7)),
-        ("confirm_directive", lambda: web_app.api_confirm_directive(7)),
-        ("reject_directive", lambda: web_app.api_reject_directive(7)),
-        ("write_decree", lambda: web_app.api_write_decree()),
         ("edit_decree", lambda: web_app.api_edit_decree(web_app.EditDecreeRequest(decree="奉天承运"))),
         # 撤回召对：undo_chat_turn 直写共享连接，自带的相位门是 phase-only（守不住 pre_settle 窗口），
         # 现一并走 _write_gate（cmr Gate2 r3 Finding1）。守门先于 undo_last_chat 触发。

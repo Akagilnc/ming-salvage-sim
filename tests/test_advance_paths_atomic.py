@@ -265,8 +265,8 @@ def _recovery_session(db, state, content, monkeypatch):
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda dossiers, _state, **_kwargs: [
             {"dossier_id": row["id"], "decision": "promulgated"}
             for row in dossiers
         ],
@@ -1325,8 +1325,6 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        lambda: sess.confirm_directive(1),
-        lambda: sess.reject_directive(1),
         lambda: sess.set_decree("改诏"),
         lambda: sess.write_decree(),
     ):
