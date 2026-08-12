@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import replace
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -1433,8 +1434,9 @@ class GameDB:
                 target_id TEXT NOT NULL,
                 delta INTEGER NOT NULL DEFAULT 0,
                 reason TEXT NOT NULL DEFAULT '',
+                cost_identity TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, cost_kind, target_kind, target_id),
+                UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
@@ -1941,6 +1943,7 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
+        self._migrate_decree_cost_identity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2667,6 +2670,47 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
+
+    def _migrate_decree_cost_identity(self) -> None:
+        """Upgrade the old dossier-wide idempotency key and discard non-cost truth."""
+        sql_row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='decree_cost_events'"
+        ).fetchone()
+        sql = str(sql_row[0] or "") if sql_row else ""
+        if "UNIQUE(dossier_id, cost_identity" in sql:
+            return
+        self.conn.executescript("""
+            ALTER TABLE decree_cost_events RENAME TO decree_cost_events_legacy;
+            CREATE TABLE decree_cost_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                cost_kind TEXT NOT NULL,
+                target_kind TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                delta INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                cost_identity TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            INSERT OR IGNORE INTO decree_cost_events
+                (id,dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity,created_at)
+            SELECT e.id,e.dossier_id,e.turn,e.cost_kind,e.target_kind,e.target_id,
+                   e.delta,e.reason,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM decree_cost_events_legacy b
+                       WHERE b.dossier_id=e.dossier_id AND b.cost_kind='breach'
+                         AND b.reason=e.reason
+                   ) THEN 'breach' ELSE 'override' END,
+                   e.created_at
+            FROM decree_cost_events_legacy e
+            WHERE e.cost_kind NOT IN ('stigma','impression');
+            DROP TABLE decree_cost_events_legacy;
+            CREATE INDEX idx_decree_cost_events_dossier
+                ON decree_cost_events(dossier_id, id);
+        """)
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
         """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
@@ -11261,14 +11305,14 @@ class GameDB:
 
     def _record_decree_cost(
         self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
-        target_id: str, delta: int, reason: str,
+        target_id: str, delta: int, reason: str, *, cost_identity: str,
     ) -> bool:
         cur = self.conn.execute(
             """INSERT OR IGNORE INTO decree_cost_events
-               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason)
-               VALUES (?,?,?,?,?,?,?)""",
+               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (int(dossier_id), int(turn), cost_kind, target_kind, str(target_id),
-             int(delta), str(reason)),
+             int(delta), str(reason), str(cost_identity)),
         )
         return cur.rowcount == 1
 
@@ -11290,7 +11334,7 @@ class GameDB:
         """ADR 0056 narrow rail: authority and typed signed reactions."""
         if include_authority and self._record_decree_cost(
             dossier_id, state.turn, "authority", "metric", "皇威",
-            self._OVERRIDE_AUTHORITY_COST, stigma_reason,
+            self._OVERRIDE_AUTHORITY_COST, stigma_reason, cost_identity="override",
         ):
             state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
             self.conn.execute(
@@ -11307,16 +11351,20 @@ class GameDB:
                 delta = sign * magnitude
                 if not self._record_decree_cost(
                     dossier_id, state.turn, "satisfaction", kind, key, delta, stigma_reason,
+                    cost_identity="override",
                 ):
                     continue
-                table = "factions" if kind == "faction" else "classes"
-                self.conn.execute(
-                    f"UPDATE {table} SET satisfaction=max(0,min(100,satisfaction+?)) WHERE name=?",
-                    (delta, key),
-                )
-        self._record_decree_cost(
-            dossier_id, state.turn, "stigma", "dossier", str(dossier_id), 0, stigma_reason,
-        )
+                from ming_sim.flows import _apply_class_dict, _apply_faction_dict
+                if kind == "faction":
+                    result = _apply_faction_dict(
+                        self, {key: {"satisfaction": delta}}, commit=False,
+                    )
+                else:
+                    result = _apply_class_dict(
+                        self, {key: {"satisfaction": delta}}, commit=False,
+                    )
+                if result.rejections or key not in result.applied:
+                    raise ValueError(f"反应代价未能落账：{kind}:{key}")
         if commit:
             self.conn.commit()
 
@@ -11338,11 +11386,14 @@ class GameDB:
                 return False
             if self._record_decree_cost(
                 dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
+                cost_identity="breach",
             ):
-                self._record_decree_cost(
+                authority_recorded = self._record_decree_cost(
                     dossier_id, state.turn, "authority", "metric", "皇威",
-                    self._OVERRIDE_AUTHORITY_COST, reason,
+                    self._OVERRIDE_AUTHORITY_COST, reason, cost_identity="breach",
                 )
+                if not authority_recorded:
+                    raise RuntimeError("毁约皇威代价账不一致")
                 state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
                 self.conn.execute(
                     "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -11366,15 +11417,13 @@ class GameDB:
                 ).fetchone()
                 if row is None:
                     continue
-                if str(row["status"]) == "deceased":
+                if str(row["status"]) == "dead":
+                    logging.getLogger(__name__).warning("跳过已故参与者%s", person)
                     continue
                 self.record_relation_edge_event(
                     source="皇帝", target=person, event_kind="辜负", context=reason,
                     origin=f"dossier:{dossier_id}:breach", turn=state.turn,
                     year=state.year, period=state.period,
-                )
-                self._record_decree_cost(
-                    dossier_id, state.turn, "impression", "character", person, -1, reason,
                 )
                 if str(row["faction"] or ""):
                     factions.add(str(row["faction"]))
@@ -11385,12 +11434,14 @@ class GameDB:
             for faction in sorted(factions):
                 if self._record_decree_cost(
                     dossier_id, state.turn, "satisfaction", "faction", faction,
-                    breach_delta, reason,
+                    breach_delta, reason, cost_identity="breach",
                 ):
-                    self.conn.execute(
-                        "UPDATE factions SET satisfaction=max(0,min(100,satisfaction+?)) WHERE name=?",
-                        (breach_delta, faction),
+                    from ming_sim.flows import _apply_faction_dict
+                    result = _apply_faction_dict(
+                        self, {faction: {"satisfaction": breach_delta}}, commit=False,
                     )
+                    if result.rejections or faction not in result.applied:
+                        raise ValueError(f"毁约派系代价未能落账：{faction}")
             self.conn.execute(
                 "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
                 (state.turn, reason, int(dossier_id)),

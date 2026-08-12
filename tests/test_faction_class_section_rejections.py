@@ -202,6 +202,18 @@ def test_valid_flat_int_faction_not_rejected(game):
     assert after == max(0, before - 5)
 
 
+def test_flat_class_delta_is_rejected_instead_of_silently_dropped(game):
+    db, state, content = game
+    turn = state.turn
+    run_settle(db, state, content, {
+        "class_delta": {_valid_class_key(db): -4},
+    }, narrative="x", decree_text="y")
+
+    rows = _rejection_rows(db, turn, CLASS_REJ_SECTION)
+    assert len(rows) == 1
+    assert rows[0]["category"] == "invalid_enum"
+
+
 def test_zero_delta_faction_not_rejected(game):
     """0 增量是合法 no-op，不当拒收（不误报）。"""
     db, state, content = game
