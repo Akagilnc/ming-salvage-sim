@@ -1263,8 +1263,11 @@ def capture_manual_directive_payload(
     db: Any = None, content: Any = None,
 ) -> Dict[str, object]:
     """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
+    directive_text = str(text or "")
     captured = extract_draft_intent(
-        str(text or ""), "请据此拟旨", llm_config=llm_config,
+        f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}",
+        directive_text,
+        llm_config=llm_config,
     )
     declared_mode = resolve_directive_mode(text, captured.get("mode"), existing_mode)
     if captured.get("draft_action") != "拟旨":
