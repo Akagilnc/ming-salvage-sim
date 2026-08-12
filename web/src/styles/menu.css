@@ -164,6 +164,14 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.saves-name b {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .saves-name small {
   color: #6a5a3a;
@@ -644,15 +652,42 @@
 
 .menu-modal-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.menu-campaign-list { display: flex; flex-direction: column; gap: 16px; }
+.menu-campaign-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(226, 180, 86, 0.7) rgba(255, 245, 215, 0.08);
+}
+.menu-campaign-list::-webkit-scrollbar { width: 8px; }
+.menu-campaign-list::-webkit-scrollbar-thumb {
+  background: rgba(226, 180, 86, 0.55);
+  border-radius: 4px;
+}
 .menu-campaign-head { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; font-weight: 700; color: #d8c39a; margin-bottom: 6px; letter-spacing: 0.04em; }
 .menu-campaign-badge { font-size: 0.7rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: rgba(180, 140, 70, 0.32); color: #f3e1b4; border: 1px solid rgba(200, 160, 90, 0.5); }
 .menu-save-list {
   list-style: none;
   padding: 0;
   margin: 0 0 8px;
-  max-height: 50vh;
+  max-height: min(52vh, 420px);
   overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(226, 180, 86, 0.7) rgba(255, 245, 215, 0.08);
+}
+.menu-save-list::-webkit-scrollbar { width: 8px; }
+.menu-save-list::-webkit-scrollbar-thumb {
+  background: rgba(226, 180, 86, 0.55);
+  border-radius: 4px;
+}
+.menu-save-list::-webkit-scrollbar-track {
+  background: rgba(255, 245, 215, 0.06);
 }
 
 .menu-save-list li { margin-bottom: 8px; }
@@ -676,7 +711,18 @@
   border-color: rgba(226, 180, 86, 0.6);
 }
 
-.menu-save-list .save-name { font-weight: 700; }
+.menu-save-list .save-name {
+  font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.menu-save-list .menu-save-load {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
 .menu-save-list .save-meta { font-size: 0.78rem; color: #b8a878; }
 
 .menu-save-row {

@@ -305,13 +305,17 @@
 .minister-office {
   flex: 0 0 auto;
   font-size: 0.68rem;
-  white-space: nowrap;
-  max-width: 10em;
+  max-width: 14em;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  white-space: normal;
   color: rgba(255,220,140,0.85);
   text-shadow: 0 1px 3px rgba(0,0,0,0.8);
   letter-spacing: 0.04em;
+  line-height: 1.25;
 }
 
 /* 状态徽标：去职/罢黜/下狱等。卡片里推到右侧成组，office 跟其后。 */
@@ -506,3 +510,26 @@
   backdrop-filter: blur(2px);
 }
 
+
+
+/* 后宫卡片：露出简介，减轻副标题截断后的空详情感 */
+.harem-drawer .minister-bio {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  width: 100%;
+  margin-top: 2px;
+  padding: 0 4px 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: rgba(240, 220, 180, 0.88);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.75);
+  text-align: center;
+  white-space: normal;
+}
+.harem-drawer .minister-office {
+  max-width: 100%;
+}

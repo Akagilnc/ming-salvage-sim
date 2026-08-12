@@ -209,7 +209,7 @@ export const HUD_SLOTS = {
     邸报: { left: "26.2%", top: "74.5%", width: "14%", height: "20%" },
     密令: { left: "43.0%", top: "74.0%", width: "14%", height: "20%" },
     史册: { left: "57.5%", top: "74.5%", width: "14%", height: "20%" },
-    拟诏: { left: "78.0%", top: "75.0%", width: "14%", height: "20%" },
+    拟诏: { left: "76.5%", top: "76.5%", width: "11.5%", height: "18%" },
   },
   命令文字: {
     奏疏: { left: "15.0%", top: "94.6%" },

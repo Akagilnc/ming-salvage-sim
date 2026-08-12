@@ -61,7 +61,17 @@
   padding: 3px 4px;
 }
 .hud2-issue-quad .situation-row:hover { background: rgba(246, 234, 200, 0.94); }
-.hud2-issue-quad .situation-name { font-size: 1.6cqh; color: #3a2410; }
+.hud2-issue-quad .situation-name {
+  font-size: 1.45cqh;
+  color: #3a2410;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.2;
+}
 .hud2-issue-quad .situation-row-head b { font-size: 1.6cqh; color: #3a2410; }
 .hud2-issue-quad .situation-group-title { font-size: 1.4cqh; }
 .hud2-issue-quad .situation-list { gap: 4px; }
@@ -163,6 +173,8 @@
   width: 3cqh;
   height: 3cqh;
   transform: translate(-50%, -50%);
+  /* Above .hud2-cmd (z-index:6): 拟诏 hitbox used to swallow「后」clicks */
+  z-index: 8;
 }
 .hud2-nav.active { color: #fff0c0; text-shadow: 0 0 6px rgba(255, 210, 120, 0.8); }
 .hud2-nav:hover { color: #fff0c0; }
