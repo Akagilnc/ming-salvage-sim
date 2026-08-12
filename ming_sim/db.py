@@ -1887,6 +1887,7 @@ class GameDB:
         self.ensure_column(
             "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
         )
+        self._backfill_proposed_appointment_break_ranks()
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -10230,6 +10231,29 @@ class GameDB:
             )
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
+
+    def _backfill_proposed_appointment_break_ranks(self) -> None:
+        """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
+        from ming_sim.office_rank import appointment_break_rank
+
+        rows = self.conn.execute(
+            "SELECT id,target_id,payload_json FROM decree_dossiers "
+            "WHERE status='proposed' AND action_type='appointment'"
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if "break_rank" in payload:
+                continue
+            payload["break_rank"] = appointment_break_rank(
+                self,
+                payload.get("name") or row["target_id"],
+                payload.get("office") or payload.get("new_office"),
+                payload.get("office_type") or payload.get("new_office_type"),
+            )
+            self.conn.execute(
+                "UPDATE decree_dossiers SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(payload, ensure_ascii=False), int(row["id"])),
+            )
 
     def create_decree_dossier(
         self,

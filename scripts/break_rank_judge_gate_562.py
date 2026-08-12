@@ -88,27 +88,32 @@ def main() -> int:
         state = db.load_state()
         agno = SqliteDb(db_file=os.path.join(tmp, "agno.db"))
         for index in range(args.samples):
-            ids = []
-            for label in ("break_rank", "ordinary"):
-                dossier_id = db.create_decree_dossier(
+            # Opaque IDs are counterbalanced independently of presentation order: neither
+            # target_id nor a fixed A/B slot reveals the intervention to the live Judge.
+            ids_by_slot = {}
+            for slot in ("a", "b"):
+                ids_by_slot[slot] = db.create_decree_dossier(
                     state, action_type="appointment",
                     decree_text=f"任命候补官员为陕西巡抚（比较样本{index + 1}）",
-                    target_kind="character", target_id=f"gate-562-{index}-{label}",
+                    target_kind="character", target_id=f"gate-562-{index}-{slot}",
                     payload={"name": "候补官员", "office": "陕西巡抚"},
                 )
-                ids.append(dossier_id)
+            break_slot, ordinary_slot = (("a", "b") if index % 2 == 0 else ("b", "a"))
+            break_id = ids_by_slot[break_slot]
+            ordinary_id = ids_by_slot[ordinary_slot]
+            ids = [break_id, ordinary_id]
             rows = [db.get_decree_dossier(i) for i in ids]
             markers = {
-                ids[0]: {"is_break_rank": True, "basis": "first_appointment_high_office",
-                         "new_rank_band": 3, "threshold_band": 4},
-                ids[1]: {"is_break_rank": False, "basis": "first_appointment_regular",
-                         "new_rank_band": 3, "threshold_band": 4},
+                break_id: {"is_break_rank": True, "basis": "first_appointment_high_office",
+                           "new_rank_band": 3, "threshold_band": 4},
+                ordinary_id: {"is_break_rank": False, "basis": "first_appointment_regular",
+                              "new_rank_band": 3, "threshold_band": 4},
             }
             context = build_promulgation_judge_context(
                 db, state, rows, break_rank_by_dossier=markers,
             )
-            # Alternate order to prevent a fixed first/second-position explanation.
-            if index % 2:
+            # Counterbalance presentation order on a separate four-sample cycle.
+            if index % 4 in (1, 2):
                 context["dossiers"].reverse()
                 rows.reverse()
             raw_typed = llm_promulgation_verdicts(
@@ -119,8 +124,8 @@ def main() -> int:
                 raw_typed, rows, db, prepared_context=context,
             )
             by_id = {int(v["dossier_id"]): v for v in verdicts}
-            br = by_id[ids[0]]["decision"] == "rejected"
-            ordinary = by_id[ids[1]]["decision"] == "rejected"
+            br = by_id[break_id]["decision"] == "rejected"
+            ordinary = by_id[ordinary_id]["decision"] == "rejected"
             break_rejected += br
             ordinary_rejected += ordinary
             break_only += br and not ordinary
@@ -139,7 +144,7 @@ def main() -> int:
     artifact = {
         "gate": "issue-562-break-rank-live-production-judge-comparison",
         "method": {
-            "design": "paired repeated batches; same appointment text and snapshot, marker intervention only; order alternates",
+            "design": "paired repeated batches; same appointment text and snapshot, marker intervention only; opaque target IDs and presentation order are independently counterbalanced",
             "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
             "alpha": 0.05, "samples": args.samples,
             "config": {"channel": "cli", "runner": args.runner, "model": args.model,
