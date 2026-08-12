@@ -112,6 +112,21 @@ def _apply_authority_change_item(
             raise ValueError("授予项必须含 holder_id/privilege/scope")
         if not db.canonical_authority_scope(scope):
             raise ValueError("invalid_authority_scope")
+        origin = db.find_authority_by_origin(
+            dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
+        )
+        if origin is not None:
+            # Origin idempotency is independent of current applicability: a
+            # revoked or expired grant remains the same durable authority row.
+            return {
+                "动作": "授予",
+                "authority_id": int(origin["id"]),
+                "dossier_id": dossier_id,
+                "holder_id": holder_id,
+                "privilege": privilege,
+                "scope": scope,
+                "reason": "same_dossier_replay",
+            }
         effective_raw = item.get("effective_turn", item.get("生效回合"))
         expires_raw = item.get("expires_turn", item.get("失效回合"))
         effective_turn = (
@@ -126,21 +141,6 @@ def _apply_authority_change_item(
             effective_turn, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if existing is not None:
-            existing_dossier = existing.get("dossier_id")
-            if (
-                existing_dossier is not None
-                and int(existing_dossier) == int(dossier_id)
-            ):
-                # Same-dossier replay is origin-idempotent (#611 §2).
-                return {
-                    "动作": "授予",
-                    "authority_id": int(existing["id"]),
-                    "dossier_id": dossier_id,
-                    "holder_id": holder_id,
-                    "privilege": privilege,
-                    "scope": scope,
-                    "reason": "same_dossier_replay",
-                }
             raise ValueError("duplicate_active_authority")
         authority_id = db.grant_authority(
             state, holder_id, privilege, scope,
