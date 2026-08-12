@@ -74,7 +74,7 @@ def _make_non_enemy(db, content, stance, name="张献忠", power_id="bandit_522"
     db.conn.commit()
 
 
-@pytest.mark.parametrize("target", ["李自成", "张献忠"])
+@pytest.mark.parametrize("target", ["李自成", "张献忠", "王嘉胤"])
 def test_canonical_bandit_pacification_forms_proposed_dossier_without_world_effect(game, target):
     db, state, content = game
     _activate_canonical_bandit(db, content, target)
@@ -92,6 +92,37 @@ def test_canonical_bandit_pacification_forms_proposed_dossier_without_world_effe
     assert dict(db.conn.execute(
         "SELECT power_id,office FROM characters WHERE name=?", (target,)
     ).fetchone()) == before, "成案前不得在 materializer 改世界"
+
+
+def test_pacification_rejects_active_non_leader_without_world_effect(game):
+    db, state, content = game
+    db.conn.execute("UPDATE characters SET power_id='bandits' WHERE name='皇太极'")
+    db.conn.commit()
+    person_before = dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='皇太极'"
+    ).fetchone())
+    power_before = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandits'"
+    ).fetchone())
+    assert (person_before["status"], person_before["power_id"],
+            power_before["kind"], power_before["stance"]) == (
+        "active", "bandits", "内乱", "潜伏",
+    )
+
+    ctx = _stage_pacification(db, state.turn, "皇太极")
+    pending_id = ctx.out["pending_action_id"]
+    assert db.commit_pending_actions(state, content=content) == []
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()["status"] == "failed"
+    assert not [d for d in db.list_decree_dossiers()
+                if d["action_type"] == "pacification"]
+    assert dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='皇太极'"
+    ).fetchone()) == person_before
+    assert dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandits'"
+    ).fetchone()) == power_before
 
 
 def test_pacification_rejects_active_foreign_enemy_without_world_effect(game):

@@ -10087,10 +10087,12 @@ class GameDB:
         if row is None or row["status"] != "active" or row["power_id"] in (None, "ming"):
             return None
         power = self.conn.execute(
-            "SELECT kind, stance FROM powers WHERE id=?", (row["power_id"],),
+            "SELECT kind, leader, stance FROM powers WHERE id=?", (row["power_id"],),
         ).fetchone()
         if power is None or not (
-            power["kind"] == "内乱" and power["stance"] in {"敌对", "潜伏"}
+            power["kind"] == "内乱"
+            and power["stance"] in {"敌对", "潜伏"}
+            and power["leader"] == matched
         ):
             return None
         character = content.characters[matched]
