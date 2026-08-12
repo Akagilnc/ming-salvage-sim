@@ -576,7 +576,9 @@ function ScrollMessages({ messages, ministerName, ministers }: { messages: Array
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
-    if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>{message.content ? <p>{message.content}</p> : beat === "divider" ? <hr aria-label={speaker ? `宣${speaker}` : "分隔"} /> : null}</div>;
+    if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
+      {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : message.content ? <p>{message.content}</p> : null}
+    </div>;
     const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
     const attendant = isAside ? ministers.find((candidate) => candidate.name === speaker) : undefined;
     const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
@@ -659,18 +661,17 @@ export function ChatModal({
   /** #501：本夜待补叙事抽取条数。 */
   extractionPendingCount?: number;
   onInput: (value: string) => void;
-  onSend: (text?: string) => void;
+  onSend: (ministerName: string, text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
-  onRetryReply?: () => void;
+  onRetryReply?: (ministerName: string) => void;
   onRetryExtraction?: () => void;
-  onUndo: () => void;
+  onUndo: (ministerName: string) => void;
   onHint: (value: string) => void;
-  onFavorite: () => void;
+  onFavorite: (minister: Minister) => void;
   onOpenEdict: () => void;
   onClose: () => void;
   onCancel?: () => void;
 }) {
-  const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(minister, portraitPrefix);
   const chatLogRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
@@ -743,9 +744,24 @@ export function ChatModal({
   if (pendingUserMessage && !pendingAlreadyPersisted) {
     displayMessages.push({ role: "user", content: pendingUserMessage, pending: true });
   }
+  // The scroll remains the only authority: derive the sidebar lens from its latest
+  // recognised entrance/divider anchor instead of storing parallel scene state.
+  // Minister dialogue can be an interjection from someone standing at the side.
+  const currentMinister = scrollMode === "audience"
+    ? displayMessages.reduce<Minister | undefined>((current, message) => {
+        if (!("speaker" in message) || !message.speaker) return current;
+        const isAudienceAnchor = message.beat === "entrance" || message.beat === "divider";
+        return isAudienceAnchor ? ministers.find((candidate) => candidate.name === message.speaker) ?? current : current;
+      }, undefined) ?? minister
+    : minister;
   if (streamingMinisterMessage) {
-    displayMessages.push({ role: "minister", content: streamingMinisterMessage, pending: true });
+    displayMessages.push({ role: "minister", speaker: currentMinister.name, content: streamingMinisterMessage, pending: true });
   }
+  const { primary: portraitPrimary, fallback: portraitFallback } = portraitSources(currentMinister, portraitPrefix);
+  const visibleSecretOrders = secretOrders.filter((order) => order.minister_name === currentMinister.name);
+  const audienceType = scrollMode === "audience"
+    ? displayMessages.find((message): message is AudienceScrollMessage => "container" in message)?.container?.audience_type
+    : "";
 
   React.useEffect(() => {
     inputRef.current?.focus();
@@ -780,13 +796,13 @@ export function ChatModal({
   };
 
   const handleSend = () => {
-    onSend(input);
+    onSend(currentMinister.name, input);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
-    onSend(input);
+    onSend(currentMinister.name, input);
   };
 
   const sendSuggestion = (suggestion: Suggestion) => {
@@ -795,7 +811,7 @@ export function ChatModal({
       onInput(suggestion.text);
       setTimeout(() => inputRef.current?.focus(), 0);
     } else {
-      onSend(suggestion.text);
+      onSend(currentMinister.name, suggestion.text);
     }
   };
 
@@ -804,30 +820,30 @@ export function ChatModal({
       <aside className="modal-pane minister-side">
         <div className="minister-profile">
           <div>
-            <h2>{minister.name}</h2>
+            <h2>{currentMinister.name}</h2>
             <p>
-              {minister.status !== "active" && (
-                <span className={`minister-status status-${minister.status}`}>{minister.status_label}</span>
+              {currentMinister.status !== "active" && (
+                <span className={`minister-status status-${currentMinister.status}`}>{currentMinister.status_label}</span>
               )}
-              {minister.office && <span className="profile-office">{minister.office}</span>}
+              {currentMinister.office && <span className="profile-office">{currentMinister.office}</span>}
             </p>
           </div>
-          <button className="icon-button" aria-label="收藏大臣" onClick={onFavorite}>
-            <Star size={16} fill={minister.favorite ? "currentColor" : "none"} />
+          <button className="icon-button" aria-label="收藏大臣" onClick={() => onFavorite(currentMinister)}>
+            <Star size={16} fill={currentMinister.favorite ? "currentColor" : "none"} />
           </button>
         </div>
-        <p className="profile-copy">{minister.summary}</p>
+        <p className="profile-copy">{currentMinister.summary}</p>
         <button className="secondary-action" onClick={onOpenEdict}>
           <ScrollText size={15} />
           转入诏书草案
         </button>
         <div className="chat-portrait-wrap">
-          <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={minister.name} />
+          <MinisterPortrait primary={portraitPrimary} fallback={portraitFallback} name={currentMinister.name} />
         </div>
-        {secretOrders.length > 0 && (
+        {visibleSecretOrders.length > 0 && (
           <div className="chat-secret-orders">
             <div className="secret-orders-label"><Lock size={12} />密令</div>
-            {secretOrders.map((o) => (
+            {visibleSecretOrders.map((o) => (
               <div key={o.id} className="secret-order-item">
                 <div className="secret-order-title">{o.title}</div>
                 <div className="secret-order-meta">第 {o.year_issued} 年 {o.period_issued} 月下令</div>
@@ -842,13 +858,14 @@ export function ChatModal({
 
       <section className="modal-pane chat-main">
         <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
-          <ScrollMessages messages={displayMessages} ministerName={minister.name} ministers={ministers} />
+          {audienceType ? <div className="audience-type-label">{audienceType}</div> : null}
+          <ScrollMessages messages={displayMessages} ministerName={currentMinister.name} ministers={ministers} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
           )}
           {busy && !streamingMinisterMessage && (
             <div className="chat-message minister thinking">
-              <span>{minister.name}</span>
+              <span>{currentMinister.name}</span>
               <p><Loader2 size={14} />{portraitPrefix === "consort_" ? "思索中..." : "大臣思索中..."}{elapsedSeconds > 0 ? `（${elapsedSeconds}秒）` : ""}</p>
             </div>
           )}
@@ -857,7 +874,7 @@ export function ChatModal({
           {replyRetry && onRetryReply && (
             <div className="chat-system-note danger chat-failure-note" role="alert" data-testid="reply-retry">
               <span>上回问话未得回话（「{replyRetry.question}」），可重新生成回话。</span>
-              <button type="button" onClick={onRetryReply} disabled={!!busy}>
+              <button type="button" onClick={() => onRetryReply(currentMinister.name)} disabled={!!busy}>
                 重新生成回话
               </button>
             </div>
@@ -917,7 +934,7 @@ export function ChatModal({
               <Send size={15} />
               发送
             </button>
-            <button className="secondary-action composer-undo" onClick={onUndo} disabled={!!busy || !canUndoLastChat}>
+            <button className="secondary-action composer-undo" onClick={() => onUndo(currentMinister.name)} disabled={!!busy || !canUndoLastChat}>
               <RotateCcw size={15} />
               撤回本轮
             </button>
