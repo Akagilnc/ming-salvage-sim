@@ -202,6 +202,8 @@ def test_leverage_multiplier_uses_canonical_office_rank_table_only():
     import ming_sim.db as dbmod
 
     # Thin cross-module seam only — full deputy/principal matrix lives in test_faction_leverage_9.
+    assert office_leverage_multiplier("") == 1.0
+    assert dbmod._office_rank_multiplier("") == 1.0
     assert office_leverage_multiplier("副总兵") == 0.5
     assert office_leverage_multiplier("总兵") == 1.0
     assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
