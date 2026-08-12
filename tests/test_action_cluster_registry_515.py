@@ -228,11 +228,11 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
     sess = _bind_apply(db, state, content)
     before = _count_pending(db, state.turn)
     scripted = candidates_from_classifier_payload({
-        "kind": "appointment", "appoint_action": "任命",
+        "kind": "appointment", "appoint_action": "任命", "mode": "ordinary",
         "name": "测试候选人甲", "office": "陕西巡抚",
     }, soft=False)
     out = sess.apply_cli_conversation_actions(
-        minister, "着测试候选人甲为陕西巡抚。", "臣遵旨拟任。",
+        minister, "中旨直发，着测试候选人甲为陕西巡抚。", "臣遵旨拟任。",
         has_directive=False, secret_order_id=None, preclassified_intent=scripted,
     )
     assert out.get("pending_action_id")
@@ -245,6 +245,7 @@ def test_scripted_appointment_stages_via_registry_materializer(game, monkeypatch
     payload = json.loads(office_rows[0]["payload_json"] or "{}")
     assert payload.get("name") == "测试候选人甲"
     assert payload.get("office") == "陕西巡抚"
+    assert payload.get("mode") == "midzhi"
     assert _count_pending(db, state.turn) == before + 1
 
 
@@ -323,6 +324,7 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
             "金额": 100000,
             "账户": "国库",
             "执行面": "in_transit",
+            "颁布方式": "普通",
         },
         {
             "正文": "着孙传庭巡抚陕西，整饬军政。",
@@ -330,6 +332,7 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
             "目标类型": "region",
             "目标ID": "shaanxi",
             "承办人": "孙传庭",
+            "颁布方式": "普通",
         },
     ]
     calls = []

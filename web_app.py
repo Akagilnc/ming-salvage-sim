@@ -1880,7 +1880,8 @@ class WebGame:
                     if draft_text:
                         # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
                         pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text)
+                            self.state.turn, character.name, draft_text, mode=message_text,
+                        )
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -1893,7 +1894,9 @@ class WebGame:
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = self.session._stage_appointment_candidate(payload_json, character)
+                    pending_action_id = self.session._stage_appointment_candidate(
+                        payload_json, character, message_text,
+                    )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
@@ -3587,22 +3590,26 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
 
 @app.patch("/api/directives/{directive_id}")
 async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    rows = get_game().directive_rows()
-    row = next((item for item in rows if int(item["id"]) == directive_id), None)
-    if row is None:
-        raise HTTPException(status_code=404, detail="未找到草案。")
-    text = request.text if request.text is not None else str(row["text"])
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
         with _serialized_web_write(game):
+            row = next(
+                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
+                None,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="未找到草案。")
+            text = request.text if request.text is not None else str(row["text"])
+            if not text.strip():
+                raise HTTPException(status_code=400, detail="指令内容不能为空。")
             capture_turn = int(game.state.turn)
+            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
             text.strip(),
             game.session.llm_config,
+            existing_mode=existing_mode,
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
         )
