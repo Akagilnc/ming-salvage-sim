@@ -97,9 +97,9 @@
 }
 .hud2-lab { font-size: 1.3cqh; color: #c9b48a; letter-spacing: 0.04em; }
 .hud2-val { font-size: 2.3cqh; font-weight: 700; color: #f6eccf; }
-.hud2-metric.warn .hud2-val { color: #f2c66a; }
-.hud2-metric.danger .hud2-val { color: #e07a55; }
-.hud2-metric.good .hud2-val { color: #8fd08a; }
+.hud2-metric-one.warn .hud2-val { color: #f2c66a; }
+.hud2-metric-one.danger .hud2-val { color: #e07a55; }
+.hud2-metric-one.good .hud2-val { color: #8fd08a; }
 
 /* 顶栏国库/内库复用 BudgetHover，去掉旧浮层底色；三行竖排、块内左对齐 */
 .hud2-slot .budget-hover { overflow: visible; }

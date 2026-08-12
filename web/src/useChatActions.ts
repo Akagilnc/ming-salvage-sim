@@ -88,15 +88,22 @@ export function useChatActions({
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
   const [temporaryActiveMinister, setTemporaryActiveMinister] = React.useState<Minister | null>(null);
 
+  // 仅用花名册查 temporaryActiveMinister；挂 ref 避免 durable setState 整表刷新
+  // 重造 loadMinisterChat → 触发 selectedMinister effect → resetPanel 清掉召对面板。
+  const rosterRef = React.useRef<Minister[]>([]);
+  React.useEffect(() => {
+    rosterRef.current = [
+      ...(state?.ministers || []),
+      ...(state?.consorts || []),
+    ];
+  }, [state?.ministers, state?.consorts]);
+
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
     // #499：历史投影 + 每一待读心轮的轮询由 hook 独占派发。返回 null=被 generation 守卫拒收
     // 的陈旧快照 → App 一并跳过全部面板外围写入（建议/可撤回/失败/临时大臣），不回覆新完成的轮。
     const data = await loadHistoryProjection(ministerName);
     if (!data || selectedMinisterRef.current !== ministerName) return;
-    const allKnown = [
-      ...(state?.ministers || []),
-      ...(state?.consorts || []),
-    ];
+    const allKnown = rosterRef.current;
     setTemporaryActiveMinister(allKnown.some((m) => m.name === data.minister.name) ? null : data.minister);
     setSuggestions(data.suggestions);
     setCanUndoLastChat(!!data.can_undo_last_chat);
@@ -108,7 +115,7 @@ export function useChatActions({
     } else {
       setChatFailures(data.pending_action_failures || []);
     }
-  }, [state, loadHistoryProjection, selectedMinisterRef]);
+  }, [loadHistoryProjection, selectedMinisterRef]);
 
   const refreshExtractionPending = React.useCallback(async () => {
     // #501：本开夜待补叙事抽取——显眼提示取数；失败静默（不挡召对）。

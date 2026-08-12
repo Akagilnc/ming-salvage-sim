@@ -49,11 +49,19 @@ export function SecretOrdersModal({
         <div className="secret-orders-list">
           {visible.length === 0 && <p className="so-empty">暂无此类密令。</p>}
           {visible.map((o) => (
-            <button
+            <article
               key={o.id}
-              type="button"
               className={`secret-order-card secret-order-card-button ${statusCls[o.status] || ""}`}
+              role="button"
+              tabIndex={0}
+              aria-label={`查看密令：${o.title}`}
               onClick={() => setSelectedOrder(o)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setSelectedOrder(o);
+                }
+              }}
             >
               <div className="so-header">
                 <span className="so-title"><Lock size={13} />{o.title}</span>
@@ -63,6 +71,7 @@ export function SecretOrdersModal({
               <div className="so-open-hint">点击查看密令详情</div>
               {o.status === "active" && (
                 <button
+                  type="button"
                   className="secondary-action so-goto"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -74,7 +83,7 @@ export function SecretOrdersModal({
                   召见 {o.minister_name}
                 </button>
               )}
-            </button>
+            </article>
           ))}
         </div>
       </article>

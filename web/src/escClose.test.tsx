@@ -63,3 +63,35 @@ describe("全局 ESC 关闭抽屉（stale closure 回归）", () => {
     expect(host.querySelector(`aside.${drawerClass}.open`)).toBeNull();      // ESC 后抽屉已关
   });
 });
+
+describe("全局 ESC 关闭结局页（endingDismissed）", () => {
+  it("ESC 关闭结局后不会被 auto-open effect 立刻重开", async () => {
+    const endingState = {
+      ...makeState(),
+      ending: {
+        status: "defeat",
+        label: "煤山自缢",
+        summary: "终章。",
+        timeline: [{ turn: 1, year: 1644, period: 3, decree_brief: "", effect_brief: "", chapter: "三月" }],
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const u = new URL(String(url), "http://t.local");
+      if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+      if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+      if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp(endingState);
+      return jsonResp({});
+    }));
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => { createRoot(host).render(<App />); });
+    await tick();
+    expect(host.querySelector(".modal-bg-ending")).not.toBeNull();
+
+    act(() => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await tick();
+    expect(host.querySelector(".modal-bg-ending")).toBeNull();
+  });
+});

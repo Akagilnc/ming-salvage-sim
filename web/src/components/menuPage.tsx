@@ -80,7 +80,7 @@ export function MenuPage({
 
       <div className="menu-panel">
         {!llmReady && (
-          <div className="menu-notice">尚未配置 LLM 后端。请先「设置 API」。</div>
+          <div className="menu-notice">尚未配置 LLM 后端。请先「模型后端」。</div>
         )}
         {error && <div className="menu-error">{error}</div>}
 
