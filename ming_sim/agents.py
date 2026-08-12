@@ -320,6 +320,8 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
             "primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。"
+            "primary_opponents 必须是非空派系 key 字符串数组（对照输入 faction names），"
+            "不得写成 {kind,key} 对象；与 affected_parties 不可混用。"
             "criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键："
             "imperial_authority_band、appointment_tenure、authorization_ids、"
             "endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 "

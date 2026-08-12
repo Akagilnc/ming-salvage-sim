@@ -12,7 +12,7 @@ def _rejected_verdict(dossier_id):
     return {
         "dossier_id": dossier_id, "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "primary_opponents": ["东林"],
         "gatekeeper_id": None, "reason": "科臣封驳。",
         "affected_parties": [
             {"kind": "faction", "key": "东林", "severity": "不满"},
@@ -3294,9 +3294,7 @@ def test_rejection_runtime_contract_rejects_each_missing_field(game, missing):
 
 
 @pytest.mark.parametrize(("field", "bad_value"), [
-    ("primary_opponents", [{"kind": "faction", "key": "not-a-real-faction"}]),
-    ("primary_opponents", [{"kind": "class", "key": "士绅"}]),
-    ("primary_opponents", [{"kind": "faction", "key": "东林", "score": 1}]),
+    ("primary_opponents", ["not-a-real-faction"]),
     ("gatekeeper_id", "not-a-real-character"),
 ])
 def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_value):
@@ -3331,9 +3329,10 @@ def test_rejection_snapshot_rejects_malformed_typed_values(game, field, bad_valu
 
 
 @pytest.mark.parametrize("contamination", [
-    {"primary_opponents": [{"kind": "faction", "key": 1}]},
-    {"primary_opponents": [{"kind": "faction", "key": 1.5}]},
-    {"primary_opponents": [{"kind": "faction", "key": True}]},
+    {"primary_opponents": [1]},
+    {"primary_opponents": [1.5]},
+    {"primary_opponents": [True]},
+    {"primary_opponents": [{"kind": "faction", "key": "东林"}]},
     {"resistance_scores": [99.5]},
     {"resistance_detail": {"score": 99.5}},
     {"resistance_detail": {"nested": [{"blocked": True}]}},
