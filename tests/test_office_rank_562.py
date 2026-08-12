@@ -1,5 +1,6 @@
 import json
-import re
+
+import pytest
 
 from ming_sim.decree import build_promulgation_judge_context
 from ming_sim.office_rank import office_leverage_multiplier, office_rank_band
@@ -134,54 +135,48 @@ def test_title_stems_keep_distinct_ming_bands_inside_same_office_type():
     assert office_rank_band("监察御史") == 7
     assert office_rank_band("少卿") == 4
     assert office_rank_band("前礼部右少卿,罢居上海") == 4
+    # 边镇/地方/翰林 must not collapse to the category-wide priority.rank_band.
+    assert office_rank_band("参将") == 4
+    assert office_rank_band("千总") == 6
+    assert office_rank_band("把总") == 7
+    assert office_rank_band("经略") == 3
+    assert office_rank_band("知州") == 5
+    assert office_rank_band("兵备道") == 4
+    assert office_rank_band("县令") == 7
+    assert office_rank_band("侍读学士") == 5
+    assert office_rank_band("修撰") == 6
+    assert office_rank_band("皇后") == 1
+
+
+def test_every_priority_stem_has_per_stem_rank_rule():
+    """AC/owner: each priority stem carries its own rank_rules band (no type-only collapse)."""
+    from ming_sim.office_rank import _match_rank_rule, _table
+
+    table = _table()
+    missing = []
+    for entry in table.get("priority") or []:
+        for stem in entry.get("stems") or []:
+            token = str(stem or "").strip()
+            if not token:
+                continue
+            matched = _match_rank_rule(token, table)
+            if matched is None or "rank_band" not in matched:
+                missing.append((entry.get("type"), token))
+    assert missing == []
 
 
 def test_leverage_multiplier_uses_canonical_office_rank_table_only():
-    """AC: migrate db._OFFICE_RANK_TIERS so faction leverage consumes the same parser."""
+    """AC: faction leverage consumes the same offices.json parser (full matrix in #9 suite)."""
     import ming_sim.db as dbmod
 
-    assert not hasattr(dbmod, "_OFFICE_RANK_TIERS")
-    src = open(dbmod.__file__, encoding="utf-8").read()
-    assert "_OFFICE_RANK_TIERS" not in src
-    assert not re.search(r"for mult, keywords in ", src)
-
-    # Preserve the old external leverage contract on overlapping stems.
+    # Thin cross-module seam only — full deputy/principal matrix lives in test_faction_leverage_9.
     assert office_leverage_multiplier("副总兵") == 0.5
-    assert office_leverage_multiplier("锦州副总兵") == 0.5
-    assert office_leverage_multiplier("佥都御史") == 0.5
-    assert office_leverage_multiplier("佥都御史，巡按") == 0.5
     assert office_leverage_multiplier("总兵") == 1.0
-    assert office_leverage_multiplier("都御史") == 1.0
-    assert office_leverage_multiplier("兵部尚书") == 1.0
-    assert office_leverage_multiplier("内阁首辅") == 1.0
-    assert office_leverage_multiplier("司礼监掌印太监") == 1.0
-    assert office_leverage_multiplier("司礼监秉笔太监") == 1.0
-    assert office_leverage_multiplier("侍郎") == 0.5
-    assert office_leverage_multiplier("东阁大学士") == 0.5
-    assert office_leverage_multiplier("次辅") == 0.5
-    assert office_leverage_multiplier("兵部职方") == 0.25
-    assert office_leverage_multiplier("郎中") == 0.25
-    assert office_leverage_multiplier("游击") == 0.25
     assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
-    assert office_leverage_multiplier("火器西法") == 1.0
-    assert office_leverage_multiplier("副都御史") == 0.5
-    assert office_leverage_multiplier("右副都御史") == 0.5
-    assert office_leverage_multiplier("都督佥事") == 0.5
-    assert office_leverage_multiplier("都督同知") == 0.5
-    assert office_leverage_multiplier("同知") == 0.5
-    assert office_leverage_multiplier("佥事") == 0.5
-    assert office_leverage_multiplier("指挥同知") == 0.5
-    assert office_leverage_multiplier("左都御史") == 1.0
-    assert office_leverage_multiplier("右都御史") == 1.0
-    assert office_leverage_multiplier("提督东厂") == 1.0
-    assert office_leverage_multiplier("提督京营") == 1.0
-    assert office_leverage_multiplier("总督军务") == 1.0
-    assert office_leverage_multiplier("秉笔太监") == 1.0
-    assert office_leverage_multiplier("都指挥使") == 1.0
-
-    # db wrapper stays as the leverage call-site seam and delegates to the same table.
     assert dbmod._office_rank_multiplier("副总兵") == office_leverage_multiplier("副总兵")
-    assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
+    assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == office_leverage_multiplier(
+        "礼部尚书,东阁大学士"
+    )
 
 
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
@@ -215,9 +210,11 @@ def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
     assert hu_payload["break_rank"]["current_rank_band"] == 3
 
 
-def test_promulgation_judge_receives_break_rank_and_is_instructed_to_treat_it_strictly(game):
-    """AC judge-in-loop floor: break_rank 入颁布上下文，prompt 钉死从严审视（无第三判决态）。"""
-    from ming_sim.agents import create_promulgation_judge_agent
+def test_promulgation_judge_receives_break_rank_and_keeps_two_slot_contract(game, monkeypatch):
+    """AC judge-in-loop floor: break_rank 结构化入判官输入；判决仍仅 promulgated|rejected。"""
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import validate_promulgation_verdicts
+    from ming_sim.exceptions import LLMContractError
     from ming_sim.models import LLMConfig
 
     db, state, _content = game
@@ -237,28 +234,56 @@ def test_promulgation_judge_receives_break_rank_and_is_instructed_to_treat_it_st
     assert by_id[high_id]["break_rank"]["is_break_rank"] is True
     assert by_id[ordinary_id]["break_rank"]["is_break_rank"] is False
 
-    captured = {}
+    # Product seam: llm path serializes the structured break_rank snapshot to the judge.
+    seen = {}
 
-    class _Agent:
-        def __init__(self, **kwargs):
-            captured.update(kwargs)
-
-    import ming_sim.agents as agents_mod
-
-    real_agent = agents_mod.Agent
-    real_model = agents_mod.create_chat_model
-    agents_mod.Agent = _Agent
-    agents_mod.create_chat_model = lambda *a, **k: object()
-    try:
-        create_promulgation_judge_agent(
-            LLMConfig(api_key="t", base_url="http://x", model="t"), object()
+    def _fake_run(_agent, prompt, **_kwargs):
+        seen["prompt"] = prompt
+        return json.dumps(
+            {
+                "verdicts": [
+                    {
+                        "dossier_id": high_id,
+                        "decision": "rejected",
+                        "blocked_layer": "six_offices",
+                        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+                        "gatekeeper_id": None,
+                        "reason": "越制破格",
+                        "criteria_snapshot": by_id[high_id]["criteria_snapshot_source"],
+                        "affected_parties": [
+                            {"kind": "faction", "key": "东林", "severity": "不满"},
+                        ],
+                    },
+                    {"dossier_id": ordinary_id, "decision": "promulgated"},
+                ]
+            },
+            ensure_ascii=False,
         )
-    finally:
-        agents_mod.Agent = real_agent
-        agents_mod.create_chat_model = real_model
 
-    instructions = "\n".join(captured.get("instructions") or [])
-    assert "break_rank.is_break_rank=true" in instructions
-    assert "从严" in instructions
-    assert "promulgated|rejected" in instructions
-    assert "deferred" not in instructions
+    monkeypatch.setattr(decree_mod, "run_agent_text", _fake_run)
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object()
+    )
+    verdicts = decree_mod.llm_promulgation_verdicts(
+        rows,
+        state,
+        db=db,
+        agno_db=object(),
+        llm_config=LLMConfig(api_key="t", base_url="http://x", model="t"),
+    )
+    fed = json.loads(seen["prompt"])
+    fed_by_id = {int(item["id"]): item for item in fed["dossiers"]}
+    assert fed_by_id[high_id]["break_rank"]["is_break_rank"] is True
+    assert fed_by_id[ordinary_id]["break_rank"]["is_break_rank"] is False
+    # Differential outcome is expressible on the 0052 two-slot contract (reject vs promulgate).
+    assert {item["dossier_id"]: item["decision"] for item in verdicts} == {
+        high_id: "rejected",
+        ordinary_id: "promulgated",
+    }
+
+    with pytest.raises(LLMContractError, match="promulgated 或 rejected"):
+        validate_promulgation_verdicts(
+            [{"dossier_id": high_id, "decision": "deferred"}],
+            rows,
+            db,
+        )
