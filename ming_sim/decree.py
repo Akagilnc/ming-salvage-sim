@@ -161,7 +161,7 @@ def build_promulgation_judge_context(
             "decree_text": str(row.get("decree_text") or ""),
             "target_kind": str(row.get("target_kind") or ""),
             "target_id": target_id,
-            "mode": str(payload.get("mode") or "regular"),
+            "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
             "break_rank": break_rank.get(int(row["id"])),
             "criteria_snapshot_source": {
@@ -191,12 +191,12 @@ def build_promulgation_judge_context(
         "ORDER BY d.turn,d.dossier_id,d.id"
     ).fetchall():
         payload = json.loads(str(item["payload_json"] or "{}"))
-        mode = str(payload.get("mode") or "regular")
+        mode = str(payload.get("mode") or "ordinary")
         rescript_action = str(item["rescript_action"] or "")
         forced = rescript_action == "force_promulgated"
         # A rescript disposition is not another promulgation attempt.  Force is
         # retained independently because it is itself a durable history marker.
-        if not forced and (mode != "中旨" or rescript_action):
+        if not forced and (mode != "midzhi" or rescript_action):
             continue
         history.append({
             "dossier_id": int(item["dossier_id"]), "turn": int(item["turn"]),
@@ -310,7 +310,7 @@ def _validate_promulgation_verdict_item(
         mode = modes.get(dossier_id) if isinstance(dossier_id, int) else None
         if marker:
             if mode is not None:
-                if decision != "rejected" or mode != "中旨":
+                if decision != "rejected" or mode != "midzhi":
                     raise ValueError("中旨亦不可颁只能标记中旨打回判决")
             elif decision != "rejected":
                 raise ValueError("中旨亦不可颁只能标记打回判决")
@@ -319,19 +319,19 @@ def _validate_promulgation_verdict_item(
         # Exact verdict-key enforcement (#561) when mode is known from proposed set.
         if mode is not None:
             allowed_keys = {"dossier_id", "decision"}
-            if decision == "promulgated" and mode == "中旨":
+            if decision == "promulgated" and mode == "midzhi":
                 allowed_keys.add("affected_parties")
             elif decision == "rejected":
                 allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
                 allowed_keys.update({"affected_parties", "legal_reason_code"})
-                if mode == "中旨":
+                if mode == "midzhi":
                     allowed_keys.add("midzhi_unpromulgatable")
             unknown_keys = set(row) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
             needs_affected = (
                 decision == "rejected"
-                or mode == "中旨"
+                or mode == "midzhi"
             )
             if needs_affected and "affected_parties" not in row:
                 raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
@@ -403,7 +403,7 @@ def validate_promulgation_verdicts(
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
             payload = json.loads(str(dossier.get("payload_json") or "{}"))
-        proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "regular")
+        proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
     rows = [
         _validate_promulgation_verdict_item(
             row, db, proposed_modes=proposed_modes, prepared_context=context,
@@ -765,7 +765,7 @@ def resolve_directives(
                 payload = dossier.get("payload")
                 if not isinstance(payload, dict):
                     payload = json.loads(str(dossier.get("payload_json") or "{}"))
-                proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "regular")
+                proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
                 (reviewed if dossier_action_policy(
                     dossier.get("action_type"), payload,
                 )["external_review"] else exempt).append(dossier)

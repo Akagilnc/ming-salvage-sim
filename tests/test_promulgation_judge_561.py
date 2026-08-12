@@ -20,7 +20,7 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
-    dossier_id = _dossier(db, state, mode="中旨")
+    dossier_id = _dossier(db, state, mode="midzhi")
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
         break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
@@ -33,7 +33,7 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
     assert "satisfaction" not in encoded
     assert "满意" not in encoded
-    assert context["dossiers"][0]["mode"] == "中旨"
+    assert context["dossiers"][0]["mode"] == "midzhi"
     assert context["dossiers"][0]["break_rank"] == {"office_rank": "越三级"}
     assert set(context["factions"][0]) == {"name", "leverage", "agenda"}
     assert context["imperial_authority_band"] in IMPERIAL_AUTHORITY_BANDS
@@ -67,12 +67,12 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
     db, state, _content = game
-    regular = _dossier(db, state)
-    midzhi_pass = _dossier(db, state, text="中旨补饷", mode="中旨")
-    midzhi_reject = _dossier(db, state, text="中旨清丈", mode="中旨")
+    ordinary = _dossier(db, state)
+    midzhi_pass = _dossier(db, state, text="中旨补饷", mode="midzhi")
+    midzhi_reject = _dossier(db, state, text="中旨清丈", mode="midzhi")
     for dossier_id, decision, action in (
-        (regular, "rejected", ""),
-        (regular, "rejected", "force_promulgated"),
+        (ordinary, "rejected", ""),
+        (ordinary, "rejected", "force_promulgated"),
         (midzhi_pass, "promulgated", ""),
         (midzhi_reject, "rejected", ""),
         (midzhi_reject, "rejected", "hold"),
@@ -87,13 +87,13 @@ def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
         )
     history = decree_mod.build_promulgation_judge_context(db, state, [])["promulgation_history"]
     assert history == [
-        {"dossier_id": regular, "turn": state.turn, "mode": "regular",
+        {"dossier_id": ordinary, "turn": state.turn, "mode": "ordinary",
          "marker": "批红强颁", "outcome": "promulgated"},
-        {"dossier_id": midzhi_pass, "turn": state.turn, "mode": "中旨",
+        {"dossier_id": midzhi_pass, "turn": state.turn, "mode": "midzhi",
          "marker": "中旨", "outcome": "promulgated"},
-        {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "中旨",
+        {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "midzhi",
          "marker": "中旨", "outcome": "rejected"},
-        {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "中旨",
+        {"dossier_id": midzhi_reject, "turn": state.turn, "mode": "midzhi",
          "marker": "批红强颁", "outcome": "promulgated"},
     ]
 
@@ -265,8 +265,8 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
 
 @pytest.mark.parametrize(
     ("mode", "decision"),
-    [("regular", "promulgated"), ("中旨", "promulgated"),
-     ("regular", "rejected"), ("中旨", "rejected")],
+    [("ordinary", "promulgated"), ("midzhi", "promulgated"),
+     ("ordinary", "rejected"), ("midzhi", "rejected")],
 )
 def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decision):
     db, state, _content = game
@@ -275,13 +275,13 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
     context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
     if decision == "promulgated":
         verdict = {"dossier_id": dossier_id, "decision": decision}
-        if mode == "中旨":
+        if mode == "midzhi":
             verdict["affected_parties"] = [
                 {"kind": "faction", "key": "东林", "severity": "不满"},
             ]
     else:
         verdict = _rejected_verdict(
-            dossier_id, context["imperial_authority_band"], midzhi=mode == "中旨",
+            dossier_id, context["imperial_authority_band"], midzhi=mode == "midzhi",
         )
 
     assert decree_mod.validate_promulgation_verdicts(
@@ -410,7 +410,7 @@ def test_non_gatekeeper_character_cannot_be_named_as_gatekeeper(game):
         )
 
 
-def test_regular_rejection_cannot_claim_midzhi_unpromulgatable(game):
+def test_ordinary_rejection_cannot_claim_midzhi_unpromulgatable(game):
     db, state, _content = game
     dossier_id = _dossier(db, state)
     dossiers = db.list_decree_dossiers(status="proposed")
@@ -587,8 +587,8 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
     db, state, content = game
     hostile_land = _dossier(db, state, "敌对清丈田亩")
     ordinary_pay = _dossier(db, state, "寻常补发边饷")
-    midzhi_pay = _dossier(db, state, "中旨补发边饷", mode="中旨")
-    vital_midzhi = _dossier(db, state, "中旨强夺钱粮命门", mode="中旨")
+    midzhi_pay = _dossier(db, state, "中旨补发边饷", mode="midzhi")
+    vital_midzhi = _dossier(db, state, "中旨强夺钱粮命门", mode="midzhi")
     seen_payload = {}
 
     monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())

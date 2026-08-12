@@ -43,7 +43,7 @@ def _args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _dossier(db: GameDB, state, text: str, *, mode: str = "regular") -> int:
+def _dossier(db: GameDB, state, text: str, *, mode: str = "ordinary") -> int:
     return db.create_decree_dossier(
         state, action_type="policy", decree_text=text, target_kind="issue",
         target_id=f"gate-561-{state.turn}-{text[:6]}", payload={"mode": mode},
@@ -224,10 +224,10 @@ def main() -> int:
         hostile = _dossier(db, state, hostile_text)
         ordinary = _dossier(db, state, "循户部成例补发边军一月欠饷")
         admin_midzhi = _dossier(
-            db, state, "中旨命内廷整理既有文册，不动外廷钱权", mode="中旨",
+            db, state, "中旨命内廷整理既有文册，不动外廷钱权", mode="midzhi",
         )
         vital_midzhi = _dossier(
-            db, state, "中旨绕开户部，强夺太仓全部钱粮交内廷支配", mode="中旨",
+            db, state, "中旨绕开户部，强夺太仓全部钱粮交内廷支配", mode="midzhi",
         )
         first_context = build_promulgation_judge_context(
             db, state, db.list_decree_dossiers(status="proposed"),
