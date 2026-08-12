@@ -1943,7 +1943,6 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
-        self._migrate_decree_cost_identity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -2670,47 +2669,6 @@ class GameDB:
         if commit:
             self.conn.commit()
         return base_key
-
-    def _migrate_decree_cost_identity(self) -> None:
-        """Upgrade the old dossier-wide idempotency key and discard non-cost truth."""
-        sql_row = self.conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='decree_cost_events'"
-        ).fetchone()
-        sql = str(sql_row[0] or "") if sql_row else ""
-        if "UNIQUE(dossier_id, cost_identity" in sql:
-            return
-        self.conn.executescript("""
-            ALTER TABLE decree_cost_events RENAME TO decree_cost_events_legacy;
-            CREATE TABLE decree_cost_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dossier_id INTEGER NOT NULL,
-                turn INTEGER NOT NULL,
-                cost_kind TEXT NOT NULL,
-                target_kind TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                delta INTEGER NOT NULL DEFAULT 0,
-                reason TEXT NOT NULL DEFAULT '',
-                cost_identity TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
-                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
-            );
-            INSERT OR IGNORE INTO decree_cost_events
-                (id,dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity,created_at)
-            SELECT e.id,e.dossier_id,e.turn,e.cost_kind,e.target_kind,e.target_id,
-                   e.delta,e.reason,
-                   CASE WHEN EXISTS (
-                       SELECT 1 FROM decree_cost_events_legacy b
-                       WHERE b.dossier_id=e.dossier_id AND b.cost_kind='breach'
-                         AND b.reason=e.reason
-                   ) THEN 'breach' ELSE 'override' END,
-                   e.created_at
-            FROM decree_cost_events_legacy e
-            WHERE e.cost_kind NOT IN ('stigma','impression');
-            DROP TABLE decree_cost_events_legacy;
-            CREATE INDEX idx_decree_cost_events_dossier
-                ON decree_cost_events(dossier_id, id);
-        """)
 
     def ensure_column(self, table: str, column: str, definition: str) -> bool:
         """确保 table.column 存在。返回 True=本次新增了该列（真·一次性迁移），
