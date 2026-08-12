@@ -325,7 +325,7 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键："
             "imperial_authority_band、appointment_tenure、authorization_ids、"
             "endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 "
-            "{kind:faction|class,key,severity:大怒|不满}。mode=中旨 无论顺颁打回"
+            "{kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回"
             "均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
             "普通中旨从严但不得机械地一概打回。",
             "顺颁不得虚构卡点。只输出 JSON，不写解释。",
