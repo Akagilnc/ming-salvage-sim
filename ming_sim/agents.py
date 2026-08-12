@@ -299,6 +299,42 @@ def parse_agent_json(raw: str, stage: str) -> Dict[str, Any]:
     return data
 
 
+def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
+    """Interim promulgation judge: one isolated call for the whole reviewed batch."""
+    del agno_db
+    cfg = _llm_for_role(llm_config, "simulator")
+    return Agent(
+        name="颁布判官",
+        id="promulgation-judge",
+        model=create_chat_model(cfg, temperature=0.2, max_tokens=cfg.max_tokens),
+        instructions=[
+            "你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。"
+            "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
+            "颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、"
+            "勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。",
+            "合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
+            "gatekeepers 官员名单形成的把关关口三类触发才可打回。皇威越高触发面"
+            "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
+            "courage、integrity 判断，不按派系首领意志判断。",
+            "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
+            "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
+            "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
+            "primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。"
+            "primary_opponents 必须是非空 typed 派系数组，每项须且仅为 "
+            "{kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。"
+            "criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键："
+            "imperial_authority_band、appointment_tenure、authorization_ids、"
+            "endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 "
+            "{kind:faction|class,key,severity:大怒|不满}。mode=midzhi 无论顺颁打回"
+            "均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
+            "普通中旨从严但不得机械地一概打回。",
+            "顺颁不得虚构卡点。只输出 JSON，不写解释。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_decree_writer_agent(llm_config: LLMConfig, agno_db: SqliteDb) -> Agent:
     # 一次性 agent：add_history_to_context=False，无需持久化 → 不传 db，免得每次往
     # <db>.emperor.db 的 agno_sessions 累积 runs 撑爆存档。agno_db 仅保留以兼容调用方。

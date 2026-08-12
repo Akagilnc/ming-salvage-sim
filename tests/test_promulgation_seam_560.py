@@ -204,12 +204,12 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
                 "dossier_id": dossier_id,
                 "decision": "rejected",
                 "blocked_layer": "six_offices",
-                "primary_opponents": ["东林"],
+                "primary_opponents": [{"kind": "faction", "key": "东林"}],
                 "gatekeeper_id": None,
                 "reason": "科臣封驳。",
                 "criteria_snapshot": {
                     "imperial_authority_band": "偏弱",
-                    "involved_office_types": ["言官"],
+                    "appointment_tenure": "",
                     "authorization_ids": [],
                     "endorsement_entry_ids": [],
                 },
@@ -247,7 +247,7 @@ def test_public_resolve_seam_rejects_reserved_or_malformed_rejection_before_pend
         ],
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱",
-            "involved_office_types": ["言官"],
+            "appointment_tenure": "",
             "authorization_ids": [],
             "endorsement_entry_ids": [],
         },
@@ -323,7 +323,7 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contaminatio
         ],
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱",
-            "involved_office_types": ["言官"],
+            "appointment_tenure": "",
             "authorization_ids": [],
             "endorsement_entry_ids": [],
         },
