@@ -473,7 +473,6 @@ _OFFICE_LEVERAGE_WEIGHT = {
 
 # 品级档 multiplier 已迁到 content/offices.json rank_rules（#562）：
 # faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
-_DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免漏算堂官）
 
 # 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
 _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
@@ -488,8 +487,6 @@ def _office_rank_multiplier(office: str, already_normalized: bool = False) -> fl
     from ming_sim.office_rank import office_leverage_multiplier
 
     text = office or ""
-    if not text.strip():
-        return _DEFAULT_OFFICE_RANK_MULTIPLIER
     normalized = text if already_normalized else normalize_office(text)
     return office_leverage_multiplier(normalized, already_normalized=True)
 
