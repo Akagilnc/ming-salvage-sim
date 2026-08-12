@@ -63,13 +63,14 @@ def validate_rejection_verdict(
         isinstance(affected, list)
         and all(
             isinstance(item, dict)
-            and set(item) == {"kind", "key", "severity"}
+            and {"kind", "key", "direction", "intensity"}.issubset(item)
             and item.get("kind") in {"faction", "class"}
             and isinstance(item.get("key"), str)
             and item["key"] in (
                 faction_names if item.get("kind") == "faction" else class_names
             )
-            and item.get("severity") in {"大怒", "不满"}
+            and item.get("direction") in {"positive", "negative"}
+            and item.get("intensity") in {"weak", "strong"}
             for item in affected
         )
     )

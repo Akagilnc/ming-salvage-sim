@@ -45,7 +45,7 @@ def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
         return [{
             "dossier_id": dossier["id"], "decision": "promulgated",
             "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ],
         }]
 
@@ -82,7 +82,7 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
             "blocked_layer": "six_offices",
             "primary_opponents": [{"kind": "faction", "key": "东林"}],
             "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ],
             "gatekeeper_id": None,
             "reason": "科臣封驳。",

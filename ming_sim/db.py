@@ -11249,8 +11249,9 @@ class GameDB:
                 )
 
     _OVERRIDE_AUTHORITY_COST = -5
-    _OVERRIDE_SEVERITY_COST = {"大怒": -8, "不满": -4}
-    _BREACH_FACTION_COST = -4
+    _REACTION_INTENSITY = {"weak": 4, "strong": 8}
+    _REACTION_SIGN = {"positive": 1, "negative": -1}
+    _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
 
     def list_decree_cost_events(self, dossier_id: int) -> List[Dict[str, object]]:
         return [dict(row) for row in self.conn.execute(
@@ -11286,7 +11287,7 @@ class GameDB:
         self, state: GameState, dossier_id: int, *, include_authority: bool,
         include_parties: bool, stigma_reason: str, commit: bool = True,
     ) -> None:
-        """ADR 0056 narrow rail: authority, typed injured parties, stigma."""
+        """ADR 0056 narrow rail: authority and typed signed reactions."""
         if include_authority and self._record_decree_cost(
             dossier_id, state.turn, "authority", "metric", "皇威",
             self._OVERRIDE_AUTHORITY_COST, stigma_reason,
@@ -11299,9 +11300,11 @@ class GameDB:
         if include_parties:
             for party in self._latest_affected_parties(dossier_id):
                 kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
-                delta = self._OVERRIDE_SEVERITY_COST.get(str(party.get("severity") or ""))
-                if kind not in {"faction", "class"} or delta is None:
-                    raise ValueError("受损方代价只接受已校验 typed 清单")
+                magnitude = self._REACTION_INTENSITY.get(str(party.get("intensity") or ""))
+                sign = self._REACTION_SIGN.get(str(party.get("direction") or ""))
+                if kind not in {"faction", "class"} or magnitude is None or sign is None:
+                    raise ValueError("反应代价只接受已校验 typed 清单")
+                delta = sign * magnitude
                 if not self._record_decree_cost(
                     dossier_id, state.turn, "satisfaction", kind, key, delta, stigma_reason,
                 ):
@@ -11375,14 +11378,18 @@ class GameDB:
                 )
                 if str(row["faction"] or ""):
                     factions.add(str(row["faction"]))
+            breach_delta = (
+                self._REACTION_SIGN[self._BREACH_FACTION_REACTION["direction"]]
+                * self._REACTION_INTENSITY[self._BREACH_FACTION_REACTION["intensity"]]
+            )
             for faction in sorted(factions):
                 if self._record_decree_cost(
                     dossier_id, state.turn, "satisfaction", "faction", faction,
-                    self._BREACH_FACTION_COST, reason,
+                    breach_delta, reason,
                 ):
                     self.conn.execute(
                         "UPDATE factions SET satisfaction=max(0,min(100,satisfaction+?)) WHERE name=?",
-                        (self._BREACH_FACTION_COST, faction),
+                        (breach_delta, faction),
                     )
             self.conn.execute(
                 "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
