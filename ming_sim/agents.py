@@ -378,8 +378,8 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
         id="audience_extractor",
         model=create_chat_model(llm_config, temperature=0.2, max_tokens=600),
         instructions=[
-            "你从一段已经发生的大臣回话（+当前在场名单）里，抽取**显著的故事事实**，"
-            "落成故事账。只搬运回话里真实演出的情节，不虚构、不引申、不复述整段原文。",
+            "你从一段已经发生的君臣对话（皇帝问话 + 大臣回话 + 当前在场名单）里，抽取**显著的故事事实**，"
+            "落成故事账。只搬运对话里真实演出的情节，不虚构、不引申、不复述整段原文。",
             "只输出 JSON，形如 "
             '{"facts":[{"person_names":["甲","乙"],"audibility":"殿上公开",'
             '"body":"一句话记该情节","tags":["站台"],"presence_effect":""}]}。',
@@ -387,7 +387,7 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
             "「殿上公开」或「御前低语」（递话/读心/私语类御前内容标私，缺省公开）；"
             "body=一句中文情节记述；tags=开放短标签数组；presence_effect 仅当该情节"
             "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串。",
-            "若回话明确说出口对「可背书案卷」中某案的会签、当面站台或御笔手敕，"
+            "若皇帝问话或大臣回话明确说出口对「可背书案卷」中某案的会签、当面站台或御笔手敕，"
             "在对应 fact 增加 endorsement={dossier_id,form,endorser_id,imperial}。"
             "会签/当面站台须填具名大臣且 imperial=false；御笔手敕须 endorser_id=空串且 imperial=true。"
             "只可引用输入中已有案卷，不按皇威或其他条件二次判断是否愿意担名；没说出口则不捕获。",
