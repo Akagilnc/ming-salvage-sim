@@ -103,6 +103,10 @@ class _FakeSession:
     def pending_count(self) -> int:
         return 0
 
+    def list_directives(self, include_pending: bool = True):
+        # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
+        return GameSession.list_directives(self, include_pending=include_pending)
+
     def note_chat_rollback(self, **_kwargs):
         return None
 

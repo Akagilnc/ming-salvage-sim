@@ -61,6 +61,9 @@ function renderModal(props: {
   onUndo?: (ministerName: string) => void;
   canUndoLastChat?: boolean;
   onFavorite?: (minister: Minister) => void;
+  onClose?: () => void;
+  scrollPosition?: number;
+  onScrollPositionChange?: (position: number) => void;
   registerChatUpdate?: (update: (chat: ChatMessage[]) => void) => void;
   registerNightUpdate?: (update: (nightId: number) => void) => void;
   registerUndoUpdate?: (update: (chatTurnId: number | null) => void) => void;
@@ -123,8 +126,9 @@ function renderModal(props: {
         onUndo={props.onUndo ?? (() => {})}
         onHint={() => {}}
         onFavorite={props.onFavorite ?? (() => {})}
-        onOpenEdict={() => {}}
-        onClose={() => {}}
+        scrollPosition={props.scrollPosition}
+        onScrollPositionChange={props.onScrollPositionChange}
+        onClose={props.onClose ?? (() => {})}
         onCancel={props.onCancel}
       />
     );
@@ -224,12 +228,7 @@ function renderEdictModal(props: {
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
-        onWriteDecree={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
-        onResetDecree={() => {}}
-        onIssueDecree={() => {}}
-        onConfirmDirective={() => {}}
-        onRejectDirective={() => {}}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -284,6 +283,19 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(button).toBeTruthy();
   });
 
+  it("does not review already-approved conversational directives", () => {
+    const { host } = renderEdictModal({
+      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
+    });
+    expect(host.textContent).not.toContain("待朱批");
+    expect(host.textContent).not.toContain("准");
+    expect(host.textContent).not.toContain("驳");
+    expect(host.textContent).toContain("发饷辽东");
+    expect(host.textContent).toContain("退朝");
+    expect(host.textContent).not.toContain("返工改稿");
+    expect(host.textContent).not.toContain("盖玺颁布");
+  });
+
   it("offers durable recovery entry for failed secret orders", () => {
     const onOpenFailureRecovery = vi.fn();
     const { host } = renderEdictModal({
@@ -318,6 +330,28 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).toContain("密令落库失败");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(button).toBeTruthy();
+  });
+});
+
+describe("ChatModal — #545 final composer contract", () => {
+  it("keeps temporary leave separate and sends retreat through the chat command seam", () => {
+    const onSend = vi.fn();
+    const onClose = vi.fn();
+    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
+
+    expect(host.textContent).not.toContain("转入诏书草案");
+    expect(host.textContent).not.toContain("任免");
+    const buttons = Array.from(host.querySelectorAll("button"));
+    const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
+    const retreat = buttons.find((button) => button.textContent?.includes("退朝")) as HTMLButtonElement;
+    expect(leave).toBeTruthy();
+    expect(retreat).toBeTruthy();
+
+    act(() => leave.click());
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+    act(() => retreat.click());
+    expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
   });
 });
 
@@ -731,6 +765,19 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { updateChat([{ role: "user", content: "完成二轮" }]); await Promise.resolve(); });
     expect(log.scrollTop).toBe(100);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores a saved position and reports player scrolling for the open night", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "卷首" }] }) }));
+    const save = vi.fn();
+    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23, scrollPosition: 137, onScrollPositionChange: save });
+    const log = host.querySelector(".chat-log") as HTMLDivElement;
+    Object.defineProperties(log, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(137);
+    log.scrollTop = 91;
+    act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
+    expect(save).toHaveBeenLastCalledWith(91);
   });
 
   it("does not merge personal history while the canonical scroll refresh is delayed", async () => {

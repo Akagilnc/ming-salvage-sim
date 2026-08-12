@@ -1064,8 +1064,16 @@ class WebGame:
         }
 
     def directive_rows(self):
-        # 颁诏候选 = draft；UI 列表含 pending
-        return self.db.list_directives(self.state, statuses=("pending", "draft"))
+        """Player desk projection shared with the CLI: undossiered candidates only."""
+        visible_ids = {
+            item.id for item in self.session.list_directives(include_pending=True)
+        }
+        return [
+            row for row in self.db.list_directives(
+                self.state, statuses=("pending", "draft"),
+            )
+            if int(row["id"]) in visible_ids
+        ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
         region_positions = {
@@ -3633,49 +3641,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
-
-
-@app.post("/api/directives/{directive_id}/confirm")
-async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
-    """大臣拟旨经皇帝核定：pending → draft。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.confirm_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/directives/{directive_id}/reject")
-async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
-    """皇帝驳回大臣拟旨：pending → rejected。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.reject_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/decree/write")
-async def api_write_decree() -> Dict[str, Any]:
-    game = get_game()
-    try:
-        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
-        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
-        with _serialized_web_write(game):
-            decree = game.session.write_decree()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"decree": decree}
 
 
 @app.post("/api/decree/advance_without_edict")
