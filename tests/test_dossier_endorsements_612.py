@@ -372,6 +372,43 @@ def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(ga
     assert [row for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == []
 
 
+def test_close_extraction_failure_reopens_at_transfer_and_can_continue(game):
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "retryable", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+
+    class _Boom:
+        def run(self, _materials):
+            raise RuntimeError("extract boom")
+
+    with pytest.raises(an.AudienceNightError) as exc:
+        an.close_night(
+            db, state, night_id=night_id, content=content, llm_config=object(),
+            write_gate=threading.Lock(), extractor_agent=_Boom(),
+        )
+    assert exc.value.code == "pending_extraction"
+    failed = an.get_night(db, night_id)
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert failed["close_commit_cursor"] == an.CLOSE_STEP_TRANSFER_CANDIDATES
+    assert db.get_story_extract_status(chat_turn_id) == "pending"
+    assert db.list_night_approved_pending(night_id, kind="directive") == []
+    assert len(db.list_decree_dossiers(status="proposed")) == 1
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content, llm_config=object(),
+        write_gate=threading.Lock(), extractor_agent=_Agent({"facts": []}),
+    )
+    assert result["closed"] is True
+    assert db.get_story_extract_status(chat_turn_id) == "done"
+    assert len(db.list_decree_dossiers(status="proposed")) == 1
+
+
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
     facts = parse_extraction_facts({
         "facts": [{

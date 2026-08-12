@@ -295,6 +295,46 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
 
 
+def test_web_issue_close_extracts_only_after_same_night_dossier_exists(web_game, monkeypatch):
+    """Real Web settlement tracer: the endpoint does not pre-drain; close-night creates
+    the dossier, then performs this persisted turn's exactly-one extraction."""
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    chat_turn_id = game.db.create_chat_turn(
+        game.state, minister, "朕准此旨。", 0, night_id=int(night["id"]),
+    )
+    game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿作保。", chat_turn_id)
+    directive_id = game.db.stage_directive_candidate(
+        game.state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister},
+    )
+    game.db.mark_pending_night_approved([directive_id], night_id=int(night["id"]))
+    calls = []
+
+    class _TracingExtractor:
+        def run(self, materials):
+            payload = json.loads(materials)
+            calls.append(payload)
+            candidates = payload["可背书案卷"]
+            assert len(candidates) == 1
+            dossier_id = candidates[0]["ref"]["dossier_id"]
+            assert game.db.get_decree_dossier(dossier_id) is not None
+            return _RunContent('{"facts":[]}')
+
+    monkeypatch.setattr(agents_mod, "create_audience_extractor_agent", lambda *a, **k: _TracingExtractor())
+
+    async def scenario():
+        async with _client() as client:
+            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+
+    events = asyncio.run(scenario())
+    assert events[-1]["event"] == "done", events
+    assert len(calls) == 1
+    assert game.db.get_story_extract_status(chat_turn_id) == "done"
+
+
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
     """Legacy saves with only turn_directives.status=pending remain operable at the
     same end-turn service seam; retired player confirm/reject routes stay absent."""

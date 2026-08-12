@@ -14,6 +14,7 @@ import sqlite3
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -2166,6 +2167,10 @@ class GameSession:
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
             beat_generator=production_beat_generator,
+            llm_config=getattr(self, "llm_config", None),
+            # resolve_turn already owns the runtime write gate on Web; CLI is
+            # single-writer. Avoid recursively acquiring that non-reentrant lock.
+            write_gate=nullcontext(),
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
