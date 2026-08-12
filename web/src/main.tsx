@@ -791,50 +791,6 @@ export function App() {
     }
   };
 
-  const confirmDirective = async (directiveId: number) => {
-    setBusy("核定大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/confirm`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const rejectDirective = async (directiveId: number) => {
-    setBusy("驳回大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const writeDecree = async () => {
-    setBusy("拟写正式诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
-      setDecree(data.decree);
-      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
-      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const advanceWithoutEdict = async () => {
     setBusy("退朝");
     setError("");
@@ -855,12 +811,6 @@ export function App() {
     } finally {
       setBusy("");
     }
-  };
-
-  const resetDecree = () => {
-    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
-    setDecree("");
-    setError("");
   };
 
   advanceWithoutEdictRef.current = advanceWithoutEdict;
@@ -1284,12 +1234,7 @@ export function App() {
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
-            onWriteDecree={writeDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onResetDecree={resetDecree}
-            onIssueDecree={issueDecree}
-            onConfirmDirective={confirmDirective}
-            onRejectDirective={rejectDirective}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
