@@ -1422,6 +1422,23 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
+            -- ADR 0056: existence of this append-only rail is the idempotency key;
+            -- stigma_json is deliberately not used as a cost guard.
+            CREATE TABLE IF NOT EXISTS decree_cost_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                cost_kind TEXT NOT NULL,
+                target_kind TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                delta INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, cost_kind, target_kind, target_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
+                ON decree_cost_events(dossier_id, id);
             CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
                 turn INTEGER NOT NULL,
                 dossier_id INTEGER NOT NULL,
@@ -11088,6 +11105,11 @@ class GameDB:
                         dossier_id, decision="force_promulgated", turn=state.turn,
                         commit=False,
                     )
+                self._apply_override_costs(
+                    state, dossier_id, include_authority=True,
+                    include_parties=not predeclared_midzhi,
+                    stigma_reason="批红强颁", commit=False,
+                )
             else:
                 self.record_dossier_decision(
                     dossier_id, "promulgated", blocked_layer=blocked_layer,
@@ -11226,6 +11248,150 @@ class GameDB:
                     dossier_id, "executing", commit=False,
                 )
 
+    _OVERRIDE_AUTHORITY_COST = -5
+    _OVERRIDE_SEVERITY_COST = {"大怒": -8, "不满": -4}
+    _BREACH_FACTION_COST = -4
+
+    def list_decree_cost_events(self, dossier_id: int) -> List[Dict[str, object]]:
+        return [dict(row) for row in self.conn.execute(
+            "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
+            (int(dossier_id),),
+        ).fetchall()]
+
+    def _record_decree_cost(
+        self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
+        target_id: str, delta: int, reason: str,
+    ) -> bool:
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO decree_cost_events
+               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason)
+               VALUES (?,?,?,?,?,?,?)""",
+            (int(dossier_id), int(turn), cost_kind, target_kind, str(target_id),
+             int(delta), str(reason)),
+        )
+        return cur.rowcount == 1
+
+    def _latest_affected_parties(self, dossier_id: int) -> List[Dict[str, str]]:
+        row = self.conn.execute(
+            """SELECT affected_parties_json FROM decree_dossier_decisions
+               WHERE dossier_id=? AND rescript_action='' AND affected_parties_json<>'[]'
+               ORDER BY id DESC LIMIT 1""", (int(dossier_id),),
+        ).fetchone()
+        if row is None:
+            return []
+        value = json.loads(str(row["affected_parties_json"] or "[]"))
+        return value if isinstance(value, list) else []
+
+    def _apply_override_costs(
+        self, state: GameState, dossier_id: int, *, include_authority: bool,
+        include_parties: bool, stigma_reason: str, commit: bool = True,
+    ) -> None:
+        """ADR 0056 narrow rail: authority, typed injured parties, stigma."""
+        if include_authority and self._record_decree_cost(
+            dossier_id, state.turn, "authority", "metric", "皇威",
+            self._OVERRIDE_AUTHORITY_COST, stigma_reason,
+        ):
+            state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
+            self.conn.execute(
+                "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (state.metrics["皇威"],),
+            )
+        if include_parties:
+            for party in self._latest_affected_parties(dossier_id):
+                kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
+                delta = self._OVERRIDE_SEVERITY_COST.get(str(party.get("severity") or ""))
+                if kind not in {"faction", "class"} or delta is None:
+                    raise ValueError("受损方代价只接受已校验 typed 清单")
+                if not self._record_decree_cost(
+                    dossier_id, state.turn, "satisfaction", kind, key, delta, stigma_reason,
+                ):
+                    continue
+                table = "factions" if kind == "faction" else "classes"
+                self.conn.execute(
+                    f"UPDATE {table} SET satisfaction=max(0,min(100,satisfaction+?)) WHERE name=?",
+                    (delta, key),
+                )
+        self._record_decree_cost(
+            dossier_id, state.turn, "stigma", "dossier", str(dossier_id), 0, stigma_reason,
+        )
+        if commit:
+            self.conn.commit()
+
+    def breach_decree_dossier(
+        self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
+        commit: bool = True,
+    ) -> bool:
+        """Withdraw an already promulgated promise and charge ADR 0056 once."""
+        with atomic(self):
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            if dossier["status"] not in {"promulgated", "executing"}:
+                return False
+            if self.conn.execute(
+                "SELECT 1 FROM decree_cost_events WHERE dossier_id=? AND cost_kind='breach'",
+                (int(dossier_id),),
+            ).fetchone():
+                return False
+            if self._record_decree_cost(
+                dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
+            ):
+                self._record_decree_cost(
+                    dossier_id, state.turn, "authority", "metric", "皇威",
+                    self._OVERRIDE_AUTHORITY_COST, reason,
+                )
+                state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
+                self.conn.execute(
+                    "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (state.metrics["皇威"],),
+                )
+            roster = dossier.get("participant_roster") or []
+            ministers = set()
+            for item in roster:
+                if not isinstance(item, dict):
+                    continue
+                tier = item.get("tier")
+                if tier == "主办":
+                    ministers.add(str(item.get("character_id") or ""))
+                if tier in {"主办", "协办"} and item.get("delegator_id"):
+                    ministers.add(str(item["delegator_id"]))
+            ministers.discard("")
+            factions = set()
+            for person in sorted(ministers):
+                row = self.conn.execute(
+                    "SELECT faction,status FROM characters WHERE name=?", (person,),
+                ).fetchone()
+                if row is None:
+                    continue
+                if str(row["status"]) == "deceased":
+                    continue
+                self.record_relation_edge_event(
+                    source="皇帝", target=person, event_kind="辜负", context=reason,
+                    origin=f"dossier:{dossier_id}:breach", turn=state.turn,
+                    year=state.year, period=state.period,
+                )
+                self._record_decree_cost(
+                    dossier_id, state.turn, "impression", "character", person, -1, reason,
+                )
+                if str(row["faction"] or ""):
+                    factions.add(str(row["faction"]))
+            for faction in sorted(factions):
+                if self._record_decree_cost(
+                    dossier_id, state.turn, "satisfaction", "faction", faction,
+                    self._BREACH_FACTION_COST, reason,
+                ):
+                    self.conn.execute(
+                        "UPDATE factions SET satisfaction=max(0,min(100,satisfaction+?)) WHERE name=?",
+                        (self._BREACH_FACTION_COST, faction),
+                    )
+            self.conn.execute(
+                "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
+                (state.turn, reason, int(dossier_id)),
+            )
+        if commit and self.conn.in_transaction:
+            self.conn.commit()
+        return True
+
     def save_pending_promulgation_verdicts(
         self, turn: int, verdicts: Iterable[Dict[str, object]],
     ) -> None:
@@ -11307,14 +11473,22 @@ class GameDB:
                     criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
                     content=content, registry=registry,
                 )
+                dossier_id = strict_int(verdict.get("dossier_id"))
                 self.conn.execute(
                     """UPDATE decree_dossier_decisions
                        SET affected_parties_json=?, midzhi_unpromulgatable=?
                        WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
                     (safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False),
                      1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-                     strict_int(verdict.get("dossier_id"))),
+                     dossier_id),
                 )
+                dossier = self.get_decree_dossier(dossier_id)
+                if dossier and dossier.get("mode") == "midzhi":
+                    self._apply_override_costs(
+                        state, dossier_id, include_authority=(decision == "promulgated"),
+                        include_parties=True, stigma_reason="预先中旨直发" if decision == "promulgated" else "中旨被打回",
+                        commit=False,
+                    )
             # Consumption belongs to the same atomic unit as effect application;
             # an outer settlement rollback restores both effects and this batch.
             self.conn.execute(

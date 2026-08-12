@@ -5452,8 +5452,22 @@ def apply_issue_tracker_output(
                 "category": "non_cancellable_converted",
             })
             continue
-        # 可撤：应用 applied_cost
-        cost = cn.get("applied_cost") or {}
+        # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
+        # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
+        linked_dossier = db.conn.execute(
+            """SELECT id FROM decree_dossiers
+               WHERE target_kind='issue' AND target_id=?
+                 AND status IN ('promulgated','executing')
+               ORDER BY id DESC LIMIT 1""",
+            (str(issue_id),),
+        ).fetchone()
+        deterministic_breach = linked_dossier is not None
+        if deterministic_breach:
+            db.breach_decree_dossier(
+                state, int(linked_dossier["id"]),
+                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+            )
+        cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
             parent_origin_ref = _canonical_issue_origin(db, row)
