@@ -17,9 +17,8 @@ def _rejected_verdict(dossier_id):
         "affected_parties": [
             {"kind": "faction", "key": "东林", "severity": "不满"},
         ],
-        "midzhi_unpromulgatable": False,
         "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
+            "imperial_authority_band": "偏弱", "appointment_tenure": "",
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
     }
@@ -1060,7 +1059,7 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     db, state, content = game
     monkeypatch.setattr(
         decree_mod,
-        "stub_promulgation_verdicts",
+        "llm_promulgation_verdicts",
         lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判决 seam"),
     )
 
@@ -1104,8 +1103,8 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(dossier["id"]) if state.turn == 1 else
             {"dossier_id": dossier["id"], "decision": "promulgated"}
         ],
@@ -1188,8 +1187,8 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [_rejected_verdict(dossier["id"])],
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [_rejected_verdict(dossier["id"])],
     )
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
@@ -1273,8 +1272,8 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
     seen = {}
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(rejected["id"]),
             {"dossier_id": promulgated["id"], "decision": "promulgated"},
         ],
@@ -2329,6 +2328,52 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
 
 
+def test_promoted_held_dossier_exposes_only_current_verdict_to_simulator(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="着核边饷",
+        target_kind="issue", target_id="frontier-pay",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.record_dossier_decision(dossier_id, "hold")
+    state.next_period()
+    db.save_state(state)
+    monkeypatch.setattr(
+        decree_mod, "llm_promulgation_verdicts",
+        lambda *_args, **_kwargs: [
+            {"dossier_id": dossier_id, "decision": "promulgated"},
+        ],
+    )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+
+    seen = {}
+
+    def inspect_payload(*_args, **kwargs):
+        seen.update(next(
+            row for row in kwargs["simulator_payload"]["decree_dossiers"]
+            if row["id"] == dossier_id
+        ))
+        return "本月邸报。", kwargs["simulator_payload"]
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", inspect_payload)
+    monkeypatch.setattr(
+        decree_mod, "create_json_sanitizer_agent",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("payload inspected")),
+    )
+    with pytest.raises(RuntimeError, match="payload inspected"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "留中重判", content=content,
+        )
+    assert seen["settlement_verdict"] == "promulgated"
+    assert "promulgation_decision" not in seen
+
+
 def test_interim_verdict_rejects_reserved_legal_reason_code(game):
     db, state, _content = game
     dossier_id = db.create_decree_dossier(
@@ -2766,7 +2811,7 @@ def test_invalid_promulgation_decision_stops_before_simulation(
         target_kind="issue", target_id="river-works",
     )
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
+        decree_mod, "llm_promulgation_verdicts",
         lambda *_a, **_k: [{"dossier_id": bad_id, "decision": bad_decision}],
     )
     forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
@@ -3281,7 +3326,7 @@ def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
         target_kind="issue", target_id="river-works",
     )
     verdict = _rejected_verdict(dossier_id)
-    verdict.pop("midzhi_unpromulgatable")
+    assert "midzhi_unpromulgatable" not in verdict
 
     db.apply_dossier_verdicts(state, [verdict])
 
@@ -3324,7 +3369,7 @@ def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_
 
 @pytest.mark.parametrize(("field", "bad_value"), [
     ("imperial_authority_band", "low"),
-    ("involved_office_types", [1]),
+    ("appointment_tenure", "临时"),
     ("authorization_ids", [{}]),
     ("endorsement_entry_ids", [True]),
     ("endorsement_entry_ids", ["1"]),
