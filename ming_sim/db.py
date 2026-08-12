@@ -10282,8 +10282,14 @@ class GameDB:
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
+            from ming_sim.office_rank import appointment_break_rank
             normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
             normalized_payload.pop("appointment_tenure", None)
+            normalized_payload["break_rank"] = appointment_break_rank(
+                self,
+                normalized_payload.get("name") or target_id,
+                normalized_payload.get("office") or normalized_payload.get("new_office"),
+            )
         if not action or not text:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
