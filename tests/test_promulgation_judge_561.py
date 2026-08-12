@@ -231,6 +231,88 @@ def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
             _select_second_verdict(True, 7, rows, [])
 
 
+def test_issue_610_prompt_keeps_three_trigger_default_pass_and_authority_exception(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(agents_mod, "create_chat_model", lambda *_a, **_k: object())
+    monkeypatch.setattr(
+        agents_mod, "Agent", lambda **kwargs: captured.update(kwargs) or kwargs,
+    )
+
+    agents_mod.create_promulgation_judge_agent(
+        LLMConfig(api_key="test", base_url="http://unused", model="test"), object(),
+    )
+
+    prompt = "".join(captured["instructions"])
+    assert "合规常务默认顺颁" in prompt
+    assert "只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers" in prompt.replace("\n", "")
+    assert "皇威越高触发面越窄、越低越宽" in prompt
+    assert "命门级逆鳞不因皇威高而豁免" in prompt
+    assert "按把关人的 faction、courage、integrity 判断，不按派系首领意志判断" in prompt
+
+
+def test_issue_610_authority_slider_changes_only_authority_inputs(game):
+    db, state, _content = game
+    _dossier(db, state, "循户部成例补发边军一月欠饷")
+    dossiers = db.list_decree_dossiers(status="proposed")
+    state.metrics["皇威"] = 0
+    weak = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    state.metrics["皇威"] = 100
+    strong = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    assert (weak["imperial_authority_band"], strong["imperial_authority_band"]) == (
+        "极弱", "强盛",
+    )
+    assert weak["dossiers"][0]["criteria_snapshot_source"]["imperial_authority_band"] == "极弱"
+    assert strong["dossiers"][0]["criteria_snapshot_source"]["imperial_authority_band"] == "强盛"
+    for context in (weak, strong):
+        context.pop("imperial_authority_band")
+        context["dossiers"][0]["criteria_snapshot_source"].pop("imperial_authority_band")
+    assert weak == strong
+
+
+def test_issue_610_faction_leader_is_not_a_judge_input_but_gatekeeper_roster_is(game):
+    db, state, _content = game
+    _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    before = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    # 安抚/更换派系首领没有颁布关读槽；判官只能看到派系态势和具名把关人。
+    assert all(set(row) == {"name", "leverage", "agenda"} for row in before["factions"])
+    assert all("leader" not in row for row in before["factions"])
+
+    removed = before["gatekeepers"][0]["name"]
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE name=?", (removed,))
+    gatekeeper_changed = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    assert removed not in {row["name"] for row in gatekeeper_changed["gatekeepers"]}
+    assert gatekeeper_changed["gatekeepers"] != before["gatekeepers"]
+
+
+def test_issue_610_appointment_of_gatekeeper_itself_enters_the_same_judge_batch(game):
+    db, state, _content = game
+    gatekeeper = decree_mod.build_promulgation_judge_context(db, state, [])["gatekeepers"][0]
+    dossier_id = db.create_decree_dossier(
+        state, action_type="appointment", decree_text=f"调任{gatekeeper['name']}",
+        target_kind="character", target_id=gatekeeper["name"], payload={"任别": "真除"},
+    )
+
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    assert context["dossiers"] == [{
+        "id": dossier_id, "action_type": "appointment",
+        "decree_text": f"调任{gatekeeper['name']}", "target_kind": "character",
+        "target_id": gatekeeper["name"], "mode": "ordinary",
+        "appointment_tenure": "真除", "break_rank": None,
+        "criteria_snapshot_source": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "真除", "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+    }]
+    assert gatekeeper in context["gatekeepers"]
+
+
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
     seen = {}
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda _cfg, **kwargs: seen.update(kwargs) or object())
