@@ -323,7 +323,7 @@ def _validate_promulgation_verdict_item(
                 allowed_keys.add("affected_parties")
             elif decision == "rejected":
                 allowed_keys.update(rejection_only_fields - {"midzhi_unpromulgatable"})
-                allowed_keys.add("affected_parties")
+                allowed_keys.update({"affected_parties", "legal_reason_code"})
                 if mode == "中旨":
                     allowed_keys.add("midzhi_unpromulgatable")
             unknown_keys = set(row) - allowed_keys
