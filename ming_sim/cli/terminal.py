@@ -352,13 +352,13 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
         print(f"{minister_name}上一轮回奏仍在进行，请稍候再问。\n")
         return
     try:
-        getattr(session, "start_chat_turn_scene", lambda *_: None)(minister_name, chat_turn_id)
+        session.start_chat_turn_scene(minister_name, chat_turn_id)
         result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
             from ming_sim.applier import atomic
             with atomic(db):
-                getattr(session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                session.join_chat_turn_scene(chat_turn_id)
                 db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
@@ -381,7 +381,7 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
                 db.restore_interrupted_after_failed_retry(chat_turn_id)
         except Exception:
             pass
-        getattr(session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
+        session.abandon_chat_turn_scene(chat_turn_id)
         print(f"重试回话失败：{exc}\n")
 
 
@@ -516,7 +516,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         agno_runs_before=0,
                         beat_generator=None,
                     )
-                    getattr(session, "start_chat_turn_scene", lambda *_: None)(character.name, chat_turn_id)
+                    session.start_chat_turn_scene(character.name, chat_turn_id)
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,
                 )
@@ -533,7 +533,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
                         and hasattr(session, "join_chat_turn_scene")):
                     from ming_sim.applier import atomic
                     with atomic(session.db):
-                        getattr(session, "join_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                        session.join_chat_turn_scene(chat_turn_id)
                         session.db.persist_minister_reply(
                             character.name, accepted_turn, result.answer, chat_turn_id,
                         )
@@ -558,7 +558,7 @@ def minister_chat(session: GameSession, character: Character) -> str:
         except BaseException as original_error:
             try:
                 if chat_turn_id:
-                    getattr(session, "abandon_chat_turn_scene", lambda *_: None)(chat_turn_id)
+                    session.abandon_chat_turn_scene(chat_turn_id)
                     session.db.record_chat_turn_rollback_diffs(
                         chat_turn_id, rollback_snapshot or {},
                         session.db.capture_chat_rollback_snapshot(),

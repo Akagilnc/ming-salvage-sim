@@ -10,6 +10,9 @@ seam：
 
 from __future__ import annotations
 
+from concurrent.futures import Future
+import threading
+
 import pytest
 
 from ming_sim import audience_night as an
@@ -22,6 +25,38 @@ from ming_sim.beat_orchestration import (
     assemble_beat_inputs,
     beat_input_field_names,
 )
+
+
+def test_abandon_running_scene_drains_without_persisting_result():
+    """A running LLM Future cannot be cancelled; abort must join it before returning."""
+    from ming_sim.session import GameSession
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    future: Future = Future()
+    assert future.set_running_or_notify_cancel()
+
+    def complete():
+        started.set()
+        release.wait()
+        future.set_result([(1, "late scene")])
+        finished.set()
+
+    worker = threading.Thread(target=complete)
+    worker.start()
+    started.wait()
+    session = object.__new__(GameSession)
+    session._chat_turn_scene_futures = {7: future}
+    waiter = threading.Thread(target=session.abandon_chat_turn_scene, args=(7,))
+    waiter.start()
+    assert waiter.is_alive()
+    release.set()
+    waiter.join(1)
+    worker.join(1)
+    assert finished.is_set()
+    assert not waiter.is_alive()
+    assert session._chat_turn_scene_futures == {}
 
 
 def _active_minister(db, content, *, exclude=None):
@@ -241,12 +276,12 @@ def test_production_generator_varies_enter_body_by_identity(game):
     _nid, _cid = an.attach_chat_turn_to_night(
         db, state, a, agno_session_id="sa", agno_runs_before=0,
         time_of_day="戌时", location="乾清宫", summon_method=an.METHOD_XUANRU,
-        beat_generator=bo.production_beat_generator,
+        beat_generator=_echo_generator,
     )
     night = an.get_open_night(db)
     an.attach_chat_turn_to_night(
         db, state, b, agno_session_id="sb", agno_runs_before=0,
-        summon_method=an.METHOD_YUECI, beat_generator=bo.production_beat_generator,
+        summon_method=an.METHOD_YUECI, beat_generator=_echo_generator,
     )
     body_a = _enter_body(db, night["id"], a)
     body_b = _enter_body(db, night["id"], b)
@@ -276,8 +311,8 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     game = web_app.WebGame(fresh=False)
     # e2e seam 注入确定性假 scene LLM；测试绝不访问真实模型。
-    game._beat_generator = bo.production_beat_generator
-    game.session._beat_generator = bo.production_beat_generator
+    game._beat_generator = _echo_generator
+    game.session._beat_generator = _echo_generator
     yield game
     try:
         game.session.close()
@@ -305,8 +340,8 @@ def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
     assert an.list_ledger(db, night["id"])[-1]["body"] == "毕自严整衣趋出。"
 
 
-def test_web_start_chat_turn_wires_production_beat_generator(web_game):
-    """生产 WebGame._start_chat_turn 接通 beat 编排缝：入殿账非 #498 一行空壳。"""
+def test_web_start_chat_turn_wires_session_beat_generator(web_game):
+    """WebGame._start_chat_turn 接通 session 的 generator owner。"""
     game = web_game
     minister = _active_minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
@@ -321,7 +356,7 @@ def test_web_start_chat_turn_wires_production_beat_generator(web_game):
     enter = _enter_body(game.db, night_id, minister)
     open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
     assert enter and minister in enter and enter != f"宣入{minister}入殿。"
-    assert open_body and "召对夜启" in open_body
+    assert open_body and "kind=open" in open_body
 
 
 # ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────

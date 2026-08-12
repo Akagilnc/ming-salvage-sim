@@ -671,7 +671,8 @@ class GameSession:
         self.llm_config = llm_config
         from ming_sim.beat_orchestration import create_llm_beat_generator
         self._beat_generator = create_llm_beat_generator(llm_config)
-        # Scene futures are owned by the durable chat-turn lifecycle, not by Web/CLI entries.
+        # Scene work is keyed by the durable chat turn.  A turn is never released while its
+        # scene generator is still running; failed/aborted turns drain it before cleanup.
         self._chat_turn_scene_futures: Dict[int, Future] = {}
         if verify_llm:
             verify_llm_available(llm_config)
@@ -1086,9 +1087,20 @@ class GameSession:
             )
 
     def abandon_chat_turn_scene(self, chat_turn_id: int) -> None:
+        """Drain scene work for an aborted turn without making its result durable.
+
+        ``Future.cancel`` cannot stop an already-running LLM call.  Waiting here keeps the
+        durable chat turn as its owner and guarantees that no work survives retry/close.
+        """
         future = self._chat_turn_scene_futures.pop(int(chat_turn_id), None)
-        if future is not None:
-            future.cancel()
+        if future is None:
+            return
+        if future.cancel():
+            return
+        try:
+            future.result()
+        except BaseException:
+            pass
 
     def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
