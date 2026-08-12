@@ -142,11 +142,14 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
     return DEFAULT_LEVERAGE_MULTIPLIER if best is None else best
 
 
-def appointment_break_rank(db: Any, name: object, new_office: object) -> dict[str, object]:
+def appointment_break_rank(
+    db: Any, name: object, new_office: object, new_office_type: object = "",
+) -> dict[str, object]:
     """Classify one appointment from current/latest archived office, without LLM."""
     person = str(name or "").strip()
     target = str(new_office or "").strip()
-    new_band = office_rank_band(target)
+    target_type = str(new_office_type or "").strip()
+    new_band = office_rank_band(target, target_type)
     row = db.conn.execute(
         "SELECT office,office_type,status,reason_code FROM characters WHERE name=?",
         (person,),
