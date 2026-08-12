@@ -4,7 +4,17 @@
 **事务边界与崩溃恢复**：见 `docs/adr/0008-settlement-applier-contract-and-transaction-boundary.md`（v0.8.0.0 起）。一句话：前半段 `pre_settle` 提交后保持已落，后半段 `settle_with_delta` 整段单一 `applier.atomic`、全有或全无。
 原版是 simulator/extractor 两步 LLM；探针 step1 我**一次产 delta**，driver 把两步合一。
 
-## 完整顺序（按调用先后）
+## #571 S1 案卷颁布关（当前实码顺序）
+
+`pre_settle` 提交后，结算读取 DB 中的 `proposed` 案卷作为待判集；有待判案卷时只调用一次批量颁布判官，并要求 verdict 覆盖全集。随后将已颁与本回合可执行的案卷过滤进 simulator/extractor：被拒案卷的效果文本不进入执行输入。若判决产生批红动作，先保存 rescript 决策并暂停；皇帝选择后，verdict/rescript 与 pending actions 在 `settle_with_delta` 的同一 atomic 中应用。无诏推进若存在待判案卷，也走同一判决与原子应用链，不绕过颁布关。
+
+打回判决沿用同一 verdict/历史 seam，并严格携带：`blocked_layer` 三值之一（`cabinet_drafting` / `palace_rescript` / `six_offices`）、非空 `primary_opponents` typed 清单（每项须且仅为 `{"kind":"faction","key":<在册派系>}`）、`gatekeeper_id`（null 或在册人物 id）、非空缘由及完整 `criteria_snapshot`。快照只保存判决时的皇威档位、涉事任别、在持授权 id、背书条目 id；盘面后来变化不回写、不重算历史。部院与场外 class 不能成为主否决方。
+
+判决结构或引用非法时，整批不进入 pending/history/案卷状态，按 `SettlementAbort(stage="promulgation")` 响亮中止；原 verdict 及原因沿用 `RejectionCollector → rejection_reports` 留痕。阻力数值字段均拒收；合法 typed 数值/布尔位仅包括正整数 `dossier_id`、快照中的正整数 `endorsement_entry_ids`，以及 bool `midzhi_unpromulgatable`。不新增 verdict 审计表。
+
+这段只描述 #571 S1 与 #609 已实现的案卷判决与执行闸；其它案卷扩展不属于本契约。
+
+## S1 结算顺序（按调用先后）
 
 ```
 [step1：召见 / 拟旨阶段]
@@ -112,7 +122,7 @@
   ── 后半段 settle_with_delta：整段单一 atomic 事务，9–16 全有或全无 ──
   9. applied = apply_score_extraction(db, state, delta, content=content, registry=None)
      ↳ 内部 _sanitize → _merge → 分发到 region/army/building/economy/issue/character 各 apply_*
-     ↳ 白名单外字段仍被沉默裁掉；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
+     ↳ 未知顶层字段响亮中止；9 个结算 section 的脏项（坏值/缺 id/非法 enum）逐项拒收
        落 `rejection_reports`（坏一项不带走整批，不再印 [WARN]），commit 成功后镜像到
        rejections.jsonl 副本。机制细节（RejectionCollector / attempt / 桥接）见 ADR 0008 PR2。
      ↳ 返回 applied.issue_summary.advances → 用来算 touched_ids

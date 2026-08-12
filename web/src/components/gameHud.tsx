@@ -124,7 +124,7 @@ export function GameHud({
       <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
         caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => onOpenModal("state")} />
       <CommandSlot slotKey="邸报" img="邸报"
-        caption="邸报" sub="本月奏报" onClick={() => onOpenModal("report")} />
+        caption="起居注" sub="历次召对记录" onClick={() => onOpenModal("audience_archive")} />
       <CommandSlot slotKey="密令" img="密令"
         badge={secretOrderActiveCount}
         caption="密令" sub="进行中密令" onClick={() => onOpenModal("secret_orders")} />

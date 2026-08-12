@@ -1,7 +1,7 @@
 import React from "react";
-import { api, pollMindreadingUntilReady, streamChat } from "./api";
+import { ApiRequestError, api, pollMindreadingUntilReady, streamChat } from "./api";
 import { chatReducer } from "./mindreading";
-import type { ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
+import type { ChatIdentity, ChatMessage, ChatResponse, PendingActionFailure, Minister, ReplyRetry, ServerChatMessage, Suggestion } from "./types";
 
 /**
  * #499 召对投递单一控制器：App 唯一消费的 hook，独占 SSE 流、历史加载、读心轮询、
@@ -27,6 +27,9 @@ export type AudienceHistoryData = {
   mindreading_pending?: boolean;
   /** 本大臣本回合所有待读心轮 id（不只最新）——每轮各自轮询，随新一轮发出仍存活。 */
   pending_turn_ids?: number[];
+  campaign_id: string;
+  /** Persisted current open-night identity; 0 means no open audience night. */
+  night_id: number;
   /** #505：崩溃遗留的中断轮 → 最后一句上给系统层重试（重新生成回话）。 */
   reply_retry?: ReplyRetry | null;
 };
@@ -47,10 +50,16 @@ export function useAudienceChat(
   // 面板一关（任何 departure：关闭/Escape/转诏书/切模态/退菜单都令其为 false）即取消实时流
   // 观察者 + 作废重开 poll-batch。归属逻辑在 App 真实消费的 hook 里，不散落各 departure。
   chatOpen: boolean,
+  /** 公共卷轴尾随写入落账后的唯一失效出口。 */
+  onScrollSettled?: () => void,
 ) {
   const [chat, dispatchChat] = React.useReducer(chatReducer, [] as ChatMessage[]);
   const [pendingUserMessage, setPendingUserMessage] = React.useState("");
+  const [pendingIdentity, setPendingIdentity] = React.useState<ChatIdentity | null>(null);
+  const [failedIdentity, setFailedIdentity] = React.useState<ChatIdentity | null>(null);
   const [streamingMinisterMessage, setStreamingMinisterMessage] = React.useState("");
+  const [currentCampaignId, setCurrentCampaignId] = React.useState("");
+  const [currentNightId, setCurrentNightId] = React.useState<number>(0);
   // 短暂请求归属：每次 sendChat 自增。
   const requestTokenRef = React.useRef(0);
   // 全部在飞流的取消句柄：sendChat 每次登记自己的 controller、结束即摘除。close/cancel 须
@@ -81,11 +90,16 @@ export function useAudienceChat(
     pollBatchRef.current += 1; // 作废旧 poll-batch（切人/清屏）
     dispatchChat({ type: "reset" });
     setPendingUserMessage("");
+    setPendingIdentity(null);
+    setFailedIdentity(null);
     setStreamingMinisterMessage("");
+    setCurrentCampaignId("");
+    setCurrentNightId(0);
   }, []);
 
   const clearPendingText = React.useCallback(() => {
     setPendingUserMessage("");
+    setPendingIdentity(null);
     setStreamingMinisterMessage("");
   }, []);
 
@@ -106,6 +120,8 @@ export function useAudienceChat(
       // generation + 面板守卫：更新的 load/send/reset 已发生或已切人 → 陈旧快照，拒收返 null。
       if (chatGenRef.current !== gen || selectedMinisterRef.current !== minister) return null;
       dispatchChat({ type: "history", history: data.history });
+      setCurrentCampaignId(String(data.campaign_id || ""));
+      setCurrentNightId(Number(data.night_id || 0));
       // 新接受的历史快照替换旧 poll-batch：推进批次代次，旧批的在飞轮询自停（去重叠加）。
       const batch = ++pollBatchRef.current;
       const batchAlive = () =>
@@ -130,12 +146,17 @@ export function useAudienceChat(
     async (minister: string, message: string, cb: SendChatCallbacks): Promise<void> => {
       const token = ++requestTokenRef.current;
       const gen = ++chatGenRef.current;  // 作废在飞的历史加载，防陈旧快照迟到回覆本轮
+      const initiatingPanelName = selectedMinisterRef.current;
       const abort = new AbortController();
       activeAbortsRef.current.add(abort);
       const ownsEphemeral = () => requestTokenRef.current === token;
-      const panelMatches = () => selectedMinisterRef.current === minister;
+      // The action target can be the scroll's current audience rather than the minister
+      // used to open the modal. Guard ephemeral writes by the initiating panel only.
+      const panelMatches = () => selectedMinisterRef.current === initiatingPanelName;
       const historyFresh = () => chatGenRef.current === gen && panelMatches();
       setPendingUserMessage(message);
+      setPendingIdentity(null);
+      setFailedIdentity(null);
       setStreamingMinisterMessage("");
       setBusy("大臣思索中");
       try {
@@ -147,15 +168,26 @@ export function useAudienceChat(
           },
           {
             signal: abort.signal,
+            onAccepted: (identity) => {
+              if (panelMatches()) {
+                setCurrentCampaignId(identity.campaign_id);
+                setCurrentNightId(identity.night_id);
+                setPendingIdentity(identity);
+              }
+            },
             onDone: (doneData) => {
               // 短暂请求态按 token 回收
               if (ownsEphemeral()) {
                 setPendingUserMessage("");
+                setPendingIdentity(null);
                 setStreamingMinisterMessage("");
                 setBusy("");
               }
               // 历史快照：generation + 面板守卫（幂等 turn-identified，仍不越面板）
-              if (historyFresh()) dispatchChat({ type: "history", history: doneData.history });
+              if (historyFresh()) {
+                dispatchChat({ type: "history", history: doneData.history });
+                if (typeof doneData.night_id === "number") setCurrentNightId(doneData.night_id);
+              }
               // 持久后果：done 到手即消费，不按 token 门控、不拖到 end（防 120s 读心期间被新轮吞掉）
               cb.onDone?.(doneData);
             },
@@ -169,20 +201,25 @@ export function useAudienceChat(
                 });
               }
             },
+            onEnd: onScrollSettled,
           },
         );
       } catch (err) {
         if (!ownsEphemeral()) return;  // 旧流尾巴：绝不触碰更新请求的短暂态
         setPendingUserMessage("");
+        setPendingIdentity(null);
         setStreamingMinisterMessage("");
         if (err instanceof Error && err.name === "AbortError") cb.onLeave?.();
-        else cb.onError?.(err);
+        else {
+          if (err instanceof ApiRequestError && err.chatIdentity) setFailedIdentity(err.chatIdentity);
+          cb.onError?.(err);
+        }
       } finally {
         if (ownsEphemeral()) setBusy("");
         activeAbortsRef.current.delete(abort);
       }
     },
-    [setBusy, selectedMinisterRef],
+    [setBusy, selectedMinisterRef, onScrollSettled],
   );
 
   const cancelChat = React.useCallback(() => {
@@ -191,7 +228,11 @@ export function useAudienceChat(
 
   return {
     chat,
+    currentCampaignId,
+    currentNightId,
     pendingUserMessage,
+    pendingIdentity,
+    failedIdentity,
     streamingMinisterMessage,
     resetPanel,
     clearPendingText,

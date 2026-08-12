@@ -3,7 +3,7 @@
 真实 WebGame + 真实 FastAPI 路由（httpx.ASGITransport），只把 LLM 边界换成 canned：
 - 大臣对话 = 假 agent.run 的 canned 流；
 - 月末推演 = 只假 simulator/extractor 这层 LLM 种子，resolve_directives 的 pre-settle /
-  结算核 / 推进回合全部真跑。
+  结算核 / 推进回合全部真跑；判官 verdict 仍固定为逐案 promulgated，非真实判官行为。
 
 外部行为断言（HTTP/SSE + DB 末态），不钉内部 helper 结构。
 
@@ -13,16 +13,23 @@
   SSE、夜开、turn 不变、chat 轮仍 generating；放行后 chat SSE 收到 done（AC10）；
 - 同步退朝端点 offload：阻塞在飞等待期间 async ticker 持续前进（真实 ASGI）；
 - 等 gate 期间相位翻到亲裁（TOCTOU）→ 持锁内权威复查经真实 /chat/stream SSE 拒、零新夜/新 chat 轮；
-- 拟诏 preview 不收夜（真实 /api/decree/write）。
+- 已成案旨无公开拟诏、改稿、删除工作面。
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 
 import httpx
 import pytest
+
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
 
 import web_app
 import ming_sim.agents as agents_mod
@@ -82,6 +89,13 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
     """只 fake 月末推演的 simulator/extractor **LLM 调用**；resolve_directives 结算核（含
     build_extractor_shared_context 这类确定性上下文装配）真跑。"""
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "llm_promulgation_verdicts",
+        lambda dossiers, _state, **_kwargs: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
+    )
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload",
                         lambda *a, **k: (narrative, k.get("simulator_payload") or {}))
     monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
@@ -216,7 +230,11 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
             # 预置 draft 候选（应允/默认同意路径）；draft 而非 pending，回话 epilogue 无待确认项、
             # 不触发确认抽取 LLM。
             game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
+                game.state.turn, minister, payload={
+                    "text": "着户部核边饷", "actor": minister,
+                    "dossier_action_type": "policy",
+                    "target_kind": "issue", "target_id": "border-pay",
+                })
             game.db.commit_pending_actions(game.state, kind_filter="directive")
 
             issue_task = asyncio.create_task(issue_client.post("/api/decree/issue/stream", json={}))
@@ -245,7 +263,89 @@ def test_asgi_inflight_reply_lands_then_issue_closes_and_advances(web_game, monk
     assert int(game.db.load_state().turn) == turn_before + 1
 
 
-# ── ② AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
+# ── ② 对话内应允候选：收夜提交即准旨，月末玩家流零二次准驳 ─────────────
+def test_night_approved_directive_closes_into_month_end_without_second_review(web_game, monkeypatch):
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn_before = int(game.state.turn)
+    text = "着户部核边饷，限三月完报"
+
+    # #502 的真实「对话内已应允」持久态：候选仍 pending，但归属本夜且 night_approved=1；
+    # 本 tracer 从该依赖交付态起，经玩家真实收夜/月末入口验证后半链，不直接 commit。
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    directive_id = game.db.stage_directive_candidate(
+        game.state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": text, "actor": minister},
+    )
+    assert an.mark_actions_night_approved(game.db, [directive_id], night_id=int(night["id"])) == 1
+
+    async def scenario():
+        async with _client() as client:
+            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+
+    events = asyncio.run(scenario())
+
+    assert events[-1]["event"] == "done"
+    assert not ({"confirm", "reject", "pending_review"} & {event["event"] for event in events})
+    assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
+    assert int(game.state.turn) == turn_before + 1
+    assert not game.db.list_night_approved_pending(int(night["id"]), kind="directive")
+    settled = game.db.list_directives_by_turn(turn_before)
+    assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
+
+
+def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
+    """Legacy saves with only turn_directives.status=pending remain operable at the
+    same end-turn service seam; retired player confirm/reject routes stay absent."""
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    turn_before = int(game.state.turn)
+    night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    directive_id = game.db.add_directive(
+        game.state, None, "着户部核边饷", "legacy-chat", actor=minister,
+        status="pending", dossier_payload={**_POLICY_FIELDS},
+    )
+    dossiered_id = game.db.add_directive(
+        game.state, None, "已成案旨", "legacy-approved", actor=minister,
+        status="draft", dossier_payload={
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "already-dossiered",
+        },
+    )
+    game.db._ensure_directive_dossier(
+        game.state, dossiered_id, "已成案旨", {
+            "dossier_action_type": "policy", "target_kind": "issue",
+            "target_id": "already-dossiered",
+        },
+    )
+
+    registered_paths = {route.path for route in web_app.app.routes}
+    assert "/api/directives/{directive_id}/confirm" not in registered_paths
+    assert "/api/directives/{directive_id}/reject" not in registered_paths
+
+    async def scenario():
+        async with _client() as client:
+            state = (await client.get("/api/game/state")).json()
+            advance = await client.post("/api/decree/advance_without_edict")
+            return state, advance
+
+    state_payload, response = asyncio.run(scenario())
+    assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
+    assert response.status_code == 200
+    assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
+    closes = [
+        row for row in an.list_ledger(game.db, int(night["id"]))
+        if an.TAG_CLOSE_NIGHT in (row.get("tags") or [])
+    ]
+    assert len(closes) == 1
+    dossier = game.db.get_dossier_for_directive(directive_id)
+    assert dossier is not None
+    assert int(game.db.load_state().turn) == turn_before + 1
+
+
+# ── ③ AC10 fail-closed：真实并发 /chat/stream 挂起在飞 → /decree/issue/stream in-flight 拒 ──
 def test_asgi_hanging_chat_makes_issue_fail_closed(web_game, monkeypatch):
     game = web_game
     minister = _active_minister(game)
@@ -322,17 +422,17 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     nights0, turns0 = _count(game.db, "audience_nights"), _count(game.db, "chat_turns")
 
     async def scenario():
-        game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
-        try:
-            async with _client() as client:
+        async with _client() as client:
+            game._write_gate.acquire()  # 扮演结算 worker 持真实 write gate
+            try:
                 chat_task = asyncio.create_task(
                     client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"}))
                 # 等真实 pending-write 态（锁前查之后、抢 gate 之前）——不替换私有方法，只读真实态
                 await _wait_for(lambda: getattr(game, "_pending_writes_count", 0) > 0)
                 game.state.turn_phase = TurnPhase.AWAITING_DECISION.value  # 结算翻相位
-        finally:
-            game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
-        return _parse_sse((await chat_task).text)
+            finally:
+                game._write_gate.release()  # 放真实 gate → chat 抢到后持锁内权威复查
+            return _parse_sse((await chat_task).text)
 
     events = asyncio.run(scenario())
 
@@ -343,29 +443,29 @@ def test_asgi_phase_flip_while_waiting_gate_rejected(web_game):
     assert _count(game.db, "chat_turns") == turns0
 
 
-# ── ⑤ 拟诏 preview 不收夜（真实 /api/decree/write）───────────────────────
-def test_asgi_write_decree_preview_does_not_close_night(web_game, monkeypatch):
+# ── ⑤ 已成案旨无公开拟诏、改稿、删除工作面 ─────────────────────────────
+def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     game = web_game
-    minister = _active_minister(game)
-    game.session.registry.get = lambda ch: _FakeAgent()
-    monkeypatch.setattr(session_mod, "write_decree_with_agno", lambda *a, **k: "奉天承运，诏曰……")
+    directive_id = game.db.add_directive(
+        game.state, None, "着户部核边饷", "手动新增",
+        dossier_payload=_POLICY_FIELDS,
+    )
+    game.db.ensure_dossiers_for_draft_directives(game.state)
+
+    registered_paths = {route.path for route in web_app.app.routes}
+    assert "/api/decree/write" not in registered_paths
 
     async def scenario():
         async with _client() as client:
-            # 真实召对开夜 + 入档
-            await client.post(f"/api/ministers/{minister}/chat/stream", json={"message": "边饷如何？"})
-            night = an.get_open_night(game.db)
-            # 一条有效 draft（应允/默认同意路径）
-            game.db.upsert_pending_directive(
-                game.state.turn, minister, payload={"text": "着户部核边饷", "actor": minister})
-            game.db.commit_pending_actions(game.state, kind_filter="directive")
-            resp = await client.post("/api/decree/write", json={})
-            return night, resp
+            return (
+                await client.patch(
+                    f"/api/directives/{directive_id}", json={"text": "改稿"},
+                ),
+                await client.delete(f"/api/directives/{directive_id}"),
+                await client.get("/api/game/state"),
+            )
 
-    night, resp = asyncio.run(scenario())
-    assert night is not None
-    assert resp.status_code == 200 and "诏" in resp.json()["decree"]
-    # 拟诏是 preview：夜仍开、无收夜账
-    assert an.get_night(game.db, night["id"])["status"] == "open"
-    closes = [e for e in an.list_ledger(game.db, night["id"]) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
-    assert closes == []
+    edit, delete, state = asyncio.run(scenario())
+    assert edit.status_code == 404
+    assert delete.status_code == 409
+    assert directive_id not in {row["id"] for row in state.json()["directives"]}

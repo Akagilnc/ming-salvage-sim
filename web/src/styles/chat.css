@@ -85,10 +85,14 @@
   min-height: 0;
 }
 
-.chat-log {
+.chat-log,
+.scroll-messages {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.chat-log {
   min-height: 0;
   overflow-y: auto;
   padding: 4px 6px 4px 4px;
@@ -115,6 +119,39 @@
 .chat-message.minister {
   align-self: flex-start;
   border: 1px solid rgba(49, 93, 71, 0.26);
+}
+
+.chat-message.aside {
+  position: relative;
+  align-self: flex-start;
+  margin-left: 62px;
+  max-width: min(680px, 72%);
+  border: 1px dashed rgba(111, 83, 46, 0.5);
+  background: rgba(255, 238, 198, 0.5);
+}
+
+.aside-avatar {
+  position: absolute;
+  left: -54px;
+  top: 2px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(111, 83, 46, 0.4);
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.chat-message.aside p { font-style: italic; }
+
+.chat-message .action {
+  display: block;
+  margin-bottom: 6px;
+  color: #94805d;
+  font-size: 0.9rem;
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.6;
 }
 
 .chat-message.pending {

@@ -5,12 +5,18 @@ import type { ApiErrorDetail, ChatResponse } from "./types";
 
 export class ApiRequestError extends Error {
   detail: ApiErrorDetail;
+  chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number };
 
-  constructor(detail: ApiErrorDetail, fallback: string) {
+  constructor(
+    detail: ApiErrorDetail,
+    fallback: string,
+    chatIdentity?: { campaign_id: string; night_id: number; chat_turn_id: number },
+  ) {
     const message = detail.message || fallback;
     super(detail.code ? `[${detail.code}] ${message}` : message);
     this.name = "ApiRequestError";
     this.detail = detail;
+    this.chatIdentity = chatIdentity;
   }
 }
 
@@ -67,8 +73,12 @@ export type StreamChatOptions = {
     mindreading: MindreadingRecord | null;
     chat_turn_id: number;
   }) => void;
+  /** 玩家问话已持久化并开夜；先于模型生成/失败返回。 */
+  onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
   onDone?: (payload: ChatResponse) => void;
+  /** 服务端 end 表示回话尾随写入均已 join、公共卷轴可安全重读。 */
+  onEnd?: () => void;
 };
 
 export const streamChat = async (
@@ -110,7 +120,13 @@ export const streamChat = async (
       const parsed = parseSseMessage(messageBlock);
       if (!parsed) continue;
       const payload = JSON.parse(parsed.data);
-      if (parsed.event === "delta") {
+      if (parsed.event === "accepted") {
+        options.onAccepted?.({
+          campaign_id: String(payload.campaign_id || ""),
+          night_id: Number(payload.night_id || 0),
+          chat_turn_id: Number(payload.chat_turn_id || 0),
+        });
+      } else if (parsed.event === "delta") {
         onDelta(String(payload.content || ""));
       } else if (parsed.event === "done") {
         // 回话先可见：不结束流，等 end；兼容旧服务端（仅 done 无 end）则缓存后继续
@@ -125,9 +141,19 @@ export const streamChat = async (
         if (!donePayload) {
           throw new Error("流式回复中断，未收到完成事件。");
         }
+        options.onEnd?.();
         return donePayload;
       } else if (parsed.event === "error") {
-        throw new ApiRequestError(normalizeApiError(payload, "流式回复失败。"), "流式回复失败。");
+        const identity = {
+          campaign_id: String(payload.campaign_id || ""),
+          night_id: Number(payload.night_id || 0),
+          chat_turn_id: Number(payload.chat_turn_id || 0),
+        };
+        throw new ApiRequestError(
+          normalizeApiError(payload, "流式回复失败。"),
+          "流式回复失败。",
+          identity.night_id && identity.chat_turn_id ? identity : undefined,
+        );
       }
     }
 

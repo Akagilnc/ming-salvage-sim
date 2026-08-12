@@ -15,8 +15,16 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from driver import run_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+
+
+def run_settle(db, state, content, extracted, **kwargs):
+    """Legacy rejection fixtures now satisfy the durable-effect origin contract."""
+    for section in ("fiscal_removes", "fiscal_changes"):
+        for item in extracted.get(section) or []:
+            item.setdefault("origin_ref", "盘面自发")
+    return _run_settle(db, state, content, extracted, **kwargs)
 
 
 def _a_fiscal_key(db):
@@ -154,9 +162,9 @@ def test_create_duplicate_key_rejected_good_create_lands(game):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": dup_stem, "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": dup_stem, "account": "国库", "direction": "income",
              "display": "撞名项", "init_value": 100, "reason": "重复"},
-            {"key": "haiguan_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "haiguan_s3", "account": "国库", "direction": "income",
              "display": "海关税", "init_value": 50, "reason": "新立"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -178,9 +186,9 @@ def test_create_illegal_account_rejected_sibling_lands(game, bad_account):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "badacct_s3", "account": bad_account, "direction": "income",
+            {"origin_ref": "盘面自发", "key": "badacct_s3", "account": bad_account, "direction": "income",
              "display": "脏账户项", "init_value": 10, "reason": "脏"},
-            {"key": "goodacct_s3", "account": "内库", "direction": "expense",
+            {"origin_ref": "盘面自发", "key": "goodacct_s3", "account": "内库", "direction": "expense",
              "display": "内库支项", "init_value": 5, "reason": "好"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -205,9 +213,9 @@ def test_create_dirty_init_value_rejected_not_silent_zero(game, bad_init):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "dirtyinit_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "dirtyinit_s3", "account": "国库", "direction": "income",
              "display": "脏初值项", "init_value": bad_init, "reason": "脏"},
-            {"key": "cleaninit_s3", "account": "国库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "cleaninit_s3", "account": "国库", "direction": "income",
              "display": "净初值项", "init_value": 20, "reason": "好"},
         ],
     }, narrative="x", decree_text="y")  # 不抛
@@ -229,7 +237,7 @@ def test_create_absent_init_value_defaults_zero(game):
 
     run_settle(db, state, content, {
         "fiscal_creates": [
-            {"key": "defaultinit_s3", "account": "内库", "direction": "income",
+            {"origin_ref": "盘面自发", "key": "defaultinit_s3", "account": "内库", "direction": "income",
              "display": "默认初值项", "reason": "缺省"}],
     }, narrative="x", decree_text="y")
 
@@ -487,7 +495,7 @@ def test_create_rate_only_sibling_collision_rejected_not_abort(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "田赋_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "田赋_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")  # 不抛 = 没崩
 
@@ -532,7 +540,7 @@ def test_create_with_rate_suffix_key_rejected(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "田赋_rate", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "田赋_rate", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")
 
@@ -550,7 +558,7 @@ def test_negative_init_value_rejected_not_clamped(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "负值测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "负值测试_base", "account": "国库",
                             "direction": "income", "init_value": -5}],
     }, narrative="x", decree_text="y")
 
@@ -569,7 +577,7 @@ def test_double_suffix_key_rejected_no_phantom(game, bad_key):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": bad_key, "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": bad_key, "account": "国库",
                             "direction": "income", "init_value": 100}],
     }, narrative="x", decree_text="y")
 
@@ -624,7 +632,7 @@ def test_chinese_direction_alias_accepted_on_driver_path(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "别名测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "别名测试_base", "account": "国库",
                             "direction": "收", "init_value": 5}],
     }, narrative="x", decree_text="y")
 
@@ -661,7 +669,7 @@ def test_lossless_int_string_same_verdict_both_paths(game):
 
     run_settle(db, state, content, {
         "fiscal_changes": [{"key": key, "delta": "5"}],
-        "fiscal_creates": [{"key": "整串测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "整串测试_base", "account": "国库",
                             "direction": "income", "init_value": "300"}],
     }, narrative="x", decree_text="y")
 
@@ -677,7 +685,7 @@ def test_driver_path_display_defaults_from_key(game):
     db, state, content = game
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "显名测试_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "显名测试_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
     }, narrative="x", decree_text="y")
 
@@ -693,7 +701,7 @@ def test_garbage_key_category_consistent_across_sections(game):
     turn = state.turn
 
     run_settle(db, state, content, {
-        "fiscal_creates": [{"key": "辽饷_base_base", "account": "国库",
+        "fiscal_creates": [{"origin_ref": "盘面自发", "key": "辽饷_base_base", "account": "国库",
                             "direction": "income", "init_value": 1}],
         "fiscal_removes": [{"key": "盐税_rate_rate", "reason": "垃圾"}],
         "fiscal_changes": [{"key": "商税_base_base", "delta": 3}],
@@ -703,3 +711,40 @@ def test_garbage_key_category_consistent_across_sections(game):
     assert cats.get("fiscal_creates") == "invalid_enum"
     assert cats.get("fiscal_removes") == "invalid_enum"  # 非法 key ≠ 不存在
     assert cats.get("fiscal_changes") == "invalid_enum"  # 三段同口径(ship-pre r5)
+
+
+def test_fiscal_change_reopens_with_value_origin_history_and_scaled_rows(game):
+    """A standalone fiscal change persists its live value, provenance, history and scaling together."""
+    from ming_sim.db import GameDB
+
+    db, state, content = game
+    key = "商税_base"
+    before = db.get_fiscal_config()[key]
+    fiscal_before = {
+        row["id"]: __import__("json").loads(row["fiscal"] or "{}").get("commerce_tax", 0)
+        for row in db.conn.execute("SELECT id,fiscal FROM regions")
+    }
+    run_settle(db, state, content, {
+        "fiscal_changes": [{"key": key, "delta": before, "reason": "重开核验"}],
+    }, narrative="x", decree_text="y")
+
+    reopened = GameDB(db.path, content)
+    try:
+        row = reopened.conn.execute(
+            "SELECT value, origin_ref FROM fiscal_config WHERE key=?", (key,)
+        ).fetchone()
+        history = reopened.conn.execute(
+            "SELECT old_value,new_value,origin_ref FROM fiscal_config_changes WHERE key=? ORDER BY id DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        assert (row["value"], row["origin_ref"]) == (before * 2, "盘面自发")
+        assert (history["old_value"], history["new_value"], history["origin_ref"]) == (
+            before, before * 2, "盘面自发",
+        )
+        fiscal_after = {
+            row["id"]: __import__("json").loads(row["fiscal"] or "{}").get("commerce_tax", 0)
+            for row in reopened.conn.execute("SELECT id,fiscal FROM regions")
+        }
+        assert any(fiscal_after[rid] != value for rid, value in fiscal_before.items() if value > 0)
+    finally:
+        reopened.close()

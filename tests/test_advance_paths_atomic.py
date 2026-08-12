@@ -15,6 +15,7 @@ TurnPhase.X.value——它们 pin 的是**落盘字符串值本身**，有意 en
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -91,6 +92,16 @@ def _drive_fallback(db, state, content, monkeypatch):
     def _stub_sim(*a, **k):
         raise RuntimeError("simulated simulator crash")
     monkeypatch.setattr(decree_mod, "simulate_season_with_payload", _stub_sim)
+    # Fallback now replaces only the narrative and deliberately stays on the
+    # normal extractor→atomic-settle rail.
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "fallback-extractor-output", "fallback-extractor-input"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "record_chapter_memory", lambda *a, **k: None)
 
     return decree_mod.resolve_directives(
         state, db, None, None, [1], "减赋诏",
@@ -113,8 +124,12 @@ def test_fallback_branch_atomic(game, monkeypatch):
     before_report = db.conn.execute(
         "SELECT COUNT(*) FROM turn_reports WHERE turn=?", (turn,)).fetchone()[0]
 
-    with pytest.raises(RuntimeError, match="fallback inertia boom"):
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises(SettlementAbort) as error:
         _drive_fallback(db, state, content, monkeypatch)
+    assert error.value.stage == "settle"
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "fallback inertia boom"
 
     other = sqlite3.connect(db.path)
     try:
@@ -249,6 +264,13 @@ def _recovery_session(db, state, content, monkeypatch):
 
     monkeypatch.setattr(session_mod, "MinisterRegistry", lambda *a, **k: object())
     monkeypatch.setattr(session_mod, "_sync_offices_from_db_impl", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "llm_promulgation_verdicts",
+        lambda dossiers, _state, **_kwargs: [
+            {"dossier_id": row["id"], "decision": "promulgated"}
+            for row in dossiers
+        ],
+    )
     sess = GameSession.__new__(GameSession)
     sess.db = db
     sess.state = state
@@ -262,6 +284,79 @@ def _recovery_session(db, state, content, monkeypatch):
     sess.last_report = ""
     monkeypatch.setattr(GameSession, "auto_save", lambda self, tag: None)
     return sess
+
+
+def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monkeypatch):
+    """A pre-origin ready commitment is not replayed and cannot advance the period."""
+    import ming_sim.decree as dm
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = "settling"
+    db.save_state(state)
+    persist_resolve_context(
+        db, turn, {
+            "new_issues": [{
+                "title": "旧档承诺", "commitment_kind": "until_stop",
+                "stop_condition": {"type": "manual"},
+            }],
+        }, decree_text="旧诏", narrative="旧叙事", simulator_payload={},
+        secret_orders=[], relevant_memories=[],
+    )
+    # Simulate a ready row written before the current replay contract existed.
+    db.conn.execute(
+        "UPDATE pending_resolve_context SET resolve_contract_version=0 WHERE turn=?",
+        (turn,),
+    )
+    db.conn.commit()
+    replayed = []
+    monkeypatch.setattr(session_mod, "resolve_settling_recovery", lambda *a, **k: replayed.append(True))
+    monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "create_score_extractor_module_agent", lambda *a, **k: None)
+    monkeypatch.setattr(dm, "build_extractor_shared_context", lambda *a, **k: "ctx")
+    monkeypatch.setattr(dm, "simulate_season_with_payload", lambda *a, **k: ("重推演", {}))
+    monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
+
+    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
+
+    assert result.awaiting is False
+    assert replayed == []
+    assert state.turn == turn + 1
+
+
+def test_recovery_entry_replays_modern_noop_without_origin(
+    game, monkeypatch,
+):
+    """Modern invalid/no-op envelopes are replayed, not mistaken for legacy."""
+    import ming_sim.session as session_mod
+
+    db, state, content = game
+    turn = state.turn
+    state.turn_phase = "settling"
+    db.save_state(state)
+    region = db.conn.execute("SELECT id FROM regions LIMIT 1").fetchone()[0]
+    persist_resolve_context(
+        db, turn, {"region_delta": {region: {"prosperity": 1}}},
+        decree_text="今诏", narrative="今叙事", simulator_payload={},
+        secret_orders=[], relevant_memories=[],
+    )
+    assert db.get_resolve_context(turn)["resolve_contract_version"] == 1
+    replayed = []
+
+    def _replay(*args, **kwargs):
+        replayed.append(True)
+        return session_mod.ResolveResult(awaiting=False, report="replayed")
+
+    monkeypatch.setattr(session_mod, "resolve_settling_recovery", _replay)
+
+    result = _recovery_session(db, state, content, monkeypatch).resolve_turn()
+
+    assert result.awaiting is False
+    assert replayed == [True]
+    assert state.turn == turn
+    assert state.turn_phase == "issued"
 
 
 def test_recovery_entry_consumes_ready_context(saved_game, monkeypatch):
@@ -342,7 +437,13 @@ def test_recover_after_simulation_crash_can_resettle(saved_game, monkeypatch):
 
     sess = _recovery_session(db, state, content, monkeypatch)
     # 需要一条 draft 才能走正常 resolve_directives（fallthrough 路径）。
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess.resolve_turn(decree="补颁诏")
 
     assert result.awaiting is False
@@ -423,11 +524,16 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         sess.resolve_turn()
+    # 首败只回滚并保留 ready 真源，允许原子重放；第二次同 payload 失败且两份
+    # ADR0008 错误包都落成后才降级，避免一次偶发代码错误毁掉可重放产物。
+    assert db.get_resolve_context(turn)["extracted"] is not None
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn()
 
     ctx_after = db.get_resolve_context(turn)
-    assert ctx_after is not None and ctx_after["extracted"] is None  # 降级非 ready：软死锁不可达，phase1 字段保留
+    assert ctx_after is not None and ctx_after["extracted"] is None
 
-    # 第二次重试：apply 恢复正常，无 ready context → 走重新推演（fallthrough）。
+    # 第三次重试：apply 恢复正常，无 ready context → 走重新推演（fallthrough）。
     monkeypatch.undo()
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(dm, "create_season_simulator_agent", lambda *a, **k: None)
@@ -439,7 +545,13 @@ def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_pa
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno",
                         lambda *a, **k: ({"metric_delta": {"民心": -1}}, "o", "i"))
     sess2 = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     result = sess2.resolve_turn(decree="补颁诏")
     assert result.awaiting is False
     assert state.turn == turn + 1
@@ -654,6 +766,48 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
         "ready-replay 重试不得用新选择覆写事件账"
 
 
+def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch):
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核河工",
+        target_kind="issue", target_id="river-works",
+    )
+    option = {
+        "label": "收回", "dossier_id": dossier_id,
+        "dossier_decision": "withdrawn",
+    }
+    db.save_pending_decisions(state.turn, [{
+        "event_id": f"dossier:{dossier_id}", "title": "批红待裁",
+        "context": "清核河工", "options": [option],
+    }])
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    monkeypatch.setattr(
+        session_mod, "resolve_decisions_phase2", lambda *_a, **_k: "ok",
+    )
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "测试诏书"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    assert sess.submit_decisions([option]) == "ok"
+    assert db.conn.execute(
+        "SELECT 1 FROM event_triggers WHERE event_id=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchone() is None
+    stored = db.list_pending_decisions(state.turn)[0]
+    assert stored["status"] == "decided"
+    assert stored["choice"] == option
+
+
 def test_record_event_decision_choice_preserves_non_triggered_terminal_state(game):
     """integrated cmr Gate2 codex correctness：event_triggers 是终态账，HITL 选择 upsert 冲突时
     只补 choice_json，**不得**把已有非 triggered 终态（avoided/expired/obsolete）翻成 triggered，
@@ -801,10 +955,13 @@ def test_hitl_poison_replay_downgrades_context_then_reextracts(game, monkeypatch
     sess = _recovery_session(db, state, content, monkeypatch)
     with pytest.raises(SettlementAbort):
         sess.submit_decisions([{"label": "战"}])
+    assert db.get_resolve_context(turn)["extracted"] is not None  # 首败仍可原子重放
+    with pytest.raises(SettlementAbort):
+        sess.submit_decisions([{"label": "战"}])
 
     ctx = db.get_resolve_context(turn)
     assert ctx is not None  # 行没被删（phase1 字段是重抽的数据依赖）
-    assert ctx["extracted"] is None  # 降级非 ready
+    assert ctx["extracted"] is None  # 重复失败且两份错误包后降级非 ready
     assert ctx["narrative"] == "裁断后邸报"
 
     # 重试：apply 恢复 + stub 重抽成功 → phase2 走非 ready 分支重抽并完整结算。
@@ -930,11 +1087,13 @@ def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
 
     def _clear_boom(*a, **k):
         raise RuntimeError("clear boom")
-    monkeypatch.setattr(dm, "clear_for_resimulation", _clear_boom)
-
     sess = _recovery_session(db, state, content, monkeypatch)
+    with pytest.raises(SettlementAbort):
+        sess.resolve_turn()  # 首败不调用逃生口
+
+    monkeypatch.setattr(dm, "clear_for_resimulation", _clear_boom)
     with pytest.raises(SettlementAbort) as ei:
-        sess.resolve_turn()
+        sess.resolve_turn()  # 重复失败才尝试降级
     assert isinstance(ei.value.__cause__, RuntimeError)
     assert "clear boom" in str(ei.value.__cause__)
 
@@ -971,7 +1130,13 @@ def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "extract_scores_by_modules_with_agno", _extract_boom)
 
     sess = _recovery_session(db, state, content, monkeypatch)
-    db.add_directive(state, None, "减赋", source="player", status="draft")
+    db.add_directive(
+        state, None, "减赋", source="player", status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "tax-relief",
+        },
+    )
     with pytest.raises(SettlementAbort):
         sess.resolve_turn(decree="补颁诏")
 
@@ -1160,8 +1325,6 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        lambda: sess.confirm_directive(1),
-        lambda: sess.reject_directive(1),
         lambda: sess.set_decree("改诏"),
         lambda: sess.write_decree(),
     ):

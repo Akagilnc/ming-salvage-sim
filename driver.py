@@ -137,13 +137,22 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     # pre_settle 之后：ready=1 统一意为「前半段已提交，只剩 settle」，恢复入口直入 apply
     # 不会跳过未跑的财政 tick（cmr S2+S3 r5）。settle 尾部 clear 自然清掉。
     # 两步同事务（PR #90 R1 codex P2 同窗，与引擎 resolve_directives 同修）：崩在
+    # Freeze the roster-write authority represented by this batch before settlement mutates DB.
+    dossier_ids_at_input = {
+        int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
+    }
     # 「settling 已提交、context 未落」的窗口=违背「settling ⟹ context 可见」不变式。
     with atomic_and_reload(db, state, content=content, registry=registry):
         pre_settle(state, db)
         extracted = persist_resolve_context(
             db, before_turn, extracted,
             decree_text=decree_text, narrative=narrative,
-            simulator_payload={}, secret_orders=[], relevant_memories=[],
+            simulator_payload={
+                "decree_dossiers": [
+                    {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
+                ],
+            },
+            secret_orders=[], relevant_memories=[],
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
     report = settle_with_delta(
@@ -159,7 +168,8 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         source=source,  # 拒收来源（决定玩家面邸报提示，ADR 0008 决定 5）
         # 注入确定性 applier:落库不走 legacy env CLI enrichment,driver 纯确定性(#54)。
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
-            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM
+            d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM,
+            dossier_ids_at_input=dossier_ids_at_input,
         ),
     )
     # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），

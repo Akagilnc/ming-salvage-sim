@@ -6,10 +6,11 @@ import json
 import re
 from typing import Dict, List
 
-from ming_sim.constants import TURN_UNIT
+from ming_sim.constants import DOSSIER_LINK_TYPES, TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.qualitative import qualitative_band
+from ming_sim.strict_types import strict_int
 from ming_sim.token_stats import tlog
 
 _STATUS_CN = {
@@ -534,12 +535,18 @@ def build_minister_tools(character: Character, context: CourtContext,
         reason: str = "",
         excluded_names_json: str = "[]",
         excluded_offices_json: str = "[]",
+        dossier_links_json: str = "[]",
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
         - "progress"：汇报进展（兼查历史）。填 order_id；progress 非空且非建档当月则暂存落档，同月补充会修正本月行。
         - "submit"：提交结案。填 order_id、claim（办结陈词）。
         - "rush"：催办加急。填 order_id；deadline_months=1 下月核议，0=本月即核。
+
+        issue 可用 dossier_links_json 关联当前提示中的旧案卷。它是 JSON 数组，每项必须含
+        target_dossier_id（旧案卷整数 ID）、relation_type（护卫/稽核/接应之一）和 note
+        （大臣已复述确认的说明）。示例：[{"target_dossier_id":12,"relation_type":"护卫",
+        "note":"护送辽饷"}]。未明确确认则传 []。
         """
         # 恢复窗总闸（PR #90 R2 codex P2）：FRONT_HALF_DONE 时四个 action 都是
         # settle 重试事务边界外的直写，重放中止回滚不回滚它们——dispatcher 一处冻全部。
@@ -547,7 +554,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
-            return _secret_order_issue(title, content, tags_json, assignee, deadline_months, excluded_names_json, excluded_offices_json)
+            return _secret_order_issue(title, content, tags_json, assignee, deadline_months, excluded_names_json, excluded_offices_json, dossier_links_json)
         if act == "progress":
             return _secret_order_progress(order_id, progress)
         if act == "submit":
@@ -556,7 +563,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return _secret_order_rush(order_id, deadline_months, reason)
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
-    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]") -> str:
+    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]", dossier_links_json: str = "[]") -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题。
@@ -564,6 +571,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         tags_json：JSON 数组，填相关人名/地区/事项关键词，用于日后检索，如 '["辽饷","兵部","密查"]'。
         assignee：实际承办人姓名。留空则默认为当前召见的大臣；若皇帝指名他人承办（如"命毕自严去查"），填该人全名。
         deadline_months：硬期限月数；0 表示无硬期限。若皇帝说"下月务必结案"填 1，说"三个月内结案"填 3。
+        dossier_links_json：只填当前提示所列旧案卷，格式为 [{"target_dossier_id": 12,
+        "relation_type": "护卫/稽核/接应", "note": "已复述确认的说明"}]。
         """
         t = (title or "").strip()
         c = (content or "").strip()
@@ -595,10 +604,36 @@ def build_minister_tools(character: Character, context: CourtContext,
         )
         real_assignee = (assignee or "").strip() or character.name
         try:
+            raw_links = json.loads(dossier_links_json or "[]")
+        except (ValueError, TypeError):
+            raw_links = []
+        visible_ids = {
+            int(row["id"]) for row in context.db.list_referenceable_dossiers(
+                character.name, context.state.turn)
+        }
+        dossier_links = []
+        for link in raw_links if isinstance(raw_links, list) else []:
+            if not isinstance(link, dict):
+                continue
+            raw_target_id = link.get("target_dossier_id")
+            if not (
+                isinstance(raw_target_id, int) and not isinstance(raw_target_id, bool)
+                or isinstance(raw_target_id, str) and raw_target_id.isdecimal()
+            ):
+                continue
+            try:
+                target_id = strict_int(raw_target_id)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            relation = str(link.get("relation_type") or "").strip()
+            note = str(link.get("note") or "").strip()
+            if target_id in visible_ids and relation in DOSSIER_LINK_TYPES and note:
+                dossier_links.append({"target_dossier_id": target_id, "relation_type": relation, "note": note})
+        try:
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices}, ensure_ascii=False)}"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices, 'dossier_links': dossier_links}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
         # Non-create tools (记进展/催办/提交核议) do **not** pin latest held.
@@ -845,10 +880,10 @@ def build_board_query_tools(context: CourtContext):
 
     def get_active_ministers() -> str:
         """查当前在朝（active）官员名单：姓名、官职、派系。
-        写 office_changes / character_status_changes 前必查，核实人物是否确实在朝。"""
+        写 canonical 人物变更前必查，核实人物是否确实在朝。"""
         rows = context.db.conn.execute(
             # roster scope（同 court_roster / _talent_pool_rows）：大明、非后宫、非宗藩
-            # （宗室就藩非朝堂命官，PR#121；写 office_changes 前查此名单不应见宗藩，cmr R3 cross-section）。
+            # （宗室就藩非朝堂命官，PR#121；写 canonical 人物变更前查此名单不应见宗藩，cmr R3 cross-section）。
             "SELECT name,office,faction FROM characters WHERE status='active' "
             "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
         ).fetchall()
@@ -923,8 +958,8 @@ def build_simulator_tools(context: CourtContext):
 
         ══ 末章固定 ══
         「人事除目」（有人事变动时必列，无则不列）：
-          任官：旧职→新职 or 起用姓名为官职  → 档房抽office_changes
-          去职：姓名+去职缘由（革/狱/流/仕/卒）  → 档房抽character_status_changes
+          任官：旧职→新职 or 起用姓名为官职  → 档房抽「人物变更」任命/调任
+          去职：姓名+去职缘由（革/狱/流/仕/卒）  → 档房抽「人物变更」罢黜/处置
         「待办未解」：只列active_issues在册局势，逐条状态短语（已具题待覆/已近结案/按其本然推移等），
         每条一句话点局势名与id，不写bar数字，不写from→to。
         「建筑只叙事」：不代标数值、不代立新建筑；新建/扩建走局势effect落地，不在邸报直造。
@@ -964,26 +999,28 @@ def build_extractor_tools(context: CourtContext):
         ══ 必须包含的顶层字段（无内容填 {} 或 []）══
 
         metric_delta        两量表增量 {"民心":N,"皇威":N}（增量非新值）
-        economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason}
+        economy_moves       浮动收支列表，每项 {account(国库/内库),delta,category,reason,origin_ref}；
+                            旨意驱动须从 extractor_context.decree_dossiers 选 dossier:<id>，
+                            月末局势自然演化须显式填 origin_ref:"盘面自发"
                             单位万两；程序已落账的月度固定收支（税/军饷/建筑维护等）不重复写
                             account按钱出自哪个库定：内帑/内库拨出=内库，户部/太仓=国库
         faction_delta       派系满意度增量 {阉党/皇党/军队/东林/宗室/中立/西学: N}
         class_delta         阶级满意度/影响力增量
                             key="农民"(全国)或"农民@shaanxi"(省级切片)
                             value={"satisfaction":N,"leverage":N}（可只写一个）
-        region_delta        地区数值变化 {region_id: {字段:增量}}
+        region_delta        地区数值变化 {region_id: {字段:增量,origin_ref}}
                             合法字段：public_support/unrest/grain_security/gentry_resistance/
                             military_pressure/corruption/population/registered_land/
                             hidden_land/tax_per_turn/natural_disaster/human_disaster/status
                             减人口写population，禁止写manpower（军队字段）
-        army_delta          军队数值变化 {army_id: {字段:增量}}
+        army_delta          军队数值变化 {army_id: {字段:增量,origin_ref}}
                             合法字段：supply/morale/training/equipment/arrears/mobility/loyalty/
                             manpower/station/commander/controller/troop_type/status
                             禁止写cohesion（势力字段）。army_delta.arrears/欠饷只允许既有军
                             正值外生加欠，引擎按饷源比例拆入省/中央累加器；负值拒收。
                             补饷、减欠、核销必须走 economy_moves（purpose=补饷）或显式核销路径。
                             新军初始欠饷固定 0，不在 new_armies 写欠饷。
-        new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/
+        new_armies          新建军队列表，每项含 id/name/owner_power/manpower/station/origin_ref/
                             commander/troop_type/status 等完整军队字段。
                             owner_power="ming" 且不是土司/自养军时，必须写饷源三字段：
                             pay_source_region/饷源省=明控省 region_id，
@@ -992,7 +1029,7 @@ def build_extractor_tools(context: CourtContext):
                             土司/自养明军才写 is_tusi/土司 或 self_funded_pay/自养军饷，
                             且饷源比例为 0/0；非明军不写明军饷源。
                             明军月饷总额由引擎按 manpower 派生，不写饷额。
-        power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N}}
+        power_updates       别的势力三项简单属性 {power_id: {"威望":N,"实力":N,"经济":N,origin_ref}}
                             只写非大明势力；三项均为整数增量；不写立场/近动/状态
         world_advance       外交态度 KV；key 为势力名或 power_id，value 为简短态度字符串
                             如 {"后金":"敌对","蒙古":"摇摆","朝鲜":"倾明"}；无内容填 {}
@@ -1008,9 +1045,10 @@ def build_extractor_tools(context: CourtContext):
                               ongoing_effects,effect_on_resolve,effect_on_fail,
                               cancellable(decree/never/by_progress)
                               effect_on_resolve/fail 可含 metrics/economy/factions/buildings
-                              buildings每项：{action:create/modify/remove,...}
+                              buildings每项：{action:create/modify/remove,origin_ref,...}；来源同样只能为已颁 dossier:<id> 或盘面自发
                             圣旨承诺(#136)固定 kind:"initiative" 且必须有
-                              origin_ref(指回诏书),commitment_kind:"until_stop"；
+                              origin_ref(只能从 extractor_context.decree_dossiers 选择
+                              dossier:<id>),commitment_kind:"until_stop"；
                               直到补齐/达标：ongoing_effects 语义非空 + stop_condition(dict)
                               人物安抚类 ongoing_effects 写 {"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2}]}
                               连续N月/半年为限：ongoing_effects 语义非空 + end_turn(turn+N，且必须大于当前turn)
@@ -1024,20 +1062,16 @@ def build_extractor_tools(context: CourtContext):
                             对照resolve_condition/fail_condition判，条件命中即报
                             不可崩坏局势（天灾/大旱等effect_on_fail为空）禁止reason=failed
                             acknowledged仅用于无语义 ongoing 且已到期的圣旨承诺已由皇帝裁决确认
-        fiscal_changes      制度性财政系数变化 [{key,delta,reason}]
+        fiscal_changes      制度性财政系数变化 [{key,delta,reason,origin_ref}]
+                            origin_ref 必填：已颁 dossier:<id> 或精确 盘面自发
                             key只从财政系数表选：田赋_rate/辽饷_base/辽饷_rate/盐税_base/盐税_rate/
                             商税_base/商税_rate/皇庄_base/皇庄_rate/织造_base/织造_rate/矿税_base/矿税_rate/
                             宗室禄米_base/宗室禄米_rate/官俸_base/官俸_rate/工程_base/工程_rate/
                             赈灾_base/赈灾_rate/宫廷_base/宫廷_rate/
                             内廷俸_base/内廷俸_rate/妃嫔_base/妃嫔_rate
-        appointments        仅后宫纳妃 [{name,office,office_type:"后宫",reason,approved}]
-                            decree_text明文"纳/册封/封/选 某某 为 位号"才立；朝臣一律不进此字段
-        character_status_changes  大臣状态变更 [{name,status,reason}]
-                            status∈dismissed/imprisoned/exiled/retired/dead/offstage
-                            邸报明文写到此人此事才立；既已dismissed/dead的不重复
-        office_changes      朝臣官职变更 [{name,new_office,reason,可选faction/new_office_type}]
-                            任何人任某官（新进朝堂/调任/升迁）一律走此字段，不分新旧任
-                            new_office必须是明制实官名；去职走character_status_changes
+        人物变更            ADR0009 人事档案唯一生产入口；每项必须含 name、动作、origin_ref。
+                            动作∈任命/罢黜/调任/处置/易主/册封/行止/评定；按动作补 office、
+                            office_type、status、new_power、location、transit_to、loyalty、reason。
 
         ══ 档位判定标准 ══
         极端：屠戮全族/抄家灭门/决定性战胜败  bar±40~50  metric±20~30  faction±20~40
@@ -1052,27 +1086,26 @@ def build_extractor_tools(context: CourtContext):
         ══ 输出 JSON 骨架示例 ══
         {
           "metric_delta": {"民心": -3, "皇威": 2},
-          "economy_moves": [{"account":"国库","delta":-15,"category":"赈灾","reason":"陕西赈粮"}],
+          "economy_moves": [{"account":"国库","delta":-15,"category":"赈灾","reason":"陕西赈粮","origin_ref":"dossier:17"}],
           "faction_delta": {"阉党": -5, "东林": 4},
           "class_delta": {"农民@shaanxi": {"satisfaction": -6, "leverage": 5}},
-          "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3}},
-          "army_delta": {"guanning": {"morale": -3, "arrears": 5}},
+          "region_delta": {"shaanxi": {"unrest": 5, "grain_security": -3, "origin_ref":"盘面自发"}},
+          "army_delta": {"guanning": {"morale": -3, "arrears": 5, "origin_ref":"dossier:17"}},
           "new_armies": [{"id":"qin_army","name":"秦军新营","owner_power":"ming",
                           "manpower":8000,"station":"陕西/西安","commander":"孙传庭",
                           "troop_type":"募兵步骑","pay_source_region":"shaanxi",
                           "province_pay_share":0.65,"central_pay_share":0.35,
-                          "status":"新募，亟待操练"}],
-          "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2}},
+                          "status":"新募，亟待操练","origin_ref":"dossier:17"}],
+          "power_updates": {"houjin": {"威望": -4, "实力": -3, "经济": -2, "origin_ref":"盘面自发"}},
           "world_advance": {"后金": "敌对", "蒙古": "摇摆", "朝鲜": "倾明"},
           "issue_advances": [{"issue_id":12,"delta_bar":15,"stage_text":"户部主事至苏州","narrative":"..."}],
           "new_issues": [{"kind":"initiative","title":"火器营试设","origin_kind":"decree","bar_value":20,"expected_months":10,"stage_text":"...","resolve_condition":"...","fail_condition":"...","ongoing_effects":{},"effect_on_resolve":{"metrics":{"皇威":3}},"effect_on_fail":{"metrics":{"皇威":-4}},"cancellable":"by_progress"},
-                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"decree:turn-1:sun-review","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
+                         {"kind":"initiative","title":"三月后复试孙承宗","origin_kind":"decree","origin_ref":"dossier:17","commitment_kind":"until_stop","end_turn":4,"ongoing_effects":{}}],
           "cancels": [],
           "close_issues": [{"issue_id":9,"reason":"resolved","narrative":"..."}],
           "fiscal_changes": [],
-          "appointments": [],
-          "character_status_changes": [{"name":"魏忠贤","status":"exiled","reason":"发配凤阳"}],
-          "office_changes": [{"name":"孙传庭","new_office":"陕西总督","new_office_type":"督抚","reason":"永城知县擢用"}]
+          "人物变更": [{"name":"魏忠贤","动作":"处置","status":"exiled","reason":"发配凤阳","origin_ref":"dossier:17"},
+                       {"name":"孙传庭","动作":"任命","office":"陕西总督","office_type":"督抚","reason":"永城知县擢用","origin_ref":"dossier:17"}]
         }
         """
         _captured.append(json_str)

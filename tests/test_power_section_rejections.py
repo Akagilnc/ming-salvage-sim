@@ -12,8 +12,16 @@ from __future__ import annotations
 
 import pytest
 
-from driver import run_settle
+from driver import run_settle as _run_settle
 from tests.section_rejection_helpers import game, rejection_rows as _rejection_rows
+
+
+def run_settle(db, state, content, extracted, **kwargs):
+    """These rejection tests model canonical spontaneous extractor envelopes."""
+    for item in (extracted.get("power_updates") or {}).values():
+        if isinstance(item, dict):
+            item.setdefault("origin_ref", "盘面自发")
+    return _run_settle(db, state, content, extracted, **kwargs)
 
 
 def _valid_power_id(db):
@@ -116,25 +124,26 @@ def test_unknown_person_power_change_rejected_good_lands(saved_game):
     assert after == good_power
 
 
-def test_character_power_changes_code_exception_aborts_settlement(game, monkeypatch):
-    """apply_character_power_changes 内代码异常 → 上抛 SettlementAbort 回滚整批,
-    绝不被原 try/except 吞掉(ADR 0005/决定 1)。"""
-    from ming_sim.exceptions import SettlementAbort
-
+def test_canonical_person_power_writer_code_exception_is_fail_loud(game, monkeypatch):
+    """Canonical 人物变更 writer 的代码异常必须上抛；legacy aliases 不再有第二写路。"""
     db, state, content = game
-    good_power = _valid_power_id(db)
-    real = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' LIMIT 1").fetchone()[0]
+    target_power = _valid_power_id(db)
+    name = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()[0]
 
-    def _boom(self, *a, **k):
-        raise KeyError("code bug in apply_character_power_changes")
+    def _boom(self, *args, **kwargs):
+        raise KeyError("canonical person power writer bug")
+
     monkeypatch.setattr(type(db), "apply_character_power_changes", _boom)
-
-    with pytest.raises(SettlementAbort):
-        run_settle(db, state, content, {
-            "character_power_changes": [
-                {"name": real, "new_power": good_power, "reason": "叛"}],
-        }, narrative="x", decree_text="y")
+    with pytest.raises(KeyError, match="canonical person power writer bug"):
+        import ming_sim.issues as issues
+        issues.apply_score_extraction(db, state, {
+            "人物变更": [{
+                "name": name, "动作": "易主", "方式": "主动投敌", "反噬": {},
+                "new_power": target_power, "reason": "叛", "origin_ref": "盘面自发",
+            }],
+        }, content=content)
 
 
 def test_power_change_formatter_skips_rejected_items():

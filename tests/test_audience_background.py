@@ -6,6 +6,8 @@ import time
 import types
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
@@ -101,6 +103,10 @@ class _FakeSession:
     def pending_count(self) -> int:
         return 0
 
+    def list_directives(self, include_pending: bool = True):
+        # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
+        return GameSession.list_directives(self, include_pending=include_pending)
+
     def note_chat_rollback(self, **_kwargs):
         return None
 
@@ -132,6 +138,24 @@ def _wait_for(predicate, timeout: float = 1.0) -> bool:
     return predicate()
 
 
+def _wait_for_pending_writes_to_drain(web_game: WebGame) -> None:
+    with web_game._drain_cond:
+        web_game._drain_cond.wait_for(
+            lambda: web_game._pending_writes_count == 0
+        )
+
+
+def _assert_next_accepted(stream) -> None:
+    accepted = next(stream)
+    assert isinstance(accepted, dict)
+    assert accepted["type"] == "accepted"
+    assert isinstance(accepted["campaign_id"], str)
+    assert isinstance(accepted["night_id"], int)
+    assert accepted["night_id"] > 0
+    assert isinstance(accepted["chat_turn_id"], int)
+    assert accepted["chat_turn_id"] > 0
+
+
 def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(game):
     db, state, content = game
     minister_name = "毕自严"
@@ -139,6 +163,7 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "户部钱粮如何？")
+    _assert_next_accepted(stream)
     assert next(stream) == {"type": "delta", "content": "臣"}
 
     stream.close()
@@ -150,9 +175,8 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
         {"role": "minister", "content": "臣遵旨。"},
     ]
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    assert _wait_for(lambda: web_game._pending_writes_count == 0), (
-        "fixture 关闭共享 DB 前必须等后台 worker 的 finally 完整结束"
-    )
+    # fixture 关闭共享 DB 前必须等后台 worker 的 finally 完整结束。
+    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_chat_reload_exposes_retryable_failed_secret_order(game):
@@ -203,29 +227,50 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     assert "密令" in failures[0]["message"]
 
 
-def test_background_audience_reply_keeps_staged_edict_after_observer_departure(game):
+@pytest.mark.parametrize(("emperor_text", "expected_mode"), [
+    ("中旨直发，命户部拟旨。", "midzhi"),
+    ("ordinary", "ordinary"),
+    ("拟一道清核辽饷的旨。", "ordinary"),
+])
+def test_background_audience_reply_preserves_emperor_mode_after_observer_departure(
+    game, emperor_text, expected_mode,
+):
     db, state, content = game
     minister_name = "毕自严"
+    # 大臣草稿刻意不复述皇帝的颁布方式；mode 必须来自皇帝原话。
     draft_text = "着户部清核辽饷。"
     agent = _FakeAgent([ToolExec("propose_directive", f"__pending_directive__{draft_text}")])
     web_game = _web_game(db, state, content, agent)
 
-    stream = web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。")
+    stream = web_game.chat_stream(minister_name, emperor_text)
+    _assert_next_accepted(stream)
     assert next(stream)["type"] == "delta"
     stream.close()
 
     assert agent.completed.wait(1.0)
-    assert _wait_for(lambda: any(
-        row["kind"] == "directive"
-        and json.loads(row["payload_json"])["text"] == draft_text
-        for row in db.list_pending_actions(state.turn)
-    ))
+
+    def staged_directive():
+        return next((
+            row for row in db.list_pending_actions(state.turn)
+            if row["kind"] == "directive"
+            and json.loads(row["payload_json"])["text"] == draft_text
+        ), None)
+
+    assert _wait_for(lambda: staged_directive() is not None)
+    pending_payload = json.loads(staged_directive()["payload_json"])
+    assert pending_payload.get("mode", "ordinary") == expected_mode
     assert not any(
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    _wait_for_pending_writes_to_drain(web_game)
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == expected_mode
 
 
 def test_stream_tool_staged_secret_order_merges_minister_reply(game):
@@ -481,6 +526,7 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     web_game = _cli_web_game(db, state, content, agent, secret_order_id=4242)
 
     stream = web_game.chat_stream(minister_name, "密查盐政亏空。")
+    _assert_next_accepted(stream)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -489,7 +535,7 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_background_audience_pending_action_persists_after_observer_departure(game):
@@ -500,6 +546,7 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     web_game = _cli_web_game(db, state, content, agent, pending_action_id=77)
 
     stream = web_game.chat_stream(minister_name, "着王承恩调教自省。")
+    _assert_next_accepted(stream)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -507,7 +554,7 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_background_audience_appointment_stages_after_observer_departure(game):
@@ -527,6 +574,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     web_game = _web_game(db, state, content, agent)
 
     stream = web_game.chat_stream(minister_name, "拟以工具候选甲为户部尚书。")
+    _assert_next_accepted(stream)
     assert next(stream)["type"] == "delta"
     stream.close()
 
@@ -544,7 +592,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     ).fetchone() is None
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    _wait_for_pending_writes_to_drain(web_game)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game, monkeypatch):

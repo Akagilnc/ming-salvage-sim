@@ -224,7 +224,7 @@ def build_timeline(db: GameDB, upto_turn: Optional[int] = None) -> List[Dict[str
     """
     chapters = {c["turn"]: c for c in db.list_chapter_memories(upto_turn=upto_turn)}
     timeline: List[Dict[str, object]] = []
-    for meta in db.list_archived_turns():
+    for meta in db.list_monthly_archives():
         turn = int(meta["turn"])
         if upto_turn is not None and turn > upto_turn:
             continue

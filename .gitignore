@@ -62,22 +62,6 @@ scripts/runs/web_server.log
 # 本局存档伴档（圣意备忘，每回合变，配合已忽略的 data/probe.db 构成游戏进度，非项目文档）
 docs/IMPERIAL_NOTES.md
 
-# Orchestrator (#256) clean-room issue snapshot — host-fetched read-only context
-# written into the resident slice worktree; must never be committed into the
-# reviewed/pushed branch (a coder's `git add -A` would otherwise stage it). The
-# Backend also adds it to the per-worktree .git/info/exclude as a suspenders belt.
-.orchestrator-snapshot.json
-# Orchestrator (integ-cmr 256 r3) fix-loop findings — host-written read-only
-# context handed to the S5 coder_fix step; same clean-room rule as the snapshot.
-.orchestrator-fix-findings.json
-# Orchestrator (#439) ship retry focus — generated from human escalation answers
-# in resident worktrees; local exclude also covers it, repo ignore is the fallback.
-.ship-focus.md
-
-# Orchestrator dogfood / verify 运行时产物（巨大或临时，绝不入库）
-.hermes/
-.worktrees/
-.verify-*/
 web/coverage/
 # 跨 session scratch（自相矛盾的草稿，非项目文档）
 temp_todo.md

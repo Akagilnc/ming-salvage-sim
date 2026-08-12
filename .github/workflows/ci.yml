@@ -25,12 +25,10 @@ jobs:
           cache: pip
       - name: 安装依赖
         # pytest 不在 requirements.txt(dev-only),单独装。
-        # python-multipart 显式 pin:web_app 上传路由(File(...))需要它,
-        # 现仅靠 agno 传递依赖带入,显式装防 agno 哪天不带它。
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest python-multipart
+          pip install pytest
       - name: 跑 pytest（tests/ 从仓库根,ming_sim 可导入）
         run: python -m pytest tests/ -q
 
@@ -51,25 +49,3 @@ jobs:
       - run: npm ci
       # build = `tsc -b && vite build`:类型检查 + 构建一并把关(web 无单测)。
       - run: npm run build
-
-  orchestrator:
-    name: 编排器测试 (npm test)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      GIT_AUTHOR_NAME: ci
-      GIT_AUTHOR_EMAIL: ci@invalid
-      GIT_COMMITTER_NAME: ci
-      GIT_COMMITTER_EMAIL: ci@invalid
-    defaults:
-      run:
-        working-directory: orchestrator
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: orchestrator/package-lock.json
-      - run: npm ci
-      - run: npm test

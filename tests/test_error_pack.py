@@ -337,33 +337,6 @@ def test_web_issue_endpoint_returns_structured_abort(monkeypatch):
     assert "错误包" in str(ei.value.detail)
 
 
-def test_web_directive_endpoints_409_when_frozen(monkeypatch):
-    """恢复窗冻结的 mutator 在 web 端回 409 指引而非 500（ship-pre r3 codex）。"""
-    import asyncio
-    from fastapi import HTTPException
-    import web_app
-
-    class _StubSession:
-        def confirm_directive(self, directive_id):
-            raise ValueError("月末结算进行中（恢复态），请先完成结算再改诏稿。")
-        def pending_count(self):
-            return 0
-
-    class _StubGame:
-        session = _StubSession()
-        def directive_payload(self, item):
-            return {}
-        def directive_rows(self):
-            return []
-
-    monkeypatch.setattr(web_app, "get_game", lambda: _StubGame())
-
-    with pytest.raises(HTTPException) as ei:
-        asyncio.run(web_app.api_confirm_directive(1))
-    assert ei.value.status_code == 409
-    assert "结算" in str(ei.value.detail)
-
-
 def test_shape_garbage_extractor_product_is_sanitized_and_recorded(game, monkeypatch, tmp_path):
     """ADR0015：可拆 shape 垃圾不再中止整月，拒收留痕后净化落库。"""
     from tests.test_resolve_context_recovery import _drive_settle_after_narrative
@@ -428,3 +401,34 @@ def test_version_read_failure_falls_back_to_unknown(game, monkeypatch, tmp_path)
 
     m = json.loads((Path(p) / "manifest.json").read_text(encoding="utf-8"))
     assert m["version"] == "unknown"
+
+
+def test_complete_ready_packs_match_database_turn_digest_and_manifest_shape(game, monkeypatch, tmp_path):
+    """Ready retry evidence is scoped by db path + turn + digest; malformed manifests are ignored."""
+    from ming_sim.error_pack import complete_error_packs_for_ready, ready_payload_digest
+
+    db, state, _ = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    from ming_sim.error_pack import error_packs_root
+    root = error_packs_root()
+    root.mkdir(parents=True)
+    payload = {"metric_delta": {"民心": 1}}
+    required = ("traceback.txt", "delta.json", "resolve_context.json", "save_backup.db")
+
+    def pack(name, manifest):
+        path = root / name
+        path.mkdir()
+        for filename in required:
+            (path / filename).write_text("x", encoding="utf-8")
+        (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    good = pack(f"turn{state.turn}_attempt1", {"db_path": db.path, "turn": state.turn,
+                         "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt2", {"db_path": db.path + ".other", "turn": state.turn,
+                      "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt3", {"db_path": db.path, "turn": state.turn + 1,
+                        "ready_payload_digest": ready_payload_digest(payload)})
+    pack(f"turn{state.turn}_attempt4", ["not", "an", "object"])
+
+    assert complete_error_packs_for_ready(db.path, state.turn, payload) == [good]

@@ -8,6 +8,15 @@ import ming_sim.issues as I
 from ming_sim.simulation import canonicalize_extraction
 
 
+def _promulgated_commitment_origin(db, state) -> str:
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="测试辽饷承诺",
+        target_kind="army", target_id="guanning", payload={"purpose": "补饷"},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    return f"dossier:{dossier_id}"
+
+
 def _table_columns(db, table: str) -> dict[str, dict[str, object]]:
     return {
         row["name"]: dict(row)
@@ -51,14 +60,14 @@ def test_effect_dict_has_work_ignores_metadata_only_payloads(payload):
     [
         {"economy": [{"account": "国库", "delta": -1, "reason": "补饷"}]},
         {"metrics": {"皇威": 1}},
-        {"region_delta": {"shaanxi": {"status": "灾荒稍解"}}},
-        {"region_delta": {"beizhili": {"cannon": 2}}},
-        {"army_delta": {"guanning": {"commander": "孙承宗"}}},
+        {"region_delta": {"shaanxi": {"origin_ref": "盘面自发", "status": "灾荒稍解"}}},
+        {"region_delta": {"beizhili": {"origin_ref": "盘面自发", "cannon": 2}}},
+        {"army_delta": {"guanning": {"origin_ref": "盘面自发", "commander": "孙承宗"}}},
         {"factions": {"阉党": {"leverage": -1}}},
         {"class_delta": {"农民": {"satisfaction": 1}}},
         {"buildings": [{"action": "remove", "building_id": "beizhili_b1"}]},
-        {"new_armies": [{"id": "tianxiong", "manpower": 1000}]},
-        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": 1}]},
+        {"new_armies": [{"origin_ref": "盘面自发", "id": "tianxiong", "manpower": 1000}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": 1}]},
         {"character": [{"name": "毛文龙", "loyalty": 1, "reason": "每月安抚"}]},
         {"legacy": {"modifiers": {"民心": 1}}},
     ],
@@ -77,7 +86,8 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
         kind="situation",
         title="奉旨拆除旧建筑",
         effect_on_resolve={
-            "buildings": [{"action": "remove", "building_id": building["id"]}],
+            "buildings": [{"action": "remove", "building_id": building["id"],
+                           "origin_ref": "盘面自发"}],
         },
     )
 
@@ -101,7 +111,7 @@ def test_issue_resolution_removes_building_and_keeps_remove_audit_log(game):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"人物变更": [{"name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
+        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "评定", "loyalty": "2"}]},
         {"character": [{"name": "毛文龙", "loyalty": "2", "reason": "每月安抚"}]},
     ],
 )
@@ -157,7 +167,7 @@ def test_new_issue_persists_commitment_columns_from_tracker_output(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
-            "origin_ref": "decree:turn-1:pay-liao-arrears",
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "每月补辽饷直到补齐",
             "end_turn": state.turn + 4,
@@ -236,6 +246,7 @@ def test_decree_initiative_cap_allows_fifteen_active_issues(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "第十五条承诺地基",
             "effect_on_resolve": {"metrics": {"民心": 1}},
@@ -325,6 +336,7 @@ def test_decree_initiative_cap_rejects_sixteenth_with_updated_message(game):
     out = I.apply_issue_tracker_output(db, state, {
         "new_issues": [{
             "origin_kind": "decree",
+            "origin_ref": _promulgated_commitment_origin(db, state),
             "kind": "initiative",
             "title": "第十六条应拒",
             "effect_on_resolve": {"metrics": {"民心": 1}},

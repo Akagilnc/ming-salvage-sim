@@ -17,9 +17,17 @@ from types import SimpleNamespace
 
 import pytest
 
+_POLICY_FIELDS = {
+    "dossier_action_type": "policy",
+    "target_kind": "issue",
+    "target_id": "test-policy",
+}
+
+import ming_sim.audience_night as audience_night
 import ming_sim.cli_backend as cb
 import ming_sim.session as session_mod
 from ming_sim.session import GameSession
+from tests.dossier_test_helpers import promulgate_proposed_appointments
 
 
 def _result():
@@ -455,12 +463,20 @@ def test_propose_directive_tool_arguments_stages_draft(game):
     sess._start_cli_action_intent = lambda *_args, **_kwargs: None
     sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
 
-    result = GameSession.chat(sess, minister, "拟一道清查辽饷的旨。")
+    result = GameSession.chat(sess, minister, "中旨直发，拟一道清查辽饷的旨。")
 
     assert result.pending_action_id
     pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "directive"]
     assert len(pending) == 1
-    assert json.loads(pending[0]["payload_json"])["text"] == "着户部清核辽饷。"
+    pending_payload = json.loads(pending[0]["payload_json"])
+    assert pending_payload["text"] == "着户部清核辽饷。"
+    assert pending_payload["mode"] == "midzhi"
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == "midzhi"
 
 
 def test_api_channel_rejects_existing_pending_action(game):
@@ -625,7 +641,7 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -656,13 +672,132 @@ def test_mixed_directive_and_secret_confirmation_commits_both(game):
     assert directives[0]["text"] == "着户部清核辽饷。"
 
 
+@pytest.mark.parametrize("kind", ["directive", "office"])
+def test_midzhi_confirmation_updates_selected_dossier_mode(game, kind):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    if kind == "directive":
+        pending_id = db.stage_pending_action(
+            state.turn, kind="directive", action="拟旨", minister_name=minister,
+            payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister,
+                     "mode": "ordinary"},
+        )
+    else:
+        pending_id = db.stage_pending_action(
+            state.turn, kind="office", action="任命", minister_name=minister,
+            payload={"name": "史可法", "office": "兵部主事", "appointer": minister,
+                     "mode": "ordinary"},
+        )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+
+    if kind == "directive":
+        row = db.conn.execute(
+            "SELECT dossier_payload_json FROM turn_directives WHERE turn=?",
+            (state.turn,),
+        ).fetchone()
+        assert json.loads(row["dossier_payload_json"])["mode"] == "midzhi"
+    else:
+        dossiers = [
+            row for row in db.list_decree_dossiers(status="proposed")
+            if row["action_type"] == "appointment"
+        ]
+        assert len(dossiers) == 1
+        assert dossiers[0]["mode"] == "midzhi"
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "kind", "raw_payload"),
+    [
+        ("immediate", "directive", "{malformed"),
+        ("night", "office", "[]"),
+        ("recovery", "directive", "null"),
+    ],
+)
+def test_confirmation_preserves_invalid_payload_for_terminal_failure_owner(
+        game, lifecycle, kind, raw_payload):
+    """确认只写有效对象的元数据；坏载荷由各生命周期的提交端判 failed。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state) if lifecycle == "night" else None
+    if lifecycle == "recovery":
+        state.turn_phase = "settling"
+    pending_id = db.stage_pending_action(
+        state.turn, kind=kind, action="拟旨" if kind == "directive" else "任命",
+        minister_name=minister, payload={"placeholder": True},
+    )
+    db.conn.execute(
+        "UPDATE pending_actions SET payload_json=? WHERE id=?",
+        (raw_payload, pending_id),
+    )
+    db.conn.commit()
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+
+    row = db.conn.execute(
+        "SELECT status, payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert row["payload_json"] == raw_payload
+    if lifecycle == "night":
+        assert row["status"] == "pending"
+        audience_night.close_night(db, state, night_id=night["id"], content=content)
+    elif lifecycle == "recovery":
+        assert row["status"] == "pending"
+        db.commit_pending_actions(state, content=content)
+
+    terminal = db.conn.execute(
+        "SELECT status, payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()
+    assert terminal["status"] == "failed"
+    assert terminal["payload_json"] == raw_payload
+
+
+def test_night_approved_midzhi_confirmation_keeps_mode_through_close(game):
+    db, state, content = game
+    minister = next(iter(content.characters.values())).name
+    night = audience_night.open_night(db, state)
+    pending_id = db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨", minister_name=minister,
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister,
+                 "mode": "ordinary"},
+    )
+
+    GameSession.apply_cli_conversation_actions(
+        _session(db, state, content=content),
+        SimpleNamespace(name=minister, office_type="兵部"),
+        player_message="中旨直发，准了。", answer="臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "confirmation", "confirmation": "应允"},
+        confirm_target_ids={pending_id},
+    )
+    audience_night.close_night(db, state, night_id=night["id"], content=content)
+
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == "midzhi"
+
+
 def test_mixed_directive_secret_confirmation_does_not_commit_unmentioned_office(game):
     db, state, content = game
     minister = next(iter(content.characters.values())).name
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="office", action="任命", minister_name=minister, target_id=None,
@@ -716,7 +851,7 @@ def test_duchayuan_does_not_confirm_directive_as_all_targets(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -785,7 +920,7 @@ def test_mixed_directive_and_secret_rejection_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -819,7 +954,7 @@ def test_mixed_directive_and_secret_bare_doubuzhun_drops_both(game):
     ch = SimpleNamespace(name=minister, office_type="兵部")
     db.stage_pending_action(
         state.turn, kind="directive", action="拟旨", minister_name=minister, target_id=None,
-        payload={"text": "着户部清核辽饷。", "actor": minister},
+        payload={**_POLICY_FIELDS, "text": "着户部清核辽饷。", "actor": minister},
     )
     db.stage_pending_action(
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
@@ -940,7 +1075,7 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
 
     sess._apply_appointment = forbidden_direct_apply
 
-    result = GameSession.chat(sess, minister, "拟以工具候选乙为户部尚书。")
+    result = GameSession.chat(sess, minister, "中旨直发，拟以工具候选乙为户部尚书。")
 
     assert result.pending_action_id
     pending = db.list_pending_actions(state.turn)
@@ -951,11 +1086,21 @@ def test_non_streaming_appointment_tool_stages_pending_action(game):
     assert pending_payload["name"] == appointee
     assert pending_payload["faction"] == "阉党"
     assert pending_payload["reason"] == "吏部举荐"
+    assert pending_payload["mode"] == "midzhi"
     assert db.conn.execute(
         "SELECT name FROM characters WHERE name=?", (appointee,)
     ).fetchone() is None
 
     db.commit_pending_actions(state, content=content, registry=sess.registry)
+    appointment_dossiers = [
+        row for row in db.list_decree_dossiers(status="proposed")
+        if row["action_type"] == "appointment"
+    ]
+    assert len(appointment_dossiers) == 1
+    assert appointment_dossiers[0]["mode"] == "midzhi"
+    promulgate_proposed_appointments(
+        db, state, content, registry=sess.registry,
+    )
 
     assert content.characters[appointee].faction == "阉党"
 
@@ -2063,13 +2208,19 @@ def test_committed_draft_followup_merges_even_when_classifier_says_none(game, mo
     ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
-        actor=minister, notes="原草案", status="draft")
+        actor=minister, notes="原草案", status="draft",
+        dossier_payload={
+            "dossier_action_type": "special_decree", "target_kind": "policy",
+            "target_id": "liao-pay-audit",
+        })
     merged_text = "着户部清核辽饷，并加派监察御史随行。"
     called = []
 
     def fake_draft(player_message, reply, **kwargs):
         called.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -2104,13 +2255,19 @@ def test_committed_draft_followup_merges_even_when_classifier_says_draft(game, m
     ).fetchone()[0]
     db.add_directive(
         state, None, "着户部清核辽饷。", "大臣拟旨",
-        actor=minister, notes="原草案", status="draft")
+        actor=minister, notes="原草案", status="draft",
+        dossier_payload={
+            "dossier_action_type": "special_decree", "target_kind": "policy",
+            "target_id": "liao-pay-audit",
+        })
     merged_text = "着户部清核辽饷，并加派监察御史随行。"
     fed_existing = []
 
     def fake_draft(player_message, reply, **kwargs):
         fed_existing.append(kwargs.get("existing_draft_text"))
-        return {"draft_action": "拟旨", "draft_text": merged_text}
+        return {
+            "draft_action": "拟旨", "draft_text": merged_text,
+        }
 
     monkeypatch.setattr(cb, "extract_draft_intent", fake_draft)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
