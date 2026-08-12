@@ -1,7 +1,12 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AudienceArchiveModal, ChatModal, EdictModal, HistoryDetailView, HistoryModal, ReportModal, parseLeadingStageDirection } from "./modals";
+import { AudienceArchiveModal } from "./audienceArchiveModal";
+import { ChatModal } from "./chatModal";
+import { EdictModal } from "./edictModal";
+import { HistoryDetailView, HistoryModal } from "./historyModal";
+import { ReportModal } from "./reportModal";
+import { parseLeadingStageDirection } from "./scrollMessages";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 

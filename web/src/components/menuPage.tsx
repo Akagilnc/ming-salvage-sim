@@ -68,16 +68,19 @@ export function MenuPage({
   return (
     <div className="menu-screen">
       <div className="menu-poster">
-        <img src="/steam_assets/主宣传图.jpg" alt="明末：力挽狂澜" />
+        <img src="/steam_assets/主宣传图.jpg" alt="残明朱批：崇祯" />
       </div>
 
-      <h1 className="menu-title">明末：力挽狂澜</h1>
+      <header className="menu-header">
+        <h1 className="menu-title">
+          <img className="menu-logo" src="/steam_assets/game-logo.png" alt="残明朱批：崇祯" />
+        </h1>
+        <p className="menu-tagline">「朕已知悉」</p>
+      </header>
 
       <div className="menu-panel">
-        <p className="menu-subtitle">召大臣议天下事</p>
-
         {!llmReady && (
-          <div className="menu-notice">尚未配置 LLM 后端。请先「设置 API」。</div>
+          <div className="menu-notice">尚未配置 LLM 后端。请先「模型后端」。</div>
         )}
         {error && <div className="menu-error">{error}</div>}
 
@@ -91,15 +94,20 @@ export function MenuPage({
           <button className="menu-btn" disabled={!llmReady || !!busy || !saves.length} onClick={() => setShowSaveList(true)} title={saves.length ? "" : "暂无存档"}>
             加载存档 {saves.length ? `(${saves.length})` : ""}
           </button>
-          <button className="menu-btn" disabled={!!busy} onClick={() => setShowApiForm(true)}>
-            设置 API {hasKey || llmReady ? "" : "（必需）"}
+          <div className="menu-divider" />
+          <button className="menu-btn subtle" disabled={!!busy} onClick={() => setShowApiForm(true)}>
+            模型后端 {hasKey || llmReady ? "" : "（必需）"}
           </button>
-          <button className="menu-btn" disabled={!!busy} onClick={() => setShowGameSettings(true)}>
+          <button className="menu-btn subtle" disabled={!!busy} onClick={() => setShowGameSettings(true)}>
             游戏设置
           </button>
         </div>
 
-        {busy && <div className="menu-busy">{busy}</div>}
+        {busy && (
+          <div className="menu-busy">
+            <Loader2 size={15} className="spin" /> {busy}
+          </div>
+        )}
         {llmReady && status?.llm && (
           <div className="menu-llm-info">
             当前后端：{currentBackend}
