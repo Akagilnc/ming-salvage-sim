@@ -177,12 +177,18 @@ describe("DecisionModal", () => {
     const dossierDecision: PendingDecision = {
       ...decisions[0],
       event_id: "dossier:42",
+      rejection_reason: "科臣封驳，谓此旨有碍成宪。",
+      opposition: "都给事中韩一良（东林）",
       options: [{
         label: "强颁", hint: "以中旨颁行。",
         dossier_id: 42, dossier_decision: "force_promulgated",
       }],
     };
     const cleanup = render(<DecisionModal decisions={[dossierDecision]} onResolve={onResolve} />);
+    expect(document.body.textContent).toContain("科臣封驳，谓此旨有碍成宪。");
+    expect(document.body.textContent).toContain("都给事中韩一良（东林）");
+    expect(document.body.textContent).not.toContain("six_offices");
+    expect(document.body.textContent).not.toContain("faction");
     const note = document.querySelector<HTMLTextAreaElement>("textarea")!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "朕意已决。");

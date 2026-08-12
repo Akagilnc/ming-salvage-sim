@@ -1836,6 +1836,8 @@ class GameDB:
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -9651,13 +9653,16 @@ class GameDB:
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending')""",
+                   (turn, idx, event_id, title, context, rejection_reason, opposition,
+                    options_json, choice_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending')""",
                 (
                     int(turn), idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
+                    str(d.get("rejection_reason") or ""),
+                    str(d.get("opposition") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
                 ),
             )
@@ -9666,7 +9671,8 @@ class GameDB:
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
         rows = self.conn.execute(
-            "SELECT idx, event_id, title, context, options_json, choice_json, status "
+            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
+            "options_json, choice_json, status "
             "FROM pending_decisions WHERE turn = ? ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -9688,6 +9694,8 @@ class GameDB:
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
+                "rejection_reason": r["rejection_reason"],
+                "opposition": r["opposition"],
                 "options": options if isinstance(options, list) else [],
                 "choice": choice,
                 "status": r["status"],

@@ -446,10 +446,18 @@ def _rescript_decisions(
         dossier = by_id.get(dossier_id)
         if dossier is None:
             continue
+        opponents = [
+            str(item.get("key") or "").strip()
+            for item in verdict.get("primary_opponents", [])
+            if isinstance(item, dict) and str(item.get("key") or "").strip()
+        ]
+        opposition = "、".join(opponents)
         decisions.append({
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
+            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            "opposition": opposition,
             "options": [
                 *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",
