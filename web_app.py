@@ -19,7 +19,7 @@ import shutil
 import sys
 import time
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
@@ -654,6 +654,8 @@ class WebGame:
             verify_llm_available(llm_config)
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
+        # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
+        self._beat_generator = self.session._beat_generator
         self._write_gate = threading.Lock()
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
         # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
@@ -1415,16 +1417,15 @@ class WebGame:
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import attach_chat_turn_to_night
-            from ming_sim.beat_orchestration import production_beat_generator
-            # #503：生产路径接通 beat 编排缝（入殿/开夜正文随身份·召法·时地不同）；
-            # 内容质量日后由 #472/#478 换 LLM 实现同一 seam。
+            # #503/#542：生产路径接通真实 scene LLM 编排缝。
             _night_id, chat_turn_id = attach_chat_turn_to_night(
                 self.db,
                 self.state,
                 minister_name,
                 agno_session_id=agno_session_id,
                 agno_runs_before=runs_before,
-                beat_generator=production_beat_generator,
+                # durable 身份先落；scene 在轮内与大臣同启，join 后原子替换垫位。
+                beat_generator=None,
             )
         else:
             chat_turn_id = self.db.create_chat_turn(
@@ -1434,6 +1435,38 @@ class WebGame:
                 runs_before,
             )
         return chat_turn_id, snapshot
+
+    def _generate_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> tuple[int, str]:
+        """只读 durable night/turn 身份生成本轮入殿 scene。"""
+        if not chat_turn_id or getattr(self, "_beat_generator", None) is None:
+            return 0, ""
+        from ming_sim import beat_orchestration as beats
+        from ming_sim.audience_night import get_night, list_ledger, METHOD_XUANRU, TAG_ENTER
+        row = self.db.conn.execute(
+            "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
+        ).fetchone()
+        if row is None:
+            return 0, ""
+        night_id = int(row["night_id"] or 0)
+        entry = next((item for item in list_ledger(self.db, night_id)
+                      if int(item.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+                      and TAG_ENTER in (item.get("tags") or [])), None)
+        if entry is None:
+            return 0, ""
+        body = beats.generate_enter_beat_body(
+            self.db, self.state, night=get_night(self.db, night_id) or {},
+            person_name=minister_name, summon_method=METHOD_XUANRU,
+            beat_generator=self._beat_generator,
+        )
+        return int(entry["id"]), body
+
+    def _persist_scene_body(self, scene: tuple[int, str]) -> None:
+        entry_id, body = scene
+        if entry_id and body:
+            self.db.conn.execute(
+                "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
+                (str(body), int(entry_id)),
+            )
 
     def _record_chat_rollback_items(
         self,
@@ -1600,6 +1633,8 @@ class WebGame:
                 message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        scene_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="audience-scene")
+        scene_future = scene_pool.submit(self._generate_chat_turn_scene, minister_name, chat_turn_id)
         try:
             chat_signature = inspect.signature(self.session.chat)
             try:
@@ -1613,10 +1648,14 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            scene = scene_future.result()  # 无上限 join：两份玩家可见内容一起完成。
             with gate:
-                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
-                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-                payload = self._chat_payload(
+                from ming_sim.applier import atomic
+                # scene 与回话全有或全无；既有内层 commit 由 atomic 延后。
+                with atomic(self.db):
+                    self._persist_scene_body(scene)
+                    # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
+                    payload = self._chat_payload(
                     minister_name, result.answer,
                     court_action=result.court_action, next_minister=result.next_minister,
                     proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -1653,6 +1692,8 @@ class WebGame:
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
             raise
+        finally:
+            scene_pool.shutdown(wait=True)
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -1930,8 +1971,11 @@ class WebGame:
                     # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
                     # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
                     from ming_sim.audience_night import dismiss_from_audience
+                    # #542：退侍与开夜/入殿/收夜共用特征化 BeatInputs seam；账仍绑定本轮，
+                    # 失败由外围 chat_turn guard 统一终态化（#503 cross-ref）。
                     dismiss_from_audience(
                         self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                        state=self.state, beat_generator=getattr(self, "_beat_generator", None),
                     )
                 elif (
                     res.startswith("__secret_order_registered__")

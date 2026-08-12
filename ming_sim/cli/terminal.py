@@ -511,16 +511,15 @@ def minister_chat(session: GameSession, character: Character) -> str:
                 if lifecycle_supported:
                     rollback_snapshot = session.db.capture_chat_rollback_snapshot()
                     # #498：CLI 与 web 共用 attach_chat_turn_to_night，禁止 night_id=0 旁路
-                    # #503：生产路径接通 beat 编排缝（与 web _start_chat_turn 同 generator）
+                    # #503/#542：生产路径与 Web/收夜共用真实 scene LLM adapter。
                     from ming_sim.audience_night import attach_chat_turn_to_night
-                    from ming_sim.beat_orchestration import production_beat_generator
                     _night_id, chat_turn_id = attach_chat_turn_to_night(
                         session.db,
                         session.state,
                         character.name,
                         agno_session_id=f"cli:{character.name}",
                         agno_runs_before=0,
-                        beat_generator=production_beat_generator,
+                        beat_generator=getattr(session, "_beat_generator", None),
                     )
                 user_message_id = session.db.append_chat_message(
                     character.name, accepted_turn, "user", question,

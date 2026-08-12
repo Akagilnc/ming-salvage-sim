@@ -669,6 +669,8 @@ class GameSession:
         self.content = content if content is not None else GameContent.load()
         _bind_all_content(self.content)
         self.llm_config = llm_config
+        from ming_sim.beat_orchestration import create_llm_beat_generator
+        self._beat_generator = create_llm_beat_generator(llm_config)
         if verify_llm:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
@@ -2165,14 +2167,13 @@ class GameSession:
         # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
         # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
         from ming_sim.audience_night import auto_close_open_night
-        from ming_sim.beat_orchestration import production_beat_generator
-        # #503：收夜 beat 生产路径接通编排缝（与 attach 入殿同 generator）。
+        # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         auto_close_open_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
-            beat_generator=production_beat_generator,
+            beat_generator=self._beat_generator,
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的

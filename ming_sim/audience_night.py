@@ -1141,6 +1141,9 @@ def dismiss_from_audience(
     night_id: Optional[int] = None,
     body: str = "",
     origin_chat_turn_id: int = 0,
+    state: Any = None,
+    beat_generator: Any = None,
+    knowledge_provider: Any = None,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
@@ -1160,12 +1163,20 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
-    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
+    generated = ""
+    if not body and beat_generator is not None:
+        from ming_sim import beat_orchestration as beats
+
+        night = get_night(db, int(nid)) or {}
+        generated = beats.generate_exit_beat_body(
+            db, state, night=night, person_name=name,
+            beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+        )
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or f"帝令{name}退下，{name}告退。",
+        body=body or generated or f"帝令{name}退下，{name}告退。",
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,
