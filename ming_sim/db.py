@@ -471,29 +471,8 @@ _OFFICE_LEVERAGE_WEIGHT = {
     # 后宫 / 宗藩 / 未仕 → 0（不在朝堂博弈或无实权）；office_type 不在表里 → 权重 0。
 }
 
-# 品级档 multiplier：从 office 头衔字串解析（同一 office_type 内 尚书 vs 职方 权力天差地别）。
-# 关键词按档分组；一个头衔逐档命中（堂官档优先于佐贰、佐贰优先于属官）。未识别 → 默认 1.0（保守，
-# 避免漏算堂官）。词序在档内不影响（只判是否含子串）。
-_OFFICE_RANK_TIERS = (
-    (1.0, (  # 堂官 / 主官
-        "尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
-        "总兵", "都督", "都指挥使", "都御史",
-    )),
-    (0.5, (  # 佐贰
-        "侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
-        # #9 线上 R3（codex P2）审计补全：offices.json 里「含某 1.0 档关键词作子串」的佐贰官名，
-        # 经 min-within-part 会与 1.0 子串共同命中、取 min 落 0.5（与 副总兵⊃总兵 同治）。逐个：
-        #   副都御史 ⊃ 都御史（本 finding 核心：都察院佐贰，左/右副都御史，非堂官）；
-        #   同知 ⊃（都督同知⊃都督、府同知、卫指挥同知）——通治 generic 佐贰词干「同知」；
-        #   佥事 ⊃（都督佥事⊃都督、按察佥事）——通治 generic 佐贰词干「佥事」（佥都御史已在上）。
-        # 不加 左/右都御史（都察院堂官、是主官非副）、提督/总督 类（主官）——它们正职档 1.0 不动。
-        "副都御史", "同知", "佥事",
-    )),
-    (0.25, (  # 属官 / 微员
-        "郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
-        "候补", "候用", "随堂", "信邸内官",
-    )),
-)
+# 品级档 multiplier 已迁到 content/offices.json rank_rules（#562）：
+# faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
 _DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免漏算堂官）
 
 # 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
@@ -501,36 +480,18 @@ _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "d
 
 
 def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
-    """从 office 头衔字串解析品级 multiplier。逗号分隔的多职取**已识别分项中的最高档**。
-    只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
-    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。
-    #9 R1 finding#5：already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize
-    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。
+    """从 office 头衔字串解析品级 multiplier。唯一真源=offices.json rank_rules。
 
-    #9 线上 R2 finding（品级子串误匹配）：**单个分项取「所有命中档里最低的 multiplier」**——
-    因为副职关键词更长（副总兵⊃总兵、佥都御史⊃都御史），与正职子串会共同命中，取 min 自然落到
-    副职档（0.5）；纯正职（如单独「总兵」「都御史」）只命中 1.0 档 → 仍 1.0。这样通治所有
-    「子串包含」overlap（不止副总兵/佥都御史两例）。跨分项仍取 max（身兼数职取最高官）。"""
+    逗号分隔的多职取已识别分项中的最高档；整串无 leverage 词干时落默认 1.0。
+    already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize。
+    """
+    from ming_sim.office_rank import office_leverage_multiplier
+
     text = office or ""
     if not text.strip():
         return _DEFAULT_OFFICE_RANK_MULTIPLIER
     normalized = text if already_normalized else normalize_office(text)
-    best: Optional[float] = None
-    for part in (p.strip() for p in normalized.split(",")):
-        if not part:
-            continue
-        # 该分项命中的所有档取最低 multiplier（副职关键词更长、与正职子串共同命中时取 min 落副职）。
-        part_mult: Optional[float] = None
-        for mult, keywords in _OFFICE_RANK_TIERS:
-            if any(kw in part for kw in keywords):
-                if part_mult is None or mult < part_mult:
-                    part_mult = mult
-        if part_mult is None:
-            continue  # 该分项无任何识别词 → 不贡献（沿用整体兜底语义）
-        if best is None or part_mult > best:
-            best = part_mult  # 跨分项取最高官
-    # 整串无任一识别词 → 保守默认（避免把生造/罕见堂官头衔误判成低档）
-    return best if best is not None else _DEFAULT_OFFICE_RANK_MULTIPLIER
+    return office_leverage_multiplier(normalized, already_normalized=True)
 
 
 def _member_office_weight(office_type: str, office: str) -> float:
@@ -2106,6 +2067,8 @@ class GameDB:
         region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
         # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
         DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
+        from ming_sim.office_rank import canonical_office_title
+
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
         ).fetchall():
@@ -2124,6 +2087,13 @@ class GameDB:
                 "WHERE name=?",
                 (status, rc, office, loc_region, name),
             )
+            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
+            historical = canonical_office_title(office)
+            if historical:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (historical, name),
+                )
         # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%在途%'"

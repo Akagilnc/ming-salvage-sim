@@ -1,7 +1,8 @@
 import json
+import re
 
 from ming_sim.decree import build_promulgation_judge_context
-from ming_sim.office_rank import office_rank_band
+from ming_sim.office_rank import office_leverage_multiplier, office_rank_band
 from ming_sim.models import Character
 
 
@@ -100,3 +101,81 @@ def test_restoration_and_displaced_third_state_use_latest_historical_office(game
     _return_id, returned = _appointment_dossier(db, state, "候铨乙", "户部尚书")
     assert returned["break_rank"]["basis"] == "historical_office"
     assert returned["break_rank"]["is_break_rank"] is False
+
+
+def test_title_stems_keep_distinct_ming_bands_inside_same_office_type():
+    """Owner #562: actual title/stem bands, not one representative band per type."""
+    assert office_rank_band("兵部尚书") == 2
+    assert office_rank_band("兵部侍郎") == 3
+    assert office_rank_band("兵部郎中") == 5
+    assert office_rank_band("兵部主事") == 6
+    assert office_rank_band("副总兵") == 3
+    assert office_rank_band("总兵") == 2
+    assert office_rank_band("监察御史") == 7
+    assert office_rank_band("少卿") == 4
+    assert office_rank_band("前礼部右少卿,罢居上海") == 4
+
+
+def test_leverage_multiplier_uses_canonical_office_rank_table_only():
+    """AC: migrate db._OFFICE_RANK_TIERS so faction leverage consumes the same parser."""
+    import ming_sim.db as dbmod
+
+    assert not hasattr(dbmod, "_OFFICE_RANK_TIERS")
+    src = open(dbmod.__file__, encoding="utf-8").read()
+    assert "_OFFICE_RANK_TIERS" not in src
+    assert not re.search(r"for mult, keywords in ", src)
+
+    # Preserve the old external leverage contract on overlapping stems.
+    assert office_leverage_multiplier("副总兵") == 0.5
+    assert office_leverage_multiplier("锦州副总兵") == 0.5
+    assert office_leverage_multiplier("佥都御史") == 0.5
+    assert office_leverage_multiplier("佥都御史，巡按") == 0.5
+    assert office_leverage_multiplier("总兵") == 1.0
+    assert office_leverage_multiplier("都御史") == 1.0
+    assert office_leverage_multiplier("兵部尚书") == 1.0
+    assert office_leverage_multiplier("内阁首辅") == 1.0
+    assert office_leverage_multiplier("司礼监掌印太监") == 1.0
+    assert office_leverage_multiplier("司礼监秉笔太监") == 1.0
+    assert office_leverage_multiplier("侍郎") == 0.5
+    assert office_leverage_multiplier("东阁大学士") == 0.5
+    assert office_leverage_multiplier("次辅") == 0.5
+    assert office_leverage_multiplier("兵部职方") == 0.25
+    assert office_leverage_multiplier("郎中") == 0.25
+    assert office_leverage_multiplier("游击") == 0.25
+    assert office_leverage_multiplier("礼部尚书,东阁大学士") == 1.0
+    assert office_leverage_multiplier("火器西法") == 1.0
+    assert office_leverage_multiplier("副都御史") == 0.5
+    assert office_leverage_multiplier("右副都御史") == 0.5
+    assert office_leverage_multiplier("都督佥事") == 0.5
+    assert office_leverage_multiplier("都督同知") == 0.5
+    assert office_leverage_multiplier("同知") == 0.5
+    assert office_leverage_multiplier("佥事") == 0.5
+    assert office_leverage_multiplier("指挥同知") == 0.5
+    assert office_leverage_multiplier("左都御史") == 1.0
+    assert office_leverage_multiplier("右都御史") == 1.0
+    assert office_leverage_multiplier("提督东厂") == 1.0
+    assert office_leverage_multiplier("提督京营") == 1.0
+    assert office_leverage_multiplier("总督军务") == 1.0
+    assert office_leverage_multiplier("秉笔太监") == 1.0
+    assert office_leverage_multiplier("都指挥使") == 1.0
+
+    # db wrapper stays as the leverage call-site seam and delegates to the same table.
+    assert dbmod._office_rank_multiplier("副总兵") == office_leverage_multiplier("副总兵")
+    assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == 1.0
+
+
+def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
+    db, _state, _content = game
+    yuan = db.conn.execute(
+        "SELECT office_title FROM character_offices WHERE character_name=?",
+        ("袁可立",),
+    ).fetchone()
+    assert yuan is not None
+    assert "巡抚" in yuan["office_title"]
+    assert "罢居" not in yuan["office_title"]
+    assert not yuan["office_title"].startswith("前")
+
+    _dossier_id, payload = _appointment_dossier(db, _state, "袁可立", "陕西巡抚")
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is False
+    assert payload["break_rank"]["current_rank_band"] == 3
