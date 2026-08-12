@@ -366,7 +366,6 @@
       "rank_band": 1,
       "leverage_multiplier": 1.0,
       "stems": [
-        "首辅",
         "太师",
         "太傅",
         "太保",
@@ -376,7 +375,14 @@
       ]
     },
     {
-      "rank_band": 1,
+      "rank_band": 5,
+      "leverage_multiplier": 1.0,
+      "stems": [
+        "首辅"
+      ]
+    },
+    {
+      "rank_band": 5,
       "leverage_multiplier": 0.5,
       "stems": [
         "大学士",
@@ -523,7 +529,12 @@
       "rank_band": 1,
       "stems": [
         "皇后",
-        "中宫",
+        "中宫"
+      ]
+    },
+    {
+      "rank_band": 5,
+      "stems": [
         "内阁",
         "辅臣",
         "阁臣",
