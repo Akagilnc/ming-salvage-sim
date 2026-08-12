@@ -146,39 +146,13 @@ def build_promulgation_judge_context(
             payload = json.loads(str(row.get("payload_json") or "{}"))
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
-        authorization_ids = payload.get("authorization_ids", [])
-        if not isinstance(authorization_ids, list):
-            authorization_ids = []
-        authorization_id = payload.get("authorization_id")
-        if authorization_id and str(authorization_id) not in authorization_ids:
-            authorization_ids = [*authorization_ids, str(authorization_id)]
         endorsement_ids = payload.get("endorsement_entry_ids", [])
         if not isinstance(endorsement_ids, list):
             endorsement_ids = []
-        holder_ids = {
-            str(payload.get(key) or "").strip()
-            for key in ("assignee_id", "character_id", "executor_id")
-        }
-        holder_ids.discard("")
-        executor_id = str(row.get("executor_id") or "").strip()
-        if executor_id:
-            holder_ids.add(executor_id)
-        held_authorities = []
-        for holder_id in sorted(holder_ids):
-            for authority_record in db.list_active_authorities(
-                state.turn, holder_id=holder_id,
-            ):
-                held_authorities.append({
-                    "id": int(authority_record["id"]),
-                    "holder_id": str(authority_record["holder_id"]),
-                    "privilege": str(authority_record["privilege"]),
-                    "scope": str(authority_record["scope"]),
-                    "effective_turn": int(authority_record["effective_turn"]),
-                })
-        held_authorities.sort(key=lambda item: int(item["id"]))
-        authorization_ids = [
-            *authorization_ids, *(str(item["id"]) for item in held_authorities),
-        ]
+        # #611: authorization_ids come only from the unique applicability projection.
+        # Never read payload authorization_id(s) as a parallel authority identity source.
+        held_authorities = db.project_applicable_authorities(state.turn, row)
+        authorization_ids = [str(item["id"]) for item in held_authorities]
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
@@ -192,8 +166,8 @@ def build_promulgation_judge_context(
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
-                "authorization_ids": sorted(set(map(str, authorization_ids))),
-                "endorsement_entry_ids": sorted(set(endorsement_ids)),
+                "authorization_ids": authorization_ids,
+                "endorsement_entry_ids": sorted(set(map(str, endorsement_ids))),
             },
         })
     gatekeepers = [

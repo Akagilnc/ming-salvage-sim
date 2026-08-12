@@ -1,66 +1,303 @@
+"""#611 authority ledger: production slot, projection, restore, revoke impression."""
+
 from ming_sim.db import GameDB
+from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
+from ming_sim.relations import EMPEROR_NODE
+from ming_sim.simulation import TOP_LEVEL_ALIASES, canonicalize_extraction
 
 
 def _minister(db):
     return str(db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' ORDER BY name LIMIT 1"
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
     ).fetchone()["name"])
 
 
-def _dossier(db, state, assignee):
+def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清丈田亩"):
+    """Real effect-eligible dossier used as authority_changes source."""
     dossier_id = db.create_decree_dossier(
-        state, action_type="policy", decree_text="清丈田亩",
-        target_kind="issue", target_id="authority-fixture",
-        payload={"assignee_id": assignee},
+        state,
+        action_type="authorization",
+        decree_text="授以便宜行事之权",
+        target_kind=target_kind,
+        target_id=target_id,
+        executor_kind="character",
+        executor_id=holder,
+        participants=[
+            {"character_id": holder, "tier": "主办", "role": "承办"},
+        ],
+        payload={"mode": "ordinary"},
     )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    assert db.dossier_authorizes_effects(dossier_id)
     return db.get_decree_dossier(dossier_id)
 
 
-def test_active_authority_survives_reopen_and_is_read_by_promulgation_judge(game):
-    db, state, content = game
-    assignee = _minister(db)
-    authority_id = db.grant_authority(
-        state, assignee, "便宜行事", "清丈田亩", effective_turn=state.turn,
-    )
-    dossier = _dossier(db, state, assignee)
-
-    before = decree_mod.build_promulgation_judge_context(db, state, [dossier])
-    db.close()
-    restored = GameDB(db.path, content)
-    restored_state = restored.load_state()
-    after = decree_mod.build_promulgation_judge_context(
-        restored, restored_state, [restored.get_decree_dossier(dossier["id"])],
-    )
-
-    expected = [{
-        "id": authority_id, "holder_id": assignee, "privilege": "便宜行事",
-        "scope": "清丈田亩", "effective_turn": state.turn,
+def test_authority_changes_alias_canonicalizes():
+    assert TOP_LEVEL_ALIASES["授权变更"] == "authority_changes"
+    assert canonicalize_extraction({
+        "授权变更": [{
+            "动作": "授予", "授予对象": "甲", "权项": "便宜行事",
+            "事域": "issue:x", "案卷编号": 1,
+        }],
+    })["authority_changes"] == [{
+        "动作": "授予", "holder_id": "甲", "privilege": "便宜行事",
+        "scope": "issue:x", "dossier_id": 1,
     }]
-    assert before["dossiers"][0]["held_authorities"] == expected
-    assert after["dossiers"][0]["held_authorities"] == expected
 
 
-def test_revoked_authority_is_durable_and_no_longer_modifies_judge_context(game):
-    db, state, _content = game
-    assignee = _minister(db)
-    authority_id = db.grant_authority(
-        state, assignee, "尚方剑密授", "辽东军务", effective_turn=state.turn,
+def test_production_path_grant_restore_revoke_impression_tracer(game):
+    """Real production-slot lifecycle: grant → judge → restore → revoke → restore."""
+    db, state, content = game
+    holder = _minister(db)
+    domain = "issue:清丈田亩"
+    grant_dossier = _eligible_dossier(
+        db, state, holder, target_id="清丈田亩",
     )
     metrics_before = dict(state.metrics)
-    factions_before = [dict(row) for row in db.conn.execute(
-        "SELECT name,satisfaction,leverage FROM factions ORDER BY name"
-    )]
-    assert db.revoke_authority(authority_id, state.turn) is True
+    factions_before = [
+        dict(row) for row in db.conn.execute(
+            "SELECT name,satisfaction,leverage FROM factions ORDER BY name"
+        )
+    ]
 
-    dossier = _dossier(db, state, assignee)
-    context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
-    record = db.get_authority(authority_id)
+    grant_result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": domain,
+            "dossier_id": grant_dossier["id"],
+        }],
+    }, content=content)
+    assert grant_result["authority_changes"][0].get("rejected") is not True
+    authority_id = int(grant_result["authority_changes"][0]["authority_id"])
+    assert authority_id > 0
+    db.conn.commit()
 
+    consumer = _eligible_dossier(
+        db, state, holder, target_id="清丈田亩",
+    )
+    # Same holder/domain; projection must surface the granted row.
+    before = decree_mod.build_promulgation_judge_context(db, state, [consumer])
+    expected_held = [{
+        "id": authority_id,
+        "holder_id": holder,
+        "privilege": "便宜行事",
+        "scope": domain,
+        "effective_turn": state.turn,
+    }]
+    assert before["dossiers"][0]["held_authorities"] == expected_held
+    assert before["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        str(authority_id),
+    ]
+
+    db.conn.commit()
+    db_path = db.path
+    db.close()
+    restored = GameDB(db_path, content)
+    restored_state = restored.load_state()
+    after_restore = decree_mod.build_promulgation_judge_context(
+        restored, restored_state, [restored.get_decree_dossier(consumer["id"])],
+    )
+    assert after_restore["dossiers"][0]["held_authorities"] == expected_held
+    assert after_restore["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        str(authority_id),
+    ]
+
+    revoke_dossier = _eligible_dossier(
+        restored, restored_state, holder, target_id="收权清丈",
+    )
+    revoke_result = issue_engine.apply_score_extraction(restored, restored_state, {
+        "authority_changes": [{
+            "动作": "收回",
+            "authority_id": authority_id,
+            "dossier_id": revoke_dossier["id"],
+        }],
+    }, content=content)
+    assert revoke_result["authority_changes"][0].get("rejected") is not True
+    assert revoke_result["authority_changes"][0]["authority_id"] == authority_id
+    restored.conn.commit()
+
+    record = restored.get_authority(authority_id)
     assert record["revoked"] is True
-    assert record["revoked_turn"] == state.turn
-    assert context["dossiers"][0]["held_authorities"] == []
-    assert state.metrics == metrics_before
-    assert [dict(row) for row in db.conn.execute(
-        "SELECT name,satisfaction,leverage FROM factions ORDER BY name"
-    )] == factions_before
+    assert record["revoked_turn"] == restored_state.turn
+
+    edges = restored.get_relation_edge_events(
+        source=holder, target=EMPEROR_NODE, event_kind="结怨",
+    )
+    assert len(edges) == 1
+    assert edges[0]["context"] == f"收权·罢差·便宜行事·{domain}"
+    assert edges[0]["origin"].startswith(f"authority_revoke:{authority_id}")
+    assert not edges[0]["evidence"]
+
+    # Zero 0056 / 皇威 / faction cost on revoke.
+    assert restored_state.metrics == metrics_before
+    assert [
+        dict(row) for row in restored.conn.execute(
+            "SELECT name,satisfaction,leverage FROM factions ORDER BY name"
+        )
+    ] == factions_before
+
+    # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
+    first_revoked_turn = record["revoked_turn"]
+    again = issue_engine.apply_score_extraction(restored, restored_state, {
+        "authority_changes": [{
+            "动作": "收回",
+            "authority_id": authority_id,
+            "dossier_id": revoke_dossier["id"],
+        }],
+    }, content=content)
+    assert again["authority_changes"][0]["reason"] == "already_revoked"
+    assert again["authority_changes"][0].get("rejected") is not True
+    assert restored.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
+    assert len(restored.get_relation_edge_events(
+        source=holder, target=EMPEROR_NODE, event_kind="结怨",
+    )) == 1
+
+    restored.conn.commit()
+    restored.close()
+    final = GameDB(db_path, content)
+    final_state = final.load_state()
+    gone = decree_mod.build_promulgation_judge_context(
+        final, final_state, [final.get_decree_dossier(consumer["id"])],
+    )
+    assert gone["dossiers"][0]["held_authorities"] == []
+    assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
+
+
+def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
+    db, state, content = game
+    holder = _minister(db)
+    good = _eligible_dossier(db, state, holder, target_id="合法授予")
+    rejected_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="打回之旨",
+        target_kind="issue", target_id="打回",
+        executor_kind="character", executor_id=holder,
+    )
+    db.record_dossier_decision(rejected_id, "rejected", reason="封驳")
+    assert not db.dossier_authorizes_effects(rejected_id)
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [
+            {
+                "动作": "授予",
+                "holder_id": holder,
+                "privilege": "尚方剑密授",
+                "scope": "issue:打回",
+                "dossier_id": rejected_id,
+            },
+            {
+                # Missing dossier_id entirely.
+                "动作": "授予",
+                "holder_id": holder,
+                "privilege": "专差督办",
+                "scope": "issue:无来源",
+            },
+            {
+                "动作": "授予",
+                "holder_id": holder,
+                "privilege": "新机构专办",
+                "scope": "issue:合法授予",
+                "dossier_id": good["id"],
+            },
+        ],
+    }, content=content)
+
+    rows = result["authority_changes"]
+    assert rows[0]["rejected"] is True
+    assert rows[0]["reason"] == "dossier_not_effect_eligible"
+    assert rows[1]["rejected"] is True
+    assert rows[1]["reason"] == "missing_dossier_source"
+    assert rows[2].get("rejected") is not True
+    authority_id = int(rows[2]["authority_id"])
+    assert db.get_authority(authority_id)["privilege"] == "新机构专办"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
+
+
+def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
+    db, state, _content = game
+    holder = _minister(db)
+    other = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "AND name<>? ORDER BY name LIMIT 1",
+        (holder,),
+    ).fetchone()["name"]
+    domain = "issue:边饷"
+    typed = db.grant_authority(
+        state, holder, "专差督办", domain, effective_turn=state.turn,
+    )
+    bare = db.grant_authority(
+        state, holder, "便宜行事", "边饷", effective_turn=state.turn,
+    )
+    # Informed-only roster member must not count as actor.
+    informed_only = db.grant_authority(
+        state, other, "尚方剑密授", domain, effective_turn=state.turn,
+    )
+
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="边饷专差",
+        target_kind="issue", target_id="边饷",
+        executor_kind="character", executor_id=holder,
+        participants=[
+            {"character_id": holder, "tier": "主办"},
+            {"character_id": other, "tier": "知情"},
+        ],
+        payload={
+            "authorization_id": "payload-auth",
+            "authorization_ids": ["payload-list"],
+            "assignee_id": other,
+            "character_id": other,
+        },
+    )
+    dossier = db.get_decree_dossier(dossier_id)
+    projected = db.project_applicable_authorities(state.turn, dossier)
+    assert [row["id"] for row in projected] == [typed]
+    assert bare not in {row["id"] for row in projected}
+    assert informed_only not in {row["id"] for row in projected}
+
+    context = decree_mod.build_promulgation_judge_context(db, state, [dossier])
+    assert context["dossiers"][0]["held_authorities"] == projected
+    assert context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
+        str(typed),
+    ]
+    assert "payload-auth" not in (
+        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    )
+    assert "payload-list" not in (
+        context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    )
+
+
+def test_duplicate_active_authority_is_rejected(game):
+    db, state, content = game
+    holder = _minister(db)
+    dossier = _eligible_dossier(db, state, holder, target_id="dup")
+    first = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:dup",
+            "dossier_id": dossier["id"],
+        }],
+    }, content=content)
+    assert first["authority_changes"][0].get("rejected") is not True
+
+    second = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:dup",
+            "dossier_id": dossier["id"],
+        }],
+    }, content=content)
+    assert second["authority_changes"][0]["rejected"] is True
+    assert second["authority_changes"][0]["reason"] == "duplicate_active_authority"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
