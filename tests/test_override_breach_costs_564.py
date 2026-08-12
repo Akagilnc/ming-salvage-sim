@@ -28,8 +28,8 @@ def _verdict(dossier_id, decision="rejected"):
             "authorization_ids": [], "endorsement_entry_ids": [],
         },
         "affected_parties": [
-            {"kind": "class", "key": "士绅", "severity": "大怒"},
-            {"kind": "faction", "key": "东林", "severity": "不满"},
+            {"kind": "class", "key": "士绅", "direction": "negative", "intensity": "strong"},
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
         ],
     }
 
@@ -52,6 +52,22 @@ def test_force_land_survey_charges_three_costs_without_eunuch_reaction(game):
         ("satisfaction", "faction", "东林"), ("stigma", "dossier", str(dossier_id)),
     }
     assert all(x["target_id"] != "阉党" for x in events)
+
+
+def test_signed_reactions_use_typed_direction_not_narrative_words(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    verdict = _verdict(dossier_id, decision="promulgated")
+    verdict["reason"] = "东林震怒，士绅欣然"
+    verdict["affected_parties"] = [
+        {"kind": "faction", "key": "东林", "direction": "positive", "intensity": "weak"},
+        {"kind": "class", "key": "士绅", "direction": "negative", "intensity": "strong"},
+    ]
+    before_faction = _sat(db, "factions", "东林")
+    before_class = _sat(db, "classes", "士绅")
+    db.apply_dossier_verdicts(state, [verdict])
+    assert _sat(db, "factions", "东林") == min(100, before_faction + 4)
+    assert _sat(db, "classes", "士绅") == max(0, before_class - 8)
 
 
 def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_authority(game):

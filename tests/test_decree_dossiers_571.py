@@ -15,7 +15,7 @@ def _rejected_verdict(dossier_id):
         "primary_opponents": [{"kind": "faction", "key": "东林"}],
         "gatekeeper_id": None, "reason": "科臣封驳。",
         "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
         ],
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱", "appointment_tenure": "",

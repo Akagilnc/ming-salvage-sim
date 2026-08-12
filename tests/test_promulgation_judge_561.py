@@ -257,7 +257,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
             "endorsement_entry_ids": [],
         },
         "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "大怒"},
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "strong"},
         ],
         **({"midzhi_unpromulgatable": True} if midzhi else {}),
     }
@@ -277,7 +277,7 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
         verdict = {"dossier_id": dossier_id, "decision": decision}
         if mode == "midzhi":
             verdict["affected_parties"] = [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]
     else:
         verdict = _rejected_verdict(
@@ -671,7 +671,7 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
             _rejected_verdict(hostile_land, band),
             {"dossier_id": ordinary_pay, "decision": "promulgated"},
             {"dossier_id": midzhi_pay, "decision": "promulgated", "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]},
             _rejected_verdict(vital_midzhi, band, midzhi=True),
         ]}, ensure_ascii=False)
