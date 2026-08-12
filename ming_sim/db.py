@@ -10082,7 +10082,7 @@ class GameDB:
         return normalized
 
     def _find_pacification_target(self, content, name: str) -> Optional[str]:
-        """Resolve an existing live non-Ming person for the pacification dossier only."""
+        """Resolve living canonical 内乱 leader still needing 自新受抚 (敌对/潜伏 only)."""
         matched = None
         if name in content.characters:
             matched = name
@@ -10106,9 +10106,6 @@ class GameDB:
             and power["stance"] in {"敌对", "潜伏"}
             and power["leader"] == matched
         ):
-            return None
-        character = content.characters[matched]
-        if character.status == "candidate" or character.office_type == "后宫":
             return None
         return matched
 
