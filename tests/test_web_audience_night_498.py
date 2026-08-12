@@ -321,17 +321,18 @@ def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_
         },
     )
 
+    registered_paths = {route.path for route in web_app.app.routes}
+    assert "/api/directives/{directive_id}/confirm" not in registered_paths
+    assert "/api/directives/{directive_id}/reject" not in registered_paths
+
     async def scenario():
         async with _client() as client:
             state = (await client.get("/api/game/state")).json()
-            confirm = await client.post(f"/api/directives/{directive_id}/confirm")
-            reject = await client.post(f"/api/directives/{directive_id}/reject")
             advance = await client.post("/api/decree/advance_without_edict")
-            return state, confirm.status_code, reject.status_code, advance
+            return state, advance
 
-    state_payload, confirm_status, reject_status, response = asyncio.run(scenario())
+    state_payload, response = asyncio.run(scenario())
     assert dossiered_id not in {row["id"] for row in state_payload["directives"]}
-    assert (confirm_status, reject_status) == (405, 405)
     assert response.status_code == 200
     assert an.get_night(game.db, int(night["id"]))["status"] == "closed"
     closes = [
@@ -451,10 +452,12 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
     )
     game.db.ensure_dossiers_for_draft_directives(game.state)
 
+    registered_paths = {route.path for route in web_app.app.routes}
+    assert "/api/decree/write" not in registered_paths
+
     async def scenario():
         async with _client() as client:
             return (
-                await client.post("/api/decree/write", json={}),
                 await client.patch(
                     f"/api/directives/{directive_id}", json={"text": "改稿"},
                 ),
@@ -462,8 +465,7 @@ def test_asgi_dossiered_directive_has_no_retired_review_surface(web_game):
                 await client.get("/api/game/state"),
             )
 
-    preview, edit, delete, state = asyncio.run(scenario())
-    assert preview.status_code == 405
+    edit, delete, state = asyncio.run(scenario())
     assert edit.status_code == 404
     assert delete.status_code == 409
     assert directive_id not in {row["id"] for row in state.json()["directives"]}
