@@ -13,7 +13,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "metric_delta":     {},  // dict[国势名 -> int]
   "economy_moves":    [],  // list[一次性收支]
   "faction_delta":    {},  // dict[派系名 -> int]
-  "class_delta":      {},  // dict[阶级名 或 阶级@省id -> int]
+  "class_delta":      {},  // dict[阶级名 或 阶级@省id -> {satisfaction/leverage: int}]
   "region_delta":     {},  // dict[region_id -> {字段:数值}]
   "fiscal_changes":   [],  // 改某项月度收支额度
   "fiscal_creates":   [],  // 新立月度收支（新税/新俸）
@@ -75,7 +75,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 ### `class_delta` — 阶级满意度变化
 - 合法 key：`<class_name>` 或 `<class_name>@<region_id>`（如 `农民@shaanxi`）
 - `class_name` 在 `content/classes.json` 里：农民 / 士绅 / 官僚 / 军户 / 商人 / 匠户 / 宗藩
-- 值：int 增量 〔⚠️ 与实码不符：实际为嵌套结构 `{类:{satisfaction/leverage: int}}`，扁平值被 `_apply_class_dict` 静默跳过，见 ADR 0056〕
+- value：dict，只收 `satisfaction` / `leverage` 两个字段；字段值为 int 增量
+- 非 dict 的阶级 item（包括扁平 int）不合法，按 item 逐项以 `invalid_enum` 拒收留痕；同一 `class_delta` 中其它合法 item 仍照常落库
 
 ### `region_delta` — 地区变化
 - 每个 region value 必填 `origin_ref`（已颁 `dossier:<id>` 或 `盘面自发`）；该字段不作为地区属性处理。
