@@ -1391,6 +1391,21 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
                 ON decree_dossier_links(target_dossier_id, id);
+            -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
+            CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+                endorser_id TEXT NOT NULL DEFAULT '',
+                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+                source_chat_turn_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, form, endorser_id, imperial, source_chat_turn_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+                FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
+                ON decree_dossier_endorsements(dossier_id, id);
             CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_dossier_id INTEGER NOT NULL,
@@ -8315,6 +8330,15 @@ class GameDB:
                     order_key=base,
                 )
                 new_ids.append(int(entry_id))
+                endorsement = fact.get("endorsement")
+                if isinstance(endorsement, Mapping):
+                    self.add_dossier_endorsement(
+                        int(endorsement.get("dossier_id") or 0),
+                        form=str(endorsement.get("form") or ""),
+                        endorser_id=str(endorsement.get("endorser_id") or ""),
+                        imperial=bool(endorsement.get("imperial", False)),
+                        source_chat_turn_id=cid, commit=False,
+                    )
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
@@ -10402,6 +10426,56 @@ class GameDB:
             character = str(item.get("character_id") or "")
             if delegator and (delegator == character or delegator not in responsible):
                 raise ValueError("委派人须为同案主办/协办且不得自委派")
+
+    def add_dossier_endorsement(
+        self, dossier_id: int, *, form: str, source_chat_turn_id: int,
+        endorser_id: str = "", imperial: bool = False, commit: bool = True,
+    ) -> int:
+        """Persist one already-spoken ADR 0070 endorsement; never re-judge willingness."""
+        did, cid = int(dossier_id), int(source_chat_turn_id)
+        kind = str(form or "").strip()
+        person = str(endorser_id or "").strip()
+        is_imperial = bool(imperial)
+        if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
+            raise ValueError("背书所指案卷不存在")
+        if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:
+            raise ValueError("背书来源对话轮不存在")
+        if kind not in {"会签", "当面站台", "御笔手敕"}:
+            raise ValueError("背书形式非法")
+        if kind == "御笔手敕":
+            if not is_imperial or person:
+                raise ValueError("御笔手敕必须使用御笔标记且不得具名大臣")
+        else:
+            if is_imperial or not person:
+                raise ValueError("会签/当面站台必须具名背书人")
+            if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
+                raise ValueError("背书人物不存在")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO decree_dossier_endorsements "
+            "(dossier_id,form,endorser_id,imperial,source_chat_turn_id) VALUES (?,?,?,?,?)",
+            (did, kind, person, int(is_imperial), cid),
+        )
+        row = self.conn.execute(
+            "SELECT id FROM decree_dossier_endorsements WHERE dossier_id=? AND form=? "
+            "AND endorser_id=? AND imperial=? AND source_chat_turn_id=?",
+            (did, kind, person, int(is_imperial), cid),
+        ).fetchone()
+        if commit:
+            self._commit_dossier_write(True)
+        return int(row["id"])
+
+    def list_dossier_endorsements(self, dossier_id: int) -> List[Dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT id,dossier_id,form,endorser_id,imperial,source_chat_turn_id "
+            "FROM decree_dossier_endorsements WHERE dossier_id=? ORDER BY id",
+            (int(dossier_id),),
+        ).fetchall()
+        return [{
+            "id": int(row["id"]), "dossier_id": int(row["dossier_id"]),
+            "form": str(row["form"]), "endorser_id": str(row["endorser_id"]),
+            "imperial": bool(row["imperial"]),
+            "source_chat_turn_id": int(row["source_chat_turn_id"]),
+        } for row in rows]
 
     def append_decree_dossier_participants(
         self, dossier_id: int, participants: Iterable[object], *,

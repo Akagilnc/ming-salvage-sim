@@ -315,7 +315,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
             "gatekeepers 官员名单形成的把关关口三类触发才可打回。皇威越高触发面"
             "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
-            "courage、integrity 判断，不按派系首领意志判断。",
+            "courage、integrity 判断，不按派系首领意志判断。案卷 endorsements 是已经说出口并落库的担名事实："
+            "会签/当面站台使否决方不好再拖、降低打回倾向；御笔手敕意味着驳回即抗旨，应大幅降低打回倾向。"
+            "不得再按皇威判断担名者愿不愿意，也不得忽略或删除这些条目。",
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
@@ -385,6 +387,10 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
             "「殿上公开」或「御前低语」（递话/读心/私语类御前内容标私，缺省公开）；"
             "body=一句中文情节记述；tags=开放短标签数组；presence_effect 仅当该情节"
             "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串。",
+            "若回话明确说出口对「可背书案卷」中某案的会签、当面站台或御笔手敕，"
+            "在对应 fact 增加 endorsement={dossier_id,form,endorser_id,imperial}。"
+            "会签/当面站台须填具名大臣且 imperial=false；御笔手敕须 endorser_id=空串且 imperial=true。"
+            "只可引用输入中已有案卷，不按皇威或其他条件二次判断是否愿意担名；没说出口则不捕获。",
             "没有可抽取的显著情节时输出 {\"facts\":[]}。不输出 JSON 以外任何文字。",
         ],
         add_history_to_context=False,

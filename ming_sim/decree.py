@@ -152,9 +152,8 @@ def build_promulgation_judge_context(
         authorization_id = payload.get("authorization_id")
         if authorization_id and str(authorization_id) not in authorization_ids:
             authorization_ids = [*authorization_ids, str(authorization_id)]
-        endorsement_ids = payload.get("endorsement_entry_ids", [])
-        if not isinstance(endorsement_ids, list):
-            endorsement_ids = []
+        endorsements = db.list_dossier_endorsements(int(row["id"]))
+        endorsement_ids = [int(item["id"]) for item in endorsements]
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
@@ -164,6 +163,7 @@ def build_promulgation_judge_context(
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
             "break_rank": break_rank.get(int(row["id"])),
+            "endorsements": endorsements,
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
