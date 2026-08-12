@@ -203,16 +203,27 @@ def test_valid_flat_int_faction_not_rejected(game):
     assert after == max(0, before - 5)
 
 
-def test_flat_class_delta_is_rejected_instead_of_silently_dropped(game):
+def test_flat_class_delta_rejected_while_nested_sibling_lands(game):
+    """#564：同一真实结算信封内，扁平坏项不静默丢，也不带走嵌套好项。"""
     db, state, content = game
     turn = state.turn
+    good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
+    assert 0 < before < 100, "开局阶级满意度需留有增量断言空间"
+
     run_settle(db, state, content, {
-        "class_delta": {_valid_class_key(db): -4},
+        "class_delta": {
+            "扁平坏项": -4,
+            good: {"satisfaction": 6},
+        },
     }, narrative="x", decree_text="y")
 
-    rows = _rejection_rows(db, turn, CLASS_REJ_SECTION)
-    assert len(rows) == 1
-    assert rows[0]["category"] == "invalid_enum"
+    invalid_enum_rows = [
+        row for row in _rejection_rows(db, turn, CLASS_REJ_SECTION)
+        if row["category"] == "invalid_enum"
+    ]
+    assert len(invalid_enum_rows) == 1, invalid_enum_rows
+    assert _class_satisfaction(db, good) == before + 6
 
 
 def test_zero_delta_faction_not_rejected(game):
