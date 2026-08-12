@@ -44,6 +44,25 @@ def validate_affected_parties(
         raise ValueError("affected_parties 须为在册 typed signed 反应清单")
 
 
+def validate_verdict_affected_parties(
+    verdict: object, mode: str, *, faction_names: object, class_names: object,
+) -> None:
+    """Enforce the mode/decision reaction shape at every public verdict seam."""
+    if not isinstance(verdict, dict):
+        raise ValueError("案卷 verdict 须为对象")
+    decision = verdict.get("decision")
+    required = decision == "rejected" or mode == "midzhi"
+    present = "affected_parties" in verdict
+    if required and (not present or not verdict.get("affected_parties")):
+        raise ValueError("打回或中旨判决的 affected_parties 必须为非空 typed 清单")
+    if not required and present:
+        raise ValueError("普通顺颁判决必须省略 affected_parties")
+    validate_affected_parties(
+        verdict.get("affected_parties", []),
+        faction_names=faction_names, class_names=class_names,
+    )
+
+
 def validate_rejection_verdict(
     verdict: object,
     blocked_layers: object,

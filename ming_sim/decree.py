@@ -64,6 +64,7 @@ from ming_sim.simulation import (
 )
 from ming_sim.strict_types import (
     IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
+    validate_verdict_affected_parties,
 )
 from ming_sim.token_stats import tlog
 
@@ -336,26 +337,16 @@ def _validate_promulgation_verdict_item(
             unknown_keys = set(row) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
-            needs_affected = (
-                decision == "rejected"
-                or mode == "midzhi"
+            validate_verdict_affected_parties(
+                row, mode, faction_names=faction_names, class_names=class_names,
             )
-            if needs_affected and "affected_parties" not in row:
-                raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
-            if not needs_affected and "affected_parties" in row:
-                raise ValueError("普通顺颁判决不得携带受损方")
-            affected = row.get("affected_parties", [])
-            if not isinstance(affected, list):
-                raise ValueError("受损方必须为 typed 清单")
-            if needs_affected and not affected:
-                raise ValueError("打回或中旨判决的受损方清单不得为空")
         else:
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
-        validate_affected_parties(
-            affected, faction_names=faction_names, class_names=class_names,
-        )
+            validate_affected_parties(
+                affected, faction_names=faction_names, class_names=class_names,
+            )
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},

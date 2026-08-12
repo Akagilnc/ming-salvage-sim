@@ -95,6 +95,26 @@ def test_midzhi_rejection_charges_only_parties_and_stigma_then_force_only_author
     assert len(_cost_events(db, dossier_id)) == 3
 
 
+def test_midzhi_rejudgment_changed_party_list_has_group_level_idempotency(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    first = _verdict(dossier_id)
+    db.apply_dossier_verdicts(state, [first])
+    before_new_party = _sat(db, "classes", "农民")
+    db.record_dossier_decision(dossier_id, "hold")
+    state.turn += 1
+    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
+    changed = _verdict(dossier_id)
+    changed["affected_parties"] = [
+        {"kind": "class", "key": "农民", "direction": "positive", "intensity": "strong"},
+    ]
+
+    db.apply_dossier_verdicts(state, [changed])
+
+    assert _sat(db, "classes", "农民") == before_new_party
+    assert len([row for row in _cost_events(db, dossier_id) if row["cost_kind"] == "satisfaction"]) == 2
+
+
 def test_costs_are_idempotent_and_survive_restore(game):
     db, state, content = game
     dossier_id = _dossier(db, state, mode="midzhi")
@@ -195,8 +215,40 @@ def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
     ]
 
 
-def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game):
+@pytest.mark.parametrize(
+    ("mode", "decision", "affected", "message"),
+    [
+        ("ordinary", "rejected", None, "affected_parties"),
+        ("ordinary", "rejected", [], "affected_parties"),
+        ("midzhi", "rejected", None, "affected_parties"),
+        ("midzhi", "promulgated", [], "affected_parties"),
+        ("ordinary", "promulgated", [
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+        ], "affected_parties"),
+    ],
+)
+def test_public_apply_rejects_invalid_mode_decision_reaction_shape_before_writes(
+    game, mode, decision, affected, message,
+):
     db, state, _ = game
+    dossier_id = _dossier(db, state, mode=mode)
+    verdict = _verdict(dossier_id, decision=decision) if decision == "rejected" else {
+        "dossier_id": dossier_id, "decision": decision,
+    }
+    if affected is None:
+        verdict.pop("affected_parties", None)
+    else:
+        verdict["affected_parties"] = affected
+
+    with pytest.raises(ValueError, match=message):
+        db.apply_dossier_verdicts(state, [verdict])
+
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
+def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(game):
+    db, state, content = game
     dossier_id = _dossier(db, state)
     legacy = [{"kind": "faction", "key": "东林", "severity": "大怒", "note": "留存"},
               {"kind": "class", "key": "士绅", "severity": "不满"},
@@ -211,13 +263,20 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
         (state.turn, dossier_id, json.dumps(pending, ensure_ascii=False)),
     )
 
-    db._migrate_legacy_reaction_severity()
-    db._migrate_legacy_reaction_severity()
-
-    saved = db.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
-    assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
-    assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
-    assert saved[2]["severity"] == "高兴"
+    db.conn.commit()
+    path = db.path
+    db.close()
+    from ming_sim.db import GameDB
+    reopened = GameDB(path, content)
+    reopened.close()
+    reopened = GameDB(path, content)
+    try:
+        saved = reopened.get_pending_promulgation_verdicts(state.turn)[0]["affected_parties"]
+        assert saved[0] == {"kind": "faction", "key": "东林", "note": "留存", "direction": "negative", "intensity": "strong"}
+        assert (saved[1]["direction"], saved[1]["intensity"]) == ("negative", "weak")
+        assert saved[2]["severity"] == "高兴"
+    finally:
+        reopened.close()
 
 
 def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, monkeypatch):
