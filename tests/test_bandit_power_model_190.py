@@ -7,7 +7,7 @@ import json
 
 
 def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
-    """流寇头目与股分层：李自成、张献忠应绑定各自独立 power,不共享全局 bandits。"""
+    """流寇头目与股分层：人物所属股的 leader 是单一 canonical 人名。"""
     db, _state, _content = read_game
 
     rows = {
@@ -24,9 +24,10 @@ def test_seed_splits_li_zicheng_and_zhang_xianzhong_bandit_powers(read_game):
         row["id"]: dict(row)
         for row in db.conn.execute(
             "SELECT id, name, leader, military_strength FROM powers "
-            "WHERE id IN ('bandit_li_zicheng', 'bandit_zhang_xianzhong')"
+            "WHERE id IN ('bandits', 'bandit_li_zicheng', 'bandit_zhang_xianzhong')"
         ).fetchall()
     }
+    assert powers["bandits"]["leader"] == "王嘉胤"
     assert powers["bandit_li_zicheng"]["leader"] == "李自成"
     assert powers["bandit_zhang_xianzhong"]["leader"] == "张献忠"
     assert powers["bandit_li_zicheng"]["military_strength"] != powers["bandit_zhang_xianzhong"]["military_strength"]
