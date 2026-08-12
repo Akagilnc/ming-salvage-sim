@@ -350,6 +350,10 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
         def pending_count(self):
             return 0
 
+        def list_directives(self, include_pending=True):
+            # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
+            return GameSession.list_directives(self, include_pending=include_pending)
+
     bind_skills_content(content)
     runtime = WebGame.__new__(WebGame)
     runtime.session = Session()
