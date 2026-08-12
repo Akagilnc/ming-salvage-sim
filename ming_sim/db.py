@@ -9479,12 +9479,59 @@ class GameDB:
             FROM audience_nights WHERE status='closed' ORDER BY turn,id
             """
         ).fetchall()
-        return [{
-            "kind": "night", "night_id": int(r["id"]), "turn": int(r["turn"]),
-            "year": int(r["year"]), "period": int(r["period"]),
-            "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
-            "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
-        } for r in rows]
+        if not rows:
+            return []
+
+        from ming_sim.audience_night import _json_list, night_archive_metadata
+
+        night_ids = [int(row["id"]) for row in rows]
+        placeholders = ",".join("?" for _ in night_ids)
+        ledger_rows = self.conn.execute(
+            f"SELECT night_id,person_names,tags,source_chat_turn_id "
+            f"FROM story_ledger_entries WHERE night_id IN ({placeholders}) "
+            "ORDER BY night_id,COALESCE(order_key,seq),id",
+            night_ids,
+        ).fetchall()
+        turn_rows = self.conn.execute(
+            f"SELECT night_id,minister_name FROM chat_turns "
+            f"WHERE night_id IN ({placeholders}) AND status NOT IN ('undone', 'failed') "
+            "ORDER BY night_id,night_seq,id",
+            night_ids,
+        ).fetchall()
+        ledgers_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
+        turns_by_night: Dict[int, List[Dict[str, Any]]] = {night_id: [] for night_id in night_ids}
+        for row in ledger_rows:
+            ledgers_by_night[int(row["night_id"])].append({
+                "person_names": [str(name) for name in _json_list(row["person_names"])],
+                "tags": [str(tag) for tag in _json_list(row["tags"])],
+                "source_chat_turn_id": int(row["source_chat_turn_id"] or 0),
+            })
+        for row in turn_rows:
+            turns_by_night[int(row["night_id"])].append({
+                "minister_name": str(row["minister_name"] or ""),
+            })
+
+        archives: List[Dict[str, object]] = []
+        for r in rows:
+            night_id = int(r["id"])
+            metadata = night_archive_metadata(
+                ledgers_by_night[night_id], turns_by_night[night_id],
+            )
+            scene_suffix = f" · 第{int(r['scene_number'])}场" if int(r["scene_count"]) > 1 else ""
+            title = (
+                f"{int(r['year'])}年{int(r['period'])}月 · "
+                f"{str(r['time_of_day'] or '')}{str(r['location'] or '')} · "
+                f"{metadata['audience_type']}{scene_suffix}"
+            )
+            archives.append({
+                "kind": "night", "night_id": night_id, "turn": int(r["turn"]),
+                "year": int(r["year"]), "period": int(r["period"]),
+                "time_of_day": str(r["time_of_day"] or ""), "location": str(r["location"] or ""),
+                "scene_number": int(r["scene_number"]), "scene_count": int(r["scene_count"]),
+                "audience_type": metadata["audience_type"], "title": title,
+                "involved_people": metadata["involved_people"],
+            })
+        return archives
 
     def list_archived_turns(self) -> List[Dict[str, object]]:
         """兼容组合读面：月档和场档保持独立条目，不再以 SQL join 互相复制。"""
@@ -10733,7 +10780,7 @@ class GameDB:
     def record_dossier_decision(
         self, dossier_id: int, decision: str, *, reason: str = "",
         blocked_layer: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         commit: bool = True,
@@ -10912,7 +10959,7 @@ class GameDB:
     def apply_dossier_promulgation(
         self, state: GameState, dossier_id: int, decision: str, *,
         blocked_layer: str = "", reason: str = "", legal_reason_code: str = "",
-        primary_opponents: Optional[List[str]] = None,
+        primary_opponents: Optional[List[Dict[str, str]]] = None,
         gatekeeper_id: Optional[str] = None,
         criteria_snapshot: Optional[Dict[str, object]] = None,
         content=None, registry=None,
@@ -11125,12 +11172,15 @@ class GameDB:
         ).fetchall()
         result = []
         for row in rows:
+            raw_value = row["verdict_json"]
             try:
-                value = json.loads(row["verdict_json"])
+                value = json.loads(raw_value)
                 if not isinstance(value, dict):
                     raise ValueError("待应用颁布判决须为对象")
             except ValueError as exc:
-                raise LLMContractError(f"待应用颁布判决读取失败：{exc}") from exc
+                raise LLMContractError(
+                    f"待应用颁布判决读取失败：{exc}", raw_value=raw_value,
+                ) from exc
             result.append(value)
         return result
 
@@ -11157,6 +11207,10 @@ class GameDB:
                         faction_names={
                             str(row["name"])
                             for row in self.conn.execute("SELECT name FROM factions")
+                        },
+                        class_names={
+                            str(row["name"])
+                            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
                         },
                         character_ids={
                             str(row["name"])
