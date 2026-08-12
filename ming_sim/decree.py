@@ -155,6 +155,30 @@ def build_promulgation_judge_context(
         endorsement_ids = payload.get("endorsement_entry_ids", [])
         if not isinstance(endorsement_ids, list):
             endorsement_ids = []
+        holder_ids = {
+            str(payload.get(key) or "").strip()
+            for key in ("assignee_id", "character_id", "executor_id")
+        }
+        holder_ids.discard("")
+        executor_id = str(row.get("executor_id") or "").strip()
+        if executor_id:
+            holder_ids.add(executor_id)
+        held_authorities = []
+        for holder_id in sorted(holder_ids):
+            for authority_record in db.list_active_authorities(
+                state.turn, holder_id=holder_id,
+            ):
+                held_authorities.append({
+                    "id": int(authority_record["id"]),
+                    "holder_id": str(authority_record["holder_id"]),
+                    "privilege": str(authority_record["privilege"]),
+                    "scope": str(authority_record["scope"]),
+                    "effective_turn": int(authority_record["effective_turn"]),
+                })
+        held_authorities.sort(key=lambda item: int(item["id"]))
+        authorization_ids = [
+            *authorization_ids, *(str(item["id"]) for item in held_authorities),
+        ]
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
@@ -164,6 +188,7 @@ def build_promulgation_judge_context(
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
             "break_rank": break_rank.get(int(row["id"])),
+            "held_authorities": held_authorities,
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
