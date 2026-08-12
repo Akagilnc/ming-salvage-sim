@@ -228,12 +228,7 @@ function renderEdictModal(props: {
         onCancelEdit={() => {}}
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
-        onWriteDecree={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
-        onResetDecree={() => {}}
-        onIssueDecree={() => {}}
-        onConfirmDirective={() => {}}
-        onRejectDirective={() => {}}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -288,6 +283,19 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(button).toBeTruthy();
   });
 
+  it("does not review already-approved conversational directives", () => {
+    const { host } = renderEdictModal({
+      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
+    });
+    expect(host.textContent).not.toContain("待朱批");
+    expect(host.textContent).not.toContain("准");
+    expect(host.textContent).not.toContain("驳");
+    expect(host.textContent).toContain("发饷辽东");
+    expect(host.textContent).toContain("退朝");
+    expect(host.textContent).not.toContain("返工改稿");
+    expect(host.textContent).not.toContain("盖玺颁布");
+  });
+
   it("offers durable recovery entry for failed secret orders", () => {
     const onOpenFailureRecovery = vi.fn();
     const { host } = renderEdictModal({
@@ -322,6 +330,28 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).toContain("密令落库失败");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(button).toBeTruthy();
+  });
+});
+
+describe("ChatModal — #545 final composer contract", () => {
+  it("keeps temporary leave separate and sends retreat through the chat command seam", () => {
+    const onSend = vi.fn();
+    const onClose = vi.fn();
+    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
+
+    expect(host.textContent).not.toContain("转入诏书草案");
+    expect(host.textContent).not.toContain("任免");
+    const buttons = Array.from(host.querySelectorAll("button"));
+    const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
+    const retreat = buttons.find((button) => button.textContent?.includes("退朝")) as HTMLButtonElement;
+    expect(leave).toBeTruthy();
+    expect(retreat).toBeTruthy();
+
+    act(() => leave.click());
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+    act(() => retreat.click());
+    expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
   });
 });
 
