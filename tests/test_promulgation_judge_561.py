@@ -526,6 +526,42 @@ def test_reviewed_and_palace_exempt_dossiers_close_in_one_default_batch(game, mo
     assert db.get_decree_dossier(inner)["promulgation_decision"] == ""
 
 
+@pytest.mark.parametrize(
+    ("action_type", "mode"),
+    [
+        ("secret_authorization", "ordinary"),
+        ("secret_authorization", "midzhi"),
+        ("secret_investigation", "ordinary"),
+        ("secret_investigation", "midzhi"),
+        ("protection", "ordinary"),
+        ("protection", "midzhi"),
+    ],
+)
+def test_review_exempt_actions_auto_promulgate_without_judge_contract_abort(
+    game, monkeypatch, action_type, mode,
+):
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type=action_type, decree_text="密旨照准",
+        target_kind="issue", target_id=f"exempt-{action_type}", payload={"mode": mode},
+    )
+    monkeypatch.setattr(
+        decree_mod, "create_promulgation_judge_agent",
+        lambda *_a, **_k: pytest.fail("review-exempt 案卷不得送入 LLM"),
+    )
+    _stop_after_promulgation(db, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="after promulgation"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "密旨照准", content=content,
+        )
+
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": dossier_id, "decision": "promulgated"},
+    ]
+    assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
 def test_default_rejected_verdict_is_validated_persisted_and_becomes_rescript_decision(
     game, monkeypatch,
 ):
@@ -554,6 +590,38 @@ def test_default_rejected_verdict_is_validated_persisted_and_becomes_rescript_de
     assert db.get_pending_promulgation_verdicts(state.turn) == [verdict]
     assert result.decisions[0]["event_id"] == f"dossier:{dossier_id}"
     assert {option["label"] for option in result.decisions[0]["options"]} == {"强颁", "收回", "留中"}
+
+
+@pytest.mark.parametrize(
+    "parsed_payload",
+    [{}, {"verdicts": None}, {"verdicts": {}}, {"verdicts": "bad"}],
+)
+def test_malformed_default_top_level_preserves_parsed_payload_in_rejection_report(
+    game, monkeypatch, tmp_path, parsed_payload,
+):
+    db, state, content = game
+    _dossier(db, state)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod, "run_agent_text",
+        lambda *_a, **_k: json.dumps(parsed_payload, ensure_ascii=False),
+    )
+
+    with pytest.raises(SettlementAbort) as exc_info:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清丈天下田亩", content=content,
+        )
+
+    assert exc_info.value.stage == "promulgation"
+    rows = db.conn.execute(
+        "SELECT item_json FROM rejection_reports WHERE turn=? ORDER BY id", (state.turn,),
+    ).fetchall()
+    assert [json.loads(row["item_json"]) for row in rows] == [
+        parsed_payload if isinstance(parsed_payload, dict)
+        else {"raw_value": parsed_payload},
+    ]
+    assert db.get_pending_promulgation_verdicts(state.turn) == []
 
 
 def test_invalid_default_rejected_verdict_reaches_rejection_tracer(game, monkeypatch, tmp_path):

@@ -224,10 +224,14 @@ def build_promulgation_judge_context(
     }
 
 
-def _require_promulgation_verdict_list(generated: object) -> List[Dict[str, object]]:
+def _require_promulgation_verdict_list(
+    generated: object, *, raw_value: object = None,
+) -> List[Dict[str, object]]:
     """Canonical top-level shape authority for every promulgation verdict batch."""
     if not isinstance(generated, list):
-        raise LLMContractError("颁布判官 verdicts 必须为列表")
+        raise LLMContractError(
+            "颁布判官 verdicts 必须为列表", raw_value=raw_value,
+        )
     return generated
 
 
@@ -247,7 +251,8 @@ def llm_promulgation_verdicts(
         tag="promulgation-judge",
     )
     parsed = parse_agent_json(raw, "颁布判官")
-    return _require_promulgation_verdict_list(parsed.get("verdicts"))
+    verdicts = parsed.get("verdicts") if isinstance(parsed, dict) else None
+    return _require_promulgation_verdict_list(verdicts, raw_value=parsed)
 
 
 def _validate_promulgation_verdict_item(
@@ -403,7 +408,17 @@ def validate_promulgation_verdicts(
         payload = dossier.get("payload")
         if not isinstance(payload, dict):
             payload = json.loads(str(dossier.get("payload_json") or "{}"))
-        proposed_modes[int(dossier["id"])] = str(payload.get("mode") or "ordinary")
+        action_type = dossier.get("action_type")
+        external_review = (
+            dossier_action_policy(action_type, payload)["external_review"]
+            if action_type is not None else True
+        )
+        # Exempt actions are deterministic auto-promulgations, not judge
+        # verdicts. Their payload mode cannot require reviewed-only evidence.
+        proposed_modes[int(dossier["id"])] = (
+            str(payload.get("mode") or "ordinary")
+            if external_review else "ordinary"
+        )
     rows = [
         _validate_promulgation_verdict_item(
             row, db, proposed_modes=proposed_modes, prepared_context=context,
