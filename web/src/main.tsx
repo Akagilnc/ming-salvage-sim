@@ -195,11 +195,6 @@ export function App() {
     cancelEditDirective,
     saveDirective,
     deleteDirective,
-    confirmDirective,
-    rejectDirective,
-    writeDecree,
-    saveDecree,
-    resetDecree,
   } = useEdictActions({ setBusy, setError, setState, beginDurableMutation, loadState, setDecree });
 
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/退朝/HITL 决策点续裁/失败重拉。
@@ -300,9 +295,7 @@ export function App() {
       // 延迟呈现归协调器：400ms 后仍最新代次才弹窗；撤回等推进代次后陈旧定时器 no-op。
       autoOpen: {
         afterMs: 400,
-        when: (orders) =>
-          shouldAutoOpenSecretOrdersAfterSettlement()
-          && orders.some((o) => o.status === "active" || o.status === "pending_review"),
+        when: (orders) => shouldAutoOpenSecretOrdersAfterSettlement(orders, currentTurn),
         open: () => setActiveModal("secret_orders"),
       },
     });
@@ -581,7 +574,7 @@ export function App() {
       ) : null}
 
       {activeModal === "edict" ? (
-        <FullscreenModal title="诏书草案" subtitle="本月指令、拟诏与颁布" bgClass="modal-bg-edict" onClose={guardClose(() => setActiveModal("none"))}>
+        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={guardClose(() => setActiveModal("none"))}>
           <EdictModal
             state={state}
             directiveText={directiveText}
@@ -598,13 +591,7 @@ export function App() {
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
-            onWriteDecree={writeDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onSaveDecree={saveDecree}
-            onResetDecree={resetDecree}
-            onIssueDecree={issueDecree}
-            onConfirmDirective={confirmDirective}
-            onRejectDirective={rejectDirective}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
