@@ -11,7 +11,11 @@ DEFAULT_LEVERAGE_MULTIPLIER = 1.0
 _INACTIVE_STATUSES = frozenset({
     "offstage", "retired", "dismissed", "imprisoned", "exiled",
 })
-_NON_OFFICES = frozenset({"", "待铨", "听用候铨", "白身", "布衣", "进士", "举人", "生员"})
+_NON_OFFICES = frozenset({
+    "", "待铨", "听用候铨", "白身", "白丁", "布衣", "未仕", "童子",
+    "进士", "举人", "生员", "贡生", "监生", "秀才", "诸生", "庠生", "国子监生",
+})
+_UNOFFICED_TYPES = frozenset({"", "未仕", "生员", "乡绅", "富商", "布衣", "待铨"})
 _TITLE_NOISE_SUFFIXES = (
     "革职候勘", "革职", "候勘", "闲住", "罢居", "致仕", "赋闲",
 )
@@ -22,29 +26,35 @@ def _table() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def canonical_office_title(office: object) -> str:
-    """Strip 前/原任 markers and 罢居/革职 tails from archived or polluted titles.
+def concurrent_office_titles(office: object) -> list[str]:
+    """Canonical tokenizer shared by rank, leverage, and archive cleanup."""
+    text = str(office or "").strip()
+    if not text:
+        return []
+    text = re.sub(r"^(?:前|原任|原)", "", text).strip()
+    text = (text.replace("兼掌", ",").replace("兼署", ",").replace("兼", ",")
+            .replace("，", ",").replace("、", ","))
+    titles: list[str] = []
+    for segment in text.split(","):
+        part = segment.strip()
+        if not part:
+            continue
+        pollution_at = min(
+            (part.find(noise) for noise in _TITLE_NOISE_SUFFIXES if noise in part),
+            default=-1,
+        )
+        if pollution_at >= 0:
+            clean = part[:pollution_at].strip()
+            if clean:
+                titles.append(clean)
+            break
+        titles.append(part)
+    return titles
 
-    Concurrent real offices joined by comma (尚书,大学士) are preserved; only a trailing
-    pollution segment after comma/， is dropped when it carries 罢居/革职 etc.
-    """
-    raw = str(office or "").strip()
-    if not raw:
-        return ""
-    text = raw.replace("，", ",")
-    if "," in text:
-        head, tail = text.split(",", 1)
-        if any(noise in tail for noise in _TITLE_NOISE_SUFFIXES):
-            text = head.strip()
-        else:
-            text = raw  # keep concurrent offices as-is for rank matching
-    else:
-        text = raw
-    text = re.sub(r"^(?:前|原任|原)", "", text.strip()).strip()
-    for noise in _TITLE_NOISE_SUFFIXES:
-        if noise in text:
-            text = text.split(noise, 1)[0].strip(" ，,")
-    return text or raw
+
+def canonical_office_title(office: object) -> str:
+    """Return clean comma-separated substantive/status title segments."""
+    return ",".join(concurrent_office_titles(office))
 
 
 def _iter_rank_rules(table: dict[str, Any]) -> list[dict[str, Any]]:
@@ -85,7 +95,7 @@ def office_rank_band(office: object, office_type: object = "") -> int:
     title = canonical_office_title(office)
     table = _table()
     # Concurrent offices: the highest substantive rank (lowest band number) wins.
-    parts = [p.strip() for p in title.replace("，", ",").split(",") if p.strip()] or [title]
+    parts = concurrent_office_titles(title) or [title]
     bands: list[int] = []
     for part in parts:
         matched = _match_rank_rule(part, table, "rank_band")
@@ -111,35 +121,49 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
     Comma-separated concurrent titles take the highest recognized multiplier. Titles with
     no leverage-bearing stem keep the historical conservative default 1.0.
     """
-    text = str(office or "")
-    if not already_normalized:
-        text = (
-            text.replace("兼掌", ",")
-            .replace("兼署", ",")
-            .replace("兼", ",")
-            .replace("，", ",")
-            .replace("、", ",")
-        )
-    if not text.strip():
+    del already_normalized  # retained for the historical caller contract
+    parts = concurrent_office_titles(office)
+    if not parts:
         return DEFAULT_LEVERAGE_MULTIPLIER
 
     table = _table()
-    best: Optional[float] = None
-    for part in (p.strip() for p in text.split(",")):
-        if not part:
-            continue
-        matched = _match_rank_rule(
-            canonical_office_title(part), table, "leverage_multiplier"
-        )
-        if matched is None:
-            # Fall back to raw part so stems still hit inside lightly decorated titles.
-            matched = _match_rank_rule(part, table, "leverage_multiplier")
-        if matched is None or "leverage_multiplier" not in matched:
-            continue
-        mult = float(matched["leverage_multiplier"])
-        if best is None or mult > best:
-            best = mult
-    return DEFAULT_LEVERAGE_MULTIPLIER if best is None else best
+    office_weights: list[float] = []
+    for part in parts:
+        matches: list[tuple[int, float]] = []
+        modifiers: list[float] = []
+        for rule in _iter_rank_rules(table):
+            if "leverage_multiplier" not in rule:
+                continue
+            for stem in rule.get("stems") or []:
+                token = str(stem or "").strip()
+                if not token or token not in part:
+                    continue
+                weight = float(rule["leverage_multiplier"])
+                if token in {"候补", "候用"}:
+                    modifiers.append(weight)
+                else:
+                    matches.append((len(token), weight))
+        if matches or modifiers:
+            longest = max((length for length, _weight in matches), default=-1)
+            base_weights = [weight for length, weight in matches if length == longest]
+            # Longest title stem identifies the office; explicit status modifiers then
+            # constrain it. This preserves old min-within-title semantics without letting
+            # generic substrings (御史 inside 佥都御史) demote the base title.
+            office_weights.append(min([*base_weights, *modifiers]))
+    # Concurrent offices contribute at the strongest real office, as before.
+    return max(office_weights, default=DEFAULT_LEVERAGE_MULTIPLIER)
+
+
+def _is_substantive_office(title: object, office_type: object = "") -> bool:
+    text = canonical_office_title(title)
+    if not text or str(office_type or "").strip() in _UNOFFICED_TYPES:
+        return False
+    if any(label in text for label in _NON_OFFICES if label):
+        return False
+    return any(
+        _match_rank_rule(part, _table(), "leverage_multiplier") is not None
+        for part in concurrent_office_titles(text)
+    ) or str(office_type or "").strip() not in _UNOFFICED_TYPES
 
 
 def appointment_break_rank(
@@ -161,26 +185,29 @@ def appointment_break_rank(
     if row is not None:
         current_title = str(row["office"] or "").strip()
         current_type = str(row["office_type"] or "").strip()
-        historical = (
+        may_have_history = (
             str(row["status"] or "") in _INACTIVE_STATUSES
             or (current_title == "听用候铨" and str(row["reason_code"] or "") == "被顶替")
             or (current_title.startswith(("前", "原")) and any(
                 marker in current_title for marker in ("罢居", "革职", "致仕", "闲住")
             ))
         )
-    if historical:
-        archived = db.conn.execute(
-            "SELECT office_title,office_type FROM character_offices WHERE character_name=?",
-            (person,),
-        ).fetchone()
-        if archived is not None and str(archived["office_title"] or "").strip() not in _NON_OFFICES:
-            current_title = canonical_office_title(archived["office_title"])
-            current_type = str(archived["office_type"] or "").strip()
-        else:
-            # Historical people must never be compared from the 待铨 fallback.
-            raise ValueError(f"{person} 缺最近任职备档，无法确定起复品级")
+        if may_have_history:
+            archived = db.conn.execute(
+                "SELECT office_title,office_type FROM character_offices WHERE character_name=?",
+                (person,),
+            ).fetchone()
+            if archived is not None and _is_substantive_office(
+                archived["office_title"], archived["office_type"]
+            ):
+                historical = True
+                current_title = canonical_office_title(archived["office_title"])
+                current_type = str(archived["office_type"] or "").strip()
+            else:
+                current_title = ""
+                current_type = ""
 
-    if not current_title or current_title in _NON_OFFICES:
+    if not _is_substantive_office(current_title, current_type):
         broken = new_band <= FIRST_APPOINTMENT_HIGH_OFFICE_THRESHOLD
         return {
             "is_break_rank": broken,

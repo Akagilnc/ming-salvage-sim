@@ -1,6 +1,10 @@
 import json
 
-from ming_sim.office_rank import office_leverage_multiplier, office_rank_band
+from ming_sim.office_rank import (
+    canonical_office_title,
+    office_leverage_multiplier,
+    office_rank_band,
+)
 from ming_sim.models import Character
 
 
@@ -211,6 +215,75 @@ def test_leverage_multiplier_uses_canonical_office_rank_table_only():
     assert dbmod._office_rank_multiplier("礼部尚书,东阁大学士") == office_leverage_multiplier(
         "礼部尚书,东阁大学士"
     )
+
+
+def test_unofficed_and_offstage_degree_labels_are_genuine_first_appointments(game):
+    db, state, _content = game
+    for index, (office, office_type, status) in enumerate((
+        ("贡生", "生员", "active"),
+        ("诸生（应天府学）", "未仕", "offstage"),
+        ("泉州童子（郑芝龙子）", "未仕", "offstage"),
+    )):
+        name = f"初仕{index}"
+        _add(db, state, name, office, office_type)
+        db.conn.execute("UPDATE characters SET status=? WHERE name=?", (status, name))
+        _dossier_id, payload = _appointment_dossier(db, state, name, "翰林院编修")
+        assert payload["break_rank"]["basis"] == "first_appointment_regular"
+        assert payload["break_rank"]["is_break_rank"] is False
+
+
+def test_historical_military_commands_and_cabinet_fallback_use_nominal_bands():
+    assert office_rank_band("都指挥使") < office_rank_band("指挥使")
+    assert office_rank_band("不常见阁衔", "内阁") == 5
+
+
+def test_one_tokenizer_preserves_real_concurrent_offices_and_drops_only_pollution():
+    title = "原任东阁大学士兼礼部尚书、左都御史，罢居松江"
+    assert canonical_office_title(title) == "东阁大学士,礼部尚书,左都御史"
+    assert office_rank_band(title) == 2
+    assert office_leverage_multiplier(title) == 1.0
+    assert office_rank_band("礼部尚书兼东阁大学士") == 2
+
+
+def test_leverage_uses_min_modifiers_within_title_and_max_across_offices():
+    assert office_leverage_multiplier("候补总兵") == 0.25
+    assert office_leverage_multiplier("候用副总兵") == 0.25
+    assert office_leverage_multiplier("候补总兵,礼部侍郎") == 0.5
+    assert office_leverage_multiplier("陌生卫指挥") == 1.0
+
+
+def test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill(game):
+    db, state, content = game
+    _add(db, state, "旧案白身", "白身", "布衣")
+    dossier_id, _payload = _appointment_dossier(db, state, "旧案白身", "陕西巡抚")
+    row = db.conn.execute(
+        "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
+    ).fetchone()
+    payload = json.loads(row["payload_json"])
+    payload.pop("break_rank")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
+        (json.dumps(payload, ensure_ascii=False), dossier_id),
+    )
+    path = db.path
+    db.close()
+
+    from ming_sim.db import GameDB
+    reopened = GameDB(path, content)
+    try:
+        migrated = json.loads(reopened.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
+        ).fetchone()["payload_json"])
+        assert migrated["break_rank"]["basis"] == "first_appointment_high_office"
+        first_json = json.dumps(migrated, ensure_ascii=False, sort_keys=True)
+        reopened.close()
+        reopened = GameDB(path, content)
+        again = json.loads(reopened.conn.execute(
+            "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
+        ).fetchone()["payload_json"])
+        assert json.dumps(again, ensure_ascii=False, sort_keys=True) == first_json
+    finally:
+        reopened.close()
 
 
 def test_seed_archives_clean_historical_office_for_dismissed_ministers(game):
