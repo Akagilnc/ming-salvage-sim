@@ -130,6 +130,10 @@ def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
     ]
     dossier_id = _dossier(db, state, roster=roster)
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    dead_faction = db.conn.execute(
+        "SELECT faction FROM characters WHERE name='徐光启'"
+    ).fetchone()[0]
+    before_dead_faction = _sat(db, "factions", dead_faction)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='徐光启'")
     db.conn.execute("UPDATE characters SET status='inactive' WHERE name='毕自严'")
 
@@ -137,6 +141,16 @@ def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
     targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
     assert "徐光启" not in targets
     assert "毕自严" in targets
+    assert _sat(db, "factions", dead_faction) == max(0, before_dead_faction - 4)
+    dead_faction_events = [
+        row for row in db.list_decree_cost_events(dossier_id)
+        if row["cost_kind"] == "satisfaction"
+        and row["target_kind"] == "faction"
+        and row["target_id"] == dead_faction
+    ]
+    assert [(row["delta"], row["cost_identity"]) for row in dead_faction_events] == [
+        (-4, "breach")
+    ]
     assert "跳过已故参与者徐光启" in caplog.text
 
 
