@@ -1430,6 +1430,26 @@ class GameDB:
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
 
+            -- ADR 0071：持有型/持续型特权的 durable 授权档。
+            CREATE TABLE IF NOT EXISTS authority_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                holder_id TEXT NOT NULL,
+                privilege TEXT NOT NULL CHECK(privilege IN (
+                    '尚方剑密授','便宜行事','专差督办','新机构专办'
+                )),
+                scope TEXT NOT NULL,
+                effective_turn INTEGER NOT NULL,
+                expires_turn INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
+                revoked_turn INTEGER,
+                dossier_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(holder_id) REFERENCES characters(name),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
+                ON authority_records(holder_id, revoked, effective_turn);
+
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_name TEXT NOT NULL,
@@ -11200,6 +11220,15 @@ class GameDB:
                 ).fetchone()
                 if not character_exists:
                     raise ValueError("授权案卷引用未知人物")
+                privilege = str(payload.get("privilege") or payload.get("权项") or "").strip()
+                scope = str(payload.get("scope") or payload.get("事域") or "").strip()
+                if privilege:
+                    self.grant_authority(
+                        state, character_id, privilege, scope,
+                        effective_turn=int(payload.get("effective_turn") or state.turn),
+                        expires_turn=payload.get("expires_turn"),
+                        dossier_id=int(dossier_id), commit=False,
+                    )
                 if not self.grant_skill(
                     state,
                     character_id,
@@ -12603,6 +12632,73 @@ class GameDB:
             "extractor_input": _parse(row["extractor_input"] or ""),
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
+
+    def grant_authority(
+        self, state: GameState, holder_id: str, privilege: str, scope: str,
+        *, effective_turn: Optional[int] = None,
+        expires_turn: Optional[int] = None, dossier_id: Optional[int] = None,
+        commit: bool = True,
+    ) -> int:
+        """Persist one ADR 0071 held privilege; capture/matching belongs to #528."""
+        holder_id, privilege, scope = map(str.strip, (holder_id, privilege, scope))
+        if privilege not in {"尚方剑密授", "便宜行事", "专差督办", "新机构专办"}:
+            raise ValueError("授权权项不在首批枚举")
+        if not scope:
+            raise ValueError("授权事域不能为空")
+        if not self.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
+        ).fetchone():
+            raise ValueError("授权对象不在人物档")
+        starts = int(state.turn if effective_turn is None else effective_turn)
+        ends = None if expires_turn is None else int(expires_turn)
+        if ends is not None and ends < starts:
+            raise ValueError("授权失效回合不得早于生效回合")
+        cursor = self.conn.execute(
+            "INSERT INTO authority_records "
+            "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (holder_id, privilege, scope, starts, ends, dossier_id),
+        )
+        if commit:
+            self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def list_active_authorities(
+        self, turn: int, *, holder_id: str = "",
+    ) -> List[Dict[str, object]]:
+        params: List[object] = [int(turn), int(turn)]
+        holder_sql = ""
+        if holder_id:
+            holder_sql = " AND holder_id=?"
+            params.append(str(holder_id))
+        rows = self.conn.execute(
+            "SELECT * FROM authority_records WHERE revoked=0 "
+            "AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?)"
+            f"{holder_sql} ORDER BY id", params,
+        ).fetchall()
+        return [{**dict(row), "revoked": False} for row in rows]
+
+    def revoke_authority(
+        self, authority_id: int, revoked_turn: int, *, commit: bool = True,
+    ) -> bool:
+        """收权只置档案状态；不调用 0056 的皇威/派系代价轨。"""
+        cursor = self.conn.execute(
+            "UPDATE authority_records SET revoked=1,revoked_turn=? "
+            "WHERE id=? AND revoked=0", (int(revoked_turn), int(authority_id)),
+        )
+        if commit:
+            self.conn.commit()
+        return cursor.rowcount > 0
 
     def grant_skill(
         self, state: GameState, character_name: str, skill_id: str,

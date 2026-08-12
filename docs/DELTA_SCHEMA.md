@@ -210,6 +210,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
+### 授权档结构化载荷（ADR 0071）
+
+授权由已成案的 `authorization` / `secret_authorization` 案卷载荷物化，不另开自然语言匹配入口。载荷须含 `character_id`（在册人物）、`authorization_id`、`privilege`（`尚方剑密授` / `便宜行事` / `专差督办` / `新机构专办`）、非空 `scope`；可含 `effective_turn`、`expires_turn`。授权档保存对象、权项、事域、生效/失效回合及收回状态；restore 直接读档。收回只置状态，不产生皇威或派系代价。
+
+颁布判官对案卷承办人读取当回合有效授权，投影为 `held_authorities`，并把档案 id 合入 `criteria_snapshot.authorization_ids`；已收回或已过期条目不进入判官输入。自然语言授予/收权捕获分别由 #528/#523 回接，本契约不作关键词推断。
+
 ### `dossier_executions` — S1 案卷执行结局
 - 每项必须带 `dossier_id`、`outcome`、`note`。
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
