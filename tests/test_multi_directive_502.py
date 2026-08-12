@@ -137,6 +137,76 @@ def test_mixed_batch_stages_supported_decree_without_capturing_acting_appointmen
     assert acting_text not in payload["text"]
 
 
+@pytest.mark.parametrize(
+    ("mode_a", "mode_b", "expect_a", "expect_b"),
+    [
+        ("中旨直发", "普通", "midzhi", "ordinary"),
+        ("普通", "中旨直发", "ordinary", "midzhi"),
+    ],
+)
+def test_same_utterance_mixed_batch_preserves_per_item_mode(
+    game, monkeypatch, mode_a, mode_b, expect_a, expect_b,
+):
+    """同一句混合批次：整句首项 mode 不得广播覆盖逐项 mode；提交后 dossier 仍各持己 mode。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    sess = _fake_session(db, state)
+    text_a = "着户部清查三边粮饷，限三月完报。"
+    text_b = "着兵部核饷九边军械，限两月呈览。"
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "draft_intent": {
+            "成品旨稿": [
+                {
+                    "正文": text_a,
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "three-borders-pay",
+                    "颁布方式": mode_a,
+                },
+                {
+                    "正文": text_b,
+                    "动作类型": "policy",
+                    "目标类型": "issue",
+                    "目标ID": "nine-borders-arms",
+                    "颁布方式": mode_b,
+                },
+            ],
+        },
+    }))
+
+    # Prefix the whole utterance with the first item's mode so a naive
+    # whole-sentence broadcast would paint every sibling the same color.
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message=(
+            f"{mode_a}，拟一道清查三边粮饷；"
+            f"再按{'普通程序' if mode_b == '普通' else mode_b}拟一道核饷九边军械"
+        ),
+        answer="臣已分别拟妥。",
+        has_directive=False,
+        secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}, {"kind": "draft"}],
+    )
+
+    pending = _pending_directives(db, state.turn)
+    assert len(pending) == 2
+    by_text = {
+        json.loads(row["payload_json"])["text"]: json.loads(row["payload_json"])["mode"]
+        for row in pending
+    }
+    assert by_text == {text_a: expect_a, text_b: expect_b}
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    assert {
+        row["decree_text"]: row["mode"] for row in db.list_decree_dossiers()
+    } == {
+        text_a: expect_a, text_b: expect_b,
+    }
+
+
 def test_two_new_decrees_stage_as_independent_candidates(game, monkeypatch):
     """一夜拟两道各自独立的旨 → 两条独立 pending directive 候选，各自正文；
     不被并进同一条（AC1「不出现全部内容卡进一道圣旨」）。"""

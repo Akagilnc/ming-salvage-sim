@@ -377,9 +377,17 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 existing_mode = session.db.read_directive_dossier_payload(
                     committed_draft
                 ).get("mode")
-        draft_res["mode"] = resolve_directive_mode(
-            ctx.player_message, draft_res.get("mode"), existing_mode,
-        )
+        # Batch extractor already requires+normalizes per-item mode. Do not
+        # rebroadcast the whole utterance (often the first item's declaration)
+        # over every sibling; keep single-item/supplement path on emperor text.
+        if ctx.candidate_kind_count > 1:
+            draft_res["mode"] = resolve_directive_mode(
+                extracted=draft_res.get("mode"),
+            )
+        else:
+            draft_res["mode"] = resolve_directive_mode(
+                ctx.player_message, draft_res.get("mode"), existing_mode,
+            )
 
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
