@@ -216,7 +216,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
 
 ### 颁布 verdict 契约（非 delta 字段）
-打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`involved_office_types`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。
+打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`appointment_tenure`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。
 
 快照随既有判决历史原样落 JSON，仅供审计，后续盘面变化不回写、不重算。非法 verdict 整批不应用，并把原 item/原因/类别/来源写入既有 `rejection_reports`；不存在第二套 verdict schema 或审计表。
 
