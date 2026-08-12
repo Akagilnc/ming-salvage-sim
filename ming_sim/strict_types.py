@@ -1,5 +1,7 @@
 """Shared strict scalar contracts for structured machine payloads."""
 
+from ming_sim.appointment_tenure import APPOINTMENT_TENURES
+
 
 def strict_int(raw: object, *, accept_numeric_strings: bool = True) -> int:
     """Reject bools/floats; optionally retain legacy acceptance of integer strings."""
@@ -19,7 +21,7 @@ REJECTION_VERDICT_KEYS = frozenset({
     "midzhi_unpromulgatable", "legal_reason_code",
 })
 REJECTION_SNAPSHOT_KEYS = frozenset({
-    "imperial_authority_band", "involved_office_types",
+    "imperial_authority_band", "appointment_tenure",
     "authorization_ids", "endorsement_entry_ids",
 })
 IMPERIAL_AUTHORITY_BANDS = frozenset({"极弱", "偏弱", "中等", "偏强", "强盛"})
@@ -90,7 +92,7 @@ def validate_rejection_verdict(
         or not isinstance(verdict.get("reason"), str) or not verdict["reason"].strip()
         or not isinstance(snapshot, dict) or set(snapshot) != REJECTION_SNAPSHOT_KEYS
         or snapshot.get("imperial_authority_band") not in IMPERIAL_AUTHORITY_BANDS
-        or not string_list(snapshot.get("involved_office_types"))
+        or snapshot.get("appointment_tenure") not in APPOINTMENT_TENURES | {""}
         or not string_list(snapshot.get("authorization_ids"))
         or not isinstance(endorsement_ids, list)
         or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0

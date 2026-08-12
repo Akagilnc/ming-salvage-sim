@@ -237,7 +237,7 @@ def _materialize_secret_and_cultivate(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_draft(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_draft_intent
+    from ming_sim.cli_backend import extract_draft_intent, resolve_directive_mode
 
     session = ctx.session
     minister_name = ctx.character.name
@@ -250,6 +250,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     committed_draft = None
     if not has_pending_directive:
         for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
+            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
+                continue
             if str(_directive["actor"] or "") == minister_name:
                 committed_draft = _directive
                 break
@@ -275,7 +277,10 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         except (ValueError, TypeError):
             _cp = {}
         _txt = str(_cp.get("text") or "") if isinstance(_cp, dict) else ""
-        dir_candidates.append({"id": int(_p["id"]), "text": _txt, "summary": _txt[:40]})
+        _mode = _cp.get("mode") if isinstance(_cp, dict) else None
+        dir_candidates.append({
+            "id": int(_p["id"]), "text": _txt, "summary": _txt[:40], "mode": _mode,
+        })
     existing_draft_text = ""
     if dir_candidates:
         existing_draft_text = str(dir_candidates[-1].get("text") or "")
@@ -356,12 +361,38 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             draft_res["participant_roster"] = roster
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
+        pending_target = next(
+            (c for c in dir_candidates if c["id"] == _target_id), None,
+        ) if _target_id is not None else None
+        # 单候选且抽取器未回目标时，下面的真实落点仍是 upsert 该候选，不是新建。
+        if pending_target is None and len(dir_candidates) == 1 and _target != "新":
+            pending_target = dir_candidates[0]
         is_existing_update = (
-            (_target_id is not None and any(c["id"] == _target_id for c in dir_candidates))
+            pending_target is not None
             or (committed_draft is not None and not has_pending_directive)
         )
+        existing_mode = None
+        if is_existing_update:
+            if pending_target is not None:
+                existing_mode = pending_target.get("mode")
+            elif committed_draft is not None:
+                existing_mode = session.db.read_directive_dossier_payload(
+                    committed_draft
+                ).get("mode")
+        # Batch extractor already requires+normalizes per-item mode. Do not
+        # rebroadcast the whole utterance (often the first item's declaration)
+        # over every sibling; keep single-item/supplement path on emperor text.
+        if ctx.candidate_kind_count > 1:
+            draft_res["mode"] = resolve_directive_mode(
+                extracted=draft_res.get("mode"),
+            )
+        else:
+            draft_res["mode"] = resolve_directive_mode(
+                ctx.player_message, draft_res.get("mode"), existing_mode,
+            )
+
         mechanical_fields = (
-            "dossier_action_type", "target_kind", "target_id", "amount", "account",
+            "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
             "execution_surface", "assignee", "authorization_id", "deadline_months",
         )
         for field_name in mechanical_fields:
@@ -437,7 +468,7 @@ def _materialize_pacification(ctx: MaterializeCtx) -> None:
 
 
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_appointment_action
+    from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
         _appointment_intent_is_current_office_noop,
         _cancel_staged_opposing_office,
@@ -482,6 +513,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             payload={
                 "name": appt["name"], "office": appt.get("office", ""),
                 "appointer": minister_name,
+                "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
             },
         )
 
@@ -543,6 +575,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("office", "官职", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
             ),
             materialize_fn=_materialize_appointment,
         ),
