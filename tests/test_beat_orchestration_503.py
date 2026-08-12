@@ -278,11 +278,33 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
     monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     game = web_app.WebGame(fresh=False)
+    # e2e seam 注入确定性假 scene LLM；测试绝不访问真实模型。
+    game._beat_generator = bo.production_beat_generator
     yield game
     try:
         game.session.close()
     except Exception:
         pass
+
+
+def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
+    db, state, _content = game
+    seen = []
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], "毕自严")
+
+    entry_id = an.dismiss_from_audience(
+        db, "毕自严", night_id=night["id"], state=state,
+        beat_generator=lambda inputs: seen.append(inputs) or "毕自严整衣趋出。",
+        knowledge_provider=_fake_provider("退侍所见"),
+    )
+
+    assert entry_id
+    assert seen[0].beat_kind == "exit"
+    assert seen[0].person_name == "毕自严"
+    assert seen[0].characterization
+    assert "退侍所见" in seen[0].perspectival_world
+    assert an.list_ledger(db, night["id"])[-1]["body"] == "毕自严整衣趋出。"
 
 
 def test_web_start_chat_turn_wires_production_beat_generator(web_game):
@@ -295,11 +317,13 @@ def test_web_start_chat_turn_wires_production_beat_generator(web_game):
         "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
     ).fetchone()
     night_id = int(row["night_id"])
+    # 身份与确定性垫位先 durable；慢 scene 在回话 worker 同启后才替换。
+    assert _enter_body(game.db, night_id, minister) == f"宣入{minister}入殿。"
+    entry_id, generated = game._generate_chat_turn_scene(minister, ctid)
+    game._persist_scene_body((entry_id, generated))
     enter = _enter_body(game.db, night_id, minister)
     open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
-    assert enter and minister in enter
-    # 生产生成器带「初入殿」标记；#498 兜底是「{method}{name}入殿。」无此字样。
-    assert "初入殿" in enter
+    assert enter and minister in enter and enter != f"宣入{minister}入殿。"
     assert open_body and "召对夜启" in open_body
 
 

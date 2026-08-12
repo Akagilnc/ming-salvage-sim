@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
+import json
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
@@ -39,6 +40,7 @@ from ming_sim.audience_night import (
 
 BEAT_OPEN = "open"
 BEAT_ENTER = "enter"
+BEAT_EXIT = "exit"
 BEAT_CLOSE = "close"
 
 # 见闻供给接口：character_name -> 角色见闻投影（get_character_knowledge 契约的 dict）。
@@ -168,7 +170,7 @@ def assemble_beat_inputs(
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
-    if beat_kind == BEAT_ENTER:
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
         subject = str(person_name or "").strip()
     else:
         # 夜级框架 beat（开夜/收夜）：视角取常在员额首席（王承恩），无则空。
@@ -183,7 +185,7 @@ def assemble_beat_inputs(
 
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
-    if beat_kind == BEAT_ENTER:
+    if beat_kind in (BEAT_ENTER, BEAT_EXIT):
         characterization = _characterization(db, person_name)
         prior_appearances = _person_prior_appearances(db, night_id, person_name)
 
@@ -191,7 +193,7 @@ def assemble_beat_inputs(
         beat_kind=beat_kind,
         time_of_day=str(time_of_day or ""),
         location=str(location or ""),
-        person_name=str(person_name or "") if beat_kind == BEAT_ENTER else "",
+        person_name=str(person_name or "") if beat_kind in (BEAT_ENTER, BEAT_EXIT) else "",
         characterization=characterization,
         summon_method=str(summon_method or "") if beat_kind == BEAT_ENTER else "",
         perspectival_world=perspectival_world,
@@ -220,6 +222,42 @@ def _identity_snippet(characterization: str) -> str:
     if raw.startswith("身份："):
         raw = raw[3:]
     return raw.split("；", 1)[0].strip()
+
+
+def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
+    """创建真实 scene LLM adapter。
+
+    prompt 只陈列已路由的 in-world 材料，不携带字数、段落、结构或格式约束；失败原样抛出，
+    由召对轮既有失败/重试生命周期处理，禁止静默模板降级。
+    """
+    from agno.agent import Agent
+    from ming_sim.llm_model import create_chat_model, extract_agent_text
+
+    agent = Agent(
+        name="Scene Beat Narrator",
+        model=create_chat_model(llm_config, temperature=0.7),
+        instructions=[
+            "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
+            "开场只立局势与悬念，不预告后来结果；收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
+        ],
+    )
+
+    def generate(inputs: BeatInputs) -> str:
+        materials = {
+            "场景节点": inputs.beat_kind,
+            "时辰": inputs.time_of_day,
+            "地点": inputs.location,
+            "人物": inputs.person_name,
+            "人物特征": inputs.characterization,
+            "召法": inputs.summon_method,
+            "人物所知": inputs.perspectival_world,
+            "人物感知的朝局张力": inputs.court_tension,
+            "此前入殿与奏对": inputs.prior_appearances,
+            "此前殿上公开之事": inputs.public_layer,
+        }
+        return extract_agent_text(agent.run(json.dumps(materials, ensure_ascii=False)))
+
+    return generate
 
 
 def production_beat_generator(inputs: BeatInputs) -> str:
@@ -258,6 +296,10 @@ def production_beat_generator(inputs: BeatInputs) -> str:
         if tension:
             body = f"{body}{tension}"
         return body
+
+    if inputs.beat_kind == BEAT_EXIT:
+        name = str(inputs.person_name or "").strip()
+        return f"{name}整衣告退。" if name else ""
 
     if inputs.beat_kind == BEAT_CLOSE:
         head = f"{place_time}，退朝，今夜召对到此。" if place_time else "退朝，今夜召对到此。"
@@ -314,6 +356,28 @@ def generate_enter_beat_body(
         summon_method=summon_method,
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
+    )
+    return _run_generator(beat_generator, inputs)
+
+
+def generate_exit_beat_body(
+    db: Any,
+    state: Any,
+    *,
+    night: Dict[str, Any],
+    person_name: str,
+    beat_generator: Optional[BeatGenerator] = None,
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+) -> str:
+    """退侍账正文；人物、时地、见闻与本夜公开层均走同一 BeatInputs seam。"""
+    if beat_generator is None:
+        return ""
+    inputs = assemble_beat_inputs(
+        db, state, beat_kind=BEAT_EXIT,
+        time_of_day=str(night.get("time_of_day") or ""),
+        location=str(night.get("location") or ""),
+        night_id=int(night.get("id") or 0), person_name=person_name,
+        knowledge_provider=knowledge_provider,
     )
     return _run_generator(beat_generator, inputs)
 
