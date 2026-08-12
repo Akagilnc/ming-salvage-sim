@@ -1,9 +1,8 @@
 import React from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Menu, Upload, X } from "lucide-react";
-import { api } from "../api";
-import { formatLegacyEffect, formatMoney, formatSignedMoney, scoreTone } from "../format";
-import type { BudgetAccount, BudgetItem, BudgetMovement, GameState, Legacy } from "../types";
+import { Upload, X } from "lucide-react";
+import { formatLegacyEffect, formatMoney, formatSignedMoney } from "../format";
+import type { BudgetAccount, BudgetItem, BudgetMovement, Legacy } from "../types";
 
 export function MinisterPortrait({ primary, fallback, name, className = "minister-card-portrait" }: { primary: string; fallback?: string; name: string; className?: string }) {
   // 两级 fallback：primary（专属）→ fallback（pool 预设）→ 占位符
@@ -73,21 +72,6 @@ export function snapToSlot(px: number, py: number, occupied: Set<string>, selfKe
   return best ?? { px, py };
 }
 
-
-// 默认坐标：从 near 开始，每人占一格，紧挨着排不留空
-export const COURT_SLOT_STEP = 1 / (COURT_SLOTS_PER_ROW - 1);  // 相邻槽间距（百分比t）
-
-export function defaultCourtPct(index: number, total: number): { px: number; py: number } {
-  const leftCount = Math.ceil(total / 2);
-  const isLeft = index < leftCount;
-  const posInRow = isLeft ? index : index - leftCount;
-  const anchor = isLeft ? LEFT_ANCHOR : RIGHT_ANCHOR;
-  const t = posInRow * COURT_SLOT_STEP;  // 从槽0开始连续，不跳格
-  return {
-    px: anchor.near.px + t * (anchor.far.px - anchor.near.px),
-    py: anchor.near.py + t * (anchor.far.py - anchor.near.py),
-  };
-}
 
 // 坐标存百分比（0-1），持久化到服务端 db（按存档隔离）
 export async function loadCourtPos(): Promise<Record<string, { px: number; py: number }>> {
@@ -164,61 +148,6 @@ export function PortraitUploadButton({
   );
 }
 
-export function RightNavBar({
-  onToggleCourt,
-  onToggleHarem,
-  onToggleArmy,
-  onToggleRegion,
-  onToggleBuilding,
-  onToggleEconomy,
-  onToggleAppointment,
-  onOpenLongGoals,
-  activeDrawer,
-}: {
-  onToggleCourt: () => void;
-  onToggleHarem: () => void;
-  onToggleArmy: () => void;
-  onToggleRegion: () => void;
-  onToggleBuilding: () => void;
-  onToggleEconomy: () => void;
-  onToggleAppointment: () => void;
-  onOpenLongGoals: () => void;
-  activeDrawer: string;
-}) {
-  const items = [
-    { key: "court", label: "政", title: "朝堂·召见大臣", onClick: onToggleCourt },
-    { key: "harem", label: "内", title: "后宫", onClick: onToggleHarem },
-    { key: "army", label: "兵", title: "军队列表", onClick: onToggleArmy },
-    { key: "region", label: "省", title: "省份列表", onClick: onToggleRegion },
-    { key: "building", label: "工", title: "建筑列表", onClick: onToggleBuilding },
-    { key: "economy", label: "户", title: "经济面板", onClick: onToggleEconomy },
-    { key: "appointment", label: "吏", title: "官员任免", onClick: onToggleAppointment },
-  ];
-  return (
-    <nav className="right-nav-bar" aria-label="六部入口">
-      {items.map((item) => (
-        <button
-          key={item.key}
-          className={`right-nav-btn${activeDrawer === item.key ? " active" : ""}`}
-          title={item.title}
-          aria-label={item.title}
-          onClick={item.onClick}
-        >
-          {item.label}
-        </button>
-      ))}
-      <button
-        className="right-nav-btn right-nav-btn-goal"
-        title="长期目标"
-        aria-label="大明长期目标"
-        onClick={onOpenLongGoals}
-      >
-        目
-      </button>
-    </nav>
-  );
-}
-
 export function RightDrawer({
   open,
   onClose,
@@ -253,216 +182,45 @@ export function RightDrawer({
   );
 }
 
-// ── 新 HUD 底图坑位坐标（相对底图百分比，见 web/public/ui/exact/hud-slots.json）──
-export const HUD_BG = "/ui/exact/auto-code-image-11685.png";
+// ── 新 HUD 底图坑位坐标（正视角平面矩形，相对底图百分比，底图 bg_hud_night_concept2.png 2560×1440）──
+export const HUD_BG = "/bg_hud_night_concept2.png";
 
 export const HUD_SLOTS = {
   顶栏: {
-    年月: { left: "9.6%", top: "6.31%" },
-    国库: { left: "25.83%", top: "6.32%" },
-    内库: { left: "42.33%", top: "6.35%" },
-    民心: { left: "58.63%", top: "6.06%" },
-    皇威: { left: "76.09%", top: "6.15%" },
+    年月: { left: "25.0%", top: "8.1%" },
+    国库: { left: "38.1%", top: "8.1%" },
+    内库: { left: "50.9%", top: "8.1%" },
+    民心: { left: "63.6%", top: "8.1%" },
+    皇威: { left: "76.5%", top: "8.1%" },
     菜单: { left: "85.8%", top: "4.6%" },
   },
   导航: {
-    政: { left: "93.36%", top: "19.46%" },
-    吏部: { left: "93.38%", top: "23.85%" },
-    省份: { left: "93.55%", top: "33.86%" },
-    兵部: { left: "93.71%", top: "38.14%" },
-    户部: { left: "94.12%", top: "48.09%" },
-    工部: { left: "94.13%", top: "51.64%" },
-    礼部: { left: "94.22%", top: "60.33%" },
-    后宫: { left: "94.36%", top: "68.81%" },
-    目标: { left: "94.56%", top: "76.32%" },
+    政: { left: "90.4%", top: "19.3%" },
+    吏部: { left: "90.4%", top: "27.5%" },
+    省份: { left: "90.4%", top: "35.4%" },
+    兵部: { left: "90.4%", top: "43.4%" },
+    户部: { left: "90.4%", top: "51.5%" },
+    工部: { left: "90.4%", top: "59.6%" },
+    礼部: { left: "90.4%", top: "67.7%" },
+    后宫: { left: "90.4%", top: "75.7%" },
   },
   命令: {
-    奏疏: { left: "12.02%", top: "75.57%", width: "11.8%", height: "11.13%" },
-    邸报: { left: "28.34%", top: "75.45%", width: "11.61%", height: "12.46%" },
-    密令: { left: "46.91%", top: "73.38%", width: "9.76%", height: "13.11%" },
-    史册: { left: "63.92%", top: "73.4%", width: "9.4%", height: "13.21%" },
-    拟诏: { left: "77.29%", top: "67.15%", width: "14.08%", height: "21.67%" },
+    奏疏: { left: "8.0%", top: "74.0%", width: "14%", height: "20%" },
+    邸报: { left: "26.2%", top: "74.5%", width: "14%", height: "20%" },
+    密令: { left: "43.0%", top: "74.0%", width: "14%", height: "20%" },
+    史册: { left: "57.5%", top: "74.5%", width: "14%", height: "20%" },
+    拟诏: { left: "76.5%", top: "76.5%", width: "11.5%", height: "18%" },
   },
   命令文字: {
-    奏疏: { left: "16.78%", top: "89.93%" },
-    邸报: { left: "32.81%", top: "89.66%" },
-    密令: { left: "51.02%", top: "88.99%" },
-    史册: { left: "67.86%", top: "89.68%" },
-    拟诏: { left: "83.9%", top: "89.76%" },
+    奏疏: { left: "15.0%", top: "94.6%" },
+    邸报: { left: "33.2%", top: "94.6%" },
+    密令: { left: "50.0%", top: "94.6%" },
+    史册: { left: "64.5%", top: "94.6%" },
+    拟诏: { left: "85.0%", top: "94.6%" },
   },
-  地图四角: { tl: [17.89, 14.9], tr: [86.95, 14.9], br: [92.13, 76.61], bl: [13.9, 76.61] },
-  局势四角: { tl: [3.14, 24.09], tr: [15.06, 24.09], br: [14.36, 47.95], bl: [1.6, 47.95] },
+  地图框: { left: 22.0, top: 16.8, width: 59.2, height: 53.4 },
+  局势框: { left: 8.8, top: 17.0, width: 7.6, height: 46.0 },
 } as const;
-
-
-// 四角 [x%,y%] → matrix3d，把单位正方形(0..1)映射到任意四边形（透视）
-export function quadToMatrix3d(
-  w: number, h: number,
-  tl: readonly number[], tr: readonly number[], br: readonly number[], bl: readonly number[]
-): string {
-  // 目标点用像素（相对容器 w×h）
-  const px = (p: readonly number[]) => [(p[0] / 100) * w, (p[1] / 100) * h];
-  const [x0, y0] = px(tl), [x1, y1] = px(tr), [x2, y2] = px(br), [x3, y3] = px(bl);
-  // 源单位矩形角: (0,0)(w,0)(w,h)(0,h) → 解 8 参数透视变换
-  const src = [[0, 0], [w, 0], [w, h], [0, h]];
-  const dst = [[x0, y0], [x1, y1], [x2, y2], [x3, y3]];
-  const A: number[][] = [], b: number[] = [];
-  for (let i = 0; i < 4; i++) {
-    const [sx, sy] = src[i], [dx, dy] = dst[i];
-    A.push([sx, sy, 1, 0, 0, 0, -sx * dx, -sy * dx]); b.push(dx);
-    A.push([0, 0, 0, sx, sy, 1, -sx * dy, -sy * dy]); b.push(dy);
-  }
-  const h8 = solve8(A, b);
-  const [a, bb, c, d, e, f, g, i] = h8;
-  // CSS matrix3d 列主序
-  return `matrix3d(${a},${d},0,${g}, ${bb},${e},0,${i}, 0,0,1,0, ${c},${f},0,1)`;
-}
-
-export function solve8(A: number[][], b: number[]): number[] {
-  // 高斯消元 8×8
-  const n = 8, M = A.map((row, k) => [...row, b[k]]);
-  for (let col = 0; col < n; col++) {
-    let piv = col;
-    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
-    [M[col], M[piv]] = [M[piv], M[col]];
-    const pv = M[col][col] || 1e-9;
-    for (let c = col; c <= n; c++) M[col][c] /= pv;
-    for (let r = 0; r < n; r++) {
-      if (r === col) continue;
-      const factor = M[r][col];
-      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c];
-    }
-  }
-  return M.map((row) => row[n]);
-}
-
-
-// 透视梯形容器：内部 stageW×stageH 的正放内容被 matrix3d 压成梯形
-export function QuadFrame({
-  quad, stageW, stageH, baseW, baseH, children, className, style,
-}: {
-  quad: { tl: readonly number[]; tr: readonly number[]; br: readonly number[]; bl: readonly number[] };
-  stageW: number; stageH: number; baseW: number; baseH: number;
-  children: React.ReactNode; className?: string; style?: React.CSSProperties;
-}) {
-  // 正放内容的逻辑尺寸＝四角包围盒像素
-  const xs = [quad.tl[0], quad.tr[0], quad.br[0], quad.bl[0]];
-  const ys = [quad.tl[1], quad.tr[1], quad.br[1], quad.bl[1]];
-  const left = (Math.min(...xs) / 100) * stageW;
-  const top = (Math.min(...ys) / 100) * stageH;
-  const w = ((Math.max(...xs) - Math.min(...xs)) / 100) * stageW;
-  const h = ((Math.max(...ys) - Math.min(...ys)) / 100) * stageH;
-  // 四角相对包围盒左上的局部坐标（百分比，喂 matrix3d）
-  const rel = (p: readonly number[]) => [
-    ((p[0] / 100) * stageW - left) / w * 100,
-    ((p[1] / 100) * stageH - top) / h * 100,
-  ];
-  const m = quadToMatrix3d(w, h, rel(quad.tl), rel(quad.tr), rel(quad.br), rel(quad.bl));
-  return (
-    <div
-      className={className}
-      style={{
-        position: "absolute", left, top, width: w, height: h,
-        transform: m, transformOrigin: "0 0", ...style,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-export function TopStatusBar({
-  state,
-  onOpenState,
-  onOpenMenu,
-}: {
-  state: GameState;
-  onOpenState: () => void;
-  onOpenMenu: () => void;
-}) {
-  const scoreKeys = ["民心", "皇威"];
-  return (
-    <>
-    <header className="status-bar" aria-label="国势状态栏">
-      <button className="status-emblem" onClick={onOpenState}>
-        <img src="/icon_ming_emblem.png" alt="大明" className="emblem-art" />
-        <span>{state.turn.year} 年 {state.turn.period} 月</span>
-      </button>
-      <i className="hud-divider" aria-hidden="true" />
-      <div className="status-metrics">
-        <BudgetHover accountName="国库" budget={state.budget["国库"]} />
-        <BudgetHover accountName="内库" budget={state.budget["内库"]} />
-        <i className="hud-divider" aria-hidden="true" />
-        {scoreKeys.map((key) => (
-          <span className={`status-pill ${scoreTone(state.metrics[key], false)}`} key={key}>
-            {key} <b>{state.metrics[key]}</b>
-          </span>
-        ))}
-        <i className="hud-divider" aria-hidden="true" />
-        <button className="status-menu" onClick={onOpenMenu} aria-label="游戏菜单">
-          <Menu size={16} />
-          <span>菜单</span>
-        </button>
-      </div>
-    </header>
-    <LegacyBar legacies={state.legacies} />
-    </>
-  );
-}
-
-export const LONG_GOAL_POSTERS = [
-  { src: "/long_goal_ming.jpg", alt: "长期目标：让大明再续二百年" },
-  { src: "/long_goal_tech.jpg", alt: "长期目标：科技树与文明延续" },
-  { src: "/long_goal_modernity.jpg", alt: "长期目标：从王朝危机到现代文明" },
-];
-
-export function LongGoalsModal({ onClose }: { onClose: () => void }) {
-  const [index, setIndex] = React.useState(0);
-  const goPrev = React.useCallback(() => {
-    setIndex((current) => (current + LONG_GOAL_POSTERS.length - 1) % LONG_GOAL_POSTERS.length);
-  }, []);
-  const goNext = React.useCallback(() => {
-    setIndex((current) => (current + 1) % LONG_GOAL_POSTERS.length);
-  }, []);
-
-  React.useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") goPrev();
-      if (event.key === "ArrowRight") goNext();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [goPrev, goNext]);
-
-  const poster = LONG_GOAL_POSTERS[index];
-  return (
-    <section className="long-goal-layer" role="dialog" aria-modal="true" aria-label="大明长期目标">
-      <div className="long-goal-scrim" onClick={onClose} />
-      <button className="long-goal-close" aria-label="关闭弹窗" onClick={onClose}>
-        <X size={30} />
-      </button>
-      <button className="long-goal-nav long-goal-nav-prev" aria-label="上一张长期目标图" onClick={goPrev}>
-        <ChevronLeft size={34} />
-      </button>
-      <figure className="long-goal-poster">
-        <img src={poster.src} alt={poster.alt} />
-      </figure>
-      <button className="long-goal-nav long-goal-nav-next" aria-label="下一张长期目标图" onClick={goNext}>
-        <ChevronRight size={34} />
-      </button>
-      <div className="long-goal-dots" aria-label="长期目标图切换">
-        {LONG_GOAL_POSTERS.map((item, itemIndex) => (
-          <button
-            key={item.src}
-            className={itemIndex === index ? "active" : ""}
-            aria-label={`切换到第 ${itemIndex + 1} 张长期目标图`}
-            onClick={() => setIndex(itemIndex)}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
 
 export function LegacyBar({ legacies }: { legacies: Legacy[] }) {
   const [open, setOpen] = React.useState(false);
@@ -510,34 +268,47 @@ export function LegacyBar({ legacies }: { legacies: Legacy[] }) {
 export function BudgetHover({ accountName, budget }: { accountName: "国库" | "内库"; budget: BudgetAccount }) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const hideTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const cancelHide = () => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
+  };
   const show = () => {
+    cancelHide();
     const r = triggerRef.current?.getBoundingClientRect();
     if (r) setPos({ left: r.left, top: r.bottom + 6 });
     setOpen(true);
   };
-  const hide = () => setOpen(false);
+  // 宽限延迟：鼠标从触发器挪向浮层（portal 到 body，非 DOM 子级）时给 300ms 缓冲
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimer.current = setTimeout(() => setOpen(false), 300);
+  };
+  React.useEffect(() => cancelHide, []);
   return (
     <span
       className={`budget-hover ${open ? "open" : ""}`}
       onMouseEnter={show}
-      onMouseLeave={hide}
+      onMouseLeave={scheduleHide}
       onFocus={show}
-      onBlur={hide}
+      onBlur={scheduleHide}
     >
       <button
         ref={triggerRef}
         className="status-money budget-trigger"
         type="button"
         aria-label={`查看${accountName}固定收支`}
-        onClick={() => (open ? hide() : show())}
+        onClick={() => (open ? setOpen(false) : show())}
       >
-        <span>{accountName} <b>{formatMoney(budget.balance)}</b></span>
+        <span className="hud2-lab">{accountName}</span>
+        <span className="hud2-val"><b>{formatMoney(budget.balance)}</b></span>
         <small className={budget.net >= 0 ? "income" : "expense"}>月 {formatSignedMoney(budget.net)}</small>
       </button>
       {open && pos && createPortal(
         <span className="budget-popover budget-popover-portal" role="tooltip"
-          style={{ left: pos.left, top: pos.top }}>
+          style={{ left: pos.left, top: pos.top, maxHeight: `calc(100vh - ${pos.top + 12}px)` }}
+          onMouseEnter={cancelHide}
+          onMouseLeave={scheduleHide}>
           <span className="budget-popover-head">
             <b>{accountName}月度定额</b>
             <span className="budget-summary">
@@ -628,65 +399,6 @@ export function CommandSlot({
   );
 }
 
-export function BottomCommandBar({
-  eventsCount,
-  directivesCount,
-  secretOrdersCount,
-  onOpenMemorials,
-  onOpenEdict,
-  onOpenReport,
-  onOpenHistory,
-  onOpenSecretOrders,
-}: {
-  eventsCount: number;
-  directivesCount: number;
-  secretOrdersCount: number;
-  onOpenMemorials: () => void;
-  onOpenEdict: () => void;
-  onOpenReport: () => void;
-  onOpenHistory: () => void;
-  onOpenSecretOrders: () => void;
-}) {
-  return (
-    <div className="ui-stage">
-      {/* 案板 + 图标 + 玉玺一体 */}
-      <div className="anban-wrap">
-        {/* 图标行：底部贴基准线向上生长 */}
-        <nav className="bottom-command-bar" aria-label="朝政辅助操作">
-          <button className="command-icon" onClick={onOpenMemorials} aria-label={`奏疏 ${eventsCount} 件待览`}>
-            <img src="/ui/exact/zoushu.png" alt="" className="command-art" />
-            {eventsCount ? <span className="command-badge">{eventsCount}</span> : null}
-          </button>
-          <button className="command-icon" onClick={onOpenReport} aria-label="本月邸报">
-            <img src="/ui/exact/mingxi.png" alt="" className="command-art" />
-          </button>
-          <button className="command-icon" onClick={onOpenSecretOrders} aria-label={`密令 ${secretOrdersCount} 条进行中`}>
-            <img src="/ui/exact/miling.png" alt="" className="command-art command-art-secret" />
-            {secretOrdersCount ? <span className="command-badge command-badge-secret">{secretOrdersCount}</span> : null}
-          </button>
-          <button className="command-icon" onClick={onOpenHistory} aria-label="历代奏报">
-            <img src="/ui/exact/lishi.png" alt="" className="command-art" />
-          </button>
-          <button className="edict-turn-button" onClick={onOpenEdict} aria-label={`诏书草案 ${directivesCount} 道待发`}>
-            <span className="edict-turn-art">
-              <img src="/ui/exact/nizhao.png" alt="" />
-              {directivesCount ? <span className="command-badge edict-turn-badge">{directivesCount}</span> : null}
-            </span>
-          </button>
-        </nav>
-        {/* 文字行：贴在 bar 下方 */}
-        <div className="bottom-caption-bar">
-          <span className="command-caption"><b>奏疏</b><small>{eventsCount} 件待览</small></span>
-          <span className="command-caption"><b>邸报</b><small>本月奏报</small></span>
-          <span className="command-caption"><b>密令</b><small>{secretOrdersCount ? `${secretOrdersCount} 条进行中` : "暂无密令"}</small></span>
-          <span className="command-caption"><b>史册</b><small>历代奏报/诏书</small></span>
-          <span className="command-caption"><b>拟诏/结束回合</b><small>{directivesCount ? `${directivesCount} 道` : "本回合"}</small></span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function FullscreenModal({
   title,
   subtitle,
@@ -694,6 +406,7 @@ export function FullscreenModal({
   onClose,
   children,
   headerExtra,
+  hideTitle,
 }: {
   title: string;
   subtitle: string;
@@ -701,18 +414,21 @@ export function FullscreenModal({
   onClose: () => void;
   children: React.ReactNode;
   headerExtra?: React.ReactNode;
+  hideTitle?: boolean;
 }) {
   return (
     <section className="fullscreen-layer" role="dialog" aria-modal="true" aria-label={title}>
       <div className="fullscreen-scrim" onClick={onClose} />
       <div className={`fullscreen-modal ${bgClass || ""}`}>
-        <header className="modal-header">
-          <div className="modal-title">
-            <div>
-              <h1>{title}</h1>
-              <span>{subtitle}</span>
+        <header className={`modal-header ${hideTitle ? "modal-header-bare" : ""}`}>
+          {!hideTitle && (
+            <div className="modal-title">
+              <div>
+                <h1>{title}</h1>
+                <span>{subtitle}</span>
+              </div>
             </div>
-          </div>
+          )}
           <div className="modal-header-actions">
             {headerExtra}
             <button className="icon-button" aria-label="关闭弹窗" onClick={onClose}>
