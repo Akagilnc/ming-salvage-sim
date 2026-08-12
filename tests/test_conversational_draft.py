@@ -239,6 +239,10 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     ("pending_candidate", "再补一条。", "midzhi"),
     ("committed", "再补一条。", "midzhi"),
     ("committed", "普通", "ordinary"),
+    # Full natural-language ordinary declaration must beat durable midzhi.
+    ("pending_upsert", "这道改按普通程序颁布，准了", "ordinary"),
+    ("pending_candidate", "这道改按普通程序颁布，准了", "ordinary"),
+    ("committed", "这道改按普通程序颁布，准了", "ordinary"),
 ])
 @pytest.mark.parametrize("supplement", ["omitted", "empty", "append"])
 def test_real_conversation_draft_supplement_preserves_and_appends_roster(

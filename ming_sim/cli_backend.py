@@ -998,7 +998,13 @@ def classify_cli_action_intent(
 # 无显式前缀（_DRAFT_PREFIXES）→ LLM 判出意图 → 进 pending_actions(kind=directive)暂存；
 # 大臣回话即草案文本，commit 时再建 turn_directives 条目。
 def _directive_mode(value: object) -> Optional[str]:
-    """Normalize one mode value; authority precedence belongs to resolve_directive_mode."""
+    """Normalize one mode value; authority precedence belongs to resolve_directive_mode.
+
+    Emperor natural-language declarations count only when unambiguous:
+    midzhi keeps prefix-shaped cues; ordinary also accepts full-sentence
+    "按普通程序…" style declarations. Silent supplements ("再补一条") stay None
+    so existing durable mode wins upstream.
+    """
     normalized = str(value or "").strip()
     if not normalized:
         return None
@@ -1008,7 +1014,12 @@ def _directive_mode(value: object) -> Optional[str]:
         or any(normalized.startswith(f"{prefix}中旨直发") for prefix in _DRAFT_PREFIXES)
     ):
         return "midzhi"
-    if normalized in {"普通", "ordinary"}:
+    if (
+        normalized in {"普通", "ordinary"}
+        or normalized.startswith("普通")
+        or any(normalized.startswith(f"{prefix}普通") for prefix in _DRAFT_PREFIXES)
+        or "普通程序" in normalized
+    ):
         return "ordinary"
     return None
 
