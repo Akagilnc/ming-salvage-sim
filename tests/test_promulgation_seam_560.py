@@ -239,7 +239,7 @@ def test_public_resolve_seam_rejects_reserved_or_malformed_rejection_before_pend
         "dossier_id": dossier_id,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "primary_opponents": ["东林"],
         "gatekeeper_id": None,
         "reason": "科臣封驳。",
         "affected_parties": [
@@ -315,7 +315,7 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contaminatio
         "dossier_id": dossier_id,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "primary_opponents": ["东林"],
         "gatekeeper_id": None,
         "reason": "科臣封驳。",
         "affected_parties": [

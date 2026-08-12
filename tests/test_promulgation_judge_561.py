@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -8,7 +9,7 @@ from ming_sim import audience_night
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
-from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
+from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -247,7 +248,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
         "dossier_id": dossier_id,
         "decision": "rejected",
         "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "primary_opponents": ["东林"],
         "gatekeeper_id": None,
         "reason": "触犯钱粮命门，科臣封驳。",
         "criteria_snapshot": {
@@ -611,3 +612,40 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
     # This deterministic test proves payload filtering and rescript options only;
     # semantic narrative acceptance belongs to the real-model gate artifact.
     assert "promulgation_instruction" in seen_payload
+
+
+def test_real_gate_rejected_primary_opponents_are_faction_key_strings(game):
+    """Lock production validator to real judge output shape (ADR 0066 string list)."""
+    db, _state, _content = game
+    evidence_path = (
+        Path(__file__).resolve().parents[1] / "docs/evidence/issue-561-gate.json"
+    )
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    rejected = [
+        item for item in evidence["judge_first"]["output"]
+        if item.get("decision") == "rejected" and item.get("primary_opponents")
+    ]
+    assert rejected, "gate evidence must include rejected verdicts with opponents"
+    faction_names = {
+        str(row["name"]) for row in db.conn.execute("SELECT name FROM factions")
+    }
+    class_names = {
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT DISTINCT name FROM classes"
+        )
+    }
+    character_ids = {
+        str(row["name"]) for row in db.conn.execute("SELECT name FROM characters")
+    }
+    blocked_layers = {"cabinet_drafting", "palace_rescript", "six_offices"}
+    for item in rejected:
+        opponents = item["primary_opponents"]
+        assert isinstance(opponents, list) and opponents
+        assert all(isinstance(name, str) and name.strip() for name in opponents)
+        assert all(not isinstance(name, dict) for name in opponents)
+        validate_rejection_verdict(
+            item, blocked_layers,
+            faction_names=faction_names,
+            class_names=class_names,
+            character_ids=character_ids,
+        )
