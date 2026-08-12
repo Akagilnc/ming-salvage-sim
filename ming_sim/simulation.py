@@ -119,7 +119,7 @@ ITEM_FIELD_ALIASES = {
     # 帝国修正的 regions/armies 维度块（值是 {entity_id: {field: pct}}，原样透传）
     "regions": "regions", "地区": "regions",
     "armies": "armies", "军队": "armies",
-    "action": "action", "动作": "action",
+    "action": "action",
     "region_id": "region_id", "地区编号": "region_id",
     "building_id": "building_id", "建筑编号": "building_id",
     "category": "category", "类别": "category",
@@ -145,7 +145,6 @@ ITEM_FIELD_ALIASES = {
     "dossier_id": "dossier_id", "案卷编号": "dossier_id",
     "outcome": "outcome", "执行结果": "outcome",
     "note": "note", "执行说明": "note",
-    "op": "动作", "动作": "动作",
     "holder_id": "holder_id", "授予对象": "holder_id", "持有人": "holder_id",
     "privilege": "privilege", "权项": "privilege",
     "scope": "scope", "事域": "scope",
@@ -936,13 +935,35 @@ def _canonical_item_fields(value: object) -> object:
     }
 
 
+AUTHORITY_CHANGE_FIELD_ALIASES = {
+    "op": "op",
+    "动作": "op",
+}
+
+
+def _canonical_authority_change_fields(value: object) -> object:
+    canonical = _canonical_item_fields(value)
+    if not isinstance(canonical, list):
+        return canonical
+    return [
+        {
+            AUTHORITY_CHANGE_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): val
+            for key, val in item.items()
+        } if isinstance(item, dict) else item
+        for item in canonical
+    ]
+
+
 def canonicalize_extraction(data: Dict[str, object]) -> Dict[str, object]:
     """delta 顶层 key 中文→英文 canonical 归一 + 逐项字段归一。公有 API：driver（ADR 0004）等
     跨模块复用此入口，别引私有名（#17）。`_canonicalize_extraction` 为历史私有别名（向后兼容）。"""
     canonical: Dict[str, object] = {}
     for raw_key, value in data.items():
         key = TOP_LEVEL_ALIASES.get(str(raw_key).strip(), str(raw_key).strip())
-        canonical[key] = _canonical_item_fields(value)
+        if key == "authority_changes":
+            canonical[key] = _canonical_authority_change_fields(value)
+        else:
+            canonical[key] = _canonical_item_fields(value)
     return canonical
 
 
