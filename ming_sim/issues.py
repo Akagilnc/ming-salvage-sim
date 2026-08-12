@@ -138,7 +138,7 @@ def _apply_authority_change_item(
             else _parse_sqlite_id(expires_raw)
         )
         existing = db.find_active_authority(
-            effective_turn, holder_id=holder_id, privilege=privilege, scope=scope,
+            state.turn, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if existing is not None:
             raise ValueError("duplicate_active_authority")
