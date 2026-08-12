@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 23 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 24 字段，别指望守门人帮忙兜。
 
-## 顶层 23 字段（容器类型固定）
+## 顶层 24 字段（容器类型固定）
 
 ```jsonc
 {
@@ -33,6 +33,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "close_issues":     [],  // 结案 issue
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
+  "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
@@ -216,7 +217,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 每项必含判别字段 `动作`（别名 `op`），只收 `授予`（`grant`）／`收回`（`revoke`）。**每项必填正整数 `dossier_id`** 作为唯一案卷来源，且该案卷须在 ADR 0055 下已具备可物化资格（`dossier_authorizes_effects`：已颁/执行中/强颁，或豁免直落）。缺来源／案卷不存在 → `missing_dossier_source`；打回、留中、未达资格 → `dossier_not_effect_eligible`。无来源、打回、留中不得改授权档。
 
-**授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（须写典范键 `target_kind:target_id`；裸域／缺冒号 → `invalid_authority_scope`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；同 `(holder_id, privilege, scope)` 已有在持行且同源 `dossier_id` → 幂等回传既有 `authority_id`；不同案卷语义重复 → `duplicate_active_authority`。不得从授权案卷 payload 平行写 `authority_records`。
+**授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（须写典范键 `target_kind:target_id`；裸域／缺冒号 → `invalid_authority_scope`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；重复判断以**当次结算的当前 `state.turn`** 查询同 `(holder_id, privilege, scope)` 在持行，不以请求的未来 `effective_turn` 查询：不同案卷命中 → `duplicate_active_authority`。同源 `dossier_id` 重放则不受当前适用性影响，始终幂等回传原 `authority_id`。不得从授权案卷 payload 平行写 `authority_records`。
 
 **收回**：必填 `authority_id`（＝`authority_records.id`）与 `dossier_id`。生产槽不接受 holder/privilege/scope 模糊收回。未知 id → `unknown_authority_id`；首次 `revoked 0→1` 成功并写观感边；已收回 → 幂等 `applied`（`already_revoked`），不改 `revoked_turn`、不写第二笔边。收回＝正当治术：零 0056/皇威代价；观感经既有 `relation_edge_events`（`source=holder_id`, `target=皇帝`, `event_kind=结怨`, `context=收权·罢差·{privilege}·{scope}`, `origin=authority_revoke:{id}`）。
 
@@ -287,7 +288,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
 
 ---

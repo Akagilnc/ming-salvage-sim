@@ -403,6 +403,56 @@ def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     ).fetchone()["n"] == 1
 
 
+def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
+    db, state, content = game
+    holder = _minister(db)
+    first_dossier = _eligible_dossier(db, state, holder, target_id="current-active")
+    second_dossier = _eligible_dossier(db, state, holder, target_id="future-request")
+    db.grant_authority(
+        state, holder, "便宜行事", "issue:turn-boundary",
+        effective_turn=state.turn, expires_turn=state.turn,
+        dossier_id=first_dossier["id"],
+    )
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+            "scope": "issue:turn-boundary", "effective_turn": state.turn + 1,
+            "dossier_id": second_dossier["id"],
+        }],
+    }, content=content)
+
+    assert result["authority_changes"][0]["reason"] == "duplicate_active_authority"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
+
+
+def test_duplicate_check_ignores_authority_only_active_in_future(game):
+    db, state, content = game
+    holder = _minister(db)
+    future_dossier = _eligible_dossier(db, state, holder, target_id="future-existing")
+    current_dossier = _eligible_dossier(db, state, holder, target_id="current-grant")
+    db.grant_authority(
+        state, holder, "便宜行事", "issue:turn-boundary-future",
+        effective_turn=state.turn + 1, dossier_id=future_dossier["id"],
+    )
+
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+            "scope": "issue:turn-boundary-future", "effective_turn": state.turn,
+            "expires_turn": state.turn,
+            "dossier_id": current_dossier["id"],
+        }],
+    }, content=content)
+
+    assert result["authority_changes"][0].get("rejected") is not True
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 2
+
+
 def test_production_and_helper_reject_bare_domain_scope(game):
     db, state, content = game
     holder = _minister(db)
