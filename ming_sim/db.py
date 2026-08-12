@@ -8336,7 +8336,7 @@ class GameDB:
                         int(endorsement.get("dossier_id") or 0),
                         form=str(endorsement.get("form") or ""),
                         endorser_id=str(endorsement.get("endorser_id") or ""),
-                        imperial=bool(endorsement.get("imperial", False)),
+                        imperial=endorsement.get("imperial", False),
                         source_chat_turn_id=cid, commit=False,
                     )
             self.conn.execute(
@@ -8664,6 +8664,11 @@ class GameDB:
                 "DELETE FROM story_ledger_entries "
                 "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
                 (int(chat_turn_id), int(chat_turn_id)),
+            )
+            # 背书是该轮已说出口对话的派生事实；撤回来源轮时须同步失效。
+            self.conn.execute(
+                "DELETE FROM decree_dossier_endorsements WHERE source_chat_turn_id = ?",
+                (int(chat_turn_id),),
             )
             self._restore_chat_rollback_items_in_tx(items, message_ids)
             # 只精确删除本召对 commit 出来的 draft 行（保留同 actor 的无关 draft）。
@@ -10435,7 +10440,9 @@ class GameDB:
         did, cid = int(dossier_id), int(source_chat_turn_id)
         kind = str(form or "").strip()
         person = str(endorser_id or "").strip()
-        is_imperial = bool(imperial)
+        if not isinstance(imperial, bool):
+            raise ValueError("御笔标记须为布尔")
+        is_imperial = imperial
         if self.conn.execute("SELECT 1 FROM decree_dossiers WHERE id=?", (did,)).fetchone() is None:
             raise ValueError("背书所指案卷不存在")
         if self.conn.execute("SELECT 1 FROM chat_turns WHERE id=?", (cid,)).fetchone() is None:

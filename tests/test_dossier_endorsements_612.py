@@ -226,7 +226,51 @@ def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
             dossier_id, form="当面站台", endorser_id="不存在的人",
             source_chat_turn_id=chat_turn_id,
         )
+    # ADR 0005 / 严格类型：写边界拒收非 bool，不得 bool("false")/bool(1) 归一化搭救。
+    for bad_imperial in ("false", 1, 0, None):
+        with pytest.raises(ValueError, match="御笔标记须为布尔"):
+            db.add_dossier_endorsement(
+                dossier_id, form="会签", endorser_id=minister,
+                imperial=bad_imperial,  # type: ignore[arg-type]
+                source_chat_turn_id=chat_turn_id,
+            )
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossier_endorsements").fetchone()[0] == 0
+
+
+def test_undo_chat_turn_removes_source_bound_endorsements_from_judge(game):
+    """撤回已说出口的会签后，背书条目须一并撤销；判官不得再读到已撤销对话的背书。"""
+    db, state, _content = game
+    minister = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="清核辽饷",
+        target_kind="issue", target_id="liao-pay-undo",
+    )
+    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
+    result = _extract(
+        db, minister=minister, reply="臣愿会签此旨。",
+        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
+        fact={
+            "body": "大臣当殿愿为辽饷旨意会签。", "person_names": [minister],
+            "tags": ["会签"], "endorsement": {
+                "dossier_id": dossier_id, "form": "会签",
+                "endorser_id": minister, "imperial": False,
+            },
+        },
+    )
+    assert result["status"] == "done"
+    assert db.list_dossier_endorsements(dossier_id)
+
+    db.undo_chat_turn(chat_turn_id)
+
+    assert db.list_dossier_endorsements(dossier_id) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossier_endorsements WHERE source_chat_turn_id=?",
+        (chat_turn_id,),
+    ).fetchone()[0] == 0
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
+    dossier_ctx = next(item for item in context["dossiers"] if item["id"] == dossier_id)
+    assert dossier_ctx["endorsements"] == []
+    assert dossier_ctx["criteria_snapshot_source"]["endorsement_entry_ids"] == []
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
