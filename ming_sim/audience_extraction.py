@@ -130,19 +130,36 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
                     code="extraction_bad_shape", detail={"index": idx},
                 )
             dossier_id = endorsement_raw.get("dossier_id")
+            dossier_ref = endorsement_raw.get("dossier_ref")
+            direct = (not isinstance(dossier_id, bool) and isinstance(dossier_id, int)
+                      and dossier_id > 0 and dossier_ref is None)
+            ref_direct = (
+                dossier_id is None and isinstance(dossier_ref, Mapping)
+                and set(dossier_ref) == {"dossier_id"}
+                and not isinstance(dossier_ref.get("dossier_id"), bool)
+                and isinstance(dossier_ref.get("dossier_id"), int)
+                and dossier_ref["dossier_id"] > 0
+            )
+            deferred = (
+                dossier_id is None and isinstance(dossier_ref, Mapping)
+                and set(dossier_ref) == {"pending_action_id"}
+                and not isinstance(dossier_ref.get("pending_action_id"), bool)
+                and isinstance(dossier_ref.get("pending_action_id"), int)
+                and dossier_ref["pending_action_id"] > 0
+            )
             form = endorsement_raw.get("form")
             imperial = endorsement_raw.get("imperial", False)
             endorser_id = endorsement_raw.get("endorser_id", "")
-            if (isinstance(dossier_id, bool) or not isinstance(dossier_id, int)
-                    or dossier_id <= 0 or form not in {"会签", "当面站台", "御笔手敕"}
+            if (not (direct or ref_direct or deferred) or form not in {"会签", "当面站台", "御笔手敕"}
                     or not isinstance(imperial, bool) or not isinstance(endorser_id, str)):
                 raise ExtractionShapeError(
                     f"第 {idx} 条 endorsement 字段非法",
                     code="extraction_bad_shape", detail={"index": idx},
                 )
             endorsement = {
-                "dossier_id": dossier_id, "form": form,
-                "endorser_id": endorser_id.strip(), "imperial": imperial,
+                **({"dossier_id": dossier_id if direct else dossier_ref["dossier_id"]}
+                   if direct or ref_direct else {"dossier_ref": dict(dossier_ref)}),
+                "form": form, "endorser_id": endorser_id.strip(), "imperial": imperial,
             }
         facts.append({
             "person_names": [n.strip() for n in person_names_raw if n.strip()],
@@ -205,7 +222,7 @@ def extract_story_facts(
         "皇帝问话": question_text,
         "回话原文": reply_text,
         "可背书案卷": [
-            {"id": int(row["id"]), "decree_text": str(row.get("decree_text") or "")}
+            {"ref": dict(row["ref"]), "decree_text": str(row.get("decree_text") or "")}
             for row in (dossier_candidates or [])
         ],
     }
@@ -223,8 +240,13 @@ def extract_story_facts(
         try:
             facts.extend(parse_extraction_facts({"facts": [item]}))
         except ExtractionShapeError as exc:
+            # Only an otherwise valid fact with a malformed endorsement is dirty
+            # per-item data. Other #501 shape failures remain loud and retryable.
+            if not isinstance(item, Mapping) or "endorsement" not in item:
+                raise
+            parse_extraction_facts({"facts": [{k: v for k, v in item.items() if k != "endorsement"}]})
             facts.append({
-                "_rejected_story_fact": dict(item) if isinstance(item, Mapping) else {"raw": item},
+                "_rejected_story_fact": dict(item),
                 "_rejection_reason": f"第 {idx} 条：{exc}",
             })
     return facts
@@ -283,7 +305,7 @@ def run_extraction_for_turn(
             present_names=present_names or [],
             llm_config=llm_config,
             extractor_agent=extractor_agent,
-            dossier_candidates=db.list_decree_dossiers(status="proposed"),
+            dossier_candidates=db.list_endorsement_candidates(int(night_id)),
             emperor_text=question_text,
         )
     except Exception as exc:

@@ -296,13 +296,12 @@ def test_bad_endorsement_item_is_rejected_without_rolling_back_valid_sibling(gam
     assert result["fact_count"] == 1
     assert [row["body"] for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == ["合法事实"]
     rejection = db.conn.execute(
-        "SELECT section, reason FROM rejection_reports ORDER BY id DESC LIMIT 1"
+        "SELECT section, category FROM rejection_reports ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert rejection["section"] == "story_facts"
-    assert "endorsement" in rejection["reason"]
+    assert dict(rejection) == {"section": "story_facts", "category": "invalid_item"}
 
 
-def test_close_extracts_endorsement_against_dossier_created_by_same_night_once(game):
+def test_post_reply_extraction_binds_endorsement_when_same_night_dossier_is_created(game):
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
@@ -321,25 +320,49 @@ def test_close_extracts_endorsement_against_dossier_created_by_same_night_once(g
         def run(self, materials):
             calls.append(json.loads(materials))
             candidates = calls[-1]["可背书案卷"]
-            assert len(candidates) == 1
+            assert candidates == [{
+                "ref": {"pending_action_id": candidate_id},
+                "decree_text": "清核辽饷",
+            }]
             return json.dumps({"facts": [{
                 "body": "皇帝亲书手敕。", "endorsement": {
-                    "dossier_id": candidates[0]["id"], "form": "御笔手敕",
+                    "dossier_ref": candidates[0]["ref"], "form": "御笔手敕",
                     "endorser_id": "", "imperial": True,
                 },
             }]}, ensure_ascii=False)
 
-    result = an.close_night(
-        db, state, night_id=night_id, content=content,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_SameNightAgent(),
+    extracted = trail_extraction_after_reply(
+        db=db, minister_name=minister, minister_reply="臣叩领圣恩。",
+        chat_turn_id=chat_turn_id, llm_config=object(),
+        write_gate=threading.Lock(), extractor_agent=_SameNightAgent(),
     )
+    assert extracted["status"] == "done"
+
+    result = an.close_night(db, state, night_id=night_id, content=content)
     assert result["closed"] is True
     dossiers = db.list_decree_dossiers(status="proposed")
     assert len(dossiers) == 1
     assert len(calls) == 1
     assert emperor_text == calls[0]["皇帝问话"]
     assert db.list_dossier_endorsements(int(dossiers[0]["id"]))[0]["imperial"] is True
+
+
+def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(game):
+    db, state, _content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
+    result = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣奏。", chat_turn_id=chat_turn_id,
+        night_id=night_id, source_night_seq=seq, llm_config=object(),
+        write_gate=threading.Lock(), extractor_agent=_Agent({"facts": [
+            {"body": "合法事实"}, {"body": 501},
+        ]}),
+    )
+    assert result["status"] == "pending"
+    assert db.get_story_extract_status(chat_turn_id) == "pending"
+    assert result["code"] == "extraction_bad_shape"
+    assert result["error_pack_path"]
+    assert [row for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == []
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():

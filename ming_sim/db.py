@@ -1406,6 +1406,19 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_endorsements_dossier
                 ON decree_dossier_endorsements(dossier_id, id);
+            -- One-call extraction may precede the same night's dossier commit. This
+            -- durable typed trail is resolved by pending_action_id after commit.
+            CREATE TABLE IF NOT EXISTS pending_dossier_endorsements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pending_action_id INTEGER NOT NULL,
+                form TEXT NOT NULL CHECK(form IN ('会签','当面站台','御笔手敕')),
+                endorser_id TEXT NOT NULL DEFAULT '',
+                imperial INTEGER NOT NULL DEFAULT 0 CHECK(imperial IN (0,1)),
+                source_chat_turn_id INTEGER NOT NULL,
+                UNIQUE(pending_action_id, form, endorser_id, imperial, source_chat_turn_id),
+                FOREIGN KEY(pending_action_id) REFERENCES pending_actions(id) ON DELETE CASCADE,
+                FOREIGN KEY(source_chat_turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS decree_dossier_link_rejections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_dossier_id INTEGER NOT NULL,
@@ -8275,6 +8288,23 @@ class GameDB:
         )
         self.conn.commit()
 
+    def list_endorsement_candidates(self, night_id: int) -> List[Dict[str, Any]]:
+        """Typed references available to the one production extraction call."""
+        rows = [{
+            "ref": {"dossier_id": int(row["id"])},
+            "decree_text": str(row.get("decree_text") or ""),
+        } for row in self.list_decree_dossiers(status="proposed")]
+        for pending in self.list_night_approved_pending(int(night_id), kind="directive"):
+            try:
+                payload = json.loads(str(pending.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                payload = {}
+            rows.append({
+                "ref": {"pending_action_id": int(pending["id"])},
+                "decree_text": str(payload.get("text") or ""),
+            })
+        return rows
+
     def settle_story_extraction(
         self,
         chat_turn_id: int,
@@ -8319,12 +8349,22 @@ class GameDB:
             endorsement = fact.get("endorsement")
             if isinstance(endorsement, Mapping):
                 try:
-                    self._validate_dossier_endorsement(
-                        endorsement.get("dossier_id"), form=endorsement.get("form"),
-                        endorser_id=endorsement.get("endorser_id", ""),
-                        imperial=endorsement.get("imperial", False), source_chat_turn_id=cid,
-                    )
-                except (TypeError, ValueError) as exc:
+                    if "dossier_ref" in endorsement:
+                        ref = endorsement["dossier_ref"]
+                        pending_id = ref["pending_action_id"]
+                        row = self.conn.execute(
+                            "SELECT 1 FROM pending_actions WHERE id=? AND night_approved=1",
+                            (pending_id,),
+                        ).fetchone()
+                        if row is None:
+                            raise ValueError("背书暂存旨不存在或未应允")
+                    else:
+                        self._validate_dossier_endorsement(
+                            endorsement.get("dossier_id"), form=endorsement.get("form"),
+                            endorser_id=endorsement.get("endorser_id", ""),
+                            imperial=endorsement.get("imperial", False), source_chat_turn_id=cid,
+                        )
+                except (TypeError, KeyError, ValueError) as exc:
                     rejected.append((fact, str(exc)))
                     continue
             accepted.append(fact)
@@ -8364,13 +8404,22 @@ class GameDB:
                 new_ids.append(int(entry_id))
                 endorsement = fact.get("endorsement")
                 if isinstance(endorsement, Mapping):
-                    self.add_dossier_endorsement(
-                        int(endorsement.get("dossier_id") or 0),
-                        form=str(endorsement.get("form") or ""),
-                        endorser_id=str(endorsement.get("endorser_id") or ""),
-                        imperial=endorsement.get("imperial", False),
-                        source_chat_turn_id=cid, commit=False,
-                    )
+                    if "dossier_ref" in endorsement:
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO pending_dossier_endorsements "
+                            "(pending_action_id,form,endorser_id,imperial,source_chat_turn_id) "
+                            "VALUES (?,?,?,?,?)",
+                            (endorsement["dossier_ref"]["pending_action_id"], endorsement["form"],
+                             endorsement.get("endorser_id", ""), int(endorsement.get("imperial", False)), cid),
+                        )
+                    else:
+                        self.add_dossier_endorsement(
+                            int(endorsement.get("dossier_id") or 0),
+                            form=str(endorsement.get("form") or ""),
+                            endorser_id=str(endorsement.get("endorser_id") or ""),
+                            imperial=endorsement.get("imperial", False),
+                            source_chat_turn_id=cid, commit=False,
+                        )
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
@@ -10494,6 +10543,23 @@ class GameDB:
             if self.conn.execute("SELECT 1 FROM characters WHERE name=?", (person,)).fetchone() is None:
                 raise ValueError("背书人物不存在")
         return did, cid, kind, person, is_imperial
+
+    def resolve_pending_dossier_endorsements(self, night_id: int) -> int:
+        rows = self.conn.execute(
+            "SELECT pe.*, dd.id AS dossier_id FROM pending_dossier_endorsements pe "
+            "JOIN pending_actions pa ON pa.id=pe.pending_action_id "
+            "JOIN decree_dossiers dd ON dd.pending_action_id=pa.id "
+            "WHERE pa.night_id=? ORDER BY pe.id", (int(night_id),),
+        ).fetchall()
+        with atomic(self):
+            for row in rows:
+                self.add_dossier_endorsement(
+                    int(row["dossier_id"]), form=row["form"], endorser_id=row["endorser_id"],
+                    imperial=bool(row["imperial"]), source_chat_turn_id=int(row["source_chat_turn_id"]),
+                    commit=False,
+                )
+                self.conn.execute("DELETE FROM pending_dossier_endorsements WHERE id=?", (row["id"],))
+        return len(rows)
 
     def add_dossier_endorsement(
         self, dossier_id: int, *, form: str, source_chat_turn_id: int,
