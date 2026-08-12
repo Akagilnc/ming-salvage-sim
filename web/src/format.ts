@@ -200,11 +200,6 @@ export const labelArmy = (id: any) => labelMaps.army.get(String(id)) || String(i
 
 export const labelPower = (id: any) => labelMaps.power.get(String(id)) || POWER_ID_CN[String(id)] || String(id ?? "");
 
-export const labelIssue = (id: any) => {
-  const t = labelMaps.issue.get(Number(id));
-  return t ? `#${id} ${t}` : `#${id}`;
-};
-
 
 // extractor 偶尔吐出的英文枚举值，统一翻中文。
 export const EN_VALUE_CN: Record<string, string> = {
@@ -215,9 +210,6 @@ export const EN_VALUE_CN: Record<string, string> = {
   done: "办结", pending: "在办", pending_review: "待核议", active: "进行中",
   draft: "草案", rejected: "已驳回", cancelled: "已取消",
 };
-
-export const cnValue = (v: any) => (v == null ? "" : (EN_VALUE_CN[String(v)] || String(v)));
-
 
 // extractor 吐的是英文字段名（region/army/class/power 的列名），这里统一翻中文。
 // 查不到的回退原值，至少不空。
@@ -241,28 +233,6 @@ export const EN_FIELD_CN: Record<string, string> = {
 };
 
 export const cnField = (k: string) => EN_FIELD_CN[k] || k;
-
-export const fiscalKeyLabel = (key: any): string => {
-  const raw = String(key ?? "");
-  const match = raw.match(/^(.+)_(base|rate)$/);
-  if (!match) return cnField(raw);
-  return `${match[1]}${match[2] === "base" ? "基数" : "系数"}`;
-};
-
-export const briefTreasury = (state: GameState) => [
-  `固定预算：国库月净${formatSignedMoney(state.budget["国库"].net)}，内库月净${formatSignedMoney(state.budget["内库"].net)}。`,
-  `账面余银：国库${formatMoney(state.budget["国库"].balance)}，内库${formatMoney(state.budget["内库"].balance)}。`,
-];
-
-export const briefRegionWarnings = (text: string) => {
-  const { items, tail } = splitReportItems(text, "地区警讯：");
-  return [...items.slice(0, 3), tail].filter(Boolean);
-};
-
-export const briefArmyWarnings = (text: string) => {
-  const { items, tail } = splitReportItems(text, "军队警讯：");
-  return [...items.slice(0, 3), tail].filter(Boolean);
-};
 
 export const getMapIntelStyle = (node: MapNode): React.CSSProperties => {
   const left = Math.min(82, Math.max(18, node.x));
