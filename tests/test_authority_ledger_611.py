@@ -64,8 +64,8 @@ def test_authority_op_alias_does_not_rewrite_other_sections_action_field():
         "authority_changes": [{"动作": "grant", "dossier_id": 7}],
     })
 
-    assert canonical["人物变更"][0]["动作"] == "任命"
-    assert canonical["建筑"][0]["动作"] == "create"
+    assert canonical["人物变更"][0]["action"] == "任命"
+    assert canonical["建筑"][0]["action"] == "create"
     assert canonical["authority_changes"][0]["op"] == "grant"
 
 
@@ -449,15 +449,18 @@ def test_promulgation_payload_does_not_write_authority_records(game):
             "mode": "ordinary",
         },
     )
+    skills_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
+        (holder,),
+    ).fetchone()["n"]
     db.apply_dossier_promulgation(state, dossier_id, "promulgated")
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 0
-    # Pre-existing skill_grants path may still fire; authority ledger must not.
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
         (holder,),
-    ).fetchone()["n"] >= 0
+    ).fetchone()["n"] == skills_before
 
 
 def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):

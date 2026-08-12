@@ -10041,21 +10041,14 @@ class GameDB:
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
-            authorization_id = str(
-                normalized.get("authorization_id") or ""
-            ).strip()
-            authorization_action = action in {
-                "authorization", "secret_authorization",
-            }
-            complete = bool(assignee) and (
-                not authorization_action or bool(authorization_id)
-            )
-            if not complete:
-                raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
+            if not assignee:
+                raise ValueError(f"{action} 旨意缺少 canonical assignee")
             normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
-            if authorization_action:
-                normalized["authorization_id"] = authorization_id
+            # Authorization identity and applicability live exclusively in
+            # authority_records; legacy dossier payload ids are not retained.
+            normalized.pop("authorization_id", None)
+            normalized.pop("authorization_ids", None)
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -11207,34 +11200,10 @@ class GameDB:
                     )
                     return
             elif row["action_type"] in {"authorization", "secret_authorization"}:
-                character_id = str(
-                    payload.get("character_id") or payload.get("assignee_id") or ""
-                ).strip()
-                skill_id = str(
-                    payload.get("skill_id") or payload.get("authorization_id") or ""
-                ).strip()
-                if not character_id or not skill_id:
-                    raise ValueError("授权案卷缺少 canonical assignee 或授权字段")
-                character_exists = self.conn.execute(
-                    "SELECT 1 FROM characters WHERE name=?", (character_id,),
-                ).fetchone()
-                if not character_exists:
-                    raise ValueError("授权案卷引用未知人物")
-                # #611: durable authority rows are written only via the
-                # authority_changes production slot — never from payload.
-                if not self.grant_skill(
-                    state,
-                    character_id,
-                    skill_id,
-                    granted_by=str(payload.get("granted_by") or "皇帝"),
-                    dossier_id=int(dossier_id),
-                    commit=False,
-                ):
-                    self.record_dossier_execution(
-                        dossier_id, "fulfilled", "授权此前已生效，幂等结案",
-                        state.turn, close=True, commit=False,
-                    )
-                    return
+                # The dossier records the decree; #611 privileges are produced
+                # only by settlement's authority_changes slot. Skill grants are
+                # a distinct character-skill mechanic, not an authority map.
+                pass
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")

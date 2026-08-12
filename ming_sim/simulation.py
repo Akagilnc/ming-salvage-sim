@@ -119,7 +119,7 @@ ITEM_FIELD_ALIASES = {
     # 帝国修正的 regions/armies 维度块（值是 {entity_id: {field: pct}}，原样透传）
     "regions": "regions", "地区": "regions",
     "armies": "armies", "军队": "armies",
-    "action": "action",
+    "action": "action", "动作": "action",
     "region_id": "region_id", "地区编号": "region_id",
     "building_id": "building_id", "建筑编号": "building_id",
     "category": "category", "类别": "category",
@@ -937,6 +937,7 @@ def _canonical_item_fields(value: object) -> object:
 
 AUTHORITY_CHANGE_FIELD_ALIASES = {
     "op": "op",
+    "action": "op",
     "动作": "op",
 }
 
