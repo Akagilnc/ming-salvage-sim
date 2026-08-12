@@ -180,6 +180,7 @@ def test_conversation_draft_rejects_malformed_roster_without_staging(
     draft = {
         "正文": "着会同清查仓储。", "动作类型": "assignment", "目标类型": "issue",
         "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
+        "颁布方式": "普通",
     }
     canned = (
         {"拟旨意图": "拟旨", **draft}
@@ -1687,7 +1688,7 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     (
         ("web", "allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
-            "目标ID": "relief", "金额": 10, "账户": "国库",
+            "目标ID": "relief", "金额": 30000, "账户": "内库",
             "执行面": "immediate",
         }),
         ("cli", "authorization", {
@@ -1726,10 +1727,15 @@ def test_manual_directive_capture_reaches_structured_dossier(
         response.update({"目标ID": actor, "承办人": actor})
     elif case == "dismiss":
         response.update({"目标类型": "character", "目标ID": actor})
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
+    directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
+
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
+        if "请据此拟旨" not in emperor or directive_text not in emperor:
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
@@ -1747,20 +1753,22 @@ def test_manual_directive_capture_reaches_structured_dossier(
         )
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
         result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text="手工旨意"),
+            web_app.DirectiveRequest(text=directive_text),
         ))
         directive_id = int(result["directive"]["id"])
     else:
         payload = cli_backend.capture_manual_directive_payload(
-            "手工旨意", None, db=db, content=content,
+            directive_text, None, db=db, content=content,
         )
         directive_id = session.add_directive(
-            "手工旨意", dossier_payload=payload,
+            directive_text, dossier_payload=payload,
         ).id
-    before = state.metrics["国库"]
+    account = "内库" if case == "allocation" else "国库"
+    before = state.metrics[account]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier["decree_text"] == directive_text
     assert dossier["target_id"]
     assert dossier["participant_roster"][0]["character_id"] == aliased.name
     if case == "controlled_verb":
@@ -1776,8 +1784,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
         state, dossier["id"], "promulgated", content=content,
     )
     if case == "allocation":
-        assert state.metrics["国库"] == before - 10
-        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
+        payload = json.loads(dossier["payload_json"])
+        assert (dossier["action_type"], payload["amount"], payload["account"]) == (
+            "grant_allocation", 30000, "内库",
+        )
+        assert state.metrics["内库"] == 0
+        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -before
     elif case == "dismiss":
         assert json.loads(dossier["payload_json"])["name"] == actor
         row = db.conn.execute(
@@ -2004,36 +2016,46 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
             "amount": 10,
             "account": "国库",
             "execution_surface": "immediate",
+            "mode": "midzhi",
         },
     )
     revised_text = "改拨二十五两赈济"
-    revised_payload = {
-        "dossier_action_type": "grant_allocation",
-        "target_kind": "issue",
-        "target_id": "relief",
-        "amount": 25,
-        "account": "国库",
-        "execution_surface": "immediate",
+    response = {
+        "拟旨意图": "拟旨",
+        "动作类型": "grant_allocation",
+        "目标类型": "issue",
+        "目标ID": "relief",
+        "金额": 25,
+        "账户": "国库",
+        "执行面": "immediate",
+        "颁布方式": "普通",
     }
-    captured = []
+    prompts = []
 
-    def capture(text, llm_config):
-        captured.append((text, llm_config))
-        return revised_payload
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        prompts.append(prompt)
+        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
+        if "请据此拟旨" not in emperor or revised_text not in emperor:
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
 
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
     monkeypatch.setattr(session, "write_decree", lambda: revised_text)
     answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     before = state.metrics["国库"]
 
     assert terminal.review_directives(session) == "issue"
-    assert captured == [(revised_text, None)]
+    assert len(prompts) == 1
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)
+    payload = json.loads(dossier["payload_json"])
     assert dossier["decree_text"] == revised_text
-    assert json.loads(dossier["payload_json"])["amount"] == 25
+    assert dossier["action_type"] == "grant_allocation"
+    assert (payload["amount"], payload["account"], payload["mode"]) == (
+        25, "国库", "midzhi",
+    )
     db.apply_dossier_promulgation(
         state, dossier["id"], "promulgated", content=content,
     )
@@ -2642,6 +2664,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "金额": 10000,
                 "账户": "国库",
                 "执行面": "in_transit",
+                "颁布方式": "普通",
             },
             {
                 "正文": "命洪承畴三月出师",
@@ -2650,6 +2673,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "目标ID": "shaanxi",
                 "承办人": "洪承畴",
                 "期限月数": 3,
+                "颁布方式": "中旨直发",
             },
         ],
     }, ensure_ascii=False)
@@ -2662,8 +2686,10 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     )
     assert result["drafts"][0]["amount"] == 10000
     assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
+    assert result["drafts"][0]["mode"] == "ordinary"
     assert result["drafts"][1]["deadline_months"] == 3
     assert result["drafts"][1]["dossier_action_type"] == "military_order"
+    assert result["drafts"][1]["mode"] == "midzhi"
 
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):

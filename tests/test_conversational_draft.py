@@ -113,6 +113,21 @@ def test_conversational_draft_intent_stages_pending(game, monkeypatch):
     assert directives == 0
 
 
+def test_new_conversational_draft_uses_emperor_mode_over_extractor(game, monkeypatch):
+    db, state, content = game
+    _run_conversational_draft(
+        db, state, content, monkeypatch,
+        player_message="中旨直发，拟一道清查辽饷的旨。",
+        minister_reply="着户部清查辽饷。",
+        canned={
+            "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+            "目标ID": "liao-pay", "颁布方式": "普通",
+        },
+    )
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert payload["mode"] == "midzhi"
+
+
 def test_no_draft_pending_when_no_intent(read_game, monkeypatch):
     """LLM 判出「无」拟旨意图 → 不 stage；闲谈不应触发草案。"""
     db, state, content = read_game
@@ -219,10 +234,19 @@ def test_pending_directive_last_write_wins(game, monkeypatch):
     assert first_reply not in updated_payload["text"]
 
 
-@pytest.mark.parametrize("landing", ["pending_upsert", "pending_candidate", "committed"])
+@pytest.mark.parametrize("landing, player_message, expected_mode", [
+    ("pending_upsert", "再补一条。", "midzhi"),
+    ("pending_candidate", "再补一条。", "midzhi"),
+    ("committed", "再补一条。", "midzhi"),
+    ("committed", "普通", "ordinary"),
+    # Full natural-language ordinary declaration must beat durable midzhi.
+    ("pending_upsert", "这道改按普通程序颁布，准了", "ordinary"),
+    ("pending_candidate", "这道改按普通程序颁布，准了", "ordinary"),
+    ("committed", "这道改按普通程序颁布，准了", "ordinary"),
+])
 @pytest.mark.parametrize("supplement", ["omitted", "empty", "append"])
 def test_real_conversation_draft_supplement_preserves_and_appends_roster(
-    game, monkeypatch, landing, supplement,
+    game, monkeypatch, landing, supplement, player_message, expected_mode,
 ):
     db, state, content = game
     names = [
@@ -235,7 +259,7 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
     character = next(ch for ch in content.characters.values() if ch.name == minister)
     initial = [{"character_id": existing, "tier": "主办", "role": "总理"}]
     payload = {
-        **_POLICY_FIELDS, "text": "初稿", "actor": minister,
+        **_POLICY_FIELDS, "text": "初稿", "actor": minister, "mode": "midzhi",
         "participant_roster": initial,
     }
     target = ""
@@ -251,7 +275,7 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
 
     extracted = {
         "draft_action": "拟旨", "draft_text": "补充后的草稿",
-        **_POLICY_FIELDS, "target_candidate": target,
+        **_POLICY_FIELDS, "target_candidate": target, "mode": "ordinary",
     }
     if supplement == "empty":
         extracted["participant_roster"] = []
@@ -266,16 +290,18 @@ def test_real_conversation_draft_supplement_preserves_and_appends_roster(
             db=db, state=state, content=content, registry=None,
             llm_config=types.SimpleNamespace(channel="cli"),
         ),
-        character, player_message="再补一条。", answer="臣已补妥。",
+        character, player_message=player_message, answer="臣已补妥。",
         has_directive=False, secret_order_id=None,
         preclassified_intent={"kind": "draft"},
     )
 
     if landing == "committed":
         row = db.list_directives(state, statuses=("draft",))[-1]
-        stored = json.loads(row["dossier_payload_json"])["participant_roster"]
+        stored_payload = json.loads(row["dossier_payload_json"])
     else:
-        stored = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])["participant_roster"]
+        stored_payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    stored = stored_payload["participant_roster"]
+    assert stored_payload["mode"] == expected_mode
     expected = ([{**initial[0], "delegator_id": None}, {
         "character_id": added, "tier": "协办", "role": "核账", "delegator_id": None,
     }] if supplement == "append" else initial)
