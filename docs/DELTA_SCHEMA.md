@@ -216,7 +216,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 每项必含判别字段 `动作`（别名 `op`），只收 `授予`（`grant`）／`收回`（`revoke`）。**每项必填正整数 `dossier_id`** 作为唯一案卷来源，且该案卷须在 ADR 0055 下已具备可物化资格（`dossier_authorizes_effects`：已颁/执行中/强颁，或豁免直落）。缺来源／案卷不存在 → `missing_dossier_source`；打回、留中、未达资格 → `dossier_not_effect_eligible`。无来源、打回、留中不得改授权档。
 
-**授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（域绑定须写典范键 `target_kind:target_id`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；同 `(holder_id, privilege, scope)` 已有在持行 → `duplicate_active_authority`。
+**授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（须写典范键 `target_kind:target_id`；裸域／缺冒号 → `invalid_authority_scope`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；同 `(holder_id, privilege, scope)` 已有在持行且同源 `dossier_id` → 幂等回传既有 `authority_id`；不同案卷语义重复 → `duplicate_active_authority`。不得从授权案卷 payload 平行写 `authority_records`。
 
 **收回**：必填 `authority_id`（＝`authority_records.id`）与 `dossier_id`。生产槽不接受 holder/privilege/scope 模糊收回。未知 id → `unknown_authority_id`；首次 `revoked 0→1` 成功并写观感边；已收回 → 幂等 `applied`（`already_revoked`），不改 `revoked_turn`、不写第二笔边。收回＝正当治术：零 0056/皇威代价；观感经既有 `relation_edge_events`（`source=holder_id`, `target=皇帝`, `event_kind=结怨`, `context=收权·罢差·{privilege}·{scope}`, `origin=authority_revoke:{id}`）。
 

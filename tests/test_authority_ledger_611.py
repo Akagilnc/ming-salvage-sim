@@ -230,9 +230,14 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     typed = db.grant_authority(
         state, holder, "专差督办", domain, effective_turn=state.turn,
     )
-    bare = db.grant_authority(
-        state, holder, "便宜行事", "边饷", effective_turn=state.turn,
+    # Legacy bare-domain rows (pre-gate) must still never match typed projection.
+    db.conn.execute(
+        "INSERT INTO authority_records "
+        "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
+        "VALUES (?,?,?,?,NULL,NULL)",
+        (holder, "便宜行事", "边饷", state.turn),
     )
+    bare = int(db.conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
     # Informed-only roster member must not count as actor.
     informed_only = db.grant_authority(
         state, other, "尚方剑密授", domain, effective_turn=state.turn,
@@ -272,17 +277,45 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     )
 
 
-def test_duplicate_active_authority_is_rejected(game):
+def test_same_dossier_grant_replay_is_idempotent(game):
+    """同源案卷重放按 dossier origin 幂等，不插第二行。"""
     db, state, content = game
     holder = _minister(db)
-    dossier = _eligible_dossier(db, state, holder, target_id="dup")
+    dossier = _eligible_dossier(db, state, holder, target_id="replay")
+    payload = {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "issue:replay",
+            "dossier_id": dossier["id"],
+        }],
+    }
+    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    assert first["authority_changes"][0].get("rejected") is not True
+    authority_id = int(first["authority_changes"][0]["authority_id"])
+
+    second = issue_engine.apply_score_extraction(db, state, payload, content=content)
+    assert second["authority_changes"][0].get("rejected") is not True
+    assert int(second["authority_changes"][0]["authority_id"]) == authority_id
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 1
+
+
+def test_duplicate_active_authority_is_rejected_across_dossiers(game):
+    """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""
+    db, state, content = game
+    holder = _minister(db)
+    first_dossier = _eligible_dossier(db, state, holder, target_id="dup-a")
+    second_dossier = _eligible_dossier(db, state, holder, target_id="dup-b")
     first = issue_engine.apply_score_extraction(db, state, {
         "authority_changes": [{
             "动作": "授予",
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:dup",
-            "dossier_id": dossier["id"],
+            "dossier_id": first_dossier["id"],
         }],
     }, content=content)
     assert first["authority_changes"][0].get("rejected") is not True
@@ -293,7 +326,7 @@ def test_duplicate_active_authority_is_rejected(game):
             "holder_id": holder,
             "privilege": "便宜行事",
             "scope": "issue:dup",
-            "dossier_id": dossier["id"],
+            "dossier_id": second_dossier["id"],
         }],
     }, content=content)
     assert second["authority_changes"][0]["rejected"] is True
@@ -301,3 +334,79 @@ def test_duplicate_active_authority_is_rejected(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
+
+
+def test_production_and_helper_reject_bare_domain_scope(game):
+    db, state, content = game
+    holder = _minister(db)
+    dossier = _eligible_dossier(db, state, holder, target_id="bare")
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予",
+            "holder_id": holder,
+            "privilege": "便宜行事",
+            "scope": "边饷",
+            "dossier_id": dossier["id"],
+        }],
+    }, content=content)
+    assert result["authority_changes"][0]["rejected"] is True
+    assert result["authority_changes"][0]["reason"] == "invalid_authority_scope"
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 0
+
+    try:
+        db.grant_authority(state, holder, "便宜行事", "边饷")
+        assert False, "bare scope must fail at grant_authority"
+    except ValueError as exc:
+        assert str(exc) == "invalid_authority_scope"
+
+
+def test_promulgation_payload_does_not_write_authority_records(game):
+    """授权案卷 payload 物化不得平行写入 authority_records。"""
+    db, state, _content = game
+    holder = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="authorization",
+        decree_text="授以便宜",
+        target_kind="issue",
+        target_id="payload旁路",
+        executor_kind="character",
+        executor_id=holder,
+        payload={
+            "character_id": holder,
+            "skill_id": "便宜行事",
+            "privilege": "便宜行事",
+            "scope": "issue:payload旁路",
+            "mode": "ordinary",
+        },
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM authority_records"
+    ).fetchone()["n"] == 0
+    # Pre-existing skill_grants path may still fire; authority ledger must not.
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM skill_grants WHERE character_name=?",
+        (holder,),
+    ).fetchone()["n"] >= 0
+
+
+def test_promulgation_judge_instructions_cover_held_authority_modifiers(monkeypatch):
+    import ming_sim.agents as agents_mod
+    from ming_sim.models import LLMConfig
+
+    monkeypatch.setattr(
+        agents_mod, "create_chat_model", lambda _cfg, **kwargs: object(),
+    )
+    monkeypatch.setattr(agents_mod, "Agent", lambda **kwargs: kwargs)
+    agent = agents_mod.create_promulgation_judge_agent(
+        LLMConfig(api_key="test", base_url="http://unused", model="test"),
+        object(),
+    )
+    text = "\n".join(str(item) for item in agent["instructions"])
+    assert "held_authorities" in text
+    assert "尚方剑密授" in text and "阻力" in text
+    assert "便宜行事" in text and "程序" in text
+    assert "专差督办" in text and "节制" in text

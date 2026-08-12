@@ -11220,15 +11220,8 @@ class GameDB:
                 ).fetchone()
                 if not character_exists:
                     raise ValueError("授权案卷引用未知人物")
-                privilege = str(payload.get("privilege") or payload.get("权项") or "").strip()
-                scope = str(payload.get("scope") or payload.get("事域") or "").strip()
-                if privilege:
-                    self.grant_authority(
-                        state, character_id, privilege, scope,
-                        effective_turn=int(payload.get("effective_turn") or state.turn),
-                        expires_turn=payload.get("expires_turn"),
-                        dossier_id=int(dossier_id), commit=False,
-                    )
+                # #611: durable authority rows are written only via the
+                # authority_changes production slot — never from payload.
                 if not self.grant_skill(
                     state,
                     character_id,
@@ -12637,6 +12630,12 @@ class GameDB:
         "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
     })
 
+    @staticmethod
+    def canonical_authority_scope(scope: str) -> bool:
+        """Domain scope must be the typed key target_kind:target_id (#611 §4/§5)."""
+        kind, sep, rest = str(scope or "").partition(":")
+        return bool(sep) and bool(kind) and bool(rest)
+
     def grant_authority(
         self, state: GameState, holder_id: str, privilege: str, scope: str,
         *, effective_turn: Optional[int] = None,
@@ -12649,6 +12648,8 @@ class GameDB:
             raise ValueError("授权权项不在首批枚举")
         if not scope:
             raise ValueError("授权事域不能为空")
+        if not self.canonical_authority_scope(scope):
+            raise ValueError("invalid_authority_scope")
         if not self.conn.execute(
             "SELECT 1 FROM characters WHERE name=?", (holder_id,)
         ).fetchone():

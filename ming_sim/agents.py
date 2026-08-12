@@ -316,6 +316,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "gatekeepers 官员名单形成的把关关口三类触发才可打回。皇威越高触发面"
             "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
             "courage、integrity 判断，不按派系首领意志判断。",
+            "每案 held_authorities 是在持授权适用性投影，按 privilege 计否决 "
+            "modifier：尚方剑密授＝抗旨阻力降；便宜行事＝免程序阻力；"
+            "专差督办＝绕常规节制。收回或投影为空后不再计。",
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
