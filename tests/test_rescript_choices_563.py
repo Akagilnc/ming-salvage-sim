@@ -42,7 +42,12 @@ def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
 
     def provider(dossiers, _state):
         seen_modes.extend(row["mode"] for row in dossiers)
-        return [{"dossier_id": dossier["id"], "decision": "promulgated"}]
+        return [{
+            "dossier_id": dossier["id"], "decision": "promulgated",
+            "affected_parties": [
+                {"kind": "faction", "key": "东林", "severity": "不满"},
+            ],
+        }]
 
     monkeypatch.setattr(
         db, "list_decree_dossiers_for_simulation",
@@ -84,7 +89,7 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
             "midzhi_unpromulgatable": True,
             "criteria_snapshot": {
                 "imperial_authority_band": "偏弱",
-                "involved_office_types": ["言官"],
+                "appointment_tenure": "",
                 "authorization_ids": [],
                 "endorsement_entry_ids": [],
             },
