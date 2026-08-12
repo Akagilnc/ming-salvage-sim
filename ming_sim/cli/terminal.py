@@ -701,11 +701,18 @@ def review_directives(session: GameSession) -> str:
                     new_text = input("新的指令内容：").strip()
                     if new_text:
                         from ming_sim.cli_backend import capture_manual_directive_payload
+                        row = next(
+                            r for r in session.db.list_directives(
+                                session.state, statuses=("draft",),
+                            ) if int(r["id"]) == target_id
+                        )
+                        existing_payload = session.db.read_directive_dossier_payload(row)
                         session.update_directive(
                             target_id,
                             new_text,
                             dossier_payload=capture_manual_directive_payload(
                                 new_text, session.llm_config,
+                                existing_mode=existing_payload.get("mode"),
                                 **({"db": session.db, "content": session.content}
                                    if getattr(session, "content", None) is not None else {}),
                             ),
