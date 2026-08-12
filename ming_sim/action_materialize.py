@@ -250,6 +250,8 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
     committed_draft = None
     if not has_pending_directive:
         for _directive in reversed(session.db.list_directives(session.state, statuses=("draft",))):
+            if session.db.get_dossier_for_directive(int(_directive["id"])) is not None:
+                continue
             if str(_directive["actor"] or "") == minister_name:
                 committed_draft = _directive
                 break

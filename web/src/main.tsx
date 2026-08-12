@@ -98,6 +98,9 @@ export function App() {
   // Tracks the current selected minister across async boundaries.
   // State closures capture stale values; this ref always reflects the latest.
   const selectedMinisterRef = React.useRef<string>("");
+  const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
+  const sendAudienceCommandRef = React.useRef<(text: string) => Promise<void>>(async () => {});
+  const advanceWithoutEdictRef = React.useRef<() => Promise<void>>(async () => {});
   const suppressNextReportRef = React.useRef(false);
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
@@ -418,6 +421,11 @@ export function App() {
       setError(`${minister.name}已${minister.status_label}${minister.status_reason ? "（" + minister.status_reason + "）" : ""}，无法召见。`);
       return;
     }
+    const isConsort = (state.consorts || []).some((consort) => consort.name === minister.name);
+    if (activeModal === "chat" && currentNightId > 0 && !isConsort) {
+      void sendAudienceCommandRef.current(`宣${minister.name}`);
+      return;
+    }
     const switchingMinister = selectedMinister !== minister.name;
     if (switchingMinister) {
       resetPanel();
@@ -476,6 +484,11 @@ export function App() {
     }
 
     const fromComposer = text === input;
+    if (["q", "quit", "退朝", "下朝"].includes(message.toLowerCase())) {
+      if (fromComposer) setInput("");
+      await advanceWithoutEdictRef.current();
+      return;
+    }
     setError("");
     setComposerHint("");
     setChatNotice("");
@@ -530,6 +543,13 @@ export function App() {
         setError(err instanceof Error ? err.message : String(err));
       },
     });
+  };
+
+  // Roster accelerators use the selected panel while normal composer sends use
+  // the current identity derived by ChatModal from the shared night scroll.
+  sendAudienceCommandRef.current = (text) => {
+    if (!activeMinister) return Promise.resolve();
+    return sendChat(activeMinister.name, text);
   };
 
   const undoLastChat = async (targetMinisterName: string) => {
@@ -771,50 +791,6 @@ export function App() {
     }
   };
 
-  const confirmDirective = async (directiveId: number) => {
-    setBusy("核定大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/confirm`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const rejectDirective = async (directiveId: number) => {
-    setBusy("驳回大臣拟旨");
-    setError("");
-    try {
-      const data = await api<{ directives: Directive[]; pending_count: number }>(`/api/directives/${directiveId}/reject`, { method: "POST" });
-      beginDurableMutation();
-      setState((current) => (current ? { ...current, directives: data.directives, pending_count: data.pending_count } : current));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const writeDecree = async () => {
-    setBusy("拟写正式诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
-      setDecree(data.decree);
-      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
-      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
   const advanceWithoutEdict = async () => {
     setBusy("退朝");
     setError("");
@@ -837,11 +813,7 @@ export function App() {
     }
   };
 
-  const resetDecree = () => {
-    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
-    setDecree("");
-    setError("");
-  };
+  advanceWithoutEdictRef.current = advanceWithoutEdict;
 
   // 颁诏/续裁共用：消费 SSE 推演流，stage/thinking/text 实时更新进度区，
   // 返回结束态：done（已结算）/ decisions（暂停待裁）/ error。
@@ -1225,7 +1197,8 @@ export function App() {
             onUndo={undoLastChat}
             onHint={setComposerHint}
             onFavorite={toggleFavorite}
-            onOpenEdict={() => setActiveModal("edict")}
+            scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
+            onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
             onClose={guardClose(() => setActiveModal("none"))}
             onCancel={cancelChat}
           />
@@ -1261,12 +1234,7 @@ export function App() {
             onCancelEdit={cancelEditDirective}
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
-            onWriteDecree={writeDecree}
             onAdvanceWithoutEdict={advanceWithoutEdict}
-            onResetDecree={resetDecree}
-            onIssueDecree={issueDecree}
-            onConfirmDirective={confirmDirective}
-            onRejectDirective={rejectDirective}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>

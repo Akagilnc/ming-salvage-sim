@@ -80,7 +80,7 @@ function mount(scrollMode: "audience" | "legacy" = "legacy", refreshOnEnd = fals
         suggestions={[]} chatNotice="" chatFailures={[]} canUndoLastChat={false}
         composerHint="" input="" busy={busy} error="" secretOrders={[]}
         onInput={() => {}} onSend={() => {}} onRetryFailure={() => {}} onUndo={() => {}}
-        onHint={() => {}} onFavorite={() => {}} onOpenEdict={() => {}} onClose={() => {}} onCancel={() => {}}
+        onHint={() => {}} onFavorite={() => {}} onClose={() => {}} onCancel={() => {}}
       />
     );
   }
@@ -563,7 +563,7 @@ describe("重开读心轮询（#499 pending_turn_ids 经真实 hook）", () => {
       await act(async () => { await hookRef.current!.loadHistory("温体仁"); });
       await advance();
       const before = call;
-      setModal("edict");  // 转入诏书草案
+      setModal("edict");  // 从常驻御案入口打开诏书草案
       await advance(); await advance();
       expect(call).toBe(before);
     } finally { vi.useRealTimers(); }
