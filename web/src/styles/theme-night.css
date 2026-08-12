@@ -1,0 +1,175 @@
+/* ===== 邸报弹窗：案头烛光底 + 无卡羽化（夜·烛·墨·朱 基调） ===== */
+.modal-bg-gazette {
+  background-image:
+    radial-gradient(ellipse 78% 92% at 50% 46%, rgba(6, 6, 9, 0.82) 32%, rgba(6, 6, 9, 0.38) 62%, rgba(6, 6, 9, 0) 92%),
+    url("/bg_desk_candle.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.modal-bg-gazette * {
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* 邸报恒为无标题栏（hideTitle）：只需给悬浮关闭钮配色，旧标题栏规则已删 */
+.modal-bg-gazette .modal-header-bare .icon-button {
+  color: #e8d5a8;
+  border: 1px solid rgba(216, 185, 106, 0.35);
+}
+
+.modal-bg-gazette .modal-header-bare .icon-button:hover {
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
+}
+
+/* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
+.gazette-document {
+  margin: 0 auto clamp(24px, 5vh, 56px);
+  width: min(1180px, 92%);
+  padding: 26px clamp(20px, 5vw, 90px) 40px;
+  color: #efe3c2;
+  overflow-y: auto;
+}
+
+.gazette-masthead {
+  text-align: center;
+  margin-bottom: 26px;
+}
+
+.gazette-masthead b {
+  font-size: 2.4rem;
+  font-weight: 900;
+  letter-spacing: 0.9em;
+  text-indent: 0.9em;
+  color: #d8453a;
+  text-shadow: 0 0 18px rgba(180, 40, 30, 0.45), 0 2px 8px rgba(0, 0, 0, 0.9);
+}
+
+.gazette-masthead span {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.82rem;
+  letter-spacing: 0.32em;
+  color: rgba(232, 213, 168, 0.72);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+}
+
+.gazette-document .memorial-text {
+  color: #efe3c2;
+  font-size: 1.12rem;
+  line-height: 2.05;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 24px rgba(0, 0, 0, 0.8);
+}
+
+
+/* ===== 主界面：地图暖黄昏调 + 暗角（盖在交互地图上的纯装饰层，夜·烛基调） ===== */
+.hud2-map-grade-frame {
+  z-index: 4;
+  pointer-events: none;
+}
+.hud2-map-grade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 30% 45% at 0% 60%, rgba(255, 176, 80, 0.16), rgba(255, 176, 80, 0) 70%),
+    radial-gradient(ellipse 62% 58% at 47% 44%, rgba(0, 0, 0, 0) 42%, rgba(10, 6, 2, 0.38) 82%, rgba(8, 5, 2, 0.58) 100%),
+    linear-gradient(160deg, rgba(148, 88, 22, 0.28), rgba(96, 52, 14, 0.36));
+}
+
+/* ===== 底部五命令：实物画进底图，扣图隐藏，点击区给烛光呼吸感 ===== */
+.hud2-cmd-img {
+  display: none;
+}
+.hud2-cmd:hover {
+  background: radial-gradient(ellipse at 50% 62%, rgba(255, 200, 110, 0.14), rgba(255, 200, 110, 0) 70%);
+}
+
+/* ===== 菜单钮：木底金字，与主界面实物语言一致 ===== */
+.hud2-menu-btn {
+  background: linear-gradient(180deg, #3d2a13, #241808);
+  border: 1px solid rgba(216, 185, 106, 0.45);
+  border-radius: 3px;
+  color: #e8d5a8;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
+}
+.hud2-menu-btn:hover {
+  background: linear-gradient(180deg, #4a3319, #2e1f0e);
+}
+
+
+/* ===== 邸报滚动条：细金半透明，融进羽化暗晕 ===== */
+.gazette-document {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 185, 106, 0.45) transparent;
+}
+.gazette-document::-webkit-scrollbar {
+  width: 6px;
+}
+.gazette-document::-webkit-scrollbar-track {
+  background: transparent;
+}
+.gazette-document::-webkit-scrollbar-thumb {
+  background: rgba(216, 185, 106, 0.4);
+  border-radius: 3px;
+}
+.gazette-document::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 185, 106, 0.65);
+}
+
+
+/* ===== 国库/内库账册浮框 + 帝国修正折子：旧纸账册样式（夜烛基调配套） ===== */
+.budget-popover {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68);
+  color: #2e2110;
+}
+.budget-popover-portal {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.68);
+}
+.budget-popover-head {
+  border-bottom: 1px solid rgba(154, 42, 43, 0.4);
+}
+.budget-popover-head b {
+  color: #8a2a22;
+  letter-spacing: 0.08em;
+}
+
+.legacy-modal-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+.legacy-modal {
+  background: linear-gradient(175deg, #efe0ba, #e2cd9c);
+  border: 1px solid #9e783a;
+  border-radius: 3px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+  color: #2e2110;
+}
+.legacy-modal-head {
+  border-bottom: 1px solid rgba(154, 42, 43, 0.4);
+}
+.legacy-modal-head h3 {
+  color: #8a2a22;
+  letter-spacing: 0.15em;
+}
+.legacy-modal-close {
+  color: #6b4c24;
+}
+.legacy-modal-close:hover {
+  color: #8a2a22;
+}
+.legacy-item {
+  border-left: 3px solid #a03232;
+}
+.legacy-item + .legacy-item {
+  border-top: 1px solid rgba(107, 76, 36, 0.18);
+}
+
