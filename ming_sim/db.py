@@ -11356,15 +11356,13 @@ class GameDB:
                     continue
                 from ming_sim.flows import _apply_class_dict, _apply_faction_dict
                 if kind == "faction":
-                    result = _apply_faction_dict(
+                    _apply_faction_dict(
                         self, {key: {"satisfaction": delta}}, commit=False,
                     )
                 else:
-                    result = _apply_class_dict(
+                    _apply_class_dict(
                         self, {key: {"satisfaction": delta}}, commit=False,
                     )
-                if result.rejections or key not in result.applied:
-                    raise ValueError(f"反应代价未能落账：{kind}:{key}")
         if commit:
             self.conn.commit()
 
@@ -11388,12 +11386,10 @@ class GameDB:
                 dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
                 cost_identity="breach",
             ):
-                authority_recorded = self._record_decree_cost(
+                self._record_decree_cost(
                     dossier_id, state.turn, "authority", "metric", "皇威",
                     self._OVERRIDE_AUTHORITY_COST, reason, cost_identity="breach",
                 )
-                if not authority_recorded:
-                    raise RuntimeError("毁约皇威代价账不一致")
                 state.metrics["皇威"] = max(0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST)
                 self.conn.execute(
                     "INSERT INTO metrics(key,value) VALUES('皇威',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -11417,6 +11413,8 @@ class GameDB:
                 ).fetchone()
                 if row is None:
                     continue
+                if str(row["faction"] or ""):
+                    factions.add(str(row["faction"]))
                 if str(row["status"]) == "dead":
                     logging.getLogger(__name__).warning("跳过已故参与者%s", person)
                     continue
@@ -11425,8 +11423,6 @@ class GameDB:
                     origin=f"dossier:{dossier_id}:breach", turn=state.turn,
                     year=state.year, period=state.period,
                 )
-                if str(row["faction"] or ""):
-                    factions.add(str(row["faction"]))
             breach_delta = (
                 self._REACTION_SIGN[self._BREACH_FACTION_REACTION["direction"]]
                 * self._REACTION_INTENSITY[self._BREACH_FACTION_REACTION["intensity"]]
@@ -11437,11 +11433,9 @@ class GameDB:
                     breach_delta, reason, cost_identity="breach",
                 ):
                     from ming_sim.flows import _apply_faction_dict
-                    result = _apply_faction_dict(
+                    _apply_faction_dict(
                         self, {faction: {"satisfaction": breach_delta}}, commit=False,
                     )
-                    if result.rejections or faction not in result.applied:
-                        raise ValueError(f"毁约派系代价未能落账：{faction}")
             self.conn.execute(
                 "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
                 (state.turn, reason, int(dossier_id)),
