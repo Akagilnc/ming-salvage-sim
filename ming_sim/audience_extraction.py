@@ -140,25 +140,17 @@ def parse_extraction_facts(raw: Any) -> List[Dict[str, Any]]:
                 and isinstance(dossier_ref.get("dossier_id"), int)
                 and dossier_ref["dossier_id"] > 0
             )
-            deferred = (
-                dossier_id is None and isinstance(dossier_ref, Mapping)
-                and set(dossier_ref) == {"pending_action_id"}
-                and not isinstance(dossier_ref.get("pending_action_id"), bool)
-                and isinstance(dossier_ref.get("pending_action_id"), int)
-                and dossier_ref["pending_action_id"] > 0
-            )
             form = endorsement_raw.get("form")
             imperial = endorsement_raw.get("imperial", False)
             endorser_id = endorsement_raw.get("endorser_id", "")
-            if (not (direct or ref_direct or deferred) or form not in {"会签", "当面站台", "御笔手敕"}
+            if (not (direct or ref_direct) or form not in {"会签", "当面站台", "御笔手敕"}
                     or not isinstance(imperial, bool) or not isinstance(endorser_id, str)):
                 raise ExtractionShapeError(
                     f"第 {idx} 条 endorsement 字段非法",
                     code="extraction_bad_shape", detail={"index": idx},
                 )
             endorsement = {
-                **({"dossier_id": dossier_id if direct else dossier_ref["dossier_id"]}
-                   if direct or ref_direct else {"dossier_ref": dict(dossier_ref)}),
+                "dossier_id": dossier_id if direct else dossier_ref["dossier_id"],
                 "form": form, "endorser_id": endorser_id.strip(), "imperial": imperial,
             }
         facts.append({
@@ -405,6 +397,11 @@ def trail_extraction_after_reply(
         night_id = int(row["night_id"] or 0)
         if night_id <= 0:
             return None
+        # ADR 0070 references only existing dossiers. If this turn has approved a
+        # directive which close-night will materialize, leave its extraction
+        # watermark untouched; close_night drains it once after dossier creation.
+        if db.list_night_approved_pending(night_id, kind="directive"):
+            return {"status": "deferred", "chat_turn_id": int(chat_turn_id)}
         return run_extraction_for_turn(
             db=db,
             minister_name=minister_name,
