@@ -210,11 +210,17 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
-### 授权档结构化载荷（ADR 0071）
+### `授权变更` / `authority_changes` — 授权档生产槽（ADR 0071 / #611）
 
-授权由已成案的 `authorization` / `secret_authorization` 案卷载荷物化，不另开自然语言匹配入口。载荷须含 `character_id`（在册人物）、`authorization_id`、`privilege`（`尚方剑密授` / `便宜行事` / `专差督办` / `新机构专办`）、非空 `scope`；可含 `effective_turn`、`expires_turn`。授权档保存对象、权项、事域、生效/失效回合及收回状态；restore 直接读档。收回只置状态，不产生皇威或派系代价。
+顶层槽中英别名：`授权变更` ↔ `authority_changes`。复用既有段适配器（`items → applied/rejected + reason`）；非法项进既有 `rejection_reports`；同批合法项仍应用。不得另造平行写入口。
 
-颁布判官对案卷承办人读取当回合有效授权，投影为 `held_authorities`，并把档案 id 合入 `criteria_snapshot.authorization_ids`；已收回或已过期条目不进入判官输入。自然语言授予/收权捕获分别由 #528/#523 回接，本契约不作关键词推断。
+每项必含判别字段 `动作`（别名 `op`），只收 `授予`（`grant`）／`收回`（`revoke`）。**每项必填正整数 `dossier_id`** 作为唯一案卷来源，且该案卷须在 ADR 0055 下已具备可物化资格（`dossier_authorizes_effects`：已颁/执行中/强颁，或豁免直落）。缺来源／案卷不存在 → `missing_dossier_source`；打回、留中、未达资格 → `dossier_not_effect_eligible`。无来源、打回、留中不得改授权档。
+
+**授予**：必填 `holder_id`（在册人物）、`privilege`（`尚方剑密授`／`便宜行事`／`专差督办`／`新机构专办`）、非空 `scope`（域绑定须写典范键 `target_kind:target_id`）、`dossier_id`；可选 `effective_turn`（缺省＝当次 turn）、`expires_turn`。应用插入 `authority_records` 行（稳定 id＝行主键）；同 `(holder_id, privilege, scope)` 已有在持行 → `duplicate_active_authority`。
+
+**收回**：必填 `authority_id`（＝`authority_records.id`）与 `dossier_id`。生产槽不接受 holder/privilege/scope 模糊收回。未知 id → `unknown_authority_id`；首次 `revoked 0→1` 成功并写观感边；已收回 → 幂等 `applied`（`already_revoked`），不改 `revoked_turn`、不写第二笔边。收回＝正当治术：零 0056/皇威代价；观感经既有 `relation_edge_events`（`source=holder_id`, `target=皇帝`, `event_kind=结怨`, `context=收权·罢差·{privilege}·{scope}`, `origin=authority_revoke:{id}`）。
+
+**唯一适用性投影**（颁布判官与 #613 共用）：承办对象＝案卷 `executor_id`（character）∪ `participant_roster` 中 `主办`/`协办`（不含 `知情`，不读 payload assignee）；事域**仅**典范键 `target_kind:target_id`（无裸 `target_id` 平行匹配）；再过滤在持谓词。投影结果为 `held_authorities`；`criteria_snapshot.authorization_ids` **只**含投影 id 的十进制字符串——禁止从 payload `authorization_id(s)` 拼第二真源。自然语言授予/收权捕获分别由 #528/#523 回接，本契约不作关键词推断。
 
 ### `dossier_executions` — S1 案卷执行结局
 - 每项必须带 `dossier_id`、`outcome`、`note`。

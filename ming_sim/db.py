@@ -12633,6 +12633,10 @@ class GameDB:
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
 
+    _AUTHORITY_PRIVILEGES = frozenset({
+        "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
+    })
+
     def grant_authority(
         self, state: GameState, holder_id: str, privilege: str, scope: str,
         *, effective_turn: Optional[int] = None,
@@ -12641,7 +12645,7 @@ class GameDB:
     ) -> int:
         """Persist one ADR 0071 held privilege; capture/matching belongs to #528."""
         holder_id, privilege, scope = map(str.strip, (holder_id, privilege, scope))
-        if privilege not in {"尚方剑密授", "便宜行事", "专差督办", "新机构专办"}:
+        if privilege not in self._AUTHORITY_PRIVILEGES:
             raise ValueError("授权权项不在首批枚举")
         if not scope:
             raise ValueError("授权事域不能为空")
@@ -12687,6 +12691,75 @@ class GameDB:
             f"{holder_sql} ORDER BY id", params,
         ).fetchall()
         return [{**dict(row), "revoked": False} for row in rows]
+
+    def find_active_authority(
+        self, turn: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the in-hand row for the exact grant identity, if any."""
+        holder_id = str(holder_id or "").strip()
+        privilege = str(privilege or "").strip()
+        scope = str(scope or "").strip()
+        for row in self.list_active_authorities(turn, holder_id=holder_id):
+            if (
+                str(row.get("privilege") or "") == privilege
+                and str(row.get("scope") or "") == scope
+            ):
+                return row
+        return None
+
+    def project_applicable_authorities(
+        self, turn: int, dossier: Mapping[str, object],
+    ) -> List[Dict[str, object]]:
+        """#611 unique applicability projection over durable authority rows.
+
+        Actors = character executor ∪ roster 主办/协办 (never payload assignee).
+        Domains = only the typed canonical key target_kind:target_id.
+        """
+        actors: set[str] = set()
+        executor_id = str(dossier.get("executor_id") or "").strip()
+        executor_kind = str(dossier.get("executor_kind") or "").strip()
+        if executor_id and executor_kind in {"", "character"}:
+            actors.add(executor_id)
+        roster = dossier.get("participant_roster") or []
+        if isinstance(roster, str):
+            try:
+                roster = json.loads(roster)
+            except (TypeError, ValueError):
+                roster = []
+        if isinstance(roster, list):
+            for entry in roster:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                    continue
+                character_id = str(entry.get("character_id") or "").strip()
+                if character_id:
+                    actors.add(character_id)
+        target_kind = str(dossier.get("target_kind") or "").strip()
+        target_id = str(dossier.get("target_id") or "").strip()
+        domains: set[str] = set()
+        if target_kind and target_id:
+            domains.add(f"{target_kind}:{target_id}")
+        if not actors or not domains:
+            return []
+        projected: List[Dict[str, object]] = []
+        for holder_id in sorted(actors):
+            for row in self.list_active_authorities(int(turn), holder_id=holder_id):
+                if str(row.get("scope") or "") not in domains:
+                    continue
+                projected.append({
+                    "id": int(row["id"]),
+                    "holder_id": str(row["holder_id"]),
+                    "privilege": str(row["privilege"]),
+                    "scope": str(row["scope"]),
+                    "effective_turn": int(row["effective_turn"]),
+                    **(
+                        {"expires_turn": int(row["expires_turn"])}
+                        if row.get("expires_turn") is not None else {}
+                    ),
+                })
+        projected.sort(key=lambda item: int(item["id"]))
+        return projected
 
     def revoke_authority(
         self, authority_id: int, revoked_turn: int, *, commit: bool = True,

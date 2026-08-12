@@ -160,11 +160,24 @@ def _prepare_reconsideration_facts(
         "UPDATE factions SET leverage=5,agenda='失去许誉卿封驳支点，转入复议' WHERE name='东林'"
     )
     held = db.get_decree_dossier(dossier_id)
-    held_payload = json.loads(str(held["payload_json"] or "{}"))
-    held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
+    # #611: authorization_ids come only from the applicability projection over
+    # durable authority_records — never from payload authorization_id(s).
+    holder = next(
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "ORDER BY name"
+        )
+    )
+    target_kind = str(held.get("target_kind") or "").strip()
+    target_id = str(held.get("target_id") or "").strip()
+    scope = f"{target_kind}:{target_id}" if target_kind and target_id else "清丈田亩"
     db.conn.execute(
-        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
-        (json.dumps(held_payload, ensure_ascii=False), dossier_id),
+        "UPDATE decree_dossiers SET executor_kind='character', executor_id=? WHERE id=?",
+        (holder, dossier_id),
+    )
+    db.grant_authority(
+        state, holder, "便宜行事", scope,
+        effective_turn=state.turn, dossier_id=int(dossier_id),
     )
     state.metrics["皇威"] = 100
     db.save_state(state)

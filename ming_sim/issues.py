@@ -31,6 +31,7 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.relations import EMPEROR_NODE
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
@@ -73,6 +74,112 @@ def _parse_sqlite_id(raw: object) -> int:
     if not (_SQLITE_INT_MIN <= val <= _SQLITE_INT_MAX):
         raise ValueError("id 超出 SQLite 64-bit 范围")
     return val
+
+
+_AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
+_AUTHORITY_REVOKE_OPS = frozenset({"收回", "revoke"})
+
+
+def _authority_change_dossier_gate(db: GameDB, item: Dict[str, object]) -> int:
+    """#611 §2: every authority_changes item needs one effect-eligible dossier_id."""
+    if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
+        raise ValueError("missing_dossier_source")
+    try:
+        dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+    except (TypeError, ValueError):
+        raise ValueError("missing_dossier_source") from None
+    if dossier_id <= 0 or db.get_decree_dossier(dossier_id) is None:
+        raise ValueError("missing_dossier_source")
+    if not db.dossier_authorizes_effects(dossier_id):
+        raise ValueError("dossier_not_effect_eligible")
+    return dossier_id
+
+
+def _apply_authority_change_item(
+    db: GameDB, state: GameState, item: Dict[str, object],
+) -> Dict[str, object]:
+    """Apply one production-slot authority grant/revoke under the #611 contract."""
+    op = str(item.get("动作") or item.get("op") or "").strip()
+    if op not in _AUTHORITY_GRANT_OPS | _AUTHORITY_REVOKE_OPS:
+        raise ValueError("授权变更动作只收授予/收回")
+    dossier_id = _authority_change_dossier_gate(db, item)
+
+    if op in _AUTHORITY_GRANT_OPS:
+        holder_id = str(item.get("holder_id") or "").strip()
+        privilege = str(item.get("privilege") or item.get("权项") or "").strip()
+        scope = str(item.get("scope") or item.get("事域") or "").strip()
+        if not holder_id or not privilege or not scope:
+            raise ValueError("授予项必须含 holder_id/privilege/scope")
+        effective_raw = item.get("effective_turn", item.get("生效回合"))
+        expires_raw = item.get("expires_turn", item.get("失效回合"))
+        effective_turn = (
+            int(state.turn) if effective_raw in (None, "")
+            else _parse_sqlite_id(effective_raw)
+        )
+        expires_turn = (
+            None if expires_raw in (None, "")
+            else _parse_sqlite_id(expires_raw)
+        )
+        if db.find_active_authority(
+            effective_turn, holder_id=holder_id, privilege=privilege, scope=scope,
+        ) is not None:
+            raise ValueError("duplicate_active_authority")
+        authority_id = db.grant_authority(
+            state, holder_id, privilege, scope,
+            effective_turn=effective_turn,
+            expires_turn=expires_turn,
+            dossier_id=dossier_id,
+            commit=False,
+        )
+        return {
+            "动作": "授予",
+            "authority_id": authority_id,
+            "dossier_id": dossier_id,
+            "holder_id": holder_id,
+            "privilege": privilege,
+            "scope": scope,
+        }
+
+    try:
+        authority_id = _parse_sqlite_id(item.get("authority_id"))
+    except (TypeError, ValueError):
+        raise ValueError("unknown_authority_id") from None
+    if authority_id <= 0:
+        raise ValueError("unknown_authority_id")
+    record = db.get_authority(authority_id)
+    if record is None:
+        raise ValueError("unknown_authority_id")
+    if bool(record.get("revoked")):
+        return {
+            "动作": "收回",
+            "authority_id": authority_id,
+            "dossier_id": dossier_id,
+            "reason": "already_revoked",
+        }
+    if not db.revoke_authority(authority_id, state.turn, commit=False):
+        raise ValueError("unknown_authority_id")
+    privilege = str(record.get("privilege") or "")
+    scope = str(record.get("scope") or "")
+    holder_id = str(record.get("holder_id") or "")
+    db.record_relation_edge_event(
+        source=holder_id,
+        target=EMPEROR_NODE,
+        event_kind="结怨",
+        context=f"收权·罢差·{privilege}·{scope}",
+        origin=f"authority_revoke:{authority_id}",
+        turn=int(state.turn),
+        year=int(state.year),
+        period=int(state.period),
+        evidence=False,
+    )
+    return {
+        "动作": "收回",
+        "authority_id": authority_id,
+        "dossier_id": dossier_id,
+        "holder_id": holder_id,
+        "privilege": privilege,
+        "scope": scope,
+    }
 
 
 def _payload_owned_dossier_for_origin(db: GameDB, origin_ref: object) -> Optional[Dict[str, object]]:
@@ -6814,6 +6921,35 @@ def apply_score_extraction(
                 "rejected": True, "category": "invalid_transition",
                 "reason": str(exc), "item": item,
             })
+
+    authority_change_results: List[Dict[str, object]] = []
+    for item in extracted.get("authority_changes") or []:
+        if not isinstance(item, dict):
+            authority_change_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+                "reason": "授权变更项必须为对象",
+            })
+            continue
+        try:
+            authority_change_results.append(
+                _apply_authority_change_item(db, state, item)
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            reason = str(exc)
+            category = "invalid_authority_change"
+            if reason in {
+                "missing_dossier_source",
+                "dossier_not_effect_eligible",
+                "duplicate_active_authority",
+                "unknown_authority_id",
+                "already_revoked",
+            }:
+                category = reason
+            authority_change_results.append({
+                "rejected": True, "category": category,
+                "reason": reason, "item": item,
+            })
+
     runtime_content = content if content is not None else _ctx()
     candidate_event_ids_authoritative = candidate_event_ids_at_input is not None
     if candidate_event_ids_at_input is None:
@@ -7867,6 +8003,7 @@ def apply_score_extraction(
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
         "dossier_participants": dossier_participant_results,
+        "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
         "fiscal_creates": applied_fiscal_creates,
