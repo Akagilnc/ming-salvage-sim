@@ -655,7 +655,6 @@ class WebGame:
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
         # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
-        self._beat_generator = self.session._beat_generator
         self._write_gate = threading.Lock()
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
         # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
@@ -1625,11 +1624,12 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
                 from ming_sim.applier import atomic
-                # scene 与回话全有或全无；既有内层 commit 由 atomic 延后。
+                # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
                 with atomic(self.db):
-                    self.session.join_chat_turn_scene(chat_turn_id)
+                    self.session.persist_chat_turn_scene(scene_generated)
                     # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
                     payload = self._chat_payload(
                     minister_name, result.answer,
@@ -1714,10 +1714,11 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
                 from ming_sim.applier import atomic
                 with atomic(self.db):
-                    self.session.join_chat_turn_scene(chat_turn_id)
+                    self.session.persist_chat_turn_scene(scene_generated)
                     payload = self._chat_payload(
                     minister_name, result.answer,
                     court_action=result.court_action, next_minister=result.next_minister,
@@ -1955,7 +1956,7 @@ class WebGame:
                     # 失败由外围 chat_turn guard 统一终态化（#503 cross-ref）。
                     dismiss_from_audience(
                         self.db, character.name, origin_chat_turn_id=chat_turn_id,
-                        state=self.state, beat_generator=getattr(self, "_beat_generator", None),
+                        state=self.state, beat_generator=self.session._beat_generator,
                     )
                 elif (
                     res.startswith("__secret_order_registered__")
@@ -2064,9 +2065,10 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
+        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         from ming_sim.applier import atomic
         with atomic(self.db):
-            self.session.join_chat_turn_scene(chat_turn_id)
+            self.session.persist_chat_turn_scene(scene_generated)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
                 proposed_directive=proposed, appointed_minister=appointed,
