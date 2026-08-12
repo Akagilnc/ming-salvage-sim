@@ -301,7 +301,7 @@ def test_bad_endorsement_item_is_rejected_without_rolling_back_valid_sibling(gam
     assert dict(rejection) == {"section": "story_facts", "category": "invalid_item"}
 
 
-def test_post_reply_extraction_binds_endorsement_when_same_night_dossier_is_created(game):
+def test_normal_post_reply_defers_once_until_close_night_creates_dossier(game):
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
@@ -320,10 +320,9 @@ def test_post_reply_extraction_binds_endorsement_when_same_night_dossier_is_crea
         def run(self, materials):
             calls.append(json.loads(materials))
             candidates = calls[-1]["可背书案卷"]
-            assert candidates == [{
-                "ref": {"pending_action_id": candidate_id},
-                "decree_text": "清核辽饷",
-            }]
+            assert len(candidates) == 1
+            assert candidates[0]["ref"] == {"dossier_id": candidates[0]["ref"]["dossier_id"]}
+            assert candidates[0]["decree_text"] == "清核辽饷"
             return json.dumps({"facts": [{
                 "body": "皇帝亲书手敕。", "endorsement": {
                     "dossier_ref": candidates[0]["ref"], "form": "御笔手敕",
@@ -336,9 +335,17 @@ def test_post_reply_extraction_binds_endorsement_when_same_night_dossier_is_crea
         chat_turn_id=chat_turn_id, llm_config=object(),
         write_gate=threading.Lock(), extractor_agent=_SameNightAgent(),
     )
-    assert extracted["status"] == "done"
+    assert extracted["status"] == "deferred"
+    assert calls == []
+    assert db.get_story_extract_status(chat_turn_id) == ""
+    assert db.conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_dossier_endorsements'"
+    ).fetchone() is None
 
-    result = an.close_night(db, state, night_id=night_id, content=content)
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(), extractor_agent=_SameNightAgent(),
+    )
     assert result["closed"] is True
     dossiers = db.list_decree_dossiers(status="proposed")
     assert len(dossiers) == 1

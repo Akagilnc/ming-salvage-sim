@@ -1016,11 +1016,6 @@ def close_night(
                 )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
-    # A normal post-reply extraction may already be done. Resolve its durable
-    # pending-action references only after the governing commit created dossiers.
-    if hasattr(db, "resolve_pending_dossier_endorsements"):
-        db.resolve_pending_dossier_endorsements(int(night_id))
-
     # Approved directives become real dossiers at the governing commit step above.
     # Only now may the one extraction call resolve same-night spoken endorsements
     # against those real ids. Failure remains loud and leaves the closing cursor
