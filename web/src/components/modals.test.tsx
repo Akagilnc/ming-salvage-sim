@@ -417,29 +417,6 @@ describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
   });
 });
 
-describe("ChatModal — four diegetic roles and system boundary (#541)", () => {
-  it("renders entrance and exit facts as scene beats, not system notes", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        night_id: 9,
-        messages: [
-          { role: "scene", speaker: "", content: "宣周延儒入殿。", beat: "entrance", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
-          { role: "scene", speaker: "", content: "周延儒告退。", beat: "exit", audibility: "殿上公开", time: null, soft_boundary: false, highlights: [], container: {} },
-        ],
-      }),
-    }));
-
-    renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 9 });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    await vi.waitFor(() => expect(document.querySelectorAll(".chat-message.scene")).toHaveLength(2));
-
-    expect(document.querySelector(".scene.beat-entrance")?.textContent).toContain("入殿");
-    expect(document.querySelector(".scene.beat-exit")?.textContent).toContain("告退");
-    expect(document.querySelector(".chat-system-note")).toBeNull();
-  });
-});
-
 describe("ChatModal — placeholder switches on character type", () => {
   it("shows 大臣 and 他 in placeholder for ministers", () => {
     renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_" });
@@ -788,6 +765,19 @@ describe("ChatModal — single night-scroll authority (#539)", () => {
     await act(async () => { updateChat([{ role: "user", content: "完成二轮" }]); await Promise.resolve(); });
     expect(log.scrollTop).toBe(100);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores a saved position and reports player scrolling for the open night", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ night_id: 23, messages: [{ role: "user", content: "卷首" }] }) }));
+    const save = vi.fn();
+    const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", currentNightId: 23, scrollPosition: 137, onScrollPositionChange: save });
+    const log = host.querySelector(".chat-log") as HTMLDivElement;
+    Object.defineProperties(log, { scrollHeight: { value: 600 }, clientHeight: { value: 200 } });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(137);
+    log.scrollTop = 91;
+    act(() => log.dispatchEvent(new Event("scroll", { bubbles: true })));
+    expect(save).toHaveBeenLastCalledWith(91);
   });
 
   it("does not merge personal history while the canonical scroll refresh is delayed", async () => {
