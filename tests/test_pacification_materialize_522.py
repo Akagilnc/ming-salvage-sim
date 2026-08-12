@@ -94,6 +94,61 @@ def test_canonical_bandit_pacification_forms_proposed_dossier_without_world_effe
     ).fetchone()) == before, "成案前不得在 materializer 改世界"
 
 
+def test_old_save_legacy_bandits_leader_admits_wang_and_rejects_non_leader(game):
+    """旧档 leader='王嘉胤等' 经 init_schema 规范化后：头目可成案，同股非头目零效果。"""
+    db, state, content = game
+    db.conn.execute("UPDATE powers SET leader='王嘉胤等' WHERE id='bandits'")
+    db.conn.execute(
+        "UPDATE characters SET status='active', power_id='bandits' WHERE name='高迎祥'"
+    )
+    content.characters["高迎祥"].status = "active"
+    content.characters["高迎祥"].power_id = "bandits"
+    db.conn.commit()
+
+    db.init_schema()
+    assert db.conn.execute(
+        "SELECT leader FROM powers WHERE id='bandits'"
+    ).fetchone()["leader"] == "王嘉胤"
+
+    wang_before = dict(db.conn.execute(
+        "SELECT power_id,office FROM characters WHERE name='王嘉胤'"
+    ).fetchone())
+    ctx = _stage_pacification(db, state.turn, "王嘉胤")
+    assert ctx.out["pending_action_id"]
+    db.commit_pending_actions(state, content=content)
+    dossier = next(d for d in db.list_decree_dossiers(status="proposed")
+                   if d["action_type"] == "pacification")
+    assert dossier["target_id"] == "王嘉胤"
+    assert dict(db.conn.execute(
+        "SELECT power_id,office FROM characters WHERE name='王嘉胤'"
+    ).fetchone()) == wang_before
+
+    non_leader_before = dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='高迎祥'"
+    ).fetchone())
+    power_before = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandits'"
+    ).fetchone())
+    assert (non_leader_before["status"], non_leader_before["power_id"],
+            power_before["leader"], power_before["kind"], power_before["stance"]) == (
+        "active", "bandits", "王嘉胤", "内乱", "潜伏",
+    )
+    reject_ctx = _stage_pacification(db, state.turn, "高迎祥")
+    pending_id = reject_ctx.out["pending_action_id"]
+    assert db.commit_pending_actions(state, content=content) == []
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (pending_id,)
+    ).fetchone()["status"] == "failed"
+    assert [d["target_id"] for d in db.list_decree_dossiers()
+            if d["action_type"] == "pacification"] == ["王嘉胤"]
+    assert dict(db.conn.execute(
+        "SELECT * FROM characters WHERE name='高迎祥'"
+    ).fetchone()) == non_leader_before
+    assert dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandits'"
+    ).fetchone()) == power_before
+
+
 def test_pacification_rejects_active_non_leader_without_world_effect(game):
     db, state, content = game
     db.conn.execute("UPDATE characters SET power_id='bandits' WHERE name='皇太极'")

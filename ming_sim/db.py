@@ -4338,6 +4338,18 @@ class GameDB:
                     else power.aliases,
                 ),
             )
+        # Known pre-#522 stock authority: exact legacy leader only → content canonical.
+        bandits = self.content.powers.get("bandits")
+        if bandits and bandits.leader:
+            self.conn.execute(
+                """
+                UPDATE powers
+                SET leader = ?
+                WHERE id = 'bandits'
+                  AND leader = '王嘉胤等'
+                """,
+                (bandits.leader,),
+            )
         for name in ("李自成", "张献忠"):
             ch = self.content.characters.get(name)
             if not ch or not ch.power_id or ch.power_id == "bandits":
