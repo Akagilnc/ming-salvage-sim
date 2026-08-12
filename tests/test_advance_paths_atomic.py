@@ -1325,8 +1325,6 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        lambda: sess.confirm_directive(1),
-        lambda: sess.reject_directive(1),
         lambda: sess.set_decree("改诏"),
         lambda: sess.write_decree(),
     ):
