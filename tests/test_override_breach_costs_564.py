@@ -1,5 +1,7 @@
 """#564 强颁与毁约的确定性代价轨（ADR 0056）。"""
 
+from ming_sim import issues
+
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
     return db.create_decree_dossier(
@@ -158,6 +160,34 @@ def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
         (-4, "breach")
     ]
     assert "跳过已故参与者徐光启" in caplog.text
+
+
+def test_cancel_linked_issue_breaches_only_its_origin_dossier_once(game):
+    db, state, _ = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="兴修河渠",
+        target_kind="issue", target_id="river-works",
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="兴修河渠", origin_kind="decree",
+        origin_ref=f"dossier:{dossier_id}", cancellable="decree",
+    )
+    authority = state.metrics["皇威"]
+    popular_support = state.metrics["民心"]
+    cancel = {"issue_id": issue_id, "narrative": "撤回成命", "applied_cost": {"metrics": {"民心": -9}}}
+
+    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
+    issues.apply_issue_tracker_output(db, state, {"cancels": [cancel]})
+
+    assert db.conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()[0] == "dropped"
+    assert db.get_decree_dossier(dossier_id)["status"] == "closed"
+    assert state.metrics["皇威"] == max(0, authority - 5)
+    assert state.metrics["民心"] == popular_support
+    events = _cost_events(db, dossier_id)
+    assert [(event["cost_kind"], event["cost_identity"]) for event in events] == [
+        ("breach", "breach"), ("authority", "breach"),
+    ]
 
 
 def test_breach_charges_authority_ministers_and_related_factions_once(game):
