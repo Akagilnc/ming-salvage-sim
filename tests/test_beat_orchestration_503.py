@@ -311,7 +311,6 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     game = web_app.WebGame(fresh=False)
     # e2e seam 注入确定性假 scene LLM；测试绝不访问真实模型。
-    game._beat_generator = _echo_generator
     game.session._beat_generator = _echo_generator
     yield game
     try:
@@ -352,7 +351,8 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
     night_id = int(row["night_id"])
     # durable 建轮即由 session 生命周期启动 scene；入口不再手工 generate/persist。
     assert _enter_body(game.db, night_id, minister) == f"宣入{minister}入殿。"
-    game.session.join_chat_turn_scene(ctid)
+    generated = game.session.join_chat_turn_scene(ctid)
+    game.session.persist_chat_turn_scene(generated)
     enter = _enter_body(game.db, night_id, minister)
     open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
     assert enter and minister in enter and enter != f"宣入{minister}入殿。"

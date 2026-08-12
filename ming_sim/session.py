@@ -1075,12 +1075,17 @@ class GameSession:
 
         self._chat_turn_scene_futures[int(chat_turn_id)] = _CLI_ACTION_INTENT_EXECUTOR.submit(generate)
 
-    def join_chat_turn_scene(self, chat_turn_id: int) -> None:
-        """Join and persist this turn's scene; caller must share the reply transaction."""
+    def join_chat_turn_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
+        """Wait for scene generation without holding a database/write lock.
+
+        The caller persists the returned bodies beside the reply in its short transaction.
+        """
         future = self._chat_turn_scene_futures.pop(int(chat_turn_id), None)
-        if future is None:
-            return
-        for entry_id, body in future.result():
+        return [] if future is None else list(future.result())
+
+    def persist_chat_turn_scene(self, generated: list[tuple[int, str]]) -> None:
+        """Persist an already-joined scene batch in the caller's reply transaction."""
+        for entry_id, body in generated:
             self.db.conn.execute(
                 "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
                 (body, int(entry_id)),

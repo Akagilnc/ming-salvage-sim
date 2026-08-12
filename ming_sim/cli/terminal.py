@@ -356,9 +356,10 @@ def _retry_interrupted_reply_cli(session: GameSession, minister_name: str) -> No
         result = session.chat(minister_name, question, chat_turn_id=chat_turn_id)
         answer = str(getattr(result, "answer", "") or "")
         if hasattr(db, "persist_minister_reply"):
+            scene_generated = session.join_chat_turn_scene(chat_turn_id)
             from ming_sim.applier import atomic
             with atomic(db):
-                session.join_chat_turn_scene(chat_turn_id)
+                session.persist_chat_turn_scene(scene_generated)
                 db.persist_minister_reply(minister_name, accepted_turn, answer, chat_turn_id)
         else:
             mid = db.append_chat_message(minister_name, accepted_turn, "minister", answer)
@@ -531,9 +532,10 @@ def minister_chat(session: GameSession, character: Character) -> str:
             if persistent_chat:
                 if (chat_turn_id and hasattr(session.db, "persist_minister_reply")
                         and hasattr(session, "join_chat_turn_scene")):
+                    scene_generated = session.join_chat_turn_scene(chat_turn_id)
                     from ming_sim.applier import atomic
                     with atomic(session.db):
-                        session.join_chat_turn_scene(chat_turn_id)
+                        session.persist_chat_turn_scene(scene_generated)
                         session.db.persist_minister_reply(
                             character.name, accepted_turn, result.answer, chat_turn_id,
                         )
