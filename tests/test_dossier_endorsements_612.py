@@ -4,7 +4,11 @@ import threading
 import pytest
 
 from ming_sim import audience_night as an
-from ming_sim.audience_extraction import run_extraction_for_turn
+from ming_sim.audience_extraction import (
+    ExtractionShapeError,
+    parse_extraction_facts,
+    run_extraction_for_turn,
+)
 from ming_sim.db import GameDB
 from ming_sim.decree import build_promulgation_judge_context
 
@@ -15,15 +19,24 @@ def _minister(db):
     ).fetchone()["name"])
 
 
-def _night_reply(db, state, minister):
+def _night_reply(db, state, minister, reply="臣愿会签此旨。"):
     night_id = int(an.open_night(db, state, location="乾清宫", time_of_day="夜")["id"])
     an.ensure_summon_enter(db, night_id, minister)
     chat_turn_id = db.create_chat_turn(
         state, minister, "endorsement-612", 0, night_id=night_id,
     )
-    db.persist_minister_reply(minister, state.turn, "臣愿会签此旨。", chat_turn_id)
+    db.persist_minister_reply(minister, state.turn, reply, chat_turn_id)
     row = db.conn.execute("SELECT night_seq FROM chat_turns WHERE id=?", (chat_turn_id,)).fetchone()
     return night_id, chat_turn_id, int(row["night_seq"] or 0)
+
+
+def _extract(db, *, minister, reply, chat_turn_id, night_id, seq, fact):
+    return run_extraction_for_turn(
+        db=db, minister_name=minister, reply=reply,
+        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Agent({"facts": [fact]}),
+    )
 
 
 class _Agent:
@@ -42,16 +55,15 @@ def test_spoken_cosign_is_persisted_restored_and_read_by_promulgation_judge(game
         target_kind="issue", target_id="liao-pay",
     )
     night_id, chat_turn_id, seq = _night_reply(db, state, minister)
-    result = run_extraction_for_turn(
-        db=db, minister_name=minister, reply="臣愿会签此旨。",
-        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": [{
+    result = _extract(
+        db, minister=minister, reply="臣愿会签此旨。",
+        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
+        fact={
             "body": "大臣当殿愿为辽饷旨意会签。", "person_names": [minister],
             "tags": ["会签"], "endorsement": {
                 "dossier_id": dossier_id, "form": "会签", "endorser_id": minister,
             },
-        }]}),
+        },
     )
     assert result["status"] == "done"
     expected = [{
@@ -66,9 +78,54 @@ def test_spoken_cosign_is_persisted_restored_and_read_by_promulgation_judge(game
 
     reopened = GameDB(db.path, content=content)
     try:
+        restored_state = reopened.load_state()
         assert reopened.list_dossier_endorsements(dossier_id) == expected
+        restored_context = build_promulgation_judge_context(
+            reopened, restored_state, reopened.list_decree_dossiers(),
+        )
+        assert restored_context["dossiers"][0]["endorsements"] == expected
+        assert restored_context["dossiers"][0]["criteria_snapshot_source"][
+            "endorsement_entry_ids"
+        ] == [1]
     finally:
         reopened.close()
+
+
+def test_spoken_public_backing_is_persisted_without_joining_participant_roster(game):
+    """当面站台落背书条目；担名≠办事，不入参与人/毁约追责名单。"""
+    db, state, _content = game
+    minister = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="南迁之议",
+        target_kind="issue", target_id="south-move",
+    )
+    before = db.get_decree_dossier(dossier_id)["participant_roster"]
+    night_id, chat_turn_id, seq = _night_reply(
+        db, state, minister, reply="臣愿当面为此旨站台。",
+    )
+    result = _extract(
+        db, minister=minister, reply="臣愿当面为此旨站台。",
+        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
+        fact={
+            "body": "大臣当殿愿为此旨当面站台。", "person_names": [minister],
+            "tags": ["当面站台"], "endorsement": {
+                "dossier_id": dossier_id, "form": "当面站台",
+                "endorser_id": minister, "imperial": False,
+            },
+        },
+    )
+    assert result["status"] == "done"
+    rows = db.list_dossier_endorsements(dossier_id)
+    assert rows == [{
+        "id": 1, "dossier_id": dossier_id, "form": "当面站台",
+        "endorser_id": minister, "imperial": False,
+        "source_chat_turn_id": chat_turn_id,
+    }]
+    after = db.get_decree_dossier(dossier_id)["participant_roster"]
+    assert after == before
+    assert all(item.get("character_id") != minister for item in after)
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
+    assert context["dossiers"][0]["endorsements"] == rows
 
 
 def test_imperial_hand_endorsement_is_captured_without_authority_suppression(game):
@@ -79,27 +136,95 @@ def test_imperial_hand_endorsement_is_captured_without_authority_suppression(gam
         state, action_type="appointment", decree_text="擢任兵部侍郎",
         target_kind="character", target_id=minister,
     )
-    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
-    run_extraction_for_turn(
-        db=db, minister_name=minister, reply="朕亲书手敕为此旨作保。",
-        chat_turn_id=chat_turn_id, night_id=night_id, source_night_seq=seq,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": [{
+    night_id, chat_turn_id, seq = _night_reply(
+        db, state, minister, reply="朕亲书手敕为此旨作保。",
+    )
+    result = _extract(
+        db, minister=minister, reply="朕亲书手敕为此旨作保。",
+        chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
+        fact={
             "body": "皇帝亲书手敕。", "endorsement": {
                 "dossier_id": dossier_id, "form": "御笔手敕", "imperial": True,
             },
-        }]}),
+        },
     )
-    assert db.list_dossier_endorsements(dossier_id)[0]["form"] == "御笔手敕"
+    assert result["status"] == "done"
+    row = db.list_dossier_endorsements(dossier_id)[0]
+    assert row == {
+        "id": 1, "dossier_id": dossier_id, "form": "御笔手敕",
+        "endorser_id": "", "imperial": True,
+        "source_chat_turn_id": chat_turn_id,
+    }
+    context = build_promulgation_judge_context(db, state, db.list_decree_dossiers())
+    assert context["dossiers"][0]["endorsements"] == [row]
+    assert context["dossiers"][0]["criteria_snapshot_source"]["endorsement_entry_ids"] == [1]
 
 
-def test_endorsement_write_boundary_rejects_unknown_or_forward_dossier(game):
+def test_endorsement_write_boundary_rejects_unknown_or_illegal_forms(game):
     db, state, _content = game
     minister = _minister(db)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="policy", decree_text="核饷",
+        target_kind="issue", target_id="pay-check",
+    )
     _night_id, chat_turn_id, _seq = _night_reply(db, state, minister)
+
     with pytest.raises(ValueError, match="案卷不存在"):
         db.add_dossier_endorsement(
             999999, form="会签", endorser_id=minister,
             source_chat_turn_id=chat_turn_id,
         )
+    with pytest.raises(ValueError, match="背书形式非法"):
+        db.add_dossier_endorsement(
+            dossier_id, form="联名", endorser_id=minister,
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError, match="会签/当面站台必须具名背书人"):
+        db.add_dossier_endorsement(
+            dossier_id, form="会签", endorser_id="",
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError, match="御笔手敕必须使用御笔标记且不得具名大臣"):
+        db.add_dossier_endorsement(
+            dossier_id, form="御笔手敕", endorser_id=minister, imperial=True,
+            source_chat_turn_id=chat_turn_id,
+        )
+    with pytest.raises(ValueError, match="背书人物不存在"):
+        db.add_dossier_endorsement(
+            dossier_id, form="当面站台", endorser_id="不存在的人",
+            source_chat_turn_id=chat_turn_id,
+        )
     assert db.conn.execute("SELECT COUNT(*) FROM decree_dossier_endorsements").fetchone()[0] == 0
+
+
+def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
+    facts = parse_extraction_facts({
+        "facts": [{
+            "body": "大臣愿会签。", "person_names": ["毕自严"],
+            "audibility": "殿上公开", "tags": ["会签"],
+            "endorsement": {
+                "dossier_id": 3, "form": "会签", "endorser_id": "毕自严",
+                "imperial": False,
+            },
+        }],
+    })
+    assert facts[0]["endorsement"] == {
+        "dossier_id": 3, "form": "会签", "endorser_id": "毕自严", "imperial": False,
+    }
+
+    with pytest.raises(ExtractionShapeError, match="endorsement"):
+        parse_extraction_facts({
+            "facts": [{
+                "body": "坏背书", "endorsement": {
+                    "dossier_id": "3", "form": "会签", "endorser_id": "毕自严",
+                },
+            }],
+        })
+    with pytest.raises(ExtractionShapeError, match="endorsement"):
+        parse_extraction_facts({
+            "facts": [{
+                "body": "坏形式", "endorsement": {
+                    "dossier_id": 1, "form": "联署", "endorser_id": "毕自严",
+                },
+            }],
+        })
