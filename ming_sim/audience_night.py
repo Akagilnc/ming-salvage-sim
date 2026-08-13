@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
@@ -26,6 +26,60 @@ TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
+
+
+def mingfa_publication_tag(directive_id: int | str) -> str:
+    """Canonical engine-command publication-fact tag for one directive."""
+    return f"{_MINGFA_ID_PREFIX}{int(directive_id)}"
+
+
+def exact_mingfa_publication_directive_id(tag: object) -> Optional[int]:
+    """Exact 明发#<positive-int> only; rejects malformed suffix / non-digit residue."""
+    text = str(tag or "")
+    if not text.startswith(_MINGFA_ID_PREFIX):
+        return None
+    rest = text[len(_MINGFA_ID_PREFIX):]
+    if not rest.isdigit():
+        return None
+    directive_id = int(rest)
+    # Reject non-canonical forms (leading zeros, etc.) so CAST/prefix loosness cannot alias.
+    if directive_id <= 0 or str(directive_id) != rest:
+        return None
+    return directive_id
+
+
+def engine_command_mingfa_publication_facts(
+    entries: Sequence[Dict[str, Any]],
+) -> List[Tuple[int, int]]:
+    """One exact engine-command 明发 publication-fact seam: (night_id, directive_id).
+
+    Only engine-command ledger rows (`source_chat_turn_id==0`); only exact
+    `明发#<positive-int>` tags. Shared by both promulgated readers and close_night
+    already_ids. Extractor open tags and malformed suffixes are not publication facts.
+    """
+    seen: set[Tuple[int, int]] = set()
+    out: List[Tuple[int, int]] = []
+    for entry in entries:
+        if int(entry.get("source_chat_turn_id") or 0) != 0:
+            continue
+        night_id = int(entry.get("night_id") or 0)
+        for tag in entry.get("tags") or []:
+            directive_id = exact_mingfa_publication_directive_id(tag)
+            if directive_id is None:
+                continue
+            key = (night_id, directive_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def engine_command_mingfa_publication_ids(
+    entries: Sequence[Dict[str, Any]],
+) -> set[int]:
+    """Directive ids from the one exact engine-command 明发 publication-fact seam."""
+    return {directive_id for _night_id, directive_id in engine_command_mingfa_publication_facts(entries)}
 # 进出账（ADR 0035：TAG_ENTER/TAG_EXIT 是机器承重的在场效果标识「进/出」）
 TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令落此账
 TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
@@ -1025,12 +1079,12 @@ def close_night(
         # 幂等按 directive_id 逐条（#502 L6）：半写后续跑只补缺的那几道、不漏不重——
         # 不用「整夜已有任意明发标」一门（那会在半写后跳过剩余道，公开账残缺）。
         # 无独立 pending-publication 游标/机制：挂在 finalize 前、靠 明发#id 账标幂等。
+        # 已发布辨识 = 唯一 exact engine-command publication-fact seam（与 DB readers 同源）。
         already_ids = {
-            str(t)[len(_MINGFA_ID_PREFIX):]
-            for e in list_ledger(db, night_id) for t in e.get("tags") or []
-            if str(t).startswith(_MINGFA_ID_PREFIX)
+            str(did)
+            for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
         }
-        # 候选 = 本夜 committed directive 前提；非 promulgated 投影。
+        # 候选 = 本夜 committed directive 前提；非 promulgated 投影（查询保持独立）。
         _mingfa_candidates = db.conn.execute(
             """
             SELECT td.id AS directive_id, td.actor, td.text
@@ -1043,15 +1097,16 @@ def close_night(
             (int(night_id),),
         ).fetchall()
         for _pd in _mingfa_candidates:
-            _did = str(int(_pd["directive_id"] or 0))
-            if not _did or _did == "0" or _did in already_ids:
+            _did_int = int(_pd["directive_id"] or 0)
+            _did = str(_did_int)
+            if not _did_int or _did in already_ids:
                 continue
             append_ledger_entry(
                 db, night_id,
                 person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
                 audibility=AUDIBILITY_PUBLIC,
                 body=f"明发旨意：{str(_pd['text'] or '')}",
-                tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
+                tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
                 check_dead=False,
             )
         tags = [TAG_CLOSE_NIGHT]

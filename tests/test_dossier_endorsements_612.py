@@ -460,17 +460,18 @@ def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
 
 
 def _public_mingfa_projection(db, night_id):
-    """Public 明发 / promulgated ledger projection for a night (TAG_MINGFA + 明发旨意)."""
+    """Public 明发 projection via the one exact engine-command publication-fact seam."""
+    ledger = an.list_ledger(db, night_id)
+    fact_ids = an.engine_command_mingfa_publication_ids(ledger)
     entries = [
-        e for e in an.list_ledger(db, night_id)
-        if an.TAG_MINGFA in (e.get("tags") or [])
-        or str(e.get("body") or "").startswith("明发旨意")
+        e for e in ledger
+        if int(e.get("source_chat_turn_id") or 0) == 0
+        and any(
+            an.exact_mingfa_publication_directive_id(t) in fact_ids
+            for t in (e.get("tags") or [])
+        )
     ]
-    mingfa_ids = sorted({
-        str(t)[len(an._MINGFA_ID_PREFIX):]
-        for e in entries for t in e.get("tags") or []
-        if str(t).startswith(an._MINGFA_ID_PREFIX)
-    })
+    mingfa_ids = sorted(str(i) for i in fact_ids)
     bodies = [str(e.get("body") or "") for e in entries]
     return entries, mingfa_ids, bodies
 
@@ -599,15 +600,147 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     assert mingfa_ids == published_ids
     assert len(entries) == len(published_ids) == 2
     assert sorted(bodies) == [f"明发旨意：{t}" for t in published_texts]
-    # Exactly-once: one ledger row per 明发#directive_id, no duplicates on success path.
+    # Exactly-once: one ledger row per exact engine-command 明发#directive_id.
     # ID/cursor idempotency: kept dossier+directive ids unchanged across failure/retry.
     tag_hits = [
-        t for e in an.list_ledger(db, night_id) for t in e.get("tags") or []
-        if str(t).startswith(an._MINGFA_ID_PREFIX)
+        an.mingfa_publication_tag(did)
+        for did in an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id))
     ]
-    assert sorted(tag_hits) == sorted(f"{an._MINGFA_ID_PREFIX}{i}" for i in published_ids)
+    assert sorted(tag_hits) == sorted(an.mingfa_publication_tag(i) for i in published_ids)
     assert len(tag_hits) == len(set(tag_hits)) == 2
     assert str(first_directive) in published_ids
+
+
+def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_retry(game):
+    """抽取账 明发# 与畸形后缀不得冒充/阻挡 exact engine-command publication fact。
+
+    真路径：收夜抽取失败 → 注入 extractor-source exact tag + command malformed suffix
+    → restore 后 readers/already_ids 仍空 → 重试成功只落一次真明发。
+    """
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    emperor_text = "准此旨，朕亲书手敕作保。"
+    user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
+    db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "retry-collision", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    calls = []
+
+    class _BoomThenOk:
+        def run(self, materials):
+            payload = json.loads(materials)
+            calls.append(payload)
+            if len(calls) == 1:
+                raise RuntimeError("extract boom")
+            candidates = payload["可背书案卷"]
+            target = next(row for row in candidates if row["decree_text"] == "清核辽饷")
+            return json.dumps({"facts": [{
+                "body": "皇帝亲书手敕。", "endorsement": {
+                    "dossier_ref": target["ref"], "form": "御笔手敕",
+                    "endorser_id": "", "imperial": True,
+                },
+            }]}, ensure_ascii=False)
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            extractor_agent=_BoomThenOk(),
+        )
+    assert ei.value.code == "pending_extraction"
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert [row["decree_text"] for row in dossiers] == ["清核辽饷"]
+    first_id = int(dossiers[0]["id"])
+    first_directive = int(dossiers[0]["directive_id"])
+    assert first_directive > 0
+    assert db.list_night_promulgated_directives(night_id) == []
+    assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
+
+    # Collision A: extractor-source open tags carry an exact-looking 明发#id.
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=[minister],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="抽取叙事妄称已明发",
+        tags=[an.TAG_MINGFA, an.mingfa_publication_tag(first_directive)],
+        source_chat_turn_id=chat_turn_id,
+        check_dead=False,
+    )
+    # Collision B: engine-command row with malformed suffix (old LIKE/CAST would alias).
+    malformed_tag = f"{an.mingfa_publication_tag(first_directive)}abc"
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=[],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="畸形后缀碰撞",
+        tags=[malformed_tag],
+        source_chat_turn_id=0,
+        check_dead=False,
+    )
+    # Loose readers must not treat either collision as publication fact.
+    assert an.exact_mingfa_publication_directive_id(malformed_tag) is None
+    assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
+    assert db.list_night_promulgated_directives(night_id) == []
+    assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
+
+    restored = GameDB(db.path, content=content)
+    try:
+        restored_state = restored.load_state()
+        restored_night = an.get_night(restored, night_id)
+        assert restored_night["status"] == an.NIGHT_STATUS_OPEN
+        assert restored.list_night_promulgated_directives(night_id) == []
+        assert restored.list_promulgated_directives(
+            turn_from=restored_state.turn, turn_to=restored_state.turn,
+        ) == []
+        assert an.engine_command_mingfa_publication_ids(
+            an.list_ledger(restored, night_id),
+        ) == set()
+    finally:
+        restored.close()
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_BoomThenOk(),
+    )
+    assert result["closed"] is True
+    assert len(calls) == 2
+    assert int(
+        next(row for row in db.list_decree_dossiers(status="proposed")
+             if row["decree_text"] == "清核辽饷")["id"]
+    ) == first_id
+    published = db.list_night_promulgated_directives(night_id)
+    assert [str(p.get("text") or "") for p in published] == ["清核辽饷"]
+    assert [int(p["directive_id"]) for p in published] == [first_directive]
+    range_published = db.list_promulgated_directives(
+        turn_from=state.turn, turn_to=state.turn,
+    )
+    assert [int(p["directive_id"]) for p in range_published] == [first_directive]
+    assert all(int(p.get("night_id") or 0) == int(night_id) for p in range_published)
+    fact_ids = an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id))
+    assert fact_ids == {first_directive}
+    # Exactly-once real publication; collisions remain but do not alias or duplicate.
+    exact_tags = [
+        t for e in an.list_ledger(db, night_id)
+        if int(e.get("source_chat_turn_id") or 0) == 0
+        for t in (e.get("tags") or [])
+        if an.exact_mingfa_publication_directive_id(t) == first_directive
+    ]
+    assert exact_tags == [an.mingfa_publication_tag(first_directive)]
+    assert any(
+        an.mingfa_publication_tag(first_directive) in (e.get("tags") or [])
+        and int(e.get("source_chat_turn_id") or 0) == chat_turn_id
+        for e in an.list_ledger(db, night_id)
+    )
+    assert any(
+        malformed_tag in (e.get("tags") or [])
+        for e in an.list_ledger(db, night_id)
+    )
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
