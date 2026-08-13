@@ -4,6 +4,7 @@ import pytest
 
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
@@ -18,19 +19,10 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
 
 
 def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices", "reason": "科臣封驳",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": "韩爌",
-        "criteria_snapshot": {
-            "imperial_authority_band": "强盛", "appointment_tenure": "",
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-        ],
-    }
+    # Preserve suite-specific gatekeeper/band/reason differences via builder knobs.
+    return rejected_verdict(
+        dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
+    )
 
 
 @pytest.mark.parametrize("extractor_result", ["missing-mode", "failure"])
