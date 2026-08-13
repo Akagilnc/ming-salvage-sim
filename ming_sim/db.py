@@ -11561,7 +11561,7 @@ class GameDB:
                 )
             else:
                 self.conn.execute(
-                    "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=? WHERE id=?",
+                    "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (state.turn, reason, int(dossier_id)),
                 )
         return True

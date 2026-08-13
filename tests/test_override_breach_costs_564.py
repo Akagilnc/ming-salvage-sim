@@ -170,7 +170,7 @@ def test_breach_excludes_stale_minister_faction_from_costs(game):
     )
 
 
-def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
+def test_breach_skips_dead_but_records_living_offstage_relations(game, caplog):
     db, state, _ = game
     roster = [
         {"character_id": "徐光启", "tier": "主办", "role": "总理"},
@@ -183,7 +183,7 @@ def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
     ).fetchone()[0]
     before_dead_faction = _sat(db, "factions", dead_faction)
     db.conn.execute("UPDATE characters SET status='dead' WHERE name='徐光启'")
-    db.conn.execute("UPDATE characters SET status='inactive' WHERE name='毕自严'")
+    db.set_character_status(state, "毕自严", "offstage", reason="在世非现任")
 
     assert db.breach_decree_dossier(state, dossier_id) is True
     targets = {row["target"] for row in db.get_relation_edge_events(event_kind="辜负")}
