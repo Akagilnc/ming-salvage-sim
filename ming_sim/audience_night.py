@@ -1016,25 +1016,21 @@ def close_night(
                 )
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
-    # Approved directives become real dossiers at the governing commit step above.
-    # Only now may the one extraction call resolve same-night spoken endorsements
-    # against those real ids. Failure remains loud and leaves the closing cursor
-    # resumable; no second LLM pass is introduced.
+    # Close-night may first create durable draft-dossier prerequisites, then drain
+    # this night's one extraction against those real ids (ADR 0036 / 0070). Only a
+    # successful drain may finalize. Extraction failure reopens at a retryable
+    # cursor and keeps the prerequisites; they are not promulgated/final effects.
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
         )
     except Exception:
-        # Dossiers/directive lifecycle created above are durable retry prerequisites,
-        # but a failed close is not left deceptively `closing`.  Re-open at the exact
-        # completed transfer cursor so the player can continue the night or retry;
-        # propagate the original extraction error unchanged.
         _set_night_fields(
             db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-            # Re-run the directive transfer on retry: the reopened night may accept
-            # another decree action after this failure, while already committed rows
-            # remain idempotent. Keeping the transfer cursor would skip that new action.
+            # Re-run the directive transfer on retry so newly consented actions join
+            # the same night. Already committed rows stay idempotent; no second
+            # extraction is introduced for a still-in-flight turn.
             close_commit_cursor=CLOSE_STEP_COMMIT_OFFICE,
         )
         raise

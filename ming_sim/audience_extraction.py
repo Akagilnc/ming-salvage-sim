@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ming_sim.audience_night import (
@@ -246,19 +245,40 @@ def extract_story_facts(
 
 
 _turn_ownership_guard = threading.Lock()
-_turn_ownership: Dict[tuple[int, int], threading.Lock] = {}
+_turn_ownership: Dict[tuple[int, int], list[Any]] = {}
 
 
-def _extraction_owner(db: Any, chat_turn_id: int) -> threading.Lock:
-    """Process-local single-flight ownership for one persisted audience turn.
+def _claim_extraction_owner(db: Any, chat_turn_id: int) -> tuple[threading.Lock, bool]:
+    """Process-local single-flight for one persisted audience turn.
 
-    The durable done watermark prevents repeat settlement, while this lock also prevents
-    two racing owners (reply trailer and close-night drain) from both invoking the LLM
-    before either has reached that watermark.
+    The durable done watermark prevents repeat settlement. This lock also keeps a
+    racing trailer and close-night drain on the same in-flight attempt. Waiters
+    observe that watermark; they do not store a Future or result. The slot is
+    reclaimed when the last waiter leaves.
     """
     key = (id(db), int(chat_turn_id))
     with _turn_ownership_guard:
-        return _turn_ownership.setdefault(key, threading.Lock())
+        slot = _turn_ownership.get(key)
+        created = slot is None
+        if created:
+            slot = [threading.Lock(), 0]
+            _turn_ownership[key] = slot
+        slot[1] += 1
+        owner = slot[0]
+    owner.acquire()
+    return owner, created
+
+
+def _release_extraction_owner(db: Any, chat_turn_id: int, owner: threading.Lock) -> None:
+    owner.release()
+    key = (id(db), int(chat_turn_id))
+    with _turn_ownership_guard:
+        slot = _turn_ownership.get(key)
+        if slot is None or slot[0] is not owner:
+            return
+        slot[1] -= 1
+        if slot[1] <= 0:
+            _turn_ownership.pop(key, None)
 
 
 def run_extraction_for_turn(
@@ -273,7 +293,6 @@ def run_extraction_for_turn(
     write_gate: threading.Lock,
     present_names: Optional[Sequence[str]] = None,
     extractor_agent: Any = None,
-    _settle_barrier: Any = None,
 ) -> Dict[str, Any]:
     """一轮叙事抽取落账尾随：幂等水位判 → 抽取 → 原子落账；失败 → 响亮错误包 + 待补。
 
@@ -288,28 +307,22 @@ def run_extraction_for_turn(
     """
     cid = int(chat_turn_id)
     if not cid:
-        if _settle_barrier is not None:
-            _settle_barrier()
         return {"status": "skipped", "chat_turn_id": cid}
 
     # The trailer and close-night drain can race across the approved-directive handoff.
     # A caller which saw contention belongs to that in-flight attempt: wait for it and
     # return its durable watermark without starting a fresh LLM call. Only a caller
     # finding the lock free may own a new attempt (including an explicit pending retry).
-    owner = _extraction_owner(db, cid)
-    if not owner.acquire(blocking=False):
-        owner.acquire()
-        owner.release()
-        status = db.get_story_extract_status(cid)
-        return {
-            "status": "done" if status == "done" else "pending",
-            "chat_turn_id": cid,
-            "already": status == "done",
-        }
+    owner, owned = _claim_extraction_owner(db, cid)
     try:
+        if not owned:
+            status = db.get_story_extract_status(cid)
+            return {
+                "status": "done" if status == "done" else "pending",
+                "chat_turn_id": cid,
+                "already": status == "done",
+            }
         if db.get_story_extract_status(cid) == "done":
-            if _settle_barrier is not None:
-                _settle_barrier()
             return {"status": "done", "chat_turn_id": cid, "already": True}
 
         # 皇帝问话从本轮已链接的 user_message 读取（生产路径落库真源）；与回话同入一次抽取。
@@ -317,8 +330,6 @@ def run_extraction_for_turn(
 
         # 问话与回话皆空：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
         if not str(reply or "").strip() and not question_text.strip():
-            if _settle_barrier is not None:
-                _settle_barrier()
             return _settle_or_pending(
                 db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
@@ -341,22 +352,18 @@ def run_extraction_for_turn(
                 emperor_text=question_text,
             )
         except Exception as exc:
-            if _settle_barrier is not None:
-                _settle_barrier()
             return _pending_with_pack(
                 db, write_gate, cid=cid, night_id=night_id,
                 minister_name=minister_name, exc=exc, stage="extract",
             )
 
-        if _settle_barrier is not None:
-            _settle_barrier()
         return _settle_or_pending(
             db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
             facts=facts, source_night_seq=source_night_seq,
             fact_count=sum(1 for fact in facts if "_rejected_story_fact" not in fact),
         )
     finally:
-        owner.release()
+        _release_extraction_owner(db, cid, owner)
 
 
 def _pending_with_pack(
@@ -486,21 +493,11 @@ def catch_up_pending_extractions(
     rows = db.list_unextracted_replies(night_id=night_id)
     extracted = 0
     pending = 0
-
-    settle_condition = threading.Condition()
-    next_settle = 0
-
-    def _run(item: tuple[int, Mapping[str, Any]]) -> Dict[str, Any]:
-        index, row = item
-
-        def _await_order() -> None:
-            nonlocal next_settle
-            with settle_condition:
-                settle_condition.wait_for(lambda: next_settle == index)
-                next_settle += 1
-                settle_condition.notify_all()
-
-        return run_extraction_for_turn(
+    # Source turns are semantically ordered: later turns consume already-settled
+    # presence/ledger. Cross-turn catch-up therefore stays serial even on a
+    # monthly-extractor-safe backend; write-gate serialization is not enough.
+    for row in rows:
+        result = run_extraction_for_turn(
             db=db,
             minister_name=str(row.get("minister_name") or ""),
             reply=str(row.get("reply") or ""),
@@ -510,20 +507,7 @@ def catch_up_pending_extractions(
             llm_config=llm_config,
             write_gate=write_gate,
             extractor_agent=extractor_agent,
-            _settle_barrier=_await_order,
         )
-
-    indexed_rows = list(enumerate(rows))
-    # Use the same proven backend-safety seam as the monthly extractors.  map
-    # preserves source order; each turn still owns one call, while the write gate
-    # serializes atomic settlements.  Unsafe API/non-codex backends stay serial.
-    from ming_sim.cli_backend import cli_backend_parallel_safe
-    if len(rows) > 1 and cli_backend_parallel_safe(llm_config):
-        with ThreadPoolExecutor(max_workers=len(rows), thread_name_prefix="audience-extract") as pool:
-            results = list(pool.map(_run, indexed_rows))
-    else:
-        results = [_run(item) for item in indexed_rows]
-    for result in results:
         status = result.get("status")
         if status == "done":
             extracted += 1
