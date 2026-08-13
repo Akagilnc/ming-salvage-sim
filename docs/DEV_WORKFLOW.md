@@ -49,11 +49,11 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
  └ to-tickets ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-spec → to-tickets 留同一不间断窗口，别中途 compact（smart zone ~120k）
  └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（评审态真源=ADR Status；标签不管）
- └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 切片轮次 typecheck+聚焦测试（全量见下方「测试分级」）
+ └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 测试义务见下方「测试分级」
           → 手动/单 session：baseline commit → /code-review → fix commits
           → 自动化交付：由仓外 v3 独立角色接力，本仓不复制其内部流程
         ▼
-     家族/批次收尾：全量 suite 跑一次（merge 前门槛）→ merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
+     家族/批次收尾：测试义务见下方「测试分级」→ merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
         （prototype 按需绕道，handoff 出/回桥接）
 ```
 
@@ -70,7 +70,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
 | `to-spec` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
 | `to-tickets` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
-| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → 切片轮次 typecheck+聚焦测试（全量见「测试分级」）；手动流随后 baseline commit → 单评 → fix commits |
+| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → 测试义务见「测试分级」；手动流随后 baseline commit → 单评 → fix commits |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
 | `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 要在 baseline commit 后跑 |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
