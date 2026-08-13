@@ -191,6 +191,9 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     }
     auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
     assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    assert authority["dossier_id"] != dossier_id
+    assert db.dossier_authorizes_effects(int(authority["dossier_id"]))
     assert second["dossiers"][0]["held_authorities"]
     assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
     assert second["imperial_authority_band"] == "强盛"
@@ -198,8 +201,9 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
 
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
+    from ming_sim.issues import apply_score_extraction
 
-    db, state, _content = game
+    db, state, content = game
     dossier_id = _dossier(db, state)
     holder = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
@@ -215,11 +219,22 @@ def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
         (json.dumps(payload), holder, dossier_id),
     )
     db.conn.commit()
-    authority_id = db.grant_authority(
-        state, holder, "便宜行事",
-        f"issue:policy-{state.turn}",
-        effective_turn=state.turn, dossier_id=dossier_id,
+    grant_dossier_id = db.create_decree_dossier(
+        state, action_type="authorization", decree_text="另案授以便宜行事",
+        target_kind="issue", target_id=f"policy-{state.turn}",
+        executor_kind="character", executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办"}],
+        payload={"mode": "ordinary"},
     )
+    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    grant = apply_score_extraction(db, state, {"authority_changes": [{
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": f"issue:policy-{state.turn}", "dossier_id": grant_dossier_id,
+    }]}, content=content)["authority_changes"][0]
+    assert grant.get("rejected") is not True
+    authority_id = int(grant["authority_id"])
+    assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id
+    assert grant_dossier_id != dossier_id
 
     stale_context = decree_mod.build_promulgation_judge_context(db, state, [stale])
     fresh_context = _judge_context_for_dossier(db, state, dossier_id)

@@ -142,12 +142,11 @@ def _apply_authority_change_item(
         )
         if existing is not None:
             raise ValueError("duplicate_active_authority")
-        authority_id = db.grant_authority(
+        authority_id = db._insert_authority_record(
             state, holder_id, privilege, scope,
             effective_turn=effective_turn,
             expires_turn=expires_turn,
             dossier_id=dossier_id,
-            commit=False,
         )
         return {
             "动作": "授予",
@@ -174,7 +173,7 @@ def _apply_authority_change_item(
             "dossier_id": dossier_id,
             "reason": "already_revoked",
         }
-    if not db.revoke_authority(authority_id, state.turn, commit=False):
+    if not db._mark_authority_revoked(authority_id, state.turn):
         raise ValueError("unknown_authority_id")
     privilege = str(record.get("privilege") or "")
     scope = str(record.get("scope") or "")

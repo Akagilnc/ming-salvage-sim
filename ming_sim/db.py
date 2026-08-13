@@ -12605,13 +12605,12 @@ class GameDB:
         kind, sep, rest = str(scope or "").partition(":")
         return bool(sep) and bool(kind) and bool(rest)
 
-    def grant_authority(
+    def _insert_authority_record(
         self, state: GameState, holder_id: str, privilege: str, scope: str,
         *, effective_turn: Optional[int] = None,
         expires_turn: Optional[int] = None, dossier_id: Optional[int] = None,
-        commit: bool = True,
     ) -> int:
-        """Persist one ADR 0071 held privilege; capture/matching belongs to #528."""
+        """Policy-free persistence primitive; authority_changes is its sole owner."""
         holder_id, privilege, scope = map(str.strip, (holder_id, privilege, scope))
         if privilege not in self._AUTHORITY_PRIVILEGES:
             raise ValueError("授权权项不在首批枚举")
@@ -12633,8 +12632,6 @@ class GameDB:
             "VALUES (?,?,?,?,?,?)",
             (holder_id, privilege, scope, starts, ends, dossier_id),
         )
-        if commit:
-            self.conn.commit()
         return int(cursor.lastrowid)
 
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
@@ -12749,16 +12746,14 @@ class GameDB:
         projected.sort(key=lambda item: int(item["id"]))
         return projected
 
-    def revoke_authority(
-        self, authority_id: int, revoked_turn: int, *, commit: bool = True,
+    def _mark_authority_revoked(
+        self, authority_id: int, revoked_turn: int,
     ) -> bool:
-        """收权只置档案状态；不调用 0056 的皇威/派系代价轨。"""
+        """Policy-free persistence primitive; authority_changes owns all effects."""
         cursor = self.conn.execute(
             "UPDATE authority_records SET revoked=1,revoked_turn=? "
             "WHERE id=? AND revoked=0", (int(revoked_turn), int(authority_id)),
         )
-        if commit:
-            self.conn.commit()
         return cursor.rowcount > 0
 
     def grant_skill(
