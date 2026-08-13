@@ -311,17 +311,23 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
     db, _state, content = game
     overflow_faction = "东林"
     ordinary_faction = "皇党"
-    ordinary_leverage = int(db.conn.execute(
-        "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
-    ).fetchone()["leverage"])
+    ordinary_row = db.conn.execute(
+        "SELECT leverage, leverage_offset FROM factions WHERE name=?",
+        (ordinary_faction,),
+    ).fetchone()
+    ordinary_leverage = int(ordinary_row["leverage"])
+    old_offset = float(ordinary_row["leverage_offset"] or 0)
+    legacy_old_sum = db._rank_rules_562_legacy_weight_sum(ordinary_faction)
+    ordinary_raw_baseline = old_offset + legacy_old_sum
+    ordinary_visible_baseline = max(0, min(100, round(ordinary_raw_baseline)))
 
     # Model an old-rules save whose raw value overflowed and was persisted clamped.
     # The raw 125 baseline lives only in offset + old weight sum, never in leverage=100.
-    old_sum = db._rank_rules_562_legacy_weight_sum(overflow_faction)
-    old_offset = 125.0 - old_sum
+    overflow_old_sum = db._rank_rules_562_legacy_weight_sum(overflow_faction)
+    overflow_old_offset = 125.0 - overflow_old_sum
     db.conn.execute(
         "UPDATE factions SET leverage=100, leverage_offset=? WHERE name=?",
-        (old_offset, overflow_faction),
+        (overflow_old_offset, overflow_faction),
     )
     db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
     db.conn.commit()
@@ -337,6 +343,11 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
         ).fetchone()["leverage_offset"])
         current_sum = reopened._faction_office_weight_sum(overflow_faction)
         assert migrated_offset + current_sum == 125.0
+        ordinary_new_offset = float(reopened.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name=?", (ordinary_faction,)
+        ).fetchone()["leverage_offset"])
+        ordinary_current_sum = reopened._faction_office_weight_sum(ordinary_faction)
+        assert ordinary_new_offset + ordinary_current_sum == ordinary_raw_baseline
         assert int(reopened.conn.execute(
             "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
         ).fetchone()["leverage"]) == ordinary_leverage
@@ -345,6 +356,9 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
         assert int(reopened.conn.execute(
             "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
         ).fetchone()["leverage"]) == 100
+        assert int(reopened.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
+        ).fetchone()["leverage"]) == ordinary_visible_baseline
 
         # A later office change is absorbed by the preserved overflow rather than
         # incorrectly dropping from a baseline reconstructed from clamped 100.
