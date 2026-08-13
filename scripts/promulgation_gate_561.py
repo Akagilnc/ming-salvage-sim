@@ -172,19 +172,20 @@ def _prepare_reconsideration_facts(
             "ORDER BY name"
         )
     )
-    target_kind = str(held.get("target_kind") or "").strip()
-    target_id = str(held.get("target_id") or "").strip()
-    scope = f"{target_kind}:{target_id}" if target_kind and target_id else "清丈田亩"
+    target_kind = str(held.get("target_kind") or "").strip() or "issue"
+    target_id = str(held.get("target_id") or "").strip() or "清丈田亩"
+    scope = f"{target_kind}:{target_id}"
     db.conn.execute(
-        "UPDATE decree_dossiers SET executor_kind='character', executor_id=? WHERE id=?",
-        (holder, dossier_id),
+        "UPDATE decree_dossiers SET executor_kind='character', executor_id=?, "
+        "target_kind=?, target_id=? WHERE id=?",
+        (holder, target_kind, target_id, dossier_id),
     )
     grant_dossier_id = db.create_decree_dossier(
         state,
         action_type="authorization",
         decree_text="复议前另案授以便宜行事之权",
-        target_kind=target_kind or "issue",
-        target_id=target_id or "清丈田亩",
+        target_kind=target_kind,
+        target_id=target_id,
         executor_kind="character",
         executor_id=holder,
         participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],

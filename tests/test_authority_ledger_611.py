@@ -101,6 +101,9 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     grant_dossier = _eligible_dossier(
         db, state, holder, target_id="清丈田亩",
     )
+    consumer = _eligible_dossier(
+        db, state, holder, target_id="清丈田亩",
+    )
     metrics_before = dict(state.metrics)
     factions_before = [
         dict(row) for row in db.conn.execute(
@@ -120,11 +123,7 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert grant_result["authority_changes"][0].get("rejected") is not True
     authority_id = int(grant_result["authority_changes"][0]["authority_id"])
     assert authority_id > 0
-    db.conn.commit()
 
-    consumer = _eligible_dossier(
-        db, state, holder, target_id="清丈田亩",
-    )
     # Same holder/domain; projection must surface the granted row.
     before = decree_mod.build_promulgation_judge_context(db, state, [consumer])
     expected_held = [{
@@ -139,7 +138,6 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
         str(authority_id),
     ]
 
-    db.conn.commit()
     db_path = db.path
     db.close()
     restored = GameDB(db_path, content)
@@ -164,13 +162,15 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     }, content=content)
     assert revoke_result["authority_changes"][0].get("rejected") is not True
     assert revoke_result["authority_changes"][0]["authority_id"] == authority_id
-    restored.conn.commit()
 
-    record = restored.get_authority(authority_id)
+    restored.close()
+    final = GameDB(db_path, content)
+    final_state = final.load_state()
+    record = final.get_authority(authority_id)
     assert record["revoked"] is True
-    assert record["revoked_turn"] == restored_state.turn
+    assert record["revoked_turn"] == final_state.turn
 
-    edges = restored.get_relation_edge_events(
+    edges = final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )
     assert len(edges) == 1
@@ -179,16 +179,22 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     assert not edges[0]["evidence"]
 
     # Zero 0056 / 皇威 / faction cost on revoke.
-    assert restored_state.metrics == metrics_before
+    assert final_state.metrics == metrics_before
     assert [
-        dict(row) for row in restored.conn.execute(
+        dict(row) for row in final.conn.execute(
             "SELECT name,satisfaction,leverage FROM factions ORDER BY name"
         )
     ] == factions_before
 
+    gone = decree_mod.build_promulgation_judge_context(
+        final, final_state, [final.get_decree_dossier(consumer["id"])],
+    )
+    assert gone["dossiers"][0]["held_authorities"] == []
+    assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
+
     # Idempotent already_revoked: no second edge, no revoked_turn rewrite.
     first_revoked_turn = record["revoked_turn"]
-    again = issue_engine.apply_score_extraction(restored, restored_state, {
+    again = issue_engine.apply_score_extraction(final, final_state, {
         "authority_changes": [{
             "动作": "收回",
             "authority_id": authority_id,
@@ -197,20 +203,10 @@ def test_production_path_grant_restore_revoke_impression_tracer(game):
     }, content=content)
     assert again["authority_changes"][0]["reason"] == "already_revoked"
     assert again["authority_changes"][0].get("rejected") is not True
-    assert restored.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
-    assert len(restored.get_relation_edge_events(
+    assert final.get_authority(authority_id)["revoked_turn"] == first_revoked_turn
+    assert len(final.get_relation_edge_events(
         source=holder, target=EMPEROR_NODE, event_kind="结怨",
     )) == 1
-
-    restored.conn.commit()
-    restored.close()
-    final = GameDB(db_path, content)
-    final_state = final.load_state()
-    gone = decree_mod.build_promulgation_judge_context(
-        final, final_state, [final.get_decree_dossier(consumer["id"])],
-    )
-    assert gone["dossiers"][0]["held_authorities"] == []
-    assert gone["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
 
 
 def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
