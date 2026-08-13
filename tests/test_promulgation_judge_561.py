@@ -20,15 +20,13 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
-    dossier_id = _dossier(db, state, mode="midzhi")
+    _dossier(db, state, mode="midzhi", break_rank={"office_rank": "越三级"})
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
-        break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
     )
 
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
-        break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
     )
     encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
     assert "satisfaction" not in encoded
