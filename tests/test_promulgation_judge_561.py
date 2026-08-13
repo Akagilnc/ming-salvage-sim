@@ -20,7 +20,10 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
-    dossier_id = _dossier(db, state, mode="midzhi")
+    # endorsement_entry_ids stay positive ints (deduped/sorted); never stringified.
+    dossier_id = _dossier(
+        db, state, mode="midzhi", endorsement_entry_ids=[3, 1, 1],
+    )
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
         break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
@@ -61,8 +64,14 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context["dossiers"][0]["criteria_snapshot_source"] == {
         "imperial_authority_band": context["imperial_authority_band"],
         "appointment_tenure": "", "authorization_ids": [],
-        "endorsement_entry_ids": [],
+        "endorsement_entry_ids": [1, 3],
     }
+    assert all(
+        isinstance(item, int) and not isinstance(item, bool) and item > 0
+        for item in context["dossiers"][0]["criteria_snapshot_source"][
+            "endorsement_entry_ids"
+        ]
+    )
 
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):

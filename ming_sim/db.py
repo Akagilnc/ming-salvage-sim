@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -1435,7 +1436,7 @@ class GameDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 holder_id TEXT NOT NULL,
                 privilege TEXT NOT NULL CHECK(privilege IN (
-                    '尚方剑密授','便宜行事','专差督办','新机构专办'
+                    __AUTHORITY_PRIVILEGES__
                 )),
                 scope TEXT NOT NULL,
                 effective_turn INTEGER NOT NULL,
@@ -1777,7 +1778,7 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
-            """
+            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
