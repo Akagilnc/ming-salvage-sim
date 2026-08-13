@@ -1017,30 +1017,43 @@ def close_night(
 
     if cursor < CLOSE_STEP_FINALIZE:
         # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
-        # 仅在同夜抽取 drain 成功之后（上块 try 已过）。机器辨识经
-        # pending_actions↔turn_directives 关联（list_night_promulgated_directives），
+        # 仅在同夜抽取 drain 成功之后（上块 try 已过）。
+        # 出版*候选*取本夜已 committed 的 directive（收夜落案前提）；公开*辨识*只认
+        # 落成后的 明发#directive_id 账标（list_night_promulgated_directives 同源）——
+        # 不以 committed pending_actions 等同已明发（#612：抽取失败保留前提时不得投影）。
         # 账本正文只作叙事呈现、不被解析。密令私密，不入明发。
         # 幂等按 directive_id 逐条（#502 L6）：半写后续跑只补缺的那几道、不漏不重——
         # 不用「整夜已有任意明发标」一门（那会在半写后跳过剩余道，公开账残缺）。
         # 无独立 pending-publication 游标/机制：挂在 finalize 前、靠 明发#id 账标幂等。
-        if hasattr(db, "list_night_promulgated_directives"):
-            already_ids = {
-                str(t)[len(_MINGFA_ID_PREFIX):]
-                for e in list_ledger(db, night_id) for t in e.get("tags") or []
-                if str(t).startswith(_MINGFA_ID_PREFIX)
-            }
-            for _pd in db.list_night_promulgated_directives(int(night_id)):
-                _did = str(int(_pd.get("directive_id") or 0))
-                if _did in already_ids:
-                    continue
-                append_ledger_entry(
-                    db, night_id,
-                    person_names=[str(_pd.get("actor") or "")] if _pd.get("actor") else [],
-                    audibility=AUDIBILITY_PUBLIC,
-                    body=f"明发旨意：{str(_pd.get('text') or '')}",
-                    tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
-                    check_dead=False,
-                )
+        already_ids = {
+            str(t)[len(_MINGFA_ID_PREFIX):]
+            for e in list_ledger(db, night_id) for t in e.get("tags") or []
+            if str(t).startswith(_MINGFA_ID_PREFIX)
+        }
+        # 候选 = 本夜 committed directive 前提；非 promulgated 投影。
+        _mingfa_candidates = db.conn.execute(
+            """
+            SELECT td.id AS directive_id, td.actor, td.text
+            FROM pending_actions pa
+            JOIN turn_directives td ON td.id = pa.committed_directive_id
+            WHERE pa.night_id = ? AND pa.kind = 'directive'
+              AND pa.status = 'committed' AND pa.committed_directive_id > 0
+            ORDER BY td.id
+            """,
+            (int(night_id),),
+        ).fetchall()
+        for _pd in _mingfa_candidates:
+            _did = str(int(_pd["directive_id"] or 0))
+            if not _did or _did == "0" or _did in already_ids:
+                continue
+            append_ledger_entry(
+                db, night_id,
+                person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
+                audibility=AUDIBILITY_PUBLIC,
+                body=f"明发旨意：{str(_pd['text'] or '')}",
+                tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
+                check_dead=False,
+            )
         tags = [TAG_CLOSE_NIGHT]
         if auto:
             tags.append(TAG_AUTO_CLOSE)
