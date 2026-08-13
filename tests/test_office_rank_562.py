@@ -309,10 +309,22 @@ def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
 
 def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
     db, _state, content = game
-    expected = {row["name"]: int(row["leverage"]) for row in db.conn.execute(
-        "SELECT name,leverage FROM factions"
-    ).fetchall()}
+    overflow_faction = "东林"
+    ordinary_faction = "皇党"
+    ordinary_leverage = int(db.conn.execute(
+        "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
+    ).fetchone()["leverage"])
+
+    # Model an old-rules save whose raw value overflowed and was persisted clamped.
+    # The raw 125 baseline lives only in offset + old weight sum, never in leverage=100.
+    old_sum = db._rank_rules_562_legacy_weight_sum(overflow_faction)
+    old_offset = 125.0 - old_sum
+    db.conn.execute(
+        "UPDATE factions SET leverage=100, leverage_offset=? WHERE name=?",
+        (old_offset, overflow_faction),
+    )
     db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
+    db.conn.commit()
     path = db.path
     db.close()
 
@@ -320,10 +332,37 @@ def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
     reopened = GameDB(path, content)
     try:
         assert reopened._has_meta_flag("__leverage_offsets_rank_rules_562")
+        migrated_offset = float(reopened.conn.execute(
+            "SELECT leverage_offset FROM factions WHERE name=?", (overflow_faction,)
+        ).fetchone()["leverage_offset"])
+        current_sum = reopened._faction_office_weight_sum(overflow_faction)
+        assert migrated_offset + current_sum == 125.0
+        assert int(reopened.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (ordinary_faction,)
+        ).fetchone()["leverage"]) == ordinary_leverage
+
         reopened.recompute_all_faction_leverage()
-        assert {row["name"]: int(row["leverage"]) for row in reopened.conn.execute(
-            "SELECT name,leverage FROM factions"
-        ).fetchall()} == expected
+        assert int(reopened.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
+        ).fetchone()["leverage"]) == 100
+
+        # A later office change is absorbed by the preserved overflow rather than
+        # incorrectly dropping from a baseline reconstructed from clamped 100.
+        member = reopened.conn.execute(
+            "SELECT name FROM characters WHERE faction=? AND status='active' "
+            "AND power_id='ming' AND office<>'' LIMIT 1",
+            (overflow_faction,),
+        ).fetchone()
+        assert member is not None
+        reopened.conn.execute("UPDATE characters SET office='' WHERE name=?", (member["name"],))
+        changed_sum = reopened._faction_office_weight_sum(overflow_faction)
+        reopened.recompute_faction_leverage(overflow_faction)
+        changed_raw = 125.0 + changed_sum - current_sum
+        assert 100 < changed_raw < 125.0
+        assert int(reopened.conn.execute(
+            "SELECT leverage FROM factions WHERE name=?", (overflow_faction,)
+        ).fetchone()["leverage"]) == 100
+
         offsets = {row["name"]: float(row["leverage_offset"]) for row in reopened.conn.execute(
             "SELECT name,leverage_offset FROM factions"
         ).fetchall()}
