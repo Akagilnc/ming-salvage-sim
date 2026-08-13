@@ -4778,15 +4778,59 @@ class GameDB:
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
             )
 
+    def _rank_rules_562_legacy_weight_sum(self, faction: str) -> float:
+        """Return the pre-#562 weight sum solely for the one-time save migration.
+
+        This frozen compatibility table is deliberately not wired into live rank or
+        leverage evaluation; current rules remain exclusively in offices.json.
+        """
+        legacy_tiers = (
+            (1.0, ("尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
+                   "总兵", "都督", "都指挥使", "都御史")),
+            (0.5, ("侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
+                   "副都御史", "同知", "佥事")),
+            (0.25, ("郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
+                    "候补", "候用", "随堂", "信邸内官")),
+        )
+
+        def legacy_multiplier(office: str) -> float:
+            best: Optional[float] = None
+            for part in (p.strip() for p in normalize_office(office).split(",") if p.strip()):
+                matched = [mult for mult, stems in legacy_tiers if any(stem in part for stem in stems)]
+                if matched:
+                    part_multiplier = min(matched)
+                    best = part_multiplier if best is None else max(best, part_multiplier)
+            return best if best is not None else 1.0
+
+        rows = self.conn.execute(
+            "SELECT office_type, office FROM characters "
+            "WHERE faction=? AND status='active' AND power_id='ming'",
+            (faction,),
+        ).fetchall()
+        total = 0.0
+        for row in rows:
+            office = str(row["office"] or "")
+            office_n = normalize_office(office)
+            if not office_n:
+                continue
+            domain = _OFFICE_LEVERAGE_WEIGHT.get(str(row["office_type"] or ""), 0)
+            for part in (p.strip() for p in office_n.split(",") if p.strip()):
+                domain = max(domain, _OFFICE_LEVERAGE_WEIGHT.get(_office_type_from_table(part), 0))
+            total += domain * legacy_multiplier(office_n)
+        return total
+
     def _reanchor_offsets_for_rank_rules_562(self) -> None:
-        """Preserve persisted faction leverage across the #562 weight-table expansion."""
+        """Translate old offsets to current rules without consulting persisted leverage."""
         for faction in _LEVERAGE_FACTIONS:
             row = self.conn.execute(
-                "SELECT leverage FROM factions WHERE name=?", (faction,)
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
             ).fetchone()
             if row is None:
                 continue
-            offset = int(row["leverage"]) - self._faction_office_weight_sum(faction)
+            old_offset = float(row["leverage_offset"] or 0)
+            old_weight_sum = self._rank_rules_562_legacy_weight_sum(faction)
+            new_weight_sum = self._faction_office_weight_sum(faction)
+            offset = old_offset + old_weight_sum - new_weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
