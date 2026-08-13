@@ -1,5 +1,7 @@
 """#611 authority ledger: production slot, projection, restore, revoke impression."""
 
+import pytest
+
 from ming_sim.db import GameDB
 from ming_sim import issues as issue_engine
 import ming_sim.decree as decree_mod
@@ -32,6 +34,28 @@ def _eligible_dossier(db, state, holder, *, target_kind="issue", target_id="清�
     db.record_dossier_decision(dossier_id, "promulgated")
     assert db.dossier_authorizes_effects(dossier_id)
     return db.get_decree_dossier(dossier_id)
+
+
+def _grant(db, state, content, holder, privilege, scope, dossier, **turns):
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予", "holder_id": holder, "privilege": privilege,
+            "scope": scope, "dossier_id": dossier["id"], **turns,
+        }],
+    }, content=content)["authority_changes"][0]
+    assert result.get("rejected") is not True
+    return int(result["authority_id"])
+
+
+def _revoke(db, state, content, authority_id, dossier):
+    result = issue_engine.apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "收回", "authority_id": authority_id,
+            "dossier_id": dossier["id"],
+        }],
+    }, content=content)["authority_changes"][0]
+    assert result.get("rejected") is not True
+    return result
 
 
 def test_authority_changes_alias_canonicalizes_chinese_and_english_op_locally():
@@ -241,7 +265,7 @@ def test_authority_changes_rejects_ineligible_keeps_legal_peer(game):
 
 
 def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
-    db, state, _content = game
+    db, state, content = game
     holder = _minister(db)
     other = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
@@ -249,8 +273,10 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
         (holder,),
     ).fetchone()["name"]
     domain = "issue:边饷"
-    typed = db.grant_authority(
-        state, holder, "专差督办", domain, effective_turn=state.turn,
+    typed = _grant(
+        db, state, content, holder, "专差督办", domain,
+        _eligible_dossier(db, state, holder, target_id="typed-projection"),
+        effective_turn=state.turn,
     )
     # Legacy bare-domain rows (pre-gate) must still never match typed projection.
     db.conn.execute(
@@ -261,8 +287,10 @@ def test_projection_typed_domain_only_and_ignores_payload_authorization(game):
     )
     bare = int(db.conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
     # Informed-only roster member must not count as actor.
-    informed_only = db.grant_authority(
-        state, other, "尚方剑密授", domain, effective_turn=state.turn,
+    informed_only = _grant(
+        db, state, content, other, "尚方剑密授", domain,
+        _eligible_dossier(db, state, other, target_id="informed-projection"),
+        effective_turn=state.turn,
     )
 
     dossier_id = db.create_decree_dossier(
@@ -325,50 +353,41 @@ def test_same_dossier_grant_replay_is_idempotent(game):
     ).fetchone()["n"] == 1
 
 
-def test_same_dossier_grant_replay_returns_revoked_origin_without_regrant(game):
+@pytest.mark.parametrize("terminal_state", ["revoked", "expired"])
+def test_same_dossier_grant_replay_returns_terminal_origin_without_regrant(
+    game, terminal_state,
+):
     db, state, content = game
     holder = _minister(db)
-    dossier = _eligible_dossier(db, state, holder, target_id="revoked-replay")
-    payload = {"authority_changes": [{
+    target = f"{terminal_state}-replay"
+    dossier = _eligible_dossier(db, state, holder, target_id=target)
+    item = {
         "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-        "scope": "issue:revoked-replay", "dossier_id": dossier["id"],
-    }]}
+        "scope": f"issue:{target}", "dossier_id": dossier["id"],
+    }
+    if terminal_state == "expired":
+        item["expires_turn"] = state.turn
+    payload = {"authority_changes": [item]}
     first = issue_engine.apply_score_extraction(db, state, payload, content=content)
     authority_id = int(first["authority_changes"][0]["authority_id"])
-    assert db.revoke_authority(authority_id, state.turn)
+    if terminal_state == "revoked":
+        revoke_dossier = _eligible_dossier(db, state, holder, target_id="replay-revoke")
+        _revoke(db, state, content, authority_id, revoke_dossier)
+    else:
+        state.turn += 1
 
     replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
 
     assert replay["authority_changes"][0]["authority_id"] == authority_id
     assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
-    assert db.get_authority(authority_id)["revoked"] is True
+    record = db.get_authority(authority_id)
+    if terminal_state == "revoked":
+        assert record["revoked"] is True
+    else:
+        assert record["expires_turn"] == state.turn - 1
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 1
-
-
-def test_same_dossier_grant_replay_returns_expired_origin_without_regrant(game):
-    db, state, content = game
-    holder = _minister(db)
-    dossier = _eligible_dossier(db, state, holder, target_id="expired-replay")
-    payload = {"authority_changes": [{
-        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
-        "scope": "issue:expired-replay", "expires_turn": state.turn,
-        "dossier_id": dossier["id"],
-    }]}
-    first = issue_engine.apply_score_extraction(db, state, payload, content=content)
-    authority_id = int(first["authority_changes"][0]["authority_id"])
-    state.turn += 1
-
-    replay = issue_engine.apply_score_extraction(db, state, payload, content=content)
-
-    assert replay["authority_changes"][0]["authority_id"] == authority_id
-    assert replay["authority_changes"][0]["reason"] == "same_dossier_replay"
-    assert db.get_authority(authority_id)["expires_turn"] == state.turn - 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM authority_records"
-    ).fetchone()["n"] == 1
-
 
 def test_duplicate_active_authority_is_rejected_across_dossiers(game):
     """不同案卷对同一在持三元组重复授予 → duplicate_active_authority。"""
@@ -408,10 +427,9 @@ def test_duplicate_check_uses_current_turn_not_future_effective_turn(game):
     holder = _minister(db)
     first_dossier = _eligible_dossier(db, state, holder, target_id="current-active")
     second_dossier = _eligible_dossier(db, state, holder, target_id="future-request")
-    db.grant_authority(
-        state, holder, "便宜行事", "issue:turn-boundary",
-        effective_turn=state.turn, expires_turn=state.turn,
-        dossier_id=first_dossier["id"],
+    _grant(
+        db, state, content, holder, "便宜行事", "issue:turn-boundary",
+        first_dossier, effective_turn=state.turn, expires_turn=state.turn,
     )
 
     result = issue_engine.apply_score_extraction(db, state, {
@@ -433,9 +451,9 @@ def test_duplicate_check_ignores_authority_only_active_in_future(game):
     holder = _minister(db)
     future_dossier = _eligible_dossier(db, state, holder, target_id="future-existing")
     current_dossier = _eligible_dossier(db, state, holder, target_id="current-grant")
-    db.grant_authority(
-        state, holder, "便宜行事", "issue:turn-boundary-future",
-        effective_turn=state.turn + 1, dossier_id=future_dossier["id"],
+    _grant(
+        db, state, content, holder, "便宜行事", "issue:turn-boundary-future",
+        future_dossier, effective_turn=state.turn + 1,
     )
 
     result = issue_engine.apply_score_extraction(db, state, {
@@ -453,7 +471,7 @@ def test_duplicate_check_ignores_authority_only_active_in_future(game):
     ).fetchone()["n"] == 2
 
 
-def test_production_and_helper_reject_bare_domain_scope(game):
+def test_production_rejects_bare_domain_scope(game):
     db, state, content = game
     holder = _minister(db)
     dossier = _eligible_dossier(db, state, holder, target_id="bare")
@@ -471,12 +489,6 @@ def test_production_and_helper_reject_bare_domain_scope(game):
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM authority_records"
     ).fetchone()["n"] == 0
-
-    try:
-        db.grant_authority(state, holder, "便宜行事", "边饷")
-        assert False, "bare scope must fail at grant_authority"
-    except ValueError as exc:
-        assert str(exc) == "invalid_authority_scope"
 
 
 def test_promulgation_payload_does_not_write_authority_records(game):
