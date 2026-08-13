@@ -279,6 +279,79 @@ def test_legacy_persisted_reaction_severity_migrates_narrowly_and_idempotently(g
         reopened.close()
 
 
+def test_commit_true_breach_reloads_state_when_failure_follows_authority_mutation(game, monkeypatch):
+    db, state, _ = game
+    dossier_id = _dossier(db, state, roster=[
+        {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
+    ])
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    before = state.metrics["皇威"]
+    monkeypatch.setattr(
+        db, "record_relation_edge_event",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("after authority")),
+    )
+
+    with pytest.raises(RuntimeError, match="after authority"):
+        db.breach_decree_dossier(state, dossier_id)
+
+    assert state.metrics["皇威"] == before
+    assert db.conn.execute("SELECT value FROM metrics WHERE key='皇威'").fetchone()[0] == before
+    assert _cost_events(db, dossier_id) == []
+
+
+def test_force_rejects_missing_or_stale_judge_reactions_before_any_cost(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state)
+    db.apply_dossier_promulgation(
+        state, dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    authority = state.metrics["皇威"]
+
+    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    assert state.metrics["皇威"] == authority
+    assert _cost_events(db, dossier_id) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
+def test_force_rejects_malformed_judge_reactions_before_any_cost(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state)
+    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    db.conn.execute(
+        "UPDATE decree_dossier_decisions SET affected_parties_json='{}' "
+        "WHERE dossier_id=? AND rescript_action=''",
+        (dossier_id,),
+    )
+    authority = state.metrics["皇威"]
+
+    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    assert state.metrics["皇威"] == authority
+    assert _cost_events(db, dossier_id) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
+def test_force_rejects_old_only_judge_reactions_atomically(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state)
+    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    db.record_dossier_decision(dossier_id, "hold")
+    state.turn += 1
+    db.conn.execute("UPDATE game_state SET turn=? WHERE id=1", (state.turn,))
+    db.record_dossier_decision(dossier_id, "rejected", blocked_layer="six_offices")
+    authority = state.metrics["皇威"]
+
+    with pytest.raises(ValueError, match="当前回合.*affected_parties"):
+        db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    assert state.metrics["皇威"] == authority
+    assert _cost_events(db, dossier_id) == []
+    assert db.get_decree_dossier(dossier_id)["status"] == "proposed"
+
+
 def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, monkeypatch):
     db, state, _ = game
     dossier_id = _dossier(db, state)
