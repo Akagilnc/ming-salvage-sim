@@ -459,6 +459,95 @@ def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
     assert db.list_night_approved_pending(night_id, kind="directive") == []
 
 
+def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_once(game):
+    """收夜可先成案卷前提；抽取失败夜重开、前提保留；重试幂等复用且不二次抽取。"""
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    emperor_text = "准此旨，朕亲书手敕作保。"
+    user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
+    db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "retry-keep", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    calls = []
+
+    class _BoomThenOk:
+        def run(self, materials):
+            payload = json.loads(materials)
+            calls.append(payload)
+            if len(calls) == 1:
+                raise RuntimeError("extract boom")
+            candidates = payload["可背书案卷"]
+            target = next(row for row in candidates if row["decree_text"] == "清核辽饷")
+            return json.dumps({"facts": [{
+                "body": "皇帝亲书手敕。", "endorsement": {
+                    "dossier_ref": target["ref"], "form": "御笔手敕",
+                    "endorser_id": "", "imperial": True,
+                },
+            }]}, ensure_ascii=False)
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            extractor_agent=_BoomThenOk(),
+        )
+    assert ei.value.code == "pending_extraction"
+    failed = an.get_night(db, night_id)
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert failed["close_commit_cursor"] == an.CLOSE_STEP_COMMIT_OFFICE
+    dossiers = db.list_decree_dossiers(status="proposed")
+    assert [row["decree_text"] for row in dossiers] == ["清核辽饷"]
+    first_id = int(dossiers[0]["id"])
+    first_directive = int(dossiers[0]["directive_id"])
+    assert dossiers[0]["promulgation_decision"] == ""
+    assert db.list_dossier_endorsements(first_id) == []
+    assert db.list_night_approved_pending(night_id, kind="directive") == []
+    restored = GameDB(db.path, content=content)
+    try:
+        restored_state = restored.load_state()
+        restored_night = an.get_night(restored, night_id)
+        assert restored_night["status"] == an.NIGHT_STATUS_OPEN
+        restored_dossiers = restored.list_decree_dossiers(status="proposed")
+        assert [row["id"] for row in restored_dossiers] == [first_id]
+        assert restored.list_dossier_endorsements(first_id) == []
+        judge = build_promulgation_judge_context(
+            restored, restored_state, restored.list_decree_dossiers(),
+        )
+        assert judge["dossiers"][0]["endorsements"] == []
+    finally:
+        restored.close()
+
+    appended_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "续核京饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "retry-keep-appended", "actor": minister},
+    )
+    db.mark_pending_night_approved([appended_id], night_id=night_id)
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_BoomThenOk(),
+    )
+    assert result["closed"] is True
+    assert len(calls) == 2
+    assert {row["decree_text"] for row in db.list_decree_dossiers(status="proposed")} == {
+        "清核辽饷", "续核京饷",
+    }
+    kept = next(row for row in db.list_decree_dossiers(status="proposed") if row["decree_text"] == "清核辽饷")
+    assert int(kept["id"]) == first_id
+    assert int(kept["directive_id"]) == first_directive
+    assert db.list_dossier_endorsements(first_id)[0]["imperial"] is True
+    assert db.get_story_extract_status(chat_turn_id) == "done"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE decree_text=?", ("清核辽饷",)
+    ).fetchone()[0] == 1
+
+
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
     facts = parse_extraction_facts({
         "facts": [{

@@ -14,11 +14,13 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 
 import ming_sim.agents as agents_mod
+import ming_sim.audience_extraction as ae
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -29,6 +31,7 @@ from ming_sim.audience_extraction import (
     parse_extraction_facts,
     run_extraction_for_turn,
 )
+from ming_sim.models import LLMConfig
 
 
 # ── canned 抽取边界（唯一 fake）──────────────────────────────────────────
@@ -243,6 +246,75 @@ def test_catch_up_persistent_failure_does_not_lock_and_marks_pending(game, tmp_p
     )
     assert again["extracted"] == 1
     assert db.get_story_extract_status(ctid) == "done"
+
+
+def test_catch_up_processes_source_turns_serially_even_on_parallel_safe_backend(game):
+    """跨轮补跑不得并行：在场派生只认已落账，后轮必须看见前轮已 settle 的进出账。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.ensure_summon_enter(db, nid, minister)
+    first = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "臣请退至殿侧。", first)
+    second = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "近前再奏。", second)
+    seen_present: list[tuple[str, list[str]]] = []
+    started = threading.Event()
+    release_first = threading.Event()
+
+    class _PresenceAwareAgent:
+        def run(self, materials):
+            payload = __import__("json").loads(materials)
+            reply = str(payload.get("回话原文") or "")
+            seen_present.append((reply, list(payload.get("当前在场") or [])))
+            if "退至殿侧" in reply:
+                started.set()
+                assert release_first.wait(5)
+                return (
+                    '{"facts":[{"body":"自行退至殿侧","person_names":["'
+                    + minister + '"],"presence_effect":"exit"}]}'
+                )
+            return (
+                '{"facts":[{"body":"近前再奏","person_names":["'
+                + minister + '"],"presence_effect":"enter"}]}'
+            )
+
+    cfg = LLMConfig(
+        api_key="cli-backend", base_url="", model="m",
+        channel="cli", cli_runner="codex",
+    )
+    worker = threading.Thread(target=lambda: catch_up_pending_extractions(
+        db=db, llm_config=cfg, write_gate=threading.Lock(),
+        extractor_agent=_PresenceAwareAgent(),
+    ))
+    worker.start()
+    assert started.wait(5)
+    time.sleep(0.05)
+    assert len(seen_present) == 1
+    release_first.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert [reply for reply, _present in seen_present] == [
+        "臣请退至殿侧。", "近前再奏。",
+    ]
+    assert minister not in seen_present[1][1]
+    assert minister in an.persons_present_tonight(db, nid)
+
+
+def test_turn_ownership_registry_reclaims_finished_turns_without_result_store(game):
+    db, state, content = game
+    minister = _minister(db, content)
+    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
+    result = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣领旨。",
+        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_FactsAgent(_STAGE_FACT_JSON),
+    )
+    assert result["status"] == "done"
+    with ae._turn_ownership_guard:
+        assert (id(db), int(ctid)) not in ae._turn_ownership
 
 
 # ── 在场派生只认已落账 + 机器可读在场效果（AC2/AC9）──────────────────────
