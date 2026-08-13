@@ -3,9 +3,9 @@
 > 票面：#1185 测试大清理 · 第二阶段审计腿（零删除）  
 > 分支：`policy/issue-1185-test-tiering` @ `6bd36b4`  
 > 采集：`.venv/bin/python -m pytest -q --durations=0`  
-> 结果：**3024 passed, 11 skipped in 1060.15s (0:17:40)**  
+> **审计基线（Batch 1 前）**：3024 passed, 11 skipped in 1060.15s (0:17:40)  
 > 收集：3035 tests / 129 files / 73027 lines  
-> 约束：本轮只审计、不改任何测试文件。
+> 约束：本轮只审计、不改任何测试文件。本报告为冻结审计件，非活台账。
 
 ---
 
@@ -200,7 +200,7 @@
 
 单跑 `test_conversation_rush_skips_pending_review`：
 
-```
+```text
 45.45s  session.apply_cli_conversation_actions
 45.45s    cli_backend.classify_cli_action_intent
 45.45s      cli_backend._run_agy
@@ -1333,7 +1333,9 @@
 | 合并知识/夜宴/配置重叠 | ~5–15s + 大减行数 |
 | **乐观合计** | **全量 17.6min → ~8–9min** |
 
-分级策略（票面原目标）另计：切片轮不跑全量后，评审腿不再×2 复跑 17min。
+**测试分级政策**：不在本报告另立口径。真源见 [`docs/DEV_WORKFLOW.md`](docs/DEV_WORKFLOW.md) §测试分级——批次/家族收尾在最终待合并状态跑全量、失败修复后重跑、最终绿灯作 merge 门。
+
+**kill-list 执行进度**：见票 #1185 评论流；本报告不维护平行结果表（冻结审计件，非活台账）。
 
 ---
 
@@ -1343,8 +1345,7 @@
 - 全量命令：`.venv/bin/python -m pytest -q --durations=0`（无墙钟上限）
 - durations 隐藏 <0.005s；hidden call 按 0.002s 估入 total_est
 - 分类以文件为主单位（票面「逐测试文件」）；文件内混合五尺时主类取主导问题，次类入注
-- 未改任何 `tests/**` 文件；本报告为唯一产物
-- 下一步：庭审 kill-list → 分批执行（先 P0 mock 改造，再删/合并）→ 收尾全量一次证绿
+- 未改任何 `tests/**` 文件；本报告为唯一产物（冻结审计件）
 
 ---
 
@@ -1362,9 +1363,9 @@
 | section_rejection | 11 | 250 | 15.8 |
 | person | 8 | 165 | 21.3 |
 
-## 附录 B. 原始 pytest 尾摘要
+## 附录 B. 原始 pytest 尾摘要（审计基线 · Batch 1 前）
 
-```
+```text
 3024 passed, 11 skipped in 1060.15s (0:17:40)
 ```
 
