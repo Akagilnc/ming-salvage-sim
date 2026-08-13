@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from ming_sim.office_rank import (
     canonical_office_title,
@@ -35,7 +36,11 @@ def _appointment_dossier(db, state, name, office, office_type=""):
 
 
 def test_rank_table_covers_every_office_type_and_pins_ming_direction():
-    table = json.loads(open("content/offices.json", encoding="utf-8").read())
+    table = json.loads(
+        (Path(__file__).resolve().parent.parent / "content" / "offices.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert {row["type"] for row in table["priority"]} | {table["fallback"]["type"]} == set(table["allowed_types"])
     assert all(1 <= row["rank_band"] <= 9 for row in [*table["priority"], table["fallback"]])
     assert office_rank_band("兵部尚书") == 2
@@ -282,6 +287,52 @@ def test_existing_proposed_appointment_dossier_gets_one_time_break_rank_backfill
             "SELECT payload_json FROM decree_dossiers WHERE id=?", (dossier_id,)
         ).fetchone()["payload_json"])
         assert json.dumps(again, ensure_ascii=False, sort_keys=True) == first_json
+    finally:
+        reopened.close()
+
+
+def test_recognizable_archive_title_survives_blank_or_legacy_office_type(game):
+    from ming_sim.office_rank import _is_substantive_office
+
+    assert _is_substantive_office("翰林院编修", "")
+    db, state, _content = game
+    name = "旧档实职"
+    _add(db, state, name, "翰林院编修", "翰林院")
+    db.set_character_status(state, name, "retired", "致仕")
+    db.conn.execute(
+        "UPDATE character_offices SET office_type='待铨' WHERE character_name=?", (name,)
+    )
+    _dossier_id, payload = _appointment_dossier(db, state, name, "兵部尚书")
+    assert payload["break_rank"]["basis"] == "historical_office"
+    assert payload["break_rank"]["is_break_rank"] is True
+
+
+def test_rank_rule_offset_reanchor_preserves_existing_save_leverage_once(game):
+    db, _state, content = game
+    expected = {row["name"]: int(row["leverage"]) for row in db.conn.execute(
+        "SELECT name,leverage FROM factions"
+    ).fetchall()}
+    db.conn.execute("DELETE FROM metrics WHERE key='__leverage_offsets_rank_rules_562'")
+    path = db.path
+    db.close()
+
+    from ming_sim.db import GameDB
+    reopened = GameDB(path, content)
+    try:
+        assert reopened._has_meta_flag("__leverage_offsets_rank_rules_562")
+        reopened.recompute_all_faction_leverage()
+        assert {row["name"]: int(row["leverage"]) for row in reopened.conn.execute(
+            "SELECT name,leverage FROM factions"
+        ).fetchall()} == expected
+        offsets = {row["name"]: float(row["leverage_offset"]) for row in reopened.conn.execute(
+            "SELECT name,leverage_offset FROM factions"
+        ).fetchall()}
+        reopened.conn.commit()
+        reopened.close()
+        reopened = GameDB(path, content)
+        assert {row["name"]: float(row["leverage_offset"]) for row in reopened.conn.execute(
+            "SELECT name,leverage_offset FROM factions"
+        ).fetchall()} == offsets
     finally:
         reopened.close()
 

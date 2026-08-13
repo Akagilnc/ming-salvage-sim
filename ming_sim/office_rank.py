@@ -155,15 +155,16 @@ def office_leverage_multiplier(office: object, already_normalized: bool = False)
 
 
 def _is_substantive_office(title: object, office_type: object = "") -> bool:
+    """Recognize a real title even when its archived type is blank or legacy state."""
     text = canonical_office_title(title)
-    if not text or str(office_type or "").strip() in _UNOFFICED_TYPES:
+    if not text or any(label in text for label in _NON_OFFICES if label):
         return False
-    if any(label in text for label in _NON_OFFICES if label):
-        return False
-    return any(
+    title_is_real = any(
         _match_rank_rule(part, _table(), "leverage_multiplier") is not None
         for part in concurrent_office_titles(text)
-    ) or str(office_type or "").strip() not in _UNOFFICED_TYPES
+    )
+    declared_type_is_real = str(office_type or "").strip() not in _UNOFFICED_TYPES
+    return title_is_real or declared_type_is_real
 
 
 def appointment_break_rank(

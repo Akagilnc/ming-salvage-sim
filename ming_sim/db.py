@@ -2051,6 +2051,16 @@ class GameDB:
             self._migrate_offsets_to_float_precision()
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
+        # #562 expanded rank_rules changes the derived office-weight sum. Re-anchor
+        # existing offsets exactly once so opening a save cannot change leverage
+        # without a character change. The marker makes repeated opens idempotent.
+        if (
+            self.table_has_rows("factions")
+            and not self._has_meta_flag("__leverage_offsets_rank_rules_562")
+        ):
+            self._reanchor_offsets_for_rank_rules_562()
+            self._set_meta_flag("__leverage_offsets_rank_rules_562")
+            self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
@@ -4734,6 +4744,9 @@ class GameDB:
         # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
         # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
         self._set_meta_flag("__leverage_offsets_float_v2")
+        # Fresh/current-rule calibration already uses the expanded #562 table;
+        # do not mistake it for an old save that needs the one-time re-anchor.
+        self._set_meta_flag("__leverage_offsets_rank_rules_562")
 
     def _migrate_offsets_to_float_precision(self) -> None:
         """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
@@ -4763,6 +4776,19 @@ class GameDB:
             new_offset = current_lev - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
+            )
+
+    def _reanchor_offsets_for_rank_rules_562(self) -> None:
+        """Preserve persisted faction leverage across the #562 weight-table expansion."""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is None:
+                continue
+            offset = int(row["leverage"]) - self._faction_office_weight_sum(faction)
+            self.conn.execute(
+                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
 
     def _has_meta_flag(self, key: str) -> bool:

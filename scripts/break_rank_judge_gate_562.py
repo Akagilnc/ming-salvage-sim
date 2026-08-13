@@ -15,6 +15,7 @@ import math
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,7 +33,7 @@ from ming_sim.decree import (
     validate_promulgation_verdicts,
 )
 from ming_sim.issues import bind_content as bind_issue_content
-from ming_sim.models import LLMConfig
+from ming_sim.models import Character, LLMConfig
 
 
 def _args() -> argparse.Namespace:
@@ -65,6 +66,71 @@ def _config(args: argparse.Namespace) -> LLMConfig:
     )
 
 
+def _character(name: str, office: str, office_type: str) -> Character:
+    return Character(
+        name=name, office=office, office_type=office_type, faction="中立",
+        aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
+        courage=50, style="", power_id="ming",
+    )
+
+
+def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> dict:
+    """Run one independent persisted-history pair in its own databases."""
+    sample_dir = Path(root) / str(index)
+    sample_dir.mkdir()
+    db = GameDB(str(sample_dir / "game.db"), content)
+    try:
+        db.seed_static_data()
+        state = db.load_state()
+        # Different real histories produce the intervention: 编修→巡抚 is a
+        # four-band jump; 布政使→巡抚 is same-band. Neither condition is fabricated.
+        break_name = f"候补官员-{index}-甲"
+        ordinary_name = f"候补官员-{index}-乙"
+        db.add_character(state, _character(break_name, "翰林院编修", "翰林院"))
+        db.add_character(state, _character(ordinary_name, "陕西布政使", "地方"))
+        names = [break_name, ordinary_name]
+        if index % 2:
+            names.reverse()
+        ids = []
+        for slot, name in zip(("a", "b"), names):
+            ids.append(db.create_decree_dossier(
+                state, action_type="appointment",
+                decree_text=f"任命候补官员为陕西巡抚(比较样本{index + 1})",
+                target_kind="character", target_id=f"gate-562-{index}-{slot}",
+                payload={"name": name, "office": "陕西巡抚"},
+            ))
+        rows = [db.get_decree_dossier(dossier_id) for dossier_id in ids]
+        persisted = {
+            int(row["id"]): json.loads(str(row["payload_json"]))["break_rank"]
+            for row in rows
+        }
+        break_id = next(i for i, marker in persisted.items() if marker["is_break_rank"])
+        ordinary_id = next(i for i, marker in persisted.items() if not marker["is_break_rank"])
+        context = build_promulgation_judge_context(db, state, rows)
+        if index % 4 in (1, 2):
+            context["dossiers"].reverse()
+            rows.reverse()
+        agno = SqliteDb(db_file=str(sample_dir / "agno.db"))
+        raw_typed = llm_promulgation_verdicts(
+            rows, state, db=db, agno_db=agno, llm_config=cfg,
+            prepared_context=context,
+        )
+        verdicts = validate_promulgation_verdicts(
+            raw_typed, rows, db, prepared_context=context,
+        )
+        by_id = {int(verdict["dossier_id"]): verdict for verdict in verdicts}
+        br = by_id[break_id]["decision"] == "rejected"
+        ordinary = by_id[ordinary_id]["decision"] == "rejected"
+        return {
+            "sample": index + 1, "input": context, "typed_verdicts": verdicts,
+            "classification": {
+                "break_rank_rejected": br, "ordinary_rejected": ordinary,
+            },
+        }
+    finally:
+        db.close()
+
+
 def main() -> int:
     args = _args()
     trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
@@ -79,77 +145,28 @@ def main() -> int:
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
-    samples = []
-    break_rejected = ordinary_rejected = break_only = ordinary_only = 0
-
     with tempfile.TemporaryDirectory(prefix="ming-562-gate-") as tmp:
-        db = GameDB(os.path.join(tmp, "gate.db"), content)
-        db.seed_static_data()
-        state = db.load_state()
-        agno = SqliteDb(db_file=os.path.join(tmp, "agno.db"))
-        for index in range(args.samples):
-            # Opaque IDs are counterbalanced independently of presentation order: neither
-            # target_id nor a fixed A/B slot reveals the intervention to the live Judge.
-            ids_by_slot = {}
-            for slot in ("a", "b"):
-                ids_by_slot[slot] = db.create_decree_dossier(
-                    state, action_type="appointment",
-                    decree_text=f"任命候补官员为陕西巡抚（比较样本{index + 1}）",
-                    target_kind="character", target_id=f"gate-562-{index}-{slot}",
-                    payload={"name": "候补官员", "office": "陕西巡抚"},
-                )
-            break_slot, ordinary_slot = (("a", "b") if index % 2 == 0 else ("b", "a"))
-            break_id = ids_by_slot[break_slot]
-            ordinary_id = ids_by_slot[ordinary_slot]
-            ids = [break_id, ordinary_id]
-            rows = [db.get_decree_dossier(i) for i in ids]
-            markers = {
-                break_id: {"is_break_rank": True, "basis": "first_appointment_high_office",
-                           "new_rank_band": 3, "threshold_band": 4},
-                ordinary_id: {"is_break_rank": False, "basis": "first_appointment_regular",
-                              "new_rank_band": 3, "threshold_band": 4},
-            }
-            context = build_promulgation_judge_context(
-                db, state, rows, break_rank_by_dossier=markers,
-            )
-            # Counterbalance presentation order on a separate four-sample cycle.
-            if index % 4 in (1, 2):
-                context["dossiers"].reverse()
-                rows.reverse()
-            raw_typed = llm_promulgation_verdicts(
-                rows, state, db=db, agno_db=agno, llm_config=cfg,
-                prepared_context=context,
-            )
-            verdicts = validate_promulgation_verdicts(
-                raw_typed, rows, db, prepared_context=context,
-            )
-            by_id = {int(v["dossier_id"]): v for v in verdicts}
-            br = by_id[break_id]["decision"] == "rejected"
-            ordinary = by_id[ordinary_id]["decision"] == "rejected"
-            break_rejected += br
-            ordinary_rejected += ordinary
-            break_only += br and not ordinary
-            ordinary_only += ordinary and not br
-            samples.append({
-                "sample": index + 1, "input": context,
-                "typed_verdicts": verdicts,
-                "classification": {"break_rank_rejected": br, "ordinary_rejected": ordinary},
-            })
-        db.close()
+        with ThreadPoolExecutor(max_workers=min(4, args.samples)) as executor:
+            futures = [executor.submit(_run_sample, i, tmp, content, cfg) for i in range(args.samples)]
+            samples = sorted((future.result() for future in as_completed(futures)), key=lambda row: row["sample"])
 
+    break_rejected = sum(s["classification"]["break_rank_rejected"] for s in samples)
+    ordinary_rejected = sum(s["classification"]["ordinary_rejected"] for s in samples)
+    break_only = sum(s["classification"]["break_rank_rejected"] and not s["classification"]["ordinary_rejected"] for s in samples)
+    ordinary_only = sum(s["classification"]["ordinary_rejected"] and not s["classification"]["break_rank_rejected"] for s in samples)
     trace_records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line]
-    if len(trace_records) != args.samples or any(r.get("error") is not None for r in trace_records):
+    if len(trace_records) != args.samples or any(record.get("error") is not None for record in trace_records):
         raise RuntimeError(f"expected {args.samples} successful raw trace records; got {len(trace_records)}")
     p_value = _two_sided_sign_p(break_only, ordinary_only)
+    correct_direction = break_only > ordinary_only
     artifact = {
         "gate": "issue-562-break-rank-live-production-judge-comparison",
         "method": {
-            "design": "paired repeated batches; same appointment text and snapshot, marker intervention only; opaque target IDs and presentation order are independently counterbalanced",
+            "design": "paired independent samples; persisted different office histories are the only rank-condition intervention; opaque target IDs and presentation order are counterbalanced",
             "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
             "alpha": 0.05, "samples": args.samples,
             "config": {"channel": "cli", "runner": args.runner, "model": args.model,
-                       "temperature": 0.2, "reasoning_strength": cfg.reasoning_strength,
-                       "max_tokens": cfg.max_tokens},
+                       "reasoning_strength": cfg.reasoning_strength, "max_tokens": cfg.max_tokens},
         },
         "summary": {
             "break_rank_rejections": break_rejected,
@@ -157,6 +174,7 @@ def main() -> int:
             "break_only_discordant": break_only,
             "ordinary_only_discordant": ordinary_only,
             "p_value_two_sided": p_value,
+            "break_rank_rejected_more_often": correct_direction,
             "statistically_distinct_at_0_05": p_value < 0.05,
         },
         "limitations": [
@@ -171,7 +189,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(output), "summary": artifact["summary"]}, ensure_ascii=False, indent=2))
-    return 0 if p_value < 0.05 else 1
+    return 0 if p_value < 0.05 and correct_direction else 1
 
 
 if __name__ == "__main__":
