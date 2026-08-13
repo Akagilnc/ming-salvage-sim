@@ -122,11 +122,8 @@ def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
     dossiers: Sequence[Dict[str, object]],
-    *,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
 ) -> Dict[str, object]:
-    """Build the deterministic, satisfaction-free snapshot for the single judge call."""
-    break_rank = break_rank_by_dossier or {}
+    """Build the deterministic snapshot from persisted dossier evidence only."""
     faction_rows = db.conn.execute(
         "SELECT name,leverage,agenda FROM factions ORDER BY name"
     ).fetchall()
@@ -163,7 +160,7 @@ def build_promulgation_judge_context(
             "target_id": target_id,
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
-            "break_rank": break_rank.get(int(row["id"])),
+            "break_rank": payload.get("break_rank"),
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
@@ -238,13 +235,10 @@ def _require_promulgation_verdict_list(
 def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
     prepared_context: Optional[Dict[str, object]] = None,
 ) -> List[Dict[str, object]]:
     """Run exactly one LLM call for one reviewed promulgation batch."""
-    context = prepared_context or build_promulgation_judge_context(
-        db, state, dossiers, break_rank_by_dossier=break_rank_by_dossier,
-    )
+    context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
     agent = create_promulgation_judge_agent(llm_config, agno_db)
     raw = run_agent_text(
         agent, json.dumps(context, ensure_ascii=False, sort_keys=True),
