@@ -155,6 +155,21 @@ def test_force_then_breach_charges_each_real_entry_independently(game):
     assert {row["cost_identity"] for row in authority_events} == {"override", "breach"}
 
 
+def test_breach_excludes_stale_minister_faction_from_costs(game):
+    db, state, _ = game
+    dossier_id = _dossier(db, state, roster=[
+        {"character_id": "倪元璐", "tier": "主办", "role": "总理"},
+    ])
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    db.conn.execute("UPDATE characters SET faction='旧党' WHERE name='倪元璐'")
+
+    assert db.breach_decree_dossier(state, dossier_id) is True
+    assert not any(
+        event["cost_kind"] == "satisfaction"
+        for event in _cost_events(db, dossier_id)
+    )
+
+
 def test_breach_skips_dead_but_records_living_inactive_relations(game, caplog):
     db, state, _ = game
     roster = [
