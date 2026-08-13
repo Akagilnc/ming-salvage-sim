@@ -293,9 +293,20 @@ def run_extraction_for_turn(
         return {"status": "skipped", "chat_turn_id": cid}
 
     # The trailer and close-night drain can race across the approved-directive handoff.
-    # Own the whole status→LLM→settle turn, not merely its final DB write, so exactly one
-    # real extraction occurs. The waiter observes the durable done watermark afterward.
-    with _extraction_owner(db, cid):
+    # A caller which saw contention belongs to that in-flight attempt: wait for it and
+    # return its durable watermark without starting a fresh LLM call. Only a caller
+    # finding the lock free may own a new attempt (including an explicit pending retry).
+    owner = _extraction_owner(db, cid)
+    if not owner.acquire(blocking=False):
+        owner.acquire()
+        owner.release()
+        status = db.get_story_extract_status(cid)
+        return {
+            "status": "done" if status == "done" else "pending",
+            "chat_turn_id": cid,
+            "already": status == "done",
+        }
+    try:
         if db.get_story_extract_status(cid) == "done":
             if _settle_barrier is not None:
                 _settle_barrier()
@@ -344,6 +355,8 @@ def run_extraction_for_turn(
             facts=facts, source_night_seq=source_night_seq,
             fact_count=sum(1 for fact in facts if "_rejected_story_fact" not in fact),
         )
+    finally:
+        owner.release()
 
 
 def _pending_with_pack(
