@@ -6,22 +6,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None, "reason": "科臣封驳。",
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-        ],
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "appointment_tenure": "",
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):

@@ -9,6 +9,7 @@ from ming_sim.exceptions import LLMContractError, SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -243,24 +244,11 @@ def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
 
 
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
-    return {
-        "dossier_id": dossier_id,
-        "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None,
-        "reason": "触犯钱粮命门，科臣封驳。",
-        "criteria_snapshot": {
-            "imperial_authority_band": authority_band,
-            "appointment_tenure": "",
-            "authorization_ids": [],
-            "endorsement_entry_ids": [],
-        },
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "strong"},
-        ],
-        **({"midzhi_unpromulgatable": True} if midzhi else {}),
-    }
+    # Preserve suite-specific reason/intensity differences via builder knobs.
+    return rejected_verdict(
+        dossier_id, authority_band, midzhi=midzhi,
+        reason="触犯钱粮命门，科臣封驳。", intensity="strong",
+    )
 
 
 @pytest.mark.parametrize(

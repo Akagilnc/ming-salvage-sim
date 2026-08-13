@@ -7,6 +7,7 @@ import pytest
 from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 from web_app import WebGame
 
 
@@ -18,22 +19,6 @@ def _make_dossier(db, state, text):
         target_kind="policy",
         target_id=text,
     )
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices", "reason": "科臣封驳。",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None,
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
-        ],
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "appointment_tenure": "",
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
 
 
 def test_one_protection_dossier_links_three_older_allocations_both_directions(game):
