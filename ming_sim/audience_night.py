@@ -1032,7 +1032,10 @@ def close_night(
         # propagate the original extraction error unchanged.
         _set_night_fields(
             db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-            close_commit_cursor=CLOSE_STEP_TRANSFER_CANDIDATES,
+            # Re-run the directive transfer on retry: the reopened night may accept
+            # another decree action after this failure, while already committed rows
+            # remain idempotent. Keeping the transfer cursor would skip that new action.
+            close_commit_cursor=CLOSE_STEP_COMMIT_OFFICE,
         )
         raise
 

@@ -245,6 +245,22 @@ def extract_story_facts(
     return facts
 
 
+_turn_ownership_guard = threading.Lock()
+_turn_ownership: Dict[tuple[int, int], threading.Lock] = {}
+
+
+def _extraction_owner(db: Any, chat_turn_id: int) -> threading.Lock:
+    """Process-local single-flight ownership for one persisted audience turn.
+
+    The durable done watermark prevents repeat settlement, while this lock also prevents
+    two racing owners (reply trailer and close-night drain) from both invoking the LLM
+    before either has reached that watermark.
+    """
+    key = (id(db), int(chat_turn_id))
+    with _turn_ownership_guard:
+        return _turn_ownership.setdefault(key, threading.Lock())
+
+
 def run_extraction_for_turn(
     *,
     db: Any,
@@ -275,54 +291,59 @@ def run_extraction_for_turn(
         if _settle_barrier is not None:
             _settle_barrier()
         return {"status": "skipped", "chat_turn_id": cid}
-    if db.get_story_extract_status(cid) == "done":
-        if _settle_barrier is not None:
-            _settle_barrier()
-        return {"status": "done", "chat_turn_id": cid, "already": True}
 
-    # 皇帝问话从本轮已链接的 user_message 读取（生产路径落库真源）；与回话同入一次抽取。
-    question_text = _user_message_for_turn(db, cid)
+    # The trailer and close-night drain can race across the approved-directive handoff.
+    # Own the whole status→LLM→settle turn, not merely its final DB write, so exactly one
+    # real extraction occurs. The waiter observes the durable done watermark afterward.
+    with _extraction_owner(db, cid):
+        if db.get_story_extract_status(cid) == "done":
+            if _settle_barrier is not None:
+                _settle_barrier()
+            return {"status": "done", "chat_turn_id": cid, "already": True}
 
-    # 问话与回话皆空：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
-    if not str(reply or "").strip() and not question_text.strip():
+        # 皇帝问话从本轮已链接的 user_message 读取（生产路径落库真源）；与回话同入一次抽取。
+        question_text = _user_message_for_turn(db, cid)
+
+        # 问话与回话皆空：无 LLM 亦可确定性收敛为 done（空 facts）——禁止 skipped 永久占水位（L4）。
+        if not str(reply or "").strip() and not question_text.strip():
+            if _settle_barrier is not None:
+                _settle_barrier()
+            return _settle_or_pending(
+                db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
+                facts=[], source_night_seq=source_night_seq, fact_count=0,
+            )
+
+        if present_names is None:
+            try:
+                present_names = sorted(persons_present_tonight(db, int(night_id)))
+            except Exception:
+                present_names = []
+
+        try:
+            facts = extract_story_facts(
+                reply,
+                minister_name=minister_name,
+                present_names=present_names or [],
+                llm_config=llm_config,
+                extractor_agent=extractor_agent,
+                dossier_candidates=db.list_endorsement_candidates(int(night_id)),
+                emperor_text=question_text,
+            )
+        except Exception as exc:
+            if _settle_barrier is not None:
+                _settle_barrier()
+            return _pending_with_pack(
+                db, write_gate, cid=cid, night_id=night_id,
+                minister_name=minister_name, exc=exc, stage="extract",
+            )
+
         if _settle_barrier is not None:
             _settle_barrier()
         return _settle_or_pending(
             db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
-            facts=[], source_night_seq=source_night_seq, fact_count=0,
+            facts=facts, source_night_seq=source_night_seq,
+            fact_count=sum(1 for fact in facts if "_rejected_story_fact" not in fact),
         )
-
-    if present_names is None:
-        try:
-            present_names = sorted(persons_present_tonight(db, int(night_id)))
-        except Exception:
-            present_names = []
-
-    try:
-        facts = extract_story_facts(
-            reply,
-            minister_name=minister_name,
-            present_names=present_names or [],
-            llm_config=llm_config,
-            extractor_agent=extractor_agent,
-            dossier_candidates=db.list_endorsement_candidates(int(night_id)),
-            emperor_text=question_text,
-        )
-    except Exception as exc:
-        if _settle_barrier is not None:
-            _settle_barrier()
-        return _pending_with_pack(
-            db, write_gate, cid=cid, night_id=night_id,
-            minister_name=minister_name, exc=exc, stage="extract",
-        )
-
-    if _settle_barrier is not None:
-        _settle_barrier()
-    return _settle_or_pending(
-        db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
-        facts=facts, source_night_seq=source_night_seq,
-        fact_count=sum(1 for fact in facts if "_rejected_story_fact" not in fact),
-    )
 
 
 def _pending_with_pack(

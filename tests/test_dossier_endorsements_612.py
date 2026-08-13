@@ -372,7 +372,7 @@ def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(ga
     assert [row for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == []
 
 
-def test_close_extraction_failure_reopens_at_transfer_and_can_continue(game):
+def test_close_extraction_failure_retry_does_not_skip_new_consented_decree(game):
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
@@ -395,10 +395,17 @@ def test_close_extraction_failure_reopens_at_transfer_and_can_continue(game):
     assert exc.value.code == "pending_extraction"
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
-    assert failed["close_commit_cursor"] == an.CLOSE_STEP_TRANSFER_CANDIDATES
+    assert failed["close_commit_cursor"] == an.CLOSE_STEP_COMMIT_OFFICE
     assert db.get_story_extract_status(chat_turn_id) == "pending"
     assert db.list_night_approved_pending(night_id, kind="directive") == []
     assert len(db.list_decree_dossiers(status="proposed")) == 1
+
+    appended_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "续核京饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "retry-appended", "actor": minister},
+    )
+    db.mark_pending_night_approved([appended_id], night_id=night_id)
 
     result = an.close_night(
         db, state, night_id=night_id, content=content, llm_config=object(),
@@ -406,7 +413,10 @@ def test_close_extraction_failure_reopens_at_transfer_and_can_continue(game):
     )
     assert result["closed"] is True
     assert db.get_story_extract_status(chat_turn_id) == "done"
-    assert len(db.list_decree_dossiers(status="proposed")) == 1
+    assert {row["decree_text"] for row in db.list_decree_dossiers(status="proposed")} == {
+        "清核辽饷", "续核京饷",
+    }
+    assert db.list_night_approved_pending(night_id, kind="directive") == []
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
