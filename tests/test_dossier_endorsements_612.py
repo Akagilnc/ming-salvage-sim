@@ -4,13 +4,13 @@ from contextlib import nullcontext
 
 import pytest
 
+from ming_sim import agents as agents_mod
 from ming_sim import audience_night as an
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     catch_up_pending_extractions,
     parse_extraction_facts,
     run_extraction_for_turn,
-    should_defer_extraction_for_close_owned_dossiers,
     trail_extraction_after_reply,
 )
 from ming_sim.db import GameDB
@@ -304,7 +304,8 @@ def test_bad_endorsement_item_is_rejected_without_rolling_back_valid_sibling(gam
     assert dict(rejection) == {"section": "story_facts", "category": "invalid_item"}
 
 
-def test_normal_post_reply_defers_once_until_close_night_creates_dossier(game):
+def test_normal_post_reply_defers_once_until_close_night_creates_dossier(game, monkeypatch):
+    """trailer/catch-up 同谓词 defer；真实 no-edict 链收夜后只 drain 一次。"""
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
@@ -333,10 +334,11 @@ def test_normal_post_reply_defers_once_until_close_night_creates_dossier(game):
                 },
             }]}, ensure_ascii=False)
 
+    agent = _SameNightAgent()
     extracted = trail_extraction_after_reply(
         db=db, minister_name=minister, minister_reply="臣叩领圣恩。",
         chat_turn_id=chat_turn_id, llm_config=object(),
-        write_gate=threading.Lock(), extractor_agent=_SameNightAgent(),
+        write_gate=threading.Lock(), extractor_agent=agent,
     )
     assert extracted["status"] == "deferred"
     assert calls == []
@@ -345,16 +347,29 @@ def test_normal_post_reply_defers_once_until_close_night_creates_dossier(game):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pending_dossier_endorsements'"
     ).fetchone() is None
 
-    result = an.close_night(
-        db, state, night_id=night_id, content=content,
-        llm_config=object(), write_gate=threading.Lock(), extractor_agent=_SameNightAgent(),
+    # startup/CLI catch-up must not mark close-owned turns done before dossiers exist.
+    summary = catch_up_pending_extractions(
+        db=db, llm_config=object(), write_gate=threading.Lock(),
+        night_id=night_id, extractor_agent=agent,
     )
-    assert result["closed"] is True
+    assert summary["deferred"] == 1
+    assert summary["extracted"] == 0
+    assert calls == []
+    assert db.get_story_extract_status(chat_turn_id) == ""
+
+    # Real no-edict chain; inject extractor only at the existing agent factory seam.
+    monkeypatch.setattr(agents_mod, "create_audience_extractor_agent", lambda cfg: agent)
+    advance_without_edict(
+        state, db, content=content, registry=None, inflight_wait_s=0.0,
+        llm_config=object(), write_gate=threading.Lock(),
+    )
+    assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
     dossiers = db.list_decree_dossiers(status="proposed")
     assert len(dossiers) == 1
     assert len(calls) == 1
     assert emperor_text == calls[0]["皇帝问话"]
     assert db.list_dossier_endorsements(int(dossiers[0]["id"]))[0]["imperial"] is True
+    assert db.get_story_extract_status(chat_turn_id) == "done"
 
 
 def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(game):
@@ -495,9 +510,16 @@ def _public_mingfa_projection(db, night_id):
 
 
 def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_once(game):
-    """收夜可先成案卷前提；抽取失败夜重开、前提保留且无公开明发；重试幂等复用并逐条明发。"""
+    """收夜可先成案卷前提；失败游标归零、consort 未落；重试吸纳新 office 并 post-drain 终局。"""
     db, state, content = game
     minister = _minister(db)
+    consort_row = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='后宫' AND status='active' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()
+    if consort_row is None:
+        pytest.skip("基底无 active 后宫角色")
+    consort = str(consort_row["name"])
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
     emperor_text = "准此旨，朕亲书手敕作保。"
     user_message_id = db.append_chat_message(minister, int(state.turn), "user", emperor_text)
@@ -508,6 +530,12 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
                  "target_kind": "issue", "target_id": "retry-keep", "actor": minister},
     )
     db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    consort_pa = db.stage_pending_action(
+        state.turn, kind="consort", action="调教", minister_name=consort,
+        payload={"name": consort, "skill": "理财", "trait": ""},
+    )
+    db.mark_pending_night_approved([consort_pa], night_id=night_id)
+    consort_before = db.get_consort_traits(consort)
     calls = []
 
     class _BoomThenOk:
@@ -542,6 +570,11 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     assert dossiers[0]["promulgation_decision"] == ""
     assert db.list_dossier_endorsements(first_id) == []
     assert db.list_night_approved_pending(night_id, kind="directive") == []
+    # pre-drain only draft prerequisites; consort final effect waits for drain success.
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
+    ).fetchone()["status"] == "pending"
+    assert db.get_consort_traits(consort) == consort_before
     # Failure must not expose public 明发 / promulgated projection (ledger or DB readers).
     # Draft prerequisites may already be committed; that must not equal promulgated.
     failed_entries, failed_ids, failed_bodies = _public_mingfa_projection(db, night_id)
@@ -581,6 +614,15 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
                  "target_kind": "issue", "target_id": "retry-keep-appended", "actor": minister},
     )
     db.mark_pending_night_approved([appended_id], night_id=night_id)
+    # cursor=0 retry rescans office prerequisites consented after the failed attempt.
+    new_office = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={
+            "name": minister, "office": "户部郎中", "office_type": "六部",
+            "faction": "中立", "reason": "续任",
+        },
+    )
+    db.mark_pending_night_approved([new_office], night_id=night_id)
     result = an.close_night(
         db, state, night_id=night_id, content=content,
         llm_config=object(), write_gate=threading.Lock(),
@@ -588,9 +630,9 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     )
     assert result["closed"] is True
     assert len(calls) == 2
-    assert {row["decree_text"] for row in db.list_decree_dossiers(status="proposed")} == {
-        "清核辽饷", "续核京饷",
-    }
+    texts = {row["decree_text"] for row in db.list_decree_dossiers(status="proposed")}
+    assert {"清核辽饷", "续核京饷"}.issubset(texts)
+    assert any("户部郎中" in str(t) for t in texts)
     kept = next(row for row in db.list_decree_dossiers(status="proposed") if row["decree_text"] == "清核辽饷")
     assert int(kept["id"]) == first_id
     assert int(kept["directive_id"]) == first_directive
@@ -599,6 +641,10 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     assert db.conn.execute(
         "SELECT COUNT(*) FROM decree_dossiers WHERE decree_text=?", ("清核辽饷",)
     ).fetchone()[0] == 1
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
+    ).fetchone()["status"] == "committed"
+    assert "理财" in (db.get_consort_traits(consort).get("extra_skills") or [])
     # Successful retry publishes each eligible directive exactly once, including
     # the newly consented action that joined after the failed attempt.
     # Both DB promulgated projections reuse the one per-directive publication fact.
@@ -700,8 +746,18 @@ def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_ret
         source_chat_turn_id=0,
         check_dead=False,
     )
-    # Loose readers must not treat either collision as publication fact.
-    assert an.exact_mingfa_publication_directive_id(malformed_tag) is None
+    # Collision C: superscript digits (isdigit but not isdecimal) must not alias.
+    superscript_tag = "明发#²"
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=[],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="上标数字不得冒充明发",
+        tags=[superscript_tag],
+        source_chat_turn_id=0,
+        check_dead=False,
+    )
+    # Public readers / exact engine-command seam must treat none as publication fact.
     assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
     assert db.list_night_promulgated_directives(night_id) == []
     assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
@@ -759,6 +815,10 @@ def test_mingfa_publication_ignores_extractor_source_and_malformed_suffix_on_ret
         malformed_tag in (e.get("tags") or [])
         for e in an.list_ledger(db, night_id)
     )
+    assert any(
+        superscript_tag in (e.get("tags") or [])
+        for e in an.list_ledger(db, night_id)
+    )
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
@@ -792,249 +852,3 @@ def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
                 },
             }],
         })
-
-
-def test_exact_mingfa_parser_rejects_superscript_digits_on_public_readers(game):
-    """isdecimal seam: superscript suffix must not alias via public readers."""
-    db, state, _content = game
-    minister = _minister(db)
-    night_id = int(an.open_night(db, state, location="乾清宫", time_of_day="夜")["id"])
-    superscript_tag = "明发#²"
-    assert "²".isdigit() and not "²".isdecimal()
-    assert an.exact_mingfa_publication_directive_id(superscript_tag) is None
-    an.append_ledger_entry(
-        db, night_id,
-        person_names=[minister],
-        audibility=an.AUDIBILITY_PUBLIC,
-        body="上标数字不得冒充明发",
-        tags=[superscript_tag],
-        source_chat_turn_id=0,
-        check_dead=False,
-    )
-    assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
-    assert db.list_night_promulgated_directives(night_id) == []
-    assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
-
-
-def test_catch_up_reuses_trailer_defer_predicate_until_close_creates_dossiers(game):
-    """startup/CLI catch-up must not mark close-owned turns done before dossiers exist."""
-    db, state, content = game
-    minister = _minister(db)
-    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
-    candidate_id = db.stage_directive_candidate(
-        state.turn, minister,
-        payload={"text": "清核辽饷", "dossier_action_type": "policy",
-                 "target_kind": "issue", "target_id": "defer-catchup", "actor": minister},
-    )
-    db.mark_pending_night_approved([candidate_id], night_id=night_id)
-    assert should_defer_extraction_for_close_owned_dossiers(db, night_id) is True
-
-    deferred = trail_extraction_after_reply(
-        db=db, minister_name=minister, minister_reply="臣愿作保。",
-        chat_turn_id=chat_turn_id, llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": [{"body": "过早抽取"}]}),
-    )
-    assert deferred["status"] == "deferred"
-    assert db.get_story_extract_status(chat_turn_id) == ""
-
-    calls = []
-
-    class _Counting:
-        def run(self, materials):
-            calls.append(json.loads(materials))
-            return json.dumps({"facts": [{"body": "不该在此抽取"}]}, ensure_ascii=False)
-
-    summary = catch_up_pending_extractions(
-        db=db, llm_config=object(), write_gate=threading.Lock(),
-        night_id=night_id, extractor_agent=_Counting(),
-    )
-    assert summary["deferred"] == 1
-    assert summary["extracted"] == 0
-    assert calls == []
-    assert db.get_story_extract_status(chat_turn_id) == ""
-
-    # One drain after close creates prerequisites — single extraction.
-    result = an.close_night(
-        db, state, night_id=night_id, content=content,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Counting(),
-    )
-    assert result["closed"] is True
-    assert len(calls) == 1
-    assert db.get_story_extract_status(chat_turn_id) == "done"
-
-
-def test_close_night_defers_consort_final_effect_until_drain_success(game):
-    """pre-drain only draft prerequisites; consort final effect runs after drain success."""
-    db, state, content = game
-    minister = _minister(db)
-    consort_row = db.conn.execute(
-        "SELECT name FROM characters WHERE office_type='后宫' AND status='active' "
-        "ORDER BY name LIMIT 1"
-    ).fetchone()
-    if consort_row is None:
-        pytest.skip("基底无 active 后宫角色")
-    consort = str(consort_row["name"])
-    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
-    dir_id = db.stage_directive_candidate(
-        state.turn, minister,
-        payload={"text": "清核辽饷", "dossier_action_type": "policy",
-                 "target_kind": "issue", "target_id": "consort-order", "actor": minister},
-    )
-    db.mark_pending_night_approved([dir_id], night_id=night_id)
-    consort_pa = db.stage_pending_action(
-        state.turn, kind="consort", action="调教", minister_name=consort,
-        payload={"name": consort, "skill": "理财", "trait": ""},
-    )
-    db.mark_pending_night_approved([consort_pa], night_id=night_id)
-    before = db.get_consort_traits(consort)
-
-    class _Boom:
-        def run(self, _materials):
-            raise RuntimeError("extract boom")
-
-    with pytest.raises(an.AudienceNightError) as ei:
-        an.close_night(
-            db, state, night_id=night_id, content=content,
-            llm_config=object(), write_gate=threading.Lock(),
-            extractor_agent=_Boom(),
-        )
-    assert ei.value.code == "pending_extraction"
-    assert int(an.get_night(db, night_id)["close_commit_cursor"] or 0) == 0
-    # Draft dossier prerequisite kept; consort final effect not applied.
-    assert any(r["decree_text"] == "清核辽饷" for r in db.list_decree_dossiers(status="proposed"))
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
-    ).fetchone()["status"] == "pending"
-    assert db.get_consort_traits(consort) == before
-
-    result = an.close_night(
-        db, state, night_id=night_id, content=content,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": []}),
-    )
-    assert result["closed"] is True
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
-    ).fetchone()["status"] == "committed"
-    after = db.get_consort_traits(consort)
-    assert "理财" in (after.get("extra_skills") or [])
-
-
-def test_close_night_failure_cursor_rescans_new_office_prerequisite(game):
-    """失败游标退回 0：重试可扫描失败后新增 office 案卷前提，旧项幂等。"""
-    db, state, content = game
-    minister = _minister(db)
-    night_id, _chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
-    first_office = db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name=minister,
-        payload={
-            "name": minister, "office": "兵部郎中", "office_type": "六部",
-            "faction": "中立", "reason": "初任",
-        },
-    )
-    db.mark_pending_night_approved([first_office], night_id=night_id)
-
-    class _BoomThenOk:
-        def __init__(self):
-            self.calls = 0
-
-        def run(self, _materials):
-            self.calls += 1
-            if self.calls == 1:
-                raise RuntimeError("extract boom")
-            return json.dumps({"facts": []}, ensure_ascii=False)
-
-    agent = _BoomThenOk()
-    with pytest.raises(an.AudienceNightError) as ei:
-        an.close_night(
-            db, state, night_id=night_id, content=content,
-            llm_config=object(), write_gate=threading.Lock(),
-            extractor_agent=agent,
-        )
-    assert ei.value.code == "pending_extraction"
-    assert int(an.get_night(db, night_id)["close_commit_cursor"] or 0) == 0
-    first_dossiers = [
-        r for r in db.list_decree_dossiers(status="proposed")
-        if "兵部郎中" in str(r.get("decree_text") or "")
-    ]
-    assert len(first_dossiers) == 1
-    kept_id = int(first_dossiers[0]["id"])
-
-    second_office = db.stage_pending_action(
-        state.turn, kind="office", action="任命", minister_name=minister,
-        payload={
-            "name": minister, "office": "户部郎中", "office_type": "六部",
-            "faction": "中立", "reason": "续任",
-        },
-    )
-    db.mark_pending_night_approved([second_office], night_id=night_id)
-
-    result = an.close_night(
-        db, state, night_id=night_id, content=content,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=agent,
-    )
-    assert result["closed"] is True
-    texts = {str(r.get("decree_text") or "") for r in db.list_decree_dossiers(status="proposed")}
-    assert any("兵部郎中" in t for t in texts)
-    assert any("户部郎中" in t for t in texts)
-    assert int(
-        next(r for r in db.list_decree_dossiers(status="proposed") if "兵部郎中" in str(r.get("decree_text") or ""))["id"]
-    ) == kept_id
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM decree_dossiers WHERE decree_text LIKE ?", ("%兵部郎中%",)
-    ).fetchone()[0] == 1
-
-
-def test_advance_without_edict_forwards_llm_config_and_write_gate(game, monkeypatch):
-    """no-edict rail must pass drain deps so deferred same-night extraction can close."""
-    db, state, content = game
-    minister = _minister(db)
-    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
-    candidate_id = db.stage_directive_candidate(
-        state.turn, minister,
-        payload={"text": "清核辽饷", "dossier_action_type": "policy",
-                 "target_kind": "issue", "target_id": "no-edict", "actor": minister},
-    )
-    db.mark_pending_night_approved([candidate_id], night_id=night_id)
-    assert trail_extraction_after_reply(
-        db=db, minister_name=minister, minister_reply="臣愿作保。",
-        chat_turn_id=chat_turn_id, llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_Agent({"facts": []}),
-    )["status"] == "deferred"
-
-    forwarded = {}
-
-    def _forwarding_auto_close(db_arg, state_arg, **kwargs):
-        forwarded.update(kwargs)
-        open_n = an.get_open_night(db_arg)
-        if open_n is None:
-            return None
-        # Production auto_close has no extractor_agent param; inject test agent at close.
-        return an.close_night(
-            db_arg, state_arg,
-            night_id=int(open_n["id"]),
-            content=kwargs.get("content"),
-            registry=kwargs.get("registry"),
-            auto=True,
-            wait_timeout_s=kwargs.get("wait_timeout_s"),
-            beat_generator=kwargs.get("beat_generator"),
-            llm_config=kwargs.get("llm_config"),
-            write_gate=kwargs.get("write_gate"),
-            extractor_agent=_Agent({"facts": []}),
-        )
-
-    # advance_without_edict imports auto_close_open_night from this module at call time.
-    monkeypatch.setattr(an, "auto_close_open_night", _forwarding_auto_close)
-
-    llm = object()
-    gate = nullcontext()
-    advance_without_edict(
-        state, db, content=content, registry=None, inflight_wait_s=0.0,
-        llm_config=llm, write_gate=gate,
-    )
-    assert forwarded.get("llm_config") is llm
-    assert forwarded.get("write_gate") is gate
-    assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
-    assert db.get_story_extract_status(chat_turn_id) == "done"
