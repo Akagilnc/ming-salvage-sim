@@ -31,7 +31,10 @@ from ming_sim.decree import (
     resolve_decisions_phase2,
     resolve_directives,
 )
-from ming_sim.issues import bind_content as bind_issue_content
+from ming_sim.issues import (
+    apply_score_extraction,
+    bind_content as bind_issue_content,
+)
 from ming_sim.models import LLMConfig
 
 
@@ -160,12 +163,43 @@ def _prepare_reconsideration_facts(
         "UPDATE factions SET leverage=5,agenda='失去许誉卿封驳支点，转入复议' WHERE name='东林'"
     )
     held = db.get_decree_dossier(dossier_id)
-    held_payload = json.loads(str(held["payload_json"] or "{}"))
-    held_payload["authorization_ids"] = ["御笔特准清丈不经部议"]
-    db.conn.execute(
-        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
-        (json.dumps(held_payload, ensure_ascii=False), dossier_id),
+    # #611: grant from a separate promulgated dossier through the sole
+    # authority_changes owner.  The held/rejected reconsideration dossier is
+    # only the eventual consumer and can never authorize its own effects.
+    holder = next(
+        str(row["name"]) for row in db.conn.execute(
+            "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+            "ORDER BY name"
+        )
     )
+    target_kind = str(held.get("target_kind") or "").strip() or "issue"
+    target_id = str(held.get("target_id") or "").strip() or "清丈田亩"
+    scope = f"{target_kind}:{target_id}"
+    db.conn.execute(
+        "UPDATE decree_dossiers SET executor_kind='character', executor_id=?, "
+        "target_kind=?, target_id=? WHERE id=?",
+        (holder, target_kind, target_id, dossier_id),
+    )
+    grant_dossier_id = db.create_decree_dossier(
+        state,
+        action_type="authorization",
+        decree_text="复议前另案授以便宜行事之权",
+        target_kind=target_kind,
+        target_id=target_id,
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        payload={"mode": "ordinary"},
+    )
+    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    grant = apply_score_extraction(db, state, {
+        "authority_changes": [{
+            "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+            "scope": scope, "dossier_id": grant_dossier_id,
+        }],
+    })["authority_changes"][0]
+    if grant.get("rejected") is True:
+        raise RuntimeError(f"reconsideration authority grant rejected: {grant}")
     state.metrics["皇威"] = 100
     db.save_state(state)
     db.conn.commit()
