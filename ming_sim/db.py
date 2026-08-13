@@ -472,66 +472,24 @@ _OFFICE_LEVERAGE_WEIGHT = {
     # 后宫 / 宗藩 / 未仕 → 0（不在朝堂博弈或无实权）；office_type 不在表里 → 权重 0。
 }
 
-# 品级档 multiplier：从 office 头衔字串解析（同一 office_type 内 尚书 vs 职方 权力天差地别）。
-# 关键词按档分组；一个头衔逐档命中（堂官档优先于佐贰、佐贰优先于属官）。未识别 → 默认 1.0（保守，
-# 避免漏算堂官）。词序在档内不影响（只判是否含子串）。
-_OFFICE_RANK_TIERS = (
-    (1.0, (  # 堂官 / 主官
-        "尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
-        "总兵", "都督", "都指挥使", "都御史",
-    )),
-    (0.5, (  # 佐贰
-        "侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
-        # #9 线上 R3（codex P2）审计补全：offices.json 里「含某 1.0 档关键词作子串」的佐贰官名，
-        # 经 min-within-part 会与 1.0 子串共同命中、取 min 落 0.5（与 副总兵⊃总兵 同治）。逐个：
-        #   副都御史 ⊃ 都御史（本 finding 核心：都察院佐贰，左/右副都御史，非堂官）；
-        #   同知 ⊃（都督同知⊃都督、府同知、卫指挥同知）——通治 generic 佐贰词干「同知」；
-        #   佥事 ⊃（都督佥事⊃都督、按察佥事）——通治 generic 佐贰词干「佥事」（佥都御史已在上）。
-        # 不加 左/右都御史（都察院堂官、是主官非副）、提督/总督 类（主官）——它们正职档 1.0 不动。
-        "副都御史", "同知", "佥事",
-    )),
-    (0.25, (  # 属官 / 微员
-        "郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
-        "候补", "候用", "随堂", "信邸内官",
-    )),
-)
-_DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免漏算堂官）
+# 品级档 multiplier 已迁到 content/offices.json rank_rules（#562）：
+# faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
 
 # 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
 _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
 
 
 def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
-    """从 office 头衔字串解析品级 multiplier。逗号分隔的多职取**已识别分项中的最高档**。
-    只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
-    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。
-    #9 R1 finding#5：already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize
-    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。
+    """从 office 头衔字串解析品级 multiplier。唯一真源=offices.json rank_rules。
 
-    #9 线上 R2 finding（品级子串误匹配）：**单个分项取「所有命中档里最低的 multiplier」**——
-    因为副职关键词更长（副总兵⊃总兵、佥都御史⊃都御史），与正职子串会共同命中，取 min 自然落到
-    副职档（0.5）；纯正职（如单独「总兵」「都御史」）只命中 1.0 档 → 仍 1.0。这样通治所有
-    「子串包含」overlap（不止副总兵/佥都御史两例）。跨分项仍取 max（身兼数职取最高官）。"""
+    逗号分隔的多职取已识别分项中的最高档；整串无 leverage 词干时落默认 1.0。
+    already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize。
+    """
+    from ming_sim.office_rank import office_leverage_multiplier
+
     text = office or ""
-    if not text.strip():
-        return _DEFAULT_OFFICE_RANK_MULTIPLIER
     normalized = text if already_normalized else normalize_office(text)
-    best: Optional[float] = None
-    for part in (p.strip() for p in normalized.split(",")):
-        if not part:
-            continue
-        # 该分项命中的所有档取最低 multiplier（副职关键词更长、与正职子串共同命中时取 min 落副职）。
-        part_mult: Optional[float] = None
-        for mult, keywords in _OFFICE_RANK_TIERS:
-            if any(kw in part for kw in keywords):
-                if part_mult is None or mult < part_mult:
-                    part_mult = mult
-        if part_mult is None:
-            continue  # 该分项无任何识别词 → 不贡献（沿用整体兜底语义）
-        if best is None or part_mult > best:
-            best = part_mult  # 跨分项取最高官
-    # 整串无任一识别词 → 保守默认（避免把生造/罕见堂官头衔误判成低档）
-    return best if best is not None else _DEFAULT_OFFICE_RANK_MULTIPLIER
+    return office_leverage_multiplier(normalized, already_normalized=True)
 
 
 def _member_office_weight(office_type: str, office: str) -> float:
@@ -1950,6 +1908,7 @@ class GameDB:
         self.ensure_column(
             "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
         )
+        self._backfill_proposed_appointment_break_ranks()
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -2113,6 +2072,16 @@ class GameDB:
             self._migrate_offsets_to_float_precision()
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
+        # #562 expanded rank_rules changes the derived office-weight sum. Re-anchor
+        # existing offsets exactly once so opening a save cannot change leverage
+        # without a character change. The marker makes repeated opens idempotent.
+        if (
+            self.table_has_rows("factions")
+            and not self._has_meta_flag("__leverage_offsets_rank_rules_562")
+        ):
+            self._reanchor_offsets_for_rank_rules_562()
+            self._set_meta_flag("__leverage_offsets_rank_rules_562")
+            self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
@@ -2127,6 +2096,8 @@ class GameDB:
         region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
         # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
         DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
+        from ming_sim.office_rank import canonical_office_title
+
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
         ).fetchall():
@@ -2145,6 +2116,25 @@ class GameDB:
                 "WHERE name=?",
                 (status, rc, office, loc_region, name),
             )
+            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
+            historical = canonical_office_title(office)
+            if historical:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (historical, name),
+                )
+        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
+        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
+        for r in self.conn.execute(
+            "SELECT character_name, office_title FROM character_offices"
+        ).fetchall():
+            raw_title = str(r["office_title"] or "")
+            cleaned = canonical_office_title(raw_title)
+            if cleaned and cleaned != raw_title:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (cleaned, r["character_name"]),
+                )
         # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
@@ -4775,6 +4765,9 @@ class GameDB:
         # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
         # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
         self._set_meta_flag("__leverage_offsets_float_v2")
+        # Fresh/current-rule calibration already uses the expanded #562 table;
+        # do not mistake it for an old save that needs the one-time re-anchor.
+        self._set_meta_flag("__leverage_offsets_rank_rules_562")
 
     def _migrate_offsets_to_float_precision(self) -> None:
         """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
@@ -4804,6 +4797,63 @@ class GameDB:
             new_offset = current_lev - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
+            )
+
+    def _rank_rules_562_legacy_weight_sum(self, faction: str) -> float:
+        """Return the pre-#562 weight sum solely for the one-time save migration.
+
+        This frozen compatibility table is deliberately not wired into live rank or
+        leverage evaluation; current rules remain exclusively in offices.json.
+        """
+        legacy_tiers = (
+            (1.0, ("尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
+                   "总兵", "都督", "都指挥使", "都御史")),
+            (0.5, ("侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
+                   "副都御史", "同知", "佥事")),
+            (0.25, ("郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
+                    "候补", "候用", "随堂", "信邸内官")),
+        )
+
+        def legacy_multiplier(office: str) -> float:
+            best: Optional[float] = None
+            for part in (p.strip() for p in normalize_office(office).split(",") if p.strip()):
+                matched = [mult for mult, stems in legacy_tiers if any(stem in part for stem in stems)]
+                if matched:
+                    part_multiplier = min(matched)
+                    best = part_multiplier if best is None else max(best, part_multiplier)
+            return best if best is not None else 1.0
+
+        rows = self.conn.execute(
+            "SELECT office_type, office FROM characters "
+            "WHERE faction=? AND status='active' AND power_id='ming'",
+            (faction,),
+        ).fetchall()
+        total = 0.0
+        for row in rows:
+            office = str(row["office"] or "")
+            office_n = normalize_office(office)
+            if not office_n:
+                continue
+            domain = _OFFICE_LEVERAGE_WEIGHT.get(str(row["office_type"] or ""), 0)
+            for part in (p.strip() for p in office_n.split(",") if p.strip()):
+                domain = max(domain, _OFFICE_LEVERAGE_WEIGHT.get(_office_type_from_table(part), 0))
+            total += domain * legacy_multiplier(office_n)
+        return total
+
+    def _reanchor_offsets_for_rank_rules_562(self) -> None:
+        """Translate old offsets to current rules without consulting persisted leverage."""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is None:
+                continue
+            old_offset = float(row["leverage_offset"] or 0)
+            old_weight_sum = self._rank_rules_562_legacy_weight_sum(faction)
+            new_weight_sum = self._faction_office_weight_sum(faction)
+            offset = old_offset + old_weight_sum - new_weight_sum
+            self.conn.execute(
+                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
 
     def _has_meta_flag(self, key: str) -> bool:
@@ -10266,6 +10316,29 @@ class GameDB:
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
+    def _backfill_proposed_appointment_break_ranks(self) -> None:
+        """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
+        from ming_sim.office_rank import appointment_break_rank
+
+        rows = self.conn.execute(
+            "SELECT id,target_id,payload_json FROM decree_dossiers "
+            "WHERE status='proposed' AND action_type='appointment'"
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if "break_rank" in payload:
+                continue
+            payload["break_rank"] = appointment_break_rank(
+                self,
+                payload.get("name") or row["target_id"],
+                payload.get("office") or payload.get("new_office"),
+                payload.get("office_type") or payload.get("new_office_type"),
+            )
+            self.conn.execute(
+                "UPDATE decree_dossiers SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(payload, ensure_ascii=False), int(row["id"])),
+            )
+
     def create_decree_dossier(
         self,
         state: GameState,
@@ -10296,8 +10369,16 @@ class GameDB:
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
+            from ming_sim.office_rank import appointment_break_rank
             normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
             normalized_payload.pop("appointment_tenure", None)
+            normalized_payload["break_rank"] = appointment_break_rank(
+                self,
+                normalized_payload.get("name") or target_id,
+                normalized_payload.get("office") or normalized_payload.get("new_office"),
+                normalized_payload.get("office_type")
+                or normalized_payload.get("new_office_type"),
+            )
         if not action or not text:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
