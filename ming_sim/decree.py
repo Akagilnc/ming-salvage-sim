@@ -125,11 +125,8 @@ def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
     dossiers: Sequence[Dict[str, object]],
-    *,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
 ) -> Dict[str, object]:
-    """Build the deterministic, satisfaction-free snapshot for the single judge call."""
-    break_rank = break_rank_by_dossier or {}
+    """Build the deterministic snapshot from persisted dossier evidence only."""
     faction_rows = db.conn.execute(
         "SELECT name,leverage,agenda FROM factions ORDER BY name"
     ).fetchall()
@@ -149,15 +146,13 @@ def build_promulgation_judge_context(
             payload = json.loads(str(row.get("payload_json") or "{}"))
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
-        authorization_ids = payload.get("authorization_ids", [])
-        if not isinstance(authorization_ids, list):
-            authorization_ids = []
-        authorization_id = payload.get("authorization_id")
-        if authorization_id and str(authorization_id) not in authorization_ids:
-            authorization_ids = [*authorization_ids, str(authorization_id)]
         endorsement_ids = payload.get("endorsement_entry_ids", [])
         if not isinstance(endorsement_ids, list):
             endorsement_ids = []
+        # #611: authorization_ids come only from the unique applicability projection.
+        # Never read payload authorization_id(s) as a parallel authority identity source.
+        held_authorities = db.project_applicable_authorities(state.turn, row)
+        authorization_ids = [str(item["id"]) for item in held_authorities]
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
@@ -166,11 +161,12 @@ def build_promulgation_judge_context(
             "target_id": target_id,
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
-            "break_rank": break_rank.get(int(row["id"])),
+            "break_rank": payload.get("break_rank"),
+            "held_authorities": held_authorities,
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
-                "authorization_ids": sorted(set(map(str, authorization_ids))),
+                "authorization_ids": authorization_ids,
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
         })
@@ -241,13 +237,10 @@ def _require_promulgation_verdict_list(
 def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
     prepared_context: Optional[Dict[str, object]] = None,
 ) -> List[Dict[str, object]]:
     """Run exactly one LLM call for one reviewed promulgation batch."""
-    context = prepared_context or build_promulgation_judge_context(
-        db, state, dossiers, break_rank_by_dossier=break_rank_by_dossier,
-    )
+    context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
     agent = create_promulgation_judge_agent(llm_config, agno_db)
     raw = run_agent_text(
         agent, json.dumps(context, ensure_ascii=False, sort_keys=True),

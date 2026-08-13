@@ -61,6 +61,7 @@ TOP_LEVEL_ALIASES = {
     "结案局势": "close_issues",
     "案卷执行": "dossier_executions",
     "案卷参与人": "dossier_participants",
+    "授权变更": "authority_changes",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
     "人物易主": "character_power_changes",
@@ -144,6 +145,12 @@ ITEM_FIELD_ALIASES = {
     "dossier_id": "dossier_id", "案卷编号": "dossier_id",
     "outcome": "outcome", "执行结果": "outcome",
     "note": "note", "执行说明": "note",
+    "holder_id": "holder_id", "授予对象": "holder_id", "持有人": "holder_id",
+    "privilege": "privilege", "权项": "privilege",
+    "scope": "scope", "事域": "scope",
+    "authority_id": "authority_id", "授权编号": "authority_id",
+    "effective_turn": "effective_turn", "生效回合": "effective_turn",
+    "expires_turn": "expires_turn", "失效回合": "expires_turn",
     "character_id": "character_id", "人物": "character_id",
     "tier": "tier", "档位": "tier",
     "role": "role", "职分": "role",
@@ -647,6 +654,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_closes": [],
     "dossier_executions": [],
     "dossier_participants": [],
+    "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
 }
@@ -656,7 +664,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
-        "dossier_executions", "dossier_participants",
+        "dossier_executions", "dossier_participants", "authority_changes",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
@@ -927,13 +935,36 @@ def _canonical_item_fields(value: object) -> object:
     }
 
 
+AUTHORITY_CHANGE_FIELD_ALIASES = {
+    "op": "op",
+    "action": "op",
+    "动作": "op",
+}
+
+
+def _canonical_authority_change_fields(value: object) -> object:
+    canonical = _canonical_item_fields(value)
+    if not isinstance(canonical, list):
+        return canonical
+    return [
+        {
+            AUTHORITY_CHANGE_FIELD_ALIASES.get(str(key).strip(), str(key).strip()): val
+            for key, val in item.items()
+        } if isinstance(item, dict) else item
+        for item in canonical
+    ]
+
+
 def canonicalize_extraction(data: Dict[str, object]) -> Dict[str, object]:
     """delta 顶层 key 中文→英文 canonical 归一 + 逐项字段归一。公有 API：driver（ADR 0004）等
     跨模块复用此入口，别引私有名（#17）。`_canonicalize_extraction` 为历史私有别名（向后兼容）。"""
     canonical: Dict[str, object] = {}
     for raw_key, value in data.items():
         key = TOP_LEVEL_ALIASES.get(str(raw_key).strip(), str(raw_key).strip())
-        canonical[key] = _canonical_item_fields(value)
+        if key == "authority_changes":
+            canonical[key] = _canonical_authority_change_fields(value)
+        else:
+            canonical[key] = _canonical_item_fields(value)
     return canonical
 
 

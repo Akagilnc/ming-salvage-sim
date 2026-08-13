@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -475,66 +476,24 @@ _OFFICE_LEVERAGE_WEIGHT = {
     # 后宫 / 宗藩 / 未仕 → 0（不在朝堂博弈或无实权）；office_type 不在表里 → 权重 0。
 }
 
-# 品级档 multiplier：从 office 头衔字串解析（同一 office_type 内 尚书 vs 职方 权力天差地别）。
-# 关键词按档分组；一个头衔逐档命中（堂官档优先于佐贰、佐贰优先于属官）。未识别 → 默认 1.0（保守，
-# 避免漏算堂官）。词序在档内不影响（只判是否含子串）。
-_OFFICE_RANK_TIERS = (
-    (1.0, (  # 堂官 / 主官
-        "尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
-        "总兵", "都督", "都指挥使", "都御史",
-    )),
-    (0.5, (  # 佐贰
-        "侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
-        # #9 线上 R3（codex P2）审计补全：offices.json 里「含某 1.0 档关键词作子串」的佐贰官名，
-        # 经 min-within-part 会与 1.0 子串共同命中、取 min 落 0.5（与 副总兵⊃总兵 同治）。逐个：
-        #   副都御史 ⊃ 都御史（本 finding 核心：都察院佐贰，左/右副都御史，非堂官）；
-        #   同知 ⊃（都督同知⊃都督、府同知、卫指挥同知）——通治 generic 佐贰词干「同知」；
-        #   佥事 ⊃（都督佥事⊃都督、按察佥事）——通治 generic 佐贰词干「佥事」（佥都御史已在上）。
-        # 不加 左/右都御史（都察院堂官、是主官非副）、提督/总督 类（主官）——它们正职档 1.0 不动。
-        "副都御史", "同知", "佥事",
-    )),
-    (0.25, (  # 属官 / 微员
-        "郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
-        "候补", "候用", "随堂", "信邸内官",
-    )),
-)
-_DEFAULT_OFFICE_RANK_MULTIPLIER = 1.0  # 未识别头衔的保守默认（避免漏算堂官）
+# 品级档 multiplier 已迁到 content/offices.json rank_rules（#562）：
+# faction leverage 与破格检测共用 ming_sim.office_rank 查表，不再在此维护第二套词干 parser。
 
 # 退场类状态(削职)——与 active 互斥（set_character_status 据此清空 office）。
 _OUSTED_STATES = {"offstage", "dismissed", "imprisoned", "exiled", "retired", "dead"}
 
 
 def _office_rank_multiplier(office: str, already_normalized: bool = False) -> float:
-    """从 office 头衔字串解析品级 multiplier。逗号分隔的多职取**已识别分项中的最高档**。
-    只在整串无任何识别词时才落默认 1.0（保守，避免漏算堂官）——故描述性尾缀（如「兵部职方,
-    火器西法」的「火器西法」）不会把默认 1.0 拉进 max 污染掉真实品级。
-    #9 R1 finding#5：already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize
-    （热路 _member_office_weight 已归一过，避免二次 normalize 冗余）。
+    """从 office 头衔字串解析品级 multiplier。唯一真源=offices.json rank_rules。
 
-    #9 线上 R2 finding（品级子串误匹配）：**单个分项取「所有命中档里最低的 multiplier」**——
-    因为副职关键词更长（副总兵⊃总兵、佥都御史⊃都御史），与正职子串会共同命中，取 min 自然落到
-    副职档（0.5）；纯正职（如单独「总兵」「都御史」）只命中 1.0 档 → 仍 1.0。这样通治所有
-    「子串包含」overlap（不止副总兵/佥都御史两例）。跨分项仍取 max（身兼数职取最高官）。"""
+    逗号分隔的多职取已识别分项中的最高档；整串无 leverage 词干时落默认 1.0。
+    already_normalized=True 时入参已是 normalize_office 结果，跳过重复 normalize。
+    """
+    from ming_sim.office_rank import office_leverage_multiplier
+
     text = office or ""
-    if not text.strip():
-        return _DEFAULT_OFFICE_RANK_MULTIPLIER
     normalized = text if already_normalized else normalize_office(text)
-    best: Optional[float] = None
-    for part in (p.strip() for p in normalized.split(",")):
-        if not part:
-            continue
-        # 该分项命中的所有档取最低 multiplier（副职关键词更长、与正职子串共同命中时取 min 落副职）。
-        part_mult: Optional[float] = None
-        for mult, keywords in _OFFICE_RANK_TIERS:
-            if any(kw in part for kw in keywords):
-                if part_mult is None or mult < part_mult:
-                    part_mult = mult
-        if part_mult is None:
-            continue  # 该分项无任何识别词 → 不贡献（沿用整体兜底语义）
-        if best is None or part_mult > best:
-            best = part_mult  # 跨分项取最高官
-    # 整串无任一识别词 → 保守默认（避免把生造/罕见堂官头衔误判成低档）
-    return best if best is not None else _DEFAULT_OFFICE_RANK_MULTIPLIER
+    return office_leverage_multiplier(normalized, already_normalized=True)
 
 
 def _member_office_weight(office_type: str, office: str) -> float:
@@ -1452,6 +1411,26 @@ class GameDB:
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
 
+            -- ADR 0071：持有型/持续型特权的 durable 授权档。
+            CREATE TABLE IF NOT EXISTS authority_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                holder_id TEXT NOT NULL,
+                privilege TEXT NOT NULL CHECK(privilege IN (
+                    __AUTHORITY_PRIVILEGES__
+                )),
+                scope TEXT NOT NULL,
+                effective_turn INTEGER NOT NULL,
+                expires_turn INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
+                revoked_turn INTEGER,
+                dossier_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(holder_id) REFERENCES characters(name),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
+                ON authority_records(holder_id, revoked, effective_turn);
+
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_name TEXT NOT NULL,
@@ -1779,7 +1758,7 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
-            """
+            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
@@ -1952,6 +1931,7 @@ class GameDB:
         self.ensure_column(
             "decree_dossiers", "participant_roster", "TEXT NOT NULL DEFAULT '[]'"
         )
+        self._backfill_proposed_appointment_break_ranks()
         self._migrate_legacy_secret_order_dossiers()
         # #498：旧档 chat_turns 无 night_id/night_seq 列；必须先 ensure 列再建索引
         # （旧档 CREATE TABLE IF NOT EXISTS 不重建 chat_turns，索引若先建会引用缺列失败）。
@@ -2115,6 +2095,16 @@ class GameDB:
             self._migrate_offsets_to_float_precision()
             self._set_meta_flag("__leverage_offsets_float_v2")
             self.conn.commit()
+        # #562 expanded rank_rules changes the derived office-weight sum. Re-anchor
+        # existing offsets exactly once so opening a save cannot change leverage
+        # without a character change. The marker makes repeated opens idempotent.
+        if (
+            self.table_has_rows("factions")
+            and not self._has_meta_flag("__leverage_offsets_rank_rules_562")
+        ):
+            self._reanchor_offsets_for_rank_rules_562()
+            self._set_meta_flag("__leverage_offsets_rank_rules_562")
+            self.conn.commit()
         self.init_fiscal_config()
         self._migrate_missing_fiscal_engine_from_pay_source_cutover()
 
@@ -2129,6 +2119,8 @@ class GameDB:
         region_ids = {row["id"] for row in self.conn.execute("SELECT id FROM regions").fetchall()}
         # 罢居=居家可起复：钱谦益 天启科场案削籍 → dismissed（→昭雪，B 口径）；其余罢居 → offstage（→起复）。
         DISMISSED_OVERRIDE = {"钱谦益": "获罪削籍"}
+        from ming_sim.office_rank import canonical_office_title
+
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%罢居%' AND status='active'"
         ).fetchall():
@@ -2147,6 +2139,25 @@ class GameDB:
                 "WHERE name=?",
                 (status, rc, office, loc_region, name),
             )
+            # #562：character_offices 保留最近实职备档供起复品级读取，去掉「前/罢居」污染尾。
+            historical = canonical_office_title(office)
+            if historical:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (historical, name),
+                )
+        # #562：凡 character_offices 仍带「前/原/革职候勘/罢居」污染的备档一律洗净。
+        # 覆盖 seed 已是 dismissed 的革职候勘者（如胡廷宴），不只 罢居→offstage 那一支。
+        for r in self.conn.execute(
+            "SELECT character_name, office_title FROM character_offices"
+        ).fetchall():
+            raw_title = str(r["office_title"] or "")
+            cleaned = canonical_office_title(raw_title)
+            if cleaned and cleaned != raw_title:
+                self.conn.execute(
+                    "UPDATE character_offices SET office_title=? WHERE character_name=?",
+                    (cleaned, r["character_name"]),
+                )
         # office 带「(在途)」→ 清串保留 active；transit_to 仅当解析出合法 region_id 才落（保守，不瞎猜目的地）。
         for r in self.conn.execute(
             "SELECT name, office FROM characters WHERE office LIKE '%在途%'"
@@ -4777,6 +4788,9 @@ class GameDB:
         # #177 R1 finding#1（codex P2）：当前校准已存精确 float offset → 同时落 v2 标记，
         # 使 init_schema 的 v2 迁移跳过（免对已正确存 float 的档重复扫）。
         self._set_meta_flag("__leverage_offsets_float_v2")
+        # Fresh/current-rule calibration already uses the expanded #562 table;
+        # do not mistake it for an old save that needs the one-time re-anchor.
+        self._set_meta_flag("__leverage_offsets_rank_rules_562")
 
     def _migrate_offsets_to_float_precision(self) -> None:
         """#177 R1 finding#1（codex P2）：一次性 v2 迁移——旧版 #9 校准 round 了 offset（存整数），
@@ -4806,6 +4820,63 @@ class GameDB:
             new_offset = current_lev - weight_sum
             self.conn.execute(
                 "UPDATE factions SET leverage_offset=? WHERE name=?", (new_offset, faction)
+            )
+
+    def _rank_rules_562_legacy_weight_sum(self, faction: str) -> float:
+        """Return the pre-#562 weight sum solely for the one-time save migration.
+
+        This frozen compatibility table is deliberately not wired into live rank or
+        leverage evaluation; current rules remain exclusively in offices.json.
+        """
+        legacy_tiers = (
+            (1.0, ("尚书", "掌印", "秉笔", "提督", "首辅", "督师", "总督", "巡抚",
+                   "总兵", "都督", "都指挥使", "都御史")),
+            (0.5, ("侍郎", "次辅", "大学士", "副总兵", "参政", "佥都御史", "少卿",
+                   "副都御史", "同知", "佥事")),
+            (0.25, ("郎中", "主事", "职方", "司属", "编修", "检讨", "游击", "守备",
+                    "候补", "候用", "随堂", "信邸内官")),
+        )
+
+        def legacy_multiplier(office: str) -> float:
+            best: Optional[float] = None
+            for part in (p.strip() for p in normalize_office(office).split(",") if p.strip()):
+                matched = [mult for mult, stems in legacy_tiers if any(stem in part for stem in stems)]
+                if matched:
+                    part_multiplier = min(matched)
+                    best = part_multiplier if best is None else max(best, part_multiplier)
+            return best if best is not None else 1.0
+
+        rows = self.conn.execute(
+            "SELECT office_type, office FROM characters "
+            "WHERE faction=? AND status='active' AND power_id='ming'",
+            (faction,),
+        ).fetchall()
+        total = 0.0
+        for row in rows:
+            office = str(row["office"] or "")
+            office_n = normalize_office(office)
+            if not office_n:
+                continue
+            domain = _OFFICE_LEVERAGE_WEIGHT.get(str(row["office_type"] or ""), 0)
+            for part in (p.strip() for p in office_n.split(",") if p.strip()):
+                domain = max(domain, _OFFICE_LEVERAGE_WEIGHT.get(_office_type_from_table(part), 0))
+            total += domain * legacy_multiplier(office_n)
+        return total
+
+    def _reanchor_offsets_for_rank_rules_562(self) -> None:
+        """Translate old offsets to current rules without consulting persisted leverage."""
+        for faction in _LEVERAGE_FACTIONS:
+            row = self.conn.execute(
+                "SELECT leverage_offset FROM factions WHERE name=?", (faction,)
+            ).fetchone()
+            if row is None:
+                continue
+            old_offset = float(row["leverage_offset"] or 0)
+            old_weight_sum = self._rank_rules_562_legacy_weight_sum(faction)
+            new_weight_sum = self._faction_office_weight_sum(faction)
+            offset = old_offset + old_weight_sum - new_weight_sum
+            self.conn.execute(
+                "UPDATE factions SET leverage_offset=? WHERE name=?", (offset, faction)
             )
 
     def _has_meta_flag(self, key: str) -> bool:
@@ -10044,21 +10115,14 @@ class GameDB:
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
-            authorization_id = str(
-                normalized.get("authorization_id") or ""
-            ).strip()
-            authorization_action = action in {
-                "authorization", "secret_authorization",
-            }
-            complete = bool(assignee) and (
-                not authorization_action or bool(authorization_id)
-            )
-            if not complete:
-                raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
+            if not assignee:
+                raise ValueError(f"{action} 旨意缺少 canonical assignee")
             normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
-            if authorization_action:
-                normalized["authorization_id"] = authorization_id
+            # Authorization identity and applicability live exclusively in
+            # authority_records; legacy dossier payload ids are not retained.
+            normalized.pop("authorization_id", None)
+            normalized.pop("authorization_ids", None)
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -10275,6 +10339,29 @@ class GameDB:
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
 
+    def _backfill_proposed_appointment_break_ranks(self) -> None:
+        """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
+        from ming_sim.office_rank import appointment_break_rank
+
+        rows = self.conn.execute(
+            "SELECT id,target_id,payload_json FROM decree_dossiers "
+            "WHERE status='proposed' AND action_type='appointment'"
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if "break_rank" in payload:
+                continue
+            payload["break_rank"] = appointment_break_rank(
+                self,
+                payload.get("name") or row["target_id"],
+                payload.get("office") or payload.get("new_office"),
+                payload.get("office_type") or payload.get("new_office_type"),
+            )
+            self.conn.execute(
+                "UPDATE decree_dossiers SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (json.dumps(payload, ensure_ascii=False), int(row["id"])),
+            )
+
     def create_decree_dossier(
         self,
         state: GameState,
@@ -10305,8 +10392,16 @@ class GameDB:
             normalized_payload["mode"] if "mode" in normalized_payload else "ordinary"
         )
         if action == "appointment":
+            from ming_sim.office_rank import appointment_break_rank
             normalized_payload["任别"] = appointment_tenure_from(normalized_payload)
             normalized_payload.pop("appointment_tenure", None)
+            normalized_payload["break_rank"] = appointment_break_rank(
+                self,
+                normalized_payload.get("name") or target_id,
+                normalized_payload.get("office") or normalized_payload.get("new_office"),
+                normalized_payload.get("office_type")
+                or normalized_payload.get("new_office_type"),
+            )
         if not action or not text:
             raise ValueError("案卷 action_type/decree_text 不能为空")
         if action not in self._DOSSIER_ACTION_TYPES:
@@ -11218,32 +11313,10 @@ class GameDB:
                     )
                     return
             elif row["action_type"] in {"authorization", "secret_authorization"}:
-                character_id = str(
-                    payload.get("character_id") or payload.get("assignee_id") or ""
-                ).strip()
-                skill_id = str(
-                    payload.get("skill_id") or payload.get("authorization_id") or ""
-                ).strip()
-                if not character_id or not skill_id:
-                    raise ValueError("授权案卷缺少 canonical assignee 或授权字段")
-                character_exists = self.conn.execute(
-                    "SELECT 1 FROM characters WHERE name=?", (character_id,),
-                ).fetchone()
-                if not character_exists:
-                    raise ValueError("授权案卷引用未知人物")
-                if not self.grant_skill(
-                    state,
-                    character_id,
-                    skill_id,
-                    granted_by=str(payload.get("granted_by") or "皇帝"),
-                    dossier_id=int(dossier_id),
-                    commit=False,
-                ):
-                    self.record_dossier_execution(
-                        dossier_id, "fulfilled", "授权此前已生效，幂等结案",
-                        state.turn, close=True, commit=False,
-                    )
-                    return
+                # The dossier records the decree; #611 privileges are produced
+                # only by settlement's authority_changes slot. Skill grants are
+                # a distinct character-skill mechanic, not an authority map.
+                pass
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
@@ -12883,6 +12956,118 @@ class GameDB:
             "extractor_input": _parse(row["extractor_input"] or ""),
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
+
+    def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def list_active_authorities(
+        self, turn: int, *, holder_id: str = "",
+    ) -> List[Dict[str, object]]:
+        params: List[object] = [int(turn), int(turn)]
+        holder_sql = ""
+        if holder_id:
+            holder_sql = " AND holder_id=?"
+            params.append(str(holder_id))
+        rows = self.conn.execute(
+            "SELECT * FROM authority_records WHERE revoked=0 "
+            "AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?)"
+            f"{holder_sql} ORDER BY id", params,
+        ).fetchall()
+        return [{**dict(row), "revoked": False} for row in rows]
+
+    def find_authority_by_origin(
+        self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the stable row for an exact grant origin, regardless of status."""
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? "
+            "AND privilege=? AND scope=? ORDER BY id LIMIT 1",
+            (
+                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+                str(scope).strip(),
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def find_active_authority(
+        self, turn: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the in-hand row for the exact grant identity, if any."""
+        holder_id = str(holder_id or "").strip()
+        privilege = str(privilege or "").strip()
+        scope = str(scope or "").strip()
+        for row in self.list_active_authorities(turn, holder_id=holder_id):
+            if (
+                str(row.get("privilege") or "") == privilege
+                and str(row.get("scope") or "") == scope
+            ):
+                return row
+        return None
+
+    def project_applicable_authorities(
+        self, turn: int, dossier: Mapping[str, object],
+    ) -> List[Dict[str, object]]:
+        """#611 unique applicability projection over durable authority rows.
+
+        Actors = character executor ∪ roster 主办/协办 (never payload assignee).
+        Domains = only the typed canonical key target_kind:target_id.
+        """
+        actors: set[str] = set()
+        executor_id = str(dossier.get("executor_id") or "").strip()
+        executor_kind = str(dossier.get("executor_kind") or "").strip()
+        if executor_id and executor_kind in {"", "character"}:
+            actors.add(executor_id)
+        roster = dossier.get("participant_roster") or []
+        if isinstance(roster, str):
+            try:
+                roster = json.loads(roster)
+            except (TypeError, ValueError):
+                roster = []
+        if isinstance(roster, list):
+            for entry in roster:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                    continue
+                character_id = str(entry.get("character_id") or "").strip()
+                if character_id:
+                    actors.add(character_id)
+        target_kind = str(dossier.get("target_kind") or "").strip()
+        target_id = str(dossier.get("target_id") or "").strip()
+        domains: set[str] = set()
+        if target_kind and target_id:
+            domains.add(f"{target_kind}:{target_id}")
+        if not actors or not domains:
+            return []
+        projected: List[Dict[str, object]] = []
+        for holder_id in sorted(actors):
+            for row in self.list_active_authorities(int(turn), holder_id=holder_id):
+                if str(row.get("scope") or "") not in domains:
+                    continue
+                projected.append({
+                    "id": int(row["id"]),
+                    "holder_id": str(row["holder_id"]),
+                    "privilege": str(row["privilege"]),
+                    "scope": str(row["scope"]),
+                    "effective_turn": int(row["effective_turn"]),
+                    **(
+                        {"expires_turn": int(row["expires_turn"])}
+                        if row.get("expires_turn") is not None else {}
+                    ),
+                })
+        projected.sort(key=lambda item: int(item["id"]))
+        return projected
 
     def grant_skill(
         self, state: GameState, character_name: str, skill_id: str,
