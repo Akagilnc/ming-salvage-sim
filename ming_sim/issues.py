@@ -80,8 +80,10 @@ _AUTHORITY_GRANT_OPS = frozenset({"授予", "grant"})
 _AUTHORITY_REVOKE_OPS = frozenset({"收回", "revoke"})
 
 
-def _authority_change_dossier_gate(db: GameDB, item: Dict[str, object]) -> int:
-    """#611 §2: every authority_changes item needs one effect-eligible dossier_id."""
+def _apply_authority_change_item(
+    db: GameDB, state: GameState, item: Dict[str, object],
+) -> Dict[str, object]:
+    """Apply one production-slot authority grant/revoke under the #611 contract."""
     if "dossier_id" not in item or item.get("dossier_id") in (None, ""):
         raise ValueError("missing_dossier_source")
     try:
@@ -92,17 +94,9 @@ def _authority_change_dossier_gate(db: GameDB, item: Dict[str, object]) -> int:
         raise ValueError("missing_dossier_source")
     if not db.dossier_authorizes_effects(dossier_id):
         raise ValueError("dossier_not_effect_eligible")
-    return dossier_id
-
-
-def _apply_authority_change_item(
-    db: GameDB, state: GameState, item: Dict[str, object],
-) -> Dict[str, object]:
-    """Apply one production-slot authority grant/revoke under the #611 contract."""
     op = str(item.get("动作") or item.get("op") or "").strip()
     if op not in _AUTHORITY_GRANT_OPS | _AUTHORITY_REVOKE_OPS:
         raise ValueError("授权变更动作只收授予/收回")
-    dossier_id = _authority_change_dossier_gate(db, item)
 
     if op in _AUTHORITY_GRANT_OPS:
         holder_id = str(item.get("holder_id") or "").strip()
