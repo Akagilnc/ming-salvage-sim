@@ -110,8 +110,17 @@ def _apply_authority_change_item(
         scope = str(item.get("scope") or item.get("事域") or "").strip()
         if not holder_id or not privilege or not scope:
             raise ValueError("授予项必须含 holder_id/privilege/scope")
-        if not db.canonical_authority_scope(scope):
+        if privilege not in {
+            "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
+        }:
+            raise ValueError("授权权项不在首批枚举")
+        kind, separator, target_id = scope.partition(":")
+        if not separator or not kind or not target_id:
             raise ValueError("invalid_authority_scope")
+        if not db.conn.execute(
+            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
+        ).fetchone():
+            raise ValueError("授权对象不在人物档")
         origin = db.find_authority_by_origin(
             dossier_id, holder_id=holder_id, privilege=privilege, scope=scope,
         )
@@ -137,17 +146,23 @@ def _apply_authority_change_item(
             None if expires_raw in (None, "")
             else _parse_sqlite_id(expires_raw)
         )
+        if expires_turn is not None and expires_turn < effective_turn:
+            raise ValueError("授权失效回合不得早于生效回合")
         existing = db.find_active_authority(
             state.turn, holder_id=holder_id, privilege=privilege, scope=scope,
         )
         if existing is not None:
             raise ValueError("duplicate_active_authority")
-        authority_id = db._insert_authority_record(
-            state, holder_id, privilege, scope,
-            effective_turn=effective_turn,
-            expires_turn=expires_turn,
-            dossier_id=dossier_id,
+        cursor = db.conn.execute(
+            "INSERT INTO authority_records "
+            "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                holder_id, privilege, scope, effective_turn, expires_turn,
+                dossier_id,
+            ),
         )
+        authority_id = int(cursor.lastrowid)
         return {
             "动作": "授予",
             "authority_id": authority_id,
@@ -173,7 +188,11 @@ def _apply_authority_change_item(
             "dossier_id": dossier_id,
             "reason": "already_revoked",
         }
-    if not db._mark_authority_revoked(authority_id, state.turn):
+    revoked = db.conn.execute(
+        "UPDATE authority_records SET revoked=1,revoked_turn=? "
+        "WHERE id=? AND revoked=0", (int(state.turn), authority_id),
+    )
+    if revoked.rowcount <= 0:
         raise ValueError("unknown_authority_id")
     privilege = str(record.get("privilege") or "")
     scope = str(record.get("scope") or "")

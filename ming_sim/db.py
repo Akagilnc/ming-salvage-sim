@@ -12595,45 +12595,6 @@ class GameDB:
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
 
-    _AUTHORITY_PRIVILEGES = frozenset({
-        "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
-    })
-
-    @staticmethod
-    def canonical_authority_scope(scope: str) -> bool:
-        """Domain scope must be the typed key target_kind:target_id (#611 §4/§5)."""
-        kind, sep, rest = str(scope or "").partition(":")
-        return bool(sep) and bool(kind) and bool(rest)
-
-    def _insert_authority_record(
-        self, state: GameState, holder_id: str, privilege: str, scope: str,
-        *, effective_turn: Optional[int] = None,
-        expires_turn: Optional[int] = None, dossier_id: Optional[int] = None,
-    ) -> int:
-        """Policy-free persistence primitive; authority_changes is its sole owner."""
-        holder_id, privilege, scope = map(str.strip, (holder_id, privilege, scope))
-        if privilege not in self._AUTHORITY_PRIVILEGES:
-            raise ValueError("授权权项不在首批枚举")
-        if not scope:
-            raise ValueError("授权事域不能为空")
-        if not self.canonical_authority_scope(scope):
-            raise ValueError("invalid_authority_scope")
-        if not self.conn.execute(
-            "SELECT 1 FROM characters WHERE name=?", (holder_id,)
-        ).fetchone():
-            raise ValueError("授权对象不在人物档")
-        starts = int(state.turn if effective_turn is None else effective_turn)
-        ends = None if expires_turn is None else int(expires_turn)
-        if ends is not None and ends < starts:
-            raise ValueError("授权失效回合不得早于生效回合")
-        cursor = self.conn.execute(
-            "INSERT INTO authority_records "
-            "(holder_id,privilege,scope,effective_turn,expires_turn,dossier_id) "
-            "VALUES (?,?,?,?,?,?)",
-            (holder_id, privilege, scope, starts, ends, dossier_id),
-        )
-        return int(cursor.lastrowid)
-
     def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
         row = self.conn.execute(
             "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
@@ -12745,16 +12706,6 @@ class GameDB:
                 })
         projected.sort(key=lambda item: int(item["id"]))
         return projected
-
-    def _mark_authority_revoked(
-        self, authority_id: int, revoked_turn: int,
-    ) -> bool:
-        """Policy-free persistence primitive; authority_changes owns all effects."""
-        cursor = self.conn.execute(
-            "UPDATE authority_records SET revoked=1,revoked_turn=? "
-            "WHERE id=? AND revoked=0", (int(revoked_turn), int(authority_id)),
-        )
-        return cursor.rowcount > 0
 
     def grant_skill(
         self, state: GameState, character_name: str, skill_id: str,
