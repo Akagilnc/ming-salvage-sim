@@ -1,14 +1,3 @@
-from ming_sim.strict_types import REJECTION_SNAPSHOT_KEYS
-
-
-_REJECTION_SNAPSHOT_DEFAULTS = {
-    "imperial_authority_band": "偏弱",
-    "appointment_tenure": "",
-    "authorization_ids": [],
-    "endorsement_entry_ids": [],
-}
-
-
 def rejected_verdict(
     dossier_id,
     authority_band="偏弱",
@@ -23,11 +12,6 @@ def rejected_verdict(
     Preserves per-suite differences via kwargs; keeps the current typed
     direction/intensity reaction contract (not the retired severity shape).
     """
-    snapshot_values = {
-        **_REJECTION_SNAPSHOT_DEFAULTS,
-        "imperial_authority_band": authority_band,
-    }
-    assert REJECTION_SNAPSHOT_KEYS <= snapshot_values.keys()
     verdict = {
         "dossier_id": dossier_id,
         "decision": "rejected",
@@ -36,7 +20,10 @@ def rejected_verdict(
         "gatekeeper_id": gatekeeper_id,
         "reason": reason,
         "criteria_snapshot": {
-            key: snapshot_values[key] for key in REJECTION_SNAPSHOT_KEYS
+            "imperial_authority_band": authority_band,
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
         },
         "affected_parties": [
             {
