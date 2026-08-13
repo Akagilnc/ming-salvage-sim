@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ming_sim.applier import atomic
 from ming_sim.appointment_tenure import appointment_tenure_from
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
 from ming_sim.constants import (
     TURN_UNIT, REGION_SCORE_FIELDS, REGION_QUANTITY_FIELDS, REGION_TEXT_FIELDS,
     ARMY_SCORE_FIELDS, ARMY_QUANTITY_FIELDS, ARMY_TEXT_FIELDS, FISCAL_SCORE_FIELDS,
@@ -104,9 +105,7 @@ def _apply_authority_change_item(
         scope = str(item.get("scope") or item.get("事域") or "").strip()
         if not holder_id or not privilege or not scope:
             raise ValueError("授予项必须含 holder_id/privilege/scope")
-        if privilege not in {
-            "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
-        }:
+        if privilege not in AUTHORITY_PRIVILEGE_SET:
             raise ValueError("授权权项不在首批枚举")
         kind, separator, target_id = scope.partition(":")
         if not separator or not kind or not target_id:

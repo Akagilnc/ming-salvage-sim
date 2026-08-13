@@ -167,7 +167,7 @@ def build_promulgation_judge_context(
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
                 "authorization_ids": authorization_ids,
-                "endorsement_entry_ids": sorted(set(map(str, endorsement_ids))),
+                "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
         })
     gatekeepers = [
