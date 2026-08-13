@@ -7863,7 +7863,13 @@ def apply_score_extraction(
                 "delta": change["delta"],
                 "reason": change["reason"],
             })
-    if commit_now and (applied_fiscal or deferred_loss_pair_changes):
+    successful_authority_changes = [
+        item for item in authority_change_results
+        if isinstance(item, dict) and item.get("rejected") is not True
+    ]
+    if commit_now and (
+        applied_fiscal or deferred_loss_pair_changes or successful_authority_changes
+    ):
         db.conn.commit()
 
     # ADR0009 legacy aliases are canonicalized above and written only through

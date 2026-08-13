@@ -199,6 +199,34 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     assert second["imperial_authority_band"] == "强盛"
 
 
+def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET target_kind='', target_id='' WHERE id=?",
+        (dossier_id,),
+    )
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    held = db.get_decree_dossier(dossier_id)
+    assert held["target_kind"] == "issue"
+    assert held["target_id"] == "清丈田亩"
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    grant = db.get_decree_dossier(int(authority["dossier_id"]))
+    assert authority["scope"] == "issue:清丈田亩"
+    assert grant["target_kind"] == "issue"
+    assert grant["target_id"] == "清丈田亩"
+    assert second["dossiers"][0]["held_authorities"][0]["scope"] == "issue:清丈田亩"
+
+
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
     from ming_sim.issues import apply_score_extraction
