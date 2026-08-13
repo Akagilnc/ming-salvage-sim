@@ -372,33 +372,73 @@ def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(ga
     assert [row for row in an.list_ledger(db, night_id) if row.get("source_chat_turn_id")] == []
 
 
-def test_close_extraction_failure_retry_does_not_skip_new_consented_decree(game):
+def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
+    """生产链追踪：尾随失败→收夜同飞不重抽→关档失败恢复→新增应允→显式重试。"""
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    write_gate = threading.Lock()
+    extraction_started = threading.Event()
+    release_extraction = threading.Event()
+    transfer_finished = threading.Event()
+    calls = []
+
+    class _BlockingBoom:
+        def run(self, materials):
+            calls.append(json.loads(materials))
+            extraction_started.set()
+            assert release_extraction.wait(5)
+            raise RuntimeError("extract boom")
+
+    trailer_results = []
+    trailer = threading.Thread(target=lambda: trailer_results.append(
+        trail_extraction_after_reply(
+            db=db, minister_name=minister, minister_reply="臣愿作保。",
+            chat_turn_id=chat_turn_id, llm_config=object(), write_gate=write_gate,
+            extractor_agent=_BlockingBoom(),
+        )
+    ))
+    trailer.start()
+    assert extraction_started.wait(5)
+
     candidate_id = db.stage_directive_candidate(
         state.turn, minister,
         payload={"text": "清核辽饷", "dossier_action_type": "policy",
                  "target_kind": "issue", "target_id": "retryable", "actor": minister},
     )
     db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    close_errors = []
 
-    class _Boom:
-        def run(self, _materials):
-            raise RuntimeError("extract boom")
+    def _close_while_trailer_owns_turn():
+        try:
+            an.close_night(
+                db, state, night_id=night_id, content=content, llm_config=object(),
+                write_gate=write_gate, extractor_agent=_BlockingBoom(),
+                on_step=lambda step, _night: (
+                    transfer_finished.set()
+                    if step == an.CLOSE_STEP_TRANSFER_CANDIDATES else None
+                ),
+            )
+        except Exception as exc:
+            close_errors.append(exc)
 
-    with pytest.raises(an.AudienceNightError) as exc:
-        an.close_night(
-            db, state, night_id=night_id, content=content, llm_config=object(),
-            write_gate=threading.Lock(), extractor_agent=_Boom(),
-        )
-    assert exc.value.code == "pending_extraction"
+    closer = threading.Thread(target=_close_while_trailer_owns_turn)
+    closer.start()
+    assert transfer_finished.wait(5)
+    release_extraction.set()
+    trailer.join(5)
+    closer.join(5)
+    assert not trailer.is_alive() and not closer.is_alive()
+    assert trailer_results[0]["status"] == "pending"
+    assert len(calls) == 1  # contending close waited for this attempt; it did not call LLM
+    assert len(close_errors) == 1
+    assert isinstance(close_errors[0], an.AudienceNightError)
+    assert close_errors[0].code == "pending_extraction"
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
     assert failed["close_commit_cursor"] == an.CLOSE_STEP_COMMIT_OFFICE
     assert db.get_story_extract_status(chat_turn_id) == "pending"
     assert db.list_night_approved_pending(night_id, kind="directive") == []
-    assert len(db.list_decree_dossiers(status="proposed")) == 1
 
     appended_id = db.stage_directive_candidate(
         state.turn, minister,
@@ -409,7 +449,7 @@ def test_close_extraction_failure_retry_does_not_skip_new_consented_decree(game)
 
     result = an.close_night(
         db, state, night_id=night_id, content=content, llm_config=object(),
-        write_gate=threading.Lock(), extractor_agent=_Agent({"facts": []}),
+        write_gate=write_gate, extractor_agent=_Agent({"facts": []}),
     )
     assert result["closed"] is True
     assert db.get_story_extract_status(chat_turn_id) == "done"
