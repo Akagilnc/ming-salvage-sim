@@ -136,7 +136,7 @@ character_offices (
 )
 ```
 
-`character_offices` 设计为"最新任职备档"而非完整履历，每次调任 UPSERT 覆盖。
+`character_offices` 设计为"最新任职备档"而非完整履历，每次调任 UPSERT 覆盖。该表同时是起复任命品级检测的只读真源：罢黜、致仕、下狱、流放、赋闲及被顶替后听用候铨者，均读取此处最近任职，不得回落到「待铨」最低带。
 
 ---
 
@@ -148,6 +148,9 @@ character_offices (
 | LLM 已判史实合理性，代码只查重 | `session.py:130` |
 | 新建大臣默认 `office_type="待铨"` | `session.py:218` |
 | 调任不改 status，仍 active | `db.py:1075` |
+| 任命案卷成案时按当前职或 `character_offices` 最近任职写入确定性 `break_rank` 标 | `db.py:create_decree_dossier` / `office_rank.py` |
+| 罢居开局清洗后 `character_offices.office_title` 存最近实职（去「前/罢居」污染），供起复品级带读取 | `db.py:_migrate_legacy_office_pollution` / `office_rank.canonical_office_title` |
+| faction leverage 品级 multiplier 与破格查表共用 `content/offices.json` `rank_rules`，无第二套 rank parser | `office_rank.office_leverage_multiplier` ← `db._office_rank_multiplier` |
 | 去职必清 office | `db.py:1047–1051` |
 | court_role 全局唯一（新写入前清旧） | `issues.py:903–911` |
 
