@@ -456,3 +456,72 @@ def test_breach_charges_authority_ministers_and_related_factions_once(game):
     assert not {"黄道周", "王承恩", "曹化淳"} & {e["target"] for e in edges}
     faction_targets = {e["target_id"] for e in _cost_events(db, dossier_id) if e["target_kind"] == "faction"}
     assert faction_targets == {"东林", "皇党", "西学"}
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_status", "expect_override_authority"),
+    [
+        ("force_promulgated", "executing", True),
+        ("withdrawn", "closed", False),
+        ("hold", "proposed", False),
+    ],
+)
+def test_chosen_rescript_actions_settle_via_promulgation_path(
+    game, monkeypatch, decision, expected_status, expect_override_authority,
+):
+    """Player disposition rows settle through apply_dossier_promulgation only.
+
+    Midzhi rows lack affected_parties; Judge-only apply_dossier_verdicts must
+    never see them. Costs/status come from the real chosen-actions settle path.
+    """
+    from ming_sim.decree import _chosen_rescript_actions, settle_with_delta
+
+    db, state, content = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    before_auth = state.metrics["皇威"]
+    before_faction = _sat(db, "factions", "东林")
+    db.apply_dossier_verdicts(state, [_verdict(dossier_id)])
+    after_reject_faction = _sat(db, "factions", "东林")
+    assert after_reject_faction == max(0, before_faction - 4)
+    assert state.metrics["皇威"] == before_auth
+    assert {x["cost_kind"] for x in _cost_events(db, dossier_id)} == {"satisfaction"}
+    settle_turn = state.turn
+
+    actions = _chosen_rescript_actions([{
+        "event_id": f"dossier:{dossier_id}",
+        "choice": {"dossier_id": dossier_id, "dossier_decision": decision},
+    }])
+    assert actions == [{"dossier_id": dossier_id, "decision": decision}]
+
+    def _forbid_verdicts(*_a, **_k):
+        raise AssertionError(
+            "player disposition rows must not enter apply_dossier_verdicts"
+        )
+
+    monkeypatch.setattr(db, "apply_dossier_verdicts", _forbid_verdicts)
+    settle_with_delta(
+        state, db, {}, before_turn=settle_turn, content=content,
+        dossier_rescript_actions=actions,
+    )
+
+    row = db.get_decree_dossier(dossier_id)
+    assert row["status"] == expected_status
+    # Midzhi rejection already charged parties; force only adds override authority.
+    assert _sat(db, "factions", "东林") == after_reject_faction
+    authority_events = [
+        x for x in _cost_events(db, dossier_id)
+        if x["cost_kind"] == "authority"
+    ]
+    if expect_override_authority:
+        assert {(x["cost_identity"], x["delta"]) for x in authority_events} == {
+            ("override", -5),
+        }
+    else:
+        assert authority_events == []
+    if decision == "hold":
+        assert row["rescript_pending"] is False
+        assert int(row["held_turn"] or 0) == settle_turn
+    if decision == "withdrawn":
+        assert row["promulgation_decision"] == "rejected"
+    if decision == "force_promulgated":
+        assert row["promulgation_decision"] == "rejected"

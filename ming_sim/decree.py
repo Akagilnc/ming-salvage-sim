@@ -1763,11 +1763,19 @@ def settle_with_delta(
                 db.apply_dossier_verdicts(
                     state, dossier_verdicts, content=content, registry=registry,
                 )
+            # Player disposition rows are not Judge verdicts: no affected_parties,
+            # no midzhi validator, no apply_dossier_verdicts. Route each chosen
+            # rescript action through the existing promulgation seam under this
+            # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
-                db.apply_dossier_verdicts(
-                    state, dossier_rescript_actions,
-                    content=content, registry=registry,
-                )
+                for action in dossier_rescript_actions:
+                    db.apply_dossier_promulgation(
+                        state,
+                        int(action["dossier_id"]),
+                        str(action["decision"]),
+                        content=content,
+                        registry=registry,
+                    )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
