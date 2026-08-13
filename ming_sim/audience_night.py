@@ -991,11 +991,38 @@ def close_night(
             content=content, registry=registry,
             directive_status="draft",
         )
+        # Draft dossiers / turn_directives are durable close-night prerequisites only.
+        # Public 明发 publication waits until same-night extraction drain succeeds.
+        _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+
+    # Close-night may first create durable draft-dossier prerequisites, then drain
+    # this night's one extraction against those real ids (ADR 0036 / 0070). Only a
+    # successful drain may publish 明发 and finalize. Extraction failure reopens at a
+    # retryable cursor and keeps the prerequisites; they are not promulgated/final
+    # effects and must not appear as public 明发 / TAG_MINGFA ledger projection.
+    try:
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
+            extractor_agent=extractor_agent,
+        )
+    except Exception:
+        _set_night_fields(
+            db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+            # Re-run the directive transfer on retry so newly consented actions join
+            # the same night. Already committed rows stay idempotent; no second
+            # extraction is introduced for a still-in-flight turn.
+            close_commit_cursor=CLOSE_STEP_COMMIT_OFFICE,
+        )
+        raise
+
+    if cursor < CLOSE_STEP_FINALIZE:
         # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
-        # 机器辨识经 pending_actions↔turn_directives 关联（list_night_promulgated_directives），
+        # 仅在同夜抽取 drain 成功之后（上块 try 已过）。机器辨识经
+        # pending_actions↔turn_directives 关联（list_night_promulgated_directives），
         # 账本正文只作叙事呈现、不被解析。密令私密，不入明发。
         # 幂等按 directive_id 逐条（#502 L6）：半写后续跑只补缺的那几道、不漏不重——
         # 不用「整夜已有任意明发标」一门（那会在半写后跳过剩余道，公开账残缺）。
+        # 无独立 pending-publication 游标/机制：挂在 finalize 前、靠 明发#id 账标幂等。
         if hasattr(db, "list_night_promulgated_directives"):
             already_ids = {
                 str(t)[len(_MINGFA_ID_PREFIX):]
@@ -1014,28 +1041,6 @@ def close_night(
                     tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
                     check_dead=False,
                 )
-        _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
-
-    # Close-night may first create durable draft-dossier prerequisites, then drain
-    # this night's one extraction against those real ids (ADR 0036 / 0070). Only a
-    # successful drain may finalize. Extraction failure reopens at a retryable
-    # cursor and keeps the prerequisites; they are not promulgated/final effects.
-    try:
-        _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-            extractor_agent=extractor_agent,
-        )
-    except Exception:
-        _set_night_fields(
-            db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-            # Re-run the directive transfer on retry so newly consented actions join
-            # the same night. Already committed rows stay idempotent; no second
-            # extraction is introduced for a still-in-flight turn.
-            close_commit_cursor=CLOSE_STEP_COMMIT_OFFICE,
-        )
-        raise
-
-    if cursor < CLOSE_STEP_FINALIZE:
         tags = [TAG_CLOSE_NIGHT]
         if auto:
             tags.append(TAG_AUTO_CLOSE)
