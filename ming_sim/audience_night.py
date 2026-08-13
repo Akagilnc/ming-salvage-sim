@@ -34,12 +34,16 @@ def mingfa_publication_tag(directive_id: int | str) -> str:
 
 
 def exact_mingfa_publication_directive_id(tag: object) -> Optional[int]:
-    """Exact 明发#<positive-int> only; rejects malformed suffix / non-digit residue."""
+    """Exact 明发#<positive-int> only; rejects malformed suffix / non-decimal residue.
+
+    Use str.isdecimal (not isdigit): superscript/compatibility digits like '²' are
+    isdigit-true but int() rejects them, and must never alias as publication facts.
+    """
     text = str(tag or "")
     if not text.startswith(_MINGFA_ID_PREFIX):
         return None
     rest = text[len(_MINGFA_ID_PREFIX):]
-    if not rest.isdigit():
+    if not rest.isdecimal():
         return None
     directive_id = int(rest)
     # Reject non-canonical forms (leading zeros, etc.) so CAST/prefix loosness cannot alias.
@@ -121,8 +125,11 @@ DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
-_CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office", "consort"})
+# Pre-drain: only draft-dossier prerequisites (endorsement targets). Final gameplay
+# effects such as consort cultivation run only after extraction drain succeeds.
+_CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
+_CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
 # ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）───────────────────────
 # 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**这可枚举的两项，其余结构化
@@ -1046,14 +1053,16 @@ def close_night(
             directive_status="draft",
         )
         # Draft dossiers / turn_directives are durable close-night prerequisites only.
-        # Public 明发 publication waits until same-night extraction drain succeeds.
+        # Public 明发 publication and final effects wait until extraction drain succeeds.
         _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
 
     # Close-night may first create durable draft-dossier prerequisites, then drain
     # this night's one extraction against those real ids (ADR 0036 / 0070). Only a
-    # successful drain may publish 明发 and finalize. Extraction failure reopens at a
-    # retryable cursor and keeps the prerequisites; they are not promulgated/final
-    # effects and must not appear as public 明发 / TAG_MINGFA ledger projection.
+    # successful drain may apply final effects, publish 明发, and finalize.
+    # Extraction failure reopens at cursor 0 so retry re-scans office+directive
+    # prerequisites (new consents join; already committed rows stay idempotent).
+    # Prerequisites are not promulgated/final effects and must not appear as public
+    # 明发 / TAG_MINGFA ledger projection.
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=write_gate,
@@ -1062,14 +1071,18 @@ def close_night(
     except Exception:
         _set_night_fields(
             db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
-            # Re-run the directive transfer on retry so newly consented actions join
-            # the same night. Already committed rows stay idempotent; no second
-            # extraction is introduced for a still-in-flight turn.
-            close_commit_cursor=CLOSE_STEP_COMMIT_OFFICE,
+            close_commit_cursor=0,
         )
         raise
 
     if cursor < CLOSE_STEP_FINALIZE:
+        # Final gameplay effects (e.g. consort) only after successful drain — never
+        # before, so a failed/retryable close cannot leave terminal effects applied.
+        _commit_night_approved(
+            db, state, int(night_id),
+            kinds=_CLOSE_COMMIT_KINDS_FINAL,
+            content=content, registry=registry,
+        )
         # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
         # 仅在同夜抽取 drain 成功之后（上块 try 已过）。
         # 出版*候选*取本夜已 committed 的 directive（收夜落案前提）；公开*辨识*只认

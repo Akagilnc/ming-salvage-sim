@@ -2343,6 +2343,9 @@ class GameSession:
             self.state, self.db,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
+            llm_config=getattr(self, "llm_config", None),
+            # CLI is single-writer; mirror resolve_turn's non-recursive gate seam.
+            write_gate=nullcontext(),
         )
         if not advanced:
             return self.resolve_turn()

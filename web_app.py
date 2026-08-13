@@ -3652,12 +3652,17 @@ def api_advance_without_edict() -> Dict[str, Any]:
             if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
+                # Same close-night drain deps as resolve_turn: llm_config + already-held
+                # write_gate (nullcontext). Without these, deferred same-night extraction
+                # fail-closes 退朝 and cannot bind endorsements to draft dossiers.
                 advanced = advance_without_edict(
                     game.state,
                     game.db,
                     content=game.content,
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
+                    llm_config=getattr(game.session, "llm_config", None),
+                    write_gate=contextlib.nullcontext(),
                 )
                 if not advanced:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)

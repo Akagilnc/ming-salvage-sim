@@ -248,13 +248,19 @@ _turn_ownership_guard = threading.Lock()
 _turn_ownership: Dict[tuple[int, int], list[Any]] = {}
 
 
-def _claim_extraction_owner(db: Any, chat_turn_id: int) -> tuple[threading.Lock, bool]:
+def _claim_extraction_owner(
+    db: Any, chat_turn_id: int,
+) -> tuple[Optional[threading.Lock], bool]:
     """Process-local single-flight for one persisted audience turn.
 
-    The durable done watermark prevents repeat settlement. This lock also keeps a
-    racing trailer and close-night drain on the same in-flight attempt. Waiters
-    observe that watermark; they do not store a Future or result. The slot is
-    reclaimed when the last waiter leaves.
+    The durable done watermark prevents repeat settlement. Only the caller that
+    creates the slot owns a new attempt. Contending callers must not block on the
+    in-flight owner (close may already hold the runtime write_gate the owner needs
+    to settle). They return immediately so the path stays finite and retryable.
+    No Future/result store. The slot is reclaimed when the last holder leaves.
+
+    Returns (lock, owned). owned=True means this caller runs extraction. lock is
+    None on contention (caller must not release).
     """
     key = (id(db), int(chat_turn_id))
     with _turn_ownership_guard:
@@ -265,8 +271,19 @@ def _claim_extraction_owner(db: Any, chat_turn_id: int) -> tuple[threading.Lock,
             _turn_ownership[key] = slot
         slot[1] += 1
         owner = slot[0]
-    owner.acquire()
-    return owner, created
+    if created:
+        owner.acquire()
+        return owner, True
+    # Contender: never block waiting for the in-flight owner.
+    if owner.acquire(blocking=False):
+        return owner, False
+    with _turn_ownership_guard:
+        cur = _turn_ownership.get(key)
+        if cur is not None and cur[0] is owner:
+            cur[1] -= 1
+            if cur[1] <= 0:
+                _turn_ownership.pop(key, None)
+    return None, False
 
 
 def _release_extraction_owner(db: Any, chat_turn_id: int, owner: threading.Lock) -> None:
@@ -279,6 +296,24 @@ def _release_extraction_owner(db: Any, chat_turn_id: int, owner: threading.Lock)
         slot[1] -= 1
         if slot[1] <= 0:
             _turn_ownership.pop(key, None)
+
+
+def should_defer_extraction_for_close_owned_dossiers(db: Any, night_id: int) -> bool:
+    """Shared trailer/catch-up defer predicate (ADR 0070 / 0036).
+
+    Night-approved office/directive rows become draft dossiers only at close-night.
+    Until then, leave extract_status untouched so close can drain once against real
+    ids. After close commits those rows, the pending lists are empty and this is
+    false — drain and ordinary catch-up proceed without a second predicate.
+    """
+    if not hasattr(db, "list_night_approved_pending"):
+        return False
+    nid = int(night_id)
+    if db.list_night_approved_pending(nid, kind="directive"):
+        return True
+    if db.list_night_approved_pending(nid, kind="office"):
+        return True
+    return False
 
 
 def run_extraction_for_turn(
@@ -309,11 +344,13 @@ def run_extraction_for_turn(
     if not cid:
         return {"status": "skipped", "chat_turn_id": cid}
 
-    # The trailer and close-night drain can race across the approved-directive handoff.
-    # A caller which saw contention belongs to that in-flight attempt: wait for it and
-    # return its durable watermark without starting a fresh LLM call. Only a caller
-    # finding the lock free may own a new attempt (including an explicit pending retry).
+    # Trailer and close-night drain can race across the approved-directive handoff.
+    # Only the slot creator owns a new attempt. Contenders return finite pending
+    # immediately (no blocking wait) so a close path that already holds the runtime
+    # write_gate cannot deadlock with an owner waiting on that same gate.
     owner, owned = _claim_extraction_owner(db, cid)
+    if owner is None:
+        return {"status": "pending", "chat_turn_id": cid, "contended": True}
     try:
         if not owned:
             status = db.get_story_extract_status(cid)
@@ -450,10 +487,9 @@ def trail_extraction_after_reply(
         night_id = int(row["night_id"] or 0)
         if night_id <= 0:
             return None
-        # ADR 0070 references only existing dossiers. If this turn has approved a
-        # directive which close-night will materialize, leave its extraction
-        # watermark untouched; close_night drains it once after dossier creation.
-        if db.list_night_approved_pending(night_id, kind="directive"):
+        # ADR 0070 references only existing dossiers. Shared defer predicate with
+        # catch-up: leave watermark untouched until close materializes dossiers.
+        if should_defer_extraction_for_close_owned_dossiers(db, night_id):
             return {"status": "deferred", "chat_turn_id": int(chat_turn_id)}
         return run_extraction_for_turn(
             db=db,
@@ -496,13 +532,23 @@ def catch_up_pending_extractions(
     # Source turns are semantically ordered: later turns consume already-settled
     # presence/ledger. Cross-turn catch-up therefore stays serial even on a
     # monthly-extractor-safe backend; write-gate serialization is not enough.
+    deferred = 0
     for row in rows:
+        row_night_id = int(row.get("night_id") or 0)
+        # Same defer predicate as trailer: close-owned turns stay unextracted until
+        # close_night creates draft dossiers and drains once. Startup/CLI catch-up
+        # must not mark them done early.
+        if row_night_id > 0 and should_defer_extraction_for_close_owned_dossiers(
+            db, row_night_id,
+        ):
+            deferred += 1
+            continue
         result = run_extraction_for_turn(
             db=db,
             minister_name=str(row.get("minister_name") or ""),
             reply=str(row.get("reply") or ""),
             chat_turn_id=int(row.get("chat_turn_id") or 0),
-            night_id=int(row.get("night_id") or 0),
+            night_id=row_night_id,
             source_night_seq=int(row.get("night_seq") or 0),
             llm_config=llm_config,
             write_gate=write_gate,
@@ -513,7 +559,12 @@ def catch_up_pending_extractions(
             extracted += 1
         elif status == "pending":
             pending += 1
-    return {"extracted": extracted, "pending": pending, "scanned": len(rows)}
+    return {
+        "extracted": extracted,
+        "pending": pending,
+        "deferred": deferred,
+        "scanned": len(rows),
+    }
 
 
 def drain_pending_before_close(

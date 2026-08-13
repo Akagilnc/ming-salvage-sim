@@ -1,17 +1,20 @@
 import json
 import threading
+from contextlib import nullcontext
 
 import pytest
 
 from ming_sim import audience_night as an
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
+    catch_up_pending_extractions,
     parse_extraction_facts,
     run_extraction_for_turn,
+    should_defer_extraction_for_close_owned_dossiers,
     trail_extraction_after_reply,
 )
 from ming_sim.db import GameDB
-from ming_sim.decree import build_promulgation_judge_context
+from ming_sim.decree import advance_without_edict, build_promulgation_judge_context
 
 
 def _minister(db):
@@ -373,11 +376,17 @@ def test_unrelated_malformed_fact_remains_retryable_and_writes_error_artifact(ga
 
 
 def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
-    """生产链追踪：尾随失败→收夜同飞不重抽→关档失败恢复→新增应允→显式重试。"""
+    """生产链追踪：尾随占用→收夜争用不阻塞→有限失败可重试→新增应允→显式重试。
+
+    close 不得阻塞等 per-turn owner（持 runtime gate 时会死锁）；争用有限返回 pending_extraction。
+    """
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
-    write_gate = threading.Lock()
+    # Outer runtime gate already held (Web resolve_turn / no-edict seam).
+    runtime_gate = threading.Lock()
+    runtime_gate.acquire()
+    write_gate = nullcontext()
     extraction_started = threading.Event()
     release_extraction = threading.Event()
     transfer_finished = threading.Event()
@@ -391,13 +400,18 @@ def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
             raise RuntimeError("extract boom")
 
     trailer_results = []
-    trailer = threading.Thread(target=lambda: trailer_results.append(
-        trail_extraction_after_reply(
-            db=db, minister_name=minister, minister_reply="臣愿作保。",
-            chat_turn_id=chat_turn_id, llm_config=object(), write_gate=write_gate,
-            extractor_agent=_BlockingBoom(),
+
+    def _trailer():
+        # Trailer settles under the real runtime gate — the deadlock partner.
+        trailer_results.append(
+            trail_extraction_after_reply(
+                db=db, minister_name=minister, minister_reply="臣愿作保。",
+                chat_turn_id=chat_turn_id, llm_config=object(), write_gate=runtime_gate,
+                extractor_agent=_BlockingBoom(),
+            )
         )
-    ))
+
+    trailer = threading.Thread(target=_trailer)
     trailer.start()
     assert extraction_started.wait(5)
 
@@ -425,18 +439,22 @@ def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
     closer = threading.Thread(target=_close_while_trailer_owns_turn)
     closer.start()
     assert transfer_finished.wait(5)
-    release_extraction.set()
-    trailer.join(5)
-    closer.join(5)
-    assert not trailer.is_alive() and not closer.is_alive()
-    assert trailer_results[0]["status"] == "pending"
-    assert len(calls) == 1  # contending close waited for this attempt; it did not call LLM
+    closer.join(5)  # must finish without waiting for trailer (finite contention)
+    assert not closer.is_alive()
     assert len(close_errors) == 1
     assert isinstance(close_errors[0], an.AudienceNightError)
     assert close_errors[0].code == "pending_extraction"
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
-    assert failed["close_commit_cursor"] == an.CLOSE_STEP_COMMIT_OFFICE
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    assert len(calls) == 1  # contending close did not start a second LLM call
+
+    # Release runtime gate before trailer settle; holding it across join would deadlock.
+    runtime_gate.release()
+    release_extraction.set()
+    trailer.join(5)
+    assert not trailer.is_alive()
+    assert trailer_results[0]["status"] == "pending"
     assert db.get_story_extract_status(chat_turn_id) == "pending"
     assert db.list_night_approved_pending(night_id, kind="directive") == []
 
@@ -449,7 +467,7 @@ def test_contended_trailer_failure_close_retry_keeps_new_consent(game):
 
     result = an.close_night(
         db, state, night_id=night_id, content=content, llm_config=object(),
-        write_gate=write_gate, extractor_agent=_Agent({"facts": []}),
+        write_gate=threading.Lock(), extractor_agent=_Agent({"facts": []}),
     )
     assert result["closed"] is True
     assert db.get_story_extract_status(chat_turn_id) == "done"
@@ -516,7 +534,7 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     assert ei.value.code == "pending_extraction"
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
-    assert failed["close_commit_cursor"] == an.CLOSE_STEP_COMMIT_OFFICE
+    assert int(failed["close_commit_cursor"] or 0) == 0
     dossiers = db.list_decree_dossiers(status="proposed")
     assert [row["decree_text"] for row in dossiers] == ["清核辽饷"]
     first_id = int(dossiers[0]["id"])
@@ -774,3 +792,249 @@ def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
                 },
             }],
         })
+
+
+def test_exact_mingfa_parser_rejects_superscript_digits_on_public_readers(game):
+    """isdecimal seam: superscript suffix must not alias via public readers."""
+    db, state, _content = game
+    minister = _minister(db)
+    night_id = int(an.open_night(db, state, location="乾清宫", time_of_day="夜")["id"])
+    superscript_tag = "明发#²"
+    assert "²".isdigit() and not "²".isdecimal()
+    assert an.exact_mingfa_publication_directive_id(superscript_tag) is None
+    an.append_ledger_entry(
+        db, night_id,
+        person_names=[minister],
+        audibility=an.AUDIBILITY_PUBLIC,
+        body="上标数字不得冒充明发",
+        tags=[superscript_tag],
+        source_chat_turn_id=0,
+        check_dead=False,
+    )
+    assert an.engine_command_mingfa_publication_ids(an.list_ledger(db, night_id)) == set()
+    assert db.list_night_promulgated_directives(night_id) == []
+    assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
+
+
+def test_catch_up_reuses_trailer_defer_predicate_until_close_creates_dossiers(game):
+    """startup/CLI catch-up must not mark close-owned turns done before dossiers exist."""
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "defer-catchup", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    assert should_defer_extraction_for_close_owned_dossiers(db, night_id) is True
+
+    deferred = trail_extraction_after_reply(
+        db=db, minister_name=minister, minister_reply="臣愿作保。",
+        chat_turn_id=chat_turn_id, llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Agent({"facts": [{"body": "过早抽取"}]}),
+    )
+    assert deferred["status"] == "deferred"
+    assert db.get_story_extract_status(chat_turn_id) == ""
+
+    calls = []
+
+    class _Counting:
+        def run(self, materials):
+            calls.append(json.loads(materials))
+            return json.dumps({"facts": [{"body": "不该在此抽取"}]}, ensure_ascii=False)
+
+    summary = catch_up_pending_extractions(
+        db=db, llm_config=object(), write_gate=threading.Lock(),
+        night_id=night_id, extractor_agent=_Counting(),
+    )
+    assert summary["deferred"] == 1
+    assert summary["extracted"] == 0
+    assert calls == []
+    assert db.get_story_extract_status(chat_turn_id) == ""
+
+    # One drain after close creates prerequisites — single extraction.
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Counting(),
+    )
+    assert result["closed"] is True
+    assert len(calls) == 1
+    assert db.get_story_extract_status(chat_turn_id) == "done"
+
+
+def test_close_night_defers_consort_final_effect_until_drain_success(game):
+    """pre-drain only draft prerequisites; consort final effect runs after drain success."""
+    db, state, content = game
+    minister = _minister(db)
+    consort_row = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type='后宫' AND status='active' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()
+    if consort_row is None:
+        pytest.skip("基底无 active 后宫角色")
+    consort = str(consort_row["name"])
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    dir_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "consort-order", "actor": minister},
+    )
+    db.mark_pending_night_approved([dir_id], night_id=night_id)
+    consort_pa = db.stage_pending_action(
+        state.turn, kind="consort", action="调教", minister_name=consort,
+        payload={"name": consort, "skill": "理财", "trait": ""},
+    )
+    db.mark_pending_night_approved([consort_pa], night_id=night_id)
+    before = db.get_consort_traits(consort)
+
+    class _Boom:
+        def run(self, _materials):
+            raise RuntimeError("extract boom")
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            extractor_agent=_Boom(),
+        )
+    assert ei.value.code == "pending_extraction"
+    assert int(an.get_night(db, night_id)["close_commit_cursor"] or 0) == 0
+    # Draft dossier prerequisite kept; consort final effect not applied.
+    assert any(r["decree_text"] == "清核辽饷" for r in db.list_decree_dossiers(status="proposed"))
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
+    ).fetchone()["status"] == "pending"
+    assert db.get_consort_traits(consort) == before
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Agent({"facts": []}),
+    )
+    assert result["closed"] is True
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (consort_pa,)
+    ).fetchone()["status"] == "committed"
+    after = db.get_consort_traits(consort)
+    assert "理财" in (after.get("extra_skills") or [])
+
+
+def test_close_night_failure_cursor_rescans_new_office_prerequisite(game):
+    """失败游标退回 0：重试可扫描失败后新增 office 案卷前提，旧项幂等。"""
+    db, state, content = game
+    minister = _minister(db)
+    night_id, _chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    first_office = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={
+            "name": minister, "office": "兵部郎中", "office_type": "六部",
+            "faction": "中立", "reason": "初任",
+        },
+    )
+    db.mark_pending_night_approved([first_office], night_id=night_id)
+
+    class _BoomThenOk:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, _materials):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("extract boom")
+            return json.dumps({"facts": []}, ensure_ascii=False)
+
+    agent = _BoomThenOk()
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            extractor_agent=agent,
+        )
+    assert ei.value.code == "pending_extraction"
+    assert int(an.get_night(db, night_id)["close_commit_cursor"] or 0) == 0
+    first_dossiers = [
+        r for r in db.list_decree_dossiers(status="proposed")
+        if "兵部郎中" in str(r.get("decree_text") or "")
+    ]
+    assert len(first_dossiers) == 1
+    kept_id = int(first_dossiers[0]["id"])
+
+    second_office = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={
+            "name": minister, "office": "户部郎中", "office_type": "六部",
+            "faction": "中立", "reason": "续任",
+        },
+    )
+    db.mark_pending_night_approved([second_office], night_id=night_id)
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=agent,
+    )
+    assert result["closed"] is True
+    texts = {str(r.get("decree_text") or "") for r in db.list_decree_dossiers(status="proposed")}
+    assert any("兵部郎中" in t for t in texts)
+    assert any("户部郎中" in t for t in texts)
+    assert int(
+        next(r for r in db.list_decree_dossiers(status="proposed") if "兵部郎中" in str(r.get("decree_text") or ""))["id"]
+    ) == kept_id
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE decree_text LIKE ?", ("%兵部郎中%",)
+    ).fetchone()[0] == 1
+
+
+def test_advance_without_edict_forwards_llm_config_and_write_gate(game, monkeypatch):
+    """no-edict rail must pass drain deps so deferred same-night extraction can close."""
+    db, state, content = game
+    minister = _minister(db)
+    night_id, chat_turn_id, _seq = _night_reply(db, state, minister, reply="臣愿作保。")
+    candidate_id = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "清核辽饷", "dossier_action_type": "policy",
+                 "target_kind": "issue", "target_id": "no-edict", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id], night_id=night_id)
+    assert trail_extraction_after_reply(
+        db=db, minister_name=minister, minister_reply="臣愿作保。",
+        chat_turn_id=chat_turn_id, llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_Agent({"facts": []}),
+    )["status"] == "deferred"
+
+    forwarded = {}
+
+    def _forwarding_auto_close(db_arg, state_arg, **kwargs):
+        forwarded.update(kwargs)
+        open_n = an.get_open_night(db_arg)
+        if open_n is None:
+            return None
+        # Production auto_close has no extractor_agent param; inject test agent at close.
+        return an.close_night(
+            db_arg, state_arg,
+            night_id=int(open_n["id"]),
+            content=kwargs.get("content"),
+            registry=kwargs.get("registry"),
+            auto=True,
+            wait_timeout_s=kwargs.get("wait_timeout_s"),
+            beat_generator=kwargs.get("beat_generator"),
+            llm_config=kwargs.get("llm_config"),
+            write_gate=kwargs.get("write_gate"),
+            extractor_agent=_Agent({"facts": []}),
+        )
+
+    # advance_without_edict imports auto_close_open_night from this module at call time.
+    monkeypatch.setattr(an, "auto_close_open_night", _forwarding_auto_close)
+
+    llm = object()
+    gate = nullcontext()
+    advance_without_edict(
+        state, db, content=content, registry=None, inflight_wait_s=0.0,
+        llm_config=llm, write_gate=gate,
+    )
+    assert forwarded.get("llm_config") is llm
+    assert forwarded.get("write_gate") is gate
+    assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_CLOSED
+    assert db.get_story_extract_status(chat_turn_id) == "done"
