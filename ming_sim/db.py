@@ -11394,14 +11394,13 @@ class GameDB:
                     cost_identity="override",
                 ):
                     continue
-                from ming_sim.flows import _apply_class_dict, _apply_faction_dict
                 if kind == "faction":
-                    _apply_faction_dict(
-                        self, {key: {"satisfaction": delta}}, commit=False,
+                    self.adjust_factions(
+                        {key: {"satisfaction": delta}}, commit=False,
                     )
                 else:
-                    _apply_class_dict(
-                        self, {key: {"satisfaction": delta}}, commit=False,
+                    self.adjust_classes(
+                        {key: {"satisfaction": delta}}, commit=False,
                     )
         if commit:
             self.conn.commit()
@@ -11461,6 +11460,11 @@ class GameDB:
                     origin=f"dossier:{dossier_id}:breach", turn=state.turn,
                     year=state.year, period=state.period,
                 )
+            registered_factions = {
+                str(row["name"])
+                for row in self.conn.execute("SELECT name FROM factions")
+            }
+            factions.intersection_update(registered_factions)
             breach_delta = (
                 self._REACTION_SIGN[self._BREACH_FACTION_REACTION["direction"]]
                 * self._REACTION_INTENSITY[self._BREACH_FACTION_REACTION["intensity"]]
@@ -11470,9 +11474,8 @@ class GameDB:
                     dossier_id, state.turn, "satisfaction", "faction", faction,
                     breach_delta, reason, cost_identity="breach",
                 ):
-                    from ming_sim.flows import _apply_faction_dict
-                    _apply_faction_dict(
-                        self, {faction: {"satisfaction": breach_delta}}, commit=False,
+                    self.adjust_factions(
+                        {faction: {"satisfaction": breach_delta}}, commit=False,
                     )
             if was_closed:
                 self.conn.execute(
