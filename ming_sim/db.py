@@ -11784,17 +11784,25 @@ class GameDB:
         return int(candidate_id)
 
     def list_night_promulgated_directives(self, night_id: int) -> List[Dict[str, object]]:
-        """按夜取数（#502 AC6）：本夜定案（收夜提交）的明发旨——经 pending_actions（本夜、
-        kind=directive、已 committed、回填了 committed_directive_id）关联 turn_directives。
-        密令（kind=secret_order，私密）天然不入此清单。机器辨识、零自由文本解析。"""
+        """按夜取数（#502 AC6 / #612）：本夜已落公开层明发账的旨。
+
+        只认既有逐条出版事实（ledger tags 中的 明发#directive_id / TAG_MINGFA），
+        不以 pending_actions committed 等同已明发——收夜可先落 draft 前提，抽取失败时
+        那些 committed 行仍非公开明发投影。机器辨识、零自由文本解析。"""
+        # 明发# 与 audience_night._MINGFA_ID_PREFIX 同源；db 层认账上既成事实字面。
         rows = self.conn.execute(
             """
             SELECT td.id AS directive_id, td.turn, td.year, td.period,
                    td.actor, td.text, td.status
-            FROM pending_actions pa
-            JOIN turn_directives td ON td.id = pa.committed_directive_id
-            WHERE pa.night_id = ? AND pa.kind = 'directive'
-              AND pa.status = 'committed' AND pa.committed_directive_id > 0
+            FROM turn_directives td
+            WHERE td.id IN (
+                SELECT CAST(substr(jt.value, length('明发#') + 1) AS INTEGER)
+                FROM story_ledger_entries sle, json_each(sle.tags) AS jt
+                WHERE sle.night_id = ?
+                  AND typeof(jt.value) = 'text'
+                  AND jt.value LIKE '明发#%'
+                  AND CAST(substr(jt.value, length('明发#') + 1) AS INTEGER) > 0
+            )
             ORDER BY td.id
             """,
             (int(night_id),),
@@ -11811,24 +11819,34 @@ class GameDB:
     def list_promulgated_directives(
         self, turn_from: Optional[int] = None, turn_to: Optional[int] = None,
     ) -> List[Dict[str, object]]:
-        """按区间取数（#502 AC6）：回合区间内各夜定案的明发旨（含所属夜 id）。turn_from/to
-        为闭区间；留空则不设该端界。用于跨夜/跨回合辨识哪些旨已明发。"""
+        """按区间取数（#502 AC6 / #612）：回合区间内已落公开层明发账的旨（含所属夜 id）。
+
+        turn_from/to 为闭区间；留空则不设该端界。与 list_night_promulgated_directives 同源：
+        只认 ledger 上的 明发#directive_id 出版事实，不以 committed pending_actions 等同明发。"""
         clauses = [
-            "pa.kind = 'directive'", "pa.status = 'committed'",
-            "pa.committed_directive_id > 0", "pa.night_id IS NOT NULL",
+            "typeof(jt.value) = 'text'",
+            "jt.value LIKE '明发#%'",
+            "CAST(substr(jt.value, length('明发#') + 1) AS INTEGER) > 0",
         ]
         params: List[object] = []
+        turn_clauses: List[str] = []
         if turn_from is not None:
-            clauses.append("td.turn >= ?")
+            turn_clauses.append("td.turn >= ?")
             params.append(int(turn_from))
         if turn_to is not None:
-            clauses.append("td.turn <= ?")
+            turn_clauses.append("td.turn <= ?")
             params.append(int(turn_to))
+        turn_sql = (" AND " + " AND ".join(turn_clauses)) if turn_clauses else ""
         rows = self.conn.execute(
             "SELECT td.id AS directive_id, td.turn, td.actor, td.text, td.status, "
-            "pa.night_id AS night_id FROM pending_actions pa "
-            "JOIN turn_directives td ON td.id = pa.committed_directive_id "
-            "WHERE " + " AND ".join(clauses) + " ORDER BY td.turn, td.id",
+            "mingfa.night_id AS night_id FROM ("
+            "SELECT DISTINCT CAST(substr(jt.value, length('明发#') + 1) AS INTEGER) "
+            "AS directive_id, sle.night_id AS night_id "
+            "FROM story_ledger_entries sle, json_each(sle.tags) AS jt "
+            "WHERE " + " AND ".join(clauses) + 
+            ") mingfa "
+            "JOIN turn_directives td ON td.id = mingfa.directive_id "
+            "WHERE 1=1" + turn_sql + " ORDER BY td.turn, td.id",
             params,
         ).fetchall()
         return [

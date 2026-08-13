@@ -523,11 +523,14 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     assert dossiers[0]["promulgation_decision"] == ""
     assert db.list_dossier_endorsements(first_id) == []
     assert db.list_night_approved_pending(night_id, kind="directive") == []
-    # Failure must not expose public 明发 / promulgated ledger projection.
+    # Failure must not expose public 明发 / promulgated projection (ledger or DB readers).
+    # Draft prerequisites may already be committed; that must not equal promulgated.
     failed_entries, failed_ids, failed_bodies = _public_mingfa_projection(db, night_id)
     assert failed_entries == []
     assert failed_ids == []
     assert failed_bodies == []
+    assert db.list_night_promulgated_directives(night_id) == []
+    assert db.list_promulgated_directives(turn_from=state.turn, turn_to=state.turn) == []
     restored = GameDB(db.path, content=content)
     try:
         restored_state = restored.load_state()
@@ -546,6 +549,10 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
         assert restored_entries == []
         assert restored_ids == []
         assert restored_bodies == []
+        assert restored.list_night_promulgated_directives(night_id) == []
+        assert restored.list_promulgated_directives(
+            turn_from=restored_state.turn, turn_to=restored_state.turn,
+        ) == []
     finally:
         restored.close()
 
@@ -575,22 +582,32 @@ def test_close_night_keeps_draft_prerequisites_on_extract_failure_and_retries_on
     ).fetchone()[0] == 1
     # Successful retry publishes each eligible directive exactly once, including
     # the newly consented action that joined after the failed attempt.
+    # Both DB promulgated projections reuse the one per-directive publication fact.
     published = db.list_night_promulgated_directives(night_id)
     published_texts = sorted(str(p.get("text") or "") for p in published)
     assert set(published_texts) == {"清核辽饷", "续核京饷"}
     assert len(published_texts) == 2
     published_ids = sorted(str(int(p["directive_id"])) for p in published)
+    range_published = db.list_promulgated_directives(
+        turn_from=state.turn, turn_to=state.turn,
+    )
+    range_ids = sorted(str(int(p["directive_id"])) for p in range_published)
+    assert range_ids == published_ids
+    assert len(range_published) == len(published_ids) == 2
+    assert all(int(p.get("night_id") or 0) == int(night_id) for p in range_published)
     entries, mingfa_ids, bodies = _public_mingfa_projection(db, night_id)
     assert mingfa_ids == published_ids
     assert len(entries) == len(published_ids) == 2
     assert sorted(bodies) == [f"明发旨意：{t}" for t in published_texts]
     # Exactly-once: one ledger row per 明发#directive_id, no duplicates on success path.
+    # ID/cursor idempotency: kept dossier+directive ids unchanged across failure/retry.
     tag_hits = [
         t for e in an.list_ledger(db, night_id) for t in e.get("tags") or []
         if str(t).startswith(an._MINGFA_ID_PREFIX)
     ]
     assert sorted(tag_hits) == sorted(f"{an._MINGFA_ID_PREFIX}{i}" for i in published_ids)
     assert len(tag_hits) == len(set(tag_hits)) == 2
+    assert str(first_directive) in published_ids
 
 
 def test_parse_extraction_facts_keeps_valid_endorsement_and_rejects_bad_shape():
