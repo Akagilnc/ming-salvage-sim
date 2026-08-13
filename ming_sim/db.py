@@ -53,7 +53,8 @@ from ming_sim.relations import (
     validate_edge_kind,
 )
 from ming_sim.strict_types import (
-    strict_int, validate_rejection_verdict, validate_verdict_affected_parties,
+    strict_int, validate_affected_parties, validate_rejection_verdict,
+    validate_verdict_affected_parties,
 )
 from ming_sim.token_stats import tlog
 
@@ -11085,6 +11086,9 @@ class GameDB:
                     if held_turn > 0:
                         raise ValueError("留中案卷须先完成下月重判方可强颁")
                     raise ValueError("强颁只可承接首次打回或下月重判")
+                # Evidence is a Judge verdict, never the player disposition row.
+                # Validate it before status, stigma, authority, or reaction writes.
+                self._current_judge_affected_parties(dossier_id, current_turn)
                 self.conn.execute(
                     """
                     UPDATE decree_dossiers
@@ -11319,16 +11323,30 @@ class GameDB:
         )
         return cur.rowcount == 1
 
-    def _latest_affected_parties(self, dossier_id: int) -> List[Dict[str, str]]:
+    def _current_judge_affected_parties(
+        self, dossier_id: int, turn: int,
+    ) -> List[Dict[str, str]]:
+        """Read only this turn's latest promulgation Judge evidence."""
         row = self.conn.execute(
             """SELECT affected_parties_json FROM decree_dossier_decisions
-               WHERE dossier_id=? AND rescript_action='' AND affected_parties_json<>'[]'
-               ORDER BY id DESC LIMIT 1""", (int(dossier_id),),
+               WHERE dossier_id=? AND turn=? AND rescript_action=''
+               ORDER BY id DESC LIMIT 1""",
+            (int(dossier_id), int(turn)),
         ).fetchone()
         if row is None:
-            return []
-        value = json.loads(str(row["affected_parties_json"] or "[]"))
-        return value if isinstance(value, list) else []
+            raise ValueError("强颁缺少当前回合 Judge affected_parties")
+        try:
+            value = json.loads(str(row["affected_parties_json"] or ""))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("强颁当前回合 Judge affected_parties 非法") from exc
+        if not isinstance(value, list) or not value:
+            raise ValueError("强颁当前回合 Judge affected_parties 必须为非空 typed 清单")
+        validate_affected_parties(
+            value,
+            faction_names={str(item["name"]) for item in self.conn.execute("SELECT name FROM factions")},
+            class_names={str(item["name"]) for item in self.conn.execute("SELECT DISTINCT name FROM classes")},
+        )
+        return value
 
     def _apply_authority_cost(
         self, state: GameState, dossier_id: int, reason: str, *, cost_identity: str,
@@ -11364,7 +11382,7 @@ class GameDB:
             (int(dossier_id),),
         ).fetchone() is not None
         if include_parties and not parties_already_applied:
-            for party in self._latest_affected_parties(dossier_id):
+            for party in self._current_judge_affected_parties(dossier_id, state.turn):
                 kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
                 magnitude = self._REACTION_INTENSITY.get(str(party.get("intensity") or ""))
                 sign = self._REACTION_SIGN.get(str(party.get("direction") or ""))
@@ -11393,7 +11411,11 @@ class GameDB:
         commit: bool = True,
     ) -> bool:
         """Withdraw an issued promise; commit=False belongs wholly to its caller."""
-        transaction = atomic(self) if commit else contextlib.nullcontext()
+        if commit:
+            from ming_sim.decree import atomic_and_reload
+            transaction = atomic_and_reload(self, state)
+        else:
+            transaction = contextlib.nullcontext()
         with transaction:
             dossier = self.get_decree_dossier(dossier_id)
             if dossier is None:

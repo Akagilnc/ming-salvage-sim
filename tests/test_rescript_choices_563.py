@@ -17,6 +17,22 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
     )
 
 
+def _rejected_verdict(dossier_id):
+    return {
+        "dossier_id": dossier_id, "decision": "rejected",
+        "blocked_layer": "six_offices", "reason": "科臣封驳",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "gatekeeper_id": "韩爌",
+        "criteria_snapshot": {
+            "imperial_authority_band": "强盛", "appointment_tenure": "",
+            "authorization_ids": [], "endorsement_entry_ids": [],
+        },
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+        ],
+    }
+
+
 @pytest.mark.parametrize("extractor_result", ["missing-mode", "failure"])
 def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
     game, monkeypatch, extractor_result,
@@ -241,9 +257,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     dossier_id = _make_midzhi_dossier(db, state)
 
     for _ in range(2):
-        db.apply_dossier_promulgation(
-            state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳"
-        )
+        db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     with pytest.raises(ValueError, match="强颁只可承接"):
@@ -261,9 +275,7 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works", payload={"mode": "ordinary"},
     )
-    db.apply_dossier_promulgation(
-        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
-    )
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [{

@@ -20,6 +20,22 @@ def _make_dossier(db, state, text):
     )
 
 
+def _rejected_verdict(dossier_id):
+    return {
+        "dossier_id": dossier_id, "decision": "rejected",
+        "blocked_layer": "six_offices", "reason": "科臣封驳。",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "gatekeeper_id": None,
+        "affected_parties": [
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+        ],
+        "criteria_snapshot": {
+            "imperial_authority_band": "偏弱", "appointment_tenure": "",
+            "authorization_ids": [], "endorsement_entry_ids": [],
+        },
+    }
+
+
 def test_one_protection_dossier_links_three_older_allocations_both_directions(game):
     db, state, _ = game
     targets = [_make_dossier(db, state, name) for name in ("辽东补饷", "宣大补饷", "东江补饷")]
@@ -457,7 +473,7 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
 
-    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)
