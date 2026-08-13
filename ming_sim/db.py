@@ -11294,7 +11294,11 @@ class GameDB:
             ).fetchall():
                 try:
                     value = json.loads(str(row["payload"] or ""))
-                except ValueError:
+                except ValueError as exc:
+                    logging.getLogger(__name__).warning(
+                        "跳过 %s 表迁移行 %s：%s",
+                        table, row["migration_id"], exc,
+                    )
                     continue
                 if table == "pending_promulgation_verdicts" and isinstance(value, dict):
                     affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
