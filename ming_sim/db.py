@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
 from ming_sim.assets import format_money, format_money_delta
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
@@ -1388,6 +1389,26 @@ class GameDB:
                 FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
 
+            -- ADR 0071：持有型/持续型特权的 durable 授权档。
+            CREATE TABLE IF NOT EXISTS authority_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                holder_id TEXT NOT NULL,
+                privilege TEXT NOT NULL CHECK(privilege IN (
+                    __AUTHORITY_PRIVILEGES__
+                )),
+                scope TEXT NOT NULL,
+                effective_turn INTEGER NOT NULL,
+                expires_turn INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),
+                revoked_turn INTEGER,
+                dossier_id INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(holder_id) REFERENCES characters(name),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_authority_records_holder
+                ON authority_records(holder_id, revoked, effective_turn);
+
             CREATE TABLE IF NOT EXISTS skill_grants (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 character_name TEXT NOT NULL,
@@ -1715,7 +1736,7 @@ class GameDB:
 
             CREATE INDEX IF NOT EXISTS idx_relation_edges_person
             ON relation_edge_events(source, target, event_kind, id);
-            """
+            """.replace("__AUTHORITY_PRIVILEGES__", AUTHORITY_PRIVILEGE_SQL_IN)
         )
         self._migrate_building_logs_to_durable_audit()
         self._ensure_office_type_parents()
@@ -10071,21 +10092,14 @@ class GameDB:
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
                 assignee = _find_existing_minister(content, assignee, self) or ""
-            authorization_id = str(
-                normalized.get("authorization_id") or ""
-            ).strip()
-            authorization_action = action in {
-                "authorization", "secret_authorization",
-            }
-            complete = bool(assignee) and (
-                not authorization_action or bool(authorization_id)
-            )
-            if not complete:
-                raise ValueError(f"{action} 旨意缺少 canonical assignee 或授权字段")
+            if not assignee:
+                raise ValueError(f"{action} 旨意缺少 canonical assignee")
             normalized["assignee_id"] = assignee
             normalized.pop("assignee", None)
-            if authorization_action:
-                normalized["authorization_id"] = authorization_id
+            # Authorization identity and applicability live exclusively in
+            # authority_records; legacy dossier payload ids are not retained.
+            normalized.pop("authorization_id", None)
+            normalized.pop("authorization_ids", None)
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -11268,32 +11282,10 @@ class GameDB:
                     )
                     return
             elif row["action_type"] in {"authorization", "secret_authorization"}:
-                character_id = str(
-                    payload.get("character_id") or payload.get("assignee_id") or ""
-                ).strip()
-                skill_id = str(
-                    payload.get("skill_id") or payload.get("authorization_id") or ""
-                ).strip()
-                if not character_id or not skill_id:
-                    raise ValueError("授权案卷缺少 canonical assignee 或授权字段")
-                character_exists = self.conn.execute(
-                    "SELECT 1 FROM characters WHERE name=?", (character_id,),
-                ).fetchone()
-                if not character_exists:
-                    raise ValueError("授权案卷引用未知人物")
-                if not self.grant_skill(
-                    state,
-                    character_id,
-                    skill_id,
-                    granted_by=str(payload.get("granted_by") or "皇帝"),
-                    dossier_id=int(dossier_id),
-                    commit=False,
-                ):
-                    self.record_dossier_execution(
-                        dossier_id, "fulfilled", "授权此前已生效，幂等结案",
-                        state.turn, close=True, commit=False,
-                    )
-                    return
+                # The dossier records the decree; #611 privileges are produced
+                # only by settlement's authority_changes slot. Skill grants are
+                # a distinct character-skill mechanic, not an authority map.
+                pass
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
@@ -12684,6 +12676,118 @@ class GameDB:
             "extractor_input": _parse(row["extractor_input"] or ""),
             "extractor_output": _parse(row["extractor_output"] or ""),
         }
+
+    def get_authority(self, authority_id: int) -> Optional[Dict[str, object]]:
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE id=?", (int(authority_id),)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def list_active_authorities(
+        self, turn: int, *, holder_id: str = "",
+    ) -> List[Dict[str, object]]:
+        params: List[object] = [int(turn), int(turn)]
+        holder_sql = ""
+        if holder_id:
+            holder_sql = " AND holder_id=?"
+            params.append(str(holder_id))
+        rows = self.conn.execute(
+            "SELECT * FROM authority_records WHERE revoked=0 "
+            "AND effective_turn<=? AND (expires_turn IS NULL OR expires_turn>=?)"
+            f"{holder_sql} ORDER BY id", params,
+        ).fetchall()
+        return [{**dict(row), "revoked": False} for row in rows]
+
+    def find_authority_by_origin(
+        self, dossier_id: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the stable row for an exact grant origin, regardless of status."""
+        row = self.conn.execute(
+            "SELECT * FROM authority_records WHERE dossier_id=? AND holder_id=? "
+            "AND privilege=? AND scope=? ORDER BY id LIMIT 1",
+            (
+                int(dossier_id), str(holder_id).strip(), str(privilege).strip(),
+                str(scope).strip(),
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["revoked"] = bool(result["revoked"])
+        return result
+
+    def find_active_authority(
+        self, turn: int, *, holder_id: str, privilege: str, scope: str,
+    ) -> Optional[Dict[str, object]]:
+        """Return the in-hand row for the exact grant identity, if any."""
+        holder_id = str(holder_id or "").strip()
+        privilege = str(privilege or "").strip()
+        scope = str(scope or "").strip()
+        for row in self.list_active_authorities(turn, holder_id=holder_id):
+            if (
+                str(row.get("privilege") or "") == privilege
+                and str(row.get("scope") or "") == scope
+            ):
+                return row
+        return None
+
+    def project_applicable_authorities(
+        self, turn: int, dossier: Mapping[str, object],
+    ) -> List[Dict[str, object]]:
+        """#611 unique applicability projection over durable authority rows.
+
+        Actors = character executor ∪ roster 主办/协办 (never payload assignee).
+        Domains = only the typed canonical key target_kind:target_id.
+        """
+        actors: set[str] = set()
+        executor_id = str(dossier.get("executor_id") or "").strip()
+        executor_kind = str(dossier.get("executor_kind") or "").strip()
+        if executor_id and executor_kind in {"", "character"}:
+            actors.add(executor_id)
+        roster = dossier.get("participant_roster") or []
+        if isinstance(roster, str):
+            try:
+                roster = json.loads(roster)
+            except (TypeError, ValueError):
+                roster = []
+        if isinstance(roster, list):
+            for entry in roster:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("tier") or "").strip() not in {"主办", "协办"}:
+                    continue
+                character_id = str(entry.get("character_id") or "").strip()
+                if character_id:
+                    actors.add(character_id)
+        target_kind = str(dossier.get("target_kind") or "").strip()
+        target_id = str(dossier.get("target_id") or "").strip()
+        domains: set[str] = set()
+        if target_kind and target_id:
+            domains.add(f"{target_kind}:{target_id}")
+        if not actors or not domains:
+            return []
+        projected: List[Dict[str, object]] = []
+        for holder_id in sorted(actors):
+            for row in self.list_active_authorities(int(turn), holder_id=holder_id):
+                if str(row.get("scope") or "") not in domains:
+                    continue
+                projected.append({
+                    "id": int(row["id"]),
+                    "holder_id": str(row["holder_id"]),
+                    "privilege": str(row["privilege"]),
+                    "scope": str(row["scope"]),
+                    "effective_turn": int(row["effective_turn"]),
+                    **(
+                        {"expires_turn": int(row["expires_turn"])}
+                        if row.get("expires_turn") is not None else {}
+                    ),
+                })
+        projected.sort(key=lambda item: int(item["id"]))
+        return projected
 
     def grant_skill(
         self, state: GameState, character_name: str, skill_id: str,
