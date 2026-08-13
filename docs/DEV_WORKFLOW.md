@@ -3,7 +3,7 @@ title: Matt Pocock 开发流程
 description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-spec → to-tickets → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-spec 前 / to-spec 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径；2026-07-03 注：本项目〔项目加〕设计评审闸（本地 cmr + 线上 bot → ADR Accepted）位于 to-tickets 之后、逐片 implement 之前（CLAUDE.md §开发流程 步骤 5；#470/#471/#478 实践序）；2026-07-14 上游改名 to-prd→to-spec、to-issues→to-tickets（后者内建原生挂接），全文已随改，历史 ADR/log 旧名不回改。
 type: concept
 created: 2026-06-17
-updated: 2026-07-14
+updated: 2026-08-13
 sources:
   - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-spec / to-tickets / triage / implement / tdd / code-review / diagnosing-bugs / improve-codebase-architecture）
   - Ming_LLM 2026-06-17 验证 session（#174 走通全链、标签纯化、triage 36 backlog）
@@ -49,11 +49,11 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
  └ to-tickets ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-spec → to-tickets 留同一不间断窗口，别中途 compact（smart zone ~120k）
  └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（评审态真源=ADR Status；标签不管）
- └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 跑 typecheck/单测/全量
+ └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 切片轮次 typecheck+聚焦测试（全量见下方「测试分级」）
           → 手动/单 session：baseline commit → /code-review → fix commits
           → 自动化交付：由仓外 v3 独立角色接力，本仓不复制其内部流程
         ▼
-     merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
+     家族/批次收尾：全量 suite 跑一次（merge 前门槛）→ merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
         （prototype 按需绕道，handoff 出/回桥接）
 ```
 
@@ -70,13 +70,23 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
 | `to-spec` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
 | `to-tickets` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
-| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量；手动流随后 baseline commit → 单评 → fix commits |
+| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → 切片轮次 typecheck+聚焦测试（全量见「测试分级」）；手动流随后 baseline commit → 单评 → fix commits |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
 | `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 要在 baseline commit 后跑 |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
 | `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
 | `handoff` | 横切 | session 间交付（context 满 / 绕道 prototype 的桥）|
+
+### 测试分级（#1185，owner 2026-08-13 裁定）
+
+**本仓测试分级政策真源**（CLAUDE.md Skill routing / 开发流程步骤 6 引用此处，不另立第二份口径）：
+
+- **切片轮次**（逐片 implement / fixer 自检；评审核 coder 回执里的聚焦测试证据，不以复跑全量 suite 为复核手段）＝ `typecheck` + **聚焦测试**（本片触及的测试）。
+- **家族/批次收尾**＝全量 suite **有且仅跑一次**，绿灯后作为 **merge 前门槛**。
+- **CI**（`.github/workflows/ci.yml`）在 push/PR 后的全量门**保留**，不在本政策改动范围。
+
+正向口径：切片只跑聚焦、全量收尾一次。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
 
 ### ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁入）
 
