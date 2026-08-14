@@ -6,7 +6,7 @@ type OrganicMarkdownApi = {
   filterMatchedHighlights(answer: string, highlights: unknown[]): string[];
 };
 
-/** Sole runtime authority: release-layout /organicMarkdown.js (web/dist/organicMarkdown.js). */
+/** Sole browser strip/match authority: release-layout /organicMarkdown.js. */
 function organicAuthority(): OrganicMarkdownApi {
   const api = (globalThis as unknown as { OrganicMarkdown?: OrganicMarkdownApi }).OrganicMarkdown;
   if (!api) {

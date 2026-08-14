@@ -350,26 +350,31 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         reopened.close()
 
 
-def test_ming_llm_spec_entry_ships_single_authority_code_span_padding():
-    """Real Ming_LLM.spec packaging entry ships the sole authority; code-span padding holds."""
+def test_build_release_entry_ships_browser_only_authority_product():
+    """Real build_release.sh → Ming_LLM.spec ships sole browser authority; no Python JS consumer."""
     from pathlib import Path
-
-    from ming_sim.organic_markdown import authority_product_path, filter_matched_highlights
-    from ming_sim.paths import bundled_root
 
     repo = Path(__file__).resolve().parents[1]
     authority = (repo / "web" / "dist" / "organicMarkdown.js").resolve()
     assert authority.is_file(), "single authority product must exist at web/dist/organicMarkdown.js"
 
-    # Packaging entry: same release-guard + tree_datas contract as Ming_LLM.spec.
+    release_sh = (repo / "scripts" / "build_release.sh").read_text(encoding="utf-8")
+    assert "Ming_LLM.spec" in release_sh
+    assert "pyinstaller" in release_sh.lower() or "PyInstaller" in release_sh
+
     spec = (repo / "Ming_LLM.spec").read_text(encoding="utf-8")
     assert 'Path("web/dist/organicMarkdown.js").is_file()' in spec
     assert 'tree_datas("web/dist"' in spec
+    assert "quickjs" not in spec.lower()
     assert "organic_markdown.authority.js" not in spec
-    assert "web/src/organicMarkdown" not in Path(
-        repo / "ming_sim" / "organic_markdown.py"
-    ).read_text(encoding="utf-8")
+    assert not (repo / "ming_sim" / "organic_markdown.py").exists()
+    assert not (repo / "ming_sim" / "organic_markdown.authority.js").exists()
+    req = (repo / "requirements.txt").read_text(encoding="utf-8")
+    req_release = (repo / "requirements-release.txt").read_text(encoding="utf-8")
+    assert "quickjs" not in req.lower()
+    assert "quickjs" not in req_release.lower()
 
+    # Same tree_datas contract the release entry uses: only the browser product lands.
     def tree_datas(root: str, dest: str, exclude_parts=()):
         root_path = Path(root)
         rows = []
@@ -390,36 +395,21 @@ def test_ming_llm_spec_entry_ships_single_authority_code_span_padding():
     )
     authority_rows = [row for row in packaged if row[0].endswith("organicMarkdown.js")]
     assert authority_rows == [(str(authority), "web/dist")]
-
-    # Write seam resolves that same release-layout file (no sibling, no path monkeypatch).
-    assert bundled_root().resolve() == repo.resolve()
-    resolved = authority_product_path().resolve()
-    assert resolved == authority
-    assert "web/src" not in resolved.as_posix()
-    assert not (repo / "ming_sim" / "organic_markdown.authority.js").exists()
-
-    answer = "臣请`  据实核账  `，不可臆断。"
-    assert filter_matched_highlights(
-        answer, ["`  据实核账  `", "未命中", "臆断"]
-    ) == ["  据实核账  ", "臆断"]
+    # No Python write-seam consumer of the authority product remains.
+    assert "web/src" not in authority.as_posix()
 
 
-def test_unmatched_highlights_never_persist_through_chat_reopen_or_stream(
+def test_write_seam_persists_raw_judge_list_through_chat_reopen_and_stream(
     content, tmp_path, monkeypatch,
 ):
-    """Write boundary strips + exact-matches; misses never land in DB/projection/SSE."""
+    """Backend stores the judge's original phrases; strip/match is browser-only."""
     from ming_sim.db import GameDB
-    from ming_sim.organic_markdown import filter_matched_highlights
     from tests.test_audience_background import _FakeAgent, _web_game
 
-    # Write seam executes the release authority product in-process. Code-span padding is
-    # deliberately observable: markdown-it's normalized token content is not enough.
     answer = "臣请`  据实核账  `，不可臆断。"
-    assert filter_matched_highlights(
-        answer, ["`  据实核账  `", "未命中", "臆断"]
-    ) == ["  据实核账  ", "臆断"]
+    raw_highlights = ["`  据实核账  `", "未命中", "臆断"]
 
-    path = str(tmp_path / "highlight-filter.db")
+    path = str(tmp_path / "highlight-raw.db")
     db = GameDB(path, content)
     db.seed_static_data()
     state = db.load_state()
@@ -428,60 +418,50 @@ def test_unmatched_highlights_never_persist_through_chat_reopen_or_stream(
     runtime.session.chat = lambda *_a, **_k: _chat_result(answer)
     monkeypatch.setattr(
         "ming_sim.highlight_judge.invoke_highlight_judge",
-        lambda *_a, **_k: '["`  据实核账  `", "未命中", "臆断"]',
+        lambda *_a, **_k: json.dumps(raw_highlights, ensure_ascii=False),
     )
     runtime._start_reply_tail_tasks = lambda *_a: None
 
     payload = runtime.chat(minister, "钱粮如何？")
     night_id = int(payload["night_id"])
     minister_msg = next(m for m in payload["history"] if m["role"] == "minister")
-    assert minister_msg["highlights"] == ["  据实核账  ", "臆断"]
-    assert "未命中" not in minister_msg["highlights"]
+    assert minister_msg["highlights"] == raw_highlights
 
-    # Raw row must already be canonical — frontend is not the sole gate.
     row = db.conn.execute(
         "SELECT highlights FROM chat_messages WHERE role='minister' ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert json.loads(row["highlights"]) == ["  据实核账  ", "臆断"]
+    assert json.loads(row["highlights"]) == raw_highlights
     db.close()
 
     reopened = GameDB(path, content)
     try:
         history = reopened.build_chat_projection(minister, night_id)
         scroll = an.read_night_scroll(reopened, night_id)
-        assert next(m for m in history if m["role"] == "minister")["highlights"] == [
-            "  据实核账  ", "臆断",
-        ]
-        assert next(m for m in scroll if m["role"] == "minister")["highlights"] == [
-            "  据实核账  ", "臆断",
-        ]
-        assert all(
-            "未命中" not in (m.get("highlights") or [])
-            for m in history + scroll
-        )
+        assert next(m for m in history if m["role"] == "minister")["highlights"] == raw_highlights
+        assert next(m for m in scroll if m["role"] == "minister")["highlights"] == raw_highlights
     finally:
         reopened.close()
 
-    # Streaming path: SSE highlights payload is already filtered.
-    db2 = GameDB(str(tmp_path / "highlight-filter-stream.db"), content)
+    # Streaming path: SSE highlights payload is the same raw judge list.
+    stream_raw = ["`  据实核账  `", "未命中"]
+    db2 = GameDB(str(tmp_path / "highlight-raw-stream.db"), content)
     db2.seed_static_data()
     state2 = db2.load_state()
     stream_runtime = _web_game(db2, state2, content, _FakeAgent(chunks=[answer]))
     monkeypatch.setattr(
         "ming_sim.highlight_judge.invoke_highlight_judge",
-        lambda *_a, **_k: '["`  据实核账  `", "未命中"]',
+        lambda *_a, **_k: json.dumps(stream_raw, ensure_ascii=False),
     )
     stream_runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
     stream_runtime._trail_extraction_after_reply = lambda *_a, **_k: None
     events = list(stream_runtime.chat_stream(minister, "钱粮如何？"))
     highlight_events = [e for e in events if e.get("type") == "highlights"]
     assert highlight_events
-    assert highlight_events[0]["highlights"] == ["  据实核账  "]
-    assert "未命中" not in highlight_events[0]["highlights"]
+    assert highlight_events[0]["highlights"] == stream_raw
     row2 = db2.conn.execute(
         "SELECT highlights FROM chat_messages WHERE role='minister' ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    assert json.loads(row2["highlights"]) == ["  据实核账  "]
+    assert json.loads(row2["highlights"]) == stream_raw
     db2.close()
 
 

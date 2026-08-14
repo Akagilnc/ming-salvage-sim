@@ -1,25 +1,29 @@
 import React from "react";
 import { MinisterPortrait, cacheBust } from "./hud";
-import { stripOrganicMarkdown } from "../format";
+import { filterMatchedHighlights, stripOrganicMarkdown } from "../format";
 import type { AudienceScrollMessage, ChatDisplayMessage, Minister } from "../types";
 
-function highlightedMinisterText(message: ChatDisplayMessage | AudienceScrollMessage, text: string): React.ReactNode {
-  const phrases = (message.highlights || [])
-    .map(stripOrganicMarkdown)
-    .filter((phrase) => phrase && text.includes(phrase));
-  if (!phrases.length) return text;
+/** Display-boundary highlight: sole strip/match via organicMarkdown.js authority. */
+function highlightedMinisterText(
+  message: ChatDisplayMessage | AudienceScrollMessage,
+  rawContent: string,
+  displayText: string,
+): React.ReactNode {
+  const phrases = filterMatchedHighlights(rawContent, message.highlights || []);
+  if (!phrases.length) return displayText;
   const ranges = phrases
-    .map((phrase) => ({ start: text.indexOf(phrase), phrase }))
+    .map((phrase) => ({ start: displayText.indexOf(phrase), phrase }))
+    .filter((range) => range.start >= 0)
     .sort((a, b) => a.start - b.start || b.phrase.length - a.phrase.length);
   const nodes: React.ReactNode[] = [];
   let cursor = 0;
   ranges.forEach(({ start, phrase }) => {
     if (start < cursor) return;
-    if (start > cursor) nodes.push(text.slice(cursor, start));
-    nodes.push(<mark key={`${start}-${phrase}`}>{text.slice(start, start + phrase.length)}</mark>);
+    if (start > cursor) nodes.push(displayText.slice(cursor, start));
+    nodes.push(<mark key={`${start}-${phrase}`}>{displayText.slice(start, start + phrase.length)}</mark>);
     cursor = start + phrase.length;
   });
-  if (cursor < text.length) nodes.push(text.slice(cursor));
+  if (cursor < displayText.length) nodes.push(displayText.slice(cursor));
   return nodes;
 }
 
@@ -65,7 +69,7 @@ export function ScrollMessages({
       {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
       <span>{speaker}</span>
       {action ? <em className="action">{action}</em> : null}
-      <p>{message.role === "minister" ? highlightedMinisterText(message, content) : content}</p>
+      <p>{message.role === "minister" ? highlightedMinisterText(message, message.content, content) : content}</p>
     </div>;
   })}</>;
 }

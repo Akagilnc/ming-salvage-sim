@@ -3,7 +3,7 @@
  * Emit the single organic-markdown authority product.
  *
  * One file: web/dist/organicMarkdown.js (IIFE, global OrganicMarkdown).
- * Browser loads it from the release layout; the write seam executes the same bytes.
+ * Browser display boundary is the sole strip/match executor of these bytes.
  * Source remains web/src/organicMarkdown.mjs (build input only — not a second runtime product).
  */
 import { createRequire } from "node:module";
