@@ -1597,6 +1597,10 @@ class WebGame:
         accepted_turn = 0
         with gate:
             self._reject_if_settlement_phase()
+            # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import assert_night_accepts_player_input
+                assert_night_accepts_player_input(self.db, what="召对")
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
             accepted_turn = int(self.state.turn)
@@ -3546,7 +3550,12 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
 @app.post("/api/ministers/{minister_name}/chat")
 async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     _require_active_minister(minister_name)
-    return get_game().chat(minister_name, request.message)
+    from ming_sim.audience_night import AudienceNightError
+    try:
+        return get_game().chat(minister_name, request.message)
+    except AudienceNightError as e:
+        # CLOSING / night admission → 409 (retryable); same family as stream path.
+        raise HTTPException(status_code=409, detail=str(e)) from None
 
 
 @app.post("/api/ministers/{minister_name}/chat/undo")

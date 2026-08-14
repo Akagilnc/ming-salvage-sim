@@ -413,11 +413,14 @@ def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
             "只输出 JSON，形如 "
             '{"endorsements":[{"dossier_id":1,"form":"会签","endorser_id":"毕自严",'
             '"imperial":false,"source_chat_turn_id":42}]}。',
-            "字段：dossier_id 必须来自输入「可背书案卷」；form ∈ {会签,当面站台,御笔手敕}；"
+            "字段：输入「可背书案卷」以 ref.dossier_id 标识案卷；输出必须用扁平 dossier_id"
+            "（取值自对应 ref.dossier_id），不得输出 dossier_ref；"
+            "form ∈ {会签,当面站台,御笔手敕}；"
             "会签/当面站台须具名 endorser_id 且 imperial=false；"
             "御笔手敕须 endorser_id 空串且 imperial=true；"
             "source_chat_turn_id 必须是输入 surviving_source_turns 中的 id。",
-            "没说出口则不要编造；不得输出 facts/body/presence_effect/tags。"
+            "没说出口则不要编造；禁字段：不得输出 facts/body/presence_effect/"
+            "audibility/tags/person_names/dossier_ref。"
             "无背书时输出 {\"endorsements\":[]}。不输出 JSON 以外任何文字。",
         ],
         add_history_to_context=False,

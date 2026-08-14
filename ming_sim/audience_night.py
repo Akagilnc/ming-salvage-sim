@@ -1208,15 +1208,23 @@ def close_night(
         )
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
+    # Replaceable beat generation has already finished (joined) above; no generator
+    # call under the runtime gate (ADR 0005: no silent in-gate fallback).
     night = get_night(db, night_id) or night
     cursor = int(night["close_commit_cursor"] or 0)
     with gate:
         if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
             # settle path should have advanced this; missing watermark is a hard fault.
+            # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
+            fault_cursor = int(cursor)
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
+            )
             raise AudienceNightError(
-                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={cursor}）",
+                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
                 code="endorsement_not_bound",
-                detail={"night_id": int(night_id), "cursor": int(cursor)},
+                detail={"night_id": int(night_id), "cursor": fault_cursor},
             )
         if cursor < CLOSE_STEP_FINALIZE:
             _commit_night_approved(
@@ -1263,14 +1271,6 @@ def close_night(
             }
             if TAG_CLOSE_NIGHT not in existing_tags:
                 generated_close = generated_close_holder.get("body") or ""
-                if not body and not generated_close and beat_generator is not None:
-                    # Beat was not pre-generated (already-bound path skipped thread).
-                    from ming_sim import beat_orchestration as beats
-                    generated_close = beats.generate_close_beat_body(
-                        db, state, night=get_night(db, night_id) or night,
-                        beat_generator=beat_generator,
-                        knowledge_provider=knowledge_provider,
-                    ) or ""
                 close_body = body or generated_close or (
                     "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
                 )
