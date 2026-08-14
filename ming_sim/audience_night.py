@@ -1198,7 +1198,14 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        raise phase2_errors[0]
+        # Preserve both diagnostics when endorsement + beat fail together
+        # (Python 3.11+ ExceptionGroup; no parallel failure bus).
+        if len(phase2_errors) == 1:
+            raise phase2_errors[0]
+        raise ExceptionGroup(
+            "close_night endorsement/beat failures",
+            phase2_errors,
+        )
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
     night = get_night(db, night_id) or night

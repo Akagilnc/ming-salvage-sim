@@ -8514,6 +8514,8 @@ class GameDB:
         night_id: int,
         facts: Sequence[Mapping[str, Any]],
         source_night_seq: int,
+        *,
+        allow_closing: bool = False,
     ) -> List[int]:
         """一轮抽取产出的多条账在**同一事务内全有或全无**落库 + 抽取水位 → 'done'（ADR 0036 cmr R3）。
 
@@ -8525,13 +8527,11 @@ class GameDB:
         closed 夜 / 非法可闻性 / 非法在场效果一律响亮拒写（回滚整轮）；死账仅对「进」效果校验
         （已死者不能在场；纯提及不拦）。seq/时序键与口令账同源。空 facts（空白回话）合法 →
         仅推进水位、不落账（不占永久待补，AC10/L4）。
+
+        CLOSING 默认拒写；仅 close_night ordinary drain 显式 `allow_closing=True`，
+        不得仅凭 night.status 自动授权，不加 token/registry/第二写口。
         """
-        from ming_sim.audience_night import (
-            NIGHT_STATUS_CLOSING,
-            PRESENCE_ENTER,
-            append_ledger_entry,
-            get_night,
-        )
+        from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -8544,13 +8544,6 @@ class GameDB:
         ).fetchone()
         if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
             return []
-        # Close-owned drain may write story while CLOSING; player-side new turns are
-        # frozen at admission seams so this only serves pre-close residues.
-        night_snap = get_night(self, int(night_id))
-        allow_closing = bool(
-            night_snap is not None
-            and str(night_snap.get("status") or "") == NIGHT_STATUS_CLOSING
-        )
         base = float(int(source_night_seq or 0)) + 0.5
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
@@ -8596,7 +8589,7 @@ class GameDB:
                     source_chat_turn_id=cid,
                     presence_effect=presence_effect,
                     order_key=base,
-                    allow_closing=allow_closing,
+                    allow_closing=bool(allow_closing),
                 )
                 new_ids.append(int(entry_id))
             self.conn.execute(
@@ -11925,7 +11918,10 @@ class GameDB:
         与 upsert_pending_directive 更新分支同纪律——把归属迁到当前开着的夜并清 night_approved，
         使本夜应允（WHERE night_id=当前夜）命中、收夜不漏交。返回该行 id（不存在/非 pending 则 0）。
         **合并保留下划线控制键**（_needs_clarification / _directive_status 等）——正文改草不得
-        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。"""
+        静默抹掉待澄清/夜内态闸（#502 L5，与 flag_directive_needs_clarification 同纪律）。
+        #612：player-facing draft mutation 统一走 assert_night_accepts_player_input，CLOSING 拒。"""
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        assert_night_accepts_player_input(self, what="改草")
         row = self.conn.execute(
             "SELECT id,payload_json,status FROM pending_actions "
             "WHERE id=? AND kind='directive'",
@@ -11991,7 +11987,10 @@ class GameDB:
     def clear_directive_needs_clarification(self, candidate_id: int) -> int:
         """清某道 pending directive 的「待澄清」标（#502 L4）：皇帝下一句指明并准驳后，
         含糊 episode 了结——被点名与其兄弟一并复位为普通 pending（未点名者重回「不回→默认同意」
-        通道）。返回该行 id（不存在/非 pending 则 0）。"""
+        通道）。返回该行 id（不存在/非 pending 则 0）。
+        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        assert_night_accepts_player_input(self, what="改草")
         row = self.conn.execute(
             "SELECT id, payload_json FROM pending_actions "
             "WHERE id=? AND kind='directive' AND status='pending'",
@@ -12120,7 +12119,10 @@ class GameDB:
     def flag_directive_needs_clarification(self, candidate_id: int) -> int:
         """含糊准驳（#502 AC5）：给 pending directive 候选打「待澄清」标，使其**不被**颁诏/过回合
         「不回→默认同意」误提交（含糊口令 ≠ 未表态）。皇帝下一句指明后由确认路清标并准驳。
-        返回该行 id（不存在/非 pending 则 0）。"""
+        返回该行 id（不存在/非 pending 则 0）。
+        #612：player-facing draft mutation，CLOSING 与改草同拒。"""
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        assert_night_accepts_player_input(self, what="改草")
         row = self.conn.execute(
             "SELECT id, payload_json FROM pending_actions "
             "WHERE id=? AND kind='directive' AND status='pending'",
