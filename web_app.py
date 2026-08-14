@@ -2490,13 +2490,19 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
     close_night holds the real runtime lock only for short prepare/finalize writes;
     the night-level endorsement-only LLM runs with the gate released. Web issue /
     stream / no-edict share this single orchestration (no duplicated close flow).
+
+    与 _await_audience_inflight_clear 同 seam：无真实 game.db.conn 的 legacy/
+    non-production 替身直接跳过 engine-owned auto-close，继续进入 session.resolve_turn。
     """
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "conn"):
+        return
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import production_beat_generator
 
     session = getattr(game, "session", None)
     auto_close_open_night(
-        game.db,
+        db,
         game.state,
         content=getattr(game, "content", None),
         registry=getattr(session, "registry", None) if session is not None else None,
