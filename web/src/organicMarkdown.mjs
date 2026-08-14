@@ -78,11 +78,3 @@ export const filterMatchedHighlights = (answer, highlights) => {
   return (highlights || []).map((raw) => stripOrganicMarkdown(String(raw || "")))
     .filter((phrase) => phrase && display.includes(phrase));
 };
-
-if (process.argv[2] === "--filter") {
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) input += chunk;
-  const payload = JSON.parse(input);
-  process.stdout.write(JSON.stringify(filterMatchedHighlights(payload.answer, payload.highlights)));
-}

@@ -350,6 +350,38 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         reopened.close()
 
 
+def test_release_layout_authority_preserves_code_span_raw_padding(tmp_path, monkeypatch):
+    """Write seam consumes the packaged web/dist authority product (not web/src+node)."""
+    import shutil
+    from pathlib import Path
+
+    from ming_sim import organic_markdown as om
+
+    sibling = Path(om.__file__).with_name("organic_markdown.authority.js")
+    assert sibling.is_file(), "authority sibling product must be committed for dev/tests"
+
+    release_root = tmp_path / "release-root"
+    release_authority = release_root / "web" / "dist" / "organicMarkdown.js"
+    release_authority.parent.mkdir(parents=True)
+    shutil.copyfile(sibling, release_authority)
+
+    monkeypatch.setattr(om, "bundled_path", lambda *parts: str(release_root.joinpath(*parts)))
+    # Drop any thread-local context bound to the sibling path.
+    if hasattr(om._thread_state, "ctx"):
+        del om._thread_state.ctx
+    if hasattr(om._thread_state, "path"):
+        del om._thread_state.path
+
+    resolved = om.authority_product_path()
+    assert resolved == release_authority
+    assert "web/src" not in resolved.as_posix()
+
+    answer = "臣请`  据实核账  `，不可臆断。"
+    assert om.filter_matched_highlights(
+        answer, ["`  据实核账  `", "未命中", "臆断"]
+    ) == ["  据实核账  ", "臆断"]
+
+
 def test_unmatched_highlights_never_persist_through_chat_reopen_or_stream(
     content, tmp_path, monkeypatch,
 ):
@@ -358,7 +390,7 @@ def test_unmatched_highlights_never_persist_through_chat_reopen_or_stream(
     from ming_sim.organic_markdown import filter_matched_highlights
     from tests.test_audience_background import _FakeAgent, _web_game
 
-    # The write seam invokes the renderer's actual JS module. Code-span padding is
+    # Write seam executes the release authority product in-process. Code-span padding is
     # deliberately observable: markdown-it's normalized token content is not enough.
     answer = "臣请`  据实核账  `，不可臆断。"
     assert filter_matched_highlights(

@@ -22,6 +22,8 @@ _openai_data, _openai_bin, _openai_hidden = collect_all("openai")
 _tiktoken_data, _tiktoken_bin, _tiktoken_hidden = collect_all("tiktoken")
 # pywebview + Mac WKWebView (pyobjc)
 _webview_data, _webview_bin, _webview_hidden = collect_all("webview")
+# #544 in-process consumer of the organic-markdown authority product
+_quickjs_data, _quickjs_bin, _quickjs_hidden = collect_all("quickjs")
 
 
 def tree_datas(root: str, dest: str, exclude_parts=()):
@@ -58,6 +60,12 @@ def _release_guard():
     if not assets_dir.is_dir() or not any(assets_dir.glob("*.js")):
         raise SystemExit(
             "[release-guard] web/dist/assets 无 JS 产物——前端构建不完整。先： cd web && npm run build"
+        )
+    # #544：写入缝与发行包共用 web/dist/organicMarkdown.js 权威产物（非 web/src + 外部 Node）
+    if not Path("web/dist/organicMarkdown.js").is_file():
+        raise SystemExit(
+            "[release-guard] web/dist/organicMarkdown.js 缺失——organic 权威产物未构建。\n"
+            "  先： cd web && npm run build"
         )
 
     # 2) 金手指建筑不得进包（无 git 依赖的硬底线：直接扫已知作弊建筑 id）
@@ -101,6 +109,7 @@ hiddenimports = (
     + _openai_hidden
     + _tiktoken_hidden
     + _webview_hidden
+    + _quickjs_hidden
     + collect_submodules("uvicorn")
     + collect_submodules("fastapi")
     + collect_submodules("anyio")
@@ -126,13 +135,16 @@ datas = (
     + _openai_data
     + _tiktoken_data
     + _webview_data
+    + _quickjs_data
     + tree_datas("web/dist", "web/dist", exclude_parts={"_backup_rgb", "_original_before_cutout"})
     + [
         ("content", "content"),
+        # Sibling copy keeps the write seam loadable if dist lookup is redirected in tests.
+        ("ming_sim/organic_markdown.authority.js", "ming_sim"),
     ]
 )
 
-binaries = _agno_bin + _openai_bin + _tiktoken_bin + _webview_bin
+binaries = _agno_bin + _openai_bin + _tiktoken_bin + _webview_bin + _quickjs_bin
 
 
 block_cipher = None
