@@ -5,9 +5,9 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node ../scripts/build_organic_markdown_authority.mjs && vite --host 127.0.0.1",
     "build": "tsc -b && vite build && node ../scripts/build_organic_markdown_authority.mjs",
-    "test": "vitest run --environment jsdom",
+    "test": "node ../scripts/build_organic_markdown_authority.mjs && vitest run",
     "electron": "npm run build && electron electron/main.cjs",
     "electron:dev": "npm run build && electron electron/main.cjs",
     "preview": "vite preview --host 127.0.0.1"

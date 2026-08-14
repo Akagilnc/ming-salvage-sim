@@ -139,8 +139,6 @@ datas = (
     + tree_datas("web/dist", "web/dist", exclude_parts={"_backup_rgb", "_original_before_cutout"})
     + [
         ("content", "content"),
-        # Sibling copy keeps the write seam loadable if dist lookup is redirected in tests.
-        ("ming_sim/organic_markdown.authority.js", "ming_sim"),
     ]
 )
 

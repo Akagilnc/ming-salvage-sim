@@ -1,10 +1,8 @@
-"""In-process consumer of the organic-markdown authority product.
+"""Write-seam consumer of the single organic-markdown authority product.
 
-Authority source: ``web/src/organicMarkdown.mjs`` (also consumed by the UI bundle).
-Release product: ``web/dist/organicMarkdown.js`` (IIFE), packaged with the app.
-Dev/test sibling copy: ``ming_sim/organic_markdown.authority.js`` (same bytes).
-
-No external Node subprocess and no extra timeout window after the judge.
+Release product (sole runtime authority): ``web/dist/organicMarkdown.js``.
+Browser and this module load those same bytes from the release layout.
+No sibling copy, no external Node subprocess, no post-judge timeout window.
 """
 from __future__ import annotations
 
@@ -17,32 +15,24 @@ from quickjs import Context
 
 from ming_sim.paths import bundled_path
 
-_RELEASE_AUTHORITY = ("web", "dist", "organicMarkdown.js")
-_SIBLING_AUTHORITY = Path(__file__).with_name("organic_markdown.authority.js")
+_AUTHORITY_PARTS = ("web", "dist", "organicMarkdown.js")
 _thread_state = threading.local()
 
 
 def authority_product_path() -> Path:
-    """Resolve the authority product the write seam executes.
-
-    Prefer the release layout path (what PyInstaller ships under web/dist/);
-    fall back to the packaged sibling copy so dev/tests work without a full UI build.
-    """
-    release = Path(bundled_path(*_RELEASE_AUTHORITY))
-    if release.is_file():
-        return release
-    if _SIBLING_AUTHORITY.is_file():
-        return _SIBLING_AUTHORITY
-    raise FileNotFoundError(
-        "organic markdown authority product missing: "
-        f"expected {release} (release layout) or {_SIBLING_AUTHORITY}"
-    )
+    """Resolve the sole authority product shipped in the release layout."""
+    path = Path(bundled_path(*_AUTHORITY_PARTS))
+    if not path.is_file():
+        raise FileNotFoundError(
+            "organic markdown authority product missing: "
+            f"expected release layout file {path}"
+        )
+    return path
 
 
 def _context() -> Context:
     ctx = getattr(_thread_state, "ctx", None)
     path = authority_product_path()
-    # Rebuild when the resolved product path changes (e.g. tests swap release layout).
     if ctx is not None and getattr(_thread_state, "path", None) == path:
         return ctx
     source = path.read_text(encoding="utf-8")
@@ -54,7 +44,7 @@ def _context() -> Context:
 
 
 def filter_matched_highlights(answer: str, highlights: Iterable[str]) -> List[str]:
-    """Filter at the write seam using the same authority product the release ships."""
+    """Filter at the write seam using the release authority product bytes."""
     expr = (
         "JSON.stringify(OrganicMarkdown.filterMatchedHighlights("
         f"{json.dumps(answer or '')}, "
