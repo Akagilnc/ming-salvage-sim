@@ -213,10 +213,6 @@ def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInpu
     return str(beat_generator(inputs) or "").strip()
 
 
-# Back-compat alias for in-tree callers / tests that imported the private name.
-_run_generator = run_beat_generator
-
-
 def _identity_snippet(characterization: str) -> str:
     """从 ADR 0033 特征化串取身份短句（生产日记用；不锁文案质量）。"""
     raw = str(characterization or "").strip()
