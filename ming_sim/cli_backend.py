@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -452,13 +453,83 @@ def _codex_final_text(obj: object) -> str:
 
 
 
-def _terminate_and_reap(proc: Any, timeout: float = 5.0) -> None:
-    """Best-effort graceful subprocess shutdown; never escalate to SIGKILL."""
+def _close_proc_pipe(stream: Any, name: str) -> None:
+    """Drop the parent-side pipe fd so a blocked reader observes EOF/err without SIGKILL.
+
+    `stream.close()` alone does not reliably wake another thread blocked in
+    `for line in stream` on macOS/Unix; closing the raw fd does.
+    """
+    if stream is None:
+        return
+    fd: Optional[int] = None
     try:
-        proc.terminate()
-        proc.wait(timeout=timeout)
+        fd = stream.fileno()
     except Exception:
-        pass
+        fd = None
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                print(
+                    f"[cli_backend] 关闭子进程 {name} fd 失败：{type(error).__name__}: {error}",
+                    flush=True,
+                )
+        except Exception as error:
+            print(
+                f"[cli_backend] 关闭子进程 {name} fd 失败：{type(error).__name__}: {error}",
+                flush=True,
+            )
+    try:
+        stream.close()
+    except Exception as error:
+        # Wrapper close after os.close often reports EBADF/closed — expected, not silent failure.
+        text = str(error).lower()
+        if error.__class__.__name__ == "ValueError" and "closed" in text:
+            return
+        if isinstance(error, OSError) and error.errno == errno.EBADF:
+            return
+        if "bad file descriptor" in text:
+            return
+        print(
+            f"[cli_backend] 关闭子进程 {name} 失败：{type(error).__name__}: {error}",
+            flush=True,
+        )
+
+
+def _terminate_and_reap(proc: Any, timeout: float = 5.0) -> None:
+    """Bounded graceful subprocess shutdown for ordinary CLI calls; never SIGKILL.
+
+    SIGTERM + wait is the happy path. If the child ignores SIGTERM, close parent-side
+    pipe fds so any blocked stdout/stderr reader is released within `timeout`, and leave
+    a diagnostic. Silence is not a cleanup strategy; SIGKILL is forbidden.
+    """
+    if getattr(proc, "returncode", None) is None:
+        try:
+            proc.terminate()
+        except Exception as error:
+            print(
+                f"[cli_backend] 子进程温和终止失败：{type(error).__name__}: {error}",
+                flush=True,
+            )
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        print(
+            f"[cli_backend] 子进程在 {timeout:g}s 内未响应温和终止；"
+            "关闭管道以有界解除阻塞读（不升级 SIGKILL）",
+            flush=True,
+        )
+    except Exception as error:
+        print(
+            f"[cli_backend] 子进程回收失败：{type(error).__name__}: {error}",
+            flush=True,
+        )
+
+    for name in ("stdin", "stdout", "stderr"):
+        _close_proc_pipe(getattr(proc, name, None), name)
+
 
 def _iter_codex_stream_chunks(
     prompt: str,
@@ -508,13 +579,14 @@ def _iter_codex_stream_chunks(
     stderr_thread.start()
     # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
     # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
-    # (codex correctness)。定时器在 run_timeout 到点 kill 进程，使阻塞读拿到 EOF 退出循环。
-    def _kill_on_timeout() -> None:
+    # (codex correctness)。到点温和终止；若子进程抗 SIGTERM，_terminate_and_reap 关闭管道
+    # 有界解除阻塞读——普通 CLI 路径自备有界清理，不借用高亮判官的进程组取消策略。
+    def _terminate_on_timeout() -> None:
         nonlocal timed_out
         timed_out = True
         _terminate_and_reap(proc)
 
-    watchdog = threading.Timer(run_timeout, _kill_on_timeout)
+    watchdog = threading.Timer(run_timeout, _terminate_on_timeout)
     watchdog.daemon = True
     watchdog.start()
     try:
@@ -538,12 +610,18 @@ def _iter_codex_stream_chunks(
     except subprocess.TimeoutExpired as exc:
         _terminate_and_reap(proc)
         raise RuntimeError("codex 流式调用超时") from exc
+    except Exception as exc:
+        # 看门狗关闭管道后，阻塞读可能以 ValueError/OSError/BrokenPipeError 等形式被唤醒。
+        if timed_out:
+            raise RuntimeError(
+                f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已温和终止）"
+            ) from exc
+        raise
     finally:
         watchdog.cancel()
-        # consumer 提前弃用（break/异常/GeneratorExit）时底层 codex 子进程仍在跑 → 泄漏。
-        # terminate+wait 兜底（正常路径 proc 已退，terminate 对已退进程是 no-op）（#399 cmr R1 coderabbit Major）。
+        # consumer 提前弃用时也温和终止并有界回收；不以 SIGKILL 越过进程清理契约。
         _terminate_and_reap(proc)
-        # 进程已退/被温和终止 → stderr 关闭 → drain 线程读到 EOF 结束；取其抽到的诊断文本。
+        # 进程已退/管道已关 → drain 线程结束；取其抽到的诊断文本。
         stderr_thread.join(timeout=2)
         stderr = "".join(stderr_parts)
 

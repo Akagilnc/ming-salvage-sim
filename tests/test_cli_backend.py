@@ -6,8 +6,10 @@ agy 生成内容非确定、不可断言；但其周围的解析、前缀分派�
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -915,10 +917,14 @@ def test_codex_stream_watchdog_gracefully_terminates_hung_process(monkeypatch):
         stdin = _Stdin()
         stdout = _HangStdout()
         stderr = None
-        returncode = 0
+        returncode = None
 
         def wait(self, timeout=None):
-            return ("", "")
+            if self.returncode is None and timeout is not None:
+                terminated.wait(timeout)
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired(cmd="codex", timeout=timeout)
+            return self.returncode
 
         def terminate(self):
             terminated.set()
@@ -933,6 +939,186 @@ def test_codex_stream_watchdog_gracefully_terminates_hung_process(monkeypatch):
     with pytest.raises(RuntimeError, match="超时"):
         list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
     assert terminated.is_set()
+
+
+def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch):
+    """Ordinary Codex stream stays bounded when the child ignores SIGTERM (#544 P1).
+
+    Highlight-judge process-group cancel must not be the only escape hatch: the
+    shared CLI helper closes parent pipe fds after a bounded wait and leaves a
+    diagnostic, without escalating to SIGKILL.
+    """
+    import threading as _t
+    import time
+
+    closed = _t.Event()
+    kill_called = []
+    diagnostics = []
+
+    class _ResistantStdout:
+        def __iter__(self):
+            if not closed.wait(5.0):
+                raise AssertionError("stdout reader hung beyond cleanup bound")
+            raise ValueError("I/O operation on closed file")
+
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+        def close(self):
+            closed.set()
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                pass
+
+            def close(self):
+                pass
+
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
+
+        stdin = _Stdin()
+        stdout = _ResistantStdout()
+        stderr = None
+        returncode = None
+
+        def wait(self, timeout=None):
+            if self.returncode is not None:
+                return self.returncode
+            # Ignore SIGTERM: never exit inside the reap budget.
+            if timeout is not None:
+                time.sleep(min(0.02, max(0.0, timeout)))
+                raise subprocess.TimeoutExpired(cmd="codex", timeout=timeout)
+            closed.wait(5.0)
+            return self.returncode
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            kill_called.append(True)
+
+    real_print = print
+
+    def capturing_print(*args, **kwargs):
+        diagnostics.append(" ".join(str(a) for a in args))
+        real_print(*args, **kwargs)
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    monkeypatch.setattr("builtins.print", capturing_print)
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="超时"):
+        list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.15))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2.0, f"caller blocked too long: {elapsed:.2f}s"
+    assert closed.is_set()
+    assert kill_called == []
+    assert any("未响应温和终止" in line for line in diagnostics)
+
+
+def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys):
+    """Direct helper contract: bounded wait, pipe-fd close, diagnostic, no SIGKILL."""
+    import os
+    import time
+
+    class _PipeStream:
+        def __init__(self):
+            self._r, self._w = os.pipe()
+            self.closed = False
+
+        def fileno(self):
+            return self._r
+
+        def close(self):
+            self.closed = True
+            try:
+                os.close(self._w)
+            except OSError:
+                pass
+
+    class _Proc:
+        def __init__(self):
+            self.returncode = None
+            self.stdin = None
+            self.stdout = _PipeStream()
+            self.stderr = _PipeStream()
+            self.kill_called = False
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                time.sleep(min(0.01, max(0.0, timeout)))
+                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+            return None
+
+        def kill(self):
+            self.kill_called = True
+
+    proc = _Proc()
+    # Keep write ends so os.close(read_fd) is the helper's responsibility.
+    read_fds = (proc.stdout.fileno(), proc.stderr.fileno())
+    cb._terminate_and_reap(proc, timeout=0.05)
+    assert proc.stdout.closed and proc.stderr.closed
+    assert proc.kill_called is False
+    for fd in read_fds:
+        with pytest.raises(OSError):
+            os.fstat(fd)  # helper closed the raw read fds
+    err = capsys.readouterr().out
+    assert "未响应温和终止" in err
+
+
+def test_terminate_and_reap_unblocks_real_sigterm_resistant_reader(capsys):
+    """Live child ignores SIGTERM; parent stdout reader still returns within bound."""
+    import os
+    import signal
+    import sys
+    import threading
+    import time
+
+    child = r"""
+import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+while True:
+    time.sleep(1)
+"""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", child],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    done = threading.Event()
+    outcome = {}
+
+    def _read() -> None:
+        try:
+            for _ in proc.stdout:
+                pass
+            outcome["eof"] = True
+        except Exception as error:
+            outcome["error"] = repr(error)
+        finally:
+            done.set()
+
+    threading.Thread(target=_read, daemon=True).start()
+    time.sleep(0.05)
+    started = time.monotonic()
+    cb._terminate_and_reap(proc, timeout=0.3)
+    elapsed = time.monotonic() - started
+    assert done.wait(2.0), f"reader still blocked after {elapsed:.2f}s; outcome={outcome}"
+    assert elapsed < 1.5
+    # Product path left the resistant child alive (no SIGKILL escalation).
+    assert proc.poll() is None
+    # Test harness only: reap leftover so the suite does not leak the child.
+    os.kill(proc.pid, signal.SIGKILL)
+    proc.wait(timeout=2)
+    assert "未响应温和终止" in capsys.readouterr().out
 
 
 def test_codex_final_text_handles_item_completed_shape():
