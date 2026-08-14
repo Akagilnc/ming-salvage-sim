@@ -426,6 +426,7 @@ def run_extraction_for_turn(
     write_gate: threading.Lock,
     present_names: Optional[Sequence[str]] = None,
     extractor_agent: Any = None,
+    allow_closing: bool = False,
 ) -> Dict[str, Any]:
     """一轮普通叙事抽取落账尾随：幂等水位判 → 抽取 → 原子落账；失败 → 响亮错误包 + 待补。
 
@@ -463,6 +464,7 @@ def run_extraction_for_turn(
             return _settle_or_pending(
                 db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
                 facts=[], source_night_seq=source_night_seq, fact_count=0,
+                allow_closing=allow_closing,
             )
 
         if present_names is None:
@@ -490,6 +492,7 @@ def run_extraction_for_turn(
             db, write_gate, cid=cid, night_id=night_id, minister_name=minister_name,
             facts=facts, source_night_seq=source_night_seq,
             fact_count=len(facts),
+            allow_closing=allow_closing,
         )
     finally:
         _release_single_flight(flight_key, owner)
@@ -636,6 +639,7 @@ def _settle_or_pending(
     db: Any, write_gate: threading.Lock, *,
     cid: int, night_id: int, minister_name: str,
     facts: Sequence[Mapping[str, Any]], source_night_seq: int, fact_count: int,
+    allow_closing: bool = False,
 ) -> Dict[str, Any]:
     """持锁落账 + 二次幂等复查；落账失败与抽取失败同语义（pack+pending，不抛穿 catch_up）。"""
     try:
@@ -644,6 +648,7 @@ def _settle_or_pending(
                 return {"status": "done", "chat_turn_id": cid, "already": True}
             entry_ids = db.settle_story_extraction(
                 cid, int(night_id), facts, int(source_night_seq),
+                allow_closing=bool(allow_closing),
             )
     except Exception as exc:
         return _pending_with_pack(
@@ -714,10 +719,12 @@ def catch_up_pending_extractions(
     write_gate: threading.Lock,
     night_id: Optional[int] = None,
     extractor_agent: Any = None,
+    allow_closing: bool = False,
 ) -> Dict[str, Any]:
     """补跑普通抽取：对已持久化但账未抽（''/'pending'）的回话逐轮尽力补跑（ADR 0036）。
 
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
+    allow_closing 仅 close_night ordinary drain 显式开启。
     """
     rows = db.list_unextracted_replies(night_id=night_id)
     extracted = 0
@@ -735,6 +742,7 @@ def catch_up_pending_extractions(
             llm_config=llm_config,
             write_gate=write_gate,
             extractor_agent=extractor_agent,
+            allow_closing=bool(allow_closing),
         )
         status = result.get("status")
         if status == "done":
@@ -759,6 +767,7 @@ def drain_pending_before_close(
     """收夜是史实书写边界（ADR 0036）：收夜前强制同步补跑普通待补一次。
 
     仍有待补 → **fail-closed 中止收夜**。不含 endorsement batch。
+    close-owned：显式 allow_closing，使 CLOSING 下 ordinary residue 可落账。
     """
     catch_up_pending_extractions(
         db=db,
@@ -766,6 +775,7 @@ def drain_pending_before_close(
         write_gate=write_gate,
         night_id=int(night_id),
         extractor_agent=extractor_agent,
+        allow_closing=True,
     )
     remaining = db.count_pending_story_extractions(night_id=int(night_id))
     if remaining > 0:

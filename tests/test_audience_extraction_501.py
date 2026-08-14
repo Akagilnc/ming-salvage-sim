@@ -577,6 +577,27 @@ def test_settle_refuses_on_closed_night(game):
             ctid, nid, [{"body": "站台", "person_names": [minister]}], 1)
     assert ei.value.code == "night_closed"
 
+    # CLOSING：默认调用拒写（不得仅凭 status 自动授权）；close-owned 显式 allow_closing 成功。
+    night2 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid2 = int(night2["id"])
+    ctid2 = db.create_chat_turn(state, minister, "s", 0, night_id=nid2)
+    db.conn.execute(
+        "UPDATE audience_nights SET status=? WHERE id=?",
+        (an.NIGHT_STATUS_CLOSING, nid2),
+    )
+    db.conn.commit()
+    with pytest.raises(an.AudienceNightError) as ei_closing:
+        db.settle_story_extraction(
+            ctid2, nid2, [{"body": "默认拒", "person_names": [minister]}], 1,
+        )
+    assert ei_closing.value.code == "night_closing"
+    assert db.get_story_extract_status(ctid2) != "done"
+    ids = db.settle_story_extraction(
+        ctid2, nid2, [{"body": "close-owned 落账", "person_names": [minister]}], 1,
+        allow_closing=True,
+    )
+    assert len(ids) == 1 and db.get_story_extract_status(ctid2) == "done"
+
 
 def test_settle_refuses_dead_actor_enter_but_allows_mention(game):
     db, state, content = game
@@ -668,12 +689,18 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
     assert db.count_pending_story_extractions(night_id=nid) == 1
-    # 带 llm/write_gate → 引擎 close 强制 drain → 收夜成功、水位 done
+    # 带 llm/write_gate → 引擎 close 强制 drain（显式 allow_closing）→ 收夜成功、水位 done
     result = an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert db.get_story_extract_status(ctid) == "done"
+    # close-owned drain 落出的抽取账真实存在（非跳过）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries "
+        "WHERE night_id=? AND source_chat_turn_id=?",
+        (nid, ctid),
+    ).fetchone()["c"] >= 1
 
 
 def test_engine_close_night_fail_closed_on_boom(game, monkeypatch, tmp_path):

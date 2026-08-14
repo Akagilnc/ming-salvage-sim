@@ -454,7 +454,8 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
 
 def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(game, monkeypatch):
     """真实 close tracer：beat 或 endorsement 代码异常均在 finalize/重开前终结两支，
-    不留后台线程继续访问 db/state；失败保持 OPEN、无 CLOSED。"""
+    不留后台线程继续访问 db/state；失败保持 OPEN、无 CLOSED。
+    双支同时失败 → ExceptionGroup 保留两条诊断后再 OPEN 重开。"""
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, seq = _night_reply(db, state, minister, reply="臣愿作保。")
@@ -573,6 +574,66 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     # CLOSED must not appear after either phase-2 fault.
     assert an.get_night(db, night_id)["status"] == an.NIGHT_STATUS_OPEN
     assert an.get_night(db, night_id2)["status"] == an.NIGHT_STATUS_OPEN
+
+    # ── Case C: both branches fail together → ExceptionGroup keeps both ────
+    night_id3, chat_turn_id3, seq3 = _night_reply(db, state, minister, reply="臣三保。")
+    assert _extract(
+        db, minister=minister, reply="臣三保。",
+        chat_turn_id=chat_turn_id3, night_id=night_id3, seq=seq3,
+        fact={"body": "大臣三保。", "person_names": [minister]},
+    )["status"] == "done"
+    candidate_id3 = db.stage_directive_candidate(
+        state.turn, minister,
+        payload={"text": "再核边饷", "dossier_action_type": "policy", "target_kind": "issue",
+                 "target_id": "phase2-both-exc", "actor": minister},
+    )
+    db.mark_pending_night_approved([candidate_id3], night_id=night_id3)
+
+    runtime_gate3 = threading.Lock()
+    endorsement_entered3 = threading.Event()
+    beat_entered3 = threading.Event()
+
+    class _BoomBothEndorsement:
+        def run(self, materials):
+            endorsement_entered3.set()
+            assert beat_entered3.wait(5)
+            raise RuntimeError("endorsement boom dual")
+
+    def _boom_both_beat(_inputs):
+        beat_entered3.set()
+        assert endorsement_entered3.wait(5)
+        raise RuntimeError("close beat dual fault")
+
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda cfg: _BoomBothEndorsement(),
+    )
+    before_threads3 = {t.ident for t in threading.enumerate() if t.ident is not None}
+    with pytest.raises(ExceptionGroup) as eg:
+        an.close_night(
+            db, state, night_id=night_id3, content=content,
+            llm_config=object(), write_gate=runtime_gate3,
+            beat_generator=_boom_both_beat,
+        )
+    msgs = [str(exc) for exc in eg.value.exceptions]
+    assert any("endorsement boom dual" in m for m in msgs), msgs
+    assert any("close beat dual fault" in m for m in msgs), msgs
+    # AudienceNightError (endorsement) and RuntimeError (beat) both preserved.
+    types = {type(exc) for exc in eg.value.exceptions}
+    assert an.AudienceNightError in types or any(
+        isinstance(exc, an.AudienceNightError) for exc in eg.value.exceptions
+    )
+    assert any(isinstance(exc, RuntimeError) for exc in eg.value.exceptions)
+    failed3 = an.get_night(db, night_id3)
+    assert failed3["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed3["close_commit_cursor"] or 0) == 0
+    leftover3 = [
+        t for t in threading.enumerate()
+        if t.ident not in before_threads3 and t.is_alive() and not t.daemon
+    ]
+    assert leftover3 == [], leftover3
+    assert endorsement_entered3.is_set() and beat_entered3.is_set()
+    assert an.get_night(db, night_id3)["status"] == an.NIGHT_STATUS_OPEN
 
 
 def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):

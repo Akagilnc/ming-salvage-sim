@@ -311,8 +311,8 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
     """Real Web settlement tracer: ordinary facts may already be done; close creates
     draft dossiers then runs one gate-free endorsement-only batch. While the
-    endorsement agent blocks, concurrent Web chat/story/stage/approve all freeze;
-    first-batch failure reopens OPEN and restores admission; retry closes."""
+    endorsement agent blocks, concurrent Web chat/story/stage/approve/draft-update
+    all freeze; first-batch failure reopens OPEN and restores admission; retry closes."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -380,7 +380,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             assert await asyncio.to_thread(entered.wait, 8.0)
-            # chat / story / stage / approve — all refuse under CLOSING.
+            # chat / story / stage / approve / draft-update — all refuse under CLOSING.
             chat_resp = await chat_client.post(
                 f"/api/ministers/{minister}/chat/stream",
                 json={"message": "另议边饷？"},
@@ -406,6 +406,15 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             with pytest.raises(an.AudienceNightError) as approve_exc:
                 an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
             assert approve_exc.value.code == "night_closing"
+            with pytest.raises(an.AudienceNightError) as draft_exc:
+                game.db.update_directive_candidate(
+                    directive_id,
+                    payload={**_POLICY_FIELDS, "text": "CLOSING 改草", "actor": minister},
+                )
+            assert draft_exc.value.code == "night_closing"
+            with pytest.raises(an.AudienceNightError) as flag_exc:
+                game.db.flag_directive_needs_clarification(directive_id)
+            assert flag_exc.value.code == "night_closing"
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
             assert game.db.conn.execute(
                 "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
@@ -424,7 +433,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     reopened = an.get_night(game.db, night_id)
     assert reopened["status"] == an.NIGHT_STATUS_OPEN
     assert int(reopened["close_commit_cursor"] or 0) == 0
-    # Failure OPEN restores player admission (stage/story no longer night_closing).
+    # Failure OPEN restores player admission (stage/story/draft-update no longer night_closing).
+    # Phase-1 already committed the approved candidate; reopen admission is proven on a
+    # fresh pending draft (player-facing update/flag/clear), not the committed row.
     restored_id = game.db.stage_directive_candidate(
         game.state.turn, minister,
         payload={**_POLICY_FIELDS, "text": "失败后可再暂存", "actor": minister,
@@ -435,6 +446,14 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         game.db, night_id, body="失败重开后故事账", tags=["试"],
     )
     assert int(story_id) > 0
+    updated = game.db.update_directive_candidate(
+        restored_id,
+        payload={**_POLICY_FIELDS, "text": "失败重开后改草", "actor": minister,
+                 "target_id": "after-reopen"},
+    )
+    assert int(updated) == int(restored_id)
+    assert game.db.flag_directive_needs_clarification(restored_id) == int(restored_id)
+    assert game.db.clear_directive_needs_clarification(restored_id) == int(restored_id)
 
     # Second close attempt succeeds through the same real Web seam.
     entered.clear()
