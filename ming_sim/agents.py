@@ -377,6 +377,7 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
 
     同邸报→delta 模式：LLM 只做「机器搬运工」——把已发生的回话叙事结构化，不虚构、
     不改写。开放标签（站台作保/自行退至殿侧等），涉在场变化带机器可读 presence_effect。
+    不含背书绑定（#612：背书走收夜 endorsement-only 批处理）。
     """
     return Agent(
         name="召对叙事抽取员",
@@ -392,11 +393,32 @@ def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
             "「殿上公开」或「御前低语」（递话/读心/私语类御前内容标私，缺省公开）；"
             "body=一句中文情节记述；tags=开放短标签数组；presence_effect 仅当该情节"
             "改变某人在场时取 'enter'（入殿/近前）或 'exit'（自行退至殿侧/告退），否则空串。",
-            "若皇帝问话或大臣回话明确说出口对「可背书案卷」中某案的会签、当面站台或御笔手敕，"
-            "在对应 fact 增加 endorsement={dossier_id,form,endorser_id,imperial}。"
-            "会签/当面站台须填具名大臣且 imperial=false；御笔手敕须 endorser_id=空串且 imperial=true。"
-            "只可引用输入中已有案卷，不按皇威或其他条件二次判断是否愿意担名；没说出口则不捕获。",
+            "不要输出 endorsement 或任何案卷绑定字段——背书由收夜专用通道处理。",
             "没有可抽取的显著情节时输出 {\"facts\":[]}。不输出 JSON 以外任何文字。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
+def create_endorsement_extractor_agent(llm_config: LLMConfig) -> Agent:
+    """收夜 endorsement-only 抽取员（#612 / ADR 0070）：只绑定已说出口的担名，不写故事账。"""
+    return Agent(
+        name="召对背书绑定员",
+        id="endorsement_extractor",
+        model=create_chat_model(llm_config, temperature=0.1, max_tokens=800),
+        instructions=[
+            "你只做一件事：把本夜对话里已经说出口的会签、当面站台、御笔手敕，"
+            "绑定到输入给出的可背书案卷。只输出引用绑定，不重写、不复制故事正文。",
+            "只输出 JSON，形如 "
+            '{"endorsements":[{"dossier_id":1,"form":"会签","endorser_id":"毕自严",'
+            '"imperial":false,"source_chat_turn_id":42}]}。',
+            "字段：dossier_id 必须来自输入「可背书案卷」；form ∈ {会签,当面站台,御笔手敕}；"
+            "会签/当面站台须具名 endorser_id 且 imperial=false；"
+            "御笔手敕须 endorser_id 空串且 imperial=true；"
+            "source_chat_turn_id 必须是输入 surviving_source_turns 中的 id。",
+            "没说出口则不要编造；不得输出 facts/body/presence_effect/tags。"
+            "无背书时输出 {\"endorsements\":[]}。不输出 JSON 以外任何文字。",
         ],
         add_history_to_context=False,
         markdown=False,

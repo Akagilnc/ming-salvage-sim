@@ -1197,6 +1197,8 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'open',
                 -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
+                -- #612 夜级 endorsement-only 批成功水位：0=未绑定；1=已绑定（可幂等跳过 LLM）
+                endorsement_bound INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
                 opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1953,6 +1955,9 @@ class GameDB:
         self.ensure_column("story_ledger_entries", "order_key", "REAL")
         self.ensure_column(
             "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
+        # #612：夜级 endorsement-only 批成功水位（单一 done 位；非逐轮、非第二状态机）
+        self.ensure_column(
+            "audience_nights", "endorsement_bound", "INTEGER NOT NULL DEFAULT 0")
         # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
         self.ensure_column(
             "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -8350,11 +8355,166 @@ class GameDB:
         self.conn.commit()
 
     def list_endorsement_candidates(self, night_id: int) -> List[Dict[str, Any]]:
-        """Typed references available to the one production extraction call."""
+        """Eligible dossier refs for the night-level endorsement-only batch.
+
+        night_id reserved for night-scoped eligibility; proposed dossiers are the
+        current canonical target set after close-night draft prerequisites land.
+        """
+        _ = int(night_id)
         return [{
             "ref": {"dossier_id": int(row["id"])},
             "decree_text": str(row.get("decree_text") or ""),
         } for row in self.list_decree_dossiers(status="proposed")]
+
+    def list_endorsement_batch_inputs(self, night_id: int) -> Dict[str, Any]:
+        """Immutable snapshot inputs for night-level endorsement-only binding."""
+        nid = int(night_id)
+        candidates = self.list_endorsement_candidates(nid)
+        turn_rows = self.conn.execute(
+            """
+            SELECT t.id AS chat_turn_id, t.night_seq, t.minister_name,
+                   um.content AS emperor_text, mm.content AS minister_reply
+            FROM chat_turns t
+            LEFT JOIN chat_messages um ON um.id = t.user_message_id
+            LEFT JOIN chat_messages mm ON mm.id = t.minister_message_id
+            WHERE t.night_id = ?
+              AND t.status = 'active'
+              AND t.minister_message_id IS NOT NULL
+              AND t.minister_message_id > 0
+            ORDER BY t.night_seq, t.id
+            """,
+            (nid,),
+        ).fetchall()
+        turns: List[Dict[str, Any]] = []
+        for row in turn_rows:
+            cid = int(row["chat_turn_id"])
+            fact_rows = self.conn.execute(
+                """
+                SELECT body, person_names, tags, audibility
+                FROM story_ledger_entries
+                WHERE night_id = ? AND source_chat_turn_id = ?
+                ORDER BY COALESCE(order_key, seq), seq, id
+                """,
+                (nid, cid),
+            ).fetchall()
+            ordinary_facts = []
+            for fr in fact_rows:
+                try:
+                    persons = json.loads(fr["person_names"] or "[]")
+                except (TypeError, ValueError):
+                    persons = []
+                try:
+                    tags = json.loads(fr["tags"] or "[]")
+                except (TypeError, ValueError):
+                    tags = []
+                ordinary_facts.append({
+                    "body": str(fr["body"] or ""),
+                    "person_names": persons if isinstance(persons, list) else [],
+                    "tags": tags if isinstance(tags, list) else [],
+                    "audibility": str(fr["audibility"] or ""),
+                })
+            turns.append({
+                "source_chat_turn_id": cid,
+                "night_seq": int(row["night_seq"] or 0),
+                "minister_name": str(row["minister_name"] or ""),
+                "emperor_text": str(row["emperor_text"] or ""),
+                "minister_reply": str(row["minister_reply"] or ""),
+                "ordinary_facts": ordinary_facts,
+            })
+        return {"candidates": candidates, "turns": turns}
+
+    def is_night_endorsement_bound(self, night_id: int) -> bool:
+        row = self.conn.execute(
+            "SELECT endorsement_bound FROM audience_nights WHERE id = ?",
+            (int(night_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        return int(row["endorsement_bound"] or 0) == 1
+
+    def mark_night_endorsement_bound(self, night_id: int, *, commit: bool = True) -> None:
+        self.conn.execute(
+            "UPDATE audience_nights SET endorsement_bound = 1 WHERE id = ?",
+            (int(night_id),),
+        )
+        if commit:
+            self.conn.commit()
+
+    def settle_endorsement_batch(
+        self,
+        night_id: int,
+        endorsements: Sequence[Mapping[str, Any]],
+    ) -> List[int]:
+        """Atomically persist night-level endorsements and the bound watermark.
+
+        Invalid items go to the established rejection channel; valid ones INSERT OR
+        IGNORE (retry-idempotent unique key). Success watermark always advances in
+        the same short transaction so crash-restore does not re-call the LLM.
+        """
+        nid = int(night_id)
+        if self.is_night_endorsement_bound(nid):
+            return []
+        accepted: List[Mapping[str, Any]] = []
+        rejected: List[tuple[Mapping[str, Any], str]] = []
+        surviving = {
+            int(t["source_chat_turn_id"])
+            for t in (self.list_endorsement_batch_inputs(nid).get("turns") or [])
+        }
+        for item in endorsements:
+            if not isinstance(item, Mapping):
+                rejected.append(({"raw": repr(item)}, "背书项非对象"))
+                continue
+            try:
+                source_cid = item.get("source_chat_turn_id")
+                if isinstance(source_cid, bool) or not isinstance(source_cid, int) or source_cid <= 0:
+                    raise ValueError("背书来源对话轮 id 须为正整数")
+                if int(source_cid) not in surviving:
+                    raise ValueError("背书来源对话轮不在本夜 surviving turns")
+                self._validate_dossier_endorsement(
+                    item.get("dossier_id"),
+                    form=item.get("form"),
+                    endorser_id=item.get("endorser_id", ""),
+                    imperial=item.get("imperial", False),
+                    source_chat_turn_id=int(source_cid),
+                )
+            except (TypeError, KeyError, ValueError) as exc:
+                rejected.append((dict(item), str(exc)))
+                continue
+            accepted.append(item)
+
+        new_ids: List[int] = []
+        with atomic(self):
+            if rejected:
+                from ming_sim.applier import Provenance, RejectedItem, RejectionCollector
+                collector = RejectionCollector()
+                turn = 0
+                trow = self.conn.execute(
+                    "SELECT turn FROM audience_nights WHERE id=?", (nid,),
+                ).fetchone()
+                if trow is not None:
+                    turn = int(trow["turn"] or 0)
+                for item, reason in rejected:
+                    collector.record(
+                        "endorsements",
+                        RejectedItem(
+                            item=dict(item), reason=reason, category="invalid_item",
+                            source=Provenance.system_simulation,
+                        ),
+                        turn,
+                    )
+                collector.flush_to_db(self)
+            for item in accepted:
+                eid = self.add_dossier_endorsement(
+                    int(item.get("dossier_id") or 0),
+                    form=str(item.get("form") or ""),
+                    endorser_id=str(item.get("endorser_id") or ""),
+                    imperial=bool(item.get("imperial", False)),
+                    source_chat_turn_id=int(item.get("source_chat_turn_id") or 0),
+                    commit=False,
+                )
+                new_ids.append(int(eid))
+            self.mark_night_endorsement_bound(nid, commit=False)
+        return new_ids
 
     def settle_story_extraction(
         self,
@@ -8391,23 +8551,14 @@ class GameDB:
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
         # Validate model-owned items before opening the all-or-nothing application
-        # transaction. Expected dirty-data failures become item rejections; code
-        # failures during application still raise and roll the transaction back.
+        # transaction. Endorsements are never settled here (#612 night-level batch).
         for fact in facts:
             if "_rejected_story_fact" in fact:
                 rejected.append((fact.get("_rejected_story_fact") or {}, str(fact.get("_rejection_reason") or "事实形状非法")))
                 continue
-            endorsement = fact.get("endorsement")
-            if isinstance(endorsement, Mapping):
-                try:
-                    self._validate_dossier_endorsement(
-                        endorsement.get("dossier_id"), form=endorsement.get("form"),
-                        endorser_id=endorsement.get("endorser_id", ""),
-                        imperial=endorsement.get("imperial", False), source_chat_turn_id=cid,
-                    )
-                except (TypeError, KeyError, ValueError) as exc:
-                    rejected.append((fact, str(exc)))
-                    continue
+            if isinstance(fact, Mapping) and "endorsement" in fact:
+                rejected.append((dict(fact), "普通故事抽取不得携带 endorsement"))
+                continue
             accepted.append(fact)
 
         new_ids: List[int] = []
@@ -8443,15 +8594,6 @@ class GameDB:
                     order_key=base,
                 )
                 new_ids.append(int(entry_id))
-                endorsement = fact.get("endorsement")
-                if isinstance(endorsement, Mapping):
-                    self.add_dossier_endorsement(
-                        int(endorsement.get("dossier_id") or 0),
-                        form=str(endorsement.get("form") or ""),
-                        endorser_id=str(endorsement.get("endorser_id") or ""),
-                        imperial=endorsement.get("imperial", False),
-                        source_chat_turn_id=cid, commit=False,
-                    )
             self.conn.execute(
                 "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
                 (cid,),
