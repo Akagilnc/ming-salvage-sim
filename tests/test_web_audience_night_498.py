@@ -311,7 +311,8 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
     """Real Web settlement tracer: ordinary facts may already be done; close creates
     draft dossiers then runs one gate-free endorsement-only batch. While the
-    endorsement agent blocks, concurrent Web chat + approval must not drift."""
+    endorsement agent blocks, concurrent Web chat/story/stage/approve all freeze;
+    first-batch failure reopens OPEN and restores admission; retry closes."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -358,6 +359,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             no_db_tx.append(game.db.conn.in_transaction is False)
             entered.set()
             assert release.wait(8.0), "endorsement agent release timeout"
+            if len(calls) == 1:
+                raise RuntimeError("endorsement boom under CLOSING freeze")
             candidates = payload["可背书案卷"]
             assert len(candidates) == 1
             dossier_id = candidates[0]["ref"]["dossier_id"]
@@ -371,20 +374,28 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # Real chat path uses registry agent; keep canned so freeze is the only outcome.
     game.session.registry.get = lambda ch: _FakeAgent(answer="臣另有奏。")
 
-    async def scenario():
+    async def first_fail_scenario():
         async with _client() as issue_client, _client() as chat_client:
             issue_task = asyncio.create_task(
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             assert await asyncio.to_thread(entered.wait, 8.0)
-            # While endorsement LLM blocks under CLOSING: real Web chat + stage/approve.
+            # chat / story / stage / approve — all refuse under CLOSING.
             chat_resp = await chat_client.post(
                 f"/api/ministers/{minister}/chat/stream",
                 json={"message": "另议边饷？"},
             )
             chat_events = _parse_sse(chat_resp.text)
             assert any(ev.get("event") == "error" for ev in chat_events), chat_events
-            # Direct stage/approve seams must also freeze (no stranded consent).
+            assert any(
+                ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
+                for ev in chat_events
+            ), chat_events
+            with pytest.raises(an.AudienceNightError) as story_exc:
+                an.append_ledger_entry(
+                    game.db, night_id, body="偷渡故事账", tags=["试"],
+                )
+            assert story_exc.value.code == "night_closing"
             with pytest.raises(an.AudienceNightError) as stage_exc:
                 game.db.stage_directive_candidate(
                     game.state.turn, minister,
@@ -408,11 +419,41 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             release.set()
             return _parse_sse((await issue_task).text)
 
-    events = asyncio.run(scenario())
+    fail_events = asyncio.run(first_fail_scenario())
+    assert any(ev.get("event") == "error" for ev in fail_events), fail_events
+    reopened = an.get_night(game.db, night_id)
+    assert reopened["status"] == an.NIGHT_STATUS_OPEN
+    assert int(reopened["close_commit_cursor"] or 0) == 0
+    # Failure OPEN restores player admission (stage/story no longer night_closing).
+    restored_id = game.db.stage_directive_candidate(
+        game.state.turn, minister,
+        payload={**_POLICY_FIELDS, "text": "失败后可再暂存", "actor": minister,
+                 "target_id": "after-reopen"},
+    )
+    assert int(restored_id) > 0
+    story_id = an.append_ledger_entry(
+        game.db, night_id, body="失败重开后故事账", tags=["试"],
+    )
+    assert int(story_id) > 0
+
+    # Second close attempt succeeds through the same real Web seam.
+    entered.clear()
+    release = threading.Event()
+
+    async def retry_scenario():
+        async with _client() as issue_client:
+            issue_task = asyncio.create_task(
+                issue_client.post("/api/decree/issue/stream", json={})
+            )
+            assert await asyncio.to_thread(entered.wait, 8.0)
+            release.set()
+            return _parse_sse((await issue_task).text)
+
+    events = asyncio.run(retry_scenario())
     assert events[-1]["event"] == "done", events
-    assert len(calls) == 1
-    assert gate_free == [True]
-    assert no_db_tx == [True]
+    assert len(calls) == 2
+    assert gate_free == [True, True]
+    assert no_db_tx == [True, True]
     assert game.db.get_story_extract_status(chat_turn_id) == "done"
     closed = an.get_night(game.db, night_id)
     assert closed["status"] == an.NIGHT_STATUS_CLOSED
