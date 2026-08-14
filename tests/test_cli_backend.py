@@ -893,10 +893,11 @@ def test_api_backend_streaming_emits_real_token_deltas(monkeypatch):
 
 
 def test_codex_stream_watchdog_gracefully_terminates_hung_process(monkeypatch):
-    """The watchdog unblocks a hung stdout reader without SIGKILL escalation."""
+    """Deadline unblocks a hung stdout reader via the sole finally reap owner."""
     import threading as _t
 
     terminated = _t.Event()
+    reap_calls = []
 
     class _HangStdout:
         def __iter__(self):
@@ -933,12 +934,20 @@ def test_codex_stream_watchdog_gracefully_terminates_hung_process(monkeypatch):
         def kill(self):
             raise AssertionError("SIGKILL escalation is forbidden")
 
+    real_reap = cb._terminate_and_reap
+
+    def counting_reap(proc, timeout=5.0):
+        reap_calls.append(timeout)
+        return real_reap(proc, timeout=timeout)
+
     monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    monkeypatch.setattr(cb, "_terminate_and_reap", counting_reap)
 
     with pytest.raises(RuntimeError, match="超时"):
         list(cb._iter_codex_stream_chunks("请写邸报", timeout=0.2))
     assert terminated.is_set()
+    assert len(reap_calls) == 1, f"cleanup must have a single owner call, got {reap_calls!r}"
 
 
 def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch):
@@ -946,7 +955,8 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
 
     Highlight-judge process-group cancel must not be the only escape hatch: the
     shared CLI helper closes parent pipe fds after a bounded wait and leaves a
-    diagnostic, without escalating to SIGKILL.
+    diagnostic, without escalating to SIGKILL. Cleanup stays single-owned even
+    when the deadline fires while the stdout reader is still blocked.
     """
     import threading as _t
     import time
@@ -954,6 +964,8 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
     closed = _t.Event()
     kill_called = []
     diagnostics = []
+    reap_calls = []
+    close_owners = []
 
     class _ResistantStdout:
         def __iter__(self):
@@ -965,6 +977,7 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
             raise io.UnsupportedOperation("fileno")
 
         def close(self):
+            close_owners.append(_t.current_thread().name)
             closed.set()
 
     class _Proc:
@@ -1000,13 +1013,19 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
             kill_called.append(True)
 
     real_print = print
+    real_reap = cb._terminate_and_reap
 
     def capturing_print(*args, **kwargs):
         diagnostics.append(" ".join(str(a) for a in args))
         real_print(*args, **kwargs)
 
+    def counting_reap(proc, timeout=5.0):
+        reap_calls.append(_t.current_thread().name)
+        return real_reap(proc, timeout=timeout)
+
     monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    monkeypatch.setattr(cb, "_terminate_and_reap", counting_reap)
     monkeypatch.setattr("builtins.print", capturing_print)
 
     started = time.monotonic()
@@ -1018,6 +1037,8 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
     assert closed.is_set()
     assert kill_called == []
     assert any("未响应温和终止" in line for line in diagnostics)
+    assert len(reap_calls) == 1, f"single reap owner required, got {reap_calls!r}"
+    assert close_owners, "stdout pipe must be closed by the sole cleanup owner"
 
 
 def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys):
