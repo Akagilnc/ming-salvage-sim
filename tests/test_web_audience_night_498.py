@@ -35,6 +35,7 @@ import web_app
 import ming_sim.agents as agents_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
+import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
@@ -56,6 +57,16 @@ class _CannedEndorsementExtractor:
     def run(self, _material):
         class _R:
             content = '{"endorsements":[]}'
+        return _R()
+
+
+class _CannedMindreadingAgent:
+    """#499 读心尾随离线边界：回话 done 后 worker 会调 create_mindreading_agent——
+    deterministic 一句旁白，绝不触网（定义真源 = mindreading.create_mindreading_agent）。"""
+
+    def run(self, _material):
+        class _R:
+            content = "近臣低声：此人心里另有盘算。"
         return _R()
 
 
@@ -120,7 +131,17 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。"""
+    """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。
+
+    允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
+    - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
+    - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
+    - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
+    - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
+    - session.verify_llm_available / load_runtime_llm 连通性中和
+    - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
+    不 patch production_beat_generator / auto-close / 结算核。
+    """
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
@@ -133,6 +154,11 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _CannedEndorsementExtractor(),
+    )
+    # #499 读心：runtime lookup = mindreading.create_mindreading_agent（模块级绑定）。
+    monkeypatch.setattr(
+        mindreading_mod, "create_mindreading_agent",
+        lambda *a, **k: _CannedMindreadingAgent(),
     )
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)

@@ -1134,19 +1134,30 @@ def close_night(
     # Independent close prep that neither reads endorsements nor writes finals:
     # pure beat body generation may overlap the endorsement LLM. close_night owns
     # both branches for the same lifecycle — no daemon, no hard join timeout.
+    #
+    # SQLite conn is main-thread only: assemble all DB-backed immutable BeatInputs
+    # here before any worker starts; worker only calls BeatGenerator(BeatInputs).
     generated_close_holder: Dict[str, str] = {"body": ""}
     beat_errors: List[BaseException] = []
     beat_thread: Optional[threading.Thread] = None
     need_beat = (not body) and beat_generator is not None
+    close_beat_inputs = None
+    if need_beat:
+        from ming_sim import beat_orchestration as beats
+        night_snap = get_night(db, night_id) or night
+        close_beat_inputs = beats.assemble_beat_inputs(
+            db, state, beat_kind=beats.BEAT_CLOSE,
+            time_of_day=str(night_snap.get("time_of_day") or ""),
+            location=str(night_snap.get("location") or ""),
+            night_id=int(night_snap.get("id") or night_id or 0),
+            knowledge_provider=knowledge_provider,
+        )
 
     def _gen_close_beat() -> None:
         from ming_sim import beat_orchestration as beats
         try:
-            night_snap = get_night(db, night_id) or night
-            generated_close_holder["body"] = beats.generate_close_beat_body(
-                db, state, night=night_snap,
-                beat_generator=beat_generator,
-                knowledge_provider=knowledge_provider,
+            generated_close_holder["body"] = beats.run_beat_generator(
+                beat_generator, close_beat_inputs,
             ) or ""
         except Exception as exc:
             # Capture for join-site re-raise (ADR 0005: no silent empty-body swallow).
