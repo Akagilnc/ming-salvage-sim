@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
@@ -26,6 +28,64 @@ TAG_STANDING_ROSTER = "常在员额"
 TAG_AUTO_CLOSE = "顺势收夜"
 TAG_MINGFA = "明发"  # 夜内定案的旨在公开层账上标已明发（#502 AC6，供 #459 扩散）
 _MINGFA_ID_PREFIX = "明发#"  # 明发账挂 directive_id 的结构化标（逐条幂等续跑，#502 L6）
+
+
+def mingfa_publication_tag(directive_id: int | str) -> str:
+    """Canonical engine-command publication-fact tag for one directive."""
+    return f"{_MINGFA_ID_PREFIX}{int(directive_id)}"
+
+
+def exact_mingfa_publication_directive_id(tag: object) -> Optional[int]:
+    """Exact 明发#<positive-int> only; rejects malformed suffix / non-decimal residue.
+
+    Use str.isdecimal (not isdigit): superscript/compatibility digits like '²' are
+    isdigit-true but int() rejects them, and must never alias as publication facts.
+    """
+    text = str(tag or "")
+    if not text.startswith(_MINGFA_ID_PREFIX):
+        return None
+    rest = text[len(_MINGFA_ID_PREFIX):]
+    if not rest.isdecimal():
+        return None
+    directive_id = int(rest)
+    # Reject non-canonical forms (leading zeros, etc.) so CAST/prefix loosness cannot alias.
+    if directive_id <= 0 or str(directive_id) != rest:
+        return None
+    return directive_id
+
+
+def engine_command_mingfa_publication_facts(
+    entries: Sequence[Dict[str, Any]],
+) -> List[Tuple[int, int]]:
+    """One exact engine-command 明发 publication-fact seam: (night_id, directive_id).
+
+    Only engine-command ledger rows (`source_chat_turn_id==0`); only exact
+    `明发#<positive-int>` tags. Shared by both promulgated readers and close_night
+    already_ids. Extractor open tags and malformed suffixes are not publication facts.
+    """
+    seen: set[Tuple[int, int]] = set()
+    out: List[Tuple[int, int]] = []
+    for entry in entries:
+        if int(entry.get("source_chat_turn_id") or 0) != 0:
+            continue
+        night_id = int(entry.get("night_id") or 0)
+        for tag in entry.get("tags") or []:
+            directive_id = exact_mingfa_publication_directive_id(tag)
+            if directive_id is None:
+                continue
+            key = (night_id, directive_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def engine_command_mingfa_publication_ids(
+    entries: Sequence[Dict[str, Any]],
+) -> set[int]:
+    """Directive ids from the one exact engine-command 明发 publication-fact seam."""
+    return {directive_id for _night_id, directive_id in engine_command_mingfa_publication_facts(entries)}
 # 进出账（ADR 0035：TAG_ENTER/TAG_EXIT 是机器承重的在场效果标识「进/出」）
 TAG_EXIT = "告退"          # 出：离场；确定性「令 X 退下」口令落此账
 TAG_IN_TRANSIT = "传召在途"  # 账在人不在场：传召已发、人在途（不落在场效果）
@@ -55,10 +115,12 @@ NIGHT_STATUS_CLOSED = "closed"
 
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
-CLOSE_STEP_FINALIZE = 3
+CLOSE_STEP_ENDORSEMENT_BOUND = 3
+CLOSE_STEP_FINALIZE = 4
 CLOSE_STEPS = (
     CLOSE_STEP_COMMIT_OFFICE,
     CLOSE_STEP_TRANSFER_CANDIDATES,
+    CLOSE_STEP_ENDORSEMENT_BOUND,
     CLOSE_STEP_FINALIZE,
 )
 
@@ -67,8 +129,11 @@ DEFAULT_IN_FLIGHT_WAIT_S = 30.0
 DEFAULT_IN_FLIGHT_POLL_S = 0.05
 
 # 收夜提交的 night-domain kinds（密令应允即落地，不进收夜提交）
-_CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office", "consort"})
+# Pre-endorsement: only draft-dossier prerequisites (endorsement targets). Final
+# gameplay effects such as consort cultivation run only after endorsement binding.
+_CLOSE_COMMIT_KINDS_OFFICE = frozenset({"office"})
 _CLOSE_COMMIT_KINDS_DIRECTIVE = frozenset({"directive"})
+_CLOSE_COMMIT_KINDS_FINAL = frozenset({"consort"})
 
 # ── 夜内真实盘面直写白名单（ADR 0038 防坑不变式；#506 AC3）───────────────────────
 # 撤回逆转干净的结构性前提：夜内对真实盘面的直写**只有**这可枚举的两项，其余结构化
@@ -201,6 +266,39 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
+def night_endorsement_bound(night: Optional[Dict[str, Any]]) -> bool:
+    """Endorsement-bound watermark is close_commit_cursor, not a parallel column."""
+    if not night:
+        return False
+    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_ENDORSEMENT_BOUND
+
+
+def assert_night_accepts_player_input(
+    db: Any,
+    night_id: Optional[int] = None,
+    *,
+    what: str = "写入",
+) -> Optional[Dict[str, Any]]:
+    """Freeze new dialogue / story / stage / approve while status=CLOSING.
+
+    Close-owned short writes and close-owned story drain are not player input;
+    they do not call this seam. Failure reopens OPEN so retries may proceed.
+    """
+    if night_id is not None and int(night_id) > 0:
+        night = get_night(db, int(night_id))
+    else:
+        night = get_open_night(db)
+    if night is None:
+        return None
+    if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        raise AudienceNightError(
+            f"本夜收夜中，暂不能{what}：{int(night['id'])}",
+            code="night_closing",
+            detail={"night_id": int(night["id"]), "what": what},
+        )
+    return night
+
+
 def get_night(db: Any, night_id: int) -> Optional[Dict[str, Any]]:
     row = db.conn.execute(
         "SELECT * FROM audience_nights WHERE id = ?",
@@ -318,8 +416,11 @@ def night_archive_metadata(
             name = str(raw_name or "").strip()
             if name and name not in people:
                 people.append(name)
+    summon_method = summon_methods[0] if summon_methods else ""
     return {
-        "audience_type": summon_methods[0] if summon_methods else "召对",
+        # Summon methods remain machine tags; the container contract exposes the
+        # player-facing audience type from this single production source.
+        "audience_type": "越次召对" if summon_method == METHOD_YUECI else "召对",
         "involved_people": people,
     }
 
@@ -596,6 +697,7 @@ def append_ledger_entry(
     presence_effect: str = "",
     order_key: Optional[float] = None,
     origin_chat_turn_id: int = 0,
+    allow_closing: bool = False,
 ) -> int:
     """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
 
@@ -605,6 +707,9 @@ def append_ledger_entry(
 
     `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
     撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
+
+    CLOSING 一律拒绝玩家侧新账（默认 allow_closing=False）；收夜自有框架写与
+    close-owned drain 仅显式 allow_closing=True，不得按 source/origin id 漏放。
     """
     night = get_night(db, night_id)
     if night is None:
@@ -612,6 +717,12 @@ def append_ledger_entry(
     if night["status"] == NIGHT_STATUS_CLOSED:
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
+        )
+    if night["status"] == NIGHT_STATUS_CLOSING and not allow_closing:
+        raise AudienceNightError(
+            f"本夜收夜中，不能再落故事账：{night_id}",
+            code="night_closing",
+            detail={"night_id": int(night_id)},
         )
     persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
     if check_dead and persons:
@@ -764,6 +875,7 @@ def summon_enter(
     if not name:
         raise AudienceNightError("宣召人名不能为空", code="empty_person")
     method = _validate_summon_method(method, default=METHOD_XUANRU)
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     text = body or f"{method}{name}入殿。"
     return append_ledger_entry(
         db, night_id,
@@ -877,13 +989,12 @@ def _commit_night_approved(
 
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
+    extractor_agent: Any = None,
 ) -> None:
-    """收夜前清空待补抽取（ADR 0036 线上 R3）——引擎侧强制闸，不只挂 web 前门。
+    """收夜前清空普通待补抽取（ADR 0036）——引擎侧强制闸。
 
-    收夜是史实书写边界：带待补账收夜会把过期在场名单写进收尾叙事，补账插回原时序后同一
-    时间线自相矛盾。有待补 → 强制同步补跑；仍有 → fail-closed 中止收夜（夜保持开、可重试）。
-    无 llm_config/write_gate 又有待补 = 无从清空又不得带待补收夜 → 同样 fail-closed
-    （绝不静默跳过史实边界）。无待补则 no-op（无依赖时正常收夜）。测试替身无该接口时跳过。
+    只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑；仍有 →
+    fail-closed。LLM 在 write_gate 外跑（drain 内 settle 才短持锁）。
     """
     if not hasattr(db, "count_pending_story_extractions"):
         return
@@ -909,7 +1020,15 @@ def _drain_story_extraction_or_fail_closed(
 
     drain_pending_before_close(
         db=db, llm_config=llm_config, write_gate=write_gate, night_id=int(night_id),
+        extractor_agent=extractor_agent,
     )
+
+
+def _gate_cm(write_gate: Any):
+    """Runtime write gate section. None → nullcontext (CLI single-writer)."""
+    if write_gate is None:
+        return contextlib.nullcontext()
+    return write_gate
 
 
 def close_night(
@@ -928,15 +1047,19 @@ def close_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
+    extractor_agent: Any = None,
+    endorsement_extractor_agent: Any = None,
 ) -> Dict[str, Any]:
-    """收夜：在飞守卫 → 收夜前清空待补抽取（引擎侧史实边界闸）→ 仅本夜已应允提交（游标幂等）
-    → 收夜账 → closed。
+    """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
-    beat_generator 注入时（#503 编排）：收夜账正文经编排层路由输入后由内容生成填充；
-    不注入（或返空）则沿用 #498 确定性兜底正文。见 beat_orchestration。
+    分相：
+    1. 持 write_gate：在飞已清后标 CLOSING；提交 office/directive draft 前提。
+    2. 释放 gate：清空普通 story 待补；与不依赖背书的收夜 beat 纯生成并发跑
+       endorsement-only LLM（无 DB transaction / 无 runtime write gate）。
+    3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
 
-    `llm_config`/`write_gate` 供收夜前 drain 用；web 前门已预清（pending=0）时本闸 no-op、
-    不重复 drain（也不因此在已持锁的 runtime write_gate 上自锁）。带待补而无依赖 → fail-closed。
+    背书失败 → OPEN、cursor=0、draft identity 保留、无需重 consent；成功前不得
+    判官/公开明发/终局效果/CLOSED。
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
@@ -952,13 +1075,13 @@ def close_night(
     if night["status"] == NIGHT_STATUS_CLOSED:
         return {"closed": True, "night_id": int(night_id), "already": True}
 
+    gate = _gate_cm(write_gate)
+
     if night["status"] == NIGHT_STATUS_OPEN:
+        # In-flight wait is gate-free (may sleep); then short write to CLOSING.
         wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-        # 史实书写边界：收夜前强制清空待补抽取（fail-closed），先于任何收夜写。
-        _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
-        )
-        _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
+        with gate:
+            _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
         night = get_night(db, night_id)
         assert night is not None
 
@@ -977,84 +1100,210 @@ def close_night(
                 detail={"night_id": int(night_id), "step": int(step)},
             )
 
-    if cursor < CLOSE_STEP_COMMIT_OFFICE:
-        _commit_night_approved(
-            db, state, int(night_id),
-            kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-            content=content, registry=registry,
-        )
-        _advance(CLOSE_STEP_COMMIT_OFFICE)
+    # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
+    with gate:
+        if cursor < CLOSE_STEP_COMMIT_OFFICE:
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+                content=content, registry=registry,
+            )
+            _advance(CLOSE_STEP_COMMIT_OFFICE)
 
-    if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-        _commit_night_approved(
-            db, state, int(night_id),
-            kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-            content=content, registry=registry,
-            directive_status="draft",
+        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+                content=content, registry=registry,
+                directive_status="draft",
+            )
+            # Draft dossiers / turn_directives are durable prerequisites only.
+            _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+
+    # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
+    # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
+    try:
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=gate,
+            extractor_agent=extractor_agent,
         )
-        # 夜内定案的旨落公开层账、标已明发（#502 AC6，供 #459 扩散）——每道一条，
-        # 机器辨识经 pending_actions↔turn_directives 关联（list_night_promulgated_directives），
-        # 账本正文只作叙事呈现、不被解析。密令私密，不入明发。
-        # 幂等按 directive_id 逐条（#502 L6）：半写后续跑只补缺的那几道、不漏不重——
-        # 不用「整夜已有任意明发标」一门（那会在半写后跳过剩余道，公开账残缺）。
-        if hasattr(db, "list_night_promulgated_directives"):
+    except Exception:
+        with gate:
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
+            )
+        raise
+
+    # Independent close prep that neither reads endorsements nor writes finals:
+    # pure beat body generation may overlap the endorsement LLM. close_night owns
+    # both branches for the same lifecycle — no daemon, no hard join timeout.
+    #
+    # SQLite conn is main-thread only: assemble all DB-backed immutable BeatInputs
+    # here before any worker starts; worker only calls BeatGenerator(BeatInputs).
+    generated_close_holder: Dict[str, str] = {"body": ""}
+    beat_errors: List[BaseException] = []
+    beat_thread: Optional[threading.Thread] = None
+    need_beat = (not body) and beat_generator is not None
+    close_beat_inputs = None
+    if need_beat:
+        from ming_sim import beat_orchestration as beats
+        night_snap = get_night(db, night_id) or night
+        close_beat_inputs = beats.assemble_beat_inputs(
+            db, state, beat_kind=beats.BEAT_CLOSE,
+            time_of_day=str(night_snap.get("time_of_day") or ""),
+            location=str(night_snap.get("location") or ""),
+            night_id=int(night_snap.get("id") or night_id or 0),
+            knowledge_provider=knowledge_provider,
+        )
+
+    def _gen_close_beat() -> None:
+        from ming_sim import beat_orchestration as beats
+        try:
+            generated_close_holder["body"] = beats.run_beat_generator(
+                beat_generator, close_beat_inputs,
+            ) or ""
+        except Exception as exc:
+            # Capture for join-site re-raise (ADR 0005: no silent empty-body swallow).
+            beat_errors.append(exc)
+
+    def _finish_owned_beat() -> None:
+        """Join beat before finalize or failure reopen; surface code errors."""
+        nonlocal beat_thread
+        if beat_thread is not None:
+            beat_thread.join()
+            beat_thread = None
+        if beat_errors:
+            raise beat_errors[0]
+
+    # Re-read cursor after Phase 1; endorsement-bound is the cursor step itself.
+    night = get_night(db, night_id) or night
+    cursor = int(night["close_commit_cursor"] or 0)
+    already_bound = cursor >= CLOSE_STEP_ENDORSEMENT_BOUND
+    if need_beat and not already_bound:
+        beat_thread = threading.Thread(target=_gen_close_beat)
+        beat_thread.start()
+    elif need_beat:
+        _gen_close_beat()
+
+    phase2_errors: List[BaseException] = []
+    try:
+        from ming_sim.audience_extraction import run_endorsement_batch_for_night
+
+        # Endorsement LLM must not hold runtime write gate / DB transaction.
+        run_endorsement_batch_for_night(
+            db=db,
+            night_id=int(night_id),
+            llm_config=llm_config,
+            write_gate=gate,
+            extractor_agent=endorsement_extractor_agent,
+        )
+    except Exception as exc:
+        phase2_errors.append(exc)
+
+    # Same-lifecycle ownership: both branches end before finalize or reopen.
+    try:
+        _finish_owned_beat()
+    except Exception as exc:
+        phase2_errors.append(exc)
+
+    if phase2_errors:
+        with gate:
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
+            )
+        # Preserve both diagnostics when endorsement + beat fail together
+        # (Python 3.11+ ExceptionGroup; no parallel failure bus).
+        if len(phase2_errors) == 1:
+            raise phase2_errors[0]
+        raise ExceptionGroup(
+            "close_night endorsement/beat failures",
+            phase2_errors,
+        )
+
+    # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
+    # Replaceable beat generation has already finished (joined) above; no generator
+    # call under the runtime gate (ADR 0005: no silent in-gate fallback).
+    night = get_night(db, night_id) or night
+    cursor = int(night["close_commit_cursor"] or 0)
+    with gate:
+        if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
+            # settle path should have advanced this; missing watermark is a hard fault.
+            # Restore OPEN so the player can retry (ADR 0036); keep code + diagnostics.
+            fault_cursor = int(cursor)
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
+            )
+            raise AudienceNightError(
+                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={fault_cursor}）",
+                code="endorsement_not_bound",
+                detail={"night_id": int(night_id), "cursor": fault_cursor},
+            )
+        if cursor < CLOSE_STEP_FINALIZE:
+            _commit_night_approved(
+                db, state, int(night_id),
+                kinds=_CLOSE_COMMIT_KINDS_FINAL,
+                content=content, registry=registry,
+            )
+            # 夜内定案的旨落公开层账、标已明发（#502 AC6）——仅 endorsement 成功之后。
             already_ids = {
-                str(t)[len(_MINGFA_ID_PREFIX):]
-                for e in list_ledger(db, night_id) for t in e.get("tags") or []
-                if str(t).startswith(_MINGFA_ID_PREFIX)
+                str(did)
+                for did in engine_command_mingfa_publication_ids(list_ledger(db, night_id))
             }
-            for _pd in db.list_night_promulgated_directives(int(night_id)):
-                _did = str(int(_pd.get("directive_id") or 0))
-                if _did in already_ids:
+            _mingfa_candidates = db.conn.execute(
+                """
+                SELECT td.id AS directive_id, td.actor, td.text
+                FROM pending_actions pa
+                JOIN turn_directives td ON td.id = pa.committed_directive_id
+                WHERE pa.night_id = ? AND pa.kind = 'directive'
+                  AND pa.status = 'committed' AND pa.committed_directive_id > 0
+                ORDER BY td.id
+                """,
+                (int(night_id),),
+            ).fetchall()
+            for _pd in _mingfa_candidates:
+                _did_int = int(_pd["directive_id"] or 0)
+                _did = str(_did_int)
+                if not _did_int or _did in already_ids:
                     continue
                 append_ledger_entry(
                     db, night_id,
-                    person_names=[str(_pd.get("actor") or "")] if _pd.get("actor") else [],
+                    person_names=[str(_pd["actor"] or "")] if _pd["actor"] else [],
                     audibility=AUDIBILITY_PUBLIC,
-                    body=f"明发旨意：{str(_pd.get('text') or '')}",
-                    tags=[TAG_MINGFA, f"{_MINGFA_ID_PREFIX}{_did}"],
+                    body=f"明发旨意：{str(_pd['text'] or '')}",
+                    tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
                     check_dead=False,
+                    allow_closing=True,
                 )
-        _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
-
-    if cursor < CLOSE_STEP_FINALIZE:
-        tags = [TAG_CLOSE_NIGHT]
-        if auto:
-            tags.append(TAG_AUTO_CLOSE)
-        # 收夜账幂等只看口令账的确定性收夜标——抽取账开放 tags 里的「收夜」不算数
-        # （否则 LLM 叙事标签旁路收夜账、夜 closed 却无退朝账）。
-        existing_tags = {
-            t for e in list_ledger(db, night_id) if _is_command_entry(e)
-            for t in e.get("tags") or []
-        }
-        if TAG_CLOSE_NIGHT not in existing_tags:
-            # 收夜账正文只在真要落且无显式正文时才生成——避免为已落账/已给 body 的
-            # 幂等续跑白跑贵 LLM（P5）。
-            generated_close = ""
-            if not body and beat_generator is not None:
-                from ming_sim import beat_orchestration as beats
-
-                generated_close = beats.generate_close_beat_body(
-                    db, state, night=night,
-                    beat_generator=beat_generator, knowledge_provider=knowledge_provider,
+            tags = [TAG_CLOSE_NIGHT]
+            if auto:
+                tags.append(TAG_AUTO_CLOSE)
+            existing_tags = {
+                t for e in list_ledger(db, night_id) if _is_command_entry(e)
+                for t in e.get("tags") or []
+            }
+            if TAG_CLOSE_NIGHT not in existing_tags:
+                generated_close = generated_close_holder.get("body") or ""
+                close_body = body or generated_close or (
+                    "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
                 )
-            close_body = body or generated_close or (
-                "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
-            )
-            append_ledger_entry(
+                append_ledger_entry(
+                    db, night_id,
+                    person_names=[],
+                    audibility=AUDIBILITY_PUBLIC,
+                    body=close_body,
+                    tags=tags,
+                    check_dead=False,
+                    allow_closing=True,
+                )
+            _set_night_fields(
                 db, night_id,
-                person_names=[],
-                audibility=AUDIBILITY_PUBLIC,
-                body=close_body,
-                tags=tags,
-                check_dead=False,
+                status=NIGHT_STATUS_CLOSED,
+                closed_at=_now_iso(),
+                close_commit_cursor=CLOSE_STEP_FINALIZE,
             )
-        _set_night_fields(
-            db, night_id,
-            status=NIGHT_STATUS_CLOSED,
-            closed_at=_now_iso(),
-            close_commit_cursor=CLOSE_STEP_FINALIZE,
-        )
 
     final = get_night(db, night_id)
     return {
@@ -1078,11 +1327,14 @@ def auto_close_open_night(
     knowledge_provider: Any = None,
     llm_config: Any = None,
     write_gate: Any = None,
+    extractor_agent: Any = None,
+    endorsement_extractor_agent: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
-    `llm_config`/`write_gate` 透传给收夜前 drain 闸；web 结算路已在前门预清待补，故此处
-    多数为 no-op（pending=0），无依赖也不会误 fail-closed。"""
+    write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
+    endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
+    """
     open_n = get_open_night(db)
     if open_n is None:
         return None
@@ -1098,6 +1350,8 @@ def auto_close_open_night(
         knowledge_provider=knowledge_provider,
         llm_config=llm_config,
         write_gate=write_gate,
+        extractor_agent=extractor_agent,
+        endorsement_extractor_agent=endorsement_extractor_agent,
     )
 
 
@@ -1160,6 +1414,7 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
+    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
@@ -1424,6 +1679,8 @@ def mark_actions_night_approved(
         return 0
     nid = night_id
     if nid is None:
-        open_n = get_open_night(db)
+        open_n = assert_night_accepts_player_input(db, what="应允暂存")
         nid = int(open_n["id"]) if open_n else None
+    else:
+        assert_night_accepts_player_input(db, int(nid), what="应允暂存")
     return int(db.mark_pending_night_approved(action_ids, night_id=nid) or 0)

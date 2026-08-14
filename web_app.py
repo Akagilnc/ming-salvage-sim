@@ -73,7 +73,6 @@ from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
-    drain_pending_before_open_night_close,
     trail_extraction_after_reply,
 )
 from ming_sim.token_stats import tlog
@@ -1064,8 +1063,16 @@ class WebGame:
         }
 
     def directive_rows(self):
-        # 颁诏候选 = draft；UI 列表含 pending
-        return self.db.list_directives(self.state, statuses=("pending", "draft"))
+        """Player desk projection shared with the CLI: undossiered candidates only."""
+        visible_ids = {
+            item.id for item in self.session.list_directives(include_pending=True)
+        }
+        return [
+            row for row in self.db.list_directives(
+                self.state, statuses=("pending", "draft"),
+            )
+            if int(row["id"]) in visible_ids
+        ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
         region_positions = {
@@ -1628,6 +1635,10 @@ class WebGame:
         accepted_turn = 0
         with gate:
             self._reject_if_settlement_phase()
+            # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import assert_night_accepts_player_input
+                assert_night_accepts_player_input(self.db, what="召对")
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
             accepted_turn = int(self.state.turn)
@@ -1716,6 +1727,10 @@ class WebGame:
         before_snapshot: Dict[str, Any] = {}
         with gate:
             self._reject_if_settlement_phase()
+            # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import assert_night_accepts_player_input
+                assert_night_accepts_player_input(self.db, what="召对")
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
@@ -1916,7 +1931,8 @@ class WebGame:
                     if draft_text:
                         # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
                         pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text)
+                            self.state.turn, character.name, draft_text, mode=message_text,
+                        )
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -1929,7 +1945,9 @@ class WebGame:
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = self.session._stage_appointment_candidate(payload_json, character)
+                    pending_action_id = self.session._stage_appointment_candidate(
+                        payload_json, character, message_text,
+                    )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
@@ -2296,6 +2314,24 @@ class WebGame:
                 self._complete_pending_write()
                 yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
                 return
+            # #612：CLOSING 冻结新对话——唯一玩家输入准入真源，无平行 status 判断。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import (
+                    AudienceNightError,
+                    assert_night_accepts_player_input,
+                )
+                try:
+                    assert_night_accepts_player_input(self.db, what="召对")
+                except AudienceNightError as err:
+                    if getattr(err, "code", "") == "night_closing":
+                        self._complete_pending_write()
+                        yield {
+                            "type": "error",
+                            "message": str(err) or "本夜收夜中，暂不能召对。",
+                            "code": "night_closing",
+                        }
+                        return
+                    raise
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}
@@ -2493,6 +2529,26 @@ def _next_or_none(iterator):
         return None
 
 
+def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
+    """Map audience-night / close dual-failure errors to retryable HTTP 409.
+
+    Shared converter for player-input boundaries (chat / reply-retry) and sync
+    decree endpoints (issue / advance_without_edict). AudienceNightError keeps
+    ``detail=str(exc)``; close_night dual ExceptionGroup surfaces both nested
+    diagnostics in detail. No new exception protocol — existing 409 only.
+    """
+    from ming_sim.audience_night import AudienceNightError
+    if isinstance(exc, AudienceNightError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ExceptionGroup):
+        parts = [str(sub) for sub in exc.exceptions]
+        return HTTPException(
+            status_code=409,
+            detail="；".join(parts) if parts else str(exc),
+        )
+    raise TypeError(f"not a retryable audience/close error: {type(exc)!r}")
+
+
 def _await_audience_inflight_clear(game) -> None:
     """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
     让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
@@ -2501,9 +2557,7 @@ def _await_audience_inflight_clear(game) -> None:
 
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
-    #501（ADR 0036 线上 R3）：在飞回话清空后、持 gate 收夜前，强制同步补跑一次清空待补——
-    收夜是史实书写边界，带在场变化的待补账收夜会把过期名单写成史实。仍有待补 → fail-closed
-    抛 AudienceNightError（端点映射 409、夜保持开、可原地重试），与在飞超时熔断同语义。"""
+    抽取由引擎 close_night 单独拥有：Web 这里只等待在飞回话，不在案卷创建前预清待补。"""
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
         return
@@ -2511,11 +2565,36 @@ def _await_audience_inflight_clear(game) -> None:
     open_n = get_open_night(db)
     if open_n is not None:
         wait_in_flight_clear(db, int(open_n["id"]))
-        drain_pending_before_open_night_close(
-            db=db,
-            llm_config=getattr(getattr(game, "session", None), "llm_config", None),
-            write_gate=_game_write_gate(game),
-        )
+
+
+
+def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> None:
+    """Close the open audience night outside any outer runtime write gate.
+
+    close_night holds the real runtime lock only for short prepare/finalize writes;
+    the night-level endorsement-only LLM runs with the gate released. Web issue /
+    stream / no-edict share this single orchestration (no duplicated close flow).
+
+    与 _await_audience_inflight_clear 同 seam：无真实 game.db.conn 的 legacy/
+    non-production 替身直接跳过 engine-owned auto-close，继续进入 session.resolve_turn。
+    """
+    db = getattr(game, "db", None)
+    if db is None or not hasattr(db, "conn"):
+        return
+    from ming_sim.audience_night import auto_close_open_night
+    from ming_sim.beat_orchestration import production_beat_generator
+
+    session = getattr(game, "session", None)
+    auto_close_open_night(
+        db,
+        game.state,
+        content=getattr(game, "content", None),
+        registry=getattr(session, "registry", None) if session is not None else None,
+        wait_timeout_s=float(inflight_wait_s),
+        beat_generator=production_beat_generator,
+        llm_config=getattr(session, "llm_config", None) if session is not None else None,
+        write_gate=_game_write_gate(game),
+    )
 
 
 def _game_write_gate(game) -> threading.Lock:
@@ -3494,7 +3573,12 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 async def api_retry_interrupted_reply(minister_name: str) -> Dict[str, Any]:
     """#505：重开后为中断轮重新生成回话（复用已持久问话，对话记录无重复句）。"""
     _require_active_minister(minister_name)
-    return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
+    from ming_sim.audience_night import AudienceNightError
+    try:
+        return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
+    except AudienceNightError as e:
+        # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.get("/api/ministers/{minister_name}/chat/mindreading")
@@ -3551,7 +3635,12 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
 @app.post("/api/ministers/{minister_name}/chat")
 async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     _require_active_minister(minister_name)
-    return get_game().chat(minister_name, request.message)
+    from ming_sim.audience_night import AudienceNightError
+    try:
+        return get_game().chat(minister_name, request.message)
+    except AudienceNightError as e:
+        # CLOSING / night admission → 409 (retryable); same family as stream path.
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.post("/api/ministers/{minister_name}/chat/undo")
@@ -3648,22 +3737,26 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
 
 @app.patch("/api/directives/{directive_id}")
 async def api_update_directive(directive_id: int, request: DirectivePatch) -> Dict[str, Any]:
-    rows = get_game().directive_rows()
-    row = next((item for item in rows if int(item["id"]) == directive_id), None)
-    if row is None:
-        raise HTTPException(status_code=404, detail="未找到草案。")
-    text = request.text if request.text is not None else str(row["text"])
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="指令内容不能为空。")
     game = get_game()
     try:
         with _serialized_web_write(game):
+            row = next(
+                (item for item in game.directive_rows() if int(item["id"]) == directive_id),
+                None,
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="未找到草案。")
+            text = request.text if request.text is not None else str(row["text"])
+            if not text.strip():
+                raise HTTPException(status_code=400, detail="指令内容不能为空。")
             capture_turn = int(game.state.turn)
+            existing_mode = game.db.read_directive_dossier_payload(row).get("mode")
         from ming_sim.cli_backend import capture_manual_directive_payload
         dossier_payload = await asyncio.to_thread(
             capture_manual_directive_payload,
             text.strip(),
             game.session.llm_config,
+            existing_mode=existing_mode,
             **({"db": game.db, "content": game.content}
                if getattr(game, "content", None) is not None else {}),
         )
@@ -3689,49 +3782,6 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
-@app.post("/api/directives/{directive_id}/confirm")
-async def api_confirm_directive(directive_id: int) -> Dict[str, Any]:
-    """大臣拟旨经皇帝核定：pending → draft。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.confirm_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/directives/{directive_id}/reject")
-async def api_reject_directive(directive_id: int) -> Dict[str, Any]:
-    """皇帝驳回大臣拟旨：pending → rejected。"""
-    game = get_game()
-    try:
-        with _serialized_web_write(game):
-            game.session.reject_directive(directive_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    return {
-        "directives": [game.directive_payload(item) for item in game.directive_rows()],
-        "pending_count": game.session.pending_count(),
-    }
-
-
-@app.post("/api/decree/write")
-async def api_write_decree() -> Dict[str, Any]:
-    game = get_game()
-    try:
-        # write_decree 现为只读 preview（不再 default-commit pending directive，#498 finding3），
-        # 但仍走 _serialized_web_write：其相位门拒结算/亲裁期拟诏，避免骑进 pre_settle 窗口。
-        with _serialized_web_write(game):
-            decree = game.session.write_decree()
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"decree": decree}
-
-
 @app.post("/api/decree/advance_without_edict")
 def api_advance_without_edict() -> Dict[str, Any]:
     # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
@@ -3745,6 +3795,8 @@ def api_advance_without_edict() -> Dict[str, Any]:
         # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
+        # Endorsement LLM must not run under the outer runtime write gate.
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with _serialized_web_write(game):
             if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
@@ -3755,6 +3807,8 @@ def api_advance_without_edict() -> Dict[str, Any]:
                     content=game.content,
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
+                    llm_config=getattr(game.session, "llm_config", None),
+                    write_gate=None,
                 )
                 if not advanced:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
@@ -3768,9 +3822,9 @@ def api_advance_without_edict() -> Dict[str, Any]:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
-    except AudienceNightError as e:
-        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+    except (AudienceNightError, ExceptionGroup) as e:
+        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        raise _retryable_audience_close_http(e) from None
     return {
         "state": game.state_payload(),
         "awaiting_decision": bool(
@@ -3823,6 +3877,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
         # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with _game_write_gate(game):
             result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
@@ -3861,9 +3916,9 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
-    except AudienceNightError as e:
-        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+    except (AudienceNightError, ExceptionGroup) as e:
+        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.post("/api/decree/issue/stream")
@@ -3888,6 +3943,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
             # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
             _await_audience_inflight_clear(game)
+            _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
             with _game_write_gate(game):
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)

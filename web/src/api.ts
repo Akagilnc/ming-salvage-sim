@@ -36,11 +36,6 @@ export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail 
   return { message: String(detail || fallback) };
 };
 
-export const formatApiError = (error: any, fallback: string) => {
-  const detail = error instanceof ApiRequestError ? error.detail : normalizeApiError(error, fallback);
-  return detail.code ? `[${detail.code}] ${detail.message || fallback}` : detail.message || fallback;
-};
-
 export const api = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },

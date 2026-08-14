@@ -6,6 +6,8 @@ import time
 import types
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.cli_backend as cb
 from ming_sim.exceptions import LLMUnavailable
 from ming_sim.session import GameSession
@@ -100,6 +102,10 @@ class _FakeSession:
 
     def pending_count(self) -> int:
         return 0
+
+    def list_directives(self, include_pending: bool = True):
+        # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
+        return GameSession.list_directives(self, include_pending=include_pending)
 
     def note_chat_rollback(self, **_kwargs):
         return None
@@ -221,30 +227,50 @@ def test_undo_chat_response_preserves_retryable_failed_secret_order(game):
     assert "密令" in failures[0]["message"]
 
 
-def test_background_audience_reply_keeps_staged_edict_after_observer_departure(game):
+@pytest.mark.parametrize(("emperor_text", "expected_mode"), [
+    ("中旨直发，命户部拟旨。", "midzhi"),
+    ("ordinary", "ordinary"),
+    ("拟一道清核辽饷的旨。", "ordinary"),
+])
+def test_background_audience_reply_preserves_emperor_mode_after_observer_departure(
+    game, emperor_text, expected_mode,
+):
     db, state, content = game
     minister_name = "毕自严"
+    # 大臣草稿刻意不复述皇帝的颁布方式；mode 必须来自皇帝原话。
     draft_text = "着户部清核辽饷。"
     agent = _FakeAgent([ToolExec("propose_directive", f"__pending_directive__{draft_text}")])
     web_game = _web_game(db, state, content, agent)
 
-    stream = web_game.chat_stream(minister_name, "拟一道清核辽饷的旨。")
+    stream = web_game.chat_stream(minister_name, emperor_text)
     _assert_next_accepted(stream)
     assert next(stream)["type"] == "delta"
     stream.close()
 
     assert agent.completed.wait(1.0)
-    assert _wait_for(lambda: any(
-        row["kind"] == "directive"
-        and json.loads(row["payload_json"])["text"] == draft_text
-        for row in db.list_pending_actions(state.turn)
-    ))
+
+    def staged_directive():
+        return next((
+            row for row in db.list_pending_actions(state.turn)
+            if row["kind"] == "directive"
+            and json.loads(row["payload_json"])["text"] == draft_text
+        ), None)
+
+    assert _wait_for(lambda: staged_directive() is not None)
+    pending_payload = json.loads(staged_directive()["payload_json"])
+    assert pending_payload.get("mode", "ordinary") == expected_mode
     assert not any(
         row["text"] == draft_text
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
     _wait_for_pending_writes_to_drain(web_game)
+
+    db.commit_pending_actions(state, kind_filter="directive")
+    db.ensure_dossiers_for_draft_directives(state)
+    dossiers = db.list_decree_dossiers()
+    assert len(dossiers) == 1
+    assert dossiers[0]["mode"] == expected_mode
 
 
 def test_stream_tool_staged_secret_order_merges_minister_reply(game):

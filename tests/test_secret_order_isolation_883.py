@@ -1468,6 +1468,7 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
     mid_sec = db.append_chat_message(assignee.name, state.turn, "user", secret_q)
 
     # CLI extract 路径：api channel 会 early-return；需 CLI backend env。
+    # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -1494,6 +1495,11 @@ def test_976_production_session_extract_update_withholds_oral(game, monkeypatch)
         SimpleNamespace(name=assignee.name, office_type="兵部"),
         secret_q, "臣领旨，已拟改旨，请陛下定夺。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={
+            "kind": "secret", "secret_action": "更新", "order_id": oid,
+            "new_title": "密查国丈（扩）", "new_content": new_content,
+            "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+        },
     )
     pid = int(out.get("pending_action_id") or 0)
     assert pid > 0
@@ -1544,6 +1550,7 @@ def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypat
             )
             db.conn.commit()
         mid_pub = db.append_chat_message(assignee.name, state.turn, "user", public_q)
+        # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", "agy")
         monkeypatch.setattr(cb, "_trace", lambda rec: None)
         monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
@@ -1570,6 +1577,12 @@ def test_976_production_extract_rush_progress_no_pure_public_pin(game, monkeypat
             SimpleNamespace(name=assignee.name, office_type="兵部"),
             public_q, "臣遵旨催办/记进展。",
             has_directive=False, secret_order_id=None,
+            preclassified_intent={
+                "kind": "secret", "secret_action": secret_action, "order_id": oid,
+                "new_title": "", "new_content": "",
+                "deadline_months": int(extra.get("deadline_months") or 0),
+                "cultivate_skill": "", "cultivate_trait": "",
+            },
         )
         pid = int(out.get("pending_action_id") or 0)
         assert pid > 0, secret_action
