@@ -650,9 +650,9 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import production_beat_generator
-    # Forward llm_config/write_gate so close-night can drain deferred same-night
-    # extraction (Web no longer pre-drains). Callers that already hold the runtime
-    # write_gate pass nullcontext — same seam as resolve_turn.
+    # Forward llm_config/write_gate so close-night can catch up ordinary story
+    # facts and run the gate-free endorsement-only batch. Callers must not hold
+    # an outer non-reentrant runtime write gate while passing nullcontext.
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=production_beat_generator,

@@ -2465,6 +2465,30 @@ def _await_audience_inflight_clear(game) -> None:
         wait_in_flight_clear(db, int(open_n["id"]))
 
 
+
+def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> None:
+    """Close the open audience night outside any outer runtime write gate.
+
+    close_night holds the real runtime lock only for short prepare/finalize writes;
+    the night-level endorsement-only LLM runs with the gate released. Web issue /
+    stream / no-edict share this single orchestration (no duplicated close flow).
+    """
+    from ming_sim.audience_night import auto_close_open_night
+    from ming_sim.beat_orchestration import production_beat_generator
+
+    session = getattr(game, "session", None)
+    auto_close_open_night(
+        game.db,
+        game.state,
+        content=getattr(game, "content", None),
+        registry=getattr(session, "registry", None) if session is not None else None,
+        wait_timeout_s=float(inflight_wait_s),
+        beat_generator=production_beat_generator,
+        llm_config=getattr(session, "llm_config", None) if session is not None else None,
+        write_gate=_game_write_gate(game),
+    )
+
+
 def _game_write_gate(game) -> threading.Lock:
     if hasattr(game, "_runtime_write_gate"):
         return game._runtime_write_gate()
@@ -3648,13 +3672,12 @@ def api_advance_without_edict() -> Dict[str, Any]:
         # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
+        # Endorsement LLM must not run under the outer runtime write gate.
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with _serialized_web_write(game):
             if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
-                # Same close-night drain deps as resolve_turn: llm_config + already-held
-                # write_gate (nullcontext). Without these, deferred same-night extraction
-                # fail-closes 退朝 and cannot bind endorsements to draft dossiers.
                 advanced = advance_without_edict(
                     game.state,
                     game.db,
@@ -3662,7 +3685,7 @@ def api_advance_without_edict() -> Dict[str, Any]:
                     registry=getattr(game.session, "registry", None),
                     inflight_wait_s=0.0,
                     llm_config=getattr(game.session, "llm_config", None),
-                    write_gate=contextlib.nullcontext(),
+                    write_gate=None,
                 )
                 if not advanced:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
@@ -3731,6 +3754,7 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
         # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with _game_write_gate(game):
             result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
@@ -3796,6 +3820,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
             # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
             _await_audience_inflight_clear(game)
+            _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
             with _game_write_gate(game):
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)

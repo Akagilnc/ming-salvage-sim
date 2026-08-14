@@ -295,35 +295,50 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
     assert any(d["text"] == text for d in settled), "收夜应将已应允候选直接提交并进入月末结算"
 
 
-def test_web_issue_close_extracts_only_after_same_night_dossier_exists(web_game, monkeypatch):
-    """Real Web settlement tracer: the endpoint does not pre-drain; close-night creates
-    the dossier, then performs this persisted turn's exactly-one extraction."""
+def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
+    """Real Web settlement tracer: ordinary facts may already be done; close creates
+    draft dossiers then runs one gate-free endorsement-only batch."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
     night = an.open_night(game.db, game.state, location="乾清宫", time_of_day="夜")
+    night_id = int(night["id"])
     chat_turn_id = game.db.create_chat_turn(
-        game.state, minister, "朕准此旨。", 0, night_id=int(night["id"]),
+        game.state, minister, "朕准此旨。", 0, night_id=night_id,
     )
     game.db.persist_minister_reply(minister, int(game.state.turn), "臣愿作保。", chat_turn_id)
+    # Scheme A: ordinary story extraction is immediate (already done before close).
+    game.db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?", (chat_turn_id,),
+    )
+    game.db.conn.commit()
     directive_id = game.db.stage_directive_candidate(
         game.state.turn, minister,
         payload={**_POLICY_FIELDS, "text": "着户部核边饷", "actor": minister},
     )
-    game.db.mark_pending_night_approved([directive_id], night_id=int(night["id"]))
+    game.db.mark_pending_night_approved([directive_id], night_id=night_id)
     calls = []
+    gate_free = []
 
-    class _TracingExtractor:
+    class _TracingEndorsementExtractor:
         def run(self, materials):
             payload = json.loads(materials)
             calls.append(payload)
+            # Outer web write gate must not be held during endorsement LLM.
+            acquired = game._runtime_write_gate().acquire(blocking=False)
+            gate_free.append(acquired)
+            if acquired:
+                game._runtime_write_gate().release()
             candidates = payload["可背书案卷"]
             assert len(candidates) == 1
             dossier_id = candidates[0]["ref"]["dossier_id"]
             assert game.db.get_decree_dossier(dossier_id) is not None
-            return _RunContent('{"facts":[]}')
+            return _RunContent(json.dumps({"endorsements": []}, ensure_ascii=False))
 
-    monkeypatch.setattr(agents_mod, "create_audience_extractor_agent", lambda *a, **k: _TracingExtractor())
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _TracingEndorsementExtractor(),
+    )
 
     async def scenario():
         async with _client() as client:
@@ -332,7 +347,9 @@ def test_web_issue_close_extracts_only_after_same_night_dossier_exists(web_game,
     events = asyncio.run(scenario())
     assert events[-1]["event"] == "done", events
     assert len(calls) == 1
+    assert gate_free == [True]
     assert game.db.get_story_extract_status(chat_turn_id) == "done"
+    assert game.db.is_night_endorsement_bound(night_id)
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):
