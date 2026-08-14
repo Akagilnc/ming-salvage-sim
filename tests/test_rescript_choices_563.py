@@ -4,6 +4,7 @@ import pytest
 
 import ming_sim.cli_backend as cli_backend
 import ming_sim.decree as decree_mod
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _make_midzhi_dossier(db, state, *, target_id="river-works"):
@@ -14,6 +15,13 @@ def _make_midzhi_dossier(db, state, *, target_id="river-works"):
         target_kind="issue",
         target_id=target_id,
         payload={"mode": "midzhi"},
+    )
+
+
+def _rejected_verdict(dossier_id):
+    # Preserve suite-specific gatekeeper/band/reason differences via builder knobs.
+    return rejected_verdict(
+        dossier_id, "强盛", gatekeeper_id="韩爌", reason="科臣封驳",
     )
 
 
@@ -45,7 +53,7 @@ def test_real_midzhi_entry_reaches_provider_and_persists_stigma(
         return [{
             "dossier_id": dossier["id"], "decision": "promulgated",
             "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ],
         }]
 
@@ -82,7 +90,7 @@ def test_rejected_unpromulgatable_midzhi_omits_force_at_public_resolve_seam(
             "blocked_layer": "six_offices",
             "primary_opponents": [{"kind": "faction", "key": "东林"}],
             "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ],
             "gatekeeper_id": None,
             "reason": "科臣封驳。",
@@ -241,9 +249,7 @@ def test_rejected_midzhi_and_force_promulgation_are_idempotent(game):
     dossier_id = _make_midzhi_dossier(db, state)
 
     for _ in range(2):
-        db.apply_dossier_promulgation(
-            state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳"
-        )
+        db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     with pytest.raises(ValueError, match="强颁只可承接"):
@@ -261,9 +267,7 @@ def test_rejected_ordinary_force_promulgation_adds_rescript_stigma(game):
         state, action_type="policy", decree_text="清核河工",
         target_kind="issue", target_id="river-works", payload={"mode": "ordinary"},
     )
-    db.apply_dossier_promulgation(
-        state, dossier_id, "rejected", blocked_layer="six_offices", reason="科臣封驳",
-    )
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     assert db.get_decree_dossier(dossier_id)["stigma"] == [{

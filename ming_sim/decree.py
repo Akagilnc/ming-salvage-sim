@@ -62,7 +62,10 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
+from ming_sim.strict_types import (
+    IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
+    validate_verdict_affected_parties,
+)
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -327,33 +330,16 @@ def _validate_promulgation_verdict_item(
             unknown_keys = set(row) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
-            needs_affected = (
-                decision == "rejected"
-                or mode == "midzhi"
+            validate_verdict_affected_parties(
+                row, mode, faction_names=faction_names, class_names=class_names,
             )
-            if needs_affected and "affected_parties" not in row:
-                raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
-            if not needs_affected and "affected_parties" in row:
-                raise ValueError("普通顺颁判决不得携带受损方")
-            affected = row.get("affected_parties", [])
-            if not isinstance(affected, list):
-                raise ValueError("受损方必须为 typed 清单")
-            if needs_affected and not affected:
-                raise ValueError("打回或中旨判决的受损方清单不得为空")
         else:
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
-        for party in affected:
-            if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
-                raise ValueError("受损方须且仅含 kind/key/severity")
-            kind, key = party.get("kind"), str(party.get("key") or "")
-            if kind not in {"faction", "class"}:
-                raise ValueError("受损方 kind 只能为 faction 或 class")
-            if party.get("severity") not in {"大怒", "不满"}:
-                raise ValueError("受损方程度只能为大怒或不满")
-            if key not in (faction_names if kind == "faction" else class_names):
-                raise ValueError(f"未知受损方：{kind}:{key}")
+            validate_affected_parties(
+                affected, faction_names=faction_names, class_names=class_names,
+            )
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},
@@ -1770,11 +1756,19 @@ def settle_with_delta(
                 db.apply_dossier_verdicts(
                     state, dossier_verdicts, content=content, registry=registry,
                 )
+            # Player disposition rows are not Judge verdicts: no affected_parties,
+            # no midzhi validator, no apply_dossier_verdicts. Route each chosen
+            # rescript action through the existing promulgation seam under this
+            # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
-                db.apply_dossier_verdicts(
-                    state, dossier_rescript_actions,
-                    content=content, registry=registry,
-                )
+                for action in dossier_rescript_actions:
+                    db.apply_dossier_promulgation(
+                        state,
+                        int(action["dossier_id"]),
+                        str(action["decision"]),
+                        content=content,
+                        registry=registry,
+                    )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,

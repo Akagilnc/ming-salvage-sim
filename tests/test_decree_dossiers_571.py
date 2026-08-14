@@ -6,22 +6,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None, "reason": "科臣封驳。",
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
-        ],
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "appointment_tenure": "",
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):
@@ -1601,7 +1586,7 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
         state, action_type="policy", decree_text="强颁赈济",
         target_kind="issue", target_id="forced-relief",
     )
-    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     before = state.metrics["国库"]
 

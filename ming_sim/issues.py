@@ -5588,8 +5588,29 @@ def apply_issue_tracker_output(
                 "category": "non_cancellable_converted",
             })
             continue
-        # 可撤：应用 applied_cost
-        cost = cn.get("applied_cost") or {}
+        # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
+        # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
+        linked_dossier = None
+        origin_ref = str(row["origin_ref"] or "").strip()
+        if re.fullmatch(r"dossier:[1-9][0-9]*", origin_ref) and db.effect_origin_rejection(origin_ref) is None:
+            linked_dossier = db.get_decree_dossier(int(origin_ref.split(":", 1)[1]))
+        deterministic_breach = bool(
+            linked_dossier
+            and (
+                linked_dossier["status"] in {"promulgated", "executing"}
+                or (
+                    linked_dossier["status"] == "closed"
+                    and bool(row["commitment_kind"])
+                    and db.dossier_authorizes_effects(int(linked_dossier["id"]))
+                )
+            )
+        )
+        if deterministic_breach:
+            db.breach_decree_dossier(
+                state, int(linked_dossier["id"]),
+                reason=str(cn.get("narrative") or "撤回成命")[:400], commit=False,
+            )
+        cost = {} if deterministic_breach else (cn.get("applied_cost") or {})
         if isinstance(cost, dict):
             _apply_metric_dict(state, cost.get("metrics") or {}, db=db)
             parent_origin_ref = _canonical_issue_origin(db, row)
@@ -5860,8 +5881,9 @@ def _restore_person_write_state(
 #   - power_updates:apply_score_extraction 虽裹 try/except,但只接住异常不回滚——前面已写的 power
 #     行仍被后续 record_log/save_turn 提交 = 半落库(CMR R2 codex)。prompt 里 power_updates 恒为
 #     嵌套 dict,无扁平标量形态,故二级非 dict = 真畸形,校验前置拦截正确。
-# **不**列入(apply 各自容忍,validate 不该更严):faction_delta(吃旧扁平 int {"阉党": -10},prompt 允许)、
-# class_delta(对非 dict `continue` 静默跳,不写)。
+# **不**列入（交给各自 adapter 按契约处理）:faction_delta 吃旧扁平 int
+# {"阉党": -10}（prompt 允许、合法）；class_delta 的扁平 item 不合法，由 adapter 逐项
+# `invalid_enum` 拒收（#564），而非 validate 层当 nested-dict shape 拒收。
 _NESTED_DICT_FIELDS = frozenset({"region_delta", "army_delta", "power_updates"})
 
 
@@ -5870,7 +5892,9 @@ def sanitize_delta_shape(extracted: dict) -> tuple[dict, list[tuple[str, dict, s
 
     Unknown top-level keys / non-dict top-level payloads still fail loud because
     no section can be safely split. Split-capable section/list/entity shape
-    defects are removed item-by-item and returned as rejection records.
+    defects are removed item-by-item and returned as rejection records. Flat
+    faction integers remain legal; flat class items reach the class adapter and
+    are rejected per item as ``invalid_enum`` under the #564 contract.
     """
     from ming_sim.simulation import EMPTY_EXTRACTION  # 懒 import 避 issues↔simulation 循环
 
