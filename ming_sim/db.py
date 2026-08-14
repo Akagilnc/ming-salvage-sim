@@ -8354,14 +8354,27 @@ class GameDB:
     def list_endorsement_candidates(self, night_id: int) -> List[Dict[str, Any]]:
         """Eligible dossier refs for the night-level endorsement-only batch.
 
-        night_id reserved for night-scoped eligibility; proposed dossiers are the
-        current canonical target set after close-night draft prerequisites land.
+        Only dossiers whose pending_action is bound to this night (Phase-1 draft
+        prerequisites). Global proposed dossiers from other nights are excluded.
         """
-        _ = int(night_id)
+        nid = int(night_id)
+        rows = self.conn.execute(
+            """
+            SELECT d.id AS id, d.decree_text AS decree_text
+            FROM decree_dossiers d
+            JOIN pending_actions pa ON pa.id = d.pending_action_id
+            WHERE pa.night_id = ?
+              AND pa.night_id > 0
+              AND d.pending_action_id > 0
+              AND d.status = 'proposed'
+            ORDER BY d.id
+            """,
+            (nid,),
+        ).fetchall()
         return [{
             "ref": {"dossier_id": int(row["id"])},
-            "decree_text": str(row.get("decree_text") or ""),
-        } for row in self.list_decree_dossiers(status="proposed")]
+            "decree_text": str(row["decree_text"] or ""),
+        } for row in rows]
 
     def list_endorsement_batch_inputs(self, night_id: int) -> Dict[str, Any]:
         """Immutable snapshot inputs for night-level endorsement-only binding."""
@@ -8431,6 +8444,9 @@ class GameDB:
         IGNORE (retry-idempotent unique key). Bound watermark is the existing
         close_commit_cursor step (not a parallel column) and always advances in the
         same short transaction so crash-restore does not re-call the LLM.
+
+        dossier_id is checked against the same night candidate snapshot used for the
+        batch inputs (not a fresh global proposed scan).
         """
         from ming_sim.audience_night import (
             CLOSE_STEP_ENDORSEMENT_BOUND,
@@ -8443,22 +8459,43 @@ class GameDB:
             return []
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
+        # One snapshot for both surviving turns and night-scoped candidates.
+        batch_inputs = self.list_endorsement_batch_inputs(nid)
         surviving = {
             int(t["source_chat_turn_id"])
-            for t in (self.list_endorsement_batch_inputs(nid).get("turns") or [])
+            for t in (batch_inputs.get("turns") or [])
         }
+        candidate_ids: set[int] = set()
+        for cand in (batch_inputs.get("candidates") or []):
+            if not isinstance(cand, Mapping):
+                continue
+            ref = cand.get("ref")
+            if isinstance(ref, Mapping) and not isinstance(ref.get("dossier_id"), bool):
+                did_raw = ref.get("dossier_id")
+                if isinstance(did_raw, int) and did_raw > 0:
+                    candidate_ids.add(int(did_raw))
+        _BANNED_STORY_FIELDS = (
+            "body", "presence_effect", "audibility", "tags", "person_names", "facts",
+        )
         for item in endorsements:
             if not isinstance(item, Mapping):
                 rejected.append(({"raw": repr(item)}, "背书项非对象"))
                 continue
             try:
+                if any(field in item for field in _BANNED_STORY_FIELDS):
+                    raise ValueError("背书项不得含故事字段")
                 source_cid = item.get("source_chat_turn_id")
                 if isinstance(source_cid, bool) or not isinstance(source_cid, int) or source_cid <= 0:
                     raise ValueError("背书来源对话轮 id 须为正整数")
                 if int(source_cid) not in surviving:
                     raise ValueError("背书来源对话轮不在本夜 surviving turns")
+                dossier_id = item.get("dossier_id")
+                if isinstance(dossier_id, bool) or not isinstance(dossier_id, int) or dossier_id <= 0:
+                    raise ValueError("背书案卷 id 须为正整数")
+                if int(dossier_id) not in candidate_ids:
+                    raise ValueError("背书案卷不在本夜候选")
                 self._validate_dossier_endorsement(
-                    item.get("dossier_id"),
+                    dossier_id,
                     form=item.get("form"),
                     endorser_id=item.get("endorser_id", ""),
                     imperial=item.get("imperial", False),
@@ -12055,13 +12092,34 @@ class GameDB:
 
         turn_from/to 为闭区间；留空则不设该端界。与 list_night_promulgated_directives
         同源：唯一 exact engine-command publication-fact seam，不以 committed
-        pending_actions 等同明发，不认抽取账开放 tags 或畸形后缀。"""
+        pending_actions 等同明发，不认抽取账开放 tags 或畸形后缀。
+
+        JSON 解码前按 audience_nights.turn 权威关系收窄 ledger；exact tag 仍只由
+        现有 helper 判定。
+        """
         from ming_sim.audience_night import (
             _json_list,
             engine_command_mingfa_publication_facts,
         )
+        clauses = ["1=1"]
+        params: List[object] = []
+        if turn_from is not None:
+            clauses.append("n.turn >= ?")
+            params.append(int(turn_from))
+        if turn_to is not None:
+            clauses.append("n.turn <= ?")
+            params.append(int(turn_to))
+        where = " AND ".join(clauses)
         ledger_rows = self.conn.execute(
-            "SELECT night_id, tags, source_chat_turn_id FROM story_ledger_entries"
+            f"""
+            SELECT e.night_id AS night_id, e.tags AS tags,
+                   e.source_chat_turn_id AS source_chat_turn_id,
+                   n.turn AS night_turn
+            FROM story_ledger_entries e
+            JOIN audience_nights n ON n.id = e.night_id
+            WHERE {where}
+            """,
+            params,
         ).fetchall()
         entries = [
             {
@@ -12071,6 +12129,10 @@ class GameDB:
             }
             for row in ledger_rows
         ]
+        night_turn_by_id = {
+            int(row["night_id"] or 0): int(row["night_turn"] or 0)
+            for row in ledger_rows
+        }
         facts = engine_command_mingfa_publication_facts(entries)
         if not facts:
             return []
@@ -12096,16 +12158,18 @@ class GameDB:
         }
         out: List[Dict[str, object]] = []
         for night_id, directive_id in sorted(
-            facts, key=lambda item: (by_id.get(item[1], {}).get("turn", 0), item[1], item[0])
+            facts,
+            key=lambda item: (
+                night_turn_by_id.get(item[0], by_id.get(item[1], {}).get("turn", 0)),
+                item[1],
+                item[0],
+            ),
         ):
             base = by_id.get(directive_id)
             if base is None:
                 continue
-            turn = int(base["turn"])
-            if turn_from is not None and turn < int(turn_from):
-                continue
-            if turn_to is not None and turn > int(turn_to):
-                continue
+            # Prefer night.turn (SQL-narrowed authority); fall back to directive.turn.
+            turn = int(night_turn_by_id.get(int(night_id), int(base["turn"])))
             out.append({
                 "directive_id": int(base["directive_id"]),
                 "turn": turn,

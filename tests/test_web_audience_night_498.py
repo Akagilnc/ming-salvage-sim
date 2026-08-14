@@ -380,7 +380,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             assert await asyncio.to_thread(entered.wait, 8.0)
-            # chat / story / stage / approve / draft-update — all refuse under CLOSING.
+            # chat (stream + non-stream) / story / stage / approve / draft-update
+            # — all refuse under CLOSING via the one admission seam.
             chat_resp = await chat_client.post(
                 f"/api/ministers/{minister}/chat/stream",
                 json={"message": "另议边饷？"},
@@ -391,6 +392,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 ev.get("event") == "error" and "收夜中" in str(ev.get("data") or "")
                 for ev in chat_events
             ), chat_events
+            nonstream = await chat_client.post(
+                f"/api/ministers/{minister}/chat",
+                json={"message": "另议边饷？"},
+            )
+            assert nonstream.status_code == 409, nonstream.text
+            assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
             with pytest.raises(an.AudienceNightError) as story_exc:
                 an.append_ledger_entry(
                     game.db, night_id, body="偷渡故事账", tags=["试"],

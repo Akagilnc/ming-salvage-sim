@@ -169,7 +169,13 @@ def _parse_dossier_id(raw: Mapping[str, Any], *, idx: int) -> int:
 
 
 def parse_endorsement_batch(raw: Any) -> List[Dict[str, Any]]:
-    """校验夜级 endorsement-only 批输出；不得含 story/presence。"""
+    """校验夜级 endorsement-only 批 envelope；单项畸形不整批失败。
+
+    Envelope 不可用（空/非 JSON/非对象/含 facts/缺 endorsements/非数组）→
+    ExtractionShapeError 整批失败。单项字段畸形原样保留，由 settle 既有 rejection
+    channel 拒收，合法 sibling 仍可落。能解析时把输入 ref.dossier_id 展平为
+    dossier_id（输出不保留 dossier_ref）。
+    """
     data: Any = raw
     if isinstance(raw, str):
         text = raw.strip()
@@ -213,40 +219,17 @@ def parse_endorsement_batch(raw: Any) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for idx, item in enumerate(container):
         if not isinstance(item, Mapping):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 endorsement 非对象",
-                code="endorsement_bad_shape", detail={"index": idx},
-            )
-        for banned in ("body", "presence_effect", "audibility", "tags", "person_names"):
-            if banned in item:
-                raise ExtractionShapeError(
-                    f"第 {idx} 条 endorsement 不得含 {banned}",
-                    code="endorsement_bad_shape", detail={"index": idx},
-                )
-        dossier_id = _parse_dossier_id(item, idx=idx)
-        form = item.get("form")
-        imperial = item.get("imperial", False)
-        endorser_id = item.get("endorser_id", "")
-        source_chat_turn_id = item.get("source_chat_turn_id")
-        if (
-            form not in _ENDORSEMENT_FORMS
-            or not isinstance(imperial, bool)
-            or not isinstance(endorser_id, str)
-            or isinstance(source_chat_turn_id, bool)
-            or not isinstance(source_chat_turn_id, int)
-            or source_chat_turn_id <= 0
-        ):
-            raise ExtractionShapeError(
-                f"第 {idx} 条 endorsement 字段非法",
-                code="endorsement_bad_shape", detail={"index": idx},
-            )
-        items.append({
-            "dossier_id": dossier_id,
-            "form": str(form),
-            "endorser_id": endorser_id.strip(),
-            "imperial": imperial,
-            "source_chat_turn_id": int(source_chat_turn_id),
-        })
+            # settle 既有 rejection channel 认非对象项。
+            items.append({"raw": repr(item)})
+            continue
+        out = dict(item)
+        try:
+            out["dossier_id"] = _parse_dossier_id(item, idx=idx)
+            out.pop("dossier_ref", None)
+        except ExtractionShapeError:
+            # 单项案卷引用非法 → 留给 settle 拒收，不拖垮 sibling。
+            pass
+        items.append(out)
     return items
 
 
@@ -366,29 +349,29 @@ def _claim_single_flight(key: tuple[Any, ...]) -> tuple[Optional[threading.Lock]
     stays finite and retryable. No Future/result store. The slot is reclaimed
     when the last holder leaves.
 
+    New owner lock is acquired **inside** `_single_flight_guard` before the slot
+    is published, so no contender can observe an unlocked freshly-created owner.
+
     Returns (lock, owned). owned=True means this caller runs the work. lock is
     None on contention (caller must not release).
     """
     with _single_flight_guard:
         slot = _single_flight_ownership.get(key)
-        created = slot is None
-        if created:
-            slot = [threading.Lock(), 0]
-            _single_flight_ownership[key] = slot
+        if slot is None:
+            owner = threading.Lock()
+            owner.acquire()
+            _single_flight_ownership[key] = [owner, 1]
+            return owner, True
         slot[1] += 1
         owner = slot[0]
-    if created:
-        owner.acquire()
-        return owner, True
-    if owner.acquire(blocking=False):
-        return owner, False
-    with _single_flight_guard:
-        cur = _single_flight_ownership.get(key)
-        if cur is not None and cur[0] is owner:
-            cur[1] -= 1
-            if cur[1] <= 0:
-                _single_flight_ownership.pop(key, None)
-    return None, False
+        if owner.acquire(blocking=False):
+            # Previous owner released; caller rechecks terminal status, does not
+            # start a parallel attempt (owned=False).
+            return owner, False
+        slot[1] -= 1
+        if slot[1] <= 0:
+            _single_flight_ownership.pop(key, None)
+        return None, False
 
 
 def _release_single_flight(key: tuple[Any, ...], owner: threading.Lock) -> None:
