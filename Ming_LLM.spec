@@ -59,12 +59,6 @@ def _release_guard():
         raise SystemExit(
             "[release-guard] web/dist/assets 无 JS 产物——前端构建不完整。先： cd web && npm run build"
         )
-    # #544：浏览器唯一权威产物（剥离/匹配只在显示边界执行；Python 不消费）
-    if not Path("web/dist/organicMarkdown.js").is_file():
-        raise SystemExit(
-            "[release-guard] web/dist/organicMarkdown.js 缺失——organic 权威产物未构建。\n"
-            "  先： cd web && npm run build"
-        )
 
     # 2) 金手指建筑不得进包（无 git 依赖的硬底线：直接扫已知作弊建筑 id）
     KNOWN_CHEAT_IDS = ("royal_gold_mine", "royal_inner_bank", "imperial_aviation")

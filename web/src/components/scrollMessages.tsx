@@ -3,7 +3,7 @@ import { MinisterPortrait, cacheBust } from "./hud";
 import { filterMatchedHighlights, stripOrganicMarkdown } from "../format";
 import type { AudienceScrollMessage, ChatDisplayMessage, Minister } from "../types";
 
-/** Display-boundary highlight: sole strip/match via organicMarkdown.js authority. */
+/** Display-boundary highlight: strip/match via organicMarkdown source module. */
 function highlightedMinisterText(
   message: ChatDisplayMessage | AudienceScrollMessage,
   rawContent: string,

@@ -131,22 +131,11 @@ describe("stripOrganicMarkdown", () => {
   });
 });
 
-describe("filterMatchedHighlights — sole browser strip/match authority", () => {
+describe("filterMatchedHighlights — display-boundary strip/match", () => {
   it("strips phrases, exact-matches stripped answer, drops misses; keeps code-span padding", () => {
     const answer = "臣请`  据实核账  `，不可臆断。";
     expect(filterMatchedHighlights(answer, ["`  据实核账  `", "未命中", "臆断"]))
       .toEqual(["  据实核账  ", "臆断"]);
     expect(stripOrganicMarkdown(answer)).toContain("  据实核账  ");
-  });
-
-  it("loads the release-layout authority product bytes (web/dist/organicMarkdown.js)", async () => {
-    const { readFileSync, existsSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const product = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "organicMarkdown.js");
-    expect(existsSync(product)).toBe(true);
-    const source = readFileSync(product, "utf8");
-    expect(source).toContain("filterMatchedHighlights");
-    expect(source).toContain("OrganicMarkdown");
   });
 });
