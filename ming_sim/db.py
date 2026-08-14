@@ -1196,9 +1196,8 @@ class GameDB:
                 location TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'open',
                 -- 收夜提交幂等游标：0=未开始；已完成步序号；见 audience_night.CLOSE_STEPS
+                -- endorsement-bound 是 CLOSE_STEPS 中的一步，不另设平行列
                 close_commit_cursor INTEGER NOT NULL DEFAULT 0,
-                -- #612 夜级 endorsement-only 批成功水位：0=未绑定；1=已绑定（可幂等跳过 LLM）
-                endorsement_bound INTEGER NOT NULL DEFAULT 0,
                 -- 夜内事件单调序源：账本 seq 与 chat night_seq 同桶递增
                 next_event_seq INTEGER NOT NULL DEFAULT 0,
                 opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1955,9 +1954,7 @@ class GameDB:
         self.ensure_column("story_ledger_entries", "order_key", "REAL")
         self.ensure_column(
             "audience_nights", "next_event_seq", "INTEGER NOT NULL DEFAULT 0")
-        # #612：夜级 endorsement-only 批成功水位（单一 done 位；非逐轮、非第二状态机）
-        self.ensure_column(
-            "audience_nights", "endorsement_bound", "INTEGER NOT NULL DEFAULT 0")
+        # #612 endorsement-bound is CLOSE_STEPS/close_commit_cursor — no parallel column.
         # 本夜已应允暂存：收夜只交这些 id，不按 turn+kind 全回合批交（#498）
         self.ensure_column(
             "pending_actions", "night_id", "INTEGER NOT NULL DEFAULT 0")
@@ -8423,36 +8420,26 @@ class GameDB:
             })
         return {"candidates": candidates, "turns": turns}
 
-    def is_night_endorsement_bound(self, night_id: int) -> bool:
-        row = self.conn.execute(
-            "SELECT endorsement_bound FROM audience_nights WHERE id = ?",
-            (int(night_id),),
-        ).fetchone()
-        if row is None:
-            return False
-        return int(row["endorsement_bound"] or 0) == 1
-
-    def mark_night_endorsement_bound(self, night_id: int, *, commit: bool = True) -> None:
-        self.conn.execute(
-            "UPDATE audience_nights SET endorsement_bound = 1 WHERE id = ?",
-            (int(night_id),),
-        )
-        if commit:
-            self.conn.commit()
-
     def settle_endorsement_batch(
         self,
         night_id: int,
         endorsements: Sequence[Mapping[str, Any]],
     ) -> List[int]:
-        """Atomically persist night-level endorsements and the bound watermark.
+        """Atomically persist night-level endorsements + CLOSE_STEP_ENDORSEMENT_BOUND.
 
         Invalid items go to the established rejection channel; valid ones INSERT OR
-        IGNORE (retry-idempotent unique key). Success watermark always advances in
-        the same short transaction so crash-restore does not re-call the LLM.
+        IGNORE (retry-idempotent unique key). Bound watermark is the existing
+        close_commit_cursor step (not a parallel column) and always advances in the
+        same short transaction so crash-restore does not re-call the LLM.
         """
+        from ming_sim.audience_night import (
+            CLOSE_STEP_ENDORSEMENT_BOUND,
+            get_night,
+            night_endorsement_bound,
+        )
+
         nid = int(night_id)
-        if self.is_night_endorsement_bound(nid):
+        if night_endorsement_bound(get_night(self, nid)):
             return []
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
@@ -8513,7 +8500,12 @@ class GameDB:
                     commit=False,
                 )
                 new_ids.append(int(eid))
-            self.mark_night_endorsement_bound(nid, commit=False)
+            # Same short transaction as endorsement rows: advance CLOSE_STEPS cursor.
+            self.conn.execute(
+                "UPDATE audience_nights SET close_commit_cursor = ? "
+                "WHERE id = ? AND close_commit_cursor < ?",
+                (int(CLOSE_STEP_ENDORSEMENT_BOUND), nid, int(CLOSE_STEP_ENDORSEMENT_BOUND)),
+            )
         return new_ids
 
     def settle_story_extraction(
@@ -8534,7 +8526,12 @@ class GameDB:
         （已死者不能在场；纯提及不拦）。seq/时序键与口令账同源。空 facts（空白回话）合法 →
         仅推进水位、不落账（不占永久待补，AC10/L4）。
         """
-        from ming_sim.audience_night import PRESENCE_ENTER, append_ledger_entry
+        from ming_sim.audience_night import (
+            NIGHT_STATUS_CLOSING,
+            PRESENCE_ENTER,
+            append_ledger_entry,
+            get_night,
+        )
 
         cid = int(chat_turn_id)
         if self.get_story_extract_status(cid) == "done":
@@ -8547,6 +8544,13 @@ class GameDB:
         ).fetchone()
         if srow is not None and str(srow["status"] or "") in {"failed", "undone"}:
             return []
+        # Close-owned drain may write story while CLOSING; player-side new turns are
+        # frozen at admission seams so this only serves pre-close residues.
+        night_snap = get_night(self, int(night_id))
+        allow_closing = bool(
+            night_snap is not None
+            and str(night_snap.get("status") or "") == NIGHT_STATUS_CLOSING
+        )
         base = float(int(source_night_seq or 0)) + 0.5
         accepted: List[Mapping[str, Any]] = []
         rejected: List[tuple[Mapping[str, Any], str]] = []
@@ -8592,6 +8596,7 @@ class GameDB:
                     source_chat_turn_id=cid,
                     presence_effect=presence_effect,
                     order_key=base,
+                    allow_closing=allow_closing,
                 )
                 new_ids.append(int(entry_id))
             self.conn.execute(
@@ -11737,7 +11742,10 @@ class GameDB:
             if origin_mid is not None:
                 payload_data["origin_chat_message_id"] = int(origin_mid)
         # #498：开夜期间 stage 的暂存挂 night_id；收夜只交本夜已应允 id
-        night_id = self._current_open_night_id()
+        # #612：CLOSING 冻结新 stage（endorsement LLM 窗口输入冻结）
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        open_n = assert_night_accepts_player_input(self, what="暂存")
+        night_id = int(open_n["id"]) if open_n is not None else 0
         cur = self.conn.execute(
             """INSERT INTO pending_actions
                (turn, kind, action, target_id, minister_name, payload_json, status,
@@ -11764,6 +11772,11 @@ class GameDB:
         self, action_ids: Iterable[int], *, night_id: Optional[int] = None,
     ) -> int:
         """标本夜已应允（收夜提交白名单）。返回更新行数。"""
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        if night_id is not None:
+            assert_night_accepts_player_input(self, int(night_id), what="应允暂存")
+        else:
+            assert_night_accepts_player_input(self, what="应允暂存")
         ids = [int(i) for i in action_ids]
         if not ids:
             return 0
@@ -11829,6 +11842,8 @@ class GameDB:
         """暂存或原地更新(last-write-wins)一条 kind=directive 拟旨意图(ADR 0006)。
         同一回合同一大臣至多一条 pending directive——新意图覆盖旧(补充=原地更新,非新增态)。
         返回行 id。"""
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        assert_night_accepts_player_input(self, what="暂存")
         row = self.conn.execute(
             "SELECT id FROM pending_actions "
             "WHERE turn=? AND minister_name=? AND kind='directive' AND status='pending'",

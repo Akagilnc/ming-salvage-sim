@@ -115,10 +115,12 @@ NIGHT_STATUS_CLOSED = "closed"
 
 CLOSE_STEP_COMMIT_OFFICE = 1
 CLOSE_STEP_TRANSFER_CANDIDATES = 2
-CLOSE_STEP_FINALIZE = 3
+CLOSE_STEP_ENDORSEMENT_BOUND = 3
+CLOSE_STEP_FINALIZE = 4
 CLOSE_STEPS = (
     CLOSE_STEP_COMMIT_OFFICE,
     CLOSE_STEP_TRANSFER_CANDIDATES,
+    CLOSE_STEP_ENDORSEMENT_BOUND,
     CLOSE_STEP_FINALIZE,
 )
 
@@ -264,6 +266,39 @@ def get_open_night(db: Any) -> Optional[Dict[str, Any]]:
     return _hydrate_night(_row_dict(row)) if row is not None else None
 
 
+def night_endorsement_bound(night: Optional[Dict[str, Any]]) -> bool:
+    """Endorsement-bound watermark is close_commit_cursor, not a parallel column."""
+    if not night:
+        return False
+    return int(night.get("close_commit_cursor") or 0) >= CLOSE_STEP_ENDORSEMENT_BOUND
+
+
+def assert_night_accepts_player_input(
+    db: Any,
+    night_id: Optional[int] = None,
+    *,
+    what: str = "写入",
+) -> Optional[Dict[str, Any]]:
+    """Freeze new dialogue / story / stage / approve while status=CLOSING.
+
+    Close-owned short writes and close-owned story drain are not player input;
+    they do not call this seam. Failure reopens OPEN so retries may proceed.
+    """
+    if night_id is not None and int(night_id) > 0:
+        night = get_night(db, int(night_id))
+    else:
+        night = get_open_night(db)
+    if night is None:
+        return None
+    if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        raise AudienceNightError(
+            f"本夜收夜中，暂不能{what}：{int(night['id'])}",
+            code="night_closing",
+            detail={"night_id": int(night["id"]), "what": what},
+        )
+    return night
+
+
 def get_night(db: Any, night_id: int) -> Optional[Dict[str, Any]]:
     row = db.conn.execute(
         "SELECT * FROM audience_nights WHERE id = ?",
@@ -284,7 +319,6 @@ def _hydrate_night(raw: Dict[str, Any]) -> Dict[str, Any]:
         "location": str(raw.get("location") or ""),
         "status": str(raw.get("status") or ""),
         "close_commit_cursor": int(raw.get("close_commit_cursor") or 0),
-        "endorsement_bound": int(raw.get("endorsement_bound") or 0),
         "next_event_seq": int(raw.get("next_event_seq") or 0),
         "opened_at": raw.get("opened_at"),
         "closed_at": raw.get("closed_at"),
@@ -659,6 +693,7 @@ def append_ledger_entry(
     presence_effect: str = "",
     order_key: Optional[float] = None,
     origin_chat_turn_id: int = 0,
+    allow_closing: bool = False,
 ) -> int:
     """追加一条故事账。commit=False 时由外层事务统一提交（开夜原子）。
 
@@ -668,6 +703,9 @@ def append_ledger_entry(
 
     `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
     撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
+
+    CLOSING 冻结玩家侧新账（对话溯源/口令来源）；收夜自有框架写与 close-owned drain
+    传 allow_closing=True。
     """
     night = get_night(db, night_id)
     if night is None:
@@ -676,6 +714,14 @@ def append_ledger_entry(
         raise AudienceNightError(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
+    if night["status"] == NIGHT_STATUS_CLOSING and not allow_closing:
+        # Player/story input freeze during endorsement LLM window.
+        if int(source_chat_turn_id or 0) > 0 or int(origin_chat_turn_id or 0) > 0:
+            raise AudienceNightError(
+                f"本夜收夜中，不能再落故事账：{night_id}",
+                code="night_closing",
+                detail={"night_id": int(night_id)},
+            )
     persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
     if check_dead and persons:
         assert_persons_not_dead(db, persons)
@@ -1105,10 +1151,10 @@ def close_night(
         except Exception:
             generated_close_holder["body"] = ""
 
-    already_bound = (
-        hasattr(db, "is_night_endorsement_bound")
-        and db.is_night_endorsement_bound(int(night_id))
-    )
+    # Re-read cursor after Phase 1; endorsement-bound is the cursor step itself.
+    night = get_night(db, night_id) or night
+    cursor = int(night["close_commit_cursor"] or 0)
+    already_bound = cursor >= CLOSE_STEP_ENDORSEMENT_BOUND
     if need_beat and not already_bound:
         beat_thread = threading.Thread(target=_gen_close_beat, daemon=True)
         beat_thread.start()
@@ -1140,7 +1186,16 @@ def close_night(
             beat_thread.join(timeout=60.0)
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
+    night = get_night(db, night_id) or night
+    cursor = int(night["close_commit_cursor"] or 0)
     with gate:
+        if cursor < CLOSE_STEP_ENDORSEMENT_BOUND:
+            # settle path should have advanced this; missing watermark is a hard fault.
+            raise AudienceNightError(
+                f"收夜背书水位未落定（night_id={int(night_id)}, cursor={cursor}）",
+                code="endorsement_not_bound",
+                detail={"night_id": int(night_id), "cursor": int(cursor)},
+            )
         if cursor < CLOSE_STEP_FINALIZE:
             _commit_night_approved(
                 db, state, int(night_id),
@@ -1585,6 +1640,8 @@ def mark_actions_night_approved(
         return 0
     nid = night_id
     if nid is None:
-        open_n = get_open_night(db)
+        open_n = assert_night_accepts_player_input(db, what="应允暂存")
         nid = int(open_n["id"]) if open_n else None
+    else:
+        assert_night_accepts_player_input(db, int(nid), what="应允暂存")
     return int(db.mark_pending_night_approved(action_ids, night_id=nid) or 0)

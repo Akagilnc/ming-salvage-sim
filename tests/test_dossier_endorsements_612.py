@@ -371,7 +371,8 @@ def test_post_reply_extracts_ordinary_facts_immediately_even_with_approved_pendi
 
 
 def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_work(game, monkeypatch):
-    """真实收夜：稳定 dossier id；整夜一次 endorsement-only LLM；调用期无 write gate。"""
+    """真实收夜：稳定 dossier id；整夜一次 endorsement-only LLM；调用期无 write gate/
+    无 DB transaction；与真实 close beat 生成重叠。"""
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
@@ -394,8 +395,9 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
 
     runtime_gate = threading.Lock()
     llm_saw_gate_free = []
-    independent_overlap = threading.Event()
-    independent_ran = threading.Event()
+    llm_saw_no_db_tx = []
+    beat_overlap = threading.Event()
+    endorsement_entered = threading.Event()
     calls = []
 
     class _EndorsementAgent:
@@ -406,9 +408,11 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
             llm_saw_gate_free.append(acquired)
             if acquired:
                 runtime_gate.release()
-            # Prove an independent close prep task can overlap.
-            independent_overlap.set()
-            assert independent_ran.wait(5)
+            # Probe: no DB transaction held across the LLM call.
+            llm_saw_no_db_tx.append(db.conn.in_transaction is False)
+            endorsement_entered.set()
+            # Wait until real close beat generator has overlapped this window.
+            assert beat_overlap.wait(5)
             candidates = calls[-1]["可背书案卷"]
             assert len(candidates) == 1
             did = int(candidates[0]["ref"]["dossier_id"])
@@ -418,37 +422,34 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
                 "source_chat_turn_id": chat_turn_id,
             }]}, ensure_ascii=False)
 
-    def _independent_close_prep():
-        assert independent_overlap.wait(5)
-        # Read-only / non-final prep: must not consume endorsements or write CLOSED.
-        assert db.list_dossier_endorsements(
-            int(db.list_decree_dossiers(status="proposed")[0]["id"])
-        ) == [] if db.list_decree_dossiers(status="proposed") else True
-        independent_ran.set()
+    def _real_close_beat(_inputs):
+        # Production close beat path (threaded by close_night) overlaps endorsement LLM.
+        assert endorsement_entered.wait(5)
+        beat_overlap.set()
+        return "王承恩代宣退朝，今夜召对到此。"
 
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent", lambda cfg: _EndorsementAgent(),
     )
-    prep = threading.Thread(target=_independent_close_prep)
-    # Start prep waiter before close so it can overlap the LLM window.
-    prep.start()
 
-    # Hold-and-release pattern mirrors production: close owns the real gate briefly.
     result = an.close_night(
         db, state, night_id=night_id, content=content,
         llm_config=object(), write_gate=runtime_gate,
+        beat_generator=_real_close_beat,
     )
-    prep.join(5)
-    assert not prep.is_alive()
     assert result["closed"] is True
     assert len(calls) == 1
     assert llm_saw_gate_free == [True]
+    assert llm_saw_no_db_tx == [True]
+    assert beat_overlap.is_set()
     assert "surviving_source_turns" in calls[0]
     assert emperor_text == calls[0]["surviving_source_turns"][0]["皇帝问话"]
     dossiers = db.list_decree_dossiers(status="proposed")
     assert len(dossiers) == 1
     assert db.list_dossier_endorsements(int(dossiers[0]["id"]))[0]["imperial"] is True
-    assert db.is_night_endorsement_bound(night_id)
+    night = an.get_night(db, night_id)
+    assert an.night_endorsement_bound(night)
+    assert int(night["close_commit_cursor"]) == an.CLOSE_STEP_FINALIZE
 
 
 def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
@@ -510,7 +511,7 @@ def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed["close_commit_cursor"] or 0) == 0
-    assert int(failed.get("endorsement_bound") or 0) == 0
+    assert not an.night_endorsement_bound(failed)
     dossiers = db.list_decree_dossiers(status="proposed")
     assert [row["decree_text"] for row in dossiers] == ["清核辽饷"]
     first_id = int(dossiers[0]["id"])
@@ -579,64 +580,119 @@ def test_startup_catchup_only_ordinary_facts_never_endorsement_batch(game):
     assert db.get_story_extract_status(chat_turn_id) == "done"
     assert endorse_calls == []
     assert db.list_dossier_endorsements(dossier_id) == []
-    assert not db.is_night_endorsement_bound(night_id)
+    assert not an.night_endorsement_bound(an.get_night(db, night_id))
 
 
-def test_endorsement_batch_single_flight_contended_returns_finite(game):
-    db, state, _content = game
+def test_office_phase1_draft_only_materializes_once_after_endorsement(game):
+    """Phase 1 office = stable draft dossier only; real office effect after bound,
+    exactly once. Failure keeps OPEN/draft/consent and leaves office unchanged."""
+    db, state, content = game
     minister = _minister(db)
-    night_id, chat_turn_id, seq = _night_reply(db, state, minister)
-    db.create_decree_dossier(
-        state, action_type="policy", decree_text="争用",
-        target_kind="issue", target_id="single-flight",
-    )
+    target = db.conn.execute(
+        "SELECT name, office FROM characters WHERE status='active' "
+        "AND power_id='ming' AND name != ? ORDER BY name LIMIT 1",
+        (minister,),
+    ).fetchone()
+    if target is None:
+        pytest.skip("no second active ming minister")
+    target_name = str(target["name"])
+    office_before = str(target["office"] or "")
+    new_office = "户部尚书" if office_before != "户部尚书" else "兵部尚书"
+
+    night_id, chat_turn_id, seq = _night_reply(db, state, minister, reply="臣愿作保。")
     assert _extract(
-        db, minister=minister, reply="臣愿会签此旨。",
+        db, minister=minister, reply="臣愿作保。",
         chat_turn_id=chat_turn_id, night_id=night_id, seq=seq,
-        fact={"body": "愿会签", "person_names": [minister]},
+        fact={"body": "大臣愿作保。", "person_names": [minister]},
     )["status"] == "done"
 
-    started = threading.Event()
-    release = threading.Event()
+    office_pa = db.stage_pending_action(
+        state.turn, kind="office", action="任命", minister_name=minister,
+        payload={"name": target_name, "office": new_office},
+    )
+    db.mark_pending_night_approved([office_pa], night_id=night_id)
     calls = []
 
-    class _Block:
+    class _BoomThenOk:
         def run(self, materials):
-            calls.append(1)
-            started.set()
-            assert release.wait(5)
-            return json.dumps({"endorsements": []}, ensure_ascii=False)
-
-    errors = []
-
-    def _owner():
-        run_endorsement_batch_for_night(
-            db=db, night_id=night_id, llm_config=object(),
-            write_gate=threading.Lock(), extractor_agent=_Block(),
-        )
-
-    def _contender():
-        try:
-            run_endorsement_batch_for_night(
-                db=db, night_id=night_id, llm_config=object(),
-                write_gate=threading.Lock(), extractor_agent=_Block(),
+            payload = json.loads(materials)
+            calls.append(payload)
+            if len(calls) == 1:
+                raise RuntimeError("endorsement boom")
+            candidates = payload["可背书案卷"]
+            target_row = next(
+                row for row in candidates
+                if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
             )
-        except an.AudienceNightError as exc:
-            errors.append(exc)
+            return json.dumps({"endorsements": [{
+                "dossier_id": target_row["ref"]["dossier_id"], "form": "御笔手敕",
+                "endorser_id": "", "imperial": True,
+                "source_chat_turn_id": chat_turn_id,
+            }]}, ensure_ascii=False)
 
-    t1 = threading.Thread(target=_owner)
-    t1.start()
-    assert started.wait(5)
-    t2 = threading.Thread(target=_contender)
-    t2.start()
-    t2.join(5)
-    assert not t2.is_alive()
-    assert len(errors) == 1
-    assert errors[0].code == "endorsement_batch_contended"
-    assert len(calls) == 1
-    release.set()
-    t1.join(5)
-    assert not t1.is_alive()
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            endorsement_extractor_agent=_BoomThenOk(),
+        )
+    assert ei.value.code == "endorsement_extract_failed"
+    failed = an.get_night(db, night_id)
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    # Draft carrier exists; real office/registry untouched.
+    dossiers = [
+        row for row in db.list_decree_dossiers(status="proposed")
+        if str(row.get("decree_text") or "").startswith(f"任命{target_name}")
+    ]
+    assert len(dossiers) == 1
+    draft_id = int(dossiers[0]["id"])
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (target_name,)
+    ).fetchone()["office"] == office_before
+    assert db.conn.execute(
+        "SELECT status FROM pending_actions WHERE id=?", (office_pa,)
+    ).fetchone()["status"] == "committed"
+
+    result = an.close_night(
+        db, state, night_id=night_id, content=content,
+        llm_config=object(), write_gate=threading.Lock(),
+        endorsement_extractor_agent=_BoomThenOk(),
+    )
+    assert result["closed"] is True
+    assert len(calls) == 2
+    kept = db.get_decree_dossier(draft_id)
+    assert kept is not None
+    assert int(kept["id"]) == draft_id
+    assert db.list_dossier_endorsements(draft_id)[0]["imperial"] is True
+    # Still proposed after close: payload effect materializes at promulgation.
+    assert str(kept["status"]) == "proposed"
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (target_name,)
+    ).fetchone()["office"] == office_before
+
+    # Endorsement-bound success barrier cleared; promulgation materializes once.
+    db.apply_dossier_promulgation(
+        state, draft_id, "promulgated", content=content, registry=None,
+    )
+    after = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (target_name,)
+    ).fetchone()["office"]
+    assert str(after) == new_office
+    final = db.get_decree_dossier(draft_id)
+    assert str(final["status"]) != "proposed"
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM decree_dossiers WHERE pending_action_id=?",
+        (office_pa,),
+    ).fetchone()[0] == 1
+    # Second promulgation must not re-apply / invent another carrier.
+    with pytest.raises(Exception):
+        db.apply_dossier_promulgation(
+            state, draft_id, "promulgated", content=content, registry=None,
+        )
+    assert db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (target_name,)
+    ).fetchone()["office"] == new_office
 
 
 def _public_mingfa_projection(db, night_id):
