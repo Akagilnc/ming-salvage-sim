@@ -212,6 +212,12 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
+### 背书条目（ADR 0070）
+
+背书条目与参与人名单分立：担名≠办事，不入毁约追责。条目字段为 `form`∈｛会签/当面站台/御笔手敕｝、会签/当面站台的具名 `endorser_id`（在册人物），或御笔手敕的 `imperial=true`（不得具名大臣）。写入只接受已存在案卷（单向新指旧；悬空/未知案卷拒收），并绑定来源 `source_chat_turn_id`；精确重复项幂等。
+
+捕获：普通 story/presence 每轮即时抽取（#501）；背书绑定走收夜**一次** endorsement-only 批处理（#612）——输入为最终可背书案卷 refs + surviving source turns（含已落普通账），输出只写 `decree_dossier_endorsements`（`form`/`endorser_id`/`imperial`/`source_chat_turn_id`），不重复故事正文。不按皇威二次抑制意愿（意愿调制属 #472）。精确重复项幂等；批失败不落终局、可重试。颁布判官读端投影完整 `endorsements`，并把条目 id 写入 `criteria_snapshot.endorsement_entry_ids`。restore 直接读档，判官读端行为一致。
+
 ### `授权变更` / `authority_changes` — 授权档生产槽（ADR 0071 / #611）
 
 顶层槽中英别名：`授权变更` ↔ `authority_changes`。复用既有段适配器（`items → applied/rejected + reason`）；非法项进既有 `rejection_reports`；同批合法项仍应用。不得另造平行写入口。
