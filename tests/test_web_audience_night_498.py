@@ -50,6 +50,15 @@ class _CannedExtractor:
         return _R()
 
 
+class _CannedEndorsementExtractor:
+    """#612 夜级 endorsement-only 离线边界：默认空绑定（不改既有收夜断言）。"""
+
+    def run(self, _material):
+        class _R:
+            content = '{"endorsements":[]}'
+        return _R()
+
+
 # ── canned LLM 边界（唯一 fake）────────────────────────────────────────
 class _RunContent:
     event = "RunContent"
@@ -121,6 +130,10 @@ def web_game(tmp_path, monkeypatch):
     # 默认抽空 facts，避免本 #498 用例走真实网络。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda *a, **k: _CannedExtractor())
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _CannedEndorsementExtractor(),
+    )
     game = web_app.WebGame(fresh=False)
     monkeypatch.setattr(web_app, "web_game", game)
     yield game
@@ -297,7 +310,8 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 
 def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
     """Real Web settlement tracer: ordinary facts may already be done; close creates
-    draft dossiers then runs one gate-free endorsement-only batch."""
+    draft dossiers then runs one gate-free endorsement-only batch. While the
+    endorsement agent blocks, concurrent Web chat + approval must not drift."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -319,6 +333,18 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     game.db.mark_pending_night_approved([directive_id], night_id=night_id)
     calls = []
     gate_free = []
+    no_db_tx = []
+    entered = threading.Event()
+    release = threading.Event()
+    turns_before = game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    pending_before = game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
+    ledger_before = game.db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+    ).fetchone()["c"]
 
     class _TracingEndorsementExtractor:
         def run(self, materials):
@@ -329,6 +355,9 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             gate_free.append(acquired)
             if acquired:
                 game._runtime_write_gate().release()
+            no_db_tx.append(game.db.conn.in_transaction is False)
+            entered.set()
+            assert release.wait(8.0), "endorsement agent release timeout"
             candidates = payload["可背书案卷"]
             assert len(candidates) == 1
             dossier_id = candidates[0]["ref"]["dossier_id"]
@@ -339,17 +368,55 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
+    # Real chat path uses registry agent; keep canned so freeze is the only outcome.
+    game.session.registry.get = lambda ch: _FakeAgent(answer="臣另有奏。")
 
     async def scenario():
-        async with _client() as client:
-            return _parse_sse((await client.post("/api/decree/issue/stream", json={})).text)
+        async with _client() as issue_client, _client() as chat_client:
+            issue_task = asyncio.create_task(
+                issue_client.post("/api/decree/issue/stream", json={})
+            )
+            assert await asyncio.to_thread(entered.wait, 8.0)
+            # While endorsement LLM blocks under CLOSING: real Web chat + stage/approve.
+            chat_resp = await chat_client.post(
+                f"/api/ministers/{minister}/chat/stream",
+                json={"message": "另议边饷？"},
+            )
+            chat_events = _parse_sse(chat_resp.text)
+            assert any(ev.get("event") == "error" for ev in chat_events), chat_events
+            # Direct stage/approve seams must also freeze (no stranded consent).
+            with pytest.raises(an.AudienceNightError) as stage_exc:
+                game.db.stage_directive_candidate(
+                    game.state.turn, minister,
+                    payload={**_POLICY_FIELDS, "text": "偷渡应允", "actor": minister,
+                             "target_id": "closing-freeze"},
+                )
+            assert stage_exc.value.code == "night_closing"
+            with pytest.raises(an.AudienceNightError) as approve_exc:
+                an.mark_actions_night_approved(game.db, [directive_id], night_id=night_id)
+            assert approve_exc.value.code == "night_closing"
+            assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
+            assert game.db.conn.execute(
+                "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+            ).fetchone()["c"] == turns_before
+            assert game.db.conn.execute(
+                "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
+            ).fetchone()["c"] == pending_before
+            assert game.db.conn.execute(
+                "SELECT COUNT(*) AS c FROM story_ledger_entries WHERE night_id=?", (night_id,),
+            ).fetchone()["c"] == ledger_before
+            release.set()
+            return _parse_sse((await issue_task).text)
 
     events = asyncio.run(scenario())
     assert events[-1]["event"] == "done", events
     assert len(calls) == 1
     assert gate_free == [True]
+    assert no_db_tx == [True]
     assert game.db.get_story_extract_status(chat_turn_id) == "done"
-    assert game.db.is_night_endorsement_bound(night_id)
+    closed = an.get_night(game.db, night_id)
+    assert closed["status"] == an.NIGHT_STATUS_CLOSED
+    assert an.night_endorsement_bound(closed)
 
 
 def test_legacy_pending_only_advances_to_durable_dossier_without_review_api(web_game, monkeypatch):

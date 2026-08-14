@@ -2270,6 +2270,21 @@ class WebGame:
                 self._complete_pending_write()
                 yield {"type": "error", "message": "月末结算/亲裁进行中，暂不能召对。"}
                 return
+            # #612：CLOSING 冻结新对话（endorsement LLM 窗口；既有夜准入 seam）。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import (
+                    NIGHT_STATUS_CLOSING,
+                    get_open_night,
+                )
+                open_n = get_open_night(self.db)
+                if open_n is not None and open_n.get("status") == NIGHT_STATUS_CLOSING:
+                    self._complete_pending_write()
+                    yield {
+                        "type": "error",
+                        "message": "本夜收夜中，暂不能召对。",
+                        "code": "night_closing",
+                    }
+                    return
             if self._audience_turn_in_flight(minister_name):
                 self._complete_pending_write()
                 yield {"type": "error", "message": f"{minister_name}上一轮回奏仍在进行，请稍候再问。"}

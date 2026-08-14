@@ -28,7 +28,9 @@ from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     PRESENCE_EFFECTS,
     AudienceNightError,
+    get_night,
     get_open_night,
+    night_endorsement_bound,
     persons_present_tonight,
     write_audience_error_pack,
 )
@@ -349,33 +351,30 @@ def extract_endorsements_for_night(
     return parse_endorsement_batch(output)
 
 
-_turn_ownership_guard = threading.Lock()
-_turn_ownership: Dict[tuple[int, int], list[Any]] = {}
+# One process-local single-flight table shared by turn extraction and night
+# endorsement batch. Keys distinguish domains: ("turn", db_id, turn_id) /
+# ("night", db_id, night_id).
+_single_flight_guard = threading.Lock()
+_single_flight_ownership: Dict[tuple[Any, ...], list[Any]] = {}
 
-_endorsement_batch_guard = threading.Lock()
-_endorsement_batch_ownership: Dict[tuple[int, int], list[Any]] = {}
 
+def _claim_single_flight(key: tuple[Any, ...]) -> tuple[Optional[threading.Lock], bool]:
+    """Process-local finite single-flight.
 
-def _claim_extraction_owner(
-    db: Any, chat_turn_id: int,
-) -> tuple[Optional[threading.Lock], bool]:
-    """Process-local single-flight for one persisted audience turn.
+    Only the caller that creates the slot owns a new attempt. Contending callers
+    must not block on the in-flight owner; they return immediately so the path
+    stays finite and retryable. No Future/result store. The slot is reclaimed
+    when the last holder leaves.
 
-    The durable done watermark prevents repeat settlement. Only the caller that
-    creates the slot owns a new attempt. Contending callers must not block on the
-    in-flight owner. They return immediately so the path stays finite and retryable.
-    No Future/result store. The slot is reclaimed when the last holder leaves.
-
-    Returns (lock, owned). owned=True means this caller runs extraction. lock is
+    Returns (lock, owned). owned=True means this caller runs the work. lock is
     None on contention (caller must not release).
     """
-    key = (id(db), int(chat_turn_id))
-    with _turn_ownership_guard:
-        slot = _turn_ownership.get(key)
+    with _single_flight_guard:
+        slot = _single_flight_ownership.get(key)
         created = slot is None
         if created:
             slot = [threading.Lock(), 0]
-            _turn_ownership[key] = slot
+            _single_flight_ownership[key] = slot
         slot[1] += 1
         owner = slot[0]
     if created:
@@ -383,67 +382,36 @@ def _claim_extraction_owner(
         return owner, True
     if owner.acquire(blocking=False):
         return owner, False
-    with _turn_ownership_guard:
-        cur = _turn_ownership.get(key)
+    with _single_flight_guard:
+        cur = _single_flight_ownership.get(key)
         if cur is not None and cur[0] is owner:
             cur[1] -= 1
             if cur[1] <= 0:
-                _turn_ownership.pop(key, None)
+                _single_flight_ownership.pop(key, None)
     return None, False
 
 
-def _release_extraction_owner(db: Any, chat_turn_id: int, owner: threading.Lock) -> None:
+def _release_single_flight(key: tuple[Any, ...], owner: threading.Lock) -> None:
     owner.release()
-    key = (id(db), int(chat_turn_id))
-    with _turn_ownership_guard:
-        slot = _turn_ownership.get(key)
+    with _single_flight_guard:
+        slot = _single_flight_ownership.get(key)
         if slot is None or slot[0] is not owner:
             return
         slot[1] -= 1
         if slot[1] <= 0:
-            _turn_ownership.pop(key, None)
+            _single_flight_ownership.pop(key, None)
 
 
-def _claim_endorsement_batch_owner(
-    db: Any, night_id: int,
-) -> tuple[Optional[threading.Lock], bool]:
-    """Night-level single-flight for endorsement-only batch. Same finite-contention
-    contract as per-turn ordinary extraction; no Future/result registry."""
-    key = (id(db), int(night_id))
-    with _endorsement_batch_guard:
-        slot = _endorsement_batch_ownership.get(key)
-        created = slot is None
-        if created:
-            slot = [threading.Lock(), 0]
-            _endorsement_batch_ownership[key] = slot
-        slot[1] += 1
-        owner = slot[0]
-    if created:
-        owner.acquire()
-        return owner, True
-    if owner.acquire(blocking=False):
-        return owner, False
-    with _endorsement_batch_guard:
-        cur = _endorsement_batch_ownership.get(key)
-        if cur is not None and cur[0] is owner:
-            cur[1] -= 1
-            if cur[1] <= 0:
-                _endorsement_batch_ownership.pop(key, None)
-    return None, False
+def _turn_flight_key(db: Any, chat_turn_id: int) -> tuple[Any, ...]:
+    return ("turn", id(db), int(chat_turn_id))
 
 
-def _release_endorsement_batch_owner(
-    db: Any, night_id: int, owner: threading.Lock,
-) -> None:
-    owner.release()
-    key = (id(db), int(night_id))
-    with _endorsement_batch_guard:
-        slot = _endorsement_batch_ownership.get(key)
-        if slot is None or slot[0] is not owner:
-            return
-        slot[1] -= 1
-        if slot[1] <= 0:
-            _endorsement_batch_ownership.pop(key, None)
+def _night_flight_key(db: Any, night_id: int) -> tuple[Any, ...]:
+    return ("night", id(db), int(night_id))
+
+
+def _is_endorsement_bound(db: Any, night_id: int) -> bool:
+    return night_endorsement_bound(get_night(db, int(night_id)))
 
 
 def run_extraction_for_turn(
@@ -474,7 +442,8 @@ def run_extraction_for_turn(
     if not cid:
         return {"status": "skipped", "chat_turn_id": cid}
 
-    owner, owned = _claim_extraction_owner(db, cid)
+    flight_key = _turn_flight_key(db, cid)
+    owner, owned = _claim_single_flight(flight_key)
     if owner is None:
         return {"status": "pending", "chat_turn_id": cid, "contended": True}
     try:
@@ -523,7 +492,7 @@ def run_extraction_for_turn(
             fact_count=len(facts),
         )
     finally:
-        _release_extraction_owner(db, cid, owner)
+        _release_single_flight(flight_key, owner)
 
 
 def run_endorsement_batch_for_night(
@@ -542,10 +511,11 @@ def run_endorsement_batch_for_night(
     - LLM/shape 失败 → 抛 AudienceNightError（调用方 fail-closed 保持 OPEN）。
     """
     nid = int(night_id)
-    if hasattr(db, "is_night_endorsement_bound") and db.is_night_endorsement_bound(nid):
+    if _is_endorsement_bound(db, nid):
         return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
-    owner, owned = _claim_endorsement_batch_owner(db, nid)
+    flight_key = _night_flight_key(db, nid)
+    owner, owned = _claim_single_flight(flight_key)
     if owner is None:
         raise AudienceNightError(
             f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
@@ -554,14 +524,14 @@ def run_endorsement_batch_for_night(
         )
     try:
         if not owned:
-            if hasattr(db, "is_night_endorsement_bound") and db.is_night_endorsement_bound(nid):
+            if _is_endorsement_bound(db, nid):
                 return {"status": "done", "night_id": nid, "already": True, "ids": []}
             raise AudienceNightError(
                 f"收夜背书批处理争用中（night_id={nid}），请稍后重试。",
                 code="endorsement_batch_contended",
                 detail={"night_id": nid},
             )
-        if hasattr(db, "is_night_endorsement_bound") and db.is_night_endorsement_bound(nid):
+        if _is_endorsement_bound(db, nid):
             return {"status": "done", "night_id": nid, "already": True, "ids": []}
 
         inputs = db.list_endorsement_batch_inputs(nid)
@@ -569,9 +539,10 @@ def run_endorsement_batch_for_night(
         source_turns = list(inputs.get("turns") or [])
 
         if not candidates or not source_turns:
+            # Same short path as settle: advance CLOSE_STEP_ENDORSEMENT_BOUND.
             with write_gate:
-                if hasattr(db, "mark_night_endorsement_bound"):
-                    db.mark_night_endorsement_bound(nid)
+                if not _is_endorsement_bound(db, nid):
+                    db.settle_endorsement_batch(nid, [])
             return {
                 "status": "skipped",
                 "night_id": nid,
@@ -604,8 +575,8 @@ def run_endorsement_batch_for_night(
 
         try:
             with write_gate:
-                # Re-check after LLM: another path may have bound.
-                if hasattr(db, "is_night_endorsement_bound") and db.is_night_endorsement_bound(nid):
+                # Re-check after LLM: another path may have bound via cursor.
+                if _is_endorsement_bound(db, nid):
                     return {"status": "done", "night_id": nid, "already": True, "ids": []}
                 ids = db.settle_endorsement_batch(nid, items)
         except Exception as exc:
@@ -630,7 +601,7 @@ def run_endorsement_batch_for_night(
             "count": len(ids),
         }
     finally:
-        _release_endorsement_batch_owner(db, nid, owner)
+        _release_single_flight(flight_key, owner)
 
 
 def _pending_with_pack(
