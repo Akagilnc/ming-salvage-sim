@@ -9,6 +9,7 @@ from ming_sim.exceptions import LLMContractError, SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -312,24 +313,11 @@ def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
 
 
 def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
-    return {
-        "dossier_id": dossier_id,
-        "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None,
-        "reason": "触犯钱粮命门，科臣封驳。",
-        "criteria_snapshot": {
-            "imperial_authority_band": authority_band,
-            "appointment_tenure": "",
-            "authorization_ids": [],
-            "endorsement_entry_ids": [],
-        },
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "大怒"},
-        ],
-        **({"midzhi_unpromulgatable": True} if midzhi else {}),
-    }
+    # Preserve suite-specific reason/intensity differences via builder knobs.
+    return rejected_verdict(
+        dossier_id, authority_band, midzhi=midzhi,
+        reason="触犯钱粮命门，科臣封驳。", intensity="strong",
+    )
 
 
 @pytest.mark.parametrize(
@@ -346,7 +334,7 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
         verdict = {"dossier_id": dossier_id, "decision": decision}
         if mode == "midzhi":
             verdict["affected_parties"] = [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]
     else:
         verdict = _rejected_verdict(
@@ -740,7 +728,7 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
             _rejected_verdict(hostile_land, band),
             {"dossier_id": ordinary_pay, "decision": "promulgated"},
             {"dossier_id": midzhi_pay, "decision": "promulgated", "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]},
             _rejected_verdict(vital_midzhi, band, midzhi=True),
         ]}, ensure_ascii=False)

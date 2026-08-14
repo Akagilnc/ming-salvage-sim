@@ -222,7 +222,7 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
 
 
 @pytest.mark.parametrize("contamination", [
-    {"affected_parties": [{"kind": "faction", "key": "不存在", "severity": "不满"}]},
+    {"affected_parties": [{"kind": "faction", "key": "不存在", "direction": "negative", "intensity": "weak"}]},
     {"legal_reason_code": "statute-42"},
     {"legal_reason_code": 0},
     {"legal_reason_code": False},
@@ -243,7 +243,7 @@ def test_public_resolve_seam_rejects_reserved_or_malformed_rejection_before_pend
         "gatekeeper_id": None,
         "reason": "科臣封驳。",
         "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
         ],
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱",
@@ -319,7 +319,7 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contaminatio
         "gatekeeper_id": None,
         "reason": "科臣封驳。",
         "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
+            {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
         ],
         "criteria_snapshot": {
             "imperial_authority_band": "偏弱",

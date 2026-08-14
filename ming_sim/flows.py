@@ -1699,14 +1699,19 @@ def _apply_class_dict(
     逐项拒收契约（ADR 0008 决定 1，#14/#63）：字段值非整数（含 bool/float）→
     invalid_enum 逐项拒收；查无此阶级名由 db.adjust_classes 返 missing_ref。
     返回 (已落 delta dict, 拒收项列表)：前者供 web 「阶级变化」面板，后者由顶层置于
-    "class_delta_rejections" 段、桥接自动收。二级真值非 dict（如 {"农民": 0}）仍按既有
-    约定静默跳（extractor prompt 容忍，validate 不拒——见 test_issue_entities）。
+    "class_delta_rejections" 段、桥接自动收。二级真值非 dict（如 {"农民": 0}）同样
+    逐项拒收。
     """
     cleaned: Dict[str, Dict[str, int]] = {}
     rejected: List[Dict[str, object]] = []
     class_delta = class_delta if isinstance(class_delta, dict) else {}  # #117 同类：真值非 dict 守卫
     for key, fields in class_delta.items():
         if not isinstance(fields, dict):
+            rejected.append({
+                "name": str(key), "rejected": True, "category": "invalid_enum",
+                "reason": f"「{key}」阶级变化须为对象：{fields!r}",
+                "item": {str(key): fields},
+            })
             continue
         entry: Dict[str, int] = {}
         for fname in ("satisfaction", "leverage"):

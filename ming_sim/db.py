@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import replace
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -52,7 +53,10 @@ from ming_sim.relations import (
     normalize_evidence,
     validate_edge_kind,
 )
-from ming_sim.strict_types import strict_int, validate_rejection_verdict
+from ming_sim.strict_types import (
+    strict_int, validate_affected_parties, validate_rejection_verdict,
+    validate_verdict_affected_parties,
+)
 from ming_sim.token_stats import tlog
 
 CURRENT_RESOLVE_CONTRACT_VERSION = 1
@@ -1381,6 +1385,24 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
+            -- ADR 0056: existence of this append-only rail is the idempotency key;
+            -- stigma_json is deliberately not used as a cost guard.
+            CREATE TABLE IF NOT EXISTS decree_cost_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                cost_kind TEXT NOT NULL,
+                target_kind TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                delta INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                cost_identity TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, cost_identity, cost_kind, target_kind, target_id),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_decree_cost_events_dossier
+                ON decree_cost_events(dossier_id, id);
             CREATE TABLE IF NOT EXISTS pending_promulgation_verdicts (
                 turn INTEGER NOT NULL,
                 dossier_id INTEGER NOT NULL,
@@ -1903,6 +1925,7 @@ class GameDB:
             "decree_dossier_decisions", "affected_parties_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column(
             "decree_dossier_decisions", "midzhi_unpromulgatable", "INTEGER NOT NULL DEFAULT 0")
+        self._migrate_legacy_reaction_severity()
         self.ensure_column("decree_dossiers", "executor_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("decree_dossiers", "executor_id", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column(
@@ -11158,6 +11181,9 @@ class GameDB:
                     if held_turn > 0:
                         raise ValueError("留中案卷须先完成下月重判方可强颁")
                     raise ValueError("强颁只可承接首次打回或下月重判")
+                # Evidence is a Judge verdict, never the player disposition row.
+                # Validate it before status, stigma, authority, or reaction writes.
+                self._current_judge_affected_parties(dossier_id, current_turn)
                 self.conn.execute(
                     """
                     UPDATE decree_dossiers
@@ -11183,6 +11209,11 @@ class GameDB:
                         dossier_id, decision="force_promulgated", turn=state.turn,
                         commit=False,
                     )
+                self._apply_override_costs(
+                    state, dossier_id, include_authority=True,
+                    include_parties=not predeclared_midzhi,
+                    stigma_reason="批红强颁", commit=False,
+                )
             else:
                 self.record_dossier_decision(
                     dossier_id, "promulgated", blocked_layer=blocked_layer,
@@ -11299,6 +11330,242 @@ class GameDB:
                     dossier_id, "executing", commit=False,
                 )
 
+    _OVERRIDE_AUTHORITY_COST = -5
+    _REACTION_INTENSITY = {"weak": 4, "strong": 8}
+    _REACTION_SIGN = {"positive": 1, "negative": -1}
+    _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
+
+    @staticmethod
+    def _migrate_reaction_value(value: object) -> tuple[object, bool]:
+        """Translate only the two persisted pre-signed severity spellings."""
+        changed = False
+        if isinstance(value, dict):
+            value = dict(value)
+            severity = value.get("severity")
+            mapped = {"大怒": ("negative", "strong"), "不满": ("negative", "weak")}.get(severity)
+            if mapped is not None:
+                value.pop("severity", None)
+                value["direction"], value["intensity"] = mapped
+                changed = True
+        elif isinstance(value, list):
+            migrated = []
+            for item in value:
+                new_item, item_changed = GameDB._migrate_reaction_value(item)
+                migrated.append(new_item)
+                changed = changed or item_changed
+            value = migrated
+        return value, changed
+
+    def _migrate_legacy_reaction_severity(self) -> None:
+        """Idempotently repair persisted verdict reaction fields, never live payloads."""
+        for table, id_col, json_col in (
+            ("pending_promulgation_verdicts", "rowid", "verdict_json"),
+            ("decree_dossier_decisions", "id", "affected_parties_json"),
+        ):
+            for row in self.conn.execute(
+                f"SELECT {id_col} AS migration_id,{json_col} AS payload FROM {table}"
+            ).fetchall():
+                try:
+                    value = json.loads(str(row["payload"] or ""))
+                except ValueError as exc:
+                    logging.getLogger(__name__).warning(
+                        "跳过 %s 表迁移行 %s：%s",
+                        table, row["migration_id"], exc,
+                    )
+                    continue
+                if table == "pending_promulgation_verdicts" and isinstance(value, dict):
+                    affected, changed = self._migrate_reaction_value(value.get("affected_parties"))
+                    if changed:
+                        value = dict(value)
+                        value["affected_parties"] = affected
+                else:
+                    value, changed = self._migrate_reaction_value(value)
+                if changed:
+                    self.conn.execute(
+                        f"UPDATE {table} SET {json_col}=? WHERE {id_col}=?",
+                        (safe_json_dumps(value, ensure_ascii=False), row["migration_id"]),
+                    )
+        self.conn.commit()
+
+    def _record_decree_cost(
+        self, dossier_id: int, turn: int, cost_kind: str, target_kind: str,
+        target_id: str, delta: int, reason: str, *, cost_identity: str,
+    ) -> bool:
+        cur = self.conn.execute(
+            """INSERT OR IGNORE INTO decree_cost_events
+               (dossier_id,turn,cost_kind,target_kind,target_id,delta,reason,cost_identity)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (int(dossier_id), int(turn), cost_kind, target_kind, str(target_id),
+             int(delta), str(reason), str(cost_identity)),
+        )
+        return cur.rowcount == 1
+
+    def _current_judge_affected_parties(
+        self, dossier_id: int, turn: int,
+    ) -> List[Dict[str, str]]:
+        """Read only this turn's latest promulgation Judge evidence."""
+        row = self.conn.execute(
+            """SELECT affected_parties_json FROM decree_dossier_decisions
+               WHERE dossier_id=? AND turn=? AND rescript_action=''
+               ORDER BY id DESC LIMIT 1""",
+            (int(dossier_id), int(turn)),
+        ).fetchone()
+        if row is None:
+            raise ValueError("强颁缺少当前回合 Judge affected_parties")
+        try:
+            value = json.loads(str(row["affected_parties_json"] or ""))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("强颁当前回合 Judge affected_parties 非法") from exc
+        if not isinstance(value, list) or not value:
+            raise ValueError("强颁当前回合 Judge affected_parties 必须为非空 typed 清单")
+        validate_affected_parties(
+            value,
+            faction_names={str(item["name"]) for item in self.conn.execute("SELECT name FROM factions")},
+            class_names={str(item["name"]) for item in self.conn.execute("SELECT DISTINCT name FROM classes")},
+        )
+        return value
+
+    def _apply_authority_cost(
+        self, state: GameState, dossier_id: int, reason: str, *, cost_identity: str,
+    ) -> None:
+        """Record and apply the shared authority event exactly once."""
+        if not self._record_decree_cost(
+            dossier_id, state.turn, "authority", "metric", "皇威",
+            self._OVERRIDE_AUTHORITY_COST, reason, cost_identity=cost_identity,
+        ):
+            return
+        state.metrics["皇威"] = max(
+            0, int(state.metrics.get("皇威", 0)) + self._OVERRIDE_AUTHORITY_COST,
+        )
+        self.conn.execute(
+            "INSERT INTO metrics(key,value) VALUES('皇威',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (state.metrics["皇威"],),
+        )
+
+    def _apply_override_costs(
+        self, state: GameState, dossier_id: int, *, include_authority: bool,
+        include_parties: bool, stigma_reason: str, commit: bool = True,
+    ) -> None:
+        """ADR 0056 narrow rail: authority and typed signed reactions."""
+        if include_authority:
+            self._apply_authority_cost(
+                state, dossier_id, stigma_reason, cost_identity="override",
+            )
+        parties_already_applied = self.conn.execute(
+            """SELECT 1 FROM decree_cost_events
+               WHERE dossier_id=? AND cost_kind='satisfaction' AND cost_identity='override'
+               LIMIT 1""",
+            (int(dossier_id),),
+        ).fetchone() is not None
+        if include_parties and not parties_already_applied:
+            for party in self._current_judge_affected_parties(dossier_id, state.turn):
+                kind, key = str(party.get("kind") or ""), str(party.get("key") or "")
+                magnitude = self._REACTION_INTENSITY.get(str(party.get("intensity") or ""))
+                sign = self._REACTION_SIGN.get(str(party.get("direction") or ""))
+                if kind not in {"faction", "class"} or magnitude is None or sign is None:
+                    raise ValueError("反应代价只接受已校验 typed 清单")
+                delta = sign * magnitude
+                if not self._record_decree_cost(
+                    dossier_id, state.turn, "satisfaction", kind, key, delta, stigma_reason,
+                    cost_identity="override",
+                ):
+                    continue
+                if kind == "faction":
+                    self.adjust_factions(
+                        {key: {"satisfaction": delta}}, commit=False,
+                    )
+                else:
+                    self.adjust_classes(
+                        {key: {"satisfaction": delta}}, commit=False,
+                    )
+        if commit:
+            self.conn.commit()
+
+    def breach_decree_dossier(
+        self, state: GameState, dossier_id: int, *, reason: str = "撤回成命",
+        commit: bool = True,
+    ) -> bool:
+        """Withdraw an issued promise; commit=False belongs wholly to its caller."""
+        if commit:
+            from ming_sim.decree import atomic_and_reload
+            transaction = atomic_and_reload(self, state)
+        else:
+            transaction = contextlib.nullcontext()
+        with transaction:
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            was_closed = dossier["status"] == "closed"
+            if dossier["status"] not in {"promulgated", "executing"} and not (
+                was_closed and self.dossier_authorizes_effects(dossier_id)
+            ):
+                return False
+            if not self._record_decree_cost(
+                dossier_id, state.turn, "breach", "dossier", str(dossier_id), 0, reason,
+                cost_identity="breach",
+            ):
+                return False
+            self._apply_authority_cost(
+                state, dossier_id, reason, cost_identity="breach",
+            )
+            roster = dossier.get("participant_roster") or []
+            ministers = set()
+            for item in roster:
+                if not isinstance(item, dict):
+                    continue
+                tier = item.get("tier")
+                if tier == "主办":
+                    ministers.add(str(item.get("character_id") or ""))
+                if tier in {"主办", "协办"} and item.get("delegator_id"):
+                    ministers.add(str(item["delegator_id"]))
+            ministers.discard("")
+            factions = set()
+            for person in sorted(ministers):
+                row = self.conn.execute(
+                    "SELECT faction,status FROM characters WHERE name=?", (person,),
+                ).fetchone()
+                if row is None:
+                    continue
+                if str(row["faction"] or ""):
+                    factions.add(str(row["faction"]))
+                if str(row["status"]) == "dead":
+                    logging.getLogger(__name__).warning("跳过已故参与者%s", person)
+                    continue
+                self.record_relation_edge_event(
+                    source="皇帝", target=person, event_kind="辜负", context=reason,
+                    origin=f"dossier:{dossier_id}:breach", turn=state.turn,
+                    year=state.year, period=state.period,
+                )
+            registered_factions = {
+                str(row["name"])
+                for row in self.conn.execute("SELECT name FROM factions")
+            }
+            factions.intersection_update(registered_factions)
+            breach_delta = (
+                self._REACTION_SIGN[self._BREACH_FACTION_REACTION["direction"]]
+                * self._REACTION_INTENSITY[self._BREACH_FACTION_REACTION["intensity"]]
+            )
+            for faction in sorted(factions):
+                if self._record_decree_cost(
+                    dossier_id, state.turn, "satisfaction", "faction", faction,
+                    breach_delta, reason, cost_identity="breach",
+                ):
+                    self.adjust_factions(
+                        {faction: {"satisfaction": breach_delta}}, commit=False,
+                    )
+            if was_closed:
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET interruption_reason=CASE WHEN interruption_reason='' THEN ? ELSE interruption_reason END WHERE id=?",
+                    (reason, int(dossier_id)),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (state.turn, reason, int(dossier_id)),
+                )
+        return True
+
     def save_pending_promulgation_verdicts(
         self, turn: int, verdicts: Iterable[Dict[str, object]],
     ) -> None:
@@ -11341,34 +11608,39 @@ class GameDB:
         content=None, registry=None,
     ) -> None:
         """结算判决注入入口：批量、同事务消费每案结构化 verdict。"""
-        # This public seam is also used outside resolve_directives.  Reuse the
-        # settlement rollback primitive so failed later verdicts restore both
-        # SQLite and the caller's in-memory GameState.
+        # Validate the complete batch before the first write at this public seam.
+        rows = list(verdicts)
+        faction_names = {str(row["name"]) for row in self.conn.execute("SELECT name FROM factions")}
+        class_names = {str(row["name"]) for row in self.conn.execute("SELECT DISTINCT name FROM classes")}
+        character_ids = {str(row["name"]) for row in self.conn.execute("SELECT name FROM characters")}
+        for verdict in rows:
+            if not isinstance(verdict, dict):
+                raise ValueError("案卷 verdict 须为对象")
+            dossier_id = strict_int(verdict.get("dossier_id"))
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            decision = str(verdict.get("decision") or "")
+            validate_verdict_affected_parties(
+                verdict, str(dossier.get("mode") or "ordinary"),
+                faction_names=faction_names, class_names=class_names,
+            )
+            if decision == "rejected":
+                validate_rejection_verdict(
+                    verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
+                    faction_names=faction_names, class_names=class_names,
+                    character_ids=character_ids,
+                )
+
+        # Reuse the settlement rollback primitive so failed later effects restore
+        # both SQLite and the caller's in-memory GameState.
         from ming_sim.decree import atomic_and_reload
 
         with atomic_and_reload(self, state, content=content, registry=registry):
-            for verdict in verdicts:
-                if not isinstance(verdict, dict):
-                    raise ValueError("案卷 verdict 须为对象")
+            for verdict in rows:
                 decision = str(verdict.get("decision") or "")
                 opponents = verdict.get("primary_opponents")
                 snapshot = verdict.get("criteria_snapshot")
-                if decision == "rejected":
-                    validate_rejection_verdict(
-                        verdict, self._PROMULGATION_BLOCKED_LAYERS - {""},
-                        faction_names={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT name FROM factions")
-                        },
-                        class_names={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
-                        },
-                        character_ids={
-                            str(row["name"])
-                            for row in self.conn.execute("SELECT name FROM characters")
-                        },
-                    )
                 self.apply_dossier_promulgation(
                     state, strict_int(verdict.get("dossier_id")), decision,
                     blocked_layer=str(verdict.get("blocked_layer") or ""),
@@ -11380,14 +11652,22 @@ class GameDB:
                     criteria_snapshot=snapshot if isinstance(snapshot, dict) else None,
                     content=content, registry=registry,
                 )
+                dossier_id = strict_int(verdict.get("dossier_id"))
                 self.conn.execute(
                     """UPDATE decree_dossier_decisions
                        SET affected_parties_json=?, midzhi_unpromulgatable=?
                        WHERE id=(SELECT MAX(id) FROM decree_dossier_decisions WHERE dossier_id=?)""",
                     (safe_json_dumps(verdict.get("affected_parties") or [], ensure_ascii=False),
                      1 if verdict.get("midzhi_unpromulgatable") is True else 0,
-                     strict_int(verdict.get("dossier_id"))),
+                     dossier_id),
                 )
+                dossier = self.get_decree_dossier(dossier_id)
+                if dossier and dossier.get("mode") == "midzhi":
+                    self._apply_override_costs(
+                        state, dossier_id, include_authority=(decision == "promulgated"),
+                        include_parties=True, stigma_reason="预先中旨直发" if decision == "promulgated" else "中旨被打回",
+                        commit=False,
+                    )
             # Consumption belongs to the same atomic unit as effect application;
             # an outer settlement rollback restores both effects and this batch.
             self.conn.execute(
