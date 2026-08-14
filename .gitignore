@@ -14,7 +14,7 @@ env/
 *.local
 secrets/
 build
-dist
+/dist
 # Logs and runtime files
 *.log
 logs/
@@ -44,7 +44,8 @@ htmlcov/
 output
 # Frontend
 web/node_modules/
-web/dist/
+web/dist/*
+!web/dist/organicMarkdown.js
 web/tsconfig.tsbuildinfo
 .vscode/
 

@@ -350,34 +350,56 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         reopened.close()
 
 
-def test_release_layout_authority_preserves_code_span_raw_padding(tmp_path, monkeypatch):
-    """Write seam consumes the packaged web/dist authority product (not web/src+node)."""
-    import shutil
+def test_ming_llm_spec_entry_ships_single_authority_code_span_padding():
+    """Real Ming_LLM.spec packaging entry ships the sole authority; code-span padding holds."""
     from pathlib import Path
 
-    from ming_sim import organic_markdown as om
+    from ming_sim.organic_markdown import authority_product_path, filter_matched_highlights
+    from ming_sim.paths import bundled_root
 
-    sibling = Path(om.__file__).with_name("organic_markdown.authority.js")
-    assert sibling.is_file(), "authority sibling product must be committed for dev/tests"
+    repo = Path(__file__).resolve().parents[1]
+    authority = (repo / "web" / "dist" / "organicMarkdown.js").resolve()
+    assert authority.is_file(), "single authority product must exist at web/dist/organicMarkdown.js"
 
-    release_root = tmp_path / "release-root"
-    release_authority = release_root / "web" / "dist" / "organicMarkdown.js"
-    release_authority.parent.mkdir(parents=True)
-    shutil.copyfile(sibling, release_authority)
+    # Packaging entry: same release-guard + tree_datas contract as Ming_LLM.spec.
+    spec = (repo / "Ming_LLM.spec").read_text(encoding="utf-8")
+    assert 'Path("web/dist/organicMarkdown.js").is_file()' in spec
+    assert 'tree_datas("web/dist"' in spec
+    assert "organic_markdown.authority.js" not in spec
+    assert "web/src/organicMarkdown" not in Path(
+        repo / "ming_sim" / "organic_markdown.py"
+    ).read_text(encoding="utf-8")
 
-    monkeypatch.setattr(om, "bundled_path", lambda *parts: str(release_root.joinpath(*parts)))
-    # Drop any thread-local context bound to the sibling path.
-    if hasattr(om._thread_state, "ctx"):
-        del om._thread_state.ctx
-    if hasattr(om._thread_state, "path"):
-        del om._thread_state.path
+    def tree_datas(root: str, dest: str, exclude_parts=()):
+        root_path = Path(root)
+        rows = []
+        for path in root_path.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root_path)
+            parts = set(rel.parts)
+            if path.name == ".DS_Store" or any(part in parts for part in exclude_parts):
+                continue
+            rows.append((str(path.resolve()), str(Path(dest) / rel.parent)))
+        return rows
 
-    resolved = om.authority_product_path()
-    assert resolved == release_authority
+    packaged = tree_datas(
+        str(repo / "web" / "dist"),
+        "web/dist",
+        exclude_parts={"_backup_rgb", "_original_before_cutout"},
+    )
+    authority_rows = [row for row in packaged if row[0].endswith("organicMarkdown.js")]
+    assert authority_rows == [(str(authority), "web/dist")]
+
+    # Write seam resolves that same release-layout file (no sibling, no path monkeypatch).
+    assert bundled_root().resolve() == repo.resolve()
+    resolved = authority_product_path().resolve()
+    assert resolved == authority
     assert "web/src" not in resolved.as_posix()
+    assert not (repo / "ming_sim" / "organic_markdown.authority.js").exists()
 
     answer = "臣请`  据实核账  `，不可臆断。"
-    assert om.filter_matched_highlights(
+    assert filter_matched_highlights(
         answer, ["`  据实核账  `", "未命中", "臆断"]
     ) == ["  据实核账  ", "臆断"]
 
