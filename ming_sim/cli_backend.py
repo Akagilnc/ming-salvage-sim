@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import errno
+import io
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -453,6 +454,20 @@ def _codex_final_text(obj: object) -> str:
 
 
 
+def _is_expected_closed_stream_error(error: BaseException) -> bool:
+    """True for already-closed / unsupported-fileno failures that cleanup must tolerate silently."""
+    if isinstance(error, io.UnsupportedOperation):
+        return True
+    text = str(error).lower()
+    if isinstance(error, ValueError) and "closed" in text:
+        return True
+    if isinstance(error, OSError) and (
+        error.errno == errno.EBADF or "bad file descriptor" in text
+    ):
+        return True
+    return False
+
+
 def _close_proc_pipe(stream: Any, name: str) -> None:
     """Drop the parent-side pipe fd so a blocked reader observes EOF/err without SIGKILL.
 
@@ -464,7 +479,15 @@ def _close_proc_pipe(stream: Any, name: str) -> None:
     fd: Optional[int] = None
     try:
         fd = stream.fileno()
-    except Exception:
+    except AttributeError:
+        # 无 fileno：假流 / 已剥离底层 fd，只能走 wrapper close
+        fd = None
+    except Exception as error:
+        if not _is_expected_closed_stream_error(error):
+            print(
+                f"[cli_backend] 获取子进程 {name} fileno 失败：{type(error).__name__}: {error}",
+                flush=True,
+            )
         fd = None
     if fd is not None:
         try:
@@ -572,8 +595,13 @@ def _iter_codex_stream_chunks(
         if proc.stderr is not None:
             try:
                 stderr_parts.append(proc.stderr.read())
-            except Exception:
-                pass
+            except Exception as error:
+                # 预期：管道已关 / UnsupportedOperation；其余必须留下可断言诊断，不得静默宽吞。
+                if not _is_expected_closed_stream_error(error):
+                    print(
+                        f"[cli_backend] 抽干子进程 stderr 失败：{type(error).__name__}: {error}",
+                        flush=True,
+                    )
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_thread.start()
