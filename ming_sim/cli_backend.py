@@ -21,6 +21,7 @@ import errno
 import io
 import json
 import os
+import queue
 from concurrent.futures import ThreadPoolExecutor
 import re
 import shutil
@@ -468,14 +469,52 @@ def _is_expected_closed_stream_error(error: BaseException) -> bool:
     return False
 
 
+def _neutralize_io_fd(stream: Any, fd: int) -> None:
+    """After os.close(fd), stop wrapper/GC from closing a possibly-reused fd number."""
+    seen: set[int] = set()
+    obj: Any = stream
+    while obj is not None and id(obj) not in seen:
+        seen.add(id(obj))
+        for attr in ("_fd", "fd"):
+            try:
+                if getattr(obj, attr, None) == fd:
+                    setattr(obj, attr, -1)
+            except Exception:
+                pass
+        try:
+            if hasattr(obj, "_closed"):
+                object.__setattr__(obj, "_closed", True)
+        except Exception:
+            try:
+                setattr(obj, "_closed", True)
+            except Exception:
+                pass
+        nxt = None
+        for attr in ("buffer", "raw"):
+            if hasattr(obj, attr):
+                try:
+                    nxt = getattr(obj, attr)
+                    break
+                except Exception:
+                    pass
+        obj = nxt
+
+
 def _close_proc_pipe(stream: Any, name: str) -> None:
     """Drop the parent-side pipe fd so a blocked reader observes EOF/err without SIGKILL.
 
     `stream.close()` alone does not reliably wake another thread blocked in
-    `for line in stream` on macOS/Unix; closing the raw fd does.
+    `for line in stream` on macOS/Unix; closing the raw fd does. After the raw
+    close, neutralize the wrapper's fd so a later close/GC cannot clobber a
+    reused integer descriptor.
     """
     if stream is None:
         return
+    try:
+        if getattr(stream, "closed", False):
+            return
+    except Exception:
+        pass
     fd: Optional[int] = None
     try:
         fd = stream.fileno()
@@ -503,10 +542,15 @@ def _close_proc_pipe(stream: Any, name: str) -> None:
                 f"[cli_backend] 关闭子进程 {name} fd 失败：{type(error).__name__}: {error}",
                 flush=True,
             )
+        _neutralize_io_fd(stream, fd)
     try:
+        if getattr(stream, "closed", False):
+            return
         stream.close()
     except Exception as error:
         # Wrapper close after os.close often reports EBADF/closed — expected, not silent failure.
+        if _is_expected_closed_stream_error(error):
+            return
         text = str(error).lower()
         if error.__class__.__name__ == "ValueError" and "closed" in text:
             return
@@ -561,7 +605,13 @@ def _iter_codex_stream_chunks(
     timeout: Optional[float] = None,
     reasoning_strength: Optional[str] = None,
 ) -> Iterator[str]:
-    """Run `codex exec --json` and yield agent_message_delta events as they arrive."""
+    """Run `codex exec --json` and yield agent_message_delta events as they arrive.
+
+    Cleanup ownership: only the generator's ``finally`` calls ``_terminate_and_reap``
+    (terminate → wait → close pipes if needed). Stdout is read on a helper thread and
+    pulled with a deadline so timeout never races a second reap entry (no Timer
+    watchdog / except-path reap). Bounded cleanup, diagnostics, and no-SIGKILL stay.
+    """
     cmd = _codex_cmd(model, json_events=True, reasoning_strength=reasoning_strength)
     run_timeout = timeout or _AGY_TIMEOUT
     try:
@@ -586,9 +636,9 @@ def _iter_codex_stream_chunks(
     stderr = ""
     timed_out = False
     # stderr 必须并发抽干（cmr Gate2 F-F）：stdout/stderr 同一阻塞管道模型——codex 往 stderr
-    # 写满 OS pipe 缓冲（~64KB）就会卡在写 stderr，stdout 随之断流，下面的 `for raw_line in
-    # proc.stdout` 拿不到 EOF 永久阻塞，最后被 watchdog 误杀成「超时」。开 daemon 线程持续读
-    # stderr，stdout 循环结束后 join 取诊断文本（不能等读完 stdout 再 read stderr）。
+    # 写满 OS pipe 缓冲（~64KB）就会卡在写 stderr，stdout 随之断流。开 daemon 线程持续读
+    # stderr；stdout 由另一线程投递到队列，主协程按绝对 deadline 取行（不能等读完 stdout
+    # 再 read stderr）。
     stderr_parts: List[str] = []
 
     def _drain_stderr() -> None:
@@ -605,21 +655,43 @@ def _iter_codex_stream_chunks(
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_thread.start()
-    # 看门狗：流式读取阻塞在 `for raw_line in proc.stdout` 上，下面的 proc.wait(timeout) 要等读
-    # 循环结束才执行——若 codex 卡死且不关 stdout，读循环会无限阻塞、那个 timeout 形同虚设
-    # (codex correctness)。到点温和终止；若子进程抗 SIGTERM，_terminate_and_reap 关闭管道
-    # 有界解除阻塞读——普通 CLI 路径自备有界清理，不借用高亮判官的进程组取消策略。
-    def _terminate_on_timeout() -> None:
-        nonlocal timed_out
-        timed_out = True
-        _terminate_and_reap(proc)
 
-    watchdog = threading.Timer(run_timeout, _terminate_on_timeout)
-    watchdog.daemon = True
-    watchdog.start()
+    # stdout 阻塞读放到辅助线程；主路径用 queue+deadline 取行，超时只置位并退出循环，
+    # 由 finally 唯一所有者做 terminate→wait→关 pipe（普通 CLI 自备有界清理，不借高亮判官）。
+    line_q: "queue.Queue[Any]" = queue.Queue()
+
+    def _read_stdout() -> None:
+        try:
+            for raw_line in proc.stdout:
+                line_q.put(raw_line)
+        except Exception as error:
+            # 清理关 pipe 后读端被唤醒属预期；把意外错误交给主路径判定。
+            if not _is_expected_closed_stream_error(error):
+                line_q.put(error)
+        finally:
+            line_q.put(None)
+
+    stdout_thread = threading.Thread(target=_read_stdout, daemon=True)
+    stdout_thread.start()
+    deadline = time.monotonic() + float(run_timeout)
+    read_error: Optional[BaseException] = None
     try:
-        for raw_line in proc.stdout:
-            line = raw_line.strip()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                item = line_q.get(timeout=remaining)
+            except queue.Empty:
+                timed_out = True
+                break
+            if item is None:
+                break
+            if isinstance(item, BaseException):
+                read_error = item
+                break
+            line = str(item).strip()
             if not line:
                 continue
             try:
@@ -634,27 +706,26 @@ def _iter_codex_stream_chunks(
             maybe_final = _codex_final_text(obj)
             if maybe_final:
                 final_text = maybe_final
-        proc.wait(timeout=run_timeout)
-    except subprocess.TimeoutExpired as exc:
-        _terminate_and_reap(proc)
-        raise RuntimeError("codex 流式调用超时") from exc
-    except Exception as exc:
-        # 看门狗关闭管道后，阻塞读可能以 ValueError/OSError/BrokenPipeError 等形式被唤醒。
-        if timed_out:
-            raise RuntimeError(
-                f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已温和终止）"
-            ) from exc
-        raise
+        if not timed_out and read_error is None and getattr(proc, "returncode", None) is None:
+            wait_budget = max(0.0, deadline - time.monotonic())
+            try:
+                proc.wait(timeout=wait_budget if wait_budget > 0 else 0.0)
+            except subprocess.TimeoutExpired:
+                timed_out = True
     finally:
-        watchdog.cancel()
-        # consumer 提前弃用时也温和终止并有界回收；不以 SIGKILL 越过进程清理契约。
+        # 唯一清理所有者：consumer 提前弃用 / 超时 / 正常结束都只在这里 reap。
+        # 不以 SIGKILL 越过进程清理契约；关 pipe 有界唤醒 stdout/stderr 读线程。
         _terminate_and_reap(proc)
-        # 进程已退/管道已关 → drain 线程结束；取其抽到的诊断文本。
+        stdout_thread.join(timeout=2)
         stderr_thread.join(timeout=2)
         stderr = "".join(stderr_parts)
 
     if timed_out:
         raise RuntimeError(f"codex 流式调用超时（>{run_timeout:.0f}s 未完成，已温和终止）")
+    if read_error is not None:
+        raise RuntimeError(
+            f"codex 流式调用失败：{type(read_error).__name__}: {read_error}"
+        ) from read_error
     text = "".join(pieces).strip() or final_text.strip()
     if proc.returncode != 0 or not text:
         raise RuntimeError(f"codex 流式调用失败（退出码 {proc.returncode}）：{(stderr or '')[:200]}")
