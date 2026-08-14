@@ -351,52 +351,89 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
 
 
 def test_build_release_entry_ships_browser_only_authority_product():
-    """Real build_release.sh → Ming_LLM.spec ships sole browser authority; no Python JS consumer."""
+    """Real build_release.sh → Ming_LLM.spec; load packaged organicMarkdown.js code-span whitespace."""
+    import os
+    import subprocess
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[1]
-    authority = (repo / "web" / "dist" / "organicMarkdown.js").resolve()
-    assert authority.is_file(), "single authority product must exist at web/dist/organicMarkdown.js"
+    release_sh = repo / "scripts" / "build_release.sh"
+    assert release_sh.is_file()
 
-    release_sh = (repo / "scripts" / "build_release.sh").read_text(encoding="utf-8")
-    assert "Ming_LLM.spec" in release_sh
-    assert "pyinstaller" in release_sh.lower() or "PyInstaller" in release_sh
+    env = os.environ.copy()
+    venv_py = repo / ".venv" / "bin" / "python"
+    if venv_py.is_file():
+        env["PYTHON"] = str(venv_py)
 
-    spec = (repo / "Ming_LLM.spec").read_text(encoding="utf-8")
-    assert 'Path("web/dist/organicMarkdown.js").is_file()' in spec
-    assert 'tree_datas("web/dist"' in spec
-    assert "quickjs" not in spec.lower()
-    assert "organic_markdown.authority.js" not in spec
-    assert not (repo / "ming_sim" / "organic_markdown.py").exists()
-    assert not (repo / "ming_sim" / "organic_markdown.authority.js").exists()
-    req = (repo / "requirements.txt").read_text(encoding="utf-8")
-    req_release = (repo / "requirements-release.txt").read_text(encoding="utf-8")
-    assert "quickjs" not in req.lower()
-    assert "quickjs" not in req_release.lower()
-
-    # Same tree_datas contract the release entry uses: only the browser product lands.
-    def tree_datas(root: str, dest: str, exclude_parts=()):
-        root_path = Path(root)
-        rows = []
-        for path in root_path.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(root_path)
-            parts = set(rel.parts)
-            if path.name == ".DS_Store" or any(part in parts for part in exclude_parts):
-                continue
-            rows.append((str(path.resolve()), str(Path(dest) / rel.parent)))
-        return rows
-
-    packaged = tree_datas(
-        str(repo / "web" / "dist"),
-        "web/dist",
-        exclude_parts={"_backup_rgb", "_original_before_cutout"},
+    built = subprocess.run(
+        ["bash", str(release_sh)],
+        cwd=str(repo),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=1800,
     )
-    authority_rows = [row for row in packaged if row[0].endswith("organicMarkdown.js")]
-    assert authority_rows == [(str(authority), "web/dist")]
-    # No Python write-seam consumer of the authority product remains.
-    assert "web/src" not in authority.as_posix()
+    assert built.returncode == 0, (
+        f"build_release failed rc={built.returncode}\n"
+        f"stdout tail:\n{built.stdout[-4000:]}\n"
+        f"stderr tail:\n{built.stderr[-4000:]}"
+    )
+
+    # Ship target: macOS .app bundle, else onedir (Linux/Windows layout).
+    app_root = repo / "dist" / "Ming_LLM.app"
+    onedir_root = repo / "dist" / "Ming_LLM"
+    package_root = app_root if app_root.is_dir() else onedir_root
+    assert package_root.is_dir(), f"release package missing under dist/: {package_root}"
+
+    matches = [
+        path
+        for path in package_root.rglob("organicMarkdown.js")
+        if path.as_posix().endswith("/web/dist/organicMarkdown.js")
+    ]
+    assert len(matches) == 1, f"expected unique packaged organicMarkdown.js, got {matches!r}"
+    authority = matches[0]
+
+    # Load the packaged IIFE product and prove code-span raw whitespace strip/match.
+    probe = f"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync({json.dumps(str(authority))}, "utf8");
+const sandbox = {{}};
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+vm.runInContext(source, sandbox);
+const api = sandbox.OrganicMarkdown;
+if (!api || typeof api.stripOrganicMarkdown !== "function"
+    || typeof api.filterMatchedHighlights !== "function") {{
+  console.error("missing OrganicMarkdown API");
+  process.exit(2);
+}}
+const codeSpan = api.stripOrganicMarkdown("`  a  `");
+if (codeSpan !== "  a  ") {{
+  console.error(JSON.stringify({{ codeSpan }}));
+  process.exit(3);
+}}
+const answer = "臣请`  据实核账  `，不可臆断。";
+const raw = ["`  据实核账  `", "未命中", "臆断"];
+const matched = api.filterMatchedHighlights(answer, raw);
+const expected = ["  据实核账  ", "臆断"];
+if (JSON.stringify(matched) !== JSON.stringify(expected)) {{
+  console.error(JSON.stringify({{ matched }}));
+  process.exit(4);
+}}
+console.log("ok");
+"""
+    loaded = subprocess.run(
+        ["node", "-e", probe],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert loaded.returncode == 0, (
+        f"packaged organicMarkdown.js failed code-span acceptance\n"
+        f"stdout: {loaded.stdout!r}\nstderr: {loaded.stderr!r}\npath: {authority}"
+    )
+    assert loaded.stdout.strip() == "ok"
 
 
 def test_write_seam_persists_raw_judge_list_through_chat_reopen_and_stream(
