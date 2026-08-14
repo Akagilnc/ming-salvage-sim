@@ -1041,6 +1041,73 @@ def test_codex_stream_sigterm_resistant_child_unblocks_within_bound(monkeypatch)
     assert close_owners, "stdout pipe must be closed by the sole cleanup owner"
 
 
+def test_real_codex_entry_early_cancel_overlapping_deadline_has_one_cleanup_owner(
+    tmp_path, monkeypatch,
+):
+    """A live ordinary-Codex Popen hits consumer cancel at its stream deadline.
+
+    The public runner (not a fake Popen) must return boundedly; its generator finally
+    is the sole reap/pipe-close owner, and cleanup must never escalate to SIGKILL.
+    """
+    import os
+    import signal
+    import stat
+    import time
+
+    executable = tmp_path / "codex"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "print(json.dumps({'type':'item.agent_message.delta','delta':'臣'}), flush=True)\n"
+        "while True: time.sleep(1)\n",
+        encoding="utf-8",
+    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setattr(cb, "_codex_cmd", lambda *_a, **_k: [str(executable)])
+    monkeypatch.setattr(cb, "_AGY_CWD", str(tmp_path))
+
+    reap_owners = []
+    close_owners = []
+    signals = []
+    real_reap = cb._terminate_and_reap
+    real_close = cb._close_proc_pipe
+    real_kill = os.kill
+
+    def bounded_reap(proc, timeout=5.0):
+        reap_owners.append(__import__("threading").current_thread().name)
+        return real_reap(proc, timeout=0.12)
+
+    def counted_close(stream, name):
+        close_owners.append((__import__("threading").current_thread().name, name))
+        return real_close(stream, name)
+
+    def recording_kill(pid, sig):
+        signals.append(sig)
+        return real_kill(pid, sig)
+
+    monkeypatch.setattr(cb, "_terminate_and_reap", bounded_reap)
+    monkeypatch.setattr(cb, "_close_proc_pipe", counted_close)
+    monkeypatch.setattr(os, "kill", recording_kill)
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="consumer cancelled"):
+        cb._run_codex_stream(
+            "prompt", timeout=1.0,
+            on_text=lambda _chunk: (
+                time.sleep(1.02),
+                (_ for _ in ()).throw(RuntimeError("consumer cancelled")),
+            )[-1],
+        )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 2.5
+    assert len(reap_owners) == 1
+    assert [name for _, name in close_owners] == ["stdin", "stdout", "stderr"]
+    assert len({owner for owner, _ in close_owners}) == 1
+    assert signal.SIGKILL not in signals
+
+
 def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys):
     """Direct helper contract: bounded wait, pipe-fd close, diagnostic, no SIGKILL."""
     import os
