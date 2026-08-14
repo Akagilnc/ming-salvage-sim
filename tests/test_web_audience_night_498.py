@@ -33,12 +33,14 @@ _POLICY_FIELDS = {
 
 import web_app
 import ming_sim.agents as agents_mod
+import ming_sim.beat_orchestration as beat_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.mindreading as mindreading_mod
 import ming_sim.session as session_mod
 from ming_sim import audience_night as an
 from ming_sim.models import TurnPhase
+from ming_sim.session import ChatTurnResult
 
 
 class _CannedExtractor:
@@ -337,8 +339,10 @@ def test_night_approved_directive_closes_into_month_end_without_second_review(we
 def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(web_game, monkeypatch):
     """Real Web settlement tracer: ordinary facts may already be done; close creates
     draft dossiers then runs one gate-free endorsement-only batch. While the
-    endorsement agent blocks, concurrent Web chat/story/stage/approve/draft-update
-    all freeze; first-batch failure reopens OPEN and restores admission; retry closes."""
+    endorsement agent blocks, concurrent Web chat/story/stage/approve/draft-update/
+    reply-retry all freeze; first-batch failure reopens OPEN and restores admission
+    (including interrupted-reply retry); sync dual close failure returns 409 with both
+    diagnostics; final retry closes."""
     game = web_game
     minister = _active_minister(game)
     _fake_settlement_llm(monkeypatch)
@@ -351,6 +355,18 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     # Scheme A: ordinary story extraction is immediate (already done before close).
     game.db.conn.execute(
         "UPDATE chat_turns SET extract_status='done' WHERE id=?", (chat_turn_id,),
+    )
+    # Interrupted reply ready for CLOSING reject / OPEN restore of /reply/retry.
+    interrupted_ct = game.db.create_chat_turn(
+        game.state, minister, "retry-sess", 0, night_id=night_id,
+    )
+    interrupted_uid = game.db.append_chat_message(
+        minister, int(game.state.turn), "user", "中断待重试？",
+    )
+    game.db.update_chat_turn_messages(interrupted_ct, user_message_id=interrupted_uid)
+    game.db.conn.execute(
+        "UPDATE chat_turns SET status='interrupted' WHERE id=?",
+        (int(interrupted_ct),),
     )
     game.db.conn.commit()
     directive_id = game.db.stage_directive_candidate(
@@ -406,8 +422,8 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 issue_client.post("/api/decree/issue/stream", json={})
             )
             assert await asyncio.to_thread(entered.wait, 8.0)
-            # chat (stream + non-stream) / story / stage / approve / draft-update
-            # — all refuse under CLOSING via the one admission seam.
+            # chat (stream + non-stream) / reply-retry / story / stage / approve /
+            # draft-update — all refuse under CLOSING via the one admission seam.
             chat_resp = await chat_client.post(
                 f"/api/ministers/{minister}/chat/stream",
                 json={"message": "另议边饷？"},
@@ -424,6 +440,14 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
             )
             assert nonstream.status_code == 409, nonstream.text
             assert "收夜中" in (nonstream.json().get("detail") or nonstream.text)
+            retry_resp = await chat_client.post(
+                f"/api/ministers/{minister}/reply/retry",
+            )
+            assert retry_resp.status_code == 409, retry_resp.text
+            assert "收夜中" in (retry_resp.json().get("detail") or retry_resp.text)
+            assert game.db.conn.execute(
+                "SELECT status FROM chat_turns WHERE id=?", (interrupted_ct,),
+            ).fetchone()["status"] == "interrupted"
             with pytest.raises(an.AudienceNightError) as story_exc:
                 an.append_ledger_entry(
                     game.db, night_id, body="偷渡故事账", tags=["试"],
@@ -466,9 +490,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     reopened = an.get_night(game.db, night_id)
     assert reopened["status"] == an.NIGHT_STATUS_OPEN
     assert int(reopened["close_commit_cursor"] or 0) == 0
-    # Failure OPEN restores player admission (stage/story/draft-update no longer night_closing).
-    # Phase-1 already committed the approved candidate; reopen admission is proven on a
-    # fresh pending draft (player-facing update/flag/clear), not the committed row.
+    # Failure OPEN restores player admission (stage/story/draft-update/retry no longer
+    # night_closing). Phase-1 already committed the approved candidate; reopen admission
+    # is proven on a fresh pending draft (player-facing update/flag/clear), not the
+    # committed row.
     restored_id = game.db.stage_directive_candidate(
         game.state.turn, minister,
         payload={**_POLICY_FIELDS, "text": "失败后可再暂存", "actor": minister,
@@ -487,8 +512,75 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     assert int(updated) == int(restored_id)
     assert game.db.flag_directive_needs_clarification(restored_id) == int(restored_id)
     assert game.db.clear_directive_needs_clarification(restored_id) == int(restored_id)
+    # OPEN restores interrupted-reply retry past the unique admission seam (canned chat,
+    # no LLM); CAS reopen + persist succeed only after OPEN.
+    assert game.db.get_interrupted_reply_retries(minister)
+    real_chat = game.session.chat
+    game.session.chat = (
+        lambda minister_name, message, *, chat_turn_id=0: ChatTurnResult(
+            answer="臣重奏：边饷当清。",
+        )
+    )
+    try:
+        retry_payload = game.retry_interrupted_reply(minister)
+    finally:
+        game.session.chat = real_chat
+    assert "重奏" in str(retry_payload.get("answer") or "")
+    assert game.db.get_interrupted_reply_retries(minister) == []
+    game.db.conn.execute(
+        "UPDATE chat_turns SET extract_status='done' WHERE id=?", (int(interrupted_ct),),
+    )
+    game.db.conn.commit()
 
-    # Second close attempt succeeds through the same real Web seam.
+    # Sync dual close failure (endorsement + beat) → shared converter 409, both diags visible.
+    class _BoomBothEndorsement:
+        def run(self, materials):
+            raise RuntimeError("endorsement boom dual")
+
+    def _boom_both_beat(_inputs):
+        raise RuntimeError("close beat dual fault")
+
+    real_beat = beat_mod.production_beat_generator
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _BoomBothEndorsement(),
+    )
+    monkeypatch.setattr(beat_mod, "production_beat_generator", _boom_both_beat)
+
+    def _detail_text(resp) -> str:
+        detail = resp.json().get("detail") if resp.headers.get("content-type", "").startswith("application/json") else None
+        if detail is None:
+            return resp.text
+        if isinstance(detail, str):
+            return detail
+        return json.dumps(detail, ensure_ascii=False)
+
+    async def dual_fail_sync_endpoints():
+        async with _client() as client:
+            issue = await client.post("/api/decree/issue", json={})
+            assert issue.status_code == 409, issue.text
+            issue_detail = _detail_text(issue)
+            assert "endorsement boom dual" in issue_detail, issue_detail
+            assert "close beat dual fault" in issue_detail, issue_detail
+            assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
+
+            advance = await client.post("/api/decree/advance_without_edict")
+            assert advance.status_code == 409, advance.text
+            advance_detail = _detail_text(advance)
+            assert "endorsement boom dual" in advance_detail, advance_detail
+            assert "close beat dual fault" in advance_detail, advance_detail
+            assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_OPEN
+
+    asyncio.run(dual_fail_sync_endpoints())
+
+    # Restore tracing endorsement + real beat for the successful close attempt.
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda *a, **k: _TracingEndorsementExtractor(),
+    )
+    monkeypatch.setattr(beat_mod, "production_beat_generator", real_beat)
+
+    # Final close attempt succeeds through the same real Web seam.
     entered.clear()
     release = threading.Event()
 

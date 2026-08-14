@@ -1690,6 +1690,10 @@ class WebGame:
         before_snapshot: Dict[str, Any] = {}
         with gate:
             self._reject_if_settlement_phase()
+            # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
+            if hasattr(self.db, "conn"):
+                from ming_sim.audience_night import assert_night_accepts_player_input
+                assert_night_accepts_player_input(self.db, what="召对")
             if self._audience_turn_in_flight(minister_name):
                 raise HTTPException(
                     status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
@@ -2467,6 +2471,26 @@ def _next_or_none(iterator):
         return next(iterator)
     except StopIteration:
         return None
+
+
+def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
+    """Map audience-night / close dual-failure errors to retryable HTTP 409.
+
+    Shared converter for player-input boundaries (chat / reply-retry) and sync
+    decree endpoints (issue / advance_without_edict). AudienceNightError keeps
+    ``detail=str(exc)``; close_night dual ExceptionGroup surfaces both nested
+    diagnostics in detail. No new exception protocol — existing 409 only.
+    """
+    from ming_sim.audience_night import AudienceNightError
+    if isinstance(exc, AudienceNightError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ExceptionGroup):
+        parts = [str(sub) for sub in exc.exceptions]
+        return HTTPException(
+            status_code=409,
+            detail="；".join(parts) if parts else str(exc),
+        )
+    raise TypeError(f"not a retryable audience/close error: {type(exc)!r}")
 
 
 def _await_audience_inflight_clear(game) -> None:
@@ -3493,7 +3517,12 @@ async def api_chat_history(minister_name: str) -> Dict[str, Any]:
 async def api_retry_interrupted_reply(minister_name: str) -> Dict[str, Any]:
     """#505：重开后为中断轮重新生成回话（复用已持久问话，对话记录无重复句）。"""
     _require_active_minister(minister_name)
-    return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
+    from ming_sim.audience_night import AudienceNightError
+    try:
+        return await run_in_threadpool(get_game().retry_interrupted_reply, minister_name)
+    except AudienceNightError as e:
+        # CLOSING / night admission → 409 (retryable); reuse shared converter, no status fork.
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.get("/api/ministers/{minister_name}/chat/mindreading")
@@ -3555,7 +3584,7 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
         return get_game().chat(minister_name, request.message)
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); same family as stream path.
-        raise HTTPException(status_code=409, detail=str(e)) from None
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.post("/api/ministers/{minister_name}/chat/undo")
@@ -3732,9 +3761,9 @@ def api_advance_without_edict() -> Dict[str, Any]:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
-    except AudienceNightError as e:
-        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+    except (AudienceNightError, ExceptionGroup) as e:
+        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        raise _retryable_audience_close_http(e) from None
     return {
         "state": game.state_payload(),
         "awaiting_decision": bool(
@@ -3826,9 +3855,9 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
-    except AudienceNightError as e:
-        # #498 AC10 fail-closed：在飞回话超时/挂起 → 夜保持开、可原地重试（409，非 500）。
-        raise HTTPException(status_code=409, detail=str(e)) from None
+    except (AudienceNightError, ExceptionGroup) as e:
+        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        raise _retryable_audience_close_http(e) from None
 
 
 @app.post("/api/decree/issue/stream")
