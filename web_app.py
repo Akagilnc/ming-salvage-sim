@@ -1508,21 +1508,18 @@ class WebGame:
     def _settle_reply_highlights(
         self, answer: str, chat_turn_id: int, gate: Any,
     ) -> List[str]:
-        """Run #544's bounded decoration and persist through the message seam.
+        """Run #544's bounded decoration and persist the raw judge phrase list.
 
-        Canonical list is formed here (organic strip + exact match + drop misses)
-        before the unique DB write; frontend display filter is defense only.
+        Write seam stores the judge's original phrases only. Browser display
+        boundary (web/dist/organicMarkdown.js) is the sole strip/match executor.
         """
         if not chat_turn_id or not answer:
             return []
         from ming_sim.highlight_judge import judge_highlights
-        from ming_sim.organic_markdown import filter_matched_highlights
         llm_config = getattr(self.session, "llm_config", None)
         if llm_config is None:
             return []
-        highlights = filter_matched_highlights(
-            answer, judge_highlights(answer, llm_config),
-        )
+        highlights = judge_highlights(answer, llm_config)
         if highlights:
             with gate:
                 self.db.set_minister_message_highlights(chat_turn_id, highlights)

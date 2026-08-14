@@ -1,4 +1,3 @@
 pyinstaller==6.21.0
 pywebview==6.2.1
-quickjs>=1.19.0
 tiktoken==0.13.0

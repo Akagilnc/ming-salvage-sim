@@ -1,6 +1,6 @@
 /**
- * Vitest setup: load the same release-layout authority product the browser and
- * write seam consume (web/dist/organicMarkdown.js).
+ * Vitest setup: load the sole browser strip/match authority product
+ * (web/dist/organicMarkdown.js release layout).
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

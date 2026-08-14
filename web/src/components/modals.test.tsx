@@ -1041,6 +1041,33 @@ describe("AudienceArchiveModal — read-only scene archive", () => {
     expect(host.textContent).toContain("臣请据实核账，不可臆断。");
   });
 
+  it("归档场卷在显示边界保留 code-span 原始空白并丢弃未命中", async () => {
+    const container = { time_of_day: "戌时", location: "乾清宫", audience_type: "朝会" };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => Promise.resolve({ ok: true, json: async () =>
+      url === "/api/history/turns" ? { turns: [{ kind: "night", night_id: 32, title: "空白场卷" }] } : { messages: [
+        {
+          role: "minister",
+          content: "臣请`  据实核账  `，不可臆断。",
+          speaker: "杨嗣昌",
+          audibility: "public",
+          time: null,
+          soft_boundary: false,
+          beat: "dialogue",
+          highlights: ["`  据实核账  `", "未命中", "臆断"],
+          container,
+        },
+      ] }
+    })));
+    const host = document.createElement("div"); document.body.appendChild(host);
+    const root = createRoot(host); mountedRoots.push({ root, host });
+    await act(async () => { root.render(<AudienceArchiveModal ministers={[]} onClose={() => {}} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(Array.from(host.querySelectorAll("mark")).map((node) => node.textContent)).toEqual([
+      "  据实核账  ",
+      "臆断",
+    ]);
+    expect(host.textContent).toContain("臣请  据实核账  ，不可臆断。");
+  });
+
 });
 
 describe("ChatModal — thinking/loading text switches on character type (gemini cmr r1)", () => {

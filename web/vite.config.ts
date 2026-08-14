@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const webDir = dirname(fileURLToPath(import.meta.url));
 const authorityProduct = join(webDir, "dist/organicMarkdown.js");
 
-/** Serve the sole release-layout authority product at /organicMarkdown.js in dev. */
+/** Serve the sole browser strip/match authority product at /organicMarkdown.js in dev. */
 function serveOrganicAuthority(): Plugin {
   return {
     name: "serve-organic-authority-product",
