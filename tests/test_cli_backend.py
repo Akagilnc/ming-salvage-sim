@@ -1048,6 +1048,8 @@ def test_real_codex_entry_early_cancel_overlapping_deadline_has_one_cleanup_owne
 
     The public runner (not a fake Popen) must return boundedly; its generator finally
     is the sole reap/pipe-close owner, and cleanup must never escalate to SIGKILL.
+    The harness then SIGKILLs the leftover SIGTERM-resistant child so the suite cannot
+    leak orphans that stall Linux CI runners (#544).
     """
     import os
     import signal
@@ -1070,12 +1072,14 @@ def test_real_codex_entry_early_cancel_overlapping_deadline_has_one_cleanup_owne
     reap_owners = []
     close_owners = []
     signals = []
+    seen_procs = []
     real_reap = cb._terminate_and_reap
     real_close = cb._close_proc_pipe
     real_kill = os.kill
 
     def bounded_reap(proc, timeout=5.0):
         reap_owners.append(__import__("threading").current_thread().name)
+        seen_procs.append(proc)
         return real_reap(proc, timeout=0.12)
 
     def counted_close(stream, name):
@@ -1091,40 +1095,67 @@ def test_real_codex_entry_early_cancel_overlapping_deadline_has_one_cleanup_owne
     monkeypatch.setattr(os, "kill", recording_kill)
 
     started = time.monotonic()
-    with pytest.raises(RuntimeError, match="consumer cancelled"):
-        cb._run_codex_stream(
-            "prompt", timeout=1.0,
-            on_text=lambda _chunk: (
-                time.sleep(1.02),
-                (_ for _ in ()).throw(RuntimeError("consumer cancelled")),
-            )[-1],
-        )
-    elapsed = time.monotonic() - started
+    try:
+        with pytest.raises(RuntimeError, match="consumer cancelled"):
+            cb._run_codex_stream(
+                "prompt", timeout=1.0,
+                on_text=lambda _chunk: (
+                    time.sleep(1.02),
+                    (_ for _ in ()).throw(RuntimeError("consumer cancelled")),
+                )[-1],
+            )
+        elapsed = time.monotonic() - started
 
-    assert elapsed < 2.5
-    assert len(reap_owners) == 1
-    assert [name for _, name in close_owners] == ["stdin", "stdout", "stderr"]
-    assert len({owner for owner, _ in close_owners}) == 1
-    assert signal.SIGKILL not in signals
+        assert elapsed < 2.5
+        assert len(reap_owners) == 1
+        assert [name for _, name in close_owners] == ["stdin", "stdout", "stderr"]
+        assert len({owner for owner, _ in close_owners}) == 1
+        assert signal.SIGKILL not in signals
+        # Product path must leave the resistant child alive (no SIGKILL escalation).
+        assert seen_procs and seen_procs[0].poll() is None
+    finally:
+        # Harness only: reap leftover so the suite does not leak the child into CI.
+        for proc in seen_procs:
+            if getattr(proc, "pid", None) and proc.poll() is None:
+                try:
+                    real_kill(proc.pid, signal.SIGKILL)
+                    proc.wait(timeout=2)
+                except (ProcessLookupError, ChildProcessError, OSError):
+                    pass
 
 
-def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys):
-    """Direct helper contract: bounded wait, pipe-fd close, diagnostic, no SIGKILL."""
+def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys, monkeypatch):
+    """Direct helper contract: bounded wait, raw fd close, diagnostic, no SIGKILL.
+
+    Cleanup must wake readers via os.close(fd) without taking the wrapper lock
+    (stream.close after concurrent read deadlocks on Linux). Wrapper close is not
+    required on the fileno path; re-arming the slot with devnull is allowed.
+    """
     import os
     import time
+
+    closed_fds: list[int] = []
+    real_os_close = os.close
+
+    def tracking_close(fd):
+        closed_fds.append(fd)
+        return real_os_close(fd)
+
+    monkeypatch.setattr(os, "close", tracking_close)
 
     class _PipeStream:
         def __init__(self):
             self._r, self._w = os.pipe()
-            self.closed = False
+            self.wrapper_close_calls = 0
 
         def fileno(self):
             return self._r
 
         def close(self):
-            self.closed = True
+            # Fileno path must not need this; count if the helper regresses into it.
+            self.wrapper_close_calls += 1
             try:
-                os.close(self._w)
+                real_os_close(self._w)
             except OSError:
                 pass
 
@@ -1149,14 +1180,18 @@ def test_terminate_and_reap_closes_pipes_and_diagnoses_resistant_child(capsys):
             self.kill_called = True
 
     proc = _Proc()
-    # Keep write ends so os.close(read_fd) is the helper's responsibility.
     read_fds = (proc.stdout.fileno(), proc.stderr.fileno())
     cb._terminate_and_reap(proc, timeout=0.05)
-    assert proc.stdout.closed and proc.stderr.closed
     assert proc.kill_called is False
     for fd in read_fds:
-        with pytest.raises(OSError):
-            os.fstat(fd)  # helper closed the raw read fds
+        assert fd in closed_fds, f"raw read fd {fd} must be os.close'd, got {closed_fds!r}"
+    assert proc.stdout.wrapper_close_calls == 0
+    assert proc.stderr.wrapper_close_calls == 0
+    for stream in (proc.stdout, proc.stderr):
+        try:
+            real_os_close(stream._w)
+        except OSError:
+            pass
     err = capsys.readouterr().out
     assert "未响应温和终止" in err
 

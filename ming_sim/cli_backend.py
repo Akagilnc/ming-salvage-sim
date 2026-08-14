@@ -469,44 +469,20 @@ def _is_expected_closed_stream_error(error: BaseException) -> bool:
     return False
 
 
-def _neutralize_io_fd(stream: Any, fd: int) -> None:
-    """After os.close(fd), stop wrapper/GC from closing a possibly-reused fd number."""
-    seen: set[int] = set()
-    obj: Any = stream
-    while obj is not None and id(obj) not in seen:
-        seen.add(id(obj))
-        for attr in ("_fd", "fd"):
-            try:
-                if getattr(obj, attr, None) == fd:
-                    setattr(obj, attr, -1)
-            except Exception:
-                pass
-        try:
-            if hasattr(obj, "_closed"):
-                object.__setattr__(obj, "_closed", True)
-        except Exception:
-            try:
-                setattr(obj, "_closed", True)
-            except Exception:
-                pass
-        nxt = None
-        for attr in ("buffer", "raw"):
-            if hasattr(obj, attr):
-                try:
-                    nxt = getattr(obj, attr)
-                    break
-                except Exception:
-                    pass
-        obj = nxt
-
-
 def _close_proc_pipe(stream: Any, name: str) -> None:
     """Drop the parent-side pipe fd so a blocked reader observes EOF/err without SIGKILL.
 
     `stream.close()` alone does not reliably wake another thread blocked in
     `for line in stream` on macOS/Unix; closing the raw fd does. After the raw
-    close, neutralize the wrapper's fd so a later close/GC cannot clobber a
-    reused integer descriptor.
+    close, do **not** call ``stream.close()``: a concurrent reader may still hold
+    the stdio lock while recovering, and wrapper close would deadlock the cleanup
+    owner (Linux CI hang under load).
+
+    To keep a later GC close from clobbering a reused descriptor number, open
+    devnull *before* closing the pipe fd, then ``dup2`` it onto the same slot.
+    Opening after close is wrong: the fresh devnull often reuses the just-freed
+    number, and closing that temporary fd would drop the only remaining ref.
+    No fileno → wrapper close only.
     """
     if stream is None:
         return
@@ -529,6 +505,12 @@ def _close_proc_pipe(stream: Any, name: str) -> None:
             )
         fd = None
     if fd is not None:
+        # Reserve devnull first so it cannot reuse `fd` after we close the pipe.
+        devnull: Optional[int]
+        try:
+            devnull = os.open(os.devnull, os.O_RDWR)
+        except OSError:
+            devnull = None
         try:
             os.close(fd)
         except OSError as error:
@@ -542,13 +524,22 @@ def _close_proc_pipe(stream: Any, name: str) -> None:
                 f"[cli_backend] 关闭子进程 {name} fd 失败：{type(error).__name__}: {error}",
                 flush=True,
             )
-        _neutralize_io_fd(stream, fd)
+        if devnull is not None:
+            try:
+                os.dup2(devnull, fd)
+            except OSError:
+                pass
+            try:
+                os.close(devnull)
+            except OSError:
+                pass
+        # Wake readers via raw close only; never take the wrapper lock here.
+        return
     try:
         if getattr(stream, "closed", False):
             return
         stream.close()
     except Exception as error:
-        # Wrapper close after os.close often reports EBADF/closed — expected, not silent failure.
         if _is_expected_closed_stream_error(error):
             return
         text = str(error).lower()
