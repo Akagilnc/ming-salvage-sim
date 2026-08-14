@@ -1121,6 +1121,172 @@ while True:
     assert "未响应温和终止" in capsys.readouterr().out
 
 
+def test_close_proc_pipe_fileno_expected_errors_stay_silent(capsys):
+    """Expected closed/unsupported fileno failures stay quiet; no fileno is also silent."""
+
+    class _NoFileno:
+        def close(self):
+            pass
+
+    class _Unsupported:
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+        def close(self):
+            pass
+
+    class _Closed:
+        def fileno(self):
+            raise ValueError("I/O operation on closed file")
+
+        def close(self):
+            pass
+
+    cb._close_proc_pipe(_NoFileno(), "stdout")
+    cb._close_proc_pipe(_Unsupported(), "stdout")
+    cb._close_proc_pipe(_Closed(), "stdout")
+    assert "[cli_backend]" not in capsys.readouterr().out
+
+
+def test_close_proc_pipe_unexpected_fileno_failure_is_diagnosed(capsys):
+    """Unexpected fileno errors must leave a mechanically assertable diagnostic (#544 P1)."""
+
+    class _BoomFileno:
+        def fileno(self):
+            raise RuntimeError("fileno exploded")
+
+        def close(self):
+            pass
+
+    cb._close_proc_pipe(_BoomFileno(), "stderr")
+    out = capsys.readouterr().out
+    assert "获取子进程 stderr fileno 失败" in out
+    assert "RuntimeError" in out
+    assert "fileno exploded" in out
+
+
+def test_drain_stderr_unexpected_read_failure_is_diagnosed(monkeypatch, capsys):
+    """Unexpected stderr.read failures must diagnose; stream path must not swallow them (#544 P1)."""
+    import json as _json
+
+    class _Stdout:
+        def __iter__(self):
+            yield _json.dumps(
+                {"type": "item.agent_message.delta", "delta": "臣领旨。"}
+            ) + "\n"
+
+        def close(self):
+            pass
+
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+    class _Stderr:
+        def read(self):
+            raise RuntimeError("stderr read exploded")
+
+        def close(self):
+            pass
+
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                pass
+
+            def close(self):
+                pass
+
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
+
+        stdin = _Stdin()
+        stdout = _Stdout()
+        stderr = _Stderr()
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            raise AssertionError("SIGKILL escalation is forbidden")
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    chunks = list(cb._iter_codex_stream_chunks("请写邸报", timeout=2.0))
+    assert "".join(chunks) == "臣领旨。"
+    out = capsys.readouterr().out
+    assert "抽干子进程 stderr 失败" in out
+    assert "RuntimeError" in out
+    assert "stderr read exploded" in out
+
+
+def test_drain_stderr_expected_closed_read_stays_silent(monkeypatch, capsys):
+    """Closed-pipe stderr.read failures remain silent expected cleanup noise."""
+    import json as _json
+
+    class _Stdout:
+        def __iter__(self):
+            yield _json.dumps(
+                {"type": "item.agent_message.delta", "delta": "臣领旨。"}
+            ) + "\n"
+
+        def close(self):
+            pass
+
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+    class _Stderr:
+        def read(self):
+            raise ValueError("I/O operation on closed file")
+
+        def close(self):
+            pass
+
+        def fileno(self):
+            raise io.UnsupportedOperation("fileno")
+
+    class _Proc:
+        class _Stdin:
+            def write(self, text):
+                pass
+
+            def close(self):
+                pass
+
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
+
+        stdin = _Stdin()
+        stdout = _Stdout()
+        stderr = _Stderr()
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            raise AssertionError("SIGKILL escalation is forbidden")
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda *a, **k: _Proc())
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+
+    chunks = list(cb._iter_codex_stream_chunks("请写邸报", timeout=2.0))
+    assert "".join(chunks) == "臣领旨。"
+    out = capsys.readouterr().out
+    assert "抽干子进程 stderr 失败" not in out
+
+
 def test_codex_final_text_handles_item_completed_shape():
     """integrated cmr Gate2 codex correctness：codex --json 的 item.completed/item.text 形态也要
     被识别为最终正文（防御性兼容，避免真实邸报被当成空输出误判失败）；reasoning/tool item 不当正文。"""
