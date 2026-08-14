@@ -704,8 +704,8 @@ def append_ledger_entry(
     `origin_chat_turn_id`（#506）：口令账由某一轮 attach 创建时绑该轮 chat_turn_id，供
     撤回按轮删除该轮所产的入殿/告退等口令账；0=开夜/员额/收夜等框架账，不随任一轮撤。
 
-    CLOSING 冻结玩家侧新账（对话溯源/口令来源）；收夜自有框架写与 close-owned drain
-    传 allow_closing=True。
+    CLOSING 一律拒绝玩家侧新账（默认 allow_closing=False）；收夜自有框架写与
+    close-owned drain 仅显式 allow_closing=True，不得按 source/origin id 漏放。
     """
     night = get_night(db, night_id)
     if night is None:
@@ -715,13 +715,11 @@ def append_ledger_entry(
             f"夜已收，不能再落账：{night_id}", code="night_closed",
         )
     if night["status"] == NIGHT_STATUS_CLOSING and not allow_closing:
-        # Player/story input freeze during endorsement LLM window.
-        if int(source_chat_turn_id or 0) > 0 or int(origin_chat_turn_id or 0) > 0:
-            raise AudienceNightError(
-                f"本夜收夜中，不能再落故事账：{night_id}",
-                code="night_closing",
-                detail={"night_id": int(night_id)},
-            )
+        raise AudienceNightError(
+            f"本夜收夜中，不能再落故事账：{night_id}",
+            code="night_closing",
+            detail={"night_id": int(night_id)},
+        )
     persons = [str(n).strip() for n in (person_names or []) if str(n).strip()]
     if check_dead and persons:
         assert_persons_not_dead(db, persons)
@@ -1134,33 +1132,46 @@ def close_night(
         raise
 
     # Independent close prep that neither reads endorsements nor writes finals:
-    # pure beat body generation may overlap the endorsement LLM.
+    # pure beat body generation may overlap the endorsement LLM. close_night owns
+    # both branches for the same lifecycle — no daemon, no hard join timeout.
     generated_close_holder: Dict[str, str] = {"body": ""}
+    beat_errors: List[BaseException] = []
     beat_thread: Optional[threading.Thread] = None
     need_beat = (not body) and beat_generator is not None
 
     def _gen_close_beat() -> None:
+        from ming_sim import beat_orchestration as beats
         try:
-            from ming_sim import beat_orchestration as beats
             night_snap = get_night(db, night_id) or night
             generated_close_holder["body"] = beats.generate_close_beat_body(
                 db, state, night=night_snap,
                 beat_generator=beat_generator,
                 knowledge_provider=knowledge_provider,
             ) or ""
-        except Exception:
-            generated_close_holder["body"] = ""
+        except Exception as exc:
+            # Capture for join-site re-raise (ADR 0005: no silent empty-body swallow).
+            beat_errors.append(exc)
+
+    def _finish_owned_beat() -> None:
+        """Join beat before finalize or failure reopen; surface code errors."""
+        nonlocal beat_thread
+        if beat_thread is not None:
+            beat_thread.join()
+            beat_thread = None
+        if beat_errors:
+            raise beat_errors[0]
 
     # Re-read cursor after Phase 1; endorsement-bound is the cursor step itself.
     night = get_night(db, night_id) or night
     cursor = int(night["close_commit_cursor"] or 0)
     already_bound = cursor >= CLOSE_STEP_ENDORSEMENT_BOUND
     if need_beat and not already_bound:
-        beat_thread = threading.Thread(target=_gen_close_beat, daemon=True)
+        beat_thread = threading.Thread(target=_gen_close_beat)
         beat_thread.start()
     elif need_beat:
         _gen_close_beat()
 
+    phase2_errors: List[BaseException] = []
     try:
         from ming_sim.audience_extraction import run_endorsement_batch_for_night
 
@@ -1172,18 +1183,22 @@ def close_night(
             write_gate=gate,
             extractor_agent=endorsement_extractor_agent,
         )
-    except Exception:
-        if beat_thread is not None:
-            beat_thread.join(timeout=60.0)
+    except Exception as exc:
+        phase2_errors.append(exc)
+
+    # Same-lifecycle ownership: both branches end before finalize or reopen.
+    try:
+        _finish_owned_beat()
+    except Exception as exc:
+        phase2_errors.append(exc)
+
+    if phase2_errors:
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        raise
-    finally:
-        if beat_thread is not None and beat_thread.is_alive():
-            beat_thread.join(timeout=60.0)
+        raise phase2_errors[0]
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
     night = get_night(db, night_id) or night
@@ -1230,6 +1245,7 @@ def close_night(
                     body=f"明发旨意：{str(_pd['text'] or '')}",
                     tags=[TAG_MINGFA, mingfa_publication_tag(_did_int)],
                     check_dead=False,
+                    allow_closing=True,
                 )
             tags = [TAG_CLOSE_NIGHT]
             if auto:
@@ -1258,6 +1274,7 @@ def close_night(
                     body=close_body,
                     tags=tags,
                     check_dead=False,
+                    allow_closing=True,
                 )
             _set_night_fields(
                 db, night_id,

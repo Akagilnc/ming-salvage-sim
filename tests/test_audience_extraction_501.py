@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.agents as agents_mod
-import ming_sim.audience_extraction as ae
 import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
@@ -133,6 +132,16 @@ def test_run_extraction_ledgers_staging_fact(game):
     assert entry["person_names"] == ["毕自严", "洪承畴"]  # 涉及人正确
     assert entry["audibility"] == "殿上公开"               # 可闻性正确
     assert entry["tags"] == ["站台"]
+    # Finished turn reclaims single-flight ownership (no Future/result store):
+    # a second claim completes immediately via durable done watermark, no double ledger.
+    again = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣为洪承畴作保。",
+        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_FactsAgent(_STAGE_FACT_JSON),
+    )
+    assert again["status"] == "done"
+    assert len([e for e in an.list_ledger(db, nid) if e["source_chat_turn_id"] == ctid]) == 1
 
 
 def test_run_extraction_bad_shape_writes_error_pack_and_marks_pending(game, tmp_path, monkeypatch):
@@ -300,21 +309,6 @@ def test_catch_up_processes_source_turns_serially_even_on_parallel_safe_backend(
     ]
     assert minister not in seen_present[1][1]
     assert minister in an.persons_present_tonight(db, nid)
-
-
-def test_turn_ownership_registry_reclaims_finished_turns_without_result_store(game):
-    db, state, content = game
-    minister = _minister(db, content)
-    nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister)
-    result = run_extraction_for_turn(
-        db=db, minister_name=minister, reply="臣领旨。",
-        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
-        llm_config=object(), write_gate=threading.Lock(),
-        extractor_agent=_FactsAgent(_STAGE_FACT_JSON),
-    )
-    assert result["status"] == "done"
-    with ae._turn_ownership_guard:
-        assert (id(db), int(ctid)) not in ae._turn_ownership
 
 
 # ── 在场派生只认已落账 + 机器可读在场效果（AC2/AC9）──────────────────────
