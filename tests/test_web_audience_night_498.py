@@ -513,18 +513,22 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     assert game.db.flag_directive_needs_clarification(restored_id) == int(restored_id)
     assert game.db.clear_directive_needs_clarification(restored_id) == int(restored_id)
     # OPEN restores interrupted-reply retry past the unique admission seam (canned chat,
-    # no LLM); CAS reopen + persist succeed only after OPEN.
+    # no LLM); CAS reopen + persist succeed only after OPEN. Suppress trail workers so
+    # dual-fail close does not race the shared SQLite conn.
     assert game.db.get_interrupted_reply_retries(minister)
     real_chat = game.session.chat
+    real_spawn = game._spawn_pending_write_thread
     game.session.chat = (
         lambda minister_name, message, *, chat_turn_id=0: ChatTurnResult(
             answer="臣重奏：边饷当清。",
         )
     )
+    game._spawn_pending_write_thread = lambda *a, **k: False
     try:
         retry_payload = game.retry_interrupted_reply(minister)
     finally:
         game.session.chat = real_chat
+        game._spawn_pending_write_thread = real_spawn
     assert "重奏" in str(retry_payload.get("answer") or "")
     assert game.db.get_interrupted_reply_retries(minister) == []
     game.db.conn.execute(
