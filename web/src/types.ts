@@ -341,7 +341,7 @@ export type ServerChatMessage = {
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
 
-export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending" | "long_goals";
+export type ModalName = "none" | "state" | "chat" | "edict" | "report" | "history" | "audience_archive" | "menu" | "secret_orders" | "ending";
 
 export type SaveEntry = { name: string; size: number; mtime: number };
 

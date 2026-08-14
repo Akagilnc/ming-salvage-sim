@@ -7,6 +7,7 @@ import pytest
 from ming_sim import cli_backend
 from ming_sim.session import GameSession
 from ming_sim.skills import bind_content as bind_skills_content
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 from web_app import WebGame
 
 
@@ -350,6 +351,10 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
         def pending_count(self):
             return 0
 
+        def list_directives(self, include_pending=True):
+            # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
+            return GameSession.list_directives(self, include_pending=include_pending)
+
     bind_skills_content(content)
     runtime = WebGame.__new__(WebGame)
     runtime.session = Session()
@@ -453,7 +458,7 @@ def test_force_promulgated_rejected_dossier_is_referenceable(game):
     db, state, _ = game
     dossier_id = _make_dossier(db, state, "中旨强颁的旧旨")
 
-    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
 
     dossier = db.get_decree_dossier(dossier_id)

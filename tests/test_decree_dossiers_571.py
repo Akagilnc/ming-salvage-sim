@@ -6,23 +6,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None, "reason": "科臣封驳。",
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
-        ],
-        "midzhi_unpromulgatable": False,
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "involved_office_types": ["言官"],
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):
@@ -180,6 +164,7 @@ def test_conversation_draft_rejects_malformed_roster_without_staging(
     draft = {
         "正文": "着会同清查仓储。", "动作类型": "assignment", "目标类型": "issue",
         "目标ID": "granary-audit", "承办人": minister, "参与人": bad_roster,
+        "颁布方式": "普通",
     }
     canned = (
         {"拟旨意图": "拟旨", **draft}
@@ -1059,7 +1044,7 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     db, state, content = game
     monkeypatch.setattr(
         decree_mod,
-        "stub_promulgation_verdicts",
+        "llm_promulgation_verdicts",
         lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判决 seam"),
     )
 
@@ -1103,8 +1088,8 @@ def test_rejected_dossier_uses_player_rescript_choice_and_resume(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(dossier["id"]) if state.turn == 1 else
             {"dossier_id": dossier["id"], "decision": "promulgated"}
         ],
@@ -1187,8 +1172,8 @@ def test_rejected_dossier_survives_simulator_failure_on_rescript_rail(
     )
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [_rejected_verdict(dossier["id"])],
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [_rejected_verdict(dossier["id"])],
     )
     monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
 
@@ -1272,8 +1257,8 @@ def test_rejected_narrative_dossier_is_not_an_executable_or_extractor_origin(
     seen = {}
 
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
-        lambda _dossiers, _state: [
+        decree_mod, "llm_promulgation_verdicts",
+        lambda _dossiers, _state, **_kwargs: [
             _rejected_verdict(rejected["id"]),
             {"dossier_id": promulgated["id"], "decision": "promulgated"},
         ],
@@ -1601,7 +1586,7 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
         state, action_type="policy", decree_text="强颁赈济",
         target_kind="issue", target_id="forced-relief",
     )
-    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     before = state.metrics["国库"]
 
@@ -1687,12 +1672,11 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
     (
         ("web", "allocation", {
             "动作类型": "grant_allocation", "目标类型": "issue",
-            "目标ID": "relief", "金额": 10, "账户": "国库",
+            "目标ID": "relief", "金额": 30000, "账户": "内库",
             "执行面": "immediate",
         }),
         ("cli", "authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
-            "授权ID": "理财",
         }),
         ("web", "controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
@@ -1726,10 +1710,15 @@ def test_manual_directive_capture_reaches_structured_dossier(
         response.update({"目标ID": actor, "承办人": actor})
     elif case == "dismiss":
         response.update({"目标类型": "character", "目标ID": actor})
-    monkeypatch.setattr(
-        cli_backend, "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
+    directive_text = "着内库拨银三万两赈灾" if case == "allocation" else "手工旨意"
+
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
+        if "请据此拟旨" not in emperor or directive_text not in emperor:
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
     session = GameSession.__new__(GameSession)
     session.db = db
     session.state = state
@@ -1747,20 +1736,22 @@ def test_manual_directive_capture_reaches_structured_dossier(
         )
         monkeypatch.setattr(web_app, "get_game", lambda: web_game)
         result = asyncio.run(web_app.api_create_directive(
-            web_app.DirectiveRequest(text="手工旨意"),
+            web_app.DirectiveRequest(text=directive_text),
         ))
         directive_id = int(result["directive"]["id"])
     else:
         payload = cli_backend.capture_manual_directive_payload(
-            "手工旨意", None, db=db, content=content,
+            directive_text, None, db=db, content=content,
         )
         directive_id = session.add_directive(
-            "手工旨意", dossier_payload=payload,
+            directive_text, dossier_payload=payload,
         ).id
-    before = state.metrics["国库"]
+    account = "内库" if case == "allocation" else "国库"
+    before = state.metrics[account]
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive_id)
+    assert dossier["decree_text"] == directive_text
     assert dossier["target_id"]
     assert dossier["participant_roster"][0]["character_id"] == aliased.name
     if case == "controlled_verb":
@@ -1776,8 +1767,12 @@ def test_manual_directive_capture_reaches_structured_dossier(
         state, dossier["id"], "promulgated", content=content,
     )
     if case == "allocation":
-        assert state.metrics["国库"] == before - 10
-        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -10
+        payload = json.loads(dossier["payload_json"])
+        assert (dossier["action_type"], payload["amount"], payload["account"]) == (
+            "grant_allocation", 30000, "内库",
+        )
+        assert state.metrics["内库"] == 0
+        assert db.list_economy_moves_for_dossier(dossier["id"])[0]["delta"] == -before
     elif case == "dismiss":
         assert json.loads(dossier["payload_json"])["name"] == actor
         row = db.conn.execute(
@@ -1785,8 +1780,8 @@ def test_manual_directive_capture_reaches_structured_dossier(
         ).fetchone()
         assert (row["status"], row["office"]) == ("dismissed", "")
     else:
-        assert "理财" in db.active_skill_grants(actor)
-        assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
+        assert db.list_skill_grants_for_dossier(dossier["id"]) == []
+        assert "authorization_id" not in json.loads(dossier["payload_json"])
 
 
 @pytest.mark.parametrize(("entry", "bad_roster"), [
@@ -1936,6 +1931,36 @@ def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
     assert not getattr(session, "last_decree", "")
 
 
+def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
+    game, monkeypatch, capsys,
+):
+    import ming_sim.cli.terminal as terminal
+    from ming_sim.session import GameSession
+
+    db, state, _content = game
+    directive_id = db.add_directive(
+        state, None, "着修河工", "手动新增",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue", "target_id": "river-works",
+        },
+    )
+    db.ensure_dossiers_for_draft_directives(state)
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.enter_review = lambda: None
+    session.back_to_summoning = lambda: None
+    answers = iter([f"edit {directive_id}", f"del {directive_id}", "back"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    assert session.list_directives() == []
+    assert terminal.review_directives(session) == "back"
+    assert capsys.readouterr().out.count("没有这条草案。") == 2
+    assert db.get_dossier_for_directive(directive_id) is not None
+    assert db.list_directives(state)[0]["text"] == "着修河工"
+
+
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     from ming_sim.session import GameSession
 
@@ -1974,36 +1999,46 @@ def test_cli_edit_replaces_text_and_mechanics_before_promulgation(game, monkeypa
             "amount": 10,
             "account": "国库",
             "execution_surface": "immediate",
+            "mode": "midzhi",
         },
     )
     revised_text = "改拨二十五两赈济"
-    revised_payload = {
-        "dossier_action_type": "grant_allocation",
-        "target_kind": "issue",
-        "target_id": "relief",
-        "amount": 25,
-        "account": "国库",
-        "execution_surface": "immediate",
+    response = {
+        "拟旨意图": "拟旨",
+        "动作类型": "grant_allocation",
+        "目标类型": "issue",
+        "目标ID": "relief",
+        "金额": 25,
+        "账户": "国库",
+        "执行面": "immediate",
+        "颁布方式": "普通",
     }
-    captured = []
+    prompts = []
 
-    def capture(text, llm_config):
-        captured.append((text, llm_config))
-        return revised_payload
+    def prompt_faithful_backend(prompt, *_args, **_kwargs):
+        prompts.append(prompt)
+        emperor = prompt.split("【皇帝】", 1)[1].split("【大臣回话】", 1)[0]
+        if "请据此拟旨" not in emperor or revised_text not in emperor:
+            return (json.dumps({"拟旨意图": "无"}, ensure_ascii=False), 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
 
-    monkeypatch.setattr(cli_backend, "capture_manual_directive_payload", capture)
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", prompt_faithful_backend)
     monkeypatch.setattr(session, "write_decree", lambda: revised_text)
     answers = iter([f"edit {directive.id}", revised_text, "issue", "yes"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     before = state.metrics["国库"]
 
     assert terminal.review_directives(session) == "issue"
-    assert captured == [(revised_text, None)]
+    assert len(prompts) == 1
 
     db.ensure_dossiers_for_draft_directives(state)
     dossier = db.get_dossier_for_directive(directive.id)
+    payload = json.loads(dossier["payload_json"])
     assert dossier["decree_text"] == revised_text
-    assert json.loads(dossier["payload_json"])["amount"] == 25
+    assert dossier["action_type"] == "grant_allocation"
+    assert (payload["amount"], payload["account"], payload["mode"]) == (
+        25, "国库", "midzhi",
+    )
     db.apply_dossier_promulgation(
         state, dossier["id"], "promulgated", content=content,
     )
@@ -2275,6 +2310,52 @@ def test_held_dossier_reenters_only_for_next_month_rejudgment(game):
         }],
     )
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
+
+
+def test_promoted_held_dossier_exposes_only_current_verdict_to_simulator(
+    game, monkeypatch,
+):
+    import ming_sim.decree as decree_mod
+
+    db, state, content = game
+    dossier_id = db.create_decree_dossier(
+        state, action_type="special_decree", decree_text="着核边饷",
+        target_kind="issue", target_id="frontier-pay",
+    )
+    db.record_dossier_decision(
+        dossier_id, "rejected", blocked_layer="six_offices", reason="封驳",
+    )
+    db.record_dossier_decision(dossier_id, "hold")
+    state.next_period()
+    db.save_state(state)
+    monkeypatch.setattr(
+        decree_mod, "llm_promulgation_verdicts",
+        lambda *_args, **_kwargs: [
+            {"dossier_id": dossier_id, "decision": "promulgated"},
+        ],
+    )
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+
+    seen = {}
+
+    def inspect_payload(*_args, **kwargs):
+        seen.update(next(
+            row for row in kwargs["simulator_payload"]["decree_dossiers"]
+            if row["id"] == dossier_id
+        ))
+        return "本月邸报。", kwargs["simulator_payload"]
+
+    monkeypatch.setattr(decree_mod, "simulate_season_with_payload", inspect_payload)
+    monkeypatch.setattr(
+        decree_mod, "create_json_sanitizer_agent",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("payload inspected")),
+    )
+    with pytest.raises(RuntimeError, match="payload inspected"):
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "留中重判", content=content,
+        )
+    assert seen["settlement_verdict"] == "promulgated"
+    assert "promulgation_decision" not in seen
 
 
 def test_interim_verdict_rejects_reserved_legal_reason_code(game):
@@ -2612,6 +2693,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "金额": 10000,
                 "账户": "国库",
                 "执行面": "in_transit",
+                "颁布方式": "普通",
             },
             {
                 "正文": "命洪承畴三月出师",
@@ -2620,6 +2702,7 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
                 "目标ID": "shaanxi",
                 "承办人": "洪承畴",
                 "期限月数": 3,
+                "颁布方式": "中旨直发",
             },
         ],
     }, ensure_ascii=False)
@@ -2632,8 +2715,10 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
     )
     assert result["drafts"][0]["amount"] == 10000
     assert result["drafts"][0]["dossier_action_type"] == "grant_allocation"
+    assert result["drafts"][0]["mode"] == "ordinary"
     assert result["drafts"][1]["deadline_months"] == 3
     assert result["drafts"][1]["dossier_action_type"] == "military_order"
+    assert result["drafts"][1]["mode"] == "midzhi"
 
 
 def test_executing_dossier_stays_visible_and_extractor_can_close_it(game):
@@ -2710,7 +2795,7 @@ def test_invalid_promulgation_decision_stops_before_simulation(
         target_kind="issue", target_id="river-works",
     )
     monkeypatch.setattr(
-        decree_mod, "stub_promulgation_verdicts",
+        decree_mod, "llm_promulgation_verdicts",
         lambda *_a, **_k: [{"dossier_id": bad_id, "decision": bad_decision}],
     )
     forbidden = lambda *_a, **_k: pytest.fail("判官契约失败后不得调用推演或 extractor")
@@ -3059,7 +3144,7 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     assert closed["execution_note"] == "护行已妥"
 
 
-def test_secret_authorization_uses_canonical_authorization_boundary(game):
+def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
     db, state, content = game
     character = next(
         item for item in content.characters.values()
@@ -3074,6 +3159,7 @@ def test_secret_authorization_uses_canonical_authorization_boundary(game):
             "dossier_action_type": "secret_authorization",
             "target_kind": "character", "target_id": character.aliases[0],
             "assignee": character.aliases[0], "authorization_id": "理财",
+            "authorization_ids": ["伪授权"],
         },
     )
     db.ensure_dossiers_for_draft_directives(state)
@@ -3084,16 +3170,13 @@ def test_secret_authorization_uses_canonical_authorization_boundary(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    grants = db.list_skill_grants_for_dossier(dossier["id"])
-    assert [(row["character_name"], row["skill_id"]) for row in grants] == [
-        (character.name, "理财"),
-    ]
+    assert db.list_skill_grants_for_dossier(dossier["id"]) == []
+    stored_payload = json.loads(dossier["payload_json"])
+    assert "authorization_id" not in stored_payload
+    assert "authorization_ids" not in stored_payload
 
 
-@pytest.mark.parametrize("missing", ("assignee", "authorization_id"))
-def test_secret_authorization_rejects_incomplete_payload_without_grant(
-    game, missing,
-):
+def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     db, state, content = game
     actor = _active_minister(db)
     payload = {
@@ -3101,12 +3184,12 @@ def test_secret_authorization_rejects_incomplete_payload_without_grant(
         "target_kind": "character", "target_id": actor,
         "assignee": actor, "authorization_id": "理财",
     }
-    payload.pop(missing)
+    payload.pop("assignee")
     before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
-    with pytest.raises(ValueError, match="canonical assignee 或授权字段"):
+    with pytest.raises(ValueError, match="canonical assignee"):
         db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before
@@ -3225,7 +3308,7 @@ def test_rejection_verdict_defaults_omitted_midzhi_marker_to_false(game):
         target_kind="issue", target_id="river-works",
     )
     verdict = _rejected_verdict(dossier_id)
-    verdict.pop("midzhi_unpromulgatable")
+    assert "midzhi_unpromulgatable" not in verdict
 
     db.apply_dossier_verdicts(state, [verdict])
 
@@ -3268,7 +3351,7 @@ def test_rejection_runtime_contract_rejects_unknown_references(game, field, bad_
 
 @pytest.mark.parametrize(("field", "bad_value"), [
     ("imperial_authority_band", "low"),
-    ("involved_office_types", [1]),
+    ("appointment_tenure", "临时"),
     ("authorization_ids", [{}]),
     ("endorsement_entry_ids", [True]),
     ("endorsement_entry_ids", ["1"]),

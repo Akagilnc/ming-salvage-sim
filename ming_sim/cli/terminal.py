@@ -282,25 +282,12 @@ def _handle_court_command(
 
 
 def _confirm_pending_directive(session: GameSession, draft, minister_name: str) -> None:
-    """大臣拟旨后当场让皇帝核定：可/准→confirm，驳→reject，其它→原地重问。"""
+    """Legacy CLI display only; end-turn default approval owns submission."""
     print(f"\n{minister_name}拟旨如下：\n")
     print("─" * 50)
     print(draft.text)
     print("─" * 50)
-    while True:
-        confirm_raw = input(
-            "\n陛下：确认入档（回车/可/准）| 驳回（驳/不准）："
-        ).strip()
-        low = confirm_raw.lower()
-        if low in _CONFIRM_WORDS:
-            session.confirm_directive(draft.id)
-            print(f"已入本{TURN_UNIT}草案 #{draft.id}。\n")
-            return
-        if low in _REJECT_WORDS:
-            session.reject_directive(draft.id)
-            print("驳回。卿重新拟议。\n")
-            return
-        print("未识别。请输 可/准 入档，或 驳/不准 驳回。\n")
+    print(f"此旨已候结束本{TURN_UNIT}成案。\n")
 
 
 def _print_interrupted_reply_retry_hint(session: GameSession, minister_name: str) -> None:
@@ -596,7 +583,7 @@ def review_directives(session: GameSession) -> str:
         ]
         print(f"\n本{TURN_UNIT}诏书草案：")
         if pending:
-            print(f"  ⚠ {len(pending)} 道大臣拟旨待核定（confirm N 准 / reject N 驳）：")
+            print(f"  · {len(pending)} 道历史拟旨候结束回合成案：")
             for d in pending:
                 print(f"  [待核定] #{d.id}  {wrap(d.text)}")
         if staged_directives:
@@ -607,8 +594,8 @@ def review_directives(session: GameSession) -> str:
                 print(f"   {wrap(d.text)}")
         elif not pending and not staged_directives:
             print("（暂无指令。back 继续召见，或 add 新增。）")
-        print("\n操作：issue 颁布 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
-              "confirm N 准拟旨 | reject N 驳拟旨 | skills 技能卡 | exit 退出")
+        print("\n操作：issue 结束回合 | back 继续召见 | add 新增 | edit N 改 | del N 删 | "
+              "skills 技能卡 | exit 退出")
         raw = input("诏书草案> ").strip()
         if not raw:
             continue
@@ -617,7 +604,7 @@ def review_directives(session: GameSession) -> str:
             raise ExitGame
         if lowered in COURT_BREAK_COMMANDS:
             if drafts or pending or staged_directives:
-                print(f"本{TURN_UNIT}尚有草案/待核定。请 issue 颁布，或 del/reject 清空后退朝。")
+                print(f"本{TURN_UNIT}尚有候选旨意；退朝将按结束回合规则成案。请输入 issue。")
                 continue
             return "skip"
         if lowered in {"back", "b", "返回", "继续召见"}:
@@ -640,23 +627,7 @@ def review_directives(session: GameSession) -> str:
                 # （ship-pre r3：write_decree 在此态必拒，不开此口 CLI 永远够不到恢复入口）。
                 print("\n检测到上月结算未完成，续跑结算……")
                 return "issue"
-            if pending:
-                print(f"尚有 {len(pending)} 道大臣拟旨待核定（confirm/reject），不能颁诏。")
-                continue
-            if not drafts and not staged_directives:
-                print("暂无指令，不能颁布空诏书。add 新增，或 back 继续召见。")
-                continue
-            try:
-                decree = session.write_decree()
-            except ValueError as e:
-                print(f"拟诏失败：{e}")
-                continue
-            print("\n最终诏书：")
-            print(decree)
-            confirm = input("确认颁布？输入 yes/颁布 确认，其他返回修改：").strip().lower()
-            if confirm in {"yes", "y", "颁布", "确认"}:
-                return "issue"
-            continue
+            return "issue"
         # 变更器统一接 ValueError（FRONT_HALF_DONE 冻结期的指引消息）：打印后留在
         # 审阅循环，不崩出进程（ship-pre r2，与 write_decree 既有 try 同款）。
         try:
@@ -680,20 +651,6 @@ def review_directives(session: GameSession) -> str:
             verb = parts[0].lower()
             if len(parts) == 2 and parts[1].lstrip("#").isdigit():
                 target_id = int(parts[1].lstrip("#"))
-                if verb in {"confirm", "准"}:
-                    if any(d.id == target_id for d in pending):
-                        session.confirm_directive(target_id)
-                        print(f"已核定 #{target_id}，入颁诏候选。")
-                    else:
-                        print("没有这条待核定拟旨。")
-                    continue
-                if verb in {"reject", "驳"}:
-                    if any(d.id == target_id for d in pending):
-                        session.reject_directive(target_id)
-                        print(f"已驳回 #{target_id}。")
-                    else:
-                        print("没有这条待核定拟旨。")
-                    continue
                 if verb in {"edit", "改", "修改"}:
                     if not any(d.id == target_id for d in drafts):
                         print("没有这条草案。")
@@ -701,11 +658,18 @@ def review_directives(session: GameSession) -> str:
                     new_text = input("新的指令内容：").strip()
                     if new_text:
                         from ming_sim.cli_backend import capture_manual_directive_payload
+                        row = next(
+                            r for r in session.db.list_directives(
+                                session.state, statuses=("draft",),
+                            ) if int(r["id"]) == target_id
+                        )
+                        existing_payload = session.db.read_directive_dossier_payload(row)
                         session.update_directive(
                             target_id,
                             new_text,
                             dossier_payload=capture_manual_directive_payload(
                                 new_text, session.llm_config,
+                                existing_mode=existing_payload.get("mode"),
                                 **({"db": session.db, "content": session.content}
                                    if getattr(session, "content", None) is not None else {}),
                             ),
@@ -717,9 +681,7 @@ def review_directives(session: GameSession) -> str:
                         session.delete_directive(target_id)
                         print("已删除。")
                     elif any(d.id == target_id for d in pending):
-                        # pending 草案删掉 = 驳回大臣拟旨
-                        session.reject_directive(target_id)
-                        print(f"已驳回 #{target_id}（待核定拟旨）。")
+                        print("对话拟旨不在此复审；请结束回合成案。")
                     else:
                         print("没有这条草案。")
                     continue
