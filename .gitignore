@@ -44,8 +44,7 @@ htmlcov/
 output
 # Frontend
 web/node_modules/
-web/dist/*
-!web/dist/organicMarkdown.js
+web/dist/
 web/tsconfig.tsbuildinfo
 .vscode/
 

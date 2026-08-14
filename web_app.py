@@ -1511,7 +1511,7 @@ class WebGame:
         """Run #544's bounded decoration and persist the raw judge phrase list.
 
         Write seam stores the judge's original phrases only. Browser display
-        boundary (web/dist/organicMarkdown.js) is the sole strip/match executor.
+        boundary (web/src/organicMarkdown.mjs via Vite bundle) is the sole strip/match executor.
         """
         if not chat_turn_id or not answer:
             return []

@@ -1,27 +1,8 @@
 import React from "react";
 import type { Army, GameState, LegacyEffect, MapNode } from "./types";
 
-type OrganicMarkdownApi = {
-  stripOrganicMarkdown(text: string): string;
-  filterMatchedHighlights(answer: string, highlights: unknown[]): string[];
-};
-
-/** Sole browser strip/match authority: release-layout /organicMarkdown.js. */
-function organicAuthority(): OrganicMarkdownApi {
-  const api = (globalThis as unknown as { OrganicMarkdown?: OrganicMarkdownApi }).OrganicMarkdown;
-  if (!api) {
-    throw new Error("OrganicMarkdown authority product is not loaded");
-  }
-  return api;
-}
-
-export const stripOrganicMarkdown = (text: string): string =>
-  organicAuthority().stripOrganicMarkdown(text);
-
-export const filterMatchedHighlights = (
-  answer: string,
-  highlights: unknown[],
-): string[] => organicAuthority().filterMatchedHighlights(answer, highlights);
+/** #544 display-boundary strip/match: unique source module, Vite-bundled. */
+export { filterMatchedHighlights, stripOrganicMarkdown } from "./organicMarkdown.mjs";
 
 export const scoreTone = (value: number, inverse = false) => {
   const danger = inverse ? value >= 65 : value <= 38;
