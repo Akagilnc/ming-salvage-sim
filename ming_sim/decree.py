@@ -146,9 +146,9 @@ def build_promulgation_judge_context(
             payload = json.loads(str(row.get("payload_json") or "{}"))
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
-        endorsement_ids = payload.get("endorsement_entry_ids", [])
-        if not isinstance(endorsement_ids, list):
-            endorsement_ids = []
+        # #612: endorsements are DB-backed spoken facts, not payload-only ids.
+        endorsements = db.list_dossier_endorsements(int(row["id"]))
+        endorsement_ids = [int(item["id"]) for item in endorsements]
         # #611: authorization_ids come only from the unique applicability projection.
         # Never read payload authorization_id(s) as a parallel authority identity source.
         held_authorities = db.project_applicable_authorities(state.turn, row)
@@ -162,6 +162,7 @@ def build_promulgation_judge_context(
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
             "break_rank": payload.get("break_rank"),
+            "endorsements": endorsements,
             "held_authorities": held_authorities,
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
@@ -614,7 +615,8 @@ class _NeedsFullSettlement(Exception):
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None) -> bool:
+                          inflight_wait_s: float | None = None,
+                          llm_config=None, write_gate=None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -634,9 +636,13 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import production_beat_generator
+    # Forward llm_config/write_gate so close-night can catch up ordinary story
+    # facts and run the gate-free endorsement-only batch. Callers must not hold
+    # an outer non-reentrant runtime write gate while passing nullcontext.
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
-                          beat_generator=production_beat_generator)
+                          beat_generator=production_beat_generator,
+                          llm_config=llm_config, write_gate=write_gate)
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:

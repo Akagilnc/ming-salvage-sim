@@ -21,12 +21,22 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
-    # endorsement_entry_ids stay positive ints (deduped/sorted); never stringified.
     # break_rank is persisted dossier evidence read from payload (#562).
-    _dossier(
+    # endorsement_entry_ids are positive ints from DB-backed spoken endorsements (#612).
+    dossier_id = _dossier(
         db, state, mode="midzhi",
-        endorsement_entry_ids=[3, 1, 1],
         break_rank={"office_rank": "越三级"},
+    )
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    chat_a = db.create_chat_turn(state, minister, "promulgation-561-a", 0)
+    chat_b = db.create_chat_turn(state, minister, "promulgation-561-b", 0)
+    first_id = db.add_dossier_endorsement(
+        dossier_id, form="会签", endorser_id=minister, source_chat_turn_id=chat_a,
+    )
+    second_id = db.add_dossier_endorsement(
+        dossier_id, form="当面站台", endorser_id=minister, source_chat_turn_id=chat_b,
     )
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
@@ -66,7 +76,7 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context["dossiers"][0]["criteria_snapshot_source"] == {
         "imperial_authority_band": context["imperial_authority_band"],
         "appointment_tenure": "", "authorization_ids": [],
-        "endorsement_entry_ids": [1, 3],
+        "endorsement_entry_ids": sorted({first_id, second_id}),
     }
     assert all(
         isinstance(item, int) and not isinstance(item, bool) and item > 0
