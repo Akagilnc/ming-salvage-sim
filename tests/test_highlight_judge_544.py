@@ -1,4 +1,5 @@
 """Issue #544 behavior at judge and durable night-scroll seams."""
+import json
 import multiprocessing
 import signal
 import sys
@@ -347,6 +348,86 @@ def test_real_chat_highlights_survive_database_reopen_and_scroll(content, tmp_pa
         assert all(m["highlights"] == [] for m in history + scroll if m["role"] != "minister")
     finally:
         reopened.close()
+
+
+def test_unmatched_highlights_never_persist_through_chat_reopen_or_stream(
+    content, tmp_path, monkeypatch,
+):
+    """Write boundary strips + exact-matches; misses never land in DB/projection/SSE."""
+    from ming_sim.db import GameDB
+    from ming_sim.organic_markdown import filter_matched_highlights, strip_organic_markdown
+    from tests.test_audience_background import _FakeAgent, _web_game
+
+    answer = "臣请**据实核账**，不可臆断。"
+    assert strip_organic_markdown("**据实核账**") == "据实核账"
+    assert filter_matched_highlights(
+        answer, ["**据实核账**", "未命中", "臆断"]
+    ) == ["据实核账", "臆断"]
+
+    path = str(tmp_path / "highlight-filter.db")
+    db = GameDB(path, content)
+    db.seed_static_data()
+    state = db.load_state()
+    minister = "温体仁"
+    runtime = _web_game(db, state, content, _FakeAgent())
+    runtime.session.chat = lambda *_a, **_k: _chat_result(answer)
+    monkeypatch.setattr(
+        "ming_sim.highlight_judge.invoke_highlight_judge",
+        lambda *_a, **_k: '["**据实核账**", "未命中", "臆断"]',
+    )
+    runtime._start_reply_tail_tasks = lambda *_a: None
+
+    payload = runtime.chat(minister, "钱粮如何？")
+    night_id = int(payload["night_id"])
+    minister_msg = next(m for m in payload["history"] if m["role"] == "minister")
+    assert minister_msg["highlights"] == ["据实核账", "臆断"]
+    assert "未命中" not in minister_msg["highlights"]
+
+    # Raw row must already be canonical — frontend is not the sole gate.
+    row = db.conn.execute(
+        "SELECT highlights FROM chat_messages WHERE role='minister' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert json.loads(row["highlights"]) == ["据实核账", "臆断"]
+    db.close()
+
+    reopened = GameDB(path, content)
+    try:
+        history = reopened.build_chat_projection(minister, night_id)
+        scroll = an.read_night_scroll(reopened, night_id)
+        assert next(m for m in history if m["role"] == "minister")["highlights"] == [
+            "据实核账", "臆断",
+        ]
+        assert next(m for m in scroll if m["role"] == "minister")["highlights"] == [
+            "据实核账", "臆断",
+        ]
+        assert all(
+            "未命中" not in (m.get("highlights") or [])
+            for m in history + scroll
+        )
+    finally:
+        reopened.close()
+
+    # Streaming path: SSE highlights payload is already filtered.
+    db2 = GameDB(str(tmp_path / "highlight-filter-stream.db"), content)
+    db2.seed_static_data()
+    state2 = db2.load_state()
+    stream_runtime = _web_game(db2, state2, content, _FakeAgent(chunks=[answer]))
+    monkeypatch.setattr(
+        "ming_sim.highlight_judge.invoke_highlight_judge",
+        lambda *_a, **_k: '["**据实核账**", "未命中"]',
+    )
+    stream_runtime._trail_mindreading_after_reply = lambda *_a, **_k: None
+    stream_runtime._trail_extraction_after_reply = lambda *_a, **_k: None
+    events = list(stream_runtime.chat_stream(minister, "钱粮如何？"))
+    highlight_events = [e for e in events if e.get("type") == "highlights"]
+    assert highlight_events
+    assert highlight_events[0]["highlights"] == ["据实核账"]
+    assert "未命中" not in highlight_events[0]["highlights"]
+    row2 = db2.conn.execute(
+        "SELECT highlights FROM chat_messages WHERE role='minister' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert json.loads(row2["highlights"]) == ["据实核账"]
+    db2.close()
 
 
 def test_web_chat_highlight_persistence_failure_silently_preserves_completed_reply(game, monkeypatch):
