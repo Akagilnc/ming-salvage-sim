@@ -10,16 +10,20 @@ seam：
 
 from __future__ import annotations
 
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
+from types import SimpleNamespace
 import threading
+import time
 
 import pytest
 
+import web_app
 from ming_sim import audience_night as an
 from ming_sim import beat_orchestration as bo
 from ming_sim.beat_orchestration import (
     BEAT_CLOSE,
     BEAT_ENTER,
+    BEAT_EXIT,
     BEAT_OPEN,
     BeatInputs,
     assemble_beat_inputs,
@@ -29,34 +33,199 @@ from ming_sim.beat_orchestration import (
 
 def test_abandon_running_scene_drains_without_persisting_result():
     """A running LLM Future cannot be cancelled; abort must join it before returning."""
-    from ming_sim.session import GameSession
-
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
-    future: Future = Future()
-    assert future.set_running_or_notify_cancel()
 
-    def complete():
+    def slow_gen(inputs: BeatInputs) -> str:
         started.set()
-        release.wait()
-        future.set_result([(1, "late scene")])
+        release.wait(1)
         finished.set()
+        return f"body-{inputs.beat_kind}"
 
-    worker = threading.Thread(target=complete)
-    worker.start()
-    started.wait()
-    session = object.__new__(GameSession)
-    session._chat_turn_scene_futures = {7: future}
-    waiter = threading.Thread(target=session.abandon_chat_turn_scene, args=(7,))
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    # Direct task submit: one running future the abandon path must drain.
+    registry._submit(7, [(1, BeatInputs(beat_kind=BEAT_OPEN))], slow_gen)
+    assert started.wait(1)
+    waiter = threading.Thread(target=registry.abandon, args=(7,))
     waiter.start()
     assert waiter.is_alive()
     release.set()
     waiter.join(1)
-    worker.join(1)
     assert finished.is_set()
     assert not waiter.is_alive()
-    assert session._chat_turn_scene_futures == {}
+    assert not registry.has(7)
+
+
+def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
+    """#542: retry except 路径 drain 不可取消 Future 时，_write_gate 必须可被他者取得。
+
+    seam = WebGame.retry_interrupted_reply 真实入口（非内联 abandon）。
+    """
+    db, state, content = game
+    minister = _active_minister(db, content)
+    an.open_night(db, state, location="乾清宫", time_of_day="戌时")
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="drain-gate", agno_runs_before=0,
+    )
+    uid = db.append_chat_message(minister, state.turn, "user", "重试问")
+    db.update_chat_turn_messages(ctid, user_message_id=uid)
+    db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ctid,))
+    db.conn.commit()
+
+    drain_entered = threading.Event()
+    release_drain = threading.Event()
+
+    class _Session:
+        temporary_characters: set = set()
+
+        def __init__(self):
+            self.db = db
+            self.state = state
+            self.content = SimpleNamespace(
+                characters={minister: SimpleNamespace(name=minister)},
+            )
+
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, chat_turn_id):
+            # 模拟不可取消 running Future：握着调用栈直到测试放行。
+            drain_entered.set()
+            assert release_drain.wait(2), "drain was not released"
+
+        def chat(self, minister_name, message, *, chat_turn_id=0):
+            raise RuntimeError("retry llm failed")
+
+    rt = object.__new__(web_app.WebGame)
+    rt.session = _Session()
+    rt.chat_history = {minister: []}
+    rt._write_gate = threading.Lock()
+    rt._runtime_write_gate = lambda: rt._write_gate
+    rt._audience_turn_in_flight = lambda _name: False
+    rt._mark_pending_write = lambda: False
+    rt._spawn_extraction_trail = lambda *a, **k: None
+    rt.directive_rows = lambda: []
+    rt.directive_payload = lambda row: row
+    rt.suggestions_for = lambda character: []
+    rt.can_undo_last_chat = lambda name: False
+    rt.pending_action_failures_for = lambda name: []
+
+    errors: list[BaseException] = []
+
+    def run_retry():
+        try:
+            rt.retry_interrupted_reply(minister)
+        except BaseException as exc:
+            errors.append(exc)
+
+    t = threading.Thread(target=run_retry)
+    t.start()
+    assert drain_entered.wait(2), "retry never entered scene drain"
+    # 等待期间 gate 必须可取得——证明 drain 不在 with gate 内。
+    acquired = rt._write_gate.acquire(timeout=0.3)
+    assert acquired, "write gate still held during scene drain"
+    rt._write_gate.release()
+    release_drain.set()
+    t.join(2)
+    assert not t.is_alive()
+    assert errors and isinstance(errors[0], RuntimeError)
+
+
+def test_open_and_enter_scene_beats_run_concurrently(game):
+    """#542: 无依赖的 open/enter 须真并发，首轮墙钟接近 max 而非 sum。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="par-oe", agno_runs_before=0,
+    )
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+    release = threading.Event()
+
+    def blocking_gen(inputs: BeatInputs) -> str:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        release.wait(1)
+        with lock:
+            active -= 1
+        return f"kind={inputs.beat_kind}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
+    registry.start_open_enter(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+        beat_generator=blocking_gen,
+    )
+    # 两拍都应进入生成（并发），而不是第一个完成后才启动第二个。
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        with lock:
+            if max_active >= 2:
+                break
+        time.sleep(0.01)
+    release.set()
+    generated = registry.join(ctid)
+    kinds = {body.split("=", 1)[-1] for _eid, body in generated}
+    assert kinds == {"open", "enter"}
+    assert max_active >= 2, f"open/enter ran sequentially (max_active={max_active})"
+
+
+def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
+    """#542: 退下旁白登记本轮 scene lifecycle；dismiss 同步路径不得直接跑 LLM。
+
+    body 只在 join 后 persist 落定；abandon 可排空未落库结果。
+    """
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], minister)
+    ctid = db.create_chat_turn(state, minister, "exit-life", 0, night_id=night["id"])
+
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def slow_exit(inputs: BeatInputs) -> str:
+        calls.append(inputs.beat_kind)
+        started.set()
+        assert release.wait(1)
+        return "特征化退下旁白"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    # dismiss 只落垫位账，不吃 beat_generator（同步 LLM 禁入）。
+    entry_id = an.dismiss_from_audience(
+        db, minister, night_id=night["id"], origin_chat_turn_id=ctid,
+        state=state,
+    )
+    assert entry_id
+    placeholder = an.list_ledger(db, night["id"])[-1]["body"]
+    assert placeholder != "特征化退下旁白"
+
+    registry.start_exit(
+        db, state,
+        person_name=minister, chat_turn_id=ctid, entry_id=int(entry_id),
+        night_id=int(night["id"]), beat_generator=slow_exit,
+    )
+    assert started.wait(1), "exit generation never started"
+    # 生成仍在跑时账正文仍是垫位——无后台迟到补写。
+    assert an.list_ledger(db, night["id"])[-1]["body"] == placeholder
+
+    release.set()
+    generated = registry.join(ctid)
+    bo.persist_chat_turn_scene(db, generated)
+    db.conn.commit()
+    assert an.list_ledger(db, night["id"])[-1]["body"] == "特征化退下旁白"
+    assert calls == [BEAT_EXIT]
 
 
 def _active_minister(db, content, *, exclude=None):

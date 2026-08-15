@@ -95,6 +95,11 @@ def _cli_session(db, state, content):
 
     return SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(), chat=chat,
+        # #542 scene lifecycle seams（CLI minister_chat 会调）；替身 no-op。
+        start_chat_turn_scene=lambda *_a, **_k: None,
+        join_chat_turn_scene=lambda *_a, **_k: [],
+        persist_chat_turn_scene=lambda *_a, **_k: None,
+        abandon_chat_turn_scene=lambda *_a, **_k: None,
     )
 
 
