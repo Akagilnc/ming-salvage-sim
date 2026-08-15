@@ -49,6 +49,10 @@ AUTHORITY_EDGE_TEXT = "越一级特授边将虚衔，仍循兵部具题复核"
 APPOINTMENT_TEXT = "调任许誉卿出京清查东林隐田"
 ADMIN_MIDZHI_TEXT = "中旨命内廷整理既有文册，不动外廷钱权"
 VITAL_MIDZHI_TEXT = "中旨绕开户部，强夺太仓全部钱粮交内廷支配"
+# Judge-visible faction posture (leverage+agenda only; never satisfaction).
+BASE_DONGLIN_AGENDA = "反对清丈，维护田赋旧例"
+# person_leader sole mutation: leader appeased via agenda, not character status.
+LEADER_APPEASED_AGENDA = "钱谦益已受安抚，东林首领息争"
 
 # Full low/high authority batch: same planted dossiers, only 皇威 differs.
 FULL_KINDS = (
@@ -264,7 +268,8 @@ def _open_scene(root: str, name: str, content: GameContent) -> tuple[GameDB, obj
 def _apply_base_board(db: GameDB, state, *, authority: int) -> None:
     """Shared minimal board. Arms may then change exactly one tested variable."""
     db.conn.execute(
-        "UPDATE factions SET leverage=95, agenda='反对清丈，维护田赋旧例' WHERE name='东林'"
+        "UPDATE factions SET leverage=95, agenda=? WHERE name='东林'",
+        (BASE_DONGLIN_AGENDA,),
     )
     state.metrics["皇威"] = int(authority)
     db.save_state(state)
@@ -296,9 +301,12 @@ def _plant_dossiers(db: GameDB, state, kinds: tuple[str, ...] | list[str]) -> di
 
 
 def _mutate_leader_only(db: GameDB, state) -> None:
-    """按人对照·首领臂：只激活东林首领，不改皇威/把关人/派系态势。"""
+    """按人对照·首领臂：只改东林 agenda 表达首领已安抚；不改 leverage/把关人/皇威。"""
     del state  # board authority already fixed by the arm
-    db.conn.execute("UPDATE characters SET status='active' WHERE name='钱谦益'")
+    db.conn.execute(
+        "UPDATE factions SET agenda=? WHERE name='东林'",
+        (LEADER_APPEASED_AGENDA,),
+    )
     db.conn.commit()
 
 
@@ -417,6 +425,13 @@ def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
 
 def _gatekeeper_names(context: dict) -> set[str]:
     return {str(row["name"]) for row in context.get("gatekeepers", [])}
+
+
+def _faction_row(context: dict, name: str) -> dict:
+    for row in context.get("factions", []):
+        if str(row.get("name")) == name:
+            return dict(row)
+    raise RuntimeError(f"faction not in judge context: {name}")
 
 
 def _by_id(verdicts: list[dict]) -> dict[int, dict]:
@@ -569,8 +584,15 @@ def main() -> int:
             ),
             "leader_change_does_not_remove_named_gatekeeper_block": (
                 leader_by_id[leader["ids"]["hostile"]]["decision"] == "rejected"
+                and "许誉卿" in _gatekeeper_names(leader["context"])
                 and _gatekeeper_names(leader["context"])
                 == _gatekeeper_names(high["context"])
+                and _faction_row(leader["context"], "东林")["agenda"]
+                == LEADER_APPEASED_AGENDA
+                and _faction_row(high["context"], "东林")["agenda"]
+                == BASE_DONGLIN_AGENDA
+                and int(_faction_row(leader["context"], "东林")["leverage"])
+                == int(_faction_row(high["context"], "东林")["leverage"])
             ),
             "gatekeeper_appointment_is_judged_and_rejected": (
                 by_id[appointment]["decision"] == "rejected"
@@ -626,9 +648,10 @@ def main() -> int:
                 "controls": {
                     "authority_slider": "only 皇威 differs between low_hold_rail and high_authority",
                     "person_not_leader": (
-                        "person_leader only activates 钱谦益; "
+                        "person_leader only sets 东林 agenda to leader-appeased text; "
                         "person_gatekeeper only dismisses 许誉卿; "
-                        "both share 皇威=100 and the same hostile decree"
+                        "both keep 许誉卿-or-not as the sole person variable, "
+                        "share 皇威=100 / leverage / the same hostile decree"
                     ),
                     "three_trigger_faces": (
                         "face_rank / face_faction / face_office each plant one dossier"
@@ -666,10 +689,16 @@ def main() -> int:
                     ],
                 },
                 "person_arms": {
-                    "leader": {"ids": leader["ids"], "gatekeepers": leader["context"]["gatekeepers"]},
+                    "leader": {
+                        "ids": leader["ids"],
+                        "gatekeepers": leader["context"]["gatekeepers"],
+                        "factions": leader["context"]["factions"],
+                        "leader_appeased_agenda": LEADER_APPEASED_AGENDA,
+                    },
                     "gatekeeper": {
                         "ids": gatekeeper["ids"],
                         "gatekeepers": gatekeeper["context"]["gatekeepers"],
+                        "factions": gatekeeper["context"]["factions"],
                     },
                 },
                 "trigger_face_arms": {
