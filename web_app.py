@@ -1755,8 +1755,9 @@ class WebGame:
             # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
             # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
             # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
+            # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
+            self.session.abandon_chat_turn_scene(chat_turn_id)
             with gate:
-                self.session.abandon_chat_turn_scene(chat_turn_id)
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             raise
@@ -1959,12 +1960,15 @@ class WebGame:
                     # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
                     # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
                     from ming_sim.audience_night import dismiss_from_audience
-                    # #542：退侍与开夜/入殿/收夜共用特征化 BeatInputs seam；账仍绑定本轮，
-                    # 失败由外围 chat_turn guard 统一终态化（#503 cross-ref）。
-                    dismiss_from_audience(
+                    # #542：dismiss 只落垫位；exit 旁白进本轮 scene registry，与 reply 同 join/persist。
+                    entry_id = dismiss_from_audience(
                         self.db, character.name, origin_chat_turn_id=chat_turn_id,
-                        state=self.state, beat_generator=self.session._beat_generator,
+                        state=self.state,
                     )
+                    if entry_id and chat_turn_id:
+                        self.session.start_chat_turn_exit_scene(
+                            character.name, int(chat_turn_id), int(entry_id),
+                        )
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")

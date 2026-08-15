@@ -25,14 +25,18 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass, fields as _dc_fields
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
+import threading
 
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     METHOD_XUANRU,
     TAG_ENTER,
+    TAG_OPEN_NIGHT,
+    get_night,
     list_chat_turns_for_night,
     list_ledger,
     resolve_standing_roster,
@@ -302,6 +306,16 @@ def production_beat_generator(inputs: BeatInputs) -> str:
             body = f"{body}{tension}"
         return body
 
+    if inputs.beat_kind == BEAT_EXIT:
+        name = str(inputs.person_name or "").strip()
+        if not name:
+            return ""
+        head = f"{place_time}，" if place_time else ""
+        body = f"{head}帝令{name}退下，{name}告退。"
+        if tension:
+            body = f"{body}{tension}"
+        return body
+
     if inputs.beat_kind == BEAT_CLOSE:
         head = f"{place_time}，退朝，今夜召对到此。" if place_time else "退朝，今夜召对到此。"
         if tension:
@@ -411,3 +425,165 @@ def generate_close_beat_body(
 def beat_input_field_names() -> Tuple[str, ...]:
     """BeatInputs 的字段名（审计断言用：断言无形式约束/裸数值字段）。"""
     return tuple(f.name for f in _dc_fields(BeatInputs))
+
+
+# ── chat-turn scene lifecycle（#542）：单一 registry，GameSession 只委托 ─────────
+
+
+def discover_open_enter_tasks(
+    db: Any,
+    state: Any,
+    *,
+    minister_name: str,
+    chat_turn_id: int,
+) -> List[Tuple[int, BeatInputs]]:
+    """主线程：发现本轮可生成的开场/入殿账并组装 BeatInputs（零 LLM、可持短读）。"""
+    row = db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"durable chat turn disappeared: {chat_turn_id}")
+    night_id = int(row["night_id"] or 0)
+    night = get_night(db, night_id) or {}
+    entries = list_ledger(db, night_id)
+    tasks: List[Tuple[int, BeatInputs]] = []
+    count = db.conn.execute(
+        "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id = ? AND id <= ?",
+        (night_id, int(chat_turn_id)),
+    ).fetchone()["c"]
+    if int(count) == 1:
+        opening = next(e for e in entries if TAG_OPEN_NIGHT in (e.get("tags") or []))
+        tasks.append((int(opening["id"]), assemble_beat_inputs(
+            db, state, beat_kind=BEAT_OPEN,
+            time_of_day=str(night.get("time_of_day") or ""),
+            location=str(night.get("location") or ""),
+        )))
+    entering = next((
+        e for e in entries
+        if int(e.get("origin_chat_turn_id") or 0) == int(chat_turn_id)
+        and TAG_ENTER in (e.get("tags") or [])
+    ), None)
+    if entering is not None:
+        tasks.append((int(entering["id"]), assemble_beat_inputs(
+            db, state, beat_kind=BEAT_ENTER,
+            time_of_day=str(night.get("time_of_day") or ""),
+            location=str(night.get("location") or ""), night_id=night_id,
+            person_name=minister_name, summon_method=METHOD_XUANRU,
+        )))
+    return tasks
+
+
+def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
+    """短写：把已 join 的 scene 正文写入故事账（调用方事务内）。"""
+    for entry_id, body in generated:
+        db.conn.execute(
+            "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
+            (body, int(entry_id)),
+        )
+
+
+class ChatTurnSceneRegistry:
+    """本轮 scene 工作的唯一 registry（open/enter/exit 同桶，禁止平行第二表）。
+
+    无依赖 beat 各提交独立 Future，真并发；join/abandon 排空整桶。
+    Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+    """
+
+    def __init__(self, executor: Executor) -> None:
+        self._executor = executor
+        self._lock = threading.Lock()
+        self._futures: Dict[int, List[Future]] = {}
+
+    def has(self, chat_turn_id: int) -> bool:
+        with self._lock:
+            return int(chat_turn_id) in self._futures
+
+    def active_turn_ids(self) -> List[int]:
+        with self._lock:
+            return list(self._futures.keys())
+
+    def _submit(
+        self,
+        chat_turn_id: int,
+        tasks: List[Tuple[int, BeatInputs]],
+        beat_generator: Optional[BeatGenerator],
+    ) -> None:
+        if not chat_turn_id or not tasks:
+            return
+
+        def _run(entry_id: int, inputs: BeatInputs) -> Tuple[int, str]:
+            return (int(entry_id), run_beat_generator(beat_generator, inputs))
+
+        with self._lock:
+            bucket = self._futures.setdefault(int(chat_turn_id), [])
+            for entry_id, inputs in tasks:
+                bucket.append(self._executor.submit(_run, int(entry_id), inputs))
+
+    def start_open_enter(
+        self,
+        db: Any,
+        state: Any,
+        *,
+        minister_name: str,
+        chat_turn_id: int,
+        beat_generator: Optional[BeatGenerator],
+    ) -> None:
+        if not chat_turn_id or self.has(int(chat_turn_id)):
+            return
+        tasks = discover_open_enter_tasks(
+            db, state, minister_name=minister_name, chat_turn_id=int(chat_turn_id),
+        )
+        # 即使无任务也占桶，避免同轮重复 discover；join 得 [].
+        with self._lock:
+            self._futures.setdefault(int(chat_turn_id), [])
+        self._submit(int(chat_turn_id), tasks, beat_generator)
+
+    def start_exit(
+        self,
+        db: Any,
+        state: Any,
+        *,
+        person_name: str,
+        chat_turn_id: int,
+        entry_id: int,
+        night_id: int,
+        beat_generator: Optional[BeatGenerator],
+        knowledge_provider: Optional[KnowledgeProvider] = None,
+    ) -> None:
+        if not chat_turn_id or not entry_id:
+            return
+        night = get_night(db, int(night_id)) or {}
+        inputs = assemble_beat_inputs(
+            db, state, beat_kind=BEAT_EXIT,
+            time_of_day=str(night.get("time_of_day") or ""),
+            location=str(night.get("location") or ""),
+            night_id=int(night_id),
+            person_name=person_name,
+            knowledge_provider=knowledge_provider,
+        )
+        self._submit(int(chat_turn_id), [(int(entry_id), inputs)], beat_generator)
+
+    def join(self, chat_turn_id: int) -> List[Tuple[int, str]]:
+        """等待本轮全部 scene Future；不持 DB/写锁。"""
+        with self._lock:
+            futures = self._futures.pop(int(chat_turn_id), None)
+        if not futures:
+            return []
+        out: List[Tuple[int, str]] = []
+        for fut in futures:
+            out.append(fut.result())
+        return out
+
+    def abandon(self, chat_turn_id: int) -> None:
+        """排空本轮 scene：能 cancel 则 cancel，已在跑则 join 丢结果。"""
+        with self._lock:
+            futures = self._futures.pop(int(chat_turn_id), None)
+        if not futures:
+            return
+        for fut in futures:
+            if fut.cancel():
+                continue
+            try:
+                fut.result()
+            except BaseException:
+                pass
