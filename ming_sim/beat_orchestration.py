@@ -201,10 +201,12 @@ def assemble_beat_inputs(
     )
 
 
-def _run_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
+def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
     """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。
 
-    strip 后返回：纯空白产出视同空，交调用方 or-兜底（否则空白正文会顶掉 #498 确定性兜底）。
+    共用薄 seam：generate_* 与 close_night worker 同走此处。strip 后返回：纯空白
+    产出视同空，交调用方 or-兜底（否则空白正文会顶掉 #498 确定性兜底）。
+    调用方须已在主线程 assemble 完全部 DB-backed BeatInputs；本 seam 零 DB。
     """
     if beat_generator is None:
         return ""
@@ -285,7 +287,7 @@ def generate_open_beat_body(
         time_of_day=time_of_day, location=location,
         knowledge_provider=knowledge_provider,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def generate_enter_beat_body(
@@ -315,7 +317,7 @@ def generate_enter_beat_body(
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def generate_close_beat_body(
@@ -326,7 +328,11 @@ def generate_close_beat_body(
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
 ) -> str:
-    """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。"""
+    """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。
+
+    单线程调用方可直接用本入口（内部 assemble + run）。跨线程路径须在主线程
+    assemble_beat_inputs(BEAT_CLOSE) 后只调 run_beat_generator——见 close_night。
+    """
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(
@@ -336,7 +342,7 @@ def generate_close_beat_body(
         night_id=int(night.get("id") or 0),
         knowledge_provider=knowledge_provider,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def beat_input_field_names() -> Tuple[str, ...]:

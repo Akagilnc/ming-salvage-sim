@@ -1,0 +1,366 @@
+
+/* 组间细金竖线分隔 */
+
+.budget-hover {
+  overflow: visible;
+}
+
+.legacy-bar {
+  position: fixed;
+  top: 70px;
+  left: 8px;
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 13px;
+  background: rgba(232, 224, 205, 0.95);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(5px);
+  cursor: pointer;
+}
+
+.situation-panel.with-legacies {
+  top: 106px;
+}
+
+
+
+.legacy-bar:hover {
+  background: rgba(240, 233, 216, 1);
+}
+
+.legacy-bar-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--gold-soft);
+  letter-spacing: 0.05em;
+}
+
+.legacy-bar-count {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #1a1410;
+}
+
+.legacy-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.legacy-modal {
+  width: min(440px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #efe8d6;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  color: #1a1410;
+}
+
+.legacy-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.legacy-modal-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--gold-soft);
+}
+
+.legacy-modal-close {
+  border: 0;
+  background: transparent;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #555;
+}
+
+.legacy-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+}
+
+.legacy-item {
+  padding: 10px 16px;
+  border-left: 3px solid var(--gold-soft);
+}
+
+.legacy-item + .legacy-item { border-top: 1px solid rgba(0, 0, 0, 0.06); }
+
+.legacy-item-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.legacy-item-top b {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.legacy-item-meta {
+  display: inline-flex;
+  gap: 8px;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.legacy-item-eff {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: #4a4039;
+  line-height: 1.4;
+}
+.legacy-item-dur { color: #777; }
+
+.legacy-item-clear {
+  margin: 5px 0 0;
+  font-size: 0.78rem;
+  color: #6b2f24;
+  line-height: 1.4;
+}
+
+.legacy-item-hint {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: #4a4039;
+  line-height: 1.4;
+}
+
+
+
+
+
+
+.status-money {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: #1a1410;
+  background: transparent;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+
+.budget-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 7px;
+}
+
+.budget-trigger > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.05;
+}
+
+.budget-trigger small {
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.budget-trigger small.income {
+  color: #6fd095;
+}
+
+.budget-trigger small.expense {
+  color: #ef8b72;
+}
+
+.budget-hover {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.budget-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 9000;
+  display: grid;
+  gap: 6px;
+  width: min(309px, calc(100vw - 24px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding: 8px;
+  transform: translateY(-2px);
+  border: 1px solid rgba(120, 80, 30, 0.6);
+  border-radius: 4px;
+  color: #2a1c0c;
+  background: #f2e2b4;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  font-size: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.budget-hover:hover .budget-popover,
+.budget-hover:focus-within .budget-popover,
+.budget-hover.open .budget-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Portal 到 body 的预算浮框：fixed 定位脱离 hud2-stage transform，文字清晰、z 顶、盖一切 */
+.budget-popover-portal {
+  position: fixed;
+  z-index: 9999;
+  opacity: 1;
+  pointer-events: auto;
+  /* transform 保 !important：situation.css ≤820px 媒体查询里 .budget-popover 平级选择器
+     有 translateY(-2px)，同优先级后来者居上会顶掉 none。 */
+  transform: none !important;
+  background: #f2e2b4;
+}
+
+.budget-popover-head {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(111, 83, 46, 0.16);
+}
+
+.budget-popover-head b {
+  color: #57361e;
+  font-size: 17px;
+  line-height: 1.05;
+}
+
+.budget-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.budget-summary span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid rgba(111, 83, 46, 0.12);
+  border-radius: 3px;
+  background: rgba(255, 248, 219, 0.38);
+}
+
+.budget-summary small {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.budget-summary strong {
+  font-size: 18px;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.budget-list {
+  display: grid;
+  gap: 3px;
+}
+
+.budget-list-title {
+  color: #704c1e;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.budget-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  padding: 2px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(111, 83, 46, 0.11);
+  border-radius: 0;
+  background: transparent;
+}
+
+.budget-row span {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.budget-row b {
+  color: var(--paper);
+  font-size: 16px;
+  line-height: 1.05;
+}
+
+.budget-row small {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.05;
+}
+
+.budget-row strong {
+  font-size: 16px;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.budget-row strong.income {
+  color: #2f7651;
+}
+
+.budget-row strong.expense {
+  color: #a64036;
+}
+
+.budget-summary strong.income {
+  color: #2f7651;
+}
+
+.budget-summary strong.expense {
+  color: #a64036;
+}
+
+.status-money b {
+  color: #1a1410;
+}
+
+
+
+
+
+/* 民心/皇威 按好坏淡染底色，扫一眼可辨 */
+
+
+
+
+
+
+
+

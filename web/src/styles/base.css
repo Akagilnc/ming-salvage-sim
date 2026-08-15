@@ -1,0 +1,124 @@
+:root {
+  color-scheme: light;
+  font-family:
+    "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-brush: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-size: 19px;
+  line-height: 1.5;
+  color: #1a1410;
+  background: #1c211d;
+  --panel: rgba(239, 222, 177, 0.92);
+  --panel-strong: rgba(249, 236, 196, 0.98);
+  --border: rgba(74, 45, 20, 0.42);
+  --gold: #d2a34a;
+  --gold-soft: #8a6424;
+  --red: #8f2f25;
+  --jade: #315d47;
+  --blue: #39596a;
+  --paper: #26190f;
+  --muted: #725f42;
+  --ink: #21180f;
+  --cinnabar: #9e3429;
+  --hud: #272018;
+  --hud-deep: #14120f;
+  --hud-line: rgba(226, 180, 86, 0.34);
+  --shadow: 0 22px 54px rgba(24, 18, 11, 0.38);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.grand-map,
+.map-strip,
+button,
+[role="button"] {
+  user-select: none;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-weight: 700;
+}
+
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* 毛笔字体：标题、品牌名、印章/卷轴说明 */
+h1,
+h2,
+h3,
+.modal-title h1,
+.drawer-brand strong {
+  font-family: var(--font-brush);
+  letter-spacing: 0.04em;
+}
+
+button:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--gold-soft);
+  outline-offset: 2px;
+}
+
+.game-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 56% 40%, rgba(213, 187, 115, 0.18), transparent 30%),
+    linear-gradient(145deg, #222a23 0%, #12130f 100%);
+}
+
+.game-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at center, transparent 48%, rgba(8, 9, 7, 0.32) 100%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22), transparent 14%, transparent 86%, rgba(0, 0, 0, 0.24));
+}
+
+.loading-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  background:
+    radial-gradient(circle at 52% 42%, rgba(125, 152, 115, 0.26), transparent 42%),
+    linear-gradient(135deg, #fff8e8, #e6d6b9 58%, #d9e1d1);
+}
+
+.loading-panel {
+  display: grid;
+  gap: 14px;
+  place-items: center;
+  min-width: 260px;
+  padding: 26px 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--gold-soft);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+}
+
