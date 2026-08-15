@@ -1,0 +1,560 @@
+/* ===== 背景图素材接入 ===== */
+
+/* 弹窗背景：背景图铺满，去掉 .fullscreen-modal 的深色渐变 */
+.modal-bg-state,
+.modal-bg-chat,
+.modal-bg-edict {
+  background-color: #f4ecd8;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.modal-bg-state {
+  background-image: url("/bg_state.png");
+}
+
+.modal-bg-chat {
+  background: rgba(244, 237, 221, 0.86);
+}
+
+.modal-bg-edict {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+
+/* 弹窗内所有元素背景一律透明（通配），文字直贴背景图 */
+.modal-bg-state *,
+.modal-bg-chat *,
+.modal-bg-edict * {
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* 文字承载块加半透明白底，背景图太花时字看得清 */
+.modal-bg-state .document-section {
+  background: rgba(252, 249, 240, 0.5);
+  border-radius: 6px;
+}
+
+/* 大臣奏对 + 奏疏：白底 80% */
+.modal-bg-chat .chat-message:not(.aside),
+.modal-bg-chat .chat-system-note,
+.modal-bg-chat .modal-pane,
+.modal-bg-edict .modal-pane {
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+}
+
+/* 诏书台：恢复笺纸卡 / 朱批待定框 / 明黄卷轴质感（通配透明的例外） */
+.modal-bg-edict .directive-item {
+  background:
+    linear-gradient(90deg, rgba(120, 86, 42, 0.10), transparent 22px),
+    rgba(250, 242, 219, 0.82);
+  border-radius: 3px;
+}
+.modal-bg-edict .directive-item.pending {
+  background:
+    linear-gradient(95deg, rgba(176, 58, 40, 0.12), transparent 55%),
+    rgba(252, 244, 222, 0.86);
+}
+.modal-bg-edict .pending-directives {
+  background:
+    linear-gradient(180deg, rgba(176, 58, 40, 0.10), rgba(176, 58, 40, 0.04));
+}
+.modal-bg-edict .decree-scroll-paper {
+  background:
+    repeating-linear-gradient(90deg, rgba(150, 36, 28, 0.05) 0 1px, transparent 1px 34px),
+    linear-gradient(180deg, #f6e6b0, #f0d894);
+  box-shadow: inset 0 0 40px rgba(150, 90, 20, 0.18);
+}
+.modal-bg-edict .decree-scroll-knob {
+  background: linear-gradient(180deg, #6e4a22, #3f2a12);
+  box-shadow: 0 2px 6px rgba(40, 24, 8, 0.4);
+}
+
+
+/* 弹窗标题栏：透明、大字居中、无深色底 */
+.modal-bg-state .modal-header,
+.modal-bg-chat .modal-header,
+.modal-bg-edict .modal-header {
+  justify-content: center;
+  min-height: 78px;
+  border-bottom: 1px solid rgba(255, 232, 170, 0.18);
+}
+
+.modal-bg-state .modal-title,
+.modal-bg-chat .modal-title,
+.modal-bg-edict .modal-title {
+  text-align: center;
+}
+
+.modal-bg-state .modal-title > div,
+.modal-bg-chat .modal-title > div,
+.modal-bg-edict .modal-title > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.modal-bg-state .modal-title h1,
+.modal-bg-chat .modal-title h1,
+.modal-bg-edict .modal-title h1 {
+  color: #ffffff;
+  font-size: 1.7rem;
+  font-weight: 700;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.modal-bg-state .modal-title span,
+.modal-bg-chat .modal-title span,
+.modal-bg-edict .modal-title span {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.92rem;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.modal-bg-state .modal-header .icon-button,
+.modal-bg-chat .modal-header .icon-button,
+.modal-bg-edict .modal-header .icon-button {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  border-radius: 8px;
+  color: #1a1410;
+  background: rgba(255, 250, 235, 0.85);
+}
+
+.modal-bg-state .modal-header .icon-button:hover,
+.modal-bg-chat .modal-header .icon-button:hover,
+.modal-bg-edict .modal-header .icon-button:hover {
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
+}
+
+.modal-bg-state .modal-header .icon-button svg,
+.modal-bg-chat .modal-header .icon-button svg,
+.modal-bg-edict .modal-header .icon-button svg {
+  width: 28px;
+  height: 28px;
+}
+
+/* 例外：必须保留底色的交互元素 —— 输入框、徽章、进度条 */
+.modal-bg-state textarea,
+.modal-bg-chat textarea,
+.modal-bg-edict textarea {
+  background: rgba(255, 241, 208, 0.92);
+}
+
+
+.modal-bg-state .issue-progress div,
+.modal-bg-state .issue-progress i {
+  background: rgba(20, 16, 11, 0.5);
+}
+
+.modal-bg-state .issue-line.good .issue-progress i,
+.modal-bg-state .issue-line.warn .issue-progress i,
+.modal-bg-state .issue-line.danger .issue-progress i,
+.modal-bg-state .issue-progress i {
+  background: linear-gradient(90deg, #a64036, #b7852c 48%, #3f7a61);
+}
+
+/* 透明后保留极淡分隔边 */
+.modal-bg-state .modal-pane,
+.modal-bg-edict .modal-pane,
+.modal-bg-edict .directive-item {
+  border-color: rgba(255, 232, 170, 0.22);
+}
+
+/* 大臣奏对白底：边线用浅灰，看得见；aside 保留自己的虚线与边色。 */
+.modal-bg-chat .modal-pane,
+.modal-bg-chat .chat-message:not(.aside) {
+  border-color: rgba(74, 45, 20, 0.18);
+}
+
+/* 浅色背景图上文字一律黑色 */
+.modal-bg-state,
+.modal-bg-chat,
+.modal-bg-edict,
+.modal-bg-state *,
+.modal-bg-chat *,
+.modal-bg-edict * {
+  color: #1a1410;
+}
+
+/* 标题用稍深的墨色 */
+.modal-bg-state h1,
+.modal-bg-state h2,
+.modal-bg-state h3,
+.modal-bg-chat h1,
+.modal-bg-chat h2,
+.modal-bg-edict h1,
+.modal-bg-edict h2 {
+  color: #0e0a06;
+}
+
+/* 深色底的徽章/主按钮文字保持浅色 */
+.modal-bg-state .primary-action {
+  color: #ffe4b0;
+}
+
+/* 改/删/新增/存改/返工：墨字宣纸底 */
+.modal-bg-edict .directive-tools button,
+.modal-bg-edict .desk-add-btn,
+.modal-bg-edict .seal-btn-ghost,
+.modal-bg-edict .seal-btn-save {
+  color: #2a1c0e;
+  background: rgba(252, 247, 232, 0.92);
+  border: 1px solid rgba(120, 86, 42, 0.4);
+  font-weight: 700;
+}
+
+.modal-bg-edict .directive-tools button:hover,
+.modal-bg-edict .desk-add-btn:hover,
+.modal-bg-edict .seal-btn-ghost:hover,
+.modal-bg-edict .seal-btn-save:hover {
+  background: rgba(255, 240, 210, 0.96);
+}
+
+/* 朱批·准：朱砂红实底 */
+.modal-bg-edict .directive-tools .vermilion-yes {
+  background: linear-gradient(180deg, #c0432f, #8a261b);
+  color: #ffe9d8;
+  border-color: rgba(150, 36, 28, 0.6);
+}
+.modal-bg-edict .directive-tools .vermilion-yes:hover {
+  background: linear-gradient(180deg, #d24c36, #9a2c1f);
+}
+
+/* 朱批·驳：朱砂红描边 */
+.modal-bg-edict .directive-tools .vermilion-no {
+  background: rgba(252, 244, 236, 0.9);
+  color: #9a2c1f;
+  border: 1px solid rgba(150, 36, 28, 0.7);
+}
+.modal-bg-edict .directive-tools .vermilion-no:hover {
+  background: rgba(176, 58, 40, 0.14);
+}
+
+/* 拟诏 / 盖玺颁布：玉玺红大钮 */
+.modal-bg-edict .seal-btn-compose,
+.modal-bg-edict .seal-btn-issue {
+  background: linear-gradient(180deg, #9c392c, #561f19);
+  color: #ffe4b0;
+  border: 1px solid rgba(226, 180, 86, 0.5);
+  box-shadow: 0 3px 10px rgba(86, 31, 25, 0.35);
+}
+.modal-bg-edict .seal-btn-compose:hover,
+.modal-bg-edict .seal-btn-issue:hover {
+  background: linear-gradient(180deg, #b2402f, #6a261d);
+}
+
+.modal-bg-edict .directive-tools button:disabled,
+.modal-bg-edict .desk-add-btn:disabled,
+.modal-bg-edict .seal-btn-ghost:disabled,
+.modal-bg-edict .seal-btn-save:disabled,
+.modal-bg-edict .seal-btn-compose:disabled,
+.modal-bg-edict .seal-btn-issue:disabled {
+  opacity: 0.5;
+}
+
+/* 召对发送 / 退出 / 离开等待按钮：黑字白底 */
+.modal-bg-chat .composer-actions .primary-action,
+.modal-bg-chat .composer-actions .composer-undo,
+.modal-bg-chat .composer-actions .composer-exit,
+.modal-bg-chat .composer-actions .composer-cancel {
+  color: #1a1410;
+  background: rgba(252, 249, 240, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  font-weight: 700;
+}
+
+.modal-bg-chat .composer-actions .primary-action:hover {
+  background: rgba(255, 235, 190, 0.96);
+}
+
+.modal-bg-chat .composer-actions .composer-undo:hover:not(:disabled) {
+  background: rgba(255, 235, 190, 0.96);
+}
+
+.modal-bg-chat .composer-actions .composer-undo:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.modal-bg-chat .composer-actions .composer-cancel:hover {
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
+}
+
+.modal-bg-chat .composer-actions .composer-exit:hover {
+  background: rgba(158, 42, 43, 0.92);
+  color: #ffe4b0;
+}
+
+/* 聊天气泡细边：通配年代实际生效的是上面的浅灰边（border-color important），
+   原来的主/客双色边是死规则——摘除 important 后合并回浅灰，避免死规则复活变色。
+   aside 排除：保留 chat.css 虚线边。 */
+.modal-bg-chat .chat-message:not(.aside) {
+  border: 1px solid rgba(74, 45, 20, 0.18);
+}
+
+/* 通配平级化的补偿例外：以下组件规则（chat.css 米色钮 / secret-order.css 深底密令卡）
+   在通配 important 年代被压住，如今会透出——显式写回通配年代的观感（透明底、墨字）。 */
+.modal-bg-chat .hitl-bar button {
+  background: transparent;
+  color: #1a1410;
+}
+.modal-bg-chat .hitl-bar button:hover {
+  background: transparent;
+}
+.modal-bg-chat .secret-order-item {
+  background: transparent;
+}
+.modal-bg-chat .secret-orders-label,
+.modal-bg-chat .secret-order-title,
+.modal-bg-chat .secret-order-meta,
+.modal-bg-chat .secret-order-content {
+  color: #1a1410;
+}
+/* 聊天气泡正文/署名（chat.css 0-1-1 元素选择器会赢平级通配）：写回通配年代墨字 */
+.modal-bg-chat .chat-message span,
+.modal-bg-chat .chat-message p {
+  color: #1a1410;
+}
+/* 失败/警告系统条（chat.css .danger 0-2-0）：写回通配年代墨字透明底 */
+.modal-bg-chat .chat-system-note.danger {
+  color: #1a1410;
+  background: transparent;
+}
+
+/* 终章弹窗：整层盖掉 bg_state.png 黄底，统一深墨色（含顶栏）*/
+.fullscreen-modal.modal-bg-ending {
+  background:
+    linear-gradient(180deg, rgba(22, 14, 10, 0.96), rgba(16, 11, 8, 0.98)),
+    url("/bg_ending.webp") center / cover no-repeat;
+}
+
+/* 顶栏标题改浅金，配深底 */
+.modal-bg-ending .modal-title h1 {
+  color: #f0c98a;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+}
+
+.modal-bg-ending .modal-title span {
+  color: #c9a86f;
+}
+
+.modal-bg-ending .modal-header {
+  border-bottom-color: rgba(201, 162, 92, 0.2);
+}
+
+/* 覆盖 .modal-bg-state * 的「文字一律深墨」通配 —— 深底必须浅色字 */
+.modal-bg-ending .ending-document,
+.modal-bg-ending .ending-hero-copy p,
+.modal-bg-ending .ending-section-kicker {
+  color: #d6a85c;
+}
+.modal-bg-ending .ending-hero-copy h2 { color: #f0c98a; }
+.modal-bg-ending .ending-hero-copy span { color: #b98f63; }
+.modal-bg-ending .ending-summary-text { color: #e8a07f; }
+.modal-bg-ending .ending-timeline-date { color: #f0c98a; }
+.modal-bg-ending .ending-timeline-date span { color: #a98c69; }
+.modal-bg-ending .ending-timeline-chapter { color: #e0563f; }
+.modal-bg-ending .ending-timeline-decree { color: #c9a572; }
+.modal-bg-ending .ending-timeline-effect { color: #9ec7aa; }
+
+/* 终章弹窗：覆盖 .modal-bg-state * 的透明通配，恢复深色国史馆样式 */
+.modal-bg-ending .ending-document {
+  background:
+    radial-gradient(130% 100% at 50% -8%, rgba(150, 44, 32, 0.30), transparent 56%),
+    radial-gradient(100% 80% at 50% 110%, rgba(80, 22, 16, 0.22), transparent 60%),
+    linear-gradient(180deg, rgba(21, 13, 9, 0.92), rgba(13, 9, 7, 0.96)),
+    url("/bg_ending.webp") center / cover no-repeat;
+}
+
+.modal-bg-ending .ending-hero {
+  background: linear-gradient(135deg, #3a2117, #241410);
+  border-color: rgba(201, 162, 92, 0.4);
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 232, 190, 0.12);
+}
+
+.modal-bg-ending .ending-seal {
+  background: radial-gradient(circle, rgba(170, 44, 32, 0.7), rgba(50, 22, 16, 0.4));
+  border-color: #c23a2a;
+  color: #f0c98a;
+  box-shadow: 0 0 26px rgba(190, 60, 40, 0.4), inset 0 0 16px rgba(0, 0, 0, 0.5);
+}
+
+.modal-bg-ending .ending-verdict-card,
+.modal-bg-ending .ending-chronicle {
+  background: linear-gradient(135deg, #2a1c14, #1a120d);
+  border-color: rgba(214, 168, 96, 0.3);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 232, 190, 0.08);
+}
+
+.modal-bg-ending .ending-timeline-body {
+  background: transparent;
+  border-color: transparent;
+}
+
+.modal-bg-ending .ending-timeline-item::after {
+  background: #c23a2a;
+}
+
+/* 朝堂抽屉背景 */
+.court-drawer {
+  background-image: url("/bg_chat.webp");
+  background-size: cover;
+  background-position: center;
+}
+
+/* 后宫独立弹窗背景：寝宫风格 */
+.harem-drawer {
+  background-image: url("/bg_harem.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* 后宫弹窗文字：浅暖色 + 阴影，深底看得清。
+   双类选择器（0-2-0）代替 !important：须压过 court.css 的 0-1-1 元素规则
+   （.drawer-brand strong/span、.segmented button），又保证下面更具体的覆盖仍生效。 */
+.harem-drawer,
+.harem-drawer.harem-drawer * {
+  color: #f3e2c4;
+  font-weight: 700;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85);
+}
+
+.harem-drawer .panel-title,
+.harem-drawer .minister-name {
+  color: #ffd9a0;
+  font-weight: 700;
+}
+
+.harem-drawer .minister-bio {
+  font-weight: 700;
+  color: #f0dcc0;
+}
+
+.harem-drawer .segmented button.active,
+.harem-drawer .segmented button:hover {
+  color: #f9e0aa;
+}
+
+/* 朝堂全屏沉浸模式文字 */
+.court-drawer .panel-title,
+.court-drawer .drawer-brand span {
+  color: #ffe8a0;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+}
+
+/* 后宫抽屉也带 court-drawer 类（标题命中上条）；但通配年代其标题阴影被后宫通配的
+   important 定成 5px/0.85——用更高优先级写回，避免摘平后渲染变化。 */
+.harem-drawer.harem-drawer .panel-title,
+.harem-drawer.harem-drawer .drawer-brand span {
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.85);
+}
+
+.court-drawer .icon-button {
+  color: #ffe8a0;
+  background: rgba(0,0,0,0.35);
+  border-radius: 50%;
+}
+
+.court-drawer .segmented {
+  background: rgba(20,10,0,0.55);
+  border-color: rgba(255,200,80,0.3);
+  backdrop-filter: blur(4px);
+}
+
+.court-drawer .segmented button {
+  color: rgba(255,220,140,0.75);
+}
+
+.court-drawer .segmented button.active,
+.court-drawer .segmented button:hover {
+  color: #ffe8a0;
+  background: rgba(143,47,37,0.75);
+}
+
+/* 地图详情小面板背景 */
+.map-intel-panel {
+  background-image: url("/bg_node.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* 加载页背景 */
+.loading-screen {
+  background-image: url("/bg_loading.jpg");
+  background-size: cover;
+  background-position: center;
+}
+
+/* #539 单卷轴 scene：无气泡通栏；divider 保持柔和且可继续上滚回读。 */
+.modal-bg-chat .chat-message.scene {
+  align-self: stretch;
+  width: 100%;
+  max-width: 100%;
+  display: block;
+  margin: 10px 0;
+  padding: 4px 6px;
+  text-align: left;
+  color: rgba(224, 211, 181, 0.72);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.modal-bg-chat .chat-message.scene p {
+  color: #7a6a4d;
+  font-style: normal;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.chat-message.scene hr {
+  width: 58%;
+  border: 0;
+  border-top: 1px solid rgba(196, 164, 99, 0.35);
+}
+
+.scene-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.scene-divider hr {
+  margin: 0;
+}
+
+.scene-divider strong,
+.audience-type-label {
+  color: rgba(196, 164, 99, 0.78);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+
+.audience-type-label {
+  align-self: center;
+  padding: 3px 12px;
+  border: 1px solid rgba(196, 164, 99, 0.28);
+  border-radius: 999px;
+}
+

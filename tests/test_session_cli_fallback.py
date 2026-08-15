@@ -47,8 +47,14 @@ def test_non_streaming_path_surfaces_pending_action_id(game, monkeypatch):
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
     result = _result()
     result.answer = "臣领旨，已记改。"
+    # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
     _session(db, state)._cli_backend_fallback_actions(
-        result, SimpleNamespace(name=who, office_type="兵部"), "改一下要旨")
+        result, SimpleNamespace(name=who, office_type="兵部"), "改一下要旨",
+        preclassified_intent={
+            "kind": "secret", "secret_action": "更新", "order_id": oid,
+            "new_title": "改", "new_content": "改", "deadline_months": 0,
+            "cultivate_skill": "", "cultivate_trait": "",
+        })
     assert result.pending_action_id        # 非流式也回传 staged 信号
     assert result.secret_order_id is None  # 暂存不当场落库
 
@@ -2436,6 +2442,7 @@ def test_non_parallel_safe_chat_serially_classifies_new_actions(
         calls.append("classify")
         return classified
 
+    # 串行分类契约：只替 classifier；后置物化 extract 用返回值 stub，禁 blanket patch runner/真 subprocess。
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     monkeypatch.setattr(
         cb,
@@ -2448,6 +2455,15 @@ def test_non_parallel_safe_chat_serially_classifies_new_actions(
             "deadline_months": 0,
             "excluded_names": [],
             "excluded_offices": [],
+        },
+    )
+    monkeypatch.setattr(
+        cb,
+        "extract_draft_intent",
+        lambda *a, **k: {
+            "draft_action": "拟旨",
+            "draft_text": "臣已拟妥，伏候圣裁。",
+            "target_candidate": "",
         },
     )
 
@@ -2753,10 +2769,16 @@ def test_conversation_update_lands_via_session_path(game, monkeypatch):
         "new_content": "改后内容", "deadline_months": 0,
         "cultivate_skill": "", "cultivate_trait": ""})
     s = _session(db, state, registry=SimpleNamespace(refresh=lambda n: None))
+    # 非 classifier 契约：preclassified_intent 跳过 serial classify，禁真 subprocess。
     res = s.apply_cli_conversation_actions(
         SimpleNamespace(name=who, office_type="兵部"),
         "你那道密令改一下，内容换成……", "臣领旨，已记改。",
         has_directive=False, secret_order_id=None,
+        preclassified_intent={
+            "kind": "secret", "secret_action": "更新", "order_id": oid,
+            "new_title": "改后标题", "new_content": "改后内容", "deadline_months": 0,
+            "cultivate_skill": "", "cultivate_trait": "",
+        },
     )
     # 召对当场：进暂存、不报"已交付"、真实表不动
     assert res["secret_order_id"] is None
@@ -2788,9 +2810,15 @@ def test_secret_conversation_actions_persist_complete_minister_reply(
     reply = "臣已逐册查核。" + "甲乙丙丁戊己庚辛壬癸" * 30 + "末尾凭据完整。"
     session = _session(db, state, registry=SimpleNamespace(refresh=lambda _name: None))
 
+    # 非 classifier 契约：显式 candidate，避免 agy serial classify 真 subprocess。
     result = session.apply_cli_conversation_actions(
         SimpleNamespace(name=who, office_type="兵部"), action, reply,
         has_directive=False, secret_order_id=None,
+        preclassified_intent={
+            "kind": "secret", "secret_action": action, "order_id": oid,
+            "new_title": "", "new_content": "", "deadline_months": 0,
+            "cultivate_skill": "", "cultivate_trait": "",
+        },
     )
 
     row = db.conn.execute(
@@ -2914,9 +2942,15 @@ def test_conversation_rush_skips_pending_review(game, monkeypatch):
         "secret_action": "催办", "order_id": oid, "new_title": "", "new_content": "",
         "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": ""})
     s = _session(db, state, registry=None)
+    # 非 classifier 契约：显式 candidate，禁止 serial classify → 真 subprocess。
     res = s.apply_cli_conversation_actions(
         SimpleNamespace(name=who, office_type="兵部"),
         "那事催一下", "臣加紧。", has_directive=False, secret_order_id=None,
+        preclassified_intent={
+            "kind": "secret", "secret_action": "催办", "order_id": oid,
+            "new_title": "", "new_content": "", "deadline_months": 0,
+            "cultivate_skill": "", "cultivate_trait": "",
+        },
     )
     assert res["secret_order_id"] is None        # pending_review 不被催办，不抛错
     row = db.conn.execute("SELECT status FROM secret_orders WHERE id=?", (oid,)).fetchone()

@@ -212,7 +212,7 @@ def test_public_resolve_seam_rejects_rejected_verdict_without_affected_parties(g
 
 
 @pytest.mark.parametrize("contamination", [
-    {"affected_parties": [{"kind": "faction", "key": "不存在", "severity": "不满"}]},
+    {"affected_parties": [{"kind": "faction", "key": "不存在", "direction": "negative", "intensity": "weak"}]},
     {"legal_reason_code": "statute-42"},
     {"legal_reason_code": 0},
     {"legal_reason_code": False},
