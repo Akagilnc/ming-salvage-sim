@@ -100,7 +100,17 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     assert "province_pay_arrears" not in entry
     assert "central_pay_arrears" not in entry
 
-    # --- Mechanical exit consumption via tracer + sentinel mutation ---
+    # --- Mechanical exit consumption via tracer + non-copy band sentinel ---
+    # Replace the shared band renderer so exits prove consumption without pinning
+    # free Chinese presentation words (CLAUDE.md #13 / r4: no exact copy pins).
+    import ming_sim.db as dbmod
+
+    def _install_band_label_sentinel() -> None:
+        def _label(field: str, band: object) -> str:
+            return f"XBAND_{field}_{band}"
+
+        monkeypatch.setattr(dbmod, "_army_stat_label", _label)
+
     def _install_army_tracer(mutate: bool = False) -> List[Dict[str, Any]]:
         calls: List[Dict[str, Any]] = []
         original: Callable[..., Dict[str, object]] = db.army_public_payload
@@ -116,7 +126,7 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
                 for a in out["armies"]:
                     if a["id"] == row["id"]:
                         a["name"] = f"ZTRACE_{a['name']}"
-                        # Force a distinct band label path: steady→firm so exit text shifts.
+                        # Distinct structural band ids; exit must echo label sentinel.
                         a["loyalty_band"] = "firm"
                         a["firearm_equipment_band"] = "critical"
             calls.append(
@@ -132,6 +142,7 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
         return calls
 
     # army_detail: must call projection with rows= slice and consume band fields.
+    _install_band_label_sentinel()
     detail_calls = _install_army_tracer(mutate=True)
     detail = db.army_detail(row["name"])
     assert len(detail_calls) == 1, "army_detail must call army_public_payload"
@@ -141,8 +152,9 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     assert d_entry["loyalty_band"] == "firm"
     assert d_entry["firearm_equipment_band"] == "critical"
     assert d_entry["name"] in detail
-    assert "忠诚：稳固" in detail  # firm sentinel rendered from projection
-    assert "火器：残破" in detail  # critical firearm band → equipment word
+    # Renderer sentinel tokens prove loyalty/firearm bands reached the real exit.
+    assert "XBAND_loyalty_firm" in detail
+    assert "XBAND_equipment_critical" in detail  # firearm uses equipment label axis
     # Raw abstract scores must not leak as bare ints on detail (band path).
     assert "73" not in detail
     assert "55" not in detail
@@ -150,6 +162,7 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
 
     # army_report: must call full projection (no rows=) and consume name/bands.
     monkeypatch.undo()
+    _install_band_label_sentinel()
     report_calls = _install_army_tracer(mutate=True)
     report = db.army_report(limit=20)
     assert len(report_calls) == 1, "army_report must call army_public_payload"
@@ -159,7 +172,7 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     )
     assert r_entry["name"] in report
     assert r_entry["firearm_equipment_band"] == "critical"
-    assert "火器：残破" in report  # report consumes firearm band from projection
+    assert "XBAND_equipment_critical" in report  # firearm band consumed via renderer
 
     # army_roster: must call projection with rows=; consumes arrears/name structure.
     monkeypatch.undo()
