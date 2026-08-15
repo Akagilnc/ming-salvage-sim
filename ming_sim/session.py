@@ -677,6 +677,15 @@ class GameSession:
         self.content = content if content is not None else GameContent.load()
         _bind_all_content(self.content)
         self.llm_config = llm_config
+        from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
+        from ming_sim.cli_backend import cli_backend_parallel_safe
+        self._beat_generator = create_llm_beat_generator(llm_config)
+        # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
+        # Reuse cli_backend_parallel_safe — no dedicated scene executor (C6 rejected).
+        self._scene_registry = ChatTurnSceneRegistry(
+            _CLI_ACTION_INTENT_EXECUTOR,
+            parallel_safe=cli_backend_parallel_safe(llm_config),
+        )
         if verify_llm:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
@@ -1025,6 +1034,83 @@ class GameSession:
             return [cand]
         return candidates
 
+    def start_chat_turn_scene(self, minister_name: str, chat_turn_id: int) -> None:
+        """委托编排层启动本轮 open/enter scene（与回话并行，join 后原子落账）。"""
+        self._scene_registry.start_open_enter(
+            self.db, self.state,
+            minister_name=minister_name,
+            chat_turn_id=int(chat_turn_id or 0),
+            beat_generator=self._beat_generator,
+        )
+
+    def start_chat_turn_exit_scene(
+        self, person_name: str, chat_turn_id: int, entry_id: int, *,
+        night_id: int = 0,
+    ) -> None:
+        """令退垫位账已落后，登记 exit 生成进本轮同一 scene registry。"""
+        if not night_id and chat_turn_id:
+            row = self.db.conn.execute(
+                "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
+            ).fetchone()
+            night_id = int(row["night_id"] or 0) if row is not None else 0
+        self._scene_registry.start_exit(
+            self.db, self.state,
+            person_name=person_name,
+            chat_turn_id=int(chat_turn_id or 0),
+            entry_id=int(entry_id or 0),
+            night_id=int(night_id or 0),
+            beat_generator=self._beat_generator,
+        )
+
+    def start_exit_scene_from_dismiss_tools(
+        self,
+        person_name: str,
+        chat_turn_id: int,
+        tools: Any,
+    ) -> bool:
+        """tools 契约已含 dismiss 时立刻落垫位；有 chat_turn_id 则登记本轮 exit（#542）。
+
+        在仍可与回话流 / action_intent / open-enter 重叠的最早可知点调用。
+        幂等：人已不在场时 dismiss_from_audience 返 None，不重复 start_exit。
+        chat_turn_id=0 仍落告退账（#500 名单即时去人），只是不进 scene registry。
+        返回是否新登记了 exit。
+        """
+        if not hasattr(self.db, "conn"):
+            return False
+        has_dismiss = False
+        for tool_exec in tools or []:
+            tool_name = getattr(tool_exec, "tool_name", "") or ""
+            tool_result = str(getattr(tool_exec, "result", "") or "")
+            if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
+                has_dismiss = True
+                break
+        if not has_dismiss:
+            return False
+        from ming_sim.audience_night import dismiss_from_audience
+        entry_id = dismiss_from_audience(
+            self.db, person_name, origin_chat_turn_id=int(chat_turn_id or 0),
+            state=self.state,
+        )
+        if not entry_id or not chat_turn_id:
+            return False
+        self.start_chat_turn_exit_scene(
+            person_name, int(chat_turn_id), int(entry_id),
+        )
+        return True
+
+    def join_chat_turn_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
+        """委托编排层等待本轮 scene；调用方在短事务内 persist。"""
+        return self._scene_registry.join(int(chat_turn_id or 0))
+
+    def persist_chat_turn_scene(self, generated: list[tuple[int, str]]) -> None:
+        """委托编排层短写已 join 的 scene 正文。"""
+        from ming_sim.beat_orchestration import persist_chat_turn_scene as _persist
+        _persist(self.db, generated)
+
+    def abandon_chat_turn_scene(self, chat_turn_id: int) -> None:
+        """委托编排层排空本轮 scene（cancel 或 join drain，不落库）。"""
+        self._scene_registry.abandon(int(chat_turn_id or 0))
+
     def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
@@ -1058,6 +1144,12 @@ class GameSession:
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
         result = ChatTurnResult(answer=answer)
+        # #542：run_output.tools 已含 dismiss → 立刻 start_exit，与仍在飞的
+        # action_intent 和/或本轮 open/enter 重叠；不得等 finish action_intent。
+        self.start_exit_scene_from_dismiss_tools(
+            character.name, int(chat_turn_id or 0),
+            getattr(run_output, "tools", None) or [],
+        )
         preexisting_pending_action_ids = {
             int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
         }
@@ -1076,15 +1168,11 @@ class GameSession:
             tool_result = str(getattr(tool_exec, "result", "") or "")
             if tool_name == "dismiss_minister" or tool_result == "__dismiss__":
                 result.court_action = "dismiss"
-                # AC1（#500）：令退在此单缝落确定性告退账，一切经 session.chat 的消费者
-                # （CLI 召对 / 非流式 web /api/ministers/{name}/chat）自动闭合，名单查询即时去人；
-                # 不在场/无开夜时既有 no-op。stream 路 tool 环另处同调 dismiss_from_audience。
-                if hasattr(self.db, "conn"):
-                    from ming_sim.audience_night import dismiss_from_audience
-                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
-                    dismiss_from_audience(
-                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
-                    )
+                # AC1（#500）：令退单缝；垫位+exit 已在 tools 可知时启动（上），
+                # 此处再调 start_exit_scene_from_dismiss_tools 幂等（人已退 → no-op）。
+                self.start_exit_scene_from_dismiss_tools(
+                    character.name, int(chat_turn_id or 0), [tool_exec],
+                )
             elif tool_name == "summon_minister" or tool_result.startswith("__summon__"):
                 next_name = tool_result.removeprefix("__summon__").strip()
                 if next_name not in self.content.characters:
@@ -2267,8 +2355,7 @@ class GameSession:
         # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
         # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
         from ming_sim.audience_night import auto_close_open_night
-        from ming_sim.beat_orchestration import production_beat_generator
-        # #503：收夜 beat 生产路径接通编排缝（与 attach 入殿同 generator）。
+        # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         # Close-night owns short write sections + gate-free endorsement LLM.
         # Web callers must invoke auto_close outside any outer runtime write gate
         # (see web_app issue/stream/no-edict) so this is typically already-closed.
@@ -2278,9 +2365,10 @@ class GameSession:
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
-            beat_generator=production_beat_generator,
+            beat_generator=self._beat_generator,
             llm_config=getattr(self, "llm_config", None),
             write_gate=None,
+            scene_registry=self._scene_registry,
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
@@ -2345,6 +2433,7 @@ class GameSession:
             on_event=on_event,
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
+            scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
         if result.awaiting:
@@ -2455,6 +2544,7 @@ class GameSession:
             registry=getattr(self, "registry", None),
             llm_config=getattr(self, "llm_config", None),
             write_gate=None,
+            scene_registry=self._scene_registry,
         )
         if not advanced:
             return self.resolve_turn()
@@ -2489,4 +2579,6 @@ class GameSession:
             return None
 
     def close(self) -> None:
+        for chat_turn_id in self._scene_registry.active_turn_ids():
+            self.abandon_chat_turn_scene(chat_turn_id)
         self.db.close()

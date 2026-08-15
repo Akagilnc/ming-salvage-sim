@@ -117,6 +117,25 @@ class _FakeSession:
     def refresh_runtime_after_chat_rollback(self):
         return None
 
+    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
+    def start_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def start_chat_turn_exit_scene(self, *_a, **_k):
+        return None
+
+    def start_exit_scene_from_dismiss_tools(self, *a, **k):
+        return GameSession.start_exit_scene_from_dismiss_tools(self, *a, **k)
+
+    def join_chat_turn_scene(self, *_a, **_k):
+        return []
+
+    def persist_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def abandon_chat_turn_scene(self, *_a, **_k):
+        return None
+
 
 def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     bind_skills_content(content)

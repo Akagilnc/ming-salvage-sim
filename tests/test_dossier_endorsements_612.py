@@ -2,10 +2,13 @@
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from ming_sim import agents as agents_mod
 from ming_sim import audience_night as an
+from ming_sim import beat_orchestration as bo
 from ming_sim.audience_extraction import (
     ExtractionShapeError,
     catch_up_pending_extractions,
@@ -337,6 +340,9 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
     llm_saw_no_db_tx = []
     beat_overlap = threading.Event()
     endorsement_entered = threading.Event()
+    scene_registry = bo.ChatTurnSceneRegistry(
+        ThreadPoolExecutor(max_workers=2, thread_name_prefix="close-scene-test"),
+    )
 
     class _EndorsementAgent:
         def run(self, materials):
@@ -374,7 +380,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
             ]}, ensure_ascii=False)
 
     def _real_close_beat(_inputs):
-        # Production close beat path (threaded by close_night) overlaps endorsement LLM.
+        # Production close beat path (registry Future) overlaps endorsement LLM.
         beat_overlap.set()
         assert endorsement_entered.wait(5)
         return "退朝，今夜召对到此。"
@@ -387,6 +393,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
         db, state, night_id=night_id, content=content,
         llm_config=object(), write_gate=runtime_gate,
         beat_generator=_real_close_beat,
+        scene_registry=scene_registry,
     )
     assert result["closed"] is True
     assert llm_saw_gate_free == [True]
@@ -416,9 +423,13 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
 
 def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(game, monkeypatch):
     """真实 close tracer：beat 或 endorsement 代码异常均在 finalize/重开前终结两支；
-    双支同时失败 → ExceptionGroup 保留两条诊断；endorsement_not_bound 前恢复 OPEN。"""
+    双支同时失败 → 先观察者传播、另一支仍 drain，cleanup 经 __cause__ 链；
+    endorsement_not_bound 前恢复 OPEN。"""
     db, state, content = game
     minister = _minister(db)
+    scene_registry = bo.ChatTurnSceneRegistry(
+        ThreadPoolExecutor(max_workers=2, thread_name_prefix="close-scene-test"),
+    )
 
     def _prep(target_id, reply):
         nid, cid, seq = _night_reply(db, state, minister, reply=reply)
@@ -431,6 +442,14 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
             db, state, minister, nid, text="清核辽饷", target_id=target_id,
         )
         return nid, cid
+
+    def _no_owned_leftover(before_idents):
+        leftover = [
+            t for t in threading.enumerate()
+            if t.ident not in before_idents and t.is_alive() and not t.daemon
+            and not (t.name or "").startswith("close-scene-test")
+        ]
+        assert leftover == [], leftover
 
     # ── Case A: beat code error while endorsement overlaps ─────────────────
     night_id, chat_turn_id = _prep("phase2-exc", "臣愿作保。")
@@ -464,15 +483,12 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
             db, state, night_id=night_id, content=content,
             llm_config=object(), write_gate=runtime_gate,
             beat_generator=_boom_beat,
+            scene_registry=scene_registry,
         )
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed["close_commit_cursor"] or 0) == 0
-    leftover = [
-        t for t in threading.enumerate()
-        if t.ident not in before_threads and t.is_alive() and not t.daemon
-    ]
-    assert leftover == [], leftover
+    _no_owned_leftover(before_threads)
 
     # ── Case B: endorsement boom while real beat overlaps ──────────────────
     night_id2, chat_turn_id2 = _prep("phase2-endorsement-exc", "臣再保。")
@@ -499,6 +515,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
             db, state, night_id=night_id2, content=content,
             llm_config=object(), write_gate=runtime_gate2,
             beat_generator=_ok_beat,
+            scene_registry=scene_registry,
         )
     assert ei.value.code == "endorsement_extract_failed"
     failed2 = an.get_night(db, night_id2)
@@ -506,7 +523,7 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     assert int(failed2["close_commit_cursor"] or 0) == 0
     assert beat_done2.is_set() and endorsement_entered2.is_set()
 
-    # ── Case C: both branches fail → ExceptionGroup keeps both ─────────────
+    # ── Case C: both branches fail → first observed propagates; other drains ─
     night_id3, _cid3 = _prep("phase2-both-exc", "臣三保。")
     runtime_gate3 = threading.Lock()
     endorsement_entered3 = threading.Event()
@@ -527,15 +544,19 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
         agents_mod, "create_endorsement_extractor_agent",
         lambda cfg: _BoomBothEndorsement(),
     )
-    with pytest.raises(ExceptionGroup) as eg:
+    with pytest.raises(an.AudienceNightError) as eg:
         an.close_night(
             db, state, night_id=night_id3, content=content,
             llm_config=object(), write_gate=runtime_gate3,
             beat_generator=_boom_both_beat,
+            scene_registry=scene_registry,
         )
-    msgs = [str(exc) for exc in eg.value.exceptions]
-    assert any("endorsement boom dual" in m for m in msgs), msgs
-    assert any("close beat dual fault" in m for m in msgs), msgs
+    # No ExceptionGroup failure bus: primary = endorsement; join still drained.
+    assert eg.value.code == "endorsement_extract_failed"
+    assert "endorsement boom dual" in str(eg.value)
+    assert eg.value.__cause__ is not None
+    assert "close beat dual fault" in str(eg.value.__cause__)
+    assert beat_entered3.is_set() and endorsement_entered3.is_set()
     failed3 = an.get_night(db, night_id3)
     assert failed3["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed3["close_commit_cursor"] or 0) == 0
@@ -571,6 +592,40 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     open_n = an.assert_night_accepts_player_input(db, what="召对")
     assert int(open_n["id"]) == night_id4
     monkeypatch.setattr(db, "settle_endorsement_batch", real_settle)
+
+    # ── Case E: story-drain fails → still join/drain; original from cleanup ─
+    night_id5, _cid5 = _prep("phase2-story-drain-cleanup", "臣五保。")
+    drain_joined = threading.Event()
+
+    def _boom_drain(*_a, **_k):
+        raise RuntimeError("story drain boom")
+
+    def _boom_join(*_a, **_k):
+        drain_joined.set()
+        raise RuntimeError("close join cleanup boom")
+
+    def _ok_beat(_inputs):
+        return "不应落账的收夜旁白"
+
+    monkeypatch.setattr(an, "_drain_story_extraction_or_fail_closed", _boom_drain)
+    monkeypatch.setattr(bo, "join_close_scene_on_registry", _boom_join)
+    monkeypatch.setattr(
+        agents_mod, "create_endorsement_extractor_agent",
+        lambda cfg: _SkipBind(),
+    )
+    with pytest.raises(RuntimeError, match="story drain boom") as ei5:
+        an.close_night(
+            db, state, night_id=night_id5, content=content,
+            llm_config=object(), write_gate=threading.Lock(),
+            beat_generator=_ok_beat,
+            scene_registry=scene_registry,
+        )
+    assert drain_joined.is_set(), "story-drain failure must still join/drain close scene"
+    assert ei5.value.__cause__ is not None
+    assert "close join cleanup boom" in str(ei5.value.__cause__)
+    failed5 = an.get_night(db, night_id5)
+    assert failed5["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed5["close_commit_cursor"] or 0) == 0
 
 
 def test_endorsement_failure_keeps_open_drafts_and_retries_idempotently(game):

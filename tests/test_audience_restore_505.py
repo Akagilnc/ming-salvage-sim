@@ -243,6 +243,22 @@ class _RetrySession:
         assert chat_turn_id != 0
         return ChatTurnResult(answer="臣重奏：剿为先。")
 
+    # #542 scene lifecycle seams：retry 入口会 start/join/persist/abandon；替身 no-op。
+    def start_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def start_chat_turn_exit_scene(self, *_a, **_k):
+        return None
+
+    def join_chat_turn_scene(self, *_a, **_k):
+        return []
+
+    def persist_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def abandon_chat_turn_scene(self, *_a, **_k):
+        return None
+
 
 def _retry_runtime(db, state, minister):
     rt = object.__new__(web_app.WebGame)

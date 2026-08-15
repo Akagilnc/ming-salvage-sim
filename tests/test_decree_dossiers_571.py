@@ -1968,6 +1968,7 @@ def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(
     assert db.list_directives(state)[0]["text"] == "着修河工"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     from ming_sim.session import GameSession
 
@@ -2987,6 +2988,7 @@ def _complete_session(game):
     return session
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_inner_treasury_allocation_closes_next_month_without_replay(
     game, monkeypatch,
 ):
@@ -3100,6 +3102,7 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
         assert closed["execution_note"] == "赈银押解到达"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeypatch):
     import ming_sim.cli_backend as cli_backend
     import ming_sim.decree as decree_mod

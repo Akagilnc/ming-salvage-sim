@@ -355,6 +355,22 @@ def test_real_web_stream_pending_commit_traces_only_confirmed_visible_links(
             # WebGame.directive_rows 唯一权威：委托真 GameSession 过滤（含 dossier 剔除）。
             return GameSession.list_directives(self, include_pending=include_pending)
 
+        # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def start_chat_turn_exit_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
     bind_skills_content(content)
     runtime = WebGame.__new__(WebGame)
     runtime.session = Session()

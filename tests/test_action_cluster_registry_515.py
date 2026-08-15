@@ -562,6 +562,7 @@ class _SyncAgent:
         return SimpleNamespace(content=self.content, tools=self.tools)
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     db, state, content = game
     minister = _active_ch(db, content)
@@ -584,6 +585,7 @@ def test_webgame_chat_create_then_undo_removes_candidate(game, monkeypatch):
     )
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_webgame_cross_round_update_then_undo_restores_before_image(game, monkeypatch):
     db, state, content = game
     minister = _active_ch(db, content)
