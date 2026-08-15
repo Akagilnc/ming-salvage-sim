@@ -1827,6 +1827,8 @@ class WebGame:
         )
         # LLM 流在无锁窗口跑（#498 AC10 可达熔断）
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
+        # #542：dismiss tool 事件一出现就 start_exit，与尚未结束的回话流重叠。
+        exit_started_during_stream = False
         for event in stream:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -1834,6 +1836,22 @@ class WebGame:
                 delta = str(content)
                 chunks.append(delta)
                 emit_delta(delta)
+            if not exit_started_during_stream:
+                # agno ToolCallCompletedEvent.tool；终事件 RunOutput.tools 作兜底。
+                # 轻量 session 替身可能无此方法——缺则留给 interpret 旧缝/跳过。
+                start_exit = getattr(
+                    self.session, "start_exit_scene_from_dismiss_tools", None,
+                )
+                tool = getattr(event, "tool", None)
+                tools_now: List[Any] = [tool] if tool is not None else []
+                if not tools_now and type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                    tools_now = list(getattr(event, "tools", None) or [])
+                if (
+                    tools_now
+                    and start_exit is not None
+                    and start_exit(character.name, int(chat_turn_id or 0), tools_now)
+                ):
+                    exit_started_during_stream = True
             if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                 run_output = event
         # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
@@ -1846,9 +1864,8 @@ class WebGame:
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
 
-        # #542：先完成 action/tool 解释并登记 exit scene（与非流式 session.chat 同序），
-        # 再在 write_gate 外统一 join，最后短事务原子持久化 reply + 本轮全部 scene。
-        # join 不得早于 start_exit，否则 exit future 脱轮、卷轴留垫位。
+        # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
+        # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
         interpreted = self._chat_stream_interpret_tools(
             minister_name, text, character, answer, run_output,
             action_intent_future, chat_turn_id,
@@ -1979,18 +1996,27 @@ class WebGame:
                                 next_minister = target.name
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
-                    # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
-                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
-                    from ming_sim.audience_night import dismiss_from_audience
-                    # #542：dismiss 只落垫位；exit 旁白进本轮 scene registry，与 reply 同 join/persist。
-                    entry_id = dismiss_from_audience(
-                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
-                        state=self.state,
+                    # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit
+                    # 时此处幂等 no-op；未启则补登（仅 tools 终事件路径）。
+                    start_exit = getattr(
+                        self.session, "start_exit_scene_from_dismiss_tools", None,
                     )
-                    if entry_id and chat_turn_id:
-                        self.session.start_chat_turn_exit_scene(
-                            character.name, int(chat_turn_id), int(entry_id),
+                    if start_exit is not None:
+                        start_exit(
+                            character.name, int(chat_turn_id or 0), [tool_exec],
                         )
+                    elif hasattr(self.db, "conn"):
+                        from ming_sim.audience_night import dismiss_from_audience
+                        entry_id = dismiss_from_audience(
+                            self.db, character.name,
+                            origin_chat_turn_id=chat_turn_id, state=self.state,
+                        )
+                        if entry_id and chat_turn_id and hasattr(
+                            self.session, "start_chat_turn_exit_scene",
+                        ):
+                            self.session.start_chat_turn_exit_scene(
+                                character.name, int(chat_turn_id), int(entry_id),
+                            )
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")

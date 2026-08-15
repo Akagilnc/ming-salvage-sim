@@ -1594,6 +1594,163 @@ def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
     assert not game.session._scene_registry.has(int(ctid))
 
 
+def test_web_stream_exit_overlaps_unfinished_reply_after_dismiss_tool(web_game):
+    """#542 C1: dismiss tool 事件出现后立刻 start_exit，与尚未结束的回话流真实重叠。
+
+    seam = WebGame._chat_stream_payload（流式 tool 事件 → scene registry）。
+    串行（等回流完再 start_exit）则 barrier 永不汇合、测试失败。
+    """
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    exit_body = f"【退下旁白·重叠】{minister}告退。"
+    both_in_flight = threading.Barrier(2, timeout=2.0)
+    exit_started = threading.Event()
+    reply_still_open = threading.Event()
+    order: list[str] = []
+
+    def tracking_exit_gen(inputs: BeatInputs) -> str:
+        if inputs.beat_kind != BEAT_EXIT:
+            return f"body-{inputs.beat_kind}"
+        order.append("exit_gen")
+        exit_started.set()
+        both_in_flight.wait()  # 与回话流后半段汇合 → 证明同时在飞
+        return exit_body
+
+    game.session._beat_generator = tracking_exit_gen
+
+    class ToolCallCompletedEvent:
+        """agno 流式 tool 完成事件形态（web_app 按 .tool 读取）。"""
+
+        def __init__(self, tool):
+            self.event = "ToolCallCompleted"
+            self.tool = tool
+
+    class RunOutput:
+        def __init__(self):
+            self.content = "臣告退。"
+            self.messages = []
+            self.tools = [
+                SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__"),
+            ]
+
+    class _OverlapDismissAgent:
+        def run(self, *_a, **_k):
+            yield SimpleNamespace(event="RunContent", content="臣")
+            yield ToolCallCompletedEvent(
+                SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__"),
+            )
+            # dismiss 已暴露后回话流仍未结束——此处必须与 exit_gen 重叠
+            reply_still_open.set()
+            order.append("reply_tail")
+            both_in_flight.wait()
+            yield SimpleNamespace(event="RunContent", content="告退。")
+            yield RunOutput()
+
+    game.session.registry.get = lambda _c: _OverlapDismissAgent()
+
+    ctid, snap = game._start_chat_turn(minister)
+    night_id = int(game.db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["night_id"])
+    if minister not in an.present_names_at(game.db, night_id):
+        an.summon_enter(game.db, night_id, minister)
+
+    payload = game._chat_stream_payload(
+        minister, "卿且退下", int(ctid), snap, int(game.state.turn),
+        lambda _d: None,
+    )
+    assert payload["court_action"] == "dismiss"
+    assert payload["answer"] == "臣告退。"
+    assert exit_started.is_set(), "exit never started"
+    assert reply_still_open.is_set(), "reply stream never reached post-dismiss tail"
+    # exit 已 start 时回话尾仍在飞：两者都进入 barrier 才会放行
+    assert "exit_gen" in order and "reply_tail" in order
+    exit_rows = [
+        e for e in an.list_ledger(game.db, night_id)
+        if an.TAG_EXIT in (e.get("tags") or []) and minister in (e.get("person_names") or [])
+    ]
+    assert exit_rows and exit_rows[-1]["body"] == exit_body
+    assert not game.session._scene_registry.has(int(ctid)), "scene must join before open interaction"
+
+
+def test_session_chat_exit_overlaps_inflight_action_intent(game):
+    """#542 C1: 非流式 tools 含 dismiss 后立刻 start_exit，与仍在飞 action_intent 重叠。
+
+    seam = GameSession.chat（run_output.tools → scene registry，先于 finish action_intent）。
+    串行（先 join action_intent 再 start_exit）则 barrier 永不汇合、测试失败。
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="exit-overlap-ai", agno_runs_before=0,
+    )
+    if minister not in an.present_names_at(db, night_id):
+        an.summon_enter(db, night_id, minister)
+
+    both_in_flight = threading.Barrier(2, timeout=2.0)
+    intent_started = threading.Event()
+    exit_started = threading.Event()
+    exit_body = f"【退下旁白·意图重叠】{minister}告退。"
+    intent_exec = ThreadPoolExecutor(max_workers=1)
+
+    def slow_exit(inputs: BeatInputs) -> str:
+        if inputs.beat_kind != BEAT_EXIT:
+            return f"body-{inputs.beat_kind}"
+        exit_started.set()
+        both_in_flight.wait()
+        return exit_body
+
+    def start_intent(_character, _message):
+        def _classify():
+            intent_started.set()
+            both_in_flight.wait()
+            return {"kind": "none"}
+
+        return intent_exec.submit(_classify)
+
+    class _DismissAgent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣告退。",
+                tools=[SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__")],
+            )
+
+    class _Reg:
+        def get(self, _c):
+            return _DismissAgent()
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = _Reg()
+    sess.llm_config = SimpleNamespace(channel="cli")
+    sess.temporary_characters = set()
+    sess._beat_generator = slow_exit
+    sess._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    sess._audience_prompt_for_message = lambda message, *a, **k: message
+    sess._start_cli_action_intent = start_intent
+    # 真 finish：会 future.result()——若 start_exit 在其后，exit 无法与 intent 汇合
+    sess._finish_cli_action_intent = GameSession._finish_cli_action_intent.__get__(sess, GameSession)
+
+    try:
+        result = GameSession.chat(sess, minister, "卿且退下", chat_turn_id=int(ctid))
+        assert result.court_action == "dismiss"
+        assert intent_started.is_set() and exit_started.is_set()
+        generated = sess.join_chat_turn_scene(int(ctid))
+        sess.persist_chat_turn_scene(generated)
+        db.conn.commit()
+        exit_rows = [
+            e for e in an.list_ledger(db, night_id)
+            if an.TAG_EXIT in (e.get("tags") or []) and minister in (e.get("person_names") or [])
+        ]
+        assert exit_rows and exit_rows[-1]["body"] == exit_body
+        assert not sess._scene_registry.has(int(ctid))
+    finally:
+        intent_exec.shutdown(wait=False, cancel_futures=True)
+
+
 def test_failed_turn_does_not_consume_opening_and_clears_enter_placeholder(game):
     """C12/T13/T16: failed turns lose opening eligibility; enter placeholder is cleared."""
     db, state, content = game

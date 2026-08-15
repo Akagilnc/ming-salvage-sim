@@ -120,6 +120,9 @@ class _FakeSession:
     def start_chat_turn_exit_scene(self, *_a, **_k):
         return None
 
+    def start_exit_scene_from_dismiss_tools(self, *a, **k):
+        return GameSession.start_exit_scene_from_dismiss_tools(self, *a, **k)
+
     def join_chat_turn_scene(self, *_a, **_k):
         return []
 
