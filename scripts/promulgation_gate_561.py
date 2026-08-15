@@ -52,10 +52,10 @@ AUTHORITY_EDGE_TEXT = "越一级特授边将虚衔，仍循兵部具题复核"
 APPOINTMENT_TEXT = "调任许誉卿出京"
 ADMIN_MIDZHI_TEXT = "中旨命内廷整理既有文册，不动外廷钱权"
 VITAL_MIDZHI_TEXT = "中旨绕开户部，强夺太仓全部钱粮交内廷支配"
-# Judge-visible faction posture (leverage+agenda only; never satisfaction).
+# Judge-visible faction posture (agenda expresses leader arm; never satisfaction).
 BASE_DONGLIN_AGENDA = "反对清丈，维护田赋旧例"
-# person_leader sole mutation: 安抚首领 via Donglin posture (agenda/leverage),
-# not a character roster swap. Gatekeeper bench stays (许誉卿 still blocks).
+# person_leader sole mutation: 安抚首领 via Donglin agenda posture only,
+# not a character roster swap and not leverage numericization. Gatekeeper bench stays.
 LEADER_APPEASED_AGENDA = "钱谦益已受安抚，东林首领息争"
 # person_gatekeeper sole mutation: dismiss 许誉卿 and seat a registered successor
 # whose faction/posture actually removes the 东林 gatekeeper block (not another 东林).
@@ -652,13 +652,9 @@ def main() -> int:
                 == LEADER_APPEASED_AGENDA
                 and _faction_row(baseline["context"], "东林")["agenda"]
                 == BASE_DONGLIN_AGENDA
-                # Posture moved (agenda and/or leverage); full payload distinguishable.
-                and (
-                    _faction_row(leader["context"], "东林")["agenda"]
-                    != _faction_row(baseline["context"], "东林")["agenda"]
-                    or int(_faction_row(leader["context"], "东林")["leverage"])
-                    != int(_faction_row(baseline["context"], "东林")["leverage"])
-                )
+                # Posture moved by fixed agenda pair only (no int() on qualitative leverage).
+                and _faction_row(leader["context"], "东林")["agenda"]
+                != _faction_row(baseline["context"], "东林")["agenda"]
                 and leader["context"] != baseline["context"]
             ),
             "gatekeeper_appointment_is_judged_and_rejected": (
@@ -726,7 +722,8 @@ def main() -> int:
                         "person_baseline / person_leader / person_gatekeeper share "
                         "hostile-only plant, 皇威=100, and authorization; "
                         "leader only sets 东林 agenda to leader-appeased posture "
-                        "(leverage/gatekeepers fixed; payload distinguishable); "
+                        "(agenda pair proves posture; leverage untouched/qualitative; "
+                        "gatekeepers fixed; payload distinguishable); "
                         f"gatekeeper dismisses 许誉卿 and seats {GATEKEEPER_SUCCESSOR} "
                         f"as {GATEKEEPER_OFFICE}"
                     ),
