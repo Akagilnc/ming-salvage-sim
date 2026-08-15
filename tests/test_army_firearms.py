@@ -108,15 +108,19 @@ def test_create_army_cannon_count_clamped(game):
 
 
 def test_army_detail_shows_firearm_cannon(game):
-    """army_detail(大臣 inspect_army 走它)必须显示火器/随军大炮数值——否则 tool-call 大臣查军详情
-    看不到军备两轴，火器 read 侧不闭环(CMR codexB read-surface)。"""
+    """army_detail 经 public 投影：火器为定性 band，随军大炮为可数门数（P4/#1185）。"""
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute("UPDATE armies SET firearm_equipment=45, cannon_equipment=3 WHERE id=?", (aid,))
     db.conn.commit()
     name = db.conn.execute("SELECT name FROM armies WHERE id=?", (aid,)).fetchone()["name"]
+    entry = next(a for a in db.army_public_payload()["armies"] if a["id"] == aid)
+    assert entry["firearm_equipment_band"] == "unstable"  # 45 → mid band
+    assert int(entry["cannon_equipment"]) == 3
+    assert "firearm_equipment" not in entry
     detail = db.army_detail(name)
-    assert "火器45" in detail
+    assert "火器" in detail
+    assert "45" not in detail
     assert "随军大炮3" in detail
 
 
@@ -137,9 +141,13 @@ def test_army_detail_dynamic_new_army_shows_firearm(game):
         "manpower": 4000, "maintenance_per_turn": 1,
         "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
     }], actor="测试")
+    entry = next(a for a in db.army_public_payload()["armies"] if a["id"] == "probe_fire_new")
+    assert entry["firearm_equipment_band"] == "steady"  # 77 → steady band
+    assert int(entry["cannon_equipment"]) == 5
     for key in ("probe_fire_new", "火器新营"):     # id 和 name 都能查到
         detail = db.army_detail(key)
-        assert "火器77" in detail, key
+        assert "火器" in detail, key
+        assert "77" not in detail, key
         assert "随军大炮5" in detail, key
 
 
@@ -208,19 +216,24 @@ def test_simulator_payload_includes_firearm(read_game):
 
 
 def test_army_roster_shows_firearm_cannon(game):
-    """大臣军表(army_roster)必须带火器/大炮——否则大臣（CLI 后端无工具）看不见、答不出。"""
+    """大臣军表(army_roster)经 public 投影：火器定性 band，大炮可数门数。"""
     db, _, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute(
         "UPDATE armies SET firearm_equipment=30, cannon_equipment=4 WHERE id=?", (aid,)
     )
     db.conn.commit()
+    entry = next(a for a in db.army_public_payload()["armies"] if a["id"] == aid)
+    assert entry["firearm_equipment_band"] == "wavering"  # 30 → low band
+    assert int(entry["cannon_equipment"]) == 4
+    assert "firearm_equipment" not in entry
     roster = db.army_roster()
     # 表头列名出现
     assert "火器" in roster
     assert "大炮" in roster
-    # 该军那一行确实带上了 30 / 4 两个值
     name = db.conn.execute("SELECT name FROM armies WHERE id=?", (aid,)).fetchone()["name"]
     line = next(l for l in roster.splitlines() if l.startswith(name + "|"))
     cells = line.split("|")
-    assert "30" in cells and "4" in cells
+    assert any(c.startswith("火器：") for c in cells)
+    assert "30" not in cells
+    assert "4" in cells

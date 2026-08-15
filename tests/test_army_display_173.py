@@ -47,9 +47,10 @@ def test_army_report_shows_actual_charge(game):
 
 
 def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
-    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家投影不见省/中央分账，抽象忠诚不出裸数。
+    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家投影不见省/中央分账，抽象评分不出裸数。
 
-    独立显式样例（arrears=63→kind=approx/rounded=60；loyalty=73→loyalty_band 稳定枚举）。
+    独立显式样例（arrears=63→kind=approx/rounded=60；loyalty=73→loyalty_band 稳定枚举；
+    其余 0-100 抽象轴同为 *_band，三出口真实消费 army_public_payload）。
     """
     db, _state, _ = game
     row = db.conn.execute(
@@ -58,7 +59,9 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     db.conn.execute(
         """
         UPDATE armies
-        SET arrears=63, province_pay_arrears=17, central_pay_arrears=46, loyalty=73
+        SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,
+            loyalty=73, supply=55, morale=35, training=15, equipment=85,
+            mobility=65, firearm_equipment=45
         WHERE id=?
         """,
         (row["id"],),
@@ -66,7 +69,7 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     db.conn.commit()
 
     stored = db.conn.execute(
-        "SELECT arrears, loyalty FROM armies WHERE id=?",
+        "SELECT arrears, loyalty, supply, morale, training, equipment, mobility, firearm_equipment FROM armies WHERE id=?",
         (row["id"],),
     ).fetchone()
     assert float(stored["arrears"]) == 63
@@ -77,17 +80,53 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
 
     assert entry["arrears"]["kind"] == "approx"
     assert entry["arrears"]["rounded_amount"] == 60
+    assert "months_band" in entry["arrears"]
+    # Independent explicit band samples (same cutoffs as projection).
     assert entry["loyalty_band"] == "steady"
-    assert "loyalty" not in entry
+    assert entry["supply_band"] == "unstable"
+    assert entry["morale_band"] == "wavering"
+    assert entry["training_band"] == "critical"
+    assert entry["equipment_band"] == "firm"
+    assert entry["mobility_band"] == "steady"
+    assert entry["firearm_equipment_band"] == "unstable"
+    bare_score_keys = {
+        "loyalty", "supply", "morale", "training", "equipment",
+        "mobility", "firearm_equipment",
+    }
+    assert bare_score_keys.isdisjoint(entry)
     assert "province_pay_arrears" not in entry
     assert "central_pay_arrears" not in entry
-    # Three player string exits must jointly consume the same public entry shape.
-    for surface in (
-        db.army_detail(row["name"]),
-        db.army_report(limit=20),
-        db.army_roster(filter_names=[row["name"]]),
-    ):
+
+    # Mechanical proof: three player exits consume the sole public projection.
+    resolved = db._resolve_army_row(row["name"])
+    detail_entry = db.army_public_payload(rows=[resolved])["armies"][0]
+    assert detail_entry == entry
+
+    report_public = db.army_public_payload(limit=20, danger_order=True)
+    report_entry = next(a for a in report_public["armies"] if a["id"] == row["id"])
+    assert report_entry["loyalty_band"] == entry["loyalty_band"]
+    assert report_entry["supply_band"] == entry["supply_band"]
+    assert report_entry["firearm_equipment_band"] == entry["firearm_equipment_band"]
+
+    roster_rows = [
+        r for r in db.conn.execute(
+            "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
+        ).fetchall()
+        if r["name"] == row["name"] or r["id"] == row["id"]
+    ]
+    roster_entry = db.army_public_payload(rows=roster_rows)["armies"][0]
+    assert roster_entry == entry
+
+    detail = db.army_detail(row["name"])
+    report = db.army_report(limit=20)
+    roster = db.army_roster(filter_names=[row["name"]])
+    for surface in (detail, report, roster):
         assert isinstance(surface, str) and surface
+    # Detail is single-army: raw abstract scores must not leak as bare ints.
+    assert "73" not in detail
+    assert "55" not in detail
+    assert "忠诚：尚稳" in detail  # loyalty_band steady rendered
+    assert "火器：短缺" in detail  # firearm 45 → unstable → 短缺
 
 
 def test_army_arrears_presentation_rounds_half_steps_up(game):

@@ -147,9 +147,20 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
         "narration": model.text,
     }
     assert "忠诚=98" not in json.dumps(payload, ensure_ascii=False)
-    # 独立显式样例：温体仁默认 seed_guilt 定性投影（不调生产 helper 算 expected）
-    assert "工心计" in material["底案"]
-    assert "案情分量：无" in material["底案"]
+    # Typed guilt/bands at materials seam (no free-prose pins on 底案措辞).
+    struct = materials["truth_struct"]
+    assert set(struct) >= {"faction", "identity_band", "loyalty_band", "guilt"}
+    assert struct["identity_band"] in {
+        "none", "faint", "subtle", "deep", "extreme",
+    }
+    assert struct["loyalty_band"] in {
+        "alienated", "wavering", "neutral", "aligned", "devoted",
+    }
+    guilt = struct["guilt"]
+    assert set(guilt) >= {"crime", "severity", "has_case"}
+    assert isinstance(guilt["crime"], str) and guilt["crime"]
+    assert guilt["severity"] in {"无", "轻", "中", "重"}
+    assert isinstance(guilt["has_case"], bool)
     rendered = json.dumps(material, ensure_ascii=False)
     assert "identity" not in rendered
     assert "loyalty" not in rendered
@@ -162,7 +173,7 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
 def test_default_seed_mindreading_materials_do_not_expose_integration_markers(game):
     db, state, content = game
     reader = content.characters["王承恩"]
-    # 结构契约：materials 不含 integration marker 字段/枚举；底案为普通定性字符串
+    # 结构契约：materials 不含 integration marker 字段/枚举；truth_struct 为 typed 面
     marker_keys = {"integration", "integ", "marker", "only_clue", "仅线索"}
 
     def _all_keys(obj, acc=None):
@@ -182,14 +193,17 @@ def test_default_seed_mindreading_materials_do_not_expose_integration_markers(ga
         )
         truths = materials["truths"]
         assert set(truths) == {"党账", "君臣账", "底案"}
-        assert isinstance(truths["底案"], str) and truths["底案"].strip()
+        struct = materials["truth_struct"]
+        assert set(struct) >= {"faction", "identity_band", "loyalty_band", "guilt"}
+        assert isinstance(struct["guilt"], dict)
+        assert set(struct["guilt"]) >= {"crime", "severity", "has_case"}
         keys = _all_keys(materials)
         assert marker_keys.isdisjoint(keys)
         assert not any("integ" in key.lower() for key in keys)
 
 
 def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
-    """读当前 ledger；定性用独立显式样例，不调 identity_band/qualitative_* 算 expected。"""
+    """读当前 ledger；typed band/guilt 用独立显式样例，不锁自由散文措辞。"""
     db, state, content = game
     reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
@@ -200,7 +214,7 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     db.conn.commit()
     model = _SpyMindreadingAgent()
 
-    _materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
+    materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
 
     material = model.inputs[0]
     row = db.conn.execute(
@@ -212,15 +226,19 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     assert int(row["loyalty"]) == 15
     assert json.loads(row["seed_guilt"]) == {"crime": "合谋", "severity": "重"}
     assert set(material) >= {"党账", "君臣账", "底案"}
-    # 独立 oracle：identity=92→党色极深；loyalty=15→离心已显；guilt 原文入底案
-    assert "皇党" in material["党账"]
-    assert "党色极深" in material["党账"]
-    assert "离心已显" in material["君臣账"]
-    assert "合谋" in material["底案"]
-    assert "重" in material["底案"]
+    # Independent explicit sample: identity=92→extreme; loyalty=15→alienated;
+    # guilt ledger fields land as typed structure (not free-prose contains).
+    struct = materials["truth_struct"]
+    assert struct["faction"] == "皇党"
+    assert struct["identity_band"] == "extreme"
+    assert struct["loyalty_band"] == "alienated"
+    assert struct["guilt"] == {"crime": "合谋", "severity": "重", "has_case": True}
     blob = json.dumps(material, ensure_ascii=False)
     assert "92" not in blob
     assert "15" not in blob
+    assert "identity" not in blob
+    assert "loyalty" not in blob
+    assert "seed_guilt" not in blob
     assert payload["narration"] == model.text
 
 
