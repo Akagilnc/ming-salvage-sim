@@ -73,37 +73,33 @@ def test_return_report_source_metadata_contract(game):
 
 def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(game):
     db, _state, _content = game
-
     authorized = {"陕西巡抚", "三边总督"}
     vacancy_titles = {row["office_title"] for row in db.list_office_vacancies()}
     assert authorized <= vacancy_titles
-
-    known_statements = []
+    known = []
     for title in authorized:
         report = build_return_report(db, f"{title}可有？")
         assert title in report["statement"]
         row = next(r for r in db.list_office_vacancies() if r["office_title"] == title)
         assert row["holder_name"] is None
-        known_statements.append(report["statement"])
-
-    unknown_title = "两广总督"
-    assert unknown_title not in vacancy_titles
-    unknown = build_return_report(db, f"{unknown_title}可有？")
-    assert unknown_title not in unknown["statement"]
-    assert not any(title in unknown["statement"] for title in authorized)
-    assert all(unknown["statement"] != known for known in known_statements)
+        known.append(report["statement"])
+    # 两个不同未知官缺 → 同一非空 fallback（空串不得混过）
+    u1 = build_return_report(db, "两广总督可有？")
+    u2 = build_return_report(db, "四川巡抚可有？")
+    assert u1["statement"] and u1["statement"] == u2["statement"]
+    assert "两广总督" not in u1["statement"] and "四川巡抚" not in u1["statement"]
+    assert all(t not in u1["statement"] for t in authorized)
+    assert all(u1["statement"] != k for k in known)
 
 
 def test_generic_office_queries_return_current_vacancies(game):
     db, _state, _content = game
-
     vacant_titles = {
         row["office_title"]
         for row in db.list_office_vacancies()
         if not row.get("holder_name")
     }
     assert {"陕西巡抚", "三边总督"} <= vacant_titles
-
     for query in ("督抚官缺如何？", "有哪些官缺？"):
         report = build_return_report(db, query)
         for title in vacant_titles:
@@ -111,23 +107,30 @@ def test_generic_office_queries_return_current_vacancies(game):
 
 
 def test_domain_inquiry_forwards_real_qualitative_readers(game):
-    """域 reader 转发：build_return_report → 未替换真实 reader → statement。"""
+    """域 reader 委派：包装原始 bound reader——真调用真返回 + 断言调用/参数。"""
     db, _state, _content = game
+    army_calls, power_calls = [], []
+    real_army, real_power = db.army_report, db.power_report
 
+    def wrap_army(*a, **k):
+        army_calls.append((a, dict(k)))
+        return real_army(*a, **k)
+
+    def wrap_power(*a, **k):
+        power_calls.append((a, dict(k)))
+        return real_power(*a, **k)
+
+    db.army_report, db.power_report = wrap_army, wrap_power  # type: ignore[method-assign]
     arrears = build_return_report(db, "各镇欠饷如何？")
     bandits = build_return_report(db, "流寇势如何？")
-
-    assert arrears["statement"] == str(db.army_report(limit=10) or "")
-    assert bandits["statement"] == str(
-        db.power_report(
-            exclude_self=True,
-            kinds={"bandit", "bandits", "内乱"},
-            audience=True,
-        )
-        or ""
-    )
-    assert arrears["statement"] and any(ch.isdigit() for ch in arrears["statement"])
-    assert bandits["statement"]
+    assert len(army_calls) == 1 and army_calls[0][1].get("limit") == 10
+    exp_army = str(real_army(limit=10) or "")
+    assert arrears["statement"] == exp_army and exp_army and any(c.isdigit() for c in exp_army)
+    assert len(power_calls) == 1
+    pk = power_calls[0][1]
+    assert pk == {"exclude_self": True, "kinds": {"bandit", "bandits", "内乱"}, "audience": True}
+    exp_power = str(real_power(**pk) or "")
+    assert bandits["statement"] == exp_power and exp_power
 
 
 def test_return_report_interface_does_not_depend_on_minister_reply():
