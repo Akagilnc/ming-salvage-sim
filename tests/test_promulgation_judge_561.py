@@ -459,6 +459,89 @@ def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
     )
 
 
+def test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation():
+    """Recursive appointment sample must not smuggle hostile 隐田 policy."""
+    from scripts.promulgation_gate_561 import APPOINTMENT_TEXT
+
+    assert "许誉卿" in APPOINTMENT_TEXT
+    for token in ("隐田", "清丈", "追夺", "田亩"):
+        assert token not in APPOINTMENT_TEXT, token
+
+
+def test_appointment_rejection_check_requires_faction_gate_structure():
+    """Appointment reject must prove 东林/许誉卿/blocked_layer, not mere rejected."""
+    from scripts.promulgation_gate_561 import _appointment_rejection_proves_faction_gate
+
+    ok = {
+        "dossier_id": 4,
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "reason": "调任把关人撞东林逆鳞",
+    }
+    assert _appointment_rejection_proves_faction_gate(ok) is True
+    # Rejected for other reasons / missing structure must fail the causal check.
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "decision": "promulgated"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "gatekeeper_id": "崔呈秀"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "primary_opponents": [{"kind": "faction", "key": "阉党"}]}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "blocked_layer": ""}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {"dossier_id": 4, "decision": "rejected"}
+    ) is False
+
+
+def test_leader_only_mutation_keeps_faction_posture_and_gatekeepers(game):
+    """TD-9 leader arm: rehabilitate 钱谦益 only; agenda/leverage/gatekeepers fixed."""
+    from scripts.promulgation_gate_561 import (
+        BASE_DONGLIN_AGENDA,
+        _apply_base_board,
+        _faction_row,
+        _gatekeeper_names,
+        _mutate_leader_only,
+        _plant_dossiers,
+    )
+
+    db, state, _content = game
+    _apply_base_board(db, state, authority=100)
+    _plant_dossiers(db, state, ("hostile",))
+    before = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    assert db.conn.execute(
+        "SELECT status FROM characters WHERE name='钱谦益'"
+    ).fetchone()["status"] == "dismissed"
+
+    _mutate_leader_only(db, state)
+    after = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    leader = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name='钱谦益'"
+    ).fetchone()
+    assert leader["status"] == "active"
+    assert leader["office"]
+    assert _gatekeeper_names(after) == _gatekeeper_names(before)
+    assert "钱谦益" not in _gatekeeper_names(after)
+    assert _faction_row(after, "东林")["agenda"] == BASE_DONGLIN_AGENDA
+    assert _faction_row(after, "东林")["agenda"] == _faction_row(before, "东林")["agenda"]
+    assert int(_faction_row(after, "东林")["leverage"]) == int(
+        _faction_row(before, "东林")["leverage"]
+    )
+    # Judge-visible snapshot equals baseline except turn noise — factions+gatekeepers.
+    assert after["factions"] == before["factions"]
+    assert after["gatekeepers"] == before["gatekeepers"]
+
+
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
     seen = {}
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda _cfg, **kwargs: seen.update(kwargs) or object())
