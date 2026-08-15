@@ -1103,9 +1103,15 @@ class GameSession:
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
                     # #502 L2 / #522：tool 拟旨与 CLI 共用候选 seam；招抚走 admission。
+                    stage_failures: List[Dict[str, Any]] = []
                     result.pending_action_id = self._stage_directive_tool_candidate(
                         draft_text, character.name, message_text,
+                        failures_out=stage_failures,
                     )
+                    if stage_failures:
+                        result.pending_action_failures = list(
+                            result.pending_action_failures or []
+                        ) + stage_failures
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1710,7 +1716,10 @@ class GameSession:
                 )
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
-            result.pending_action_failures = list(res["pending_action_failures"])
+            # Preserve tool-stage diagnostics (e.g. #522 招抚未知/歧义) then append
+            # confirmation-commit failures from the shared CLI seam.
+            prior = list(result.pending_action_failures or [])
+            result.pending_action_failures = prior + list(res["pending_action_failures"])
         # #502 AC5：把结构化含糊态透到 ChatTurnResult，供大臣当场追问哪一道（表面契约可达）。
         if res.get("directive_confirmation_ambiguous"):
             result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
@@ -1737,59 +1746,64 @@ class GameSession:
     _PACIFICATION_TOOL_CUES = ("招抚", "招安", "受抚", "抚贼", "抚寇")
 
     def _mentioned_pacification_target(self, text: str) -> Optional[str]:
-        """Pick the single character name/alias mentioned for a 招抚 tool draft."""
+        """Pick the single canonical character mentioned for a 招抚 tool draft.
+
+        Aggregate every name/alias hit by canonical. Distinct canonicals at any
+        length are ambiguous. Longest match only collapses nested aliases of the
+        same canonical (e.g. 八大王 + 张献忠).
+        """
         blob = str(text or "")
         if not blob or getattr(self, "content", None) is None:
             return None
-        hits: List[Tuple[int, str]] = []
+        hit_canonicals: Dict[str, int] = {}
         for name, character in self.content.characters.items():
             needles = [name, *list(getattr(character, "aliases", None) or [])]
+            best = 0
             for needle in needles:
                 token = str(needle or "").strip()
-                if token and token in blob:
-                    hits.append((len(token), name))
-        if not hits:
+                if token and token in blob and len(token) > best:
+                    best = len(token)
+            if best:
+                hit_canonicals[name] = best
+        if not hit_canonicals:
             return None
-        hits.sort(reverse=True)
-        # Longest mention wins; keep first canonical name at that length.
-        best_len = hits[0][0]
-        names = []
-        seen = set()
-        for length, name in hits:
-            if length < best_len:
-                break
-            if name not in seen:
-                seen.add(name)
-                names.append(name)
-        if len(names) == 1:
-            return names[0]
-        # Multiple same-length hits: prefer the one that still needs pacification.
-        eligible = [
-            name for name in names
-            if self.db._find_pacification_target(self.content, name)
-        ]
-        if len(eligible) == 1:
-            return eligible[0]
+        if len(hit_canonicals) == 1:
+            return next(iter(hit_canonicals))
+        # Multiple distinct canonicals mentioned → ambiguous (length irrelevant).
         return None
 
     def _stage_directive_tool_candidate(
         self, draft_text: str, minister_name: str, message_text: str,
+        *, failures_out: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522).
 
         Pacification cues stay inside the pacification admission seam: a single
         resolvable target stages via stage_pacification_candidate; unknown or
-        ambiguous targets fail loud (return 0) and never degrade to
-        stage_explicit_directive → special_decree. Generic drafts without a
-        pacification cue keep the special_decree path.
+        ambiguous targets fail loud (return 0 + pending_action_failures diagnostic)
+        and never degrade to stage_explicit_directive → special_decree. Generic
+        drafts without a pacification cue keep the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
             return 0
         combined = f"{message_text or ''}\n{text}"
-        if any(cue in combined for cue in self._PACIFICATION_TOOL_CUES):
+        if any(cue in combined for cue in GameSession._PACIFICATION_TOOL_CUES):
             target = self._mentioned_pacification_target(combined)
             if not target:
+                failure = {
+                    "id": 0,
+                    "kind": "directive",
+                    "action": "pacification",
+                    "minister_name": str(minister_name or ""),
+                    "retryable": True,
+                    "message": (
+                        "招抚目标未知或歧义，未能拟旨入档；"
+                        "请指明单一可招抚对象后再拟。"
+                    ),
+                }
+                if failures_out is not None:
+                    failures_out.append(failure)
                 return 0
             from ming_sim.action_materialize import stage_pacification_candidate
             pending_id = stage_pacification_candidate(

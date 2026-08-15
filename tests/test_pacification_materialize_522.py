@@ -169,8 +169,15 @@ def test_pacification_rejects_ineligible_targets_without_world_effect(game, case
 
 @pytest.mark.parametrize("decision", ["rejected", "promulgated"])
 def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
+    """顺颁经 ADR 0055 物化接缝自动交 #190 易主；打回零效果。不得手工注入人物变更。"""
     db, state, content = game
     _activate_canonical_bandit(db, content)
+    before = dict(db.conn.execute(
+        "SELECT power_id, office FROM characters WHERE name='张献忠'"
+    ).fetchone())
+    power_before = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_zhang_xianzhong'"
+    ).fetchone())
     ctx = _stage_pacification(db, state.turn)
     db.commit_pending_actions(state, content=content)
     dossier = next(d for d in db.list_decree_dossiers(status="proposed")
@@ -179,31 +186,20 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
                if decision == "promulgated" else _rejected_verdict(dossier["id"]))
     db.apply_dossier_verdicts(state, [verdict], content=content)
 
-    origin = f"dossier:{dossier['id']}"
-    applied = issues.apply_score_extraction(db, state, {"人物变更": [
-        {"name": "张献忠", "origin_ref": origin, "动作": "易主",
-         "new_power": "ming", "方式": "主动归附",
-         "反噬": {"bandit_zhang_xianzhong": {"military_strength": -5, "reason": "受抚散众"}},
-         "reason": "受抚归明"},
-        {"name": "张献忠", "origin_ref": origin, "动作": "任命",
-         "office": "游击将军", "reason": "旨授游击将军"},
-    ]}, content=content)
-    changes = [x for x in applied["applied_person_changes"] if x.get("name") == "张献忠"]
-    accepted = [x["动作"] for x in changes if not x.get("rejected")]
-    if decision == "promulgated":
-        assert accepted == ["易主", "任命"]
-        expected = ("ming", "游击将军", 19)
-    else:
-        assert accepted == []
-        expected = ("bandit_zhang_xianzhong", "边兵,潜在流寇首领", 24)
-
     row = db.conn.execute(
-        "SELECT power_id,office FROM characters WHERE name='张献忠'"
+        "SELECT power_id, office FROM characters WHERE name='张献忠'"
     ).fetchone()
-    strength = db.conn.execute(
-        "SELECT military_strength FROM powers WHERE id='bandit_zhang_xianzhong'"
-    ).fetchone()["military_strength"]
-    assert (row["power_id"], row["office"], strength) == expected
+    power_after = dict(db.conn.execute(
+        "SELECT * FROM powers WHERE id='bandit_zhang_xianzhong'"
+    ).fetchone())
+    if decision == "promulgated":
+        assert row["power_id"] == "ming"
+        assert row["office"] == "归附"
+        # 反噬字段经 #190 落账；空对象不改兵力，势力行仍可读。
+        assert power_after["id"] == power_before["id"]
+    else:
+        assert dict(row) == before
+        assert power_after == power_before
 
 
 @pytest.mark.parametrize(
@@ -282,18 +278,27 @@ def _yi_zhu_item(name, origin, *, power_id):
 
 
 def test_pacification_effect_rejects_mismatched_target_binds_canonical(game):
-    """C1：招抚案卷只可易主 canonical target；错配拒、匹配过、其它 origin 不变。"""
+    """C1：招抚案卷只可易主 canonical target；顺颁自动易主绑定 target，错配拒、其它 origin 不变。"""
     db, state, content = game
     _activate_canonical_bandit(db, content, "李自成")
-    dossier = _promulgate_pacification(db, state, content, "张献忠")
-    origin = f"dossier:{dossier['id']}"
-
     li_before = dict(db.conn.execute(
         "SELECT power_id, office FROM characters WHERE name='李自成'"
     ).fetchone())
     zhang_before = dict(db.conn.execute(
         "SELECT power_id, office FROM characters WHERE name='张献忠'"
     ).fetchone())
+    assert zhang_before["power_id"] != "ming"
+
+    dossier = _promulgate_pacification(db, state, content, "张献忠")
+    origin = f"dossier:{dossier['id']}"
+
+    # 顺颁自动物化：仅 canonical target 易主
+    assert db.conn.execute(
+        "SELECT power_id FROM characters WHERE name='张献忠'"
+    ).fetchone()["power_id"] == "ming"
+    assert dict(db.conn.execute(
+        "SELECT power_id, office FROM characters WHERE name='李自成'"
+    ).fetchone()) == li_before
 
     crossed = issues.apply_score_extraction(db, state, {"人物变更": [
         _yi_zhu_item("李自成", origin, power_id="bandit_li_zicheng"),
@@ -305,18 +310,6 @@ def test_pacification_effect_rejects_mismatched_target_binds_canonical(game):
     assert dict(db.conn.execute(
         "SELECT power_id, office FROM characters WHERE name='李自成'"
     ).fetchone()) == li_before
-
-    matched = issues.apply_score_extraction(db, state, {"人物变更": [
-        _yi_zhu_item("张献忠", origin, power_id="bandit_zhang_xianzhong"),
-    ]}, content=content)
-    matched_row = next(
-        x for x in matched["applied_person_changes"] if x.get("name") == "张献忠"
-    )
-    assert not matched_row.get("rejected")
-    assert db.conn.execute(
-        "SELECT power_id FROM characters WHERE name='张献忠'"
-    ).fetchone()["power_id"] == "ming"
-    assert zhang_before["power_id"] != "ming"
 
     # 盘面自发仍可走既有 #190 路径（非案卷 origin 不受本绑定约束）
     _activate_canonical_bandit(db, content, "李自成")
@@ -610,14 +603,18 @@ def test_api_tool_pacification_unknown_target_fails_loud_not_special_decree(game
     ).fetchone()["name"]
     sess = _directive_session(db, state, content)
     before = _pending_directive_payloads(db, state.turn, minister)
+    failures = []
 
     pending_id = sess._stage_directive_tool_candidate(
         "着招抚流寇归顺朝廷，授游击将军。",
         minister,
         "中旨直发，着即招抚。",
+        failures_out=failures,
     )
 
     assert pending_id == 0
+    assert failures, "未知目标须经 pending_action_failures 显式诊断"
+    assert all("招抚" in str(f.get("message") or "") for f in failures)
     after = _pending_directive_payloads(db, state.turn, minister)
     assert after == before
     assert not any(
@@ -635,19 +632,136 @@ def test_api_tool_pacification_ambiguous_target_fails_loud_not_special_decree(ga
     ).fetchone()["name"]
     sess = _directive_session(db, state, content)
     before = _pending_directive_payloads(db, state.turn, minister)
+    failures = []
 
     pending_id = sess._stage_directive_tool_candidate(
         "着招抚张献忠与李自成归顺朝廷。",
         minister,
         "中旨直发，招抚张献忠李自成。",
+        failures_out=failures,
     )
 
     assert pending_id == 0
+    assert failures, "歧义目标须经 pending_action_failures 显式诊断"
+    assert all("招抚" in str(f.get("message") or "") for f in failures)
     after = _pending_directive_payloads(db, state.turn, minister)
     assert after == before
     assert not any(
         p.get("dossier_action_type") in {"special_decree", "pacification"}
         for _, p in after
+    )
+
+
+def test_pacification_unequal_length_dual_names_are_ambiguous(game):
+    """不等长双名：张献忠(3)与闯将(2→李自成)须歧义，不得因最长匹配吞掉较短名。"""
+    db, state, content = game
+    _activate_canonical_bandit(db, content, "张献忠")
+    _activate_canonical_bandit(db, content, "李自成")
+    assert "闯将" in (content.characters["李自成"].aliases or [])
+    sess = _directive_session(db, state, content)
+
+    assert sess._mentioned_pacification_target("招抚张献忠与闯将归顺") is None
+
+    failures = []
+    pending_id = sess._stage_directive_tool_candidate(
+        "着招抚张献忠与闯将归顺朝廷。",
+        db.conn.execute(
+            "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+        ).fetchone()["name"],
+        "招抚张献忠与闯将。",
+        failures_out=failures,
+    )
+    assert pending_id == 0
+    assert failures
+
+
+def test_pacification_nested_alias_same_canonical_resolves(game):
+    """同一 canonical 的嵌套别名（八大王⊂张献忠语境）最长匹配只消歧别名，不构成多目标。"""
+    db, state, content = game
+    _activate_canonical_bandit(db, content, "张献忠")
+    assert "八大王" in (content.characters["张献忠"].aliases or [])
+    sess = _directive_session(db, state, content)
+    assert sess._mentioned_pacification_target("着招抚八大王张献忠归顺") == "张献忠"
+
+
+def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(game):
+    """显式诊断须到非流式 ChatTurnResult 与 web stream payload 两通道。"""
+    from ming_sim.session import GameSession
+    import web_app
+
+    db, state, content = game
+    _activate_canonical_bandit(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已拟招抚之旨。",
+                tools=[SimpleNamespace(
+                    tool_name="propose_directive",
+                    result="",
+                    arguments={"decree_text": "着招抚流寇归顺朝廷。"},
+                )],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message, *a, **k: message
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
+
+    result = GameSession.chat(sess, minister, "中旨直发，着即招抚。")
+    assert result.pending_action_id == 0
+    assert result.pending_action_failures
+    assert any("招抚" in str(f.get("message") or "") for f in result.pending_action_failures)
+
+    # web stream 与 session 共用 _stage_directive_tool_candidate；经 commit 缝透出 failures。
+    web_game = web_app.WebGame.__new__(web_app.WebGame)
+    web_game.session = sess
+    web_game.chat_history = {name: [] for name in content.characters}
+    web_game.suggestions_for = lambda _character: []
+    web_game.chat_projection = lambda name: list(web_game.chat_history.get(name) or [])
+    web_game.directive_rows = lambda: []
+    web_game.directive_payload = lambda row: row
+    web_game.can_undo_last_chat = lambda _name: False
+    web_game._record_chat_rollback_items = lambda *_a, **_k: None
+    character = content.characters[minister]
+    run_output = Agent().run("")
+    payload = web_app.WebGame._chat_stream_payload_commit(
+        web_game,
+        minister,
+        "中旨直发，着即招抚。",
+        character,
+        "臣已拟招抚之旨。",
+        run_output,
+        None,
+        chat_turn_id=0,
+        before_snapshot={
+            "pending_action_ids": [],
+            "secret_order_ids": [],
+            "directive_ids": [],
+        },
+        accepted_turn=state.turn,
+    )
+    assert payload.get("pending_action_id") in (0, None)
+    assert payload.get("pending_action_failures")
+    assert any(
+        "招抚" in str(f.get("message") or "")
+        for f in payload["pending_action_failures"]
     )
 
 

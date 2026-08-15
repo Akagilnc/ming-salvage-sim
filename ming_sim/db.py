@@ -11670,6 +11670,45 @@ class GameDB:
                         state.turn, close=True, commit=False,
                     )
                     return
+            elif row["action_type"] == "pacification":
+                # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
+                target = str(
+                    payload.get("target_id") or row.get("target_id") or ""
+                ).strip()
+                if not target:
+                    raise ValueError("招抚案卷缺少 canonical target")
+                origin_ref = f"dossier:{int(dossier_id)}"
+                item = {
+                    "name": target,
+                    "origin_ref": origin_ref,
+                    "动作": "易主",
+                    "new_power": "ming",
+                    "方式": "主动归附",
+                    "反噬": {},
+                    "reason": str(
+                        payload.get("text") or row.get("decree_text") or "受抚归明"
+                    ),
+                }
+                from ming_sim.issues import _apply_person_changes
+                results = _apply_person_changes(
+                    self,
+                    state,
+                    [item],
+                    content=content,
+                    registry=registry,
+                    origin_ref=origin_ref,
+                    require_origin=True,
+                    external_transaction=True,
+                )
+                accepted = [
+                    r for r in results
+                    if isinstance(r, dict) and not r.get("rejected")
+                ]
+                if not accepted:
+                    reason = ""
+                    if results and isinstance(results[0], dict):
+                        reason = str(results[0].get("reason") or "")
+                    raise ValueError(reason or "招抚案卷易主物化失败")
             elif row["action_type"] in {"authorization", "secret_authorization"}:
                 # The dossier records the decree; #611 privileges are produced
                 # only by settlement's authority_changes slot. Skill grants are

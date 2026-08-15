@@ -1860,6 +1860,7 @@ class WebGame:
         secret_order_id = 0
         pending_action_id = 0
         tool_pending_action_id = 0
+        tool_stage_failures: List[Dict[str, Any]] = []
         if hasattr(self.db, "list_pending_actions"):
             preexisting_pending_action_ids = {
                 int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
@@ -1894,9 +1895,15 @@ class WebGame:
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
                         # #502 L2 / #522：与 session 非流式同真源；招抚走 admission seam。
+                        stage_failures: List[Dict[str, Any]] = []
                         pending_action_id = self.session._stage_directive_tool_candidate(
                             draft_text, character.name, message_text,
+                            failures_out=stage_failures,
                         )
+                        if stage_failures:
+                            # Merge into method-local channel; confirmation-path
+                            # pending_action_failures are appended below.
+                            tool_stage_failures.extend(stage_failures)
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -2055,6 +2062,8 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
+        if tool_stage_failures:
+            pending_action_failures = pending_action_failures + list(tool_stage_failures)
         payload = self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
             proposed_directive=proposed, appointed_minister=appointed,
