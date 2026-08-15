@@ -559,24 +559,20 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
     assert dossier["target_id"] == "张献忠"
     assert dossier["mode"] == "midzhi"
 
-    # 非法对象：敌国首领不得经 tool 路成招抚案卷
+    # 非法对象：敌国首领零合格 → 解析期 fail-loud，不入档、不降级 special_decree
     bad_before = list(db.list_decree_dossiers())
+    before_pending = _pending_directive_payloads(db, state.turn, minister)
     bad_sess = _api_session(Agent("着招抚皇太极归顺朝廷。"))
     bad_result = GameSession.chat(bad_sess, minister, "招抚皇太极。")
-    assert bad_result.pending_action_id
-    bad_payload = json.loads(db.conn.execute(
-        "SELECT payload_json FROM pending_actions WHERE id=?",
-        (bad_result.pending_action_id,),
-    ).fetchone()["payload_json"])
-    assert bad_payload["dossier_action_type"] == "pacification"
-    assert db.commit_pending_actions(
-        state, content=content, minister_name=minister,
-        action_ids={int(bad_result.pending_action_id)},
-    ) == []
-    assert db.conn.execute(
-        "SELECT status FROM pending_actions WHERE id=?",
-        (bad_result.pending_action_id,),
-    ).fetchone()["status"] == "failed"
+    assert not bad_result.pending_action_id
+    assert bad_result.pending_action_failures
+    assert all("招抚" in str(f.get("message") or "") for f in bad_result.pending_action_failures)
+    after_pending = _pending_directive_payloads(db, state.turn, minister)
+    assert after_pending == before_pending
+    assert not any(
+        p.get("dossier_action_type") in {"special_decree", "pacification"}
+        for _, p in after_pending
+    )
     assert list(db.list_decree_dossiers()) == bad_before
 
 
@@ -694,6 +690,43 @@ def test_pacification_nested_alias_same_canonical_resolves(game):
     assert "八大王" in (content.characters["张献忠"].aliases or [])
     sess = _directive_session(db, state, content)
     assert sess._mentioned_pacification_target("着招抚八大王张献忠归顺") == "张献忠"
+
+
+def test_pacification_unqualified_name_does_not_create_false_ambiguity(game):
+    """C1 r5：非合格奏疏人名不得计为歧义；仅合格自新内乱头目参与聚合。
+
+    张献忠(合格) + 杨嗣昌(明臣非合格) → 保留张献忠暂存，不 fail-loud。
+    """
+    db, state, content = game
+    _activate_canonical_bandit(db, content, "张献忠")
+    assert "杨嗣昌" in content.characters
+    assert db._find_pacification_target(content, "杨嗣昌") is None
+    assert db._find_pacification_target(content, "张献忠") == "张献忠"
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+
+    assert sess._mentioned_pacification_target(
+        "着杨嗣昌议，招抚张献忠归顺朝廷。"
+    ) == "张献忠"
+
+    failures = []
+    pending_id = sess._stage_directive_tool_candidate(
+        "着招抚张献忠归顺朝廷，授游击将军。",
+        minister,
+        "着杨嗣昌议，招抚张献忠。",
+        failures_out=failures,
+    )
+    assert pending_id > 0
+    assert not failures
+    payloads = _pending_directive_payloads(db, state.turn, minister)
+    staged = [p for _, p in payloads if p.get("dossier_action_type") == "pacification"]
+    assert len(staged) == 1
+    assert staged[0].get("target_id") == "张献忠"
+    assert not any(
+        p.get("dossier_action_type") == "special_decree" for _, p in payloads
+    )
 
 
 def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(game):
