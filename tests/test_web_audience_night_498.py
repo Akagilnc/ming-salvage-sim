@@ -33,7 +33,6 @@ _POLICY_FIELDS = {
 
 import web_app
 import ming_sim.agents as agents_mod
-import ming_sim.beat_orchestration as beat_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.mindreading as mindreading_mod
@@ -537,6 +536,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     game.db.conn.commit()
 
     # Sync dual close failure (endorsement + beat) → shared converter 409, both diags visible.
+    # Deterministic beat for the final retry (ticket: 测试注入假输出、零真 LLM).
+    def _deterministic_beat(inputs):
+        return f"kind={getattr(inputs, 'beat_kind', 'close')}"
+
     class _BoomBothEndorsement:
         def run(self, materials):
             raise RuntimeError("endorsement boom dual")
@@ -544,7 +547,6 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     def _boom_both_beat(_inputs):
         raise RuntimeError("close beat dual fault")
 
-    real_beat = game.session._beat_generator
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _BoomBothEndorsement(),
@@ -577,12 +579,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
 
     asyncio.run(dual_fail_sync_endpoints())
 
-    # Restore tracing endorsement + real beat for the successful close attempt.
+    # Restore tracing endorsement + deterministic beat (no real LLM on final retry).
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
-    game.session._beat_generator = real_beat
+    game.session._beat_generator = _deterministic_beat
 
     # Final close attempt succeeds through the same real Web seam.
     entered.clear()

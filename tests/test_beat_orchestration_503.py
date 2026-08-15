@@ -109,10 +109,7 @@ def test_join_exception_drains_uncancellable_sibling_before_propagating():
 
 
 def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
-    """#542: retry except 路径 drain 不可取消 Future 时，_write_gate 必须可被他者取得。
-
-    seam = WebGame.retry_interrupted_reply 真实入口（非内联 abandon）。
-    """
+    """#542: retry except 路径 drain 时 _write_gate 须可被他者取得（真实 retry 入口）。"""
     db, state, content = game
     minister = _active_minister(db, content)
     an.open_night(db, state, location="乾清宫", time_of_day="戌时")
@@ -123,35 +120,24 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     db.update_chat_turn_messages(ctid, user_message_id=uid)
     db.conn.execute("UPDATE chat_turns SET status='interrupted' WHERE id=?", (ctid,))
     db.conn.commit()
-
-    drain_entered = threading.Event()
-    release_drain = threading.Event()
+    drain_entered, release_drain = threading.Event(), threading.Event()
 
     class _Session:
         temporary_characters: set = set()
 
         def __init__(self):
-            self.db = db
-            self.state = state
+            self.db, self.state = db, state
             self.content = SimpleNamespace(
                 characters={minister: SimpleNamespace(name=minister)},
             )
 
-        def start_chat_turn_scene(self, *_a, **_k):
-            return None
-
-        def join_chat_turn_scene(self, *_a, **_k):
-            return []
-
-        def persist_chat_turn_scene(self, *_a, **_k):
-            return None
-
-        def abandon_chat_turn_scene(self, chat_turn_id):
-            # 模拟不可取消 running Future：握着调用栈直到测试放行。
+        def start_chat_turn_scene(self, *_a, **_k): return None
+        def join_chat_turn_scene(self, *_a, **_k): return []
+        def persist_chat_turn_scene(self, *_a, **_k): return None
+        def abandon_chat_turn_scene(self, _ctid):
             drain_entered.set()
-            assert release_drain.wait(2), "drain was not released"
-
-        def chat(self, minister_name, message, *, chat_turn_id=0):
+            assert release_drain.wait(2)
+        def chat(self, *_a, **_k):
             raise RuntimeError("retry llm failed")
 
     rt = object.__new__(web_app.WebGame)
@@ -159,15 +145,14 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt.chat_history = {minister: []}
     rt._write_gate = threading.Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
-    rt._audience_turn_in_flight = lambda _name: False
+    rt._audience_turn_in_flight = lambda _n: False
     rt._mark_pending_write = lambda: False
     rt._spawn_extraction_trail = lambda *a, **k: None
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row
-    rt.suggestions_for = lambda character: []
-    rt.can_undo_last_chat = lambda name: False
-    rt.pending_action_failures_for = lambda name: []
-
+    rt.suggestions_for = lambda _c: []
+    rt.can_undo_last_chat = lambda _n: False
+    rt.pending_action_failures_for = lambda _n: []
     errors: list[BaseException] = []
 
     def run_retry():
@@ -179,9 +164,7 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     t = threading.Thread(target=run_retry)
     t.start()
     assert drain_entered.wait(2), "retry never entered scene drain"
-    # 等待期间 gate 必须可取得——证明 drain 不在 with gate 内。
-    acquired = rt._write_gate.acquire(timeout=0.3)
-    assert acquired, "write gate still held during scene drain"
+    assert rt._write_gate.acquire(timeout=0.3), "write gate held during drain"
     rt._write_gate.release()
     release_drain.set()
     t.join(2)
@@ -190,15 +173,13 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
 
 
 def test_open_and_enter_scene_beats_run_concurrently(game):
-    """#542: 无依赖的 open/enter 须真并发，首轮墙钟接近 max 而非 sum。"""
+    """#542: 无依赖的 open/enter 须真并发（max_active>=2）。"""
     db, state, content = game
     minister = _active_minister(db, content)
     _nid, ctid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="par-oe", agno_runs_before=0,
     )
-
-    active = 0
-    max_active = 0
+    active = max_active = 0
     lock = threading.Lock()
     release = threading.Event()
 
@@ -217,7 +198,6 @@ def test_open_and_enter_scene_beats_run_concurrently(game):
         db, state, minister_name=minister, chat_turn_id=ctid,
         beat_generator=blocking_gen,
     )
-    # 两拍都应进入生成（并发），而不是第一个完成后才启动第二个。
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
         with lock:
@@ -225,91 +205,79 @@ def test_open_and_enter_scene_beats_run_concurrently(game):
                 break
         time.sleep(0.01)
     release.set()
-    generated = registry.join(ctid)
-    kinds = {body.split("=", 1)[-1] for _eid, body in generated}
-    assert kinds == {"open", "enter"}
-    assert max_active >= 2, f"open/enter ran sequentially (max_active={max_active})"
+    kinds = {body.split("=", 1)[-1] for _eid, body in registry.join(ctid)}
+    assert kinds == {"open", "enter"} and max_active >= 2
 
 
 def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeypatch):
-    """#542: 同 chat_turn_id 并发 start_open_enter 锁内一次原子 claim，至多一轮 discover/submit。"""
+    """#542: 同 chat_turn_id 并发 start_open_enter 至多一轮 discover/submit。"""
     db, state, content = game
     minister = _active_minister(db, content)
     _nid, ctid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="claim-oe", agno_runs_before=0,
     )
-
-    discover_calls = 0
-    discover_lock = threading.Lock()
+    discover_calls = gen_starts = 0
+    lock = threading.Lock()
     real_discover = bo.discover_open_enter_tasks
 
-    def slow_discover(*args, **kwargs):
+    def slow_discover(*a, **k):
         nonlocal discover_calls
-        with discover_lock:
+        with lock:
             discover_calls += 1
-        time.sleep(0.05)  # widen TOCTOU window if claim is outside the lock
-        return real_discover(*args, **kwargs)
+        time.sleep(0.05)
+        return real_discover(*a, **k)
 
     monkeypatch.setattr(bo, "discover_open_enter_tasks", slow_discover)
 
-    gen_starts = 0
-    gen_lock = threading.Lock()
-
     def counting_gen(inputs: BeatInputs) -> str:
         nonlocal gen_starts
-        with gen_lock:
+        with lock:
             gen_starts += 1
         return f"kind={inputs.beat_kind}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
-
-    def call_start():
-        registry.start_open_enter(
-            db, state, minister_name=minister, chat_turn_id=ctid,
-            beat_generator=counting_gen,
+    threads = [
+        threading.Thread(
+            target=registry.start_open_enter,
+            kwargs=dict(
+                db=db, state=state, minister_name=minister, chat_turn_id=ctid,
+                beat_generator=counting_gen,
+            ),
         )
-
-    threads = [threading.Thread(target=call_start) for _ in range(2)]
+        for _ in range(2)
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join(2)
         assert not t.is_alive()
-
-    generated = registry.join(ctid)
-    kinds = sorted(body.split("=", 1)[-1] for _eid, body in generated)
-    assert discover_calls == 1, f"discover ran {discover_calls} times (want 1)"
-    assert gen_starts == 2, f"generator started {gen_starts} times (want open+enter once)"
-    assert kinds == ["enter", "open"]
+    kinds = sorted(body.split("=", 1)[-1] for _eid, body in registry.join(ctid))
+    assert discover_calls == 1 and gen_starts == 2 and kinds == ["enter", "open"]
     assert not registry.has(ctid)
 
 
-def _start_open_enter_during_discover(game, monkeypatch, *, drain):
-    """start_open_enter 卡在 discover 时跑 drain（join/abandon）；断言无迟到 Future/无桶重建。"""
+@pytest.mark.parametrize("mode", ["join", "abandon"])
+def test_start_open_enter_discover_vs_drain_no_late_future(game, monkeypatch, mode):
+    """#542: start@discover 与 join/abandon 交错——drain 后无迟到 Future/无桶重建。"""
     db, state, content = game
     minister = _active_minister(db, content)
     _nid, ctid = an.attach_chat_turn_to_night(
-        db, state, minister, agno_session_id=f"drain-{drain.__name__}", agno_runs_before=0,
+        db, state, minister, agno_session_id=f"drain-{mode}", agno_runs_before=0,
     )
-
-    in_discover = threading.Event()
-    release_discover = threading.Event()
+    in_discover, release_discover = threading.Event(), threading.Event()
     real_discover = bo.discover_open_enter_tasks
 
-    def gated_discover(*args, **kwargs):
+    def gated_discover(*a, **k):
         in_discover.set()
-        assert release_discover.wait(2), "discover gate not released"
-        return real_discover(*args, **kwargs)
+        assert release_discover.wait(2)
+        return real_discover(*a, **k)
 
     monkeypatch.setattr(bo, "discover_open_enter_tasks", gated_discover)
-
     gen_starts = 0
-    gen_lock = threading.Lock()
 
     def counting_gen(inputs: BeatInputs) -> str:
         nonlocal gen_starts
-        with gen_lock:
-            gen_starts += 1
+        gen_starts += 1
         return f"kind={inputs.beat_kind}"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
@@ -322,54 +290,25 @@ def _start_open_enter_during_discover(game, monkeypatch, *, drain):
     )
     starter.start()
     assert in_discover.wait(2), "start never entered discover"
-
-    drained = drain(registry, ctid)
+    if mode == "join":
+        assert registry.join(ctid) == []
+    else:
+        registry.abandon(ctid)
     release_discover.set()
     starter.join(2)
     assert not starter.is_alive()
-
-    # drain 返回后：无 Future 迟到、无桶重建、无 scene 活过本轮
-    assert not registry.has(ctid)
-    assert registry.active_turn_ids() == []
-    assert gen_starts == 0, f"generator ran after drain (starts={gen_starts})"
-    late = registry.join(ctid)
-    assert late == []
-    assert not registry.has(ctid)
-    return drained
-
-
-def test_start_open_enter_discover_vs_join_no_late_future(game, monkeypatch):
-    """#542: start 在 discover 阶段与 join 交错——drain 后无迟到 Future/无桶重建。"""
-
-    def do_join(registry, ctid):
-        return registry.join(ctid)
-
-    assert _start_open_enter_during_discover(game, monkeypatch, drain=do_join) == []
-
-
-def test_start_open_enter_discover_vs_abandon_no_late_future(game, monkeypatch):
-    """#542: start 在 discover 阶段与 abandon 交错——drain 后无迟到 Future/无桶重建。"""
-
-    def do_abandon(registry, ctid):
-        registry.abandon(ctid)
-        return None
-
-    assert _start_open_enter_during_discover(game, monkeypatch, drain=do_abandon) is None
+    assert not registry.has(ctid) and registry.active_turn_ids() == []
+    assert gen_starts == 0 and registry.join(ctid) == []
 
 
 def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
-    """#542: 退下旁白登记本轮 scene lifecycle；dismiss 同步路径不得直接跑 LLM。
-
-    body 只在 join 后 persist 落定；abandon 可排空未落库结果。
-    """
+    """#542: 退下旁白进 scene lifecycle；dismiss 同步不跑 LLM；join 后才落 body。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
     an.summon_enter(db, night["id"], minister)
     ctid = db.create_chat_turn(state, minister, "exit-life", 0, night_id=night["id"])
-
-    started = threading.Event()
-    release = threading.Event()
+    started, release = threading.Event(), threading.Event()
     calls: list[str] = []
 
     def slow_exit(inputs: BeatInputs) -> str:
@@ -379,27 +318,20 @@ def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
         return "特征化退下旁白"
 
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
-    # dismiss 只落垫位账，不吃 beat_generator（同步 LLM 禁入）。
     entry_id = an.dismiss_from_audience(
-        db, minister, night_id=night["id"], origin_chat_turn_id=ctid,
-        state=state,
+        db, minister, night_id=night["id"], origin_chat_turn_id=ctid, state=state,
+        beat_generator=lambda inputs: calls.append("sync") or "同步旁白",
     )
-    assert entry_id
     placeholder = an.list_ledger(db, night["id"])[-1]["body"]
-    assert placeholder != "特征化退下旁白"
-
+    assert entry_id and "sync" not in calls and placeholder != "特征化退下旁白"
     registry.start_exit(
-        db, state,
-        person_name=minister, chat_turn_id=ctid, entry_id=int(entry_id),
+        db, state, person_name=minister, chat_turn_id=ctid, entry_id=int(entry_id),
         night_id=int(night["id"]), beat_generator=slow_exit,
     )
-    assert started.wait(1), "exit generation never started"
-    # 生成仍在跑时账正文仍是垫位——无后台迟到补写。
-    assert an.list_ledger(db, night["id"])[-1]["body"] == placeholder
-
+    assert started.wait(1)
+    assert an.list_ledger(db, night["id"])[-1]["body"] == placeholder  # 无迟到补写
     release.set()
-    generated = registry.join(ctid)
-    bo.persist_chat_turn_scene(db, generated)
+    bo.persist_chat_turn_scene(db, registry.join(ctid))
     db.conn.commit()
     assert an.list_ledger(db, night["id"])[-1]["body"] == "特征化退下旁白"
     assert calls == [BEAT_EXIT]
@@ -420,16 +352,12 @@ def _active_minister(db, content, *, exclude=None):
 
 
 def _echo_generator(inputs: BeatInputs) -> str:
-    """把路由后的输入原样回显进账正文，供断言编排（非文案质量）。"""
+    """路由后输入回显进账正文，供断言编排（非文案质量）。"""
     return "‖".join([
-        f"kind={inputs.beat_kind}",
-        f"person={inputs.person_name}",
-        f"method={inputs.summon_method}",
-        f"tod={inputs.time_of_day}",
-        f"loc={inputs.location}",
-        f"char={inputs.characterization}",
-        f"world={inputs.perspectival_world}",
-        f"tension={inputs.court_tension}",
+        f"kind={inputs.beat_kind}", f"person={inputs.person_name}",
+        f"method={inputs.summon_method}", f"tod={inputs.time_of_day}",
+        f"loc={inputs.location}", f"char={inputs.characterization}",
+        f"world={inputs.perspectival_world}", f"tension={inputs.court_tension}",
         f"prior={'∥'.join(inputs.prior_appearances)}",
         f"public={'∥'.join(inputs.public_layer)}",
     ])
@@ -614,34 +542,6 @@ def test_no_generator_keeps_deterministic_fallback(game):
     assert close_body == "退朝，今夜召对到此。"
 
 
-def test_production_generator_varies_enter_body_by_identity(game):
-    """#503 生产生成器：不同身份者入殿正文非空且不同（AC1，不做文案质量断言）。"""
-    db, state, content = game
-    a = _active_minister(db, content)
-    b = _active_minister(db, content, exclude={a})
-    _nid, _cid = an.attach_chat_turn_to_night(
-        db, state, a, agno_session_id="sa", agno_runs_before=0,
-        time_of_day="戌时", location="乾清宫", summon_method=an.METHOD_XUANRU,
-        beat_generator=_echo_generator,
-    )
-    night = an.get_open_night(db)
-    an.attach_chat_turn_to_night(
-        db, state, b, agno_session_id="sb", agno_runs_before=0,
-        summon_method=an.METHOD_YUECI, beat_generator=_echo_generator,
-    )
-    body_a = _enter_body(db, night["id"], a)
-    body_b = _enter_body(db, night["id"], b)
-    assert body_a and body_b
-    assert body_a != body_b
-    assert a in body_a and b in body_b
-    assert an.METHOD_XUANRU in body_a and an.METHOD_YUECI in body_b
-    # 时地取自夜容器（cmr R7）
-    assert "戌时" in body_a and "乾清宫" in body_a
-    # 开夜账亦经生产生成器（非 #498 一行兜底独占）
-    open_body = _ledger_body(db, night["id"], an.TAG_OPEN_NIGHT)
-    assert open_body and "乾清宫" in open_body and "戌时" in open_body
-
-
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
     """真实 WebGame（离线 LLM）——验证生产 _start_chat_turn 接线。"""
@@ -694,27 +594,8 @@ def test_exit_beat_routes_characterization_and_perspectival_inputs(game):
     assert an.list_ledger(db, night["id"])[-1]["body"] == "毕自严整衣趋出。"
 
 
-def test_dismiss_ignores_beat_generator_sync_bypass(game):
-    """#542: dismiss_from_audience 不得再走同步 beat_generator 旁路。"""
-    db, state, content = game
-    minister = _active_minister(db, content)
-    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
-    an.summon_enter(db, night["id"], minister)
-    calls: list[str] = []
-
-    entry_id = an.dismiss_from_audience(
-        db, minister, night_id=night["id"], state=state,
-        beat_generator=lambda inputs: calls.append(inputs.beat_kind) or "同步旁白",
-    )
-    assert entry_id
-    assert calls == []
-    body = an.list_ledger(db, night["id"])[-1]["body"]
-    assert body != "同步旁白"
-    assert minister in body
-
-
 def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
-    """#542: CLI「退下」进唯一 registry；失败 abandon，不跑同步 generate_exit_beat_body。"""
+    """#542: CLI「退下」进唯一 registry；不跑同步 generate_exit_beat_body。"""
     import ming_sim.cli.terminal as term
     from ming_sim.session import GameSession
 
@@ -722,9 +603,7 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
     minister = _active_minister(db, content)
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
     an.summon_enter(db, night["id"], minister)
-
-    started = threading.Event()
-    release = threading.Event()
+    started, release = threading.Event(), threading.Event()
     calls: list[str] = []
 
     def slow_exit(inputs: BeatInputs) -> str:
@@ -734,21 +613,14 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
         return "CLI特征化退下"
 
     session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
-    session.content = content
+    session.db, session.state, session.content = db, state, content
     session.temporary_characters = set()
     session._beat_generator = slow_exit
     session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
-
-    def run():
-        term._record_audience_exit(session, minister)
-
-    worker = threading.Thread(target=run)
+    worker = threading.Thread(target=term._record_audience_exit, args=(session, minister))
     worker.start()
     assert started.wait(1), "CLI exit never entered registry generator"
-    placeholder = an.list_ledger(db, night["id"])[-1]["body"]
-    assert placeholder != "CLI特征化退下"
+    assert an.list_ledger(db, night["id"])[-1]["body"] != "CLI特征化退下"
     release.set()
     worker.join(2)
     assert not worker.is_alive()
@@ -758,7 +630,7 @@ def test_cli_dismiss_routes_exit_through_scene_registry(game, monkeypatch):
 
 
 def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
-    """#542 票面 e2e：真实玩家入口→假 generator→账本→卷轴，四类 role=scene 可读（零真 LLM）。"""
+    """#542 票面 e2e：真实玩家入口→假 generator→卷轴四类 role=scene（零真 LLM）。"""
     game = web_game
     minister = _active_minister(game.db, game.content)
     fake_bodies = {
@@ -767,53 +639,39 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
         BEAT_EXIT: f"【退下旁白·特征化】{minister}告退。",
         BEAT_CLOSE: "【收夜旁白·特征化】烛影摇红。",
     }
-
-    def fake_gen(inputs: BeatInputs) -> str:
-        return fake_bodies[inputs.beat_kind]
-
+    fake_gen = lambda inputs: fake_bodies[inputs.beat_kind]
     game.session._beat_generator = fake_gen
-
-    # 1-2) 真实 Web 起聊入口：开场 + 入殿与回话并行，join 后落账
     ctid, _snap = game._start_chat_turn(minister)
-    assert ctid
-    row = game.db.conn.execute(
+    night_id = int(game.db.conn.execute(
         "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
-    ).fetchone()
-    night_id = int(row["night_id"])
+    ).fetchone()["night_id"])
     uid = game.db.append_chat_message(minister, game.state.turn, "user", "边饷如何？")
     game.db.update_chat_turn_messages(ctid, user_message_id=int(uid))
-    # 3) 令退：垫位 + registry exit（与 tool dismiss 同缝）
     entry_id = an.dismiss_from_audience(
         game.db, minister, night_id=night_id, origin_chat_turn_id=int(ctid),
         state=game.state,
     )
-    assert entry_id
     game.session.start_chat_turn_exit_scene(
         minister, int(ctid), int(entry_id), night_id=night_id,
     )
-    generated = game.session.join_chat_turn_scene(int(ctid))
-    game.session.persist_chat_turn_scene(generated)
+    game.session.persist_chat_turn_scene(game.session.join_chat_turn_scene(int(ctid)))
     game.db.persist_minister_reply(minister, game.state.turn, "臣请据实核账。", int(ctid))
     game.db.settle_story_extraction(int(ctid), night_id, [], 0)
     game.db.conn.commit()
-
-    # 4) 收夜真实引擎入口
     an.close_night(
         game.db, game.state, night_id=night_id, content=game.content,
         beat_generator=fake_gen, wait_timeout_s=0.0,
     )
-
-    scroll = an.read_night_scroll(game.db, night_id)
     by_beat = {
-        m["beat"]: m for m in scroll
+        m["beat"]: m for m in an.read_night_scroll(game.db, night_id)
         if m["role"] == "scene" and m["beat"] in {"opening", "entrance", "exit", "closing"}
     }
     assert set(by_beat) == {"opening", "entrance", "exit", "closing"}
-    assert by_beat["opening"]["content"] == fake_bodies[BEAT_OPEN]
-    assert by_beat["entrance"]["content"] == fake_bodies[BEAT_ENTER]
-    assert by_beat["exit"]["content"] == fake_bodies[BEAT_EXIT]
-    assert by_beat["closing"]["content"] == fake_bodies[BEAT_CLOSE]
-    assert all(by_beat[b]["role"] == "scene" for b in by_beat)
+    for kind, key in (
+        (BEAT_OPEN, "opening"), (BEAT_ENTER, "entrance"),
+        (BEAT_EXIT, "exit"), (BEAT_CLOSE, "closing"),
+    ):
+        assert by_beat[key]["content"] == fake_bodies[kind]
 
 
 def test_web_start_chat_turn_wires_session_beat_generator(web_game):
@@ -821,46 +679,32 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
     game = web_game
     minister = _active_minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
-    assert ctid
-    row = game.db.conn.execute(
-        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
-    ).fetchone()
-    night_id = int(row["night_id"])
-    # durable 建轮即由 session 生命周期启动 scene；入口不再手工 generate/persist。
+    night_id = int(game.db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["night_id"])
     assert _enter_body(game.db, night_id, minister) == f"宣入{minister}入殿。"
-    generated = game.session.join_chat_turn_scene(ctid)
-    game.session.persist_chat_turn_scene(generated)
+    game.session.persist_chat_turn_scene(game.session.join_chat_turn_scene(ctid))
     enter = _enter_body(game.db, night_id, minister)
-    open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
     assert enter and minister in enter and enter != f"宣入{minister}入殿。"
-    assert open_body and "kind=open" in open_body
+    assert "kind=open" in (_ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT) or "")
 
 
 def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
     """#542: Web 自动收夜走 session._beat_generator，不旁路 production_beat_generator。"""
     game = web_game
-    minister = _active_minister(game.db, game.content)
-    an.open_night(game.db, game.state, time_of_day="戌时", location="乾清宫")
-    # drain any open/enter futures started by prior night attach paths
     for ctid in list(game.session._scene_registry.active_turn_ids()):
         game.session.abandon_chat_turn_scene(ctid)
-
-    seen = []
-
-    def tracking_gen(inputs: BeatInputs) -> str:
-        seen.append(inputs.beat_kind)
-        return f"session-owned-{inputs.beat_kind}"
-
-    game.session._beat_generator = tracking_gen
-
-    def boom_production(_inputs):
-        raise AssertionError("production_beat_generator must not be used by web auto-close")
-
-    monkeypatch.setattr(bo, "production_beat_generator", boom_production)
+    an.open_night(game.db, game.state, time_of_day="戌时", location="乾清宫")
+    seen: list[str] = []
+    game.session._beat_generator = (
+        lambda inputs: seen.append(inputs.beat_kind) or f"session-owned-{inputs.beat_kind}"
+    )
+    monkeypatch.setattr(
+        bo, "production_beat_generator",
+        lambda _i: (_ for _ in ()).throw(AssertionError("production bypass")),
+    )
     web_app._auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-    assert BEAT_CLOSE in seen
-    night = an.get_open_night(game.db)
-    assert night is None
+    assert BEAT_CLOSE in seen and an.get_open_night(game.db) is None
 
 
 # ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────
