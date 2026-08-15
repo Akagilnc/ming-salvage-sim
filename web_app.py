@@ -657,6 +657,7 @@ class WebGame:
             verify_llm_available(llm_config)
             _delete_sqlite_db_files_or_raise(db_path)
         self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
+        # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
         self._write_gate = threading.Lock()
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
         # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
@@ -1426,16 +1427,15 @@ class WebGame:
         # 测试替身无 conn/夜表时回退 create_chat_turn（lifecycle 双接口仍可测）。
         if hasattr(self.db, "conn"):
             from ming_sim.audience_night import attach_chat_turn_to_night
-            from ming_sim.beat_orchestration import production_beat_generator
-            # #503：生产路径接通 beat 编排缝（入殿/开夜正文随身份·召法·时地不同）；
-            # 内容质量日后由 #472/#478 换 LLM 实现同一 seam。
+            # #503/#542：生产路径接通真实 scene LLM 编排缝。
             _night_id, chat_turn_id = attach_chat_turn_to_night(
                 self.db,
                 self.state,
                 minister_name,
                 agno_session_id=agno_session_id,
                 agno_runs_before=runs_before,
-                beat_generator=production_beat_generator,
+                # durable 身份先落；scene 在轮内与大臣同启，join 后原子替换垫位。
+                beat_generator=None,
             )
         else:
             chat_turn_id = self.db.create_chat_turn(
@@ -1444,6 +1444,8 @@ class WebGame:
                 agno_session_id,
                 runs_before,
             )
+        if chat_turn_id:
+            self.session.start_chat_turn_scene(minister_name, chat_turn_id)
         return chat_turn_id, snapshot
 
     def _record_chat_rollback_items(
@@ -1460,7 +1462,10 @@ class WebGame:
         """召对中断/失败的统一善后：记 rollback 项、标 chat_turn=failed、从 DB 重载聊天缓存。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
         minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
-        仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。"""
+        仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
+
+        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
+        """
         if not chat_turn_id:
             return
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -1599,23 +1604,25 @@ class WebGame:
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
-        with gate:
-            self._reject_if_settlement_phase()
-            # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import assert_night_accepts_player_input
-                assert_night_accepts_player_input(self.db, what="召对")
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            accepted_turn = int(self.state.turn)
-            if self._persistent_chat_minister(minister_name):
-                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            if minister_name not in self.session.temporary_characters:
-                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                if chat_turn_id:
-                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
+        # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
+            with gate:
+                self._reject_if_settlement_phase()
+                # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
+                if self._audience_turn_in_flight(minister_name):
+                    raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                accepted_turn = int(self.state.turn)
+                if self._persistent_chat_minister(minister_name):
+                    chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+                self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+                if minister_name not in self.session.temporary_characters:
+                    message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                    if chat_turn_id:
+                        self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
             chat_signature = inspect.signature(self.session.chat)
             try:
                 chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
@@ -1628,10 +1635,13 @@ class WebGame:
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
-                # _chat_payload 持久化 minister 消息 + 更新 chat_turn——纳入失败 guard 覆盖范围，
-                # 若它失败也干净回滚，不留孤儿轮（#399 cmr R1 coderabbit Major）。
-                payload = self._chat_payload(
+                # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
+                with atomic(self.db):
+                    self.session.persist_chat_turn_scene(scene_generated)
+                    # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
+                    payload = self._chat_payload(
                     minister_name, result.answer,
                     court_action=result.court_action, next_minister=result.next_minister,
                     proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -1660,6 +1670,8 @@ class WebGame:
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
+            # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
+            self.session.abandon_chat_turn_scene(chat_turn_id)
             with gate:
                 if chat_turn_id:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -1692,32 +1704,38 @@ class WebGame:
         self._reject_if_settlement_phase()
         gate = self._runtime_write_gate()
         before_snapshot: Dict[str, Any] = {}
-        with gate:
-            self._reject_if_settlement_phase()
-            # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import assert_night_accepts_player_input
-                assert_night_accepts_player_input(self.db, what="召对")
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(
-                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
-            # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
-            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                raise HTTPException(
-                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
-            # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
-            # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
-            before_snapshot = self.db.capture_chat_rollback_snapshot()
+        # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
+        # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
+            with gate:
+                self._reject_if_settlement_phase()
+                # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
+                if self._audience_turn_in_flight(minister_name):
+                    raise HTTPException(
+                        status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
+                # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
+                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                    raise HTTPException(
+                        status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
+                # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
+                # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
+                before_snapshot = self.db.capture_chat_rollback_snapshot()
+                self.session.start_chat_turn_scene(minister_name, chat_turn_id)
             result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
             proposed = None
             if result.proposed_directive is not None:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
+            scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
-                payload = self._chat_payload(
+                with atomic(self.db):
+                    self.session.persist_chat_turn_scene(scene_generated)
+                    payload = self._chat_payload(
                     minister_name, result.answer,
                     court_action=result.court_action, next_minister=result.next_minister,
                     proposed_directive=proposed, appointed_minister=result.appointed_minister,
@@ -1732,7 +1750,7 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
-                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
@@ -1746,6 +1764,8 @@ class WebGame:
             # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
             # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
             # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
+            # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
+            self.session.abandon_chat_turn_scene(chat_turn_id)
             with gate:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 self.db.restore_interrupted_after_failed_retry(chat_turn_id)
@@ -1816,6 +1836,8 @@ class WebGame:
         )
         # LLM 流在无锁窗口跑（#498 AC10 可达熔断）
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
+        # #542：dismiss tool 事件一出现就 start_exit，与尚未结束的回话流重叠。
+        exit_started_during_stream = False
         for event in stream:
             content = getattr(event, "content", None)
             event_name = getattr(event, "event", "")
@@ -1823,6 +1845,22 @@ class WebGame:
                 delta = str(content)
                 chunks.append(delta)
                 emit_delta(delta)
+            if not exit_started_during_stream:
+                # agno ToolCallCompletedEvent.tool；终事件 RunOutput.tools 作兜底。
+                # 轻量 session 替身可能无此方法——缺则留给 interpret 旧缝/跳过。
+                start_exit = getattr(
+                    self.session, "start_exit_scene_from_dismiss_tools", None,
+                )
+                tool = getattr(event, "tool", None)
+                tools_now: List[Any] = [tool] if tool is not None else []
+                if not tools_now and type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
+                    tools_now = list(getattr(event, "tools", None) or [])
+                if (
+                    tools_now
+                    and start_exit is not None
+                    and start_exit(character.name, int(chat_turn_id or 0), tools_now)
+                ):
+                    exit_started_during_stream = True
             if type(event).__name__ in ("RunOutput", "RunCompletedEvent"):
                 run_output = event
         # 流式跑完补 dump：流式 run_output(RunCompletedEvent)常无 .messages，
@@ -1835,14 +1873,37 @@ class WebGame:
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
 
+        # #542：action/tool 解释（exit 若流中未启则幂等补登），write_gate 外统一 join，
+        # 短事务原子持久化 reply + 本轮全部 scene。join 不得早于 start_exit。
+        interpreted = self._chat_stream_interpret_tools(
+            minister_name, text, character, answer, run_output,
+            action_intent_future, chat_turn_id,
+        )
+        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
-            return self._chat_stream_payload_commit(
-                minister_name, text, character, answer, run_output,
-                action_intent_future, chat_turn_id, before_snapshot, accepted_turn,
-            )
+            with atomic(self.db):
+                self.session.persist_chat_turn_scene(scene_generated or [])
+                payload = self._chat_payload(
+                    minister_name,
+                    interpreted["answer"],
+                    court_action=interpreted["court_action"],
+                    next_minister=interpreted["next_minister"],
+                    proposed_directive=interpreted["proposed"],
+                    appointed_minister=interpreted["appointed"],
+                    registered_minister=interpreted["registered"],
+                    displaced_minister=interpreted["displaced"],
+                    secret_order_id=interpreted["secret_order_id"],
+                    pending_action_id=interpreted["pending_action_id"],
+                    pending_action_failures=interpreted["pending_action_failures"],
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
+                )
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            return payload
 
-    def _chat_stream_payload_commit(
+    def _chat_stream_interpret_tools(
         self,
         minister_name: str,
         text: str,
@@ -1851,8 +1912,6 @@ class WebGame:
         run_output: Any,
         action_intent_future: Any,
         chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-        accepted_turn: int,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -1959,12 +2018,27 @@ class WebGame:
                                 next_minister = target.name
                 elif tool_name == "dismiss_minister" or res == "__dismiss__":
                     court_action = "dismiss"
-                    # AC1（#500）：令退同源落确定性告退账，名单查询即时去人。
-                    # #506 L1：告退账绑本轮，撤回本轮据 origin 删账、令退者在场复原。
-                    from ming_sim.audience_night import dismiss_from_audience
-                    dismiss_from_audience(
-                        self.db, character.name, origin_chat_turn_id=chat_turn_id,
+                    # AC1（#500）/#506 L1：令退同源落账绑本轮。#542：流中已 start_exit
+                    # 时此处幂等 no-op；未启则补登（仅 tools 终事件路径）。
+                    start_exit = getattr(
+                        self.session, "start_exit_scene_from_dismiss_tools", None,
                     )
+                    if start_exit is not None:
+                        start_exit(
+                            character.name, int(chat_turn_id or 0), [tool_exec],
+                        )
+                    elif hasattr(self.db, "conn"):
+                        from ming_sim.audience_night import dismiss_from_audience
+                        entry_id = dismiss_from_audience(
+                            self.db, character.name,
+                            origin_chat_turn_id=chat_turn_id, state=self.state,
+                        )
+                        if entry_id and chat_turn_id and hasattr(
+                            self.session, "start_chat_turn_exit_scene",
+                        ):
+                            self.session.start_chat_turn_exit_scene(
+                                character.name, int(chat_turn_id), int(entry_id),
+                            )
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")
@@ -2089,20 +2163,20 @@ class WebGame:
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)
-        payload = self._chat_payload(
-            minister_name, answer, court_action=court_action, next_minister=next_minister,
-            proposed_directive=proposed, appointed_minister=appointed,
-            registered_minister=registered,
-            displaced_minister=displaced,
-            secret_order_id=secret_order_id,
-            pending_action_id=pending_action_id,
-            pending_action_failures=pending_action_failures,
-            chat_turn_id=chat_turn_id,
-            accepted_turn=accepted_turn,
-            directive_confirmation_ambiguous=directive_ambiguous,
-        )
-        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        return payload
+        # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
+        return {
+            "answer": answer,
+            "court_action": court_action,
+            "next_minister": next_minister,
+            "proposed": proposed,
+            "appointed": appointed,
+            "registered": registered,
+            "displaced": displaced,
+            "secret_order_id": secret_order_id,
+            "pending_action_id": pending_action_id,
+            "pending_action_failures": pending_action_failures,
+            "directive_ambiguous": directive_ambiguous,
+        }
 
     def _trail_mindreading_after_reply(
         self,
@@ -2305,6 +2379,8 @@ class WebGame:
         accepted_turn = 0
         # #498 AC10：prologue 持锁写库后立刻释放，LLM 不持 write_gate——
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
+        # #542 r6g：Lock.locked() 不记 owner——本路径自记是否仍持 gate，只放自己的锁。
+        gate_held = True
         write_gate.acquire()
         try:
             # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
@@ -2343,14 +2419,25 @@ class WebGame:
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
+            # Release gate before scene drain — prologue may have already started futures.
+            if gate_held:
+                try:
+                    write_gate.release()
+                except RuntimeError:
+                    pass
+                gate_held = False
             try:
-                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
             self._complete_pending_write()
             raise
         finally:
-            write_gate.release()
+            if gate_held:
+                write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         identity = {
@@ -2371,6 +2458,8 @@ class WebGame:
                 ev_queue.put({"type": "accepted", **identity})
         except Exception as error:  # noqa: BLE001
             try:
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
@@ -2403,7 +2492,10 @@ class WebGame:
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
                     # 否则 error 事件不会被投进 queue、消费者永久挂死。
+                    # Scene drain stays outside write_gate (C9/T1/T10).
                     try:
+                        if chat_turn_id:
+                            self.session.abandon_chat_turn_scene(chat_turn_id)
                         with write_gate:
                             self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                     except Exception:
@@ -2450,6 +2542,8 @@ class WebGame:
             thread.start()
         except Exception:
             try:
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
@@ -2512,12 +2606,26 @@ def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
 
     Shared converter for player-input boundaries (chat / reply-retry) and sync
     decree endpoints (issue / advance_without_edict). AudienceNightError keeps
-    ``detail=str(exc)``; close_night dual ExceptionGroup surfaces both nested
-    diagnostics in detail. No new exception protocol — existing 409 only.
+    ``detail=str(exc)`` and walks ``__cause__`` so endorsement∥close-scene dual
+    failures still surface both nested diagnostics (CI5 dropped ExceptionGroup
+    bus; chain is primary from join). Legacy ExceptionGroup still flattened.
+    No new exception protocol — existing 409 only.
     """
     from ming_sim.audience_night import AudienceNightError
     if isinstance(exc, AudienceNightError):
-        return HTTPException(status_code=409, detail=str(exc))
+        parts: list[str] = []
+        cur: BaseException | None = exc
+        seen: set[int] = set()
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            text = str(cur).strip()
+            if text and text not in parts:
+                parts.append(text)
+            cur = cur.__cause__  # type: ignore[assignment]
+        return HTTPException(
+            status_code=409,
+            detail="；".join(parts) if parts else str(exc),
+        )
     if isinstance(exc, ExceptionGroup):
         parts = [str(sub) for sub in exc.exceptions]
         return HTTPException(
@@ -2560,7 +2668,6 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
     if db is None or not hasattr(db, "conn"):
         return
     from ming_sim.audience_night import auto_close_open_night
-    from ming_sim.beat_orchestration import production_beat_generator
 
     session = getattr(game, "session", None)
     auto_close_open_night(
@@ -2569,9 +2676,10 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
         content=getattr(game, "content", None),
         registry=getattr(session, "registry", None) if session is not None else None,
         wait_timeout_s=float(inflight_wait_s),
-        beat_generator=production_beat_generator,
+        beat_generator=getattr(session, "_beat_generator", None) if session is not None else None,
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
+        scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
     )
 
 
@@ -3782,6 +3890,7 @@ def api_advance_without_edict() -> Dict[str, Any]:
                     inflight_wait_s=0.0,
                     llm_config=getattr(game.session, "llm_config", None),
                     write_gate=None,
+                    scene_registry=getattr(game.session, "_scene_registry", None),
                 )
                 if not advanced:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)

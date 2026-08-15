@@ -1735,6 +1735,7 @@ def _decree_session(db, state, content):
     return sess
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, monkeypatch):
     """P1-1：拟诏（write_decree 产生稿）后，玩家又新建一条对话式草案（新 draft）。
     resolve_turn 时，陈旧的 last_decree 仅覆盖旧 draft——必须强制重生成、纳入新 draft，
@@ -1798,6 +1799,7 @@ def test_stale_decree_not_issued_when_new_draft_created_after_generation(game, m
     assert any("草案B" in t for t in captured["directive_texts"]), "新 draft B 须进 directives"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_supplied_decree_not_used_after_pending_directive_auto_commit(game, monkeypatch):
     """resolve_turn(decree=...) 外部传入旧诏书时，若本次调用先 auto-commit 了口头草案，
     传入文本不包含新 draft；必须重拟/重取当前 draft 集，不能把未入正文的 draft 标 issued。"""

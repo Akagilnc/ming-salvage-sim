@@ -8170,6 +8170,13 @@ class GameDB:
         ]
         with self.conn:
             self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
+            # Same family as undo_chat_turn: drop enter/exit placeholders bound to this
+            # turn so failed attach/exit cannot freeze night presence or scene pads (T16/C11).
+            self.conn.execute(
+                "DELETE FROM story_ledger_entries "
+                "WHERE source_chat_turn_id = ? OR origin_chat_turn_id = ?",
+                (int(chat_turn_id), int(chat_turn_id)),
+            )
             self._restore_chat_rollback_items_in_tx(items, message_ids)
             if message_ids:
                 placeholders = ",".join("?" for _ in message_ids)

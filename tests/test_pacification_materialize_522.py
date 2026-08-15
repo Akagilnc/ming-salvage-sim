@@ -774,7 +774,7 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
     assert result.pending_action_failures
     assert any("招抚" in str(f.get("message") or "") for f in result.pending_action_failures)
 
-    # web stream 与 session 共用 _stage_directive_tool_candidate；经 commit 缝透出 failures。
+    # web stream 与 session 共用 _stage_directive_tool_candidate；经 interpret 缝透出 failures。
     web_game = web_app.WebGame.__new__(web_app.WebGame)
     web_game.session = sess
     web_game.chat_history = {name: [] for name in content.characters}
@@ -786,7 +786,7 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
     web_game._record_chat_rollback_items = lambda *_a, **_k: None
     character = content.characters[minister]
     run_output = Agent().run("")
-    payload = web_app.WebGame._chat_stream_payload_commit(
+    payload = web_app.WebGame._chat_stream_interpret_tools(
         web_game,
         minister,
         "中旨直发，着即招抚。",
@@ -794,13 +794,7 @@ def test_api_tool_pacification_failure_diagnostic_reaches_chat_and_web_stream(ga
         "臣已拟招抚之旨。",
         run_output,
         None,
-        chat_turn_id=0,
-        before_snapshot={
-            "pending_action_ids": [],
-            "secret_order_ids": [],
-            "directive_ids": [],
-        },
-        accepted_turn=state.turn,
+        0,
     )
     assert payload.get("pending_action_id") in (0, None)
     assert payload.get("pending_action_failures")
@@ -948,7 +942,7 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
     web_game.can_undo_last_chat = lambda _name: False
     web_game._record_chat_rollback_items = lambda *_a, **_k: None
     character = content.characters[minister]
-    payload = web_app.WebGame._chat_stream_payload_commit(
+    payload = web_app.WebGame._chat_stream_interpret_tools(
         web_game,
         minister,
         "拟旨如下：先筹饷，再议招抚流寇。",
@@ -956,13 +950,7 @@ def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(ga
         "臣已拟两道旨。",
         Agent().run(""),
         None,
-        chat_turn_id=0,
-        before_snapshot={
-            "pending_action_ids": [],
-            "secret_order_ids": [],
-            "directive_ids": [],
-        },
-        accepted_turn=state.turn,
+        0,
     )
     assert int(payload.get("pending_action_id") or 0) > 0
     assert payload.get("pending_action_failures")

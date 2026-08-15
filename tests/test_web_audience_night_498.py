@@ -33,7 +33,6 @@ _POLICY_FIELDS = {
 
 import web_app
 import ming_sim.agents as agents_mod
-import ming_sim.beat_orchestration as beat_mod
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories_mod
 import ming_sim.mindreading as mindreading_mod
@@ -132,8 +131,11 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
 
 
 @pytest.fixture
-def web_game(tmp_path, monkeypatch):
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。
+
+    显式 opt-in `_offline_scene_beat_generator`：在 GameSession.__init__ 前注入确定性
+    beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取
@@ -379,8 +381,16 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     no_db_tx = []
     entered = threading.Event()
     release = threading.Event()
+    # Baseline excludes close-scene scaffold (minister=收夜 / session=close-scene):
+    # start_close may lawfully add that registry bucket before status=CLOSING.
+    # Freeze still forbids concurrent admission smuggling turns only.
     turns_before = game.db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+        """
+        SELECT COUNT(*) AS c FROM chat_turns
+        WHERE night_id=?
+          AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+        """,
+        (night_id,),
     ).fetchone()["c"]
     pending_before = game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
@@ -473,8 +483,15 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 game.db.flag_directive_needs_clarification(directive_id)
             assert flag_exc.value.code == "night_closing"
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
+            # Close-scene scaffold is the night-closing registry bucket, not admission
+            # smuggling; count only non-scaffold turns under the freeze.
             assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+                """
+                SELECT COUNT(*) AS c FROM chat_turns
+                WHERE night_id=?
+                  AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+                """,
+                (night_id,),
             ).fetchone()["c"] == turns_before
             assert game.db.conn.execute(
                 "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
@@ -537,6 +554,10 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     game.db.conn.commit()
 
     # Sync dual close failure (endorsement + beat) → shared converter 409, both diags visible.
+    # Deterministic beat for the final retry (ticket: 测试注入假输出、零真 LLM).
+    def _deterministic_beat(inputs):
+        return f"kind={getattr(inputs, 'beat_kind', 'close')}"
+
     class _BoomBothEndorsement:
         def run(self, materials):
             raise RuntimeError("endorsement boom dual")
@@ -544,12 +565,11 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     def _boom_both_beat(_inputs):
         raise RuntimeError("close beat dual fault")
 
-    real_beat = beat_mod.production_beat_generator
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _BoomBothEndorsement(),
     )
-    monkeypatch.setattr(beat_mod, "production_beat_generator", _boom_both_beat)
+    game.session._beat_generator = _boom_both_beat
 
     def _detail_text(resp) -> str:
         detail = resp.json().get("detail") if resp.headers.get("content-type", "").startswith("application/json") else None
@@ -577,12 +597,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
 
     asyncio.run(dual_fail_sync_endpoints())
 
-    # Restore tracing endorsement + real beat for the successful close attempt.
+    # Restore tracing endorsement + deterministic beat (no real LLM on final retry).
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
-    monkeypatch.setattr(beat_mod, "production_beat_generator", real_beat)
+    game.session._beat_generator = _deterministic_beat
 
     # Final close attempt succeeds through the same real Web seam.
     entered.clear()

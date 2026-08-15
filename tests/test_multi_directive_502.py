@@ -575,6 +575,7 @@ def _by_pid(db, pid):
         "SELECT id, payload_json FROM pending_actions WHERE id=?", (int(pid),)).fetchone()
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_nonstream_web_chat_surfaces_ambiguous():
     """R1：非流式 WebGame.chat 组装 payload 时透出结构化含糊态（候选集），与 stream 同 surface。
     临时大臣路径跳过持久化/读心，聚焦 payload 组装是否携带 directive_confirmation_ambiguous。"""
@@ -605,6 +606,22 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         def _character(self, n):
             return self.content.characters[n]
 
+        # #542 scene lifecycle seams — production chat start/join/persist/abandon.
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def start_chat_turn_exit_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
     rt.chat_history = {name: []}
@@ -622,6 +639,7 @@ def test_nonstream_web_chat_surfaces_ambiguous():
     assert {c["id"] for c in payload["directive_confirmation_ambiguous"]["candidates"]} == {11, 12}
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_nonstream_web_chat_no_ambiguous_key_is_none():
     """负路：非含糊轮 payload 的含糊态键为 None（不误置）。"""
     import threading
@@ -645,6 +663,22 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
 
         def _character(self, n):
             return self.content.characters[n]
+
+        # #542 scene lifecycle seams — production chat start/join/persist/abandon.
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def start_chat_turn_exit_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
 
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()

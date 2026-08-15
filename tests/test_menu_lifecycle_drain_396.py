@@ -1,6 +1,8 @@
 """#396: menu lifecycle endpoints must drain in-flight writes before closing DB sessions."""
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import os
 import threading
@@ -538,6 +540,22 @@ class _GapBSession:
     def pending_count(self):
         return 0
 
+    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
+    def start_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def start_chat_turn_exit_scene(self, *_a, **_k):
+        return None
+
+    def join_chat_turn_scene(self, *_a, **_k):
+        return []
+
+    def persist_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def abandon_chat_turn_scene(self, *_a, **_k):
+        return None
+
 
 class _GapBDB:
     def __init__(self):
@@ -584,6 +602,7 @@ class _GapBDB:
         return result
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_drain_waits_for_queued_chat_stream_not_just_gate_holder():
     """#396 Gap B: drain 不能只等当前持锁 worker——已排队（阻塞在 gate.acquire()）的旧召对请求
     也须先跑完写库，drain 才关 session。否则 drain 抢到下一轮 acquire 直接关连接，排队请求要么

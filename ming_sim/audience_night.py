@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -786,7 +785,7 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
-    open_body = body or f"{location}·{time_of_day}，召对夜启。"
+    open_body = body or f"{location}·{time_of_day}，召对启。"
 
     # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
     # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
@@ -1045,17 +1044,20 @@ def close_night(
     write_gate: Any = None,
     extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
+    scene_registry: Any = None,
+    close_chat_turn_id: int = 0,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
     分相：
-    1. 持 write_gate：在飞已清后标 CLOSING；提交 office/directive draft 前提。
-    2. 释放 gate：清空普通 story 待补；与不依赖背书的收夜 beat 纯生成并发跑
-       endorsement-only LLM（无 DB transaction / 无 runtime write gate）。
+    1. 在飞已清后，经调用方既有 ChatTurnSceneRegistry start_close（不立即 join）；
+       持 write_gate 标 CLOSING、提交 draft 前提。不得自建第二 registry/executor/Thread。
+    2. 释放 gate：清空普通 story 待补；endorsement-only LLM 与 close scene 并行
+       （无 DB transaction / 无 runtime write gate）；终局写入前 join close scene。
     3. 重取 gate：原子落背书水位；consort/明发/收夜账/CLOSED。
 
-    背书失败 → OPEN、cursor=0、draft identity 保留、无需重 consent；成功前不得
-    判官/公开明发/终局效果/CLOSED。
+    背书或 close scene 失败 → OPEN、cursor=0、draft identity 保留；scene 失败另走
+    chat-turn abandon/fail。成功前不得判官/公开明发/终局效果/CLOSED。
     """
     if wait_timeout_s is None:
         wait_timeout_s = DEFAULT_IN_FLIGHT_WAIT_S
@@ -1072,117 +1074,149 @@ def close_night(
         return {"closed": True, "night_id": int(night_id), "already": True}
 
     gate = _gate_cm(write_gate)
+    close_body = str(body or "")
+    close_ctid = int(close_chat_turn_id or 0)
+    close_scaffold_owned = False
+    close_started = False
+    need_close_scene = (not close_body) and beat_generator is not None
+    reg = scene_registry if (
+        scene_registry is not None and hasattr(scene_registry, "start_close")
+    ) else None
 
-    if night["status"] == NIGHT_STATUS_OPEN:
-        # In-flight wait is gate-free (may sleep); then short write to CLOSING.
-        wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-        with gate:
-            _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
-        night = get_night(db, night_id)
-        assert night is not None
-
-    cursor = int(night["close_commit_cursor"] or 0)
-
-    def _advance(step: int) -> None:
-        nonlocal cursor
-        _set_night_fields(db, night_id, close_commit_cursor=int(step))
-        cursor = int(step)
-        if on_step is not None:
-            on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == int(step):
-            raise AudienceNightError(
-                f"收夜提交崩溃注入：step={step}",
-                code="close_crash",
-                detail={"night_id": int(night_id), "step": int(step)},
+    def _start_close_scene() -> None:
+        nonlocal close_ctid, close_scaffold_owned, close_started
+        if not need_close_scene or reg is None or close_started:
+            return
+        from ming_sim import beat_orchestration as beats
+        # #542 r6e: start_close 同步抛错时 helper 经异常交出 ctid；finally 置
+        # close_started，使既有 abandon/fail/OPEN 清理必跑到。
+        try:
+            close_ctid, close_scaffold_owned = beats.start_close_scene_on_registry(
+                db, state,
+                night_id=int(night_id),
+                scene_registry=reg,
+                beat_generator=beat_generator,
+                knowledge_provider=knowledge_provider,
+                chat_turn_id=int(close_ctid or 0),
             )
+        except BaseException as start_exc:
+            owned = getattr(start_exc, "close_scene_ownership", None)
+            if owned is not None:
+                close_ctid = int(owned[0])
+                close_scaffold_owned = bool(owned[1])
+            raise
+        finally:
+            close_started = bool(close_ctid)
 
-    # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
-    with gate:
-        if cursor < CLOSE_STEP_COMMIT_OFFICE:
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                content=content, registry=registry,
-            )
-            _advance(CLOSE_STEP_COMMIT_OFFICE)
-
-        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                content=content, registry=registry,
-                directive_status="draft",
-            )
-            # Draft dossiers / turn_directives are durable prerequisites only.
-            _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
-
-    # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
-    # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
-    try:
-        _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=gate,
-            extractor_agent=extractor_agent,
-        )
-    except Exception:
+    def _cleanup_close_scene_early(primary_exc: BaseException) -> None:
+        """T15: after start_close through phase-1, any failure drains/fails scaffold and reopens."""
+        cleanup_exc: BaseException | None = None
+        if close_started and reg is not None:
+            try:
+                if hasattr(reg, "abandon"):
+                    reg.abandon(int(close_ctid))
+                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
+                    db.fail_chat_turn(int(close_ctid))
+            except BaseException as exc:
+                cleanup_exc = exc
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
+        if cleanup_exc is not None:
+            raise primary_exc from cleanup_exc
+        raise primary_exc
+
+    try:
+        if night["status"] == NIGHT_STATUS_OPEN:
+            # In-flight wait is gate-free (may sleep).
+            wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
+            # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
+            _start_close_scene()
+            with gate:
+                _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
+            night = get_night(db, night_id)
+            assert night is not None
+        else:
+            # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
+            _start_close_scene()
+
+        cursor = int(night["close_commit_cursor"] or 0)
+
+        def _advance(step: int) -> None:
+            nonlocal cursor
+            _set_night_fields(db, night_id, close_commit_cursor=int(step))
+            cursor = int(step)
+            if on_step is not None:
+                on_step(step, get_night(db, night_id) or {})
+            if crash_after_step is not None and int(crash_after_step) == int(step):
+                raise AudienceNightError(
+                    f"收夜提交崩溃注入：step={step}",
+                    code="close_crash",
+                    detail={"night_id": int(night_id), "step": int(step)},
+                )
+
+        # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
+        with gate:
+            if cursor < CLOSE_STEP_COMMIT_OFFICE:
+                _commit_night_approved(
+                    db, state, int(night_id),
+                    kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+                    content=content, registry=registry,
+                )
+                _advance(CLOSE_STEP_COMMIT_OFFICE)
+
+            if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
+                _commit_night_approved(
+                    db, state, int(night_id),
+                    kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+                    content=content, registry=registry,
+                    directive_status="draft",
+                )
+                # Draft dossiers / turn_directives are durable prerequisites only.
+                _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+    except BaseException as early_exc:
+        # Only clean when close scene was started; bare pre-start failures pass through.
+        if close_started:
+            _cleanup_close_scene_early(early_exc)
         raise
 
-    # Independent close prep that neither reads endorsements nor writes finals:
-    # pure beat body generation may overlap the endorsement LLM. close_night owns
-    # both branches for the same lifecycle — no daemon, no hard join timeout.
-    #
-    # SQLite conn is main-thread only: assemble all DB-backed immutable BeatInputs
-    # here before any worker starts; worker only calls BeatGenerator(BeatInputs).
-    generated_close_holder: Dict[str, str] = {"body": ""}
-    beat_errors: List[BaseException] = []
-    beat_thread: Optional[threading.Thread] = None
-    need_beat = (not body) and beat_generator is not None
-    close_beat_inputs = None
-    if need_beat:
-        from ming_sim import beat_orchestration as beats
-        night_snap = get_night(db, night_id) or night
-        close_beat_inputs = beats.assemble_beat_inputs(
-            db, state, beat_kind=beats.BEAT_CLOSE,
-            time_of_day=str(night_snap.get("time_of_day") or ""),
-            location=str(night_snap.get("location") or ""),
-            night_id=int(night_snap.get("id") or night_id or 0),
-            knowledge_provider=knowledge_provider,
+    # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
+    # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
+    # Close scene already started: drain/join on failure; never swallow cleanup.
+    try:
+        _drain_story_extraction_or_fail_closed(
+            db, int(night_id), llm_config=llm_config, write_gate=gate,
+            extractor_agent=extractor_agent,
         )
+    except Exception as drain_exc:
+        cleanup_exc: BaseException | None = None
+        if close_started and reg is not None:
+            try:
+                from ming_sim import beat_orchestration as beats
+                beats.join_close_scene_on_registry(
+                    db,
+                    scene_registry=reg,
+                    chat_turn_id=int(close_ctid),
+                    scaffold_owned=bool(close_scaffold_owned),
+                )
+            except BaseException as exc:
+                cleanup_exc = exc
+        with gate:
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
+            )
+        if cleanup_exc is not None:
+            raise drain_exc from cleanup_exc
+        raise
 
-    def _gen_close_beat() -> None:
-        from ming_sim import beat_orchestration as beats
-        try:
-            generated_close_holder["body"] = beats.run_beat_generator(
-                beat_generator, close_beat_inputs,
-            ) or ""
-        except Exception as exc:
-            # Capture for join-site re-raise (ADR 0005: no silent empty-body swallow).
-            beat_errors.append(exc)
-
-    def _finish_owned_beat() -> None:
-        """Join beat before finalize or failure reopen; surface code errors."""
-        nonlocal beat_thread
-        if beat_thread is not None:
-            beat_thread.join()
-            beat_thread = None
-        if beat_errors:
-            raise beat_errors[0]
-
-    # Re-read cursor after Phase 1; endorsement-bound is the cursor step itself.
-    night = get_night(db, night_id) or night
-    cursor = int(night["close_commit_cursor"] or 0)
-    already_bound = cursor >= CLOSE_STEP_ENDORSEMENT_BOUND
-    if need_beat and not already_bound:
-        beat_thread = threading.Thread(target=_gen_close_beat)
-        beat_thread.start()
-    elif need_beat:
-        _gen_close_beat()
-
-    phase2_errors: List[BaseException] = []
+    # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
+    # Both branches end before finalize or reopen. No ExceptionGroup bus /
+    # second registry/executor/Thread. First observed failure propagates;
+    # sibling still drains; join/cleanup chains via __cause__.
+    primary_exc: BaseException | None = None
     try:
         from ming_sim.audience_extraction import run_endorsement_batch_for_night
 
@@ -1195,32 +1229,38 @@ def close_night(
             extractor_agent=endorsement_extractor_agent,
         )
     except Exception as exc:
-        phase2_errors.append(exc)
+        primary_exc = exc
 
-    # Same-lifecycle ownership: both branches end before finalize or reopen.
-    try:
-        _finish_owned_beat()
-    except Exception as exc:
-        phase2_errors.append(exc)
+    join_exc: BaseException | None = None
+    if close_started and reg is not None:
+        try:
+            from ming_sim import beat_orchestration as beats
+            joined_body = beats.join_close_scene_on_registry(
+                db,
+                scene_registry=reg,
+                chat_turn_id=int(close_ctid),
+                scaffold_owned=bool(close_scaffold_owned),
+            )
+            if joined_body and not close_body:
+                close_body = str(joined_body)
+        except Exception as exc:
+            join_exc = exc
 
-    if phase2_errors:
+    if primary_exc is not None or join_exc is not None:
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        # Preserve both diagnostics when endorsement + beat fail together
-        # (Python 3.11+ ExceptionGroup; no parallel failure bus).
-        if len(phase2_errors) == 1:
-            raise phase2_errors[0]
-        raise ExceptionGroup(
-            "close_night endorsement/beat failures",
-            phase2_errors,
-        )
+        if primary_exc is not None:
+            if join_exc is not None:
+                raise primary_exc from join_exc
+            raise primary_exc
+        raise join_exc
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
-    # Replaceable beat generation has already finished (joined) above; no generator
-    # call under the runtime gate (ADR 0005: no silent in-gate fallback).
+    # Close body joined above (or explicit body=); no generator under the runtime
+    # gate (ADR 0005: no silent in-gate fallback).
     night = get_night(db, night_id) or night
     cursor = int(night["close_commit_cursor"] or 0)
     with gate:
@@ -1281,15 +1321,14 @@ def close_night(
                 for t in e.get("tags") or []
             }
             if TAG_CLOSE_NIGHT not in existing_tags:
-                generated_close = generated_close_holder.get("body") or ""
-                close_body = body or generated_close or (
-                    "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
+                final_close_body = close_body or (
+                    "王承恩代宣退朝，召对到此。" if auto else "退朝，召对到此。"
                 )
                 append_ledger_entry(
                     db, night_id,
                     person_names=[],
                     audibility=AUDIBILITY_PUBLIC,
-                    body=close_body,
+                    body=final_close_body,
                     tags=tags,
                     check_dead=False,
                     allow_closing=True,
@@ -1325,11 +1364,16 @@ def auto_close_open_night(
     write_gate: Any = None,
     extractor_agent: Any = None,
     endorsement_extractor_agent: Any = None,
+    scene_registry: Any = None,
+    close_chat_turn_id: int = 0,
+    body: str = "",
 ) -> Optional[Dict[str, Any]]:
     """颁诏/过回合前：有开夜则顺势收夜；无开夜返回 None。
 
     write_gate 应为真实 runtime Lock（或 CLI 下 None）；close_night 只在短写阶段持锁，
     endorsement LLM 期间释放。调用方不得在外层持同一把非重入锁再传入 nullcontext。
+    scene_registry：既有 ChatTurnSceneRegistry（session 持有）；start_close 后与
+    endorsement 并行，终局写入前 join；不自建第二 registry/executor。
     """
     open_n = get_open_night(db)
     if open_n is None:
@@ -1340,6 +1384,7 @@ def auto_close_open_night(
         content=content,
         registry=registry,
         auto=True,
+        body=body,
         wait_timeout_s=wait_timeout_s,
         crash_after_step=crash_after_step,
         beat_generator=beat_generator,
@@ -1348,6 +1393,8 @@ def auto_close_open_night(
         write_gate=write_gate,
         extractor_agent=extractor_agent,
         endorsement_extractor_agent=endorsement_extractor_agent,
+        scene_registry=scene_registry,
+        close_chat_turn_id=int(close_chat_turn_id or 0),
     )
 
 
@@ -1391,14 +1438,21 @@ def dismiss_from_audience(
     night_id: Optional[int] = None,
     body: str = "",
     origin_chat_turn_id: int = 0,
+    state: Any = None,
+    beat_generator: Any = None,
+    knowledge_provider: Any = None,
 ) -> Optional[int]:
     """「令 X 退下」口令：确定性落告退账，即时反映于名单查询。
 
     不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
 
+    只落垫位/显式 body——exit 旁白由调用方登记本轮 ChatTurnSceneRegistry（#542）。
+    `beat_generator` / `knowledge_provider` 形参保留兼容，**故意忽略**（禁止同步旁路）。
+
     `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
     使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
-    且被令退者永久差出）。0=不属某轮的独立令退（如 CLI「退下」控制口令，无对话轮、无撤回目标）。"""
+    且被令退者永久差出）。0=不属某轮的独立令退（无撤回目标）。
+    """
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("令退人名不能为空", code="empty_person")
@@ -1410,7 +1464,8 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
-    # #541 临时确定性 scene 垫位；#542/S4 将由人物、召法与时地特征化生成正文。
+    # state/beat_generator/knowledge_provider: compatibility only — no sync LLM here.
+    _ = (state, beat_generator, knowledge_provider)
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
