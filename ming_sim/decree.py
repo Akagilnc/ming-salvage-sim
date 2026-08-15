@@ -642,7 +642,10 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # an outer non-reentrant runtime write gate while passing nullcontext.
     # #503/#542：收夜 beat 与开夜/入殿共用真实 scene LLM adapter。
     effective_llm = llm_config if llm_config is not None else getattr(db, "llm_config", None)
-    beat_generator = create_llm_beat_generator(effective_llm)
+    # No usable config → skip adapter construction (None would AttributeError on base_url).
+    beat_generator = (
+        create_llm_beat_generator(effective_llm) if effective_llm is not None else None
+    )
     # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
@@ -1636,7 +1639,11 @@ def pre_settle(
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import create_llm_beat_generator
-    beat_generator = create_llm_beat_generator(getattr(db, "llm_config", None))
+    effective_llm = getattr(db, "llm_config", None)
+    # No usable config → skip adapter construction (probe/engine often pass bare GameDB).
+    beat_generator = (
+        create_llm_beat_generator(effective_llm) if effective_llm is not None else None
+    )
     # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
     auto_close_open_night(db, state, content=content, registry=registry,
                           beat_generator=beat_generator,

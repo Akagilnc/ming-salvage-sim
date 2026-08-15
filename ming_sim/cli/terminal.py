@@ -212,6 +212,15 @@ def _fail_cli_chat_turn_scene(
                 before_snapshot,
                 session.db.capture_chat_rollback_snapshot(),
             )
+        # Delete scaffold exit placeholder in the same cleanup path before fail.
+        # fail_chat_turn also drops origin-bound rows; explicit entry_id covers
+        # doubles whose fail path is thinner than production GameDB.
+        if entry_id and hasattr(session.db, "conn") and getattr(session.db, "conn", None):
+            session.db.conn.execute(
+                "DELETE FROM story_ledger_entries WHERE id = ?",
+                (int(entry_id),),
+            )
+            session.db.conn.commit()
         session.db.fail_chat_turn(int(chat_turn_id))
         return
     if entry_id:

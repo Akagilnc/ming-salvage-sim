@@ -112,12 +112,20 @@ def _characterization(db: Any, person_name: str) -> str:
     return minister_dossier(character)
 
 
-def _public_layer_bodies(db: Any, night_id: int) -> Tuple[str, ...]:
-    """本夜公开层账正文（该知扩散取数）：只取殿上公开；御前低语不入侍立者取数区间（PRD R1）。"""
+def _public_layer_bodies(
+    db: Any, night_id: int, *, before_entry_id: int = 0,
+) -> Tuple[str, ...]:
+    """本夜公开层账正文（该知扩散取数）：只取殿上公开；御前低语不入侍立者取数区间（PRD R1）。
+
+    before_entry_id>0 时仅取该 id 之前的账，避免 enter 把自己的垫位正文当前情。
+    """
     if not night_id:
         return ()
+    bound = int(before_entry_id or 0)
     bodies: List[str] = []
     for entry in list_ledger(db, night_id):
+        if bound and int(entry.get("id") or 0) >= bound:
+            continue
         if entry.get("audibility") != AUDIBILITY_PUBLIC:
             continue
         body = str(entry.get("body") or "").strip()
@@ -126,12 +134,20 @@ def _public_layer_bodies(db: Any, night_id: int) -> Tuple[str, ...]:
     return tuple(bodies)
 
 
-def _person_prior_appearances(db: Any, night_id: int, person_name: str) -> Tuple[str, ...]:
-    """该人本夜先前的入殿账 + 奏对回话（AC2：第二次宣入时组装输入含首次入殿/奏对账目）。"""
+def _person_prior_appearances(
+    db: Any, night_id: int, person_name: str, *, before_entry_id: int = 0,
+) -> Tuple[str, ...]:
+    """该人本夜先前的入殿账 + 奏对回话（AC2：第二次宣入时组装输入含首次入殿/奏对账目）。
+
+    before_entry_id>0 时排除目标 entry 自身及其后账，保证因果：生成中的入殿不自见。
+    """
     if not night_id or not person_name:
         return ()
+    bound = int(before_entry_id or 0)
     bodies: List[str] = []
     for entry in list_ledger(db, night_id):
+        if bound and int(entry.get("id") or 0) >= bound:
+            continue
         if TAG_ENTER not in (entry.get("tags") or []):
             continue
         if person_name not in (entry.get("person_names") or []):
@@ -167,11 +183,13 @@ def assemble_beat_inputs(
     summon_method: str = "",
     knowledge_provider: Optional[KnowledgeProvider] = None,
     extra_public_layer: Tuple[str, ...] = (),
+    before_entry_id: int = 0,
 ) -> BeatInputs:
     """把一个 beat 的 in-world 输入路由成 BeatInputs。只经见闻供给接口取世界，不调全知 builder。
 
     extra_public_layer：临时公开层供给（新夜首入殿时夜尚未落库、无 night_id 可取，
     以刚生成的开夜气氛作临时公开层——避免持写锁跨 LLM 调用，见 attach_chat_turn_to_night）。
+    before_entry_id：enter 组装时排除目标 entry 自身（及之后）的 prior/public。
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
@@ -190,9 +208,12 @@ def assemble_beat_inputs(
 
     characterization = ""
     prior_appearances: Tuple[str, ...] = ()
+    prior_bound = int(before_entry_id or 0)
     if beat_kind in (BEAT_ENTER, BEAT_EXIT):
         characterization = _characterization(db, person_name)
-        prior_appearances = _person_prior_appearances(db, night_id, person_name)
+        prior_appearances = _person_prior_appearances(
+            db, night_id, person_name, before_entry_id=prior_bound,
+        )
 
     return BeatInputs(
         beat_kind=beat_kind,
@@ -204,7 +225,9 @@ def assemble_beat_inputs(
         perspectival_world=perspectival_world,
         court_tension=court_tension,
         prior_appearances=prior_appearances,
-        public_layer=tuple(extra_public_layer) + _public_layer_bodies(db, night_id),
+        public_layer=tuple(extra_public_layer) + _public_layer_bodies(
+            db, night_id, before_entry_id=prior_bound,
+        ),
     )
 
 
@@ -239,20 +262,23 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
 
     prompt 只陈列已路由的 in-world 材料，不携带字数、段落、结构或格式约束；失败原样抛出，
     由召对轮既有失败/重试生命周期处理，禁止静默模板降级。
+
+    每次 generate 新建 Agent：并发 open/enter 不得共享粘性 session/run 状态。
     """
     from agno.agent import Agent
     from ming_sim.llm_model import create_chat_model, extract_agent_text
 
-    agent = Agent(
-        name="Scene Beat Narrator",
-        model=create_chat_model(llm_config, temperature=0.7),
-        instructions=[
-            "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
-            "开场只立局势与悬念，不预告后来结果；收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
-        ],
-    )
+    instructions = [
+        "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
+        "开场只立局势与悬念，不预告后来结果；收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
+    ]
 
     def generate(inputs: BeatInputs) -> str:
+        agent = Agent(
+            name="Scene Beat Narrator",
+            model=create_chat_model(llm_config, temperature=0.7),
+            instructions=instructions,
+        )
         materials = {
             "场景节点": inputs.beat_kind,
             "时辰": inputs.time_of_day,
@@ -448,8 +474,10 @@ def discover_open_enter_tasks(
     night = get_night(db, night_id) or {}
     entries = list_ledger(db, night_id)
     tasks: List[Tuple[int, BeatInputs]] = []
+    # Failed/undone turns do not consume first-turn opening eligibility (C12/T13).
     count = db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id = ? AND id <= ?",
+        "SELECT COUNT(*) AS c FROM chat_turns "
+        "WHERE night_id = ? AND id <= ? AND status NOT IN ('failed', 'undone')",
         (night_id, int(chat_turn_id)),
     ).fetchone()["c"]
     if int(count) == 1:
@@ -472,11 +500,13 @@ def discover_open_enter_tasks(
             (method for method in SUMMON_METHODS if method in enter_tags),
             METHOD_XUANRU,
         )
-        tasks.append((int(entering["id"]), assemble_beat_inputs(
+        enter_id = int(entering["id"])
+        tasks.append((enter_id, assemble_beat_inputs(
             db, state, beat_kind=BEAT_ENTER,
             time_of_day=str(night.get("time_of_day") or ""),
             location=str(night.get("location") or ""), night_id=night_id,
             person_name=minister_name, summon_method=summon_method,
+            before_entry_id=enter_id,
         )))
     return tasks
 
@@ -493,12 +523,13 @@ def persist_chat_turn_scene(db: Any, generated: List[Tuple[int, str]]) -> None:
 class ChatTurnSceneRegistry:
     """本轮 scene 工作的唯一 registry（open/enter/exit 同桶，禁止平行第二表）。
 
-    无依赖 beat 各提交独立 Future，真并发；join/abandon 排空整桶。
-    Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
+    无依赖 beat 在 parallel_safe 时各提交独立 Future 真并发；否则同轮串行。
+    join/abandon 排空整桶。Future.cancel 挡不住已在跑的 LLM——abandon 必须 join drain。
     """
 
-    def __init__(self, executor: Executor) -> None:
+    def __init__(self, executor: Executor, *, parallel_safe: bool = True) -> None:
         self._executor = executor
+        self._parallel_safe = bool(parallel_safe)
         self._lock = threading.Lock()
         self._futures: Dict[int, List[Future]] = {}
 
@@ -533,8 +564,22 @@ class ChatTurnSceneRegistry:
                 bucket = self._futures.get(key)
                 if bucket is None:
                     return
-            for entry_id, inputs in tasks:
-                bucket.append(self._executor.submit(_run, int(entry_id), inputs))
+            if self._parallel_safe or len(tasks) <= 1:
+                for entry_id, inputs in tasks:
+                    bucket.append(self._executor.submit(_run, int(entry_id), inputs))
+            else:
+                # Unsafe CLI backend: same-turn beats share one serial lock so open/enter
+                # never overlap subprocess/auth (cli_backend_parallel_safe=False).
+                serial = threading.Lock()
+
+                def _run_serial(entry_id: int, inputs: BeatInputs) -> Tuple[int, str]:
+                    with serial:
+                        return _run(entry_id, inputs)
+
+                for entry_id, inputs in tasks:
+                    bucket.append(
+                        self._executor.submit(_run_serial, int(entry_id), inputs)
+                    )
 
     def start_open_enter(
         self,
@@ -555,9 +600,16 @@ class ChatTurnSceneRegistry:
             if key in self._futures:
                 return
             self._futures[key] = []
-        tasks = discover_open_enter_tasks(
-            db, state, minister_name=minister_name, chat_turn_id=key,
-        )
+        try:
+            tasks = discover_open_enter_tasks(
+                db, state, minister_name=minister_name, chat_turn_id=key,
+            )
+        except BaseException:
+            # Discover failed: drop our still-empty claim so retry can re-claim.
+            with self._lock:
+                if self._futures.get(key) == []:
+                    self._futures.pop(key, None)
+            raise
         # create=False: join/abandon may have popped the empty claim during
         # discover; do not setdefault-rebuild a late-living bucket.
         self._submit(key, tasks, beat_generator, create=False)

@@ -10,6 +10,7 @@ seam：
 
 from __future__ import annotations
 
+import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 import threading
@@ -800,6 +801,8 @@ def test_advance_without_edict_auto_close_uses_caller_scene_registry(game, monke
     db, state, content = game
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
     night_id = int(night["id"])
+    # Usable config present → construct generator (factory monkeypatched offline).
+    db.llm_config = object()
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     seen_start: list[int] = []
     real_start = registry.start_close
@@ -831,6 +834,7 @@ def test_pre_settle_auto_close_scene_failure_keeps_night_open(game, monkeypatch)
     db, state, content = game
     night = an.open_night(db, state, time_of_day="亥时", location="乾清宫")
     night_id = int(night["id"])
+    db.llm_config = object()
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
 
     def _boom(_inputs: BeatInputs) -> str:
@@ -1097,3 +1101,452 @@ def test_public_layer_excludes_private_whispers(game):
     joined = "".join(inputs.public_layer)
     assert "着户部核边饷" in joined
     assert "此人不可信" not in joined
+
+
+# ── #542 fixer eight-class tracers (PR #1192) ─────────────────────────────
+
+
+def test_create_llm_beat_generator_isolates_agent_per_call(monkeypatch):
+    """C1/T2: each concurrent beat must not share one sticky Agent instance."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    agents: list[object] = []
+
+    class _FakeAgent:
+        def __init__(self, **_kwargs):
+            agents.append(self)
+
+        def run(self, _prompt):
+            return SimpleNamespace(content=f"agent-{id(self)}")
+
+    monkeypatch.setattr("agno.agent.Agent", _FakeAgent)
+    monkeypatch.setattr(
+        "ming_sim.llm_model.create_chat_model",
+        lambda *_a, **_k: object(),
+    )
+    monkeypatch.setattr(
+        "ming_sim.llm_model.extract_agent_text",
+        lambda result: str(getattr(result, "content", "") or ""),
+    )
+
+    # Fresh module load bypasses autouse offline stub on bo.create_llm_beat_generator.
+    mod_name = "ming_sim._beat_orch_factory_probe"
+    spec = importlib.util.spec_from_file_location(mod_name, Path(bo.__file__))
+    probe = importlib.util.module_from_spec(spec)
+    probe.__package__ = "ming_sim"
+    sys.modules[mod_name] = probe
+    assert spec.loader is not None
+    spec.loader.exec_module(probe)
+
+    gen = probe.create_llm_beat_generator(object())
+    out_a = gen(BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时"))
+    out_b = gen(BeatInputs(beat_kind=BEAT_ENTER, person_name="甲"))
+    assert len(agents) == 2
+    assert agents[0] is not agents[1]
+    assert out_a != out_b
+
+
+def test_registry_serializes_open_enter_when_backend_not_parallel_safe(game):
+    """C13/T14: unsafe CLI backend must not run open/enter scene beats concurrently."""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="serial-oe", agno_runs_before=0,
+    )
+    active = max_active = 0
+    lock = threading.Lock()
+    release = threading.Event()
+
+    def blocking_gen(inputs: BeatInputs) -> str:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        assert release.wait(1)
+        with lock:
+            active -= 1
+        return f"kind={inputs.beat_kind}"
+
+    registry = bo.ChatTurnSceneRegistry(
+        ThreadPoolExecutor(max_workers=4), parallel_safe=False,
+    )
+    registry.start_open_enter(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+        beat_generator=blocking_gen,
+    )
+    time.sleep(0.15)
+    with lock:
+        observed = max_active
+    release.set()
+    kinds = {body.split("=", 1)[-1] for _eid, body in registry.join(ctid)}
+    assert kinds == {"open", "enter"}
+    assert observed == 1
+
+
+def test_start_open_enter_releases_claim_when_discover_raises(game, monkeypatch):
+    """C3/T4: discover failure must drop empty claim so same chat_turn_id can retry."""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id="claim-release", agno_runs_before=0,
+    )
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    calls = {"n": 0}
+
+    def boom_discover(*_a, **_k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("discover boom")
+        return []
+
+    monkeypatch.setattr(bo, "discover_open_enter_tasks", boom_discover)
+    with pytest.raises(RuntimeError, match="discover boom"):
+        registry.start_open_enter(
+            db, state, minister_name=minister, chat_turn_id=ctid,
+            beat_generator=_echo_generator,
+        )
+    assert not registry.has(ctid)
+    # Same turn can re-claim after the failed discover.
+    registry.start_open_enter(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+        beat_generator=_echo_generator,
+    )
+    assert calls["n"] == 2
+    assert registry.join(ctid) == []
+
+
+def test_auto_close_entries_skip_generator_when_llm_config_missing(game, monkeypatch):
+    """C5/C7: no usable LLM config → do not construct generator; no open night still advances."""
+    from ming_sim.decree import advance_without_edict, pre_settle
+
+    db, state, content = game
+    assert an.get_open_night(db) is None
+    db.llm_config = None
+    created = {"n": 0}
+    seen_generators: list = []
+
+    def _track(_cfg):
+        created["n"] += 1
+        raise AssertionError("create_llm_beat_generator must not run without config")
+
+    def _capture_auto_close(*_a, **kwargs):
+        seen_generators.append(kwargs.get("beat_generator", "missing"))
+        return None
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", _track)
+    monkeypatch.setattr(an, "auto_close_open_night", _capture_auto_close)
+    # Import-bound name inside decree module.
+    import ming_sim.decree as decree_mod
+    monkeypatch.setattr(decree_mod, "auto_close_open_night", _capture_auto_close, raising=False)
+
+    # Keep settlement body out of scope: force front-half-done early return after auto-close.
+    # pre_settle calls auto-close before the FRONT_HALF_DONE guard? No — guard is first.
+    # So call with summoning and abort settlement by raising NeedsFullSettlement path...
+    # Thinner seam: invoke the two call sites' construction contract via monkeypatched auto_close.
+    state.turn_phase = "summoning"
+    # Patch pre_settle/advance body after auto-close by making atomic_and_reload a no-op raise stop.
+    class _Stop(Exception):
+        pass
+
+    @contextlib.contextmanager
+    def _stop_atomic(*_a, **_k):
+        raise _Stop()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(decree_mod, "atomic_and_reload", _stop_atomic)
+    with pytest.raises(_Stop):
+        pre_settle(state, db, content=content)
+    assert created["n"] == 0
+    assert seen_generators and seen_generators[-1] is None
+
+    with pytest.raises(_Stop):
+        advance_without_edict(state, db, content=content, inflight_wait_s=0.0, llm_config=None)
+    assert created["n"] == 0
+    assert seen_generators[-1] is None
+
+
+def test_enter_beat_inputs_exclude_own_placeholder_entry(game):
+    """C8/T9: enter prior/public must not include the target enter entry itself."""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister,
+        agno_session_id="self-prior", agno_runs_before=0,
+    )
+    enter = next(
+        e for e in an.list_ledger(db, night_id)
+        if an.TAG_ENTER in (e.get("tags") or [])
+        and int(e.get("origin_chat_turn_id") or 0) == int(ctid)
+    )
+    marker = f"SELF-ENTER-{enter['id']}"
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
+        (marker, int(enter["id"])),
+    )
+    db.conn.commit()
+
+    tasks = bo.discover_open_enter_tasks(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+    )
+    enter_inputs = [inp for _eid, inp in tasks if inp.beat_kind == BEAT_ENTER]
+    assert len(enter_inputs) == 1
+    prior = "‖".join(enter_inputs[0].prior_appearances)
+    public = "‖".join(enter_inputs[0].public_layer)
+    assert marker not in prior
+    assert marker not in public
+
+
+def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
+    """C9/T1/T10: stream success join and failure abandon wait outside write_gate."""
+    join_entered = threading.Event()
+    release_join = threading.Event()
+    abandon_entered = threading.Event()
+    release_abandon = threading.Event()
+    minister = "测试大臣"
+
+    class _RunOutput:
+        def __init__(self, content: str):
+            self.content = content
+            self.messages = []
+            self.tools = []
+
+    class _AgentOk:
+        def run(self, *_a, **_k):
+            yield SimpleNamespace(event="RunContent", content="臣遵旨。")
+            yield _RunOutput("臣遵旨。")
+
+    class _AgentBoom:
+        def run(self, *_a, **_k):
+            raise RuntimeError("stream boom")
+            yield  # pragma: no cover
+
+    class _Session:
+        temporary_characters: set = set()
+
+        def __init__(self):
+            self.content = SimpleNamespace(
+                characters={minister: SimpleNamespace(name=minister)},
+            )
+            self.registry = SimpleNamespace(get=lambda _c: _AgentOk())
+            self._character = lambda name: SimpleNamespace(name=name)
+            self._start_cli_action_intent = lambda *_a, **_k: None
+            self._finish_cli_action_intent = lambda *_a, **_k: None
+            self.apply_cli_conversation_actions = lambda *_a, **_k: {
+                "directive": None,
+                "secret_order_id": 0,
+                "pending_action_id": 0,
+                "pending_action_failures": [],
+                "directive_confirmation_ambiguous": None,
+            }
+
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, _ctid):
+            join_entered.set()
+            assert release_join.wait(2)
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, _ctid):
+            abandon_entered.set()
+            assert release_abandon.wait(2)
+
+    class _DB:
+        def create_chat_turn(self, *a, **k):
+            return 11
+
+        def capture_chat_rollback_snapshot(self):
+            return {}
+
+        def record_chat_turn_rollback_diffs(self, *a, **k):
+            return None
+
+        def append_chat_message(self, *a, **k):
+            return 1
+
+        def update_chat_turn_messages(self, *a, **k):
+            return None
+
+        def fail_chat_turn(self, ctid):
+            return None
+
+        def load_all_chat_history(self):
+            return {}
+
+        def get_last_active_chat_turn(self, *a, **k):
+            return None
+
+        def agno_runs_length(self, *a, **k):
+            return 0
+
+        def kv_get(self, *a, **k):
+            return ""
+
+        def list_pending_actions(self, *a, **k):
+            return []
+
+    db = _DB()
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    session = _Session()
+    session.db = db
+    session.state = state
+    session.content = SimpleNamespace(
+        characters={minister: SimpleNamespace(name=minister)},
+    )
+    rt = object.__new__(web_app.WebGame)
+    object.__setattr__(rt, "session", session)
+    object.__setattr__(rt, "chat_history", {minister: []})
+    object.__setattr__(rt, "_write_gate", threading.Lock())
+    rt._runtime_write_gate = lambda: rt._write_gate
+    object.__setattr__(rt, "_drain_cond", threading.Condition())
+    object.__setattr__(rt, "_pending_writes_count", 0)
+    rt._persistent_chat_minister = lambda _n: True
+    rt._audience_turn_in_flight = lambda _n: False
+    rt._start_chat_turn = lambda _n: (11, {})
+    rt._record_chat_rollback_items = lambda *_a, **_k: None
+    rt._chat_payload = lambda *a, **k: {"answer": "臣遵旨。"}
+    rt._spawn_extraction_trail = lambda *_a, **_k: None
+    rt._trail_mindreading_after_reply = lambda *_a, **_k: None
+    rt._complete_pending_write = lambda: setattr(rt, "_pending_writes_count", 0)
+    rt._mark_pending_write = lambda: True
+    monkeypatch.setattr(
+        web_app, "_audience_prompt_for_web_chat",
+        lambda *_a, **_k: "prompt",
+    )
+    monkeypatch.setattr(web_app, "fail_if_llm_error", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "extract_agent_text", lambda *_a, **_k: "臣遵旨。")
+    monkeypatch.setattr(web_app, "_dump_llm_messages", lambda *_a, **_k: None)
+
+    gen = rt.chat_stream(minister, "边饷如何？")
+    events: list = []
+
+    def drive():
+        for item in gen:
+            events.append(item)
+
+    t = threading.Thread(target=drive)
+    t.start()
+    assert join_entered.wait(2), "stream never joined scene outside commit"
+    assert rt._write_gate.acquire(timeout=0.3), "write_gate held during stream join"
+    rt._write_gate.release()
+    release_join.set()
+    t.join(3)
+    assert not t.is_alive()
+
+    session.registry = SimpleNamespace(get=lambda _c: _AgentBoom())
+    object.__setattr__(rt, "chat_history", {minister: []})
+    gen2 = rt.chat_stream(minister, "再问边饷")
+    events2: list = []
+
+    def drive2():
+        for item in gen2:
+            events2.append(item)
+
+    t2 = threading.Thread(target=drive2)
+    t2.start()
+    assert abandon_entered.wait(2), "stream never abandoned scene"
+    assert rt._write_gate.acquire(timeout=0.3), "write_gate held during stream abandon"
+    rt._write_gate.release()
+    release_abandon.set()
+    t2.join(3)
+    assert not t2.is_alive()
+    assert any(e.get("type") == "error" for e in events2)
+
+
+def test_failed_turn_does_not_consume_opening_and_clears_enter_placeholder(game):
+    """C12/T13/T16: failed turns lose opening eligibility; enter placeholder is cleared."""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister,
+        agno_session_id="fail-open", agno_runs_before=0,
+    )
+    assert _enter_body(db, night_id, minister)
+    db.fail_chat_turn(int(ctid))
+    # Enter bound to failed turn must not remain.
+    assert _enter_body(db, night_id, minister) is None
+
+    # Next live turn is the first non-failed timeline turn → rediscover opening.
+    # Minister no longer present after failed enter cleanup, so re-attach creates enter.
+    _nid2, ctid2 = an.attach_chat_turn_to_night(
+        db, state, minister,
+        agno_session_id="fail-open-2", agno_runs_before=0,
+    )
+    tasks = bo.discover_open_enter_tasks(
+        db, state, minister_name=minister, chat_turn_id=ctid2,
+    )
+    kinds = {inp.beat_kind for _eid, inp in tasks}
+    assert BEAT_OPEN in kinds
+    assert BEAT_ENTER in kinds
+
+
+def test_close_scene_early_phase1_failure_drains_and_reopens(game, monkeypatch):
+    """T15: exception after close start through phase-1 must drain/fail scaffold and OPEN."""
+    db, state, content = game
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    night_id = int(night["id"])
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_close(_inputs: BeatInputs) -> str:
+        started.set()
+        assert release.wait(2)
+        return "收夜旁白"
+
+    # crash_after_step=1 fires at end of office commit (phase-1), after start_close.
+    with pytest.raises(an.AudienceNightError, match="收夜提交崩溃注入"):
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            beat_generator=slow_close, scene_registry=registry,
+            wait_timeout_s=0.0, crash_after_step=an.CLOSE_STEP_COMMIT_OFFICE,
+        )
+    release.set()
+    failed = an.get_night(db, night_id)
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    assert not registry.active_turn_ids()
+    # Owned scaffold must not remain generating forever.
+    rows = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE night_id = ? AND minister_name = '收夜'",
+        (night_id,),
+    ).fetchall()
+    assert rows
+    assert all(str(r["status"]) == "failed" for r in rows)
+
+
+def test_cli_scaffold_exit_failure_deletes_exit_ledger(game, monkeypatch):
+    """C11/T12: scaffold-owned CLI exit failure deletes exit placeholder then fails turn."""
+    import ming_sim.cli.terminal as term
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], minister)
+    night_id = int(night["id"])
+
+    def boom_exit(_inputs: BeatInputs) -> str:
+        raise RuntimeError("scaffold exit boom")
+
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.temporary_characters = set()
+    session._beat_generator = boom_exit
+    session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+
+    with pytest.raises(RuntimeError, match="scaffold exit boom"):
+        term._record_audience_exit(session, minister)
+
+    exit_rows = [
+        e for e in an.list_ledger(db, night_id)
+        if an.TAG_EXIT in (e.get("tags") or [])
+    ]
+    assert exit_rows == [], exit_rows
+    # Minister remains present because scaffold exit rolled back.
+    assert minister in an.present_names_at(db, night_id)
