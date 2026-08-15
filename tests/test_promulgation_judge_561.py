@@ -368,6 +368,288 @@ def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
             _select_second_verdict(True, 7, rows, [])
 
 
+def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
+    """Non-awaiting arms must read applied history at the pre-resolve turn."""
+    from ming_sim.content import GameContent
+    from ming_sim.models import LLMConfig
+    from scripts import promulgation_gate_561 as gate
+
+    content = GameContent.load()
+    cfg = LLMConfig(
+        api_key="", base_url="", model="test", channel="cli",
+        cli_runner="codex", cli_model="test",
+    )
+
+    def fake_resolve(state, db, *_a, **_k):
+        dossiers = db.list_decree_dossiers(status="proposed")
+        verdicts = [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+        db.save_pending_promulgation_verdicts(state.turn, verdicts)
+        db.apply_dossier_verdicts(state, verdicts, content=content)
+        # Settlement consumes pending and advances turn — the bug surface.
+        assert db.get_pending_promulgation_verdicts(state.turn) == []
+        state.turn += 1
+        db.save_state(state)
+        return decree_mod.ResolveResult(awaiting=False, report="settled")
+
+    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
+    result = gate._run_resolve_arm(
+        str(tmp_path), content, cfg,
+        name="settled_arm", authority=100, kinds=("hostile",),
+    )
+    assert result["awaiting"] is False
+    assert result["verdicts"], "settled arm must recover applied verdicts"
+    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
+        result["ids"].values()
+    )
+    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
+
+
+def test_gatekeeper_successor_removes_donglin_block_posture(game):
+    """TD-9 successor must be registered and not recreate the 东林 block."""
+    from scripts.promulgation_gate_561 import (
+        GATEKEEPER_SUCCESSOR,
+        _gatekeeper_names,
+        _mutate_gatekeeper_replace,
+    )
+
+    db, state, _content = game
+    seeded = db.conn.execute(
+        "SELECT name, faction, status, power_id FROM characters WHERE name=?",
+        (GATEKEEPER_SUCCESSOR,),
+    ).fetchone()
+    assert seeded is not None, f"successor {GATEKEEPER_SUCCESSOR!r} must be registered"
+    assert seeded["power_id"] == "ming"
+    assert seeded["faction"] != "东林"
+
+    _mutate_gatekeeper_replace(db, state)
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    names = _gatekeeper_names(context)
+    assert GATEKEEPER_SUCCESSOR in names
+    assert "许誉卿" not in names
+    successor = next(
+        row for row in context["gatekeepers"] if row["name"] == GATEKEEPER_SUCCESSOR
+    )
+    assert successor["faction"] != "东林"
+
+
+def test_gate_arm_pool_size_follows_cli_backend_parallel_safe():
+    """Arm scheduler workers must reuse production parallel-safe policy."""
+    from scripts.promulgation_gate_561 import _arm_pool_size
+
+    codex = LLMConfig(
+        api_key="", base_url="", model="x", channel="cli", cli_runner="codex",
+    )
+    claude = LLMConfig(
+        api_key="", base_url="", model="x", channel="cli", cli_runner="claude",
+    )
+    assert _arm_pool_size(codex, 5) == 5
+    assert _arm_pool_size(claude, 5) == 1
+
+
+def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
+    """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
+    from scripts.promulgation_gate_561 import _choose_rescripts
+
+    db, state, _content = game
+    hostile = _dossier(db, state, "敌对清丈")
+    vital = _dossier(db, state, "命门中旨", mode="midzhi")
+    appointment = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="调任",
+        target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+    )
+    authority_edge = _dossier(db, state, "越一级特授")
+    ordinary_opts = [
+        {"label": "强颁", "dossier_id": authority_edge,
+         "dossier_decision": "force_promulgated"},
+        {"label": "收回", "dossier_id": authority_edge,
+         "dossier_decision": "withdrawn"},
+        {"label": "留中", "dossier_id": authority_edge,
+         "dossier_decision": "hold"},
+    ]
+    decisions = [
+        {"event_id": f"dossier:{hostile}", "title": "批红", "context": "h",
+         "options": [
+             {"label": "强颁", "dossier_id": hostile,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": hostile,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": hostile,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{vital}", "title": "批红", "context": "v",
+         "options": [
+             {"label": "收回", "dossier_id": vital,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": vital,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{appointment}", "title": "批红", "context": "a",
+         "options": [
+             {"label": "强颁", "dossier_id": appointment,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": appointment,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": appointment,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
+         "options": ordinary_opts},
+    ]
+    db.save_pending_decisions(state.turn, decisions)
+    chosen = _choose_rescripts(
+        db, state.turn, hostile, vital, appointment,
+    )
+    by_event = {row["event_id"]: row["choice"] for row in chosen}
+    assert by_event[f"dossier:{hostile}"]["dossier_decision"] == "hold"
+    assert by_event[f"dossier:{vital}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{appointment}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] in {
+        "withdrawn", "hold",
+    }
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
+        "force_promulgated"
+    )
+
+
+def test_appointment_text_is_pure_gatekeeper_transfer_without_land_confiscation():
+    """Recursive appointment sample must not smuggle hostile 隐田 policy."""
+    from scripts.promulgation_gate_561 import APPOINTMENT_TEXT
+
+    assert "许誉卿" in APPOINTMENT_TEXT
+    for token in ("隐田", "清丈", "追夺", "田亩"):
+        assert token not in APPOINTMENT_TEXT, token
+
+
+def test_appointment_rejection_check_requires_faction_gate_structure():
+    """Appointment reject must prove 东林/许誉卿/blocked_layer, not mere rejected."""
+    from scripts.promulgation_gate_561 import _appointment_rejection_proves_faction_gate
+
+    ok = {
+        "dossier_id": 4,
+        "decision": "rejected",
+        "blocked_layer": "six_offices",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "reason": "调任把关人撞东林逆鳞",
+    }
+    assert _appointment_rejection_proves_faction_gate(ok) is True
+    # Rejected for other reasons / missing structure must fail the causal check.
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "decision": "promulgated"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "gatekeeper_id": "崔呈秀"}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "primary_opponents": [{"kind": "faction", "key": "阉党"}]}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {**ok, "blocked_layer": ""}
+    ) is False
+    assert _appointment_rejection_proves_faction_gate(
+        {"dossier_id": 4, "decision": "rejected"}
+    ) is False
+
+
+def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
+    """TD-1 / ADR 0055 S6: ordinary class = 寻常补饷; every planted one must pass."""
+    from scripts.promulgation_gate_561 import (
+        ORDINARY_TEXT,
+        _ordinary_class_all_promulgated,
+    )
+
+    # Class is the pay edict itself — not an invented multi-sample roster.
+    assert "补" in ORDINARY_TEXT and "饷" in ORDINARY_TEXT
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1, "hostile": 2},
+         {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
+        ({"ordinary": 3},
+         {3: {"decision": "promulgated"}}),
+    ]) is True
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "rejected"}}),
+    ]) is False
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "promulgated"}}),
+        ({"ordinary": 4}, {4: {"decision": "rejected"}}),
+    ]) is False
+    # Arms without ordinary do not invent a sample; empty plant is not a pass.
+    assert _ordinary_class_all_promulgated([
+        ({"hostile": 2}, {2: {"decision": "rejected"}}),
+    ]) is False
+
+
+def test_leader_only_mutation_changes_faction_posture_not_roster(game):
+    """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
+    import inspect
+    from pathlib import Path
+
+    from scripts import promulgation_gate_561 as gate
+    from scripts.promulgation_gate_561 import (
+        BASE_DONGLIN_AGENDA,
+        LEADER_APPEASED_AGENDA,
+        _apply_base_board,
+        _faction_row,
+        _gatekeeper_names,
+        _mutate_leader_only,
+        _plant_dossiers,
+    )
+
+    db, state, _content = game
+    _apply_base_board(db, state, authority=100)
+    _plant_dossiers(db, state, ("hostile",))
+    before = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    qian_before = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name='钱谦益'"
+    ).fetchone()
+
+    _mutate_leader_only(db, state)
+    after = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
+    assert "许誉卿" in _gatekeeper_names(after)
+    assert _gatekeeper_names(after) == _gatekeeper_names(before)
+    assert after["gatekeepers"] == before["gatekeepers"]
+
+    before_faction = _faction_row(before, "东林")
+    after_faction = _faction_row(after, "东林")
+    assert before_faction["agenda"] == BASE_DONGLIN_AGENDA
+    assert after_faction["agenda"] == LEADER_APPEASED_AGENDA
+    # Posture moves only via fixed agenda pair (ADR 0143: no int() on qualitative leverage).
+    assert after_faction["agenda"] != before_faction["agenda"]
+    assert before_faction["leverage"] == after_faction["leverage"]
+    assert isinstance(before_faction["leverage"], str)
+    assert before_faction["leverage"] in IMPERIAL_AUTHORITY_BANDS
+    # Full payload distinguishable so evidence trace can pair leader vs baseline.
+    assert after["factions"] != before["factions"]
+    assert after != before
+
+    # Evidence script must not numericize qualitative faction leverage (dead int branch).
+    gate_source = Path(inspect.getfile(gate)).read_text(encoding="utf-8")
+    assert "int(_faction_row" not in gate_source
+    assert "int(after_faction[\"leverage\"])" not in gate_source
+    assert "int(before_faction[\"leverage\"])" not in gate_source
+    # Leader-arm posture check keeps agenda pair only — no leverage fallback.
+    assert "LEADER_APPEASED_AGENDA" in gate_source
+    assert "BASE_DONGLIN_AGENDA" in gate_source
+
+    # Forbidden: only rehab 钱谦益 roster and pretend that is 安抚.
+    qian_after = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name='钱谦益'"
+    ).fetchone()
+    assert qian_after["status"] == qian_before["status"]
+    assert qian_after["office"] == qian_before["office"]
+
+
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
     seen = {}
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda _cfg, **kwargs: seen.update(kwargs) or object())
