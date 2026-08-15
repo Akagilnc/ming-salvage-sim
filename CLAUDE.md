@@ -49,18 +49,17 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## 开发流程（想法 → merge，2026-06-17 定，本项目试行）
 
-> **完整流程文档（Matt Pocock 整套，严格按 Matt 试水）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（canonical 顺序 / decision-mapping 大目标推雾 / to-spec 两层设计 / 设计六层阶梯 / triage 入口匝道 / 全 skill 速查 / 追踪模型 / 切片并行全在那）。
 > **标签 Matt 纯化（2026-06-17）**：全仓删掉 `priority/*` `area/*` `type/*` 那套，**只剩 7 个** —— `bug`/`enhancement`（category）+ `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix`（state）。
 
-**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落（六层阶梯见 DEV_WORKFLOW.md）**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-spec` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-spec 之后到代码之间无设计」——架构级早在 `to-spec` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
+**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-spec` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-spec 之后到代码之间无设计」——架构级早在 `to-spec` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
 
 **流水线 + skill（Matt canonical 顺序；标〔项目加〕的是 Matt 之外本项目的闸）**。⚠️ 2026-07-14 上游改名：`to-prd`→`to-spec`（纯改名，产物即 PRD）、`to-issues`→`to-tickets`（改名 + 内建原生挂接）；旧名已失效，历史 ADR/log 里的旧名不回改：
 1. 想法 → **`grill-with-docs`**（有 codebase）/ `grill-me`（无）→ 逼问（核心引擎 `/grilling`），决策结晶**当场**写 **tiny 单决策 ADR** + `CONTEXT.md` 词表。**逼问那一步在这、不在 to-spec；止于不可逆决策。** 大/模糊、一次 session 定不完的，先 **`decision-mapping`** 建决策图逐票推雾、路清再往下。
 2. （可选）`prototype` 去风险（状态/UI 开放问题）——`handoff` 出/回桥接（原型在独立 session 跑），答案落 ADR/issue/NOTES、原型删。
 3. **`to-spec`**（旧名 to-prd，产物即 PRD）→ **完整 PRD**（不访谈，只综合 grill 的结论）：详尽 user stories + **Implementation Decisions + Testing Decisions（两层设计）** + Out of Scope；发 issue tracker 当父/epic、贴 `ready-for-agent`（父票贴标无所谓，不参与步骤 5 的设计评审状态判断）。**禁文件路径/代码片段。**
-4. **`to-tickets`**（旧名 to-issues，2026-07-14 上游改名）切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**新版已内建**①子挂父 native sub-issue ②子↔子 native blocked_by（skill 原文「Use the platform's native blocking / sub-issue relationship」）。它默认自动贴 `ready-for-agent`——**贴着无所谓、不用管**（owner 2026-07-14 简化：评审态真源 = ADR Status，Accepted 前=这波未过审，票上贴什么标都不作准；撤父标/闸前 hold 仪式一并废止）。核验/手补命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
+4. **`to-tickets`**（旧名 to-issues，2026-07-14 上游改名）切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**新版已内建**①子挂父 native sub-issue ②子↔子 native blocked_by（skill 原文「Use the platform's native blocking / sub-issue relationship」）。它默认自动贴 `ready-for-agent`——**贴着无所谓、不用管**（owner 2026-07-14 简化：评审态真源 = ADR Status，Accepted 前=这波未过审，票上贴什么标都不作准；撤父标/闸前 hold 仪式一并废止）。
 5. 〔项目加〕设计评审（**在 to-tickets 之后**——cmr 审含切片布线的设计全家；#470/#471/#478 实践序，2026-07-03 修订原 4/5 对调）：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。**评审态真源 = ADR Status**（owner 2026-07-14 简化）：Accepted 前=未过审，无论票上贴什么标；不搞撤标/贴回仪式。〈设计侧到此结束〉
-6. **逐切片各开新 session `implement`**（canonical 构建步）：约定 seam 调 `/tdd`（never refactor while RED）→ 测试义务见 [`docs/DEV_WORKFLOW.md` §测试分级](docs/DEV_WORKFLOW.md)；**代码级实现现场长**（架构级早在 to-spec 钉了）。手动/单 session 流随后建 baseline commit；硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。自动化角色接力由仓外 v3 `ak-pi-workflow-roles` 维护，本仓不复制其流程或配置。
+6. **逐切片各开新 session `implement`**（canonical 构建步）：约定 seam 调 `/tdd`（never refactor while RED）→ 测试义务见本文件「## 测试分级」；**代码级实现现场长**（架构级早在 to-spec 钉了）。手动/单 session 流随后建 baseline commit；硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。自动化角色接力由仓外 v3 `ak-pi-workflow-roles` 维护，本仓不复制其流程或配置。
 7. 〔项目加〕baseline commit 后代码评审：手动/单 session 场景单评用 `/code-review`（Standards + Spec 两轴；它评 `fixed-point...HEAD`，所以必须已有 commit），然后 per-slice `ak-cross-m-review` + ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。评审修复一律追加新 commit，禁止 amend。自动化交付使用仓外 v3 的独立角色，具体接力以其项目真源为准。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
 
@@ -76,7 +75,27 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 - **金手指例外**：`content/buildings.json` 金手指为常驻例外（见上文「金手指改动」节）。
 - 全局 agent 纪律（授权词 / 中文输出 / 先开分支 / 评审轮禁 amend / 设计文档同评 / merge 不 squash / PR 平台前缀）见 owner 全局 `~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md`，本文件不重复。
-- ship-pre DoD 全闭环点检见 [`docs/DEV_WORKFLOW.md`](docs/DEV_WORKFLOW.md)（#911 从本文件迁出）。
+- ship-pre DoD 全闭环点检见本文件「## ship-pre DoD 全闭环点检」。
+
+## 测试分级（#1185，owner 2026-08-13 裁定）
+
+**本仓测试分级政策真源**（Skill routing / 开发流程步骤 6 引用此处，不另立第二份口径）：
+
+- **切片轮次**（逐片 implement / fixer 自检；评审核 coder 回执里的聚焦测试证据，不以复跑全量 suite 为复核手段）＝ **聚焦测试**（本片触及的测试）。Python 侧无 typecheck 工具链，owner 2026-08-15 拍：暂不装，以后有需要单独实现；Web/TS 侧类型检查照 CI 既有 tsc + vite build。
+- **家族/批次收尾**＝在**最终待合并状态**执行一次全量 suite；若执行失败或随后产生修复 commit，必须在新的最终状态重跑。**最终状态绿灯**后，才可作为 **merge 前门槛**。无家族/批次上下文的单切片或单 session 改动，**其自身即一个批次**——merge 前同样在最终状态跑一次全量到绿。
+- **CI**（`.github/workflows/ci.yml`）覆盖 **Python 全量 pytest + Web 构建/类型检查**（`tsc` + vite build），**不含 Web vitest**；本政策如实描述既有覆盖面，不改 CI 机制、不把 vitest 加进 CI。
+
+正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
+
+## ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁入）
+
+进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进。Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。
+
+把「核心写路径接通 + 单元测试绿 + 前几轮 CMR 收敛」误当成「全闭环完成」两头亏：(1) 在不完整目标上启动昂贵的 ship-pre 评审循环，(2) CMR 一轮轮真抓闭环缺口、滚到离谱轮数才被外人判出「功能不足」。
+
+**判据**：进 ship-pre 前对着 plan 逐面点检 DoD，任一面（尤其读取/恢复/呈现这些最容易被「写路径接了」盖过的隐性面）未落 = 早了，先补完再进。这是 **ship-gate / DoD 判断**，不是编码能力——写路径接了、测试绿都可能为真，错在把「核心接通」当「全闭环完成」。
+
+且即便 DoD 齐、进了 ship-pre，装起来跑的整体 cmr 仍是独立一道闸——别当走过场：per-slice cmr 各自全绿 ≠ feature 完成，整体闸基本仍会抓出 per-slice 照不到的**跨片接缝**（字段名/类型对不对、字段口径一不一致、组合后才出现的 e2e 行为），要预期它有料、按真闸认真跑。
 
 ## Skill routing
 
@@ -85,7 +104,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 When you are an agent assigned a single slice issue in this worktree, route by what the task is:
 
-- **Implement a slice / build a feature / fix a bug test-first** → invoke the `tdd` skill (Claude: `Skill` tool with skill `tdd`; Codex: load `~/.claude/skills/tdd/SKILL.md` and follow it as the active skill), drive red → green → refactor; test obligations: [`docs/DEV_WORKFLOW.md` §测试分级](docs/DEV_WORKFLOW.md) (#1185). Manual/single-session implement may then create its baseline commit before `/code-review` because that skill reviews `fixed-point...HEAD`, not uncommitted changes. Automated coder/reviewer separation is owned by the external v3 package.
+- **Implement a slice / build a feature / fix a bug test-first** → invoke the `tdd` skill (Claude: `Skill` tool with skill `tdd`; Codex: load `~/.claude/skills/tdd/SKILL.md` and follow it as the active skill), drive red → green → refactor; test obligations: 本文件「## 测试分级」(#1185). Manual/single-session implement may then create its baseline commit before `/code-review` because that skill reviews `fixed-point...HEAD`, not uncommitted changes. Automated coder/reviewer separation is owned by the external v3 package.
 - **A hard bug / something throwing / failing / slow that needs root-cause diagnosis before a fix** → invoke the `diagnosing-bugs` skill first to find root cause, then return to `tdd` to fix it test-first. `diagnosing-bugs` internally hands off to `improve-codebase-architecture` when the root cause is an architectural seam problem — that skill is present alongside (2b).
 - **Designing or improving a module's interface / deciding where a seam goes / making code more testable** → invoke the `codebase-design` skill for the deep-module vocabulary; for a larger architectural cleanup invoke `improve-codebase-architecture` (which itself calls `codebase-design`).
 - **Slice-end review of the diff** → manual/single-session flow runs `/code-review`, then the project CMR and ship gates described above. Automated review/fix roles and their handoff are external v3 concerns, not contracts maintained in this repository.
@@ -101,7 +120,7 @@ GitHub Issues（`Akagilnc/ming-salvage-sim`，已设为本 clone 的 gh 默认�
 
 ### Triage labels
 
-**Matt 纯化（2026-06-17）**：全仓只剩 7 个标签——`bug` / `enhancement`（category）+ 五态 `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`（state）。旧 `priority/area/type` 已删。See `docs/agents/triage-labels.md` + `docs/DEV_WORKFLOW.md`.
+**Matt 纯化（2026-06-17）**：全仓只剩 7 个标签——`bug` / `enhancement`（category）+ 五态 `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`（state）。旧 `priority/area/type` 已删。See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
