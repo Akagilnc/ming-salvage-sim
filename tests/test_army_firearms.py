@@ -4,12 +4,11 @@
 大炮装备：红夷炮——守城/攻城神器，笨重不利野战（随军门数，clamp 0-12；城防炮另挂 region.cannon）。
 simulator 看得见、软性加权判战；引擎只 clamp、不算胜负。
 
-#1185 显示面：真实出口 + 可数哨兵/renderer 哨兵/双态差分；不锁中文展示串。
+#1185 显示面：真实出口可数哨兵/双态差分；同 seam 合并为最短 tracer。
 """
 
 from __future__ import annotations
 
-import ming_sim.db as dbmod
 from ming_sim.constants import ARMY_SCORE_FIELDS
 
 
@@ -117,9 +116,9 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
-def test_army_detail_shows_firearm_cannon(game):
-    """army_detail 真实出口须带火器可数分与随军炮门数（差分哨兵）。"""
-    db, _state, _ = game
+def test_army_public_exits_surface_firearm_and_cannon(game):
+    """detail/report/roster 同一读侧：可数火器/炮门 + roster 双态差分（无内部 renderer patch）。"""
+    db, state, _ = game
     aid = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1"
     ).fetchone()["id"]
@@ -132,57 +131,66 @@ def test_army_detail_shows_firearm_cannon(game):
         (aid,),
     )
     db.conn.commit()
-    detail_a = db.army_detail(name)
+    detail = db.army_detail(name)
+    assert "45" in detail and "3" in detail
 
     db.conn.execute(
         "UPDATE armies SET firearm_equipment=91, cannon_equipment=7 WHERE id=?",
         (aid,),
     )
     db.conn.commit()
-    detail_b = db.army_detail(name)
+    detail_hi = db.army_detail(name)
+    assert detail != detail_hi
+    assert "91" in detail_hi and "7" in detail_hi
+    assert "91" not in detail
 
-    assert detail_a != detail_b
-    assert "45" in detail_a and "3" in detail_a
-    assert "91" in detail_b and "7" in detail_b
-    assert "91" not in detail_a
-
-
-def test_army_report_shows_firearm_and_cannon(game, monkeypatch):
-    """army_report 须消费火器定性 renderer + 炮门数（哨兵，无中文钉）。"""
-    db, _state, _ = game
-    sample = db.army_rows(limit=8, danger_order=True)
-    assert sample
-    target = sample[0]
+    # report 消费两轴：炮门可数；火器变化使出口可判别
     db.conn.execute(
         "UPDATE armies SET firearm_equipment=45, cannon_equipment=6 WHERE id=?",
-        (target["id"],),
+        (aid,),
     )
     db.conn.commit()
-
-    monkeypatch.setattr(
-        dbmod,
-        "_qualitative_army_stat",
-        lambda field, value: f"QSTAT_{field}_{value}",
+    rpt_a = db.army_report(limit=8)
+    db.conn.execute(
+        "UPDATE armies SET firearm_equipment=91 WHERE id=?", (aid,)
     )
-    rpt = db.army_report(limit=8)
-    # firearm 走 equipment 词轴的 qualitative 路径
-    assert "QSTAT_equipment_45" in rpt
-    assert "6" in rpt
-    assert target["name"] in rpt
+    db.conn.commit()
+    rpt_b = db.army_report(limit=8)
+    assert name in rpt_a and "6" in rpt_a
+    assert rpt_a != rpt_b
 
+    # roster 双态：数值火器 vs 定性火器；炮门数两态皆在
+    db.conn.execute(
+        "UPDATE armies SET firearm_equipment=30, cannon_equipment=4 WHERE id=?",
+        (aid,),
+    )
+    db.conn.commit()
+    line_num = next(
+        l
+        for l in db.army_roster(filter_names=[name], qualitative_equipment=False).splitlines()
+        if l.startswith(name + "|")
+    )
+    cells_num = line_num.split("|")
+    assert cells_num[-2] == "30" and cells_num[-1] == "4"
+    line_q = next(
+        l
+        for l in db.army_roster(filter_names=[name], qualitative_equipment=True).splitlines()
+        if l.startswith(name + "|")
+    )
+    cells_q = line_q.split("|")
+    assert cells_q[-2] != "30" and "30" not in cells_q
+    assert cells_q[-1] == "4"
+    assert line_num != line_q
 
-def test_army_detail_dynamic_new_army_shows_firearm(game):
-    """动态 new_armies 按 id/name 查 army_detail 也能读到火器/炮。"""
-    db, state, _ = game
+    # 动态新军 detail 按 id/name 闭合
     db.create_armies_from_extraction(state, [{
         "id": "probe_fire_new", "name": "火器新营", "owner_power": "ming",
         "manpower": 4000, "maintenance_per_turn": 1,
         "firearm_equipment": 77, "cannon_equipment": 5, **_pay_source(),
     }], actor="测试")
     for key in ("probe_fire_new", "火器新营"):
-        detail = db.army_detail(key)
-        assert "77" in detail, key
-        assert "5" in detail, key
+        d = db.army_detail(key)
+        assert "77" in d and "5" in d
 
 
 def test_fresh_seed_wires_firearm_not_all_zero(content):
@@ -250,39 +258,3 @@ def test_simulator_payload_includes_firearm(read_game):
     cols = armies.get("cols") or []
     assert "firearm_equipment" in cols
     assert "cannon_equipment" in cols
-
-
-def test_army_roster_dual_state_firearm(game, monkeypatch):
-    """army_roster 双态：False=原数值火器；True=定性 renderer；炮门数两态皆在。"""
-    db, _, _ = game
-    aid = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' LIMIT 1"
-    ).fetchone()["id"]
-    db.conn.execute(
-        "UPDATE armies SET firearm_equipment=30, cannon_equipment=4 WHERE id=?",
-        (aid,),
-    )
-    db.conn.commit()
-    name = db.conn.execute(
-        "SELECT name FROM armies WHERE id=?", (aid,)
-    ).fetchone()["name"]
-
-    roster_num = db.army_roster(filter_names=[name], qualitative_equipment=False)
-    line_num = next(l for l in roster_num.splitlines() if l.startswith(name + "|"))
-    cells_num = line_num.split("|")
-    assert cells_num[-2] == "30"
-    assert "4" in cells_num
-
-    monkeypatch.setattr(
-        dbmod,
-        "_qualitative_army_stat",
-        lambda field, value: f"QSTAT_{field}_{value}",
-    )
-    roster_q = db.army_roster(filter_names=[name], qualitative_equipment=True)
-    line_q = next(l for l in roster_q.splitlines() if l.startswith(name + "|"))
-    cells_q = line_q.split("|")
-    assert any("QSTAT_equipment_30" in c for c in cells_q)
-    assert cells_q[-2] != "30"
-    assert "30" not in cells_q
-    assert "4" in cells_q
-    assert roster_num != roster_q

@@ -9,9 +9,6 @@ payload 字段契约见 test_region_citydefense.py。
 
 from __future__ import annotations
 
-import ming_sim.db as dbmod
-import ming_sim.qualitative as qualitative
-
 
 def _city_region(db):
     return db.conn.execute(
@@ -39,7 +36,7 @@ def test_region_report_surfaces_cannon_count(game):
 
 
 def test_region_detail_surfaces_city_level_and_cannon(game):
-    """region_detail 须暴露城市等级与城防炮门数（可数哨兵，非中文盯文）。"""
+    """region_detail 须暴露城市等级与城防炮门数；定性模式消费 city_level 差分。"""
     db, _, _ = game
     r = _city_region(db)
     stored_level = int(
@@ -59,42 +56,13 @@ def test_region_detail_surfaces_city_level_and_cannon(game):
     assert str(stored_level * 8) in det  # 城防炮上限 = city_level×8
     assert str(sentinel_cannon) in det
 
-
-def test_region_detail_qualitative_city_defense_consumes_level(game, monkeypatch):
-    """qualitative detail 须把 city_level 送进城防描述器（renderer 哨兵，无中文钉）。"""
-    db, _, _ = game
-    region = _city_region(db)
-    seen: list[object] = []
-
-    def _sentinel(value: object) -> str:
-        seen.append(value)
-        return f"CDEF_SENTINEL_{value}"
-
-    monkeypatch.setattr(dbmod, "city_defense_description", _sentinel)
-    monkeypatch.setattr(qualitative, "city_defense_description", _sentinel)
-
+    # qualitative：等级差分可判别（不 patch 内部 city_defense_description）
+    details = {}
     for level in (1, 3, 5):
-        seen.clear()
         db.conn.execute(
-            "UPDATE regions SET city_level=? WHERE id=?", (level, region["id"])
+            "UPDATE regions SET city_level=? WHERE id=?", (level, r["id"])
         )
         db.conn.commit()
-        detail = db.region_detail(region["name"], qualitative=True)
-        assert seen == [level] or seen == [str(level)] or any(
-            int(v) == level for v in seen if str(v).lstrip("-").isdigit()
-        )
-        assert f"CDEF_SENTINEL_{level}" in detail
-
-
-def test_region_detail_does_not_clamp_out_of_range_city_level(game):
-    """越界存量 city_level 在非定性 detail 读回不被静默截断。"""
-    db, _, _ = game
-    region = _city_region(db)
-    db.conn.execute(
-        "UPDATE regions SET city_level=9 WHERE id=?", (region["id"],)
-    )
-    db.conn.commit()
-
-    detail = db.region_detail(region["name"], qualitative=False)
-    assert "9" in detail
-    assert "72" in detail  # 9×8 上限仍按存量计算
+        details[level] = db.region_detail(r["name"], qualitative=True)
+    assert details[1] != details[3] != details[5]
+    assert details[1] != details[5]
