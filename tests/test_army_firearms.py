@@ -107,8 +107,10 @@ def test_create_army_cannon_count_clamped(game):
     assert val == 12
 
 
-def test_army_detail_shows_firearm_cannon(game):
+def test_army_detail_shows_firearm_cannon(game, monkeypatch):
     """army_detail 经 public 投影：火器为定性 band，随军大炮为可数门数（P4/#1185）。"""
+    import copy
+
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute("UPDATE armies SET firearm_equipment=45, cannon_equipment=3 WHERE id=?", (aid,))
@@ -118,18 +120,71 @@ def test_army_detail_shows_firearm_cannon(game):
     assert entry["firearm_equipment_band"] == "unstable"  # 45 → mid band
     assert int(entry["cannon_equipment"]) == 3
     assert "firearm_equipment" not in entry
+
+    calls = []
+    original = db.army_public_payload
+
+    def wrapper(*args, **kwargs):
+        result = original(*args, **kwargs)
+        out = {
+            "armies": [dict(a) for a in result["armies"]],
+            "monthly_pay_total": result.get("monthly_pay_total", 0),
+            "manpower_total": result.get("manpower_total", 0),
+        }
+        for a in out["armies"]:
+            if a["id"] == aid:
+                a["cannon_equipment"] = 777
+                a["name"] = f"ZTRACE_{a['name']}"
+                a["firearm_equipment_band"] = "critical"
+        calls.append({"kwargs": dict(kwargs), "result": copy.deepcopy(out)})
+        return out
+
+    monkeypatch.setattr(db, "army_public_payload", wrapper)
     detail = db.army_detail(name)
-    assert "火器" in detail
+    assert len(calls) == 1, "army_detail must call army_public_payload"
+    assert calls[0]["kwargs"].get("rows") is not None
+    traced = calls[0]["result"]["armies"][0]
+    assert traced["name"] in detail
+    assert "777" in detail  # cannon_equipment consumed from projection
+    assert "火器：残破" in detail  # band sentinel consumed
     assert "45" not in detail
-    assert "随军大炮3" in detail
 
 
-def test_army_report_shows_firearm_and_cannon(read_game):
-    """army_report(list_armies 警讯)带火器 + 随军大炮(炮)，read 摘要面闭环（CMR codexC）。"""
+def test_army_report_shows_firearm_and_cannon(read_game, monkeypatch):
+    """army_report 必须调用 army_public_payload 并消费火器 band + 炮门数。"""
+    import copy
+
     db, _, _ = read_game
+    # Pick one army present in danger-ordered report window.
+    sample = db.army_rows(limit=8, danger_order=True)
+    assert sample
+    target_id = sample[0]["id"]
+
+    calls = []
+    original = db.army_public_payload
+
+    def wrapper(*args, **kwargs):
+        result = original(*args, **kwargs)
+        out = {
+            "armies": [dict(a) for a in result["armies"]],
+            "monthly_pay_total": result.get("monthly_pay_total", 0),
+            "manpower_total": result.get("manpower_total", 0),
+        }
+        for a in out["armies"]:
+            if a["id"] == target_id:
+                a["name"] = f"ZTRACE_{a['name']}"
+                a["cannon_equipment"] = 666
+                a["firearm_equipment_band"] = "critical"
+        calls.append({"kwargs": dict(kwargs), "result": copy.deepcopy(out)})
+        return out
+
+    monkeypatch.setattr(db, "army_public_payload", wrapper)
     rpt = db.army_report(limit=8)
-    assert "火器" in rpt
-    assert "炮" in rpt
+    assert len(calls) == 1, "army_report must call army_public_payload"
+    traced = next(a for a in calls[0]["result"]["armies"] if a["id"] == target_id)
+    assert traced["name"] in rpt
+    assert "火器：残破" in rpt
+    assert "炮666门" in rpt
 
 
 def test_army_detail_dynamic_new_army_shows_firearm(game):
@@ -215,8 +270,10 @@ def test_simulator_payload_includes_firearm(read_game):
     assert "cannon_equipment" in cols
 
 
-def test_army_roster_shows_firearm_cannon(game):
-    """大臣军表(army_roster)经 public 投影：火器定性 band，大炮可数门数。"""
+def test_army_roster_shows_firearm_cannon(game, monkeypatch):
+    """army_roster 双态：False=原数值火器；True=投影 band 定性；均消费同一投影。"""
+    import copy
+
     db, _, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute(
@@ -227,13 +284,65 @@ def test_army_roster_shows_firearm_cannon(game):
     assert entry["firearm_equipment_band"] == "wavering"  # 30 → low band
     assert int(entry["cannon_equipment"]) == 4
     assert "firearm_equipment" not in entry
-    roster = db.army_roster()
-    # 表头列名出现
-    assert "火器" in roster
-    assert "大炮" in roster
     name = db.conn.execute("SELECT name FROM armies WHERE id=?", (aid,)).fetchone()["name"]
-    line = next(l for l in roster.splitlines() if l.startswith(name + "|"))
+
+    # Default False: numeric firearm cell (base dual-state), still via public projection.
+    calls_num = []
+    original = db.army_public_payload
+
+    def wrap_num(*args, **kwargs):
+        result = original(*args, **kwargs)
+        out = {
+            "armies": [dict(a) for a in result["armies"]],
+            "monthly_pay_total": result.get("monthly_pay_total", 0),
+            "manpower_total": result.get("manpower_total", 0),
+        }
+        for a in out["armies"]:
+            if a["id"] == aid:
+                a["name"] = f"ZTRACE_{a['name']}"
+                a["cannon_equipment"] = 888
+        calls_num.append({"kwargs": dict(kwargs), "result": copy.deepcopy(out)})
+        return out
+
+    monkeypatch.setattr(db, "army_public_payload", wrap_num)
+    roster = db.army_roster(filter_names=[name])
+    assert len(calls_num) == 1, "army_roster must call army_public_payload"
+    assert calls_num[0]["kwargs"].get("rows") is not None
+    traced_name = next(
+        a["name"] for a in calls_num[0]["result"]["armies"] if a["id"] == aid
+    )
+    assert "火器" in roster and "大炮" in roster
+    line = next(l for l in roster.splitlines() if l.startswith(traced_name + "|"))
     cells = line.split("|")
-    assert any(c.startswith("火器：") for c in cells)
-    assert "30" not in cells
-    assert "4" in cells
+    assert "30" in cells  # False path: raw firearm count
+    assert not any(c.startswith("火器：") for c in cells)
+    assert "888" in cells  # cannon_equipment consumed from projection
+
+    # True: qualitative firearm from projection band (minister tool path).
+    monkeypatch.undo()
+    calls_q = []
+
+    def wrap_q(*args, **kwargs):
+        result = original(*args, **kwargs)
+        out = {
+            "armies": [dict(a) for a in result["armies"]],
+            "monthly_pay_total": result.get("monthly_pay_total", 0),
+            "manpower_total": result.get("manpower_total", 0),
+        }
+        for a in out["armies"]:
+            if a["id"] == aid:
+                a["name"] = f"QTRACE_{a['name']}"
+                a["firearm_equipment_band"] = "critical"
+                a["cannon_equipment"] = 4
+        calls_q.append({"kwargs": dict(kwargs), "result": copy.deepcopy(out)})
+        return out
+
+    monkeypatch.setattr(db, "army_public_payload", wrap_q)
+    roster_q = db.army_roster(filter_names=[name], qualitative_equipment=True)
+    assert len(calls_q) == 1
+    q_name = next(a["name"] for a in calls_q[0]["result"]["armies"] if a["id"] == aid)
+    q_line = next(l for l in roster_q.splitlines() if l.startswith(q_name + "|"))
+    q_cells = q_line.split("|")
+    assert any(c == "火器：残破" for c in q_cells)
+    assert "30" not in q_cells
+    assert "4" in q_cells

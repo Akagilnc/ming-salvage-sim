@@ -6062,9 +6062,8 @@ class GameDB:
 
     def _project_region_public(self, row: sqlite3.Row) -> Dict[str, object]:
         """One region's player-facing public projection (shared by report/detail)."""
+        # Faithful read of stored city_level (no silent 0–5 clamp on projection).
         city_level = int(row["city_level"] or 0)
-        # Discrete 0–5 city-defense scale is structural (not a 0-100 abstract score).
-        city_level = max(0, min(city_level, 5))
         controlled_by = str(row["controlled_by"] or "ming")
         return {
             "id": row["id"],
@@ -6104,14 +6103,20 @@ class GameDB:
         contracts bind here instead of free Chinese contains.
         """
         if rows is not None:
+            # Detail/slice path: project only the given rows; no global aggregate query.
             source_rows: Sequence[sqlite3.Row] = rows
+            tax_total = 0
         else:
             source_rows = self.region_rows(limit=limit, danger_order=danger_order)
+            # Report/full path needs empire-wide tax total.
+            total_tax = self.conn.execute(
+                "SELECT SUM(tax_per_turn) AS total FROM regions"
+            ).fetchone()
+            tax_total = int(total_tax["total"] or 0)
         regions = [self._project_region_public(row) for row in source_rows]
-        total_tax = self.conn.execute("SELECT SUM(tax_per_turn) AS total FROM regions").fetchone()
         return {
             "regions": regions,
-            "tax_total": int(total_tax["total"] or 0),
+            "tax_total": tax_total,
         }
 
     def _resolve_region_row(self, raw_name: str) -> sqlite3.Row:
@@ -6674,21 +6679,25 @@ class GameDB:
         """
         source_rows: Sequence[sqlite3.Row]
         if rows is not None:
+            # Detail/slice/roster path: project only the given rows; no full-table aggregate.
             source_rows = rows
+            monthly_pay_total = 0
+            manpower_total = 0
         else:
             source_rows = self.army_rows(limit=limit, danger_order=danger_order)
+            all_rows = self.conn.execute("SELECT * FROM armies").fetchall()
+            # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
+            total_needed = sum(self._army_pay(r) for r in all_rows)
+            monthly_pay_total = monthly_amount(total_needed)
+            manpower_total = int(
+                self.conn.execute(
+                    "SELECT COALESCE(SUM(manpower), 0) AS total FROM armies"
+                ).fetchone()["total"]
+            )
         armies = [self._project_army_public(row) for row in source_rows]
-        all_rows = self.conn.execute("SELECT * FROM armies").fetchall()
-        # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
-        total_needed = sum(self._army_pay(r) for r in all_rows)
-        manpower_total = int(
-            self.conn.execute(
-                "SELECT COALESCE(SUM(manpower), 0) AS total FROM armies"
-            ).fetchone()["total"]
-        )
         return {
             "armies": armies,
-            "monthly_pay_total": monthly_amount(total_needed),
+            "monthly_pay_total": monthly_pay_total,
             "manpower_total": manpower_total,
         }
 
@@ -6763,14 +6772,13 @@ class GameDB:
         index_only: bool = False,
         qualitative_equipment: bool = False,
     ) -> str:
-        """全军名册；火器装备一律走 public 投影定性 band（P4）。"""
-        del qualitative_equipment  # kept for call-site compat; projection is always qualitative
+        """全军名册；qualitative_equipment 双态：False=原数值火器，True=投影 band 定性。"""
         rows = self.conn.execute(
             "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
         ).fetchall()
         if filter_names:
             rows = [r for r in rows if r["name"] in filter_names or r["id"] in filter_names]
-        # Sole public projection — same builder/totals as army_report/detail.
+        # Sole public projection — same builder as army_report/detail (no second projection).
         entries = self.army_public_payload(rows=rows)["armies"]
         if index_only:
             # 军队超 30 时用索引：仅显示军名+欠饷+状态，完整信息由 query_army_roster tool 提供
@@ -6788,15 +6796,23 @@ class GameDB:
             return ""
         own: List[str] = []
         other: List[str] = []
-        for entry in entries:
+        # Pair projection entries with source rows so False path can emit raw firearm counts
+        # without a second projection or bare-score field on the public shape.
+        for entry, src in zip(entries, rows):
             # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
             monthly_pay = int(entry["monthly_pay"])
             arrears_text = _army_arrears_report_text_from_projection(entry["arrears"])  # type: ignore[arg-type]
-            firearm_word = _army_stat_label(
-                "equipment", entry["firearm_equipment_band"]
-            ).removeprefix("装备：")
+            if qualitative_equipment:
+                firearm_cell: object = (
+                    "火器："
+                    + _army_stat_label(
+                        "equipment", entry["firearm_equipment_band"]
+                    ).removeprefix("装备：")
+                )
+            else:
+                firearm_cell = int(src["firearm_equipment"])
             if str(entry["owner_power"]) == "ming":
-                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚/火器以 band 定性呈现。
+                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚以 band 定性；火器随参数双态。
                 own.append(
                     "|".join(str(x) for x in (
                         entry["name"], entry["station"], entry["commander"], entry["troop_type"],
@@ -6808,7 +6824,7 @@ class GameDB:
                         _army_stat_label("mobility", entry["mobility_band"]),
                         _army_loyalty_label(entry["loyalty_band"]),
                         arrears_text, entry["status"],
-                        f"火器：{firearm_word}",
+                        firearm_cell,
                         entry["cannon_equipment"],
                     ))
                 )
@@ -6821,7 +6837,11 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
-            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚/火器为定性奏报，随军大炮为门数0-12）：",
+            (
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
+                if qualitative_equipment else
+                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
+            ),
             *own,
         ]
         if other:
