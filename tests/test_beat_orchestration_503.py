@@ -1334,6 +1334,45 @@ def test_enter_beat_inputs_exclude_own_placeholder_entry(game):
     assert marker not in public
 
 
+def test_exit_beat_inputs_exclude_own_placeholder_entry(game):
+    """#542 r5f C1: exit prior/public must not include this beat's own ledger placeholder."""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], minister)
+    ctid = db.create_chat_turn(state, minister, "exit-self-prior", 0, night_id=night["id"])
+    entry_id = an.dismiss_from_audience(
+        db, minister, night_id=night["id"], origin_chat_turn_id=ctid, state=state,
+    )
+    assert entry_id
+    marker = f"SELF-EXIT-{entry_id}"
+    db.conn.execute(
+        "UPDATE story_ledger_entries SET body = ? WHERE id = ?",
+        (marker, int(entry_id)),
+    )
+    db.conn.commit()
+
+    seen: list[BeatInputs] = []
+
+    def capture(inputs: BeatInputs) -> str:
+        seen.append(inputs)
+        return "特征化退下旁白"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=1))
+    registry.start_exit(
+        db, state, person_name=minister, chat_turn_id=ctid, entry_id=int(entry_id),
+        night_id=int(night["id"]), beat_generator=capture,
+    )
+    bo.persist_chat_turn_scene(db, registry.join(ctid))
+    db.conn.commit()
+
+    assert len(seen) == 1
+    prior = "‖".join(seen[0].prior_appearances)
+    public = "‖".join(seen[0].public_layer)
+    assert marker not in prior
+    assert marker not in public
+
+
 def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     """C9/T1/T10: stream success join and failure abandon wait outside write_gate."""
     join_entered = threading.Event()

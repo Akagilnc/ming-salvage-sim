@@ -189,7 +189,7 @@ def assemble_beat_inputs(
 
     extra_public_layer：临时公开层供给（新夜首入殿时夜尚未落库、无 night_id 可取，
     以刚生成的开夜气氛作临时公开层——避免持写锁跨 LLM 调用，见 attach_chat_turn_to_night）。
-    before_entry_id：enter 组装时排除目标 entry 自身（及之后）的 prior/public。
+    before_entry_id：enter/exit 组装时排除目标 entry 自身（及之后）的 prior/public。
     """
     provider = knowledge_provider or _default_knowledge_provider(db, state)
 
@@ -629,6 +629,7 @@ class ChatTurnSceneRegistry:
         if not chat_turn_id or not entry_id:
             return
         night = get_night(db, int(night_id)) or {}
+        exit_id = int(entry_id)
         inputs = assemble_beat_inputs(
             db, state, beat_kind=BEAT_EXIT,
             time_of_day=str(night.get("time_of_day") or ""),
@@ -636,8 +637,9 @@ class ChatTurnSceneRegistry:
             night_id=int(night_id),
             person_name=person_name,
             knowledge_provider=knowledge_provider,
+            before_entry_id=exit_id,
         )
-        self._submit(int(chat_turn_id), [(int(entry_id), inputs)], beat_generator)
+        self._submit(int(chat_turn_id), [(exit_id, inputs)], beat_generator)
 
     def start_close(
         self,
