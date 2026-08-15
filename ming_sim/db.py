@@ -299,21 +299,51 @@ def _round_half_up_to_step(value: float, step: int) -> int:
     return int(math.floor(value / step + 0.5) * step)
 
 
-def _army_arrears_projection(amount: object) -> Dict[str, object]:
-    """Structured player-facing arrears: kind + rounded_amount (single rounding source)."""
+def _army_arrears_months_band(arrears: object, monthly_pay: object) -> str:
+    """Stable months-ratio band for player-facing arrears (computed once at projection)."""
+    try:
+        arr = float(arrears or 0)
+        pay = float(monthly_pay or 0)
+    except (TypeError, ValueError):
+        return "none"
+    if arr <= 0 or pay <= 0:
+        return "none"
+    months = arr / pay
+    if months < 1:
+        return "under_one"
+    if months < 3:
+        return "about_two"
+    if months < 6:
+        return "several"
+    if months < 12:
+        return "half_year"
+    years = int(round(months / 12.0))
+    if years <= 1:
+        return "over_year"
+    return f"years:{years}"
+
+
+def _army_arrears_projection(
+    amount: object, monthly_pay: object | None = None,
+) -> Dict[str, object]:
+    """Structured player-facing arrears: kind + rounded_amount (+ months_band)."""
     try:
         value = float(amount or 0)
     except (TypeError, ValueError):
         value = 0.0
     if value <= 0:
-        return {"kind": "none", "rounded_amount": 0}
-    if value < 10:
-        return {"kind": "under_ten", "rounded_amount": 0}
-    if value < 20:
+        proj: Dict[str, object] = {"kind": "none", "rounded_amount": 0}
+    elif value < 10:
+        proj = {"kind": "under_ten", "rounded_amount": 0}
+    elif value < 20:
         rounded = _round_half_up_to_step(value, 5)
+        proj = {"kind": "approx", "rounded_amount": max(1, rounded)}
     else:
         rounded = _round_half_up_to_step(value, 10)
-    return {"kind": "approx", "rounded_amount": max(1, rounded)}
+        proj = {"kind": "approx", "rounded_amount": max(1, rounded)}
+    if monthly_pay is not None:
+        proj["months_band"] = _army_arrears_months_band(amount, monthly_pay)
+    return proj
 
 
 def _format_arrears_projection(proj: Mapping[str, object]) -> str:
@@ -326,32 +356,36 @@ def _format_arrears_projection(proj: Mapping[str, object]) -> str:
     return f"欠饷约{int(proj.get('rounded_amount') or 0)}万两"
 
 
+def _format_arrears_months_band(band: object) -> str:
+    key = str(band or "none")
+    if key in ("", "none"):
+        return ""
+    if key == "under_one":
+        return "，不足一月军饷"
+    if key == "about_two":
+        return "，约两月军饷"
+    if key == "several":
+        return "，数月军饷"
+    if key == "half_year":
+        return "，约半年军饷"
+    if key == "over_year":
+        return "，逾一年军饷"
+    if key.startswith("years:"):
+        try:
+            years = int(key.split(":", 1)[1])
+        except ValueError:
+            return "，逾一年军饷"
+        return f"，约{years}年军饷"
+    return ""
+
+
 def _approx_wanliang(amount: object) -> str:
     """奏报口吻的万两近似数；军饷欠是真钱，但玩家不看 DB 精确账格。"""
     return _format_arrears_projection(_army_arrears_projection(amount))
 
 
 def _approx_pay_months(arrears: object, monthly_pay: object) -> str:
-    try:
-        arr = float(arrears or 0)
-        pay = float(monthly_pay or 0)
-    except (TypeError, ValueError):
-        return ""
-    if arr <= 0 or pay <= 0:
-        return ""
-    months = arr / pay
-    if months < 1:
-        return "，不足一月军饷"
-    if months < 3:
-        return "，约两月军饷"
-    if months < 6:
-        return "，数月军饷"
-    if months < 12:
-        return "，约半年军饷"
-    years = int(round(months / 12.0))
-    if years <= 1:
-        return "，逾一年军饷"
-    return f"，约{years}年军饷"
+    return _format_arrears_months_band(_army_arrears_months_band(arrears, monthly_pay))
 
 
 _ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
@@ -363,8 +397,8 @@ _ARMY_QUALITATIVE_WORDS: Dict[str, Tuple[str, str, str, str, str]] = {
     "loyalty": ("危殆", "浮动", "不稳", "尚稳", "稳固"),
 }
 
-# Stable loyalty band ids for the player-facing public projection (P4: no raw score).
-_ARMY_LOYALTY_BANDS: Tuple[str, ...] = ("critical", "wavering", "unstable", "steady", "firm")
+# Stable qualitative band ids for all 0-100 army abstract scores (P4: never raw int).
+_ARMY_STAT_BANDS: Tuple[str, ...] = ("critical", "wavering", "unstable", "steady", "firm")
 
 
 def _army_stat_band_index(value: object) -> int:
@@ -383,28 +417,42 @@ def _army_stat_band_index(value: object) -> int:
     return 0
 
 
+def _army_stat_band(value: object) -> str:
+    return _ARMY_STAT_BANDS[_army_stat_band_index(value)]
+
+
+def _army_stat_label(field: str, band: object) -> str:
+    """Render one abstract army stat from its stable public band id."""
+    try:
+        idx = _ARMY_STAT_BANDS.index(str(band))
+    except ValueError:
+        idx = 0
+    words = _ARMY_QUALITATIVE_WORDS.get(field, ("极低", "偏低", "中等", "尚可", "优良"))
+    return f"{ARMY_FIELD_LABELS.get(field, field)}：{words[idx]}"
+
+
 def _army_loyalty_band(value: object) -> str:
-    return _ARMY_LOYALTY_BANDS[_army_stat_band_index(value)]
+    return _army_stat_band(value)
 
 
 def _army_loyalty_label(band: object) -> str:
     """Render loyalty from the stable public band id (same words as qualitative path)."""
-    try:
-        idx = _ARMY_LOYALTY_BANDS.index(str(band))
-    except ValueError:
-        idx = 0
-    word = _ARMY_QUALITATIVE_WORDS["loyalty"][idx]
-    return f"{ARMY_FIELD_LABELS.get('loyalty', 'loyalty')}：{word}"
+    return _army_stat_label("loyalty", band)
 
 
 def _qualitative_army_stat(field: str, value: object) -> str:
-    words = _ARMY_QUALITATIVE_WORDS.get(field, ("极低", "偏低", "中等", "尚可", "优良"))
-    word = words[_army_stat_band_index(value)]
-    return f"{ARMY_FIELD_LABELS.get(field, field)}：{word}"
+    """Legacy numeric→label path; player exits must prefer _army_stat_label on bands."""
+    return _army_stat_label(field, _army_stat_band(value))
+
+
+def _army_arrears_report_text_from_projection(proj: Mapping[str, object]) -> str:
+    return _format_arrears_projection(proj) + _format_arrears_months_band(proj.get("months_band"))
 
 
 def _army_arrears_report_text(arrears: object, monthly_pay: object) -> str:
-    return _approx_wanliang(arrears) + _approx_pay_months(arrears, monthly_pay)
+    return _army_arrears_report_text_from_projection(
+        _army_arrears_projection(arrears, monthly_pay)
+    )
 
 
 def _is_commitment_stop_condition(resolve_condition: object) -> bool:
@@ -6012,57 +6060,116 @@ class GameDB:
         ).fetchone()
         return str(row["name"]) if row else str(power_id)
 
-    def region_report(self, limit: int = 5) -> str:
-        rows = self.region_rows(limit=limit, danger_order=True)
-        if not rows:
-            return "地区尚未建档。"
-        total_tax = self.conn.execute("SELECT SUM(tax_per_turn) AS total FROM regions").fetchone()
-        total_tax_value = int(total_tax["total"] or 0)
-        parts = []
-        for row in rows:
-            held = ""
-            if str(row["controlled_by"]) != "ming":
-                held = f"【已为{self.power_display_name(row['controlled_by'])}所据】"
-            defense = f"，城防炮{int(row['cannon'])}门" if int(row["cannon"] or 0) > 0 else ""
-            parts.append(
-                f"{row['name']}{held}：{_public_support_description(row['public_support'])}，"
-                f"{_unrest_description(row['unrest'])}，"
-                f"粮情{qualitative_band(row['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}，"
-                f"税{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}{defense}，{row['status']}"
-            )
-        return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
+    def _project_region_public(self, row: sqlite3.Row) -> Dict[str, object]:
+        """One region's player-facing public projection (shared by report/detail)."""
+        city_level = int(row["city_level"] or 0)
+        # Discrete 0–5 city-defense scale is structural (not a 0-100 abstract score).
+        city_level = max(0, min(city_level, 5))
+        controlled_by = str(row["controlled_by"] or "ming")
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "kind": row["kind"],
+            "population": int(row["population"] or 0),
+            "public_support": int(row["public_support"] or 0),
+            "unrest": int(row["unrest"] or 0),
+            "grain_security": int(row["grain_security"] or 0),
+            "registered_land": int(row["registered_land"] or 0),
+            "hidden_land": int(row["hidden_land"] or 0),
+            "tax_per_turn": int(row["tax_per_turn"] or 0),
+            "gentry_resistance": int(row["gentry_resistance"] or 0),
+            "military_pressure": int(row["military_pressure"] or 0),
+            "city_level": city_level,
+            "cannon": int(row["cannon"] or 0),
+            "cannon_cap": city_level * 8,
+            "natural_disaster": row["natural_disaster"],
+            "human_disaster": row["human_disaster"],
+            "status": row["status"],
+            "controlled_by": controlled_by,
+            "controller_name": (
+                self.power_display_name(controlled_by) if controlled_by != "ming" else "ming"
+            ),
+        }
 
-    def region_detail(self, raw_name: str, qualitative: bool = False) -> str:
+    def region_public_payload(
+        self,
+        limit: int | None = None,
+        danger_order: bool = False,
+        *,
+        rows: Optional[Sequence[sqlite3.Row]] = None,
+    ) -> Dict[str, object]:
+        """Sole player-facing structured region projection for report/detail.
+
+        Carries city_level / cannon / cannon_cap as countable structure so display
+        contracts bind here instead of free Chinese contains.
+        """
+        if rows is not None:
+            source_rows: Sequence[sqlite3.Row] = rows
+        else:
+            source_rows = self.region_rows(limit=limit, danger_order=danger_order)
+        regions = [self._project_region_public(row) for row in source_rows]
+        total_tax = self.conn.execute("SELECT SUM(tax_per_turn) AS total FROM regions").fetchone()
+        return {
+            "regions": regions,
+            "tax_total": int(total_tax["total"] or 0),
+        }
+
+    def _resolve_region_row(self, raw_name: str) -> sqlite3.Row:
         region_id = match_region_id_from_text(raw_name, self.content.regions)
         if region_id is None:
             raise ValueError(f"未找到地区：{raw_name}")
         row = self.conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
         if row is None:
             raise ValueError(f"地区未入库：{raw_name}")
+        return row
+
+    def region_report(self, limit: int = 5) -> str:
+        public = self.region_public_payload(limit=limit, danger_order=True)
+        entries = public["regions"]
+        if not entries:
+            return "地区尚未建档。"
+        total_tax_value = int(public["tax_total"])
+        parts = []
+        for entry in entries:
+            held = ""
+            if str(entry["controlled_by"]) != "ming":
+                held = f"【已为{entry['controller_name']}所据】"
+            defense = f"，城防炮{int(entry['cannon'])}门" if int(entry["cannon"] or 0) > 0 else ""
+            parts.append(
+                f"{entry['name']}{held}：{_public_support_description(entry['public_support'])}，"
+                f"{_unrest_description(entry['unrest'])}，"
+                f"粮情{qualitative_band(entry['grain_security'], ('告急', '偏紧', '平稳', '充裕', '丰足'))}，"
+                f"税{format_money(monthly_amount(int(entry['tax_per_turn'])))}/{TURN_UNIT}{defense}，{entry['status']}"
+            )
+        return f"地区警讯：{'；'.join(parts)}。两京十三省账面{TURN_UNIT}税合计{format_money(monthly_amount(total_tax_value))}。"
+
+    def region_detail(self, raw_name: str, qualitative: bool = False) -> str:
+        row = self._resolve_region_row(raw_name)
+        entry = self.region_public_payload(rows=[row])["regions"][0]
         held = ""
-        if str(row["controlled_by"]) != "ming":
-            held = f"，控制权：已为{self.power_display_name(row['controlled_by'])}所据（非大明辖治）"
+        if str(entry["controlled_by"]) != "ming":
+            held = f"，控制权：已为{entry['controller_name']}所据（非大明辖治）"
         if qualitative:
             return (
-                f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
-                f"{_public_support_description(row['public_support'])}，"
-                f"{_unrest_description(row['unrest'])}，粮食{row['grain_security']}万石，"
-                f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
-                f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-                f"士绅阻力{qualitative_band(row['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
-                f"军事压力{qualitative_band(row['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
-                f"城防{city_defense_description(row['city_level'])}，"
-                f"城防大炮{int(row['cannon'])}门。天灾：{row['natural_disaster']}；"
-                f"人祸：{row['human_disaster']}；状态：{row['status']}"
+                f"{entry['name']}（{entry['kind']}）{held}：人口{entry['population']}万人，"
+                f"{_public_support_description(entry['public_support'])}，"
+                f"{_unrest_description(entry['unrest'])}，粮食{entry['grain_security']}万石，"
+                f"田亩{entry['registered_land']}万亩，隐田{entry['hidden_land']}万亩，"
+                f"账面税收{format_money(monthly_amount(int(entry['tax_per_turn'])))}/{TURN_UNIT}，"
+                f"士绅阻力{qualitative_band(entry['gentry_resistance'], ('极弱', '偏弱', '中等', '偏强', '强'))}，"
+                f"军事压力{qualitative_band(entry['military_pressure'], ('极低', '偏低', '中等', '偏高', '极高'))}，"
+                f"城防{city_defense_description(entry['city_level'])}，"
+                f"城防大炮{int(entry['cannon'])}门。天灾：{entry['natural_disaster']}；"
+                f"人祸：{entry['human_disaster']}；状态：{entry['status']}"
             )
         return (
-            f"{row['name']}（{row['kind']}）{held}：人口{row['population']}万人，"
-            f"民心{row['public_support']}，动乱{row['unrest']}，粮食{row['grain_security']}万石，"
-            f"田亩{row['registered_land']}万亩，隐田{row['hidden_land']}万亩，"
-            f"账面税收{format_money(monthly_amount(int(row['tax_per_turn'])))}/{TURN_UNIT}，"
-            f"士绅阻力{row['gentry_resistance']}，军事压力{row['military_pressure']}，"
-            f"城市等级{int(row['city_level'])}（城防炮上限{int(row['city_level']) * 8}门），城防大炮{int(row['cannon'])}门。"
-            f"天灾：{row['natural_disaster']}；人祸：{row['human_disaster']}；状态：{row['status']}"
+            f"{entry['name']}（{entry['kind']}）{held}：人口{entry['population']}万人，"
+            f"民心{entry['public_support']}，动乱{entry['unrest']}，粮食{entry['grain_security']}万石，"
+            f"田亩{entry['registered_land']}万亩，隐田{entry['hidden_land']}万亩，"
+            f"账面税收{format_money(monthly_amount(int(entry['tax_per_turn'])))}/{TURN_UNIT}，"
+            f"士绅阻力{entry['gentry_resistance']}，军事压力{entry['military_pressure']}，"
+            f"城市等级{int(entry['city_level'])}（城防炮上限{int(entry['cannon_cap'])}门），城防大炮{int(entry['cannon'])}门。"
+            f"天灾：{entry['natural_disaster']}；人祸：{entry['human_disaster']}；状态：{entry['status']}"
         )
 
     def turn_region_summary(self, turn: int, limit: int = 10) -> str:
@@ -6524,8 +6631,8 @@ class GameDB:
             )
         return payload
 
-    def _army_public_entry(self, row: sqlite3.Row) -> Dict[str, object]:
-        """One army's player-facing public projection (shared by report/detail/roster)."""
+    def _project_army_public(self, row: sqlite3.Row) -> Dict[str, object]:
+        """Build one army's player-facing public projection (P4: no bare 0-100 scores)."""
         monthly_pay = self._army_pay(row)
         return {
             "id": row["id"],
@@ -6538,22 +6645,39 @@ class GameDB:
             "manpower": int(row["manpower"]),
             # #173：引擎实扣月应发（呈现层「月饷」唯一真源）。
             "monthly_pay": monthly_pay,
-            "supply": int(row["supply"]),
-            "morale": int(row["morale"]),
-            "training": int(row["training"]),
-            "equipment": int(row["equipment"]),
-            "arrears": _army_arrears_projection(row["arrears"]),
-            "mobility": int(row["mobility"]),
-            # P4: loyalty only as stable qualitative band — never raw score.
+            "supply_band": _army_stat_band(row["supply"]),
+            "morale_band": _army_stat_band(row["morale"]),
+            "training_band": _army_stat_band(row["training"]),
+            "equipment_band": _army_stat_band(row["equipment"]),
+            "mobility_band": _army_stat_band(row["mobility"]),
+            "firearm_equipment_band": _army_stat_band(row["firearm_equipment"]),
             "loyalty_band": _army_loyalty_band(row["loyalty"]),
-            "firearm_equipment": int(row["firearm_equipment"]),
+            "arrears": _army_arrears_projection(row["arrears"], monthly_pay),
+            # cannon_equipment is countable 炮门, not a 0-100 abstract score.
             "cannon_equipment": int(row["cannon_equipment"]),
             "status": row["status"],
             "owner_power": row["owner_power"],
         }
 
-    def _army_public_totals(self) -> Dict[str, int]:
-        """Aggregate pay/manpower totals shared by army_public_payload and report."""
+    def army_public_payload(
+        self,
+        limit: int | None = None,
+        danger_order: bool = False,
+        *,
+        rows: Optional[Sequence[sqlite3.Row]] = None,
+    ) -> Dict[str, object]:
+        """Sole player-facing structured army projection.
+
+        army_report / army_detail / army_roster must consume this payload (or a
+        rows= slice of it). Abstract 0-100 scores are bands only; free Chinese
+        is not a contract. manpower / monthly_pay / cannon_equipment stay countable.
+        """
+        source_rows: Sequence[sqlite3.Row]
+        if rows is not None:
+            source_rows = rows
+        else:
+            source_rows = self.army_rows(limit=limit, danger_order=danger_order)
+        armies = [self._project_army_public(row) for row in source_rows]
         all_rows = self.conn.execute("SELECT * FROM armies").fetchall()
         # #173：月饷总额按引擎实扣应发 army_needed 之和（替退役 maintenance_per_turn 之和）。
         total_needed = sum(self._army_pay(r) for r in all_rows)
@@ -6563,28 +6687,13 @@ class GameDB:
             ).fetchone()["total"]
         )
         return {
+            "armies": armies,
             "monthly_pay_total": monthly_amount(total_needed),
             "manpower_total": manpower_total,
         }
 
-    def army_public_payload(
-        self,
-        limit: int | None = None,
-        danger_order: bool = False,
-    ) -> Dict[str, object]:
-        """Player-facing structured army projection.
-
-        Sole structured seam consumed by army_report / army_detail / army_roster.
-        Amount rounding and P4 loyalty banding live here; free Chinese is not a contract.
-        """
-        armies = [
-            self._army_public_entry(row)
-            for row in self.army_rows(limit=limit, danger_order=danger_order)
-        ]
-        return {"armies": armies, **self._army_public_totals()}
-
-    def _army_public_entry_for_name(self, raw_name: str) -> tuple[Dict[str, object], sqlite3.Row]:
-        """Resolve one army row and project it through the public seam."""
+    def _resolve_army_row(self, raw_name: str) -> sqlite3.Row:
+        """Resolve one army row by id/name/alias (no presentation)."""
         # 先按 DB id/name 直查（含动态 new_armies 建出的、不在静态 content.armies 的军队），
         # 再退回静态别名模糊匹配（如「关宁军」→ guanning）。
         row = self.conn.execute(
@@ -6596,50 +6705,54 @@ class GameDB:
                 row = self.conn.execute("SELECT * FROM armies WHERE id = ?", (army_id,)).fetchone()
         if row is None:
             raise ValueError(f"未找到军队：{raw_name}")
-        return self._army_public_entry(row), row
+        return row
 
     def army_report(self, limit: int = 5) -> str:
-        rows = self.army_rows(limit=limit, danger_order=True)
-        if not rows:
+        public = self.army_public_payload(limit=limit, danger_order=True)
+        entries = public["armies"]
+        if not entries:
             return "军队尚未建档。"
-        # Three player exits jointly consume _army_public_entry / army_public_payload shape.
-        entries = [self._army_public_entry(r) for r in rows]
-        totals = self._army_public_totals()
         parts = []
-        for entry, row in zip(entries, rows):
+        for entry in entries:
             pay = int(entry["monthly_pay"])
-            # Raw arrears only for months-ratio (真钱); rounded presentation comes from projection math.
-            arr_text = _army_arrears_report_text(row["arrears"], pay)
+            arr_text = _army_arrears_report_text_from_projection(entry["arrears"])  # type: ignore[arg-type]
+            firearm_word = _army_stat_label(
+                "equipment", entry["firearm_equipment_band"]
+            ).removeprefix("装备：")
             parts.append(
                 f"{entry['name']}：驻{entry['station']}，兵{entry['manpower']}，"
                 f"饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
-                f"{_qualitative_army_stat('supply', entry['supply'])}，"
-                f"{_qualitative_army_stat('morale', entry['morale'])}，"
-                f"火器：{_qualitative_army_stat('equipment', entry['firearm_equipment']).removeprefix('装备：')}，"
+                f"{_army_stat_label('supply', entry['supply_band'])}，"
+                f"{_army_stat_label('morale', entry['morale_band'])}，"
+                f"火器：{firearm_word}，"
                 f"炮{entry['cannon_equipment']}门，{arr_text}，{entry['status']}"
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
-            f"建档兵力合计{int(totals['manpower_total'])}人，"
-            f"{TURN_UNIT}应发军饷合计{format_money(int(totals['monthly_pay_total']))}。"
+            f"建档兵力合计{int(public['manpower_total'])}人，"
+            f"{TURN_UNIT}应发军饷合计{format_money(int(public['monthly_pay_total']))}。"
         )
 
     def army_detail(self, raw_name: str) -> str:
         # SELECT * 渲染含火器/随军大炮，故新军详情 read 也闭合
         # （CMR codexB/C：army render 收敛到 public 投影单一真源，杀 read 侧 whack-a-mole）。
-        entry, row = self._army_public_entry_for_name(raw_name)
+        row = self._resolve_army_row(raw_name)
+        entry = self.army_public_payload(rows=[row])["armies"][0]
         pay = int(entry["monthly_pay"])
-        arr_text = _army_arrears_report_text(row["arrears"], pay)
+        arr_text = _army_arrears_report_text_from_projection(entry["arrears"])  # type: ignore[arg-type]
+        firearm_word = _army_stat_label(
+            "equipment", entry["firearm_equipment_band"]
+        ).removeprefix("装备：")
         return (
             f"{entry['name']}：驻扎地{entry['station']}，统帅{entry['commander']}，"
             f"兵种{entry['troop_type']}，人数{entry['manpower']}人，"
             f"月应发军饷{format_money(monthly_amount(pay))} /{TURN_UNIT}，"
-            f"{_qualitative_army_stat('supply', entry['supply'])}，"
-            f"{_qualitative_army_stat('morale', entry['morale'])}，"
-            f"{_qualitative_army_stat('training', entry['training'])}，"
-            f"{_qualitative_army_stat('equipment', entry['equipment'])}，"
-            f"火器{entry['firearm_equipment']}，随军大炮{entry['cannon_equipment']}门，"
-            f"{arr_text}，{_qualitative_army_stat('mobility', entry['mobility'])}，"
+            f"{_army_stat_label('supply', entry['supply_band'])}，"
+            f"{_army_stat_label('morale', entry['morale_band'])}，"
+            f"{_army_stat_label('training', entry['training_band'])}，"
+            f"{_army_stat_label('equipment', entry['equipment_band'])}，"
+            f"火器：{firearm_word}，随军大炮{entry['cannon_equipment']}门，"
+            f"{arr_text}，{_army_stat_label('mobility', entry['mobility_band'])}，"
             f"{_army_loyalty_label(entry['loyalty_band'])}。"
             f"状态：{entry['status']}"
         )
@@ -6650,20 +6763,22 @@ class GameDB:
         index_only: bool = False,
         qualitative_equipment: bool = False,
     ) -> str:
-        """全军名册；大臣上下文可将火器装备以定性词呈现。"""
+        """全军名册；火器装备一律走 public 投影定性 band（P4）。"""
+        del qualitative_equipment  # kept for call-site compat; projection is always qualitative
         rows = self.conn.execute(
             "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
         ).fetchall()
         if filter_names:
             rows = [r for r in rows if r["name"] in filter_names or r["id"] in filter_names]
-        entries = [self._army_public_entry(r) for r in rows]
+        # Sole public projection — same builder/totals as army_report/detail.
+        entries = self.army_public_payload(rows=rows)["armies"]
         if index_only:
             # 军队超 30 时用索引：仅显示军名+欠饷+状态，完整信息由 query_army_roster tool 提供
             lines = []
             for entry in entries:
                 if str(entry["owner_power"]) == "ming":
                     lines.append(
-                        f"{entry['name']}：{_format_arrears_projection(entry['arrears'])}，{entry['status']}"
+                        f"{entry['name']}：{_format_arrears_projection(entry['arrears'])}，{entry['status']}"  # type: ignore[arg-type]
                     )
             return (
                 "【全军名册索引（涉及军队欠饷/补给/士气时先调 query_army_roster 查完整信息）】\n"
@@ -6673,27 +6788,27 @@ class GameDB:
             return ""
         own: List[str] = []
         other: List[str] = []
-        source_by_id = {r["id"]: r for r in rows}
         for entry in entries:
             # #173：月饷取引擎实扣应发 army_needed（替退役 maintenance_per_turn）。全按月度，不除 3。
             monthly_pay = int(entry["monthly_pay"])
-            row = source_by_id[entry["id"]]
-            arrears_text = _army_arrears_report_text(row["arrears"], monthly_pay)
+            arrears_text = _army_arrears_report_text_from_projection(entry["arrears"])  # type: ignore[arg-type]
+            firearm_word = _army_stat_label(
+                "equipment", entry["firearm_equipment_band"]
+            ).removeprefix("装备：")
             if str(entry["owner_power"]) == "ming":
-                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚以奏报定性呈现。
+                # 列序见表头。兵力/月饷/欠饷为真钱；补给…忠诚/火器以 band 定性呈现。
                 own.append(
                     "|".join(str(x) for x in (
                         entry["name"], entry["station"], entry["commander"], entry["troop_type"],
                         entry["manpower"], monthly_pay,
-                        _qualitative_army_stat("supply", entry["supply"]),
-                        _qualitative_army_stat("morale", entry["morale"]),
-                        _qualitative_army_stat("training", entry["training"]),
-                        _qualitative_army_stat("equipment", entry["equipment"]),
-                        _qualitative_army_stat("mobility", entry["mobility"]),
+                        _army_stat_label("supply", entry["supply_band"]),
+                        _army_stat_label("morale", entry["morale_band"]),
+                        _army_stat_label("training", entry["training_band"]),
+                        _army_stat_label("equipment", entry["equipment_band"]),
+                        _army_stat_label("mobility", entry["mobility_band"]),
                         _army_loyalty_label(entry["loyalty_band"]),
                         arrears_text, entry["status"],
-                        f"火器：{_qualitative_army_stat('equipment', entry['firearm_equipment']).removeprefix('装备：')}"
-                        if qualitative_equipment else entry["firearm_equipment"],
+                        f"火器：{firearm_word}",
                         entry["cannon_equipment"],
                     ))
                 )
@@ -6706,11 +6821,7 @@ class GameDB:
                 )
         out = [
             "【全军名册（现状以此为准，谈某军欠饷/补给/士气直接据此；欠饷为奏报近似总额，不拆省/中央分账）】",
-            (
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为定性装备，随军大炮为门数0-12）："
-                if qualitative_equipment else
-                "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚为定性奏报，火器为0-100，随军大炮为门数0-12）："
-            ),
+            "大明各军（| 分隔，列序＝军名|驻地|统帅|兵种|兵力|月饷万两|补给|士气|训练|装备|机动|忠诚|欠饷奏报|状态|火器|随军大炮；补给…忠诚/火器为定性奏报，随军大炮为门数0-12）：",
             *own,
         ]
         if other:
