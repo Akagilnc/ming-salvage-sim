@@ -187,15 +187,14 @@ class _OfflineSceneRegistry:
         return False
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _offline_scene_beat_generator():
-    """#542：一处共享注入 session._beat_generator / create_llm_beat_generator 测试缝。
+    """#542：轻壳测试显式 opt-in 的 offline scene / beat 双缝（非 autouse）。
 
-    生产 r4 已删 web production_beat_generator 旁路；GameSession.__init__ 与
-    decree auto-close 均走 create_llm_beat_generator。未注入时全量会 NoneType.base_url
-    （db.llm_config is None）或 sk-test 401。
+    真实 DB 与无关测试默认走生产 create_llm_beat_generator + ChatTurnSceneRegistry。
+    需要离线 scene / 确定性旁白的用例再请求本 fixture：
 
-    - factory 缝：create_llm_beat_generator → 确定性假 generator（覆盖真 init + decree）
+    - factory 缝：create_llm_beat_generator → 确定性假 generator
     - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
       （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
     实例赋值（dual-fail / 503 e2e / 竞态）仍优先于类属性。不改生产。
@@ -219,13 +218,13 @@ def _offline_scene_beat_generator():
     mp.undo()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _atomic_connless_test_shell_compat():
-    """#542：无 conn 生命周期测试壳的 atomic 兼容——只改测试，不改生产事务语义。
+    """#542：无 conn 轻壳测试显式 opt-in 的 atomic 兼容（非 autouse）。
 
-    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`（不得按 db.conn 走
-    nullcontext）。轻壳故意无 conn，以便 `_start_chat_turn` / night 准入等仍走
-    create_chat_turn 等 stub 缝；真库仍走真实 atomic（_SuspendableConnection）。
+    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`；真实 DB 测试默认
+    走生产 atomic。仅轻壳（故意无 conn，以保持 stub 缝）请求本 fixture：
+    missing conn → no-op CM；真 _SuspendableConnection 仍走真实 atomic。
     """
     import contextlib
 

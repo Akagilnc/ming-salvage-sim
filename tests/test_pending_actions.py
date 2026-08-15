@@ -793,6 +793,7 @@ def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monke
     assert exc.value.detail == "结算中止，可重试。"
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_advance_without_edict_default_approves_into_one_dossier(game, monkeypatch):
     """Web 真实结束入口经生产 resolve/commit，把默认同意拟旨成唯一案卷并推进回合。"""
     import web_app
@@ -859,6 +860,7 @@ def test_web_advance_without_edict_default_approves_into_one_dossier(game, monke
     assert state.turn == turn_before + 1
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, monkeypatch):
     """真实结算入口只把 DB owner 判定合法的候选送入拟诏与结算。"""
     import ming_sim.session as session_mod

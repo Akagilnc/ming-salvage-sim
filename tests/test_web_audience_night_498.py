@@ -131,8 +131,11 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
 
 
 @pytest.fixture
-def web_game(tmp_path, monkeypatch):
+def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。
+
+    显式 opt-in `_offline_scene_beat_generator`：在 GameSession.__init__ 前注入确定性
+    beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
 
     允许 canned seam（定义真源 / runtime lookup，本 fixture 唯一 fake 面）：
     - agents.create_audience_extractor_agent → 回话尾随 / 收夜 drain 叙事抽取

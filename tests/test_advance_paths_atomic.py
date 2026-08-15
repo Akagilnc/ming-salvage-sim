@@ -286,6 +286,7 @@ def _recovery_session(db, state, content, monkeypatch):
     return sess
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_recovery_entry_resimulates_legacy_commitment_without_origin(game, monkeypatch):
     """A pre-origin ready commitment is not replayed and cannot advance the period."""
     import ming_sim.decree as dm
@@ -497,6 +498,7 @@ def test_recovery_path_commits_pending_actions(game, monkeypatch):
     assert title == "恢复期标题"  # 真表生效
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_poison_replay_clears_context_for_resimulation(game, monkeypatch, tmp_path):
     """重放炸 → 自动清 context（决定 6 逃生口接线），下次重试走重新推演（cmr S7 r2 claude）。
 
@@ -1098,6 +1100,7 @@ def test_escape_hatch_failure_does_not_mask_abort(game, monkeypatch, tmp_path):
     assert "clear boom" in str(ei.value.__cause__)
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_resim_path_does_not_preconsume_pending(game, monkeypatch, tmp_path):
     """settling 无 ready 重推演路：守门早退不提前消费暂存动作（cmr S7 r5 codex）。
 
@@ -1332,6 +1335,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
             call()
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_noready_recovery_uses_persisted_decree(game, monkeypatch):
     """跨进程 no-ready 恢复用占位真源里的原诏，免草案要求，不重新生成（ship-pre r5）。
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import json
 import threading
@@ -181,6 +183,7 @@ def _runtime_for_stream_race():
     return runtime, character.name, allow_finish, settlement_attempting, settlement
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_background_stream_completion_waits_for_settlement_gate_and_keeps_acceptance_turn():
     runtime, minister_name, allow_finish, settlement_attempting, settlement = _runtime_for_stream_race()
 
@@ -222,6 +225,7 @@ def test_identity_setup_failure_closes_durable_turn_and_pending_owner_as_termina
     assert completed == [True]
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
 def test_lightweight_stream_seam_reaches_done_without_durable_identity_or_night_signature():
     runtime, minister_name, allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
     stream = runtime.chat_stream(minister_name, "请奏")
