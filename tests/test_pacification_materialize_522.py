@@ -835,3 +835,158 @@ def test_special_decree_origin_cannot_authorize_pacification_allegiance(game):
     assert dict(db.conn.execute(
         "SELECT power_id, office FROM characters WHERE name='张献忠'"
     ).fetchone()) == before
+
+
+def test_idle_session_pacification_mention_does_not_hijack_ordinary_draft(game):
+    """C1 r6：会话闲笔提招抚，拟旨是寻常旨 → 寻常拟旨照常暂存，不得劫持 admission。"""
+    db, state, content = game
+    _activate_canonical_bandit(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    before = _pending_directive_payloads(db, state.turn, minister)
+    failures = []
+
+    pending_id = sess._stage_directive_tool_candidate(
+        "着户部速筹军饷，以济边需。",
+        minister,
+        "卿以为招抚张献忠如何？先拟一道筹饷旨来。",
+        failures_out=failures,
+    )
+
+    assert pending_id > 0
+    assert not failures
+    after = _pending_directive_payloads(db, state.turn, minister)
+    assert len(after) == len(before) + 1
+    staged = dict(after)[pending_id]
+    assert staged.get("dossier_action_type") == "special_decree"
+    assert staged.get("dossier_action_type") != "pacification"
+    assert "军饷" in str(staged.get("text") or "")
+
+
+def test_same_turn_success_pending_id_survives_later_failed_stage_cli_and_web(game):
+    """C2 r6：同轮先成功暂存、后失败 0 → 保留成功 pending_action_id；失败诊断仍透出。"""
+    from ming_sim.session import GameSession, coalesce_pending_action_id
+    import web_app
+
+    db, state, content = game
+    _activate_canonical_bandit(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+
+    # Shared aggregation rule: non-zero wins; zero must not erase prior success.
+    assert coalesce_pending_action_id(0, 42) == 42
+    assert coalesce_pending_action_id(42, 0) == 42
+    assert coalesce_pending_action_id(11, 22) == 22
+    assert coalesce_pending_action_id(0, 0) == 0
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已拟两道旨。",
+                tools=[
+                    SimpleNamespace(
+                        tool_name="propose_directive",
+                        result="",
+                        arguments={"decree_text": "着户部速筹军饷，以济边需。"},
+                    ),
+                    SimpleNamespace(
+                        tool_name="propose_directive",
+                        result="",
+                        arguments={"decree_text": "着招抚流寇归顺朝廷。"},
+                    ),
+                ],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    def _bind(sess):
+        sess.db = db
+        sess.state = state
+        sess.content = content
+        sess.registry = Registry()
+        sess.llm_config = SimpleNamespace(channel="api")
+        sess.temporary_characters = set()
+        sess._audience_prompt_for_message = lambda message, *a, **k: message
+        sess._start_cli_action_intent = lambda *_a, **_k: None
+        sess._finish_cli_action_intent = lambda *_a, **_k: None
+        return sess
+
+    cli_sess = _bind(GameSession.__new__(GameSession))
+    cli_result = GameSession.chat(cli_sess, minister, "拟旨如下：先筹饷，再议招抚流寇。")
+    assert cli_result.pending_action_id > 0
+    assert cli_result.pending_action_failures
+    assert any(
+        "招抚" in str(f.get("message") or "")
+        for f in cli_result.pending_action_failures
+    )
+    cli_payload = dict(_pending_directive_payloads(db, state.turn, minister))[
+        int(cli_result.pending_action_id)
+    ]
+    assert cli_payload.get("dossier_action_type") == "special_decree"
+
+    # Fresh pending slate for the web consumer of the same aggregation rule.
+    for row_id, _ in _pending_directive_payloads(db, state.turn, minister):
+        db.conn.execute("DELETE FROM pending_actions WHERE id=?", (row_id,))
+    db.conn.commit()
+
+    web_sess = _bind(GameSession.__new__(GameSession))
+    web_game = web_app.WebGame.__new__(web_app.WebGame)
+    web_game.session = web_sess
+    web_game.chat_history = {name: [] for name in content.characters}
+    web_game.suggestions_for = lambda _character: []
+    web_game.chat_projection = lambda name: list(web_game.chat_history.get(name) or [])
+    web_game.directive_rows = lambda: []
+    web_game.directive_payload = lambda row: row
+    web_game.can_undo_last_chat = lambda _name: False
+    web_game._record_chat_rollback_items = lambda *_a, **_k: None
+    character = content.characters[minister]
+    payload = web_app.WebGame._chat_stream_payload_commit(
+        web_game,
+        minister,
+        "拟旨如下：先筹饷，再议招抚流寇。",
+        character,
+        "臣已拟两道旨。",
+        Agent().run(""),
+        None,
+        chat_turn_id=0,
+        before_snapshot={
+            "pending_action_ids": [],
+            "secret_order_ids": [],
+            "directive_ids": [],
+        },
+        accepted_turn=state.turn,
+    )
+    assert int(payload.get("pending_action_id") or 0) > 0
+    assert payload.get("pending_action_failures")
+    assert any(
+        "招抚" in str(f.get("message") or "")
+        for f in payload["pending_action_failures"]
+    )
+    web_staged = dict(_pending_directive_payloads(db, state.turn, minister))[
+        int(payload["pending_action_id"])
+    ]
+    assert web_staged.get("dossier_action_type") == "special_decree"
+
+
+def test_pacification_successful_promulgation_closes_dossier(game):
+    """C3 r6：招抚纳入 terminal 集；成功易主后 fulfilled/closed，不滞留 executing。"""
+    from ming_sim.decree_vocabulary import dossier_action_policy
+
+    db, state, content = game
+    assert dossier_action_policy("pacification")["execution_surface"] == "terminal"
+    dossier = _promulgate_pacification(db, state, content, "张献忠")
+    row = db.get_decree_dossier(dossier["id"])
+    assert row is not None
+    assert row["status"] == "closed"
+    assert row["execution_outcome"] == "fulfilled"
+    assert db.conn.execute(
+        "SELECT power_id FROM characters WHERE name='张献忠'"
+    ).fetchone()["power_id"] == "ming"
