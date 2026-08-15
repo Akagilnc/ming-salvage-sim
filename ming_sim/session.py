@@ -1070,7 +1070,7 @@ class GameSession:
             )))
 
         def generate() -> list[tuple[int, str]]:
-            return [(entry_id, beats._run_generator(self._beat_generator, inputs))
+            return [(entry_id, beats.run_beat_generator(self._beat_generator, inputs))
                     for entry_id, inputs in tasks]
 
         self._chat_turn_scene_futures[int(chat_turn_id)] = _CLI_ACTION_INTENT_EXECUTOR.submit(generate)
@@ -2250,12 +2250,18 @@ class GameSession:
         # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
         from ming_sim.audience_night import auto_close_open_night
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
+        # Close-night owns short write sections + gate-free endorsement LLM.
+        # Web callers must invoke auto_close outside any outer runtime write gate
+        # (see web_app issue/stream/no-edict) so this is typically already-closed.
+        # CLI is single-writer: None write_gate = no lock around LLM.
         auto_close_open_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
             beat_generator=self._beat_generator,
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=None,
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
@@ -2428,6 +2434,8 @@ class GameSession:
             self.state, self.db,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=None,
         )
         if not advanced:
             return self.resolve_turn()

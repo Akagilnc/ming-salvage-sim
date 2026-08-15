@@ -132,9 +132,10 @@ export function MinisterCardList({
       const npx = Math.max(0, Math.min(1, dragging.current.startPX + dx / width));
       const npy = Math.max(0, Math.min(1, dragging.current.startPY + dy / height));
       setPositions((prev) => {
+        // 拖动中只更新视图与暂存，不写库——一次拖动数十个 mousemove，
+        // fire-and-forget POST 乱序到达会让旧坐标覆盖新坐标；持久化只在松手时做一次。
         const next = { ...prev, [dragging.current!.name]: { px: npx, py: npy } };
         savedPosRef.current = next;
-        saveCourtPos(next);
         return next;
       });
     };
@@ -145,10 +146,24 @@ export function MinisterCardList({
         setPositions((prev) => {
           const cur = prev[dragName];
           if (!cur) return prev;
-          // 已占槽位（其他大臣）
+          // 固定官职（首辅/六部尚书等）不参与自由排位：拖完弹回固定席位
+          const dragMinister = list.find((m) => m.name === dragName);
+          const fixed = dragMinister ? fixedSlotFor(roleFromOffice(dragMinister.office || "")) : null;
+          // 已占槽位（其他大臣按各自当前位置归入最近槽）
+          const allSlots = courtSlots();
           const occupied = new Set<string>();
+          Object.entries(prev).forEach(([name, p]) => {
+            if (name === dragName) return;
+            let bestKey = "";
+            let bestD = Infinity;
+            for (const s of allSlots) {
+              const d = Math.hypot(s.px - p.px, s.py - p.py);
+              if (d < bestD) { bestD = d; bestKey = `${s.side}:${s.slot}`; }
+            }
+            if (bestKey) occupied.add(bestKey);
+          });
           // 找吸附目标
-          const snapped = snapToSlot(cur.px, cur.py, occupied, "");
+          const snapped = fixed ?? snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
           savedPosRef.current = next;
           saveCourtPos(next);
