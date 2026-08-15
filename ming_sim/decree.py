@@ -616,7 +616,8 @@ class _NeedsFullSettlement(Exception):
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
                           inflight_wait_s: float | None = None,
-                          llm_config=None, write_gate=None) -> bool:
+                          llm_config=None, write_gate=None,
+                          scene_registry=None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -642,10 +643,12 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # #503/#542：收夜 beat 与开夜/入殿共用真实 scene LLM adapter。
     effective_llm = llm_config if llm_config is not None else getattr(db, "llm_config", None)
     beat_generator = create_llm_beat_generator(effective_llm)
+    # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
                           beat_generator=beat_generator,
-                          llm_config=effective_llm, write_gate=write_gate)
+                          llm_config=effective_llm, write_gate=write_gate,
+                          scene_registry=scene_registry)
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
@@ -696,6 +699,7 @@ def resolve_directives(
     cheat_directive: str = "",
     source: Provenance = Provenance.player_decree,
     promulgation_verdict_provider: Optional[PromulgationVerdictProvider] = None,
+    scene_registry=None,
 ) -> ResolveResult:
     """phase1：跑固定财政 + simulator 写邸报，解析 HITL 决策点。
 
@@ -720,7 +724,10 @@ def resolve_directives(
 
     if (not directives and not _requires_full_settlement(state, db)
             and not db.list_pending_actions(state.turn)):
-        advance_without_edict(state, db, content=content, registry=registry)
+        advance_without_edict(
+            state, db, content=content, registry=registry,
+            scene_registry=scene_registry,
+        )
         return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
 
     before_turn = state.turn
@@ -745,7 +752,8 @@ def resolve_directives(
         with atomic_and_reload(db, state, content=content, registry=registry):
             auto_triggered = pre_settle(
                 state, db, on_stage=lambda label: _emit("stage", label),
-                content=content, registry=registry)
+                content=content, registry=registry,
+                scene_registry=scene_registry)
             db.save_resolve_context(
                 state.turn, decree_text, "", {},
                 secret_orders={}, relevant_memories=[],   # #48：占位用分组承载的空 dict（旋即被真存覆盖）
@@ -1595,6 +1603,7 @@ def force_transit_arrivals(
 
 def pre_settle(
     state: GameState, db: GameDB, *, on_stage=None, content=None, registry=None,
+    scene_registry=None,
 ) -> List[Dict[str, object]]:
     """确定性结算「前括号」：固定月度财政 tick + auto_trigger 硬立 seed 情势，均在 LLM 推演前。
 
@@ -1628,8 +1637,10 @@ def pre_settle(
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import create_llm_beat_generator
     beat_generator = create_llm_beat_generator(getattr(db, "llm_config", None))
+    # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
     auto_close_open_night(db, state, content=content, registry=registry,
-                          beat_generator=beat_generator)
+                          beat_generator=beat_generator,
+                          scene_registry=scene_registry)
     # atomic + 最外层回滚后从 DB 重载（ADR 0008 决定 3 第三条）：apply_fixed_period_flows 直改了
     # state.metrics（flows.py:192）、尾部 turn_phase 已被赋 settling，脏 settling 会被下次 pre_settle
     # 守门跳过=该月财政永久丢（cmr S4 r1 F4）。嵌套时跳过 reload，由最外层拥有者处理。见 atomic_and_reload。

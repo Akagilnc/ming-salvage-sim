@@ -3770,6 +3770,7 @@ def api_advance_without_edict() -> Dict[str, Any]:
                     inflight_wait_s=0.0,
                     llm_config=getattr(game.session, "llm_config", None),
                     write_gate=None,
+                    scene_registry=getattr(game.session, "_scene_registry", None),
                 )
                 if not advanced:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)

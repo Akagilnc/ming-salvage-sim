@@ -793,6 +793,61 @@ def test_close_night_routes_scene_through_chat_turn_registry(game, monkeypatch):
     assert int(failed["close_commit_cursor"] or 0) == 0
 
 
+def test_advance_without_edict_auto_close_uses_caller_scene_registry(game, monkeypatch):
+    """#542 CI6: advance_without_edict 自动收夜经调用方既有 registry start_close→join 落账。"""
+    from ming_sim.decree import advance_without_edict
+
+    db, state, content = game
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    night_id = int(night["id"])
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    seen_start: list[int] = []
+    real_start = registry.start_close
+
+    def _track_start(db_, state_, **kwargs):
+        seen_start.append(int(kwargs.get("chat_turn_id") or 0))
+        return real_start(db_, state_, **kwargs)
+
+    monkeypatch.setattr(registry, "start_close", _track_start)
+    monkeypatch.setattr(
+        bo, "create_llm_beat_generator",
+        lambda _cfg: (lambda inputs: f"decree-advance-close-{inputs.beat_kind}"),
+    )
+
+    advance_without_edict(
+        state, db, content=content, scene_registry=registry, inflight_wait_s=0.0,
+    )
+
+    assert seen_start and seen_start[0] > 0
+    assert an.get_open_night(db) is None
+    close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
+    assert close_body == f"decree-advance-close-{BEAT_CLOSE}"
+
+
+def test_pre_settle_auto_close_scene_failure_keeps_night_open(game, monkeypatch):
+    """#542 CI6: pre_settle 自动收夜生成失败走既有收夜失败生命周期上抛，夜保持 OPEN。"""
+    from ming_sim.decree import pre_settle
+
+    db, state, content = game
+    night = an.open_night(db, state, time_of_day="亥时", location="乾清宫")
+    night_id = int(night["id"])
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+
+    def _boom(_inputs: BeatInputs) -> str:
+        raise RuntimeError("pre_settle close boom")
+
+    monkeypatch.setattr(bo, "create_llm_beat_generator", lambda _cfg: _boom)
+
+    with pytest.raises(RuntimeError, match="pre_settle close boom"):
+        pre_settle(state, db, content=content, scene_registry=registry)
+
+    failed = an.get_night(db, night_id)
+    assert failed is not None
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    assert _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT) is None
+
+
 def test_cli_exit_cleanup_failure_chains_to_scene_error(game, monkeypatch):
     """#542 CI2: _record_audience_exit cleanup 失败须链到原 scene 异常，不得 pass 吞掉。"""
     import ming_sim.cli.terminal as term
