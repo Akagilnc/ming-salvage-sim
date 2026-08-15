@@ -1893,9 +1893,9 @@ class WebGame:
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
-                        pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text, mode=message_text,
+                        # #502 L2 / #522：与 session 非流式同真源；招抚走 admission seam。
+                        pending_action_id = self.session._stage_directive_tool_candidate(
+                            draft_text, character.name, message_text,
                         )
                 elif (
                     tool_name == "propose_appointment"
