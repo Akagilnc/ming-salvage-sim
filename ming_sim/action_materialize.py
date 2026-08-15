@@ -439,6 +439,100 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         ctx.draft_staged = True
 
 
+def stage_pacification_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    target_id: str,
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared pacification candidate write: mode + same-target update.
+
+    Used by classifier materialize and API/CLI tool propose_directive so both
+    channels share admission payload shape (commit still runs _find_pacification_target).
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    target = str(target_id or "").strip()
+    if not target:
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    existing_id = 0
+    existing_mode = None
+    for row in pending_rows:
+        if row.get("kind") != "directive":
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("dossier_action_type") or "").strip() != "pacification":
+            continue
+        if str(payload.get("target_id") or "").strip() != target:
+            continue
+        existing_id = int(row["id"])
+        existing_mode = payload.get("mode")
+        break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "pacification",
+        "target_kind": "character",
+        "target_id": target,
+        "mode": mode,
+    }
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_pacification(ctx: MaterializeCtx) -> None:
+    """暂存招抚案卷；确认与判后人物易主仍走既有案卷链。"""
+    if (
+        ctx.intent_kind != "pacification"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    target_id = intent.get("target_id")
+    if not isinstance(target_id, str) or not target_id.strip():
+        return
+    minister_name = ctx.character.name
+    pending_id = stage_pacification_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        minister_name,
+        text=ctx.reply,
+        target_id=target_id.strip(),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -530,6 +624,17 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "拟旨", "draft", EFFECT_MATERIALIZE, priority=50,
             fields=(),
             materialize_fn=_materialize_draft,
+        ),
+        ActionCluster(
+            "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
+            fields=(
+                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_pacification,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,

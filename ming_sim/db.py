@@ -4394,6 +4394,18 @@ class GameDB:
                     else power.aliases,
                 ),
             )
+        # Known pre-#522 stock authority: exact legacy leader only → content canonical.
+        bandits = self.content.powers.get("bandits")
+        if bandits and bandits.leader:
+            self.conn.execute(
+                """
+                UPDATE powers
+                SET leader = ?
+                WHERE id = 'bandits'
+                  AND leader = '王嘉胤等'
+                """,
+                (bandits.leader,),
+            )
         for name in ("李自成", "张献忠"):
             ch = self.content.characters.get(name)
             if not ch or not ch.power_id or ch.power_id == "bandits":
@@ -10403,14 +10415,45 @@ class GameDB:
         if target_id in {"narrative", "policy"}:
             target_id = ""
         if target_kind == "character" and target_id and content is not None:
-            from ming_sim.session import _find_existing_minister
-            target_id = _find_existing_minister(content, target_id, self) or ""
+            if action == "pacification":
+                target_id = self._find_pacification_target(content, target_id) or ""
+            else:
+                from ming_sim.session import _find_existing_minister
+                target_id = _find_existing_minister(content, target_id, self) or ""
         if target_id:
             normalized["target_id"] = target_id
         else:
             normalized.pop("target_id", None)
             raise ValueError("旨意缺少 canonical target")
         return normalized
+
+    def _find_pacification_target(self, content, name: str) -> Optional[str]:
+        """Resolve living canonical 内乱 leader still needing 自新受抚 (敌对/潜伏 only)."""
+        matched = None
+        if name in content.characters:
+            matched = name
+        else:
+            matched = next((
+                key for key, character in content.characters.items()
+                if name in (character.aliases or [])
+            ), None)
+        if not matched:
+            return None
+        row = self.conn.execute(
+            "SELECT status, power_id FROM characters WHERE name=?", (matched,),
+        ).fetchone()
+        if row is None or row["status"] != "active" or row["power_id"] in (None, "ming"):
+            return None
+        power = self.conn.execute(
+            "SELECT kind, leader, stance FROM powers WHERE id=?", (row["power_id"],),
+        ).fetchone()
+        if power is None or not (
+            power["kind"] == "内乱"
+            and power["stance"] in {"敌对", "潜伏"}
+            and power["leader"] == matched
+        ):
+            return None
+        return matched
 
     def _commit_dossier_write(self, commit: bool) -> None:
         if commit and not bool(getattr(self.conn, "_commit_suspended", False)) and int(
@@ -11636,6 +11679,62 @@ class GameDB:
                         state.turn, close=True, commit=False,
                     )
                     return
+            elif row["action_type"] == "pacification":
+                # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
+                # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
+                target = str(
+                    payload.get("target_id") or row.get("target_id") or ""
+                ).strip()
+                if not target:
+                    raise ValueError("招抚案卷缺少 canonical target")
+                person_row = self.conn.execute(
+                    "SELECT power_id FROM characters WHERE name = ?",
+                    (target,),
+                ).fetchone()
+                if person_row is None:
+                    raise ValueError(f"招抚案卷目标不存在：{target}")
+                old_power = str(person_row["power_id"] or "").strip()
+                if not old_power or old_power == "ming":
+                    raise ValueError(
+                        f"招抚案卷目标原势力不可反噬：{target}@{old_power or '∅'}"
+                    )
+                origin_ref = f"dossier:{int(dossier_id)}"
+                item = {
+                    "name": target,
+                    "origin_ref": origin_ref,
+                    "动作": "易主",
+                    "new_power": "ming",
+                    "方式": "主动归附",
+                    "反噬": {
+                        old_power: {
+                            "military_strength": -1,
+                            "reason": "受抚",
+                        }
+                    },
+                    "reason": str(
+                        payload.get("text") or row.get("decree_text") or "受抚归明"
+                    ),
+                }
+                from ming_sim.issues import _apply_person_changes
+                results = _apply_person_changes(
+                    self,
+                    state,
+                    [item],
+                    content=content,
+                    registry=registry,
+                    origin_ref=origin_ref,
+                    require_origin=True,
+                    external_transaction=True,
+                )
+                accepted = [
+                    r for r in results
+                    if isinstance(r, dict) and not r.get("rejected")
+                ]
+                if not accepted:
+                    reason = ""
+                    if results and isinstance(results[0], dict):
+                        reason = str(results[0].get("reason") or "")
+                    raise ValueError(reason or "招抚案卷易主物化失败")
             elif row["action_type"] in {"authorization", "secret_authorization"}:
                 # The dossier records the decree; #611 privileges are produced
                 # only by settlement's authority_changes slot. Skill grants are

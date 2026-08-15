@@ -490,6 +490,14 @@ def apply_appointment(
     return (name, displaced)
 
 
+def coalesce_pending_action_id(prior: int, staged: int) -> int:
+    """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
+    staged_id = int(staged or 0)
+    if staged_id > 0:
+        return staged_id
+    return int(prior or 0)
+
+
 def _pending_action_brief(pa: Dict[str, Any]) -> str:
     """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
     import json as _json
@@ -1102,9 +1110,19 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
-                    result.pending_action_id = self.db.stage_explicit_directive(
-                        self.state.turn, character.name, draft_text, mode=message_text)
+                    # #502 L2 / #522：tool 拟旨与 CLI 共用候选 seam；招抚走 admission。
+                    stage_failures: List[Dict[str, Any]] = []
+                    result.pending_action_id = coalesce_pending_action_id(
+                        result.pending_action_id,
+                        self._stage_directive_tool_candidate(
+                            draft_text, character.name, message_text,
+                            failures_out=stage_failures,
+                        ),
+                    )
+                    if stage_failures:
+                        result.pending_action_failures = list(
+                            result.pending_action_failures or []
+                        ) + stage_failures
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1112,8 +1130,11 @@ class GameSession:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
-                result.pending_action_id = self._stage_appointment_candidate(
-                    payload, character, message_text,
+                result.pending_action_id = coalesce_pending_action_id(
+                    result.pending_action_id,
+                    self._stage_appointment_candidate(
+                        payload, character, message_text,
+                    ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
@@ -1156,10 +1177,13 @@ class GameSession:
                                 payload = self.db.attach_secret_oral_pin(
                                     character.name, int(self.state.turn), payload,
                                 )
-                            result.pending_action_id = self.db.stage_pending_action(
-                                self.state.turn, kind="secret_order", action=action,
-                                minister_name=character.name, target_id=order_id,
-                                payload=payload,
+                            result.pending_action_id = coalesce_pending_action_id(
+                                result.pending_action_id,
+                                self.db.stage_pending_action(
+                                    self.state.turn, kind="secret_order", action=action,
+                                    minister_name=character.name, target_id=order_id,
+                                    payload=payload,
+                                ),
                             )
                 elif tool_result.startswith("__secret_order__"):
                     payload_json = tool_result.removeprefix("__secret_order__").strip()
@@ -1168,26 +1192,29 @@ class GameSession:
                     except (ValueError, TypeError):
                         payload = {}
                     if isinstance(payload, dict):
-                        result.pending_action_id = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="新建",
-                            minister_name=character.name, target_id=None,
-                            payload={
-                                "title": str(payload.get("title") or "").strip(),
-                                "content": str(payload.get("content") or "").strip(),
-                                "assignee": str(payload.get("assignee") or character.name).strip(),
-                                "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
-                                "deadline_months": payload.get("deadline_months") or 0,
-                                "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
-                                "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
-                                "dossier_links": __import__(
-                                    "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
-                                ).confirm_dossier_links(
-                                    answer,
-                                    self.db.list_referenceable_dossiers(character.name, self.state.turn),
-                                    payload.get("dossier_links"),
-                                    llm_config=self.llm_config,
-                                ),
-                            },
+                        result.pending_action_id = coalesce_pending_action_id(
+                            result.pending_action_id,
+                            self.db.stage_pending_action(
+                                self.state.turn, kind="secret_order", action="新建",
+                                minister_name=character.name, target_id=None,
+                                payload={
+                                    "title": str(payload.get("title") or "").strip(),
+                                    "content": str(payload.get("content") or "").strip(),
+                                    "assignee": str(payload.get("assignee") or character.name).strip(),
+                                    "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+                                    "deadline_months": payload.get("deadline_months") or 0,
+                                    "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                    "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                    "dossier_links": __import__(
+                                        "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
+                                    ).confirm_dossier_links(
+                                        answer,
+                                        self.db.list_referenceable_dossiers(character.name, self.state.turn),
+                                        payload.get("dossier_links"),
+                                        llm_config=self.llm_config,
+                                    ),
+                                },
+                            ),
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
                     try:
@@ -1197,8 +1224,11 @@ class GameSession:
                     except Exception:
                         order_id = 0
                     if order_id:
-                        result.pending_action_id = self._stage_legacy_registered_secret_order(
-                            order_id, character.name)
+                        result.pending_action_id = coalesce_pending_action_id(
+                            result.pending_action_id,
+                            self._stage_legacy_registered_secret_order(
+                                order_id, character.name),
+                        )
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         self._cli_backend_fallback_actions(
             result, character, message,
@@ -1709,7 +1739,10 @@ class GameSession:
                 )
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
-            result.pending_action_failures = list(res["pending_action_failures"])
+            # Preserve tool-stage diagnostics (e.g. #522 招抚未知/歧义) then append
+            # confirmation-commit failures from the shared CLI seam.
+            prior = list(result.pending_action_failures or [])
+            result.pending_action_failures = prior + list(res["pending_action_failures"])
         # #502 AC5：把结构化含糊态透到 ChatTurnResult，供大臣当场追问哪一道（表面契约可达）。
         if res.get("directive_confirmation_ambiguous"):
             result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
@@ -1732,6 +1765,82 @@ class GameSession:
         except (ValueError, TypeError):
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
+
+    _PACIFICATION_TOOL_CUES = ("招抚", "招安", "受抚", "抚贼", "抚寇")
+
+    def _mentioned_pacification_target(self, text: str) -> Optional[str]:
+        """Pick the single eligible canonical mentioned for a 招抚 tool draft.
+
+        Each name/alias hit is resolved through db._find_pacification_target;
+        only qualified canonicals aggregate. Exactly one stages; zero or many
+        fail loud (None). Nested aliases of one canonical collapse to one hit.
+        """
+        blob = str(text or "")
+        if not blob or getattr(self, "content", None) is None:
+            return None
+        hit_canonicals: set[str] = set()
+        for name, character in self.content.characters.items():
+            needles = [name, *list(getattr(character, "aliases", None) or [])]
+            for needle in needles:
+                token = str(needle or "").strip()
+                if not token or token not in blob:
+                    continue
+                matched = self.db._find_pacification_target(self.content, token)
+                if matched:
+                    hit_canonicals.add(matched)
+        if len(hit_canonicals) == 1:
+            return next(iter(hit_canonicals))
+        # Zero qualified → unknown; multiple qualified canonicals → ambiguous.
+        return None
+
+    def _stage_directive_tool_candidate(
+        self, draft_text: str, minister_name: str, message_text: str,
+        *, failures_out: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """API/stream/CLI tool propose_directive → structured candidate seam (#522).
+
+        Pacification cue/target admission reads only the tool draft (拟旨).
+        Session chatter must not hijack an ordinary draft into pacification.
+        When the draft itself is pacification, a single resolvable target stages
+        via stage_pacification_candidate; unknown or ambiguous targets fail loud
+        (return 0 + pending_action_failures diagnostic) and never degrade to
+        stage_explicit_directive → special_decree. Generic drafts without a
+        pacification cue keep the special_decree path.
+        """
+        text = str(draft_text or "").strip()
+        if not text:
+            return 0
+        # Cue + target bind only to propose_directive draft_text — never message_text.
+        if any(cue in text for cue in GameSession._PACIFICATION_TOOL_CUES):
+            target = self._mentioned_pacification_target(text)
+            if not target:
+                failure = {
+                    "id": 0,
+                    "kind": "directive",
+                    "action": "pacification",
+                    "minister_name": str(minister_name or ""),
+                    "retryable": True,
+                    "message": (
+                        "招抚目标未知或歧义，未能拟旨入档；"
+                        "请指明单一可招抚对象后再拟。"
+                    ),
+                }
+                if failures_out is not None:
+                    failures_out.append(failure)
+                return 0
+            from ming_sim.action_materialize import stage_pacification_candidate
+            pending_id = stage_pacification_candidate(
+                self.db,
+                self.state.turn,
+                minister_name,
+                text=text,
+                target_id=target,
+                emperor_text=message_text,
+            )
+            return int(pending_id or 0)
+        return self.db.stage_explicit_directive(
+            self.state.turn, minister_name, text, mode=message_text,
+        )
 
     def _stage_appointment_candidate(
         self, payload: str, appointer: Character, message_text: str,
