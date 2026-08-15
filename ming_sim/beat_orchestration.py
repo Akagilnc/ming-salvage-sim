@@ -311,7 +311,7 @@ def production_beat_generator(inputs: BeatInputs) -> str:
     tension = str(inputs.court_tension or "").strip()
 
     if inputs.beat_kind == BEAT_OPEN:
-        head = f"{place_time}，召对夜启。" if place_time else "召对夜启。"
+        head = f"{place_time}，召对启。" if place_time else "召对启。"
         if tension:
             return f"{head}{tension}"
         return head
@@ -344,7 +344,7 @@ def production_beat_generator(inputs: BeatInputs) -> str:
         return body
 
     if inputs.beat_kind == BEAT_CLOSE:
-        head = f"{place_time}，退朝，今夜召对到此。" if place_time else "退朝，今夜召对到此。"
+        head = f"{place_time}，退朝，召对到此。" if place_time else "退朝，召对到此。"
         if tension:
             return f"{head}{tension}"
         return head

@@ -785,7 +785,7 @@ def open_night(
     location = str(location or "").strip() or DEFAULT_LOCATION
 
     roster = resolve_standing_roster(db)
-    open_body = body or f"{location}·{time_of_day}，召对夜启。"
+    open_body = body or f"{location}·{time_of_day}，召对启。"
 
     # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
     # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
@@ -1312,7 +1312,7 @@ def close_night(
             }
             if TAG_CLOSE_NIGHT not in existing_tags:
                 final_close_body = close_body or (
-                    "王承恩代宣退朝，今夜召对到此。" if auto else "退朝，今夜召对到此。"
+                    "王承恩代宣退朝，召对到此。" if auto else "退朝，召对到此。"
                 )
                 append_ledger_entry(
                     db, night_id,

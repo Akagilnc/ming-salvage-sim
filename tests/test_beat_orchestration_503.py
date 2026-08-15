@@ -568,19 +568,55 @@ def test_open_and_close_beat_bodies_land(game):
 
 
 def test_no_generator_keeps_deterministic_fallback(game):
-    """不注入生成器 = 沿用 #498 确定性兜底正文（编排层可选，不破既有行为）。"""
+    """无生成器/registry 缺失 = 确定性 open/close 兜底；文案从时地长出，不硬称夜。"""
     db, state, content = game
     minister = _active_minister(db, content)
     night_id, _cid = an.attach_chat_turn_to_night(
         db, state, minister, agno_session_id="s", agno_runs_before=0,
         time_of_day="戌时", location="乾清宫",
     )
+    open_body = _ledger_body(db, night_id, an.TAG_OPEN_NIGHT)
+    assert open_body == "乾清宫·戌时，召对启。"
+    assert "夜" not in open_body
     enter_body = _enter_body(db, night_id, minister)
     assert enter_body and "kind=" not in enter_body
     _land_reply(db, state, minister, _cid, night_id)
+    # 无 beat_generator、无 scene_registry：走空 body close 兜底
     an.close_night(db, state, night_id=night_id, content=content)
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
-    assert close_body == "退朝，今夜召对到此。"
+    assert close_body == "退朝，召对到此。"
+    assert "夜" not in close_body
+
+
+def test_production_beat_generator_open_close_fallback_no_night_hardcode():
+    """#542 r3：production open/close 确定性正文从时地长出，不硬称夜。"""
+    open_with = bo.production_beat_generator(
+        BeatInputs(beat_kind=BEAT_OPEN, time_of_day="戌时", location="乾清宫"),
+    )
+    assert open_with == "乾清宫·戌时，召对启。"
+    assert "夜" not in open_with
+    open_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_OPEN))
+    assert open_bare == "召对启。"
+    assert "夜" not in open_bare
+
+    close_with = bo.production_beat_generator(
+        BeatInputs(beat_kind=BEAT_CLOSE, time_of_day="戌时", location="乾清宫"),
+    )
+    assert close_with == "乾清宫·戌时，退朝，召对到此。"
+    assert "夜" not in close_with
+    close_bare = bo.production_beat_generator(BeatInputs(beat_kind=BEAT_CLOSE))
+    assert close_bare == "退朝，召对到此。"
+    assert "夜" not in close_bare
+
+
+def test_auto_close_fallback_body_no_night_hardcode(game):
+    """#542 r3：auto-close 空 body 兜底（王承恩代宣）亦不硬称夜。"""
+    db, state, content = game
+    night = an.open_night(db, state, time_of_day="戌时", location="便殿")
+    an.close_night(db, state, night_id=night["id"], content=content, auto=True)
+    close_body = _ledger_body(db, night["id"], an.TAG_CLOSE_NIGHT)
+    assert close_body == "王承恩代宣退朝，召对到此。"
+    assert "夜" not in close_body
 
 
 @pytest.fixture
