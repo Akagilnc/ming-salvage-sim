@@ -1,4 +1,8 @@
-"""#491 近臣读心：独立生成、定性输入与流水线边界。"""
+"""#491 近臣读心：独立生成、定性输入与流水线边界。
+
+#1185：不锁自由散文措辞；经 build_mindreading_materials 真实入口 + 测试侧
+renderer 哨兵/差分，证明 ledger 值进入模型材料且裸分不泄。
+"""
 
 from dataclasses import replace
 import inspect
@@ -123,7 +127,9 @@ def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monk
     assert calls == [(0.5, 1.0), (0.5, 1.0)]
 
 
-def test_model_receives_complete_qualitative_sources_and_result_enters_payload(game):
+def test_model_receives_complete_qualitative_sources_and_result_enters_payload(
+    game, monkeypatch
+):
     db, state, content = game
     reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
@@ -131,11 +137,20 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
     model = _SpyMindreadingAgent("近臣低声说，这话尚未说尽。")
     reply = "  臣先奏：忠诚=98。\n次陈军务，不敢删节。  "
 
+    # renderer 哨兵：证明 identity/loyalty 经定性层进入材料，不锁中文 band 词
+    monkeypatch.setattr(
+        mindreading, "identity_band", lambda value: f"IDBAND_{value}"
+    )
+    monkeypatch.setattr(
+        mindreading,
+        "qualitative_character_axis",
+        lambda field, value: f"AXIS_{field}_{value}",
+    )
+
     materials, payload = _generate(db, state, reader, target, reply, model)
 
     assert len(model.inputs) == 1
     material = model.inputs[0]
-    # 完整定性源：固定 material 键集合入模型，不泄机读字段名
     assert set(material) == {"当轮回话", "党账", "君臣账", "底案", "近臣自身见闻"}
     assert material["当轮回话"] == reply
     assert any(item["title"] == "旧闻" for item in material["近臣自身见闻"])
@@ -147,34 +162,41 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
         "narration": model.text,
     }
     assert "忠诚=98" not in json.dumps(payload, ensure_ascii=False)
-    # Typed guilt/bands at materials seam (no free-prose pins on 底案措辞).
-    struct = materials["truth_struct"]
-    assert set(struct) >= {"faction", "identity_band", "loyalty_band", "guilt"}
-    assert struct["identity_band"] in {
-        "none", "faint", "subtle", "deep", "extreme",
-    }
-    assert struct["loyalty_band"] in {
-        "alienated", "wavering", "neutral", "aligned", "devoted",
-    }
-    guilt = struct["guilt"]
-    assert set(guilt) >= {"crime", "severity", "has_case"}
-    assert isinstance(guilt["crime"], str) and guilt["crime"]
-    assert guilt["severity"] in {"无", "轻", "中", "重"}
-    assert isinstance(guilt["has_case"], bool)
+    # materials 读当前 DB ledger，不是静态 content 快照
+    row = db.conn.execute(
+        "SELECT identity, loyalty, seed_guilt FROM characters WHERE name=?",
+        (target.name,),
+    ).fetchone()
+    identity_v = int(row["identity"])
+    loyalty_v = int(row["loyalty"])
+    id_tok = f"IDBAND_{identity_v}"
+    loy_tok = f"AXIS_loyalty_{loyalty_v}"
+    assert id_tok in material["党账"]
+    assert loy_tok in material["君臣账"]
+    seed = json.loads(row["seed_guilt"] or "{}") if row["seed_guilt"] else {}
+    if not isinstance(seed, dict):
+        seed = {}
+    crime = str(seed.get("crime") or "无")
+    severity = str(seed.get("severity") or "无")
+    if crime == "无" and severity == "无":
+        assert material["底案"]
+    else:
+        assert crime in material["底案"]
+        assert severity in material["底案"]
     rendered = json.dumps(material, ensure_ascii=False)
-    assert "identity" not in rendered
-    assert "loyalty" not in rendered
-    assert "seed_guilt" not in rendered
-    party_loyalty = f"{material['党账']}{material['君臣账']}"
-    assert str(target.identity) not in party_loyalty
-    assert str(target.loyalty) not in party_loyalty
+    cleaned = rendered.replace(id_tok, "").replace(loy_tok, "")
+    assert "identity" not in cleaned
+    assert "loyalty" not in cleaned
+    assert "seed_guilt" not in cleaned
+    assert str(identity_v) not in cleaned
+    assert str(loyalty_v) not in cleaned
+    assert "truth_struct" not in materials
 
 
 def test_default_seed_mindreading_materials_do_not_expose_integration_markers(game):
     db, state, content = game
     reader = content.characters["王承恩"]
-    # 结构契约：materials 不含 integration marker 字段/枚举；truth_struct 为 typed 面
-    marker_keys = {"integration", "integ", "marker", "only_clue", "仅线索"}
+    marker_keys = {"integration", "integ", "marker", "only_clue", "仅线索", "truth_struct"}
 
     def _all_keys(obj, acc=None):
         acc = set() if acc is None else acc
@@ -193,26 +215,38 @@ def test_default_seed_mindreading_materials_do_not_expose_integration_markers(ga
         )
         truths = materials["truths"]
         assert set(truths) == {"党账", "君臣账", "底案"}
-        struct = materials["truth_struct"]
-        assert set(struct) >= {"faction", "identity_band", "loyalty_band", "guilt"}
-        assert isinstance(struct["guilt"], dict)
-        assert set(struct["guilt"]) >= {"crime", "severity", "has_case"}
         keys = _all_keys(materials)
         assert marker_keys.isdisjoint(keys)
         assert not any("integ" in key.lower() for key in keys)
+        # 底案正文亦不夹 integration 标记词
+        guilt_text = str(truths["底案"])
+        assert "仅线索" not in guilt_text
+        assert "integ" not in guilt_text.lower()
 
 
-def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
-    """读当前 ledger；typed band/guilt 用独立显式样例，不锁自由散文措辞。"""
+def test_mindreading_reads_current_structured_ledger_without_raw_scores(
+    game, monkeypatch
+):
+    """读当前 ledger；renderer 哨兵绑定显式样例，裸分不进模型材料。"""
     db, state, content = game
     reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
+    guilt_payload = {"crime": "合谋", "severity": "重"}
     db.conn.execute(
         "UPDATE characters SET faction=?, identity=?, loyalty=?, seed_guilt=? WHERE name=?",
-        ("皇党", 92, 15, '{"crime":"合谋","severity":"重"}', target.name),
+        ("皇党", 92, 15, json.dumps(guilt_payload, ensure_ascii=False), target.name),
     )
     db.conn.commit()
     model = _SpyMindreadingAgent()
+
+    monkeypatch.setattr(
+        mindreading, "identity_band", lambda value: f"IDBAND_{value}"
+    )
+    monkeypatch.setattr(
+        mindreading,
+        "qualitative_character_axis",
+        lambda field, value: f"AXIS_{field}_{value}",
+    )
 
     materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
 
@@ -224,25 +258,39 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     assert row["faction"] == "皇党"
     assert int(row["identity"]) == 92
     assert int(row["loyalty"]) == 15
-    assert json.loads(row["seed_guilt"]) == {"crime": "合谋", "severity": "重"}
+    assert json.loads(row["seed_guilt"]) == guilt_payload
     assert set(material) >= {"党账", "君臣账", "底案"}
-    # Independent explicit sample: identity=92→extreme; loyalty=15→alienated;
-    # guilt ledger fields land as typed structure (not free-prose contains).
-    struct = materials["truth_struct"]
-    assert struct["faction"] == "皇党"
-    assert struct["identity_band"] == "extreme"
-    assert struct["loyalty_band"] == "alienated"
-    assert struct["guilt"] == {"crime": "合谋", "severity": "重", "has_case": True}
+    assert "皇党" in material["党账"]
+    assert "IDBAND_92" in material["党账"]
+    assert "AXIS_loyalty_15" in material["君臣账"]
+    assert guilt_payload["crime"] in material["底案"]
+    assert guilt_payload["severity"] in material["底案"]
     blob = json.dumps(material, ensure_ascii=False)
-    assert "92" not in blob
-    assert "15" not in blob
-    assert "identity" not in blob
-    assert "loyalty" not in blob
-    assert "seed_guilt" not in blob
+    cleaned = blob.replace("IDBAND_92", "").replace("AXIS_loyalty_15", "")
+    assert "92" not in cleaned
+    assert "15" not in cleaned
+    assert "identity" not in cleaned
+    assert "loyalty" not in cleaned
+    assert "seed_guilt" not in cleaned
+    assert "truth_struct" not in materials
     assert payload["narration"] == model.text
 
+    # 差分：换 ledger 值 → 材料可判别变化
+    db.conn.execute(
+        "UPDATE characters SET identity=?, loyalty=? WHERE name=?",
+        (10, 90, target.name),
+    )
+    db.conn.commit()
+    materials2, _ = _generate(db, state, reader, target, "臣有本奏。", _SpyMindreadingAgent())
+    m2 = json.dumps(materials2["truths"], ensure_ascii=False)
+    assert "IDBAND_10" in m2
+    assert "AXIS_loyalty_90" in m2
+    assert "IDBAND_92" not in m2
 
-def test_mindreading_record_survives_restore_without_entering_shared_history(tmp_path, content):
+
+def test_mindreading_record_survives_restore_without_entering_shared_history(
+    tmp_path, content
+):
     path = tmp_path / "mindreading.db"
     db = GameDB(str(path), content)
     try:
@@ -251,7 +299,8 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
         reader = content.characters["王承恩"]
         target = content.characters["温体仁"]
         _materials, payload = _generate(
-            db, state, reader, target, "臣有本奏。", _SpyMindreadingAgent("近臣低声陈明未尽之意。"),
+            db, state, reader, target, "臣有本奏。",
+            _SpyMindreadingAgent("近臣低声陈明未尽之意。"),
         )
         chat_turn_id = db.create_chat_turn(state, target.name, "record-test", 0)
         db.record_mindreading(chat_turn_id, payload)
@@ -260,7 +309,6 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
 
     restored = GameDB(str(path), content)
     try:
-        # 记录带持久身份 id（#499：前端按 (chat_turn_id, id) 去重/归位）；其余字段原样留存。
         records = restored.list_mindreading_records(chat_turn_id)
         assert len(records) == 1
         assert records[0].pop("id") > 0

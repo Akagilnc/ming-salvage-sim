@@ -15,13 +15,7 @@ OFFICE_SLOTS = (
 )
 
 
-def _vacancy_statement(rows: Iterable[Mapping[str, Any]], query: str) -> tuple[str, str]:
-    """Return (statement, result_kind) for an office-domain inquiry.
-
-    result_kind is the report-export discriminator: ``known`` when at least one
-    authorized office/jurisdiction matched, else ``unknown``. Callers must not
-    treat an empty or unrelated statement as unknown without this flag.
-    """
+def _vacancy_statement(rows: Iterable[Mapping[str, Any]], query: str) -> str:
     text = str(query or "")
     rows = list(rows)
     matches = [row for row in rows if str(row["office_title"]) in text]
@@ -34,11 +28,11 @@ def _vacancy_statement(rows: Iterable[Mapping[str, Any]], query: str) -> tuple[s
             vacancies = [row for row in rows if not row.get("holder_name")]
             matches = vacancies or rows
     if not matches:
-        return "近臣暂未查到与所问相符的督抚官缺。", "unknown"
+        return "近臣暂未查到与所问相符的督抚官缺。"
     return "".join(
         f"{row['office_title']}{'现由' + str(row['holder_name']) + '任事。' if row.get('holder_name') else '当前虚悬。'}"
         for row in matches
-    ), "known"
+    )
 
 
 def _query_domain(query: str) -> str:
@@ -65,30 +59,25 @@ def _report_text(text: object) -> str:
     return str(text or "")
 
 
-def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str, str]:
-    """Read existing domain seams.
-
-    Returns ``(statement, domain_ref, result_kind)``. ``result_kind`` is the
-    public report-export discriminator (known / unknown / unsupported).
-    """
+def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
+    """Read the existing domain presentation seams, keeping values out of payload."""
     domain = _query_domain(query)
     if not domain:
-        return "近臣暂不能据现有册档查明所问。", "unsupported", "unsupported"
+        return "近臣暂不能据现有册档查明所问。", "unsupported"
     if domain == "office":
-        statement, result_kind = _vacancy_statement(db.list_office_vacancies(), query)
-        return statement, "office_vacancies", result_kind
+        return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
     if domain == "arrears":
-        return _report_text(db.army_report(limit=10)), "armies", "known"
+        return _report_text(db.army_report(limit=10)), "armies"
     if domain == "bandits":
         # power_report is the existing qualitative military-intelligence seam;
         # use its domain filter so a bandit question cannot receive every
         # foreign power's report.
         return _report_text(db.power_report(
             # Content identifies the three rebel powers by id while their
-            # display kind is "内乱".  power_report accepts either form.
+            # display kind is \"内乱\".  power_report accepts either form.
             exclude_self=True, kinds={"bandit", "bandits", "内乱"}, audience=True,
-        )), "powers", "known"
-    return _report_text(db.power_report(exclude_self=True, audience=True)), "powers", "known"
+        )), "powers"
+    return _report_text(db.power_report(exclude_self=True, audience=True)), "powers"
 
 
 def _character_domain_statement(db: Any, state: Any, character_name: str, query: str) -> tuple[str, str]:
@@ -171,15 +160,12 @@ def build_return_report(
     # a firsthand report; the production, role-scoped seam below performs the
     # witness check before selecting firsthand.
     source_kind = "inquiry"
-    statement, domain_ref, result_kind = _qualitative_domain_statement(db, query)
+    statement, domain_ref = _qualitative_domain_statement(db, query)
     return {
         "source_kind": source_kind,
         "source_ref": _canonical_source_ref(source_kind, source_ref, domain_ref),
         "subject": "查访" if source_kind == "inquiry" else "见闻",
         "statement": statement,
-        # Report-export discriminator: office hit vs office miss vs unsupported.
-        # Empty/unrelated statements must not satisfy an unknown contract alone.
-        "result_kind": result_kind,
     }
 
 
@@ -201,7 +187,6 @@ def persist_return_report(
         return {
             "source_kind": "unsupported", "source_ref": "unsupported",
             "subject": "未成报", "statement": "近臣暂不能据现有册档查明所问。",
-            "result_kind": "unsupported",
         }
     firsthand_record = _matching_firsthand_record(db, state, character_name, query)
     requested_kind = source_kind_for_query(query)
@@ -212,14 +197,12 @@ def persist_return_report(
     )
     if source_kind == "firsthand":
         statement, domain_ref = _character_domain_statement(db, state, character_name, query)
-        result_kind = "known"
     else:
         # Keep the existing DB seam as the single deterministic inquiry
         # provider; it derives the source from the queried substrate.
         report = db.build_return_report(query, source_kind="inquiry", source_ref="")
         statement = report["statement"]
         source_ref = report["source_ref"]
-        result_kind = str(report.get("result_kind") or "known")
     if source_kind == "firsthand":
         source_ref = _canonical_source_ref(source_kind, None, domain_ref)
     digest = hashlib.sha256(f"{state.turn}|{character_name}|{query}".encode()).hexdigest()[:16]
@@ -237,7 +220,6 @@ def persist_return_report(
         "source_ref": source_ref,
         "subject": "查访" if source_kind == "inquiry" else "见闻",
         "statement": statement,
-        "result_kind": result_kind,
     }
     if not chat_turn_id or source_id != stable_source_id or exists is None:
         db.register_character_knowledge_source(
