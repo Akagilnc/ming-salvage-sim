@@ -408,7 +408,7 @@ def generate_close_beat_body(
     """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。
 
     单线程调用方可直接用本入口（内部 assemble + run）。生产收夜路径经
-    ChatTurnSceneRegistry.start_close / run_close_scene_on_registry（#542 CI2）。
+    ChatTurnSceneRegistry.start_close + join（#542：与 endorsement 并行后再汇合）。
     """
     if beat_generator is None:
         return ""
@@ -650,7 +650,7 @@ class ChatTurnSceneRegistry:
         self._drain(futures, keep_results=False)
 
 
-def run_close_scene_on_registry(
+def start_close_scene_on_registry(
     db: Any,
     state: Any,
     *,
@@ -659,41 +659,51 @@ def run_close_scene_on_registry(
     beat_generator: Optional[BeatGenerator],
     knowledge_provider: Optional[KnowledgeProvider] = None,
     chat_turn_id: int = 0,
-) -> Tuple[int, str]:
-    """收夜 scene 唯一生命周期：进既有 ChatTurnSceneRegistry，join 后返回正文。
+) -> Tuple[int, bool]:
+    """收夜 scene 启动：进既有 ChatTurnSceneRegistry，不 join。
 
-    无 chat_turn_id 时 scaffold 一轮（与 CLI exit 同族）；成功后退役 scaffold，
-    失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread。
+    无 chat_turn_id 时 scaffold 一轮（与 CLI exit 同族）。返回 (ctid, scaffold_owned)。
+    调用方与 endorsement 等无依赖任务并行后，再 join_close_scene_on_registry。
+    无 generator 或无 start_close 能力时返回 (ctid, False) 且不提交 Future。
     """
-    if beat_generator is None:
-        return (int(chat_turn_id or 0), "")
+    ctid = int(chat_turn_id or 0)
+    if beat_generator is None or not hasattr(scene_registry, "start_close"):
+        return (ctid, False)
 
     scaffold_owned = False
-    ctid = int(chat_turn_id or 0)
     if not ctid:
-        if not hasattr(db, "create_chat_turn"):
-            night = get_night(db, int(night_id)) or {}
-            inputs = assemble_beat_inputs(
-                db, state, beat_kind=BEAT_CLOSE,
-                time_of_day=str(night.get("time_of_day") or ""),
-                location=str(night.get("location") or ""),
-                night_id=int(night_id),
-                knowledge_provider=knowledge_provider,
-            )
-            return (0, run_beat_generator(beat_generator, inputs) or "")
         ctid = int(db.create_chat_turn(
             state, "收夜", "close-scene", 0, night_id=int(night_id),
         ))
         scaffold_owned = True
 
+    scene_registry.start_close(
+        db, state,
+        chat_turn_id=ctid,
+        night_id=int(night_id),
+        beat_generator=beat_generator,
+        knowledge_provider=knowledge_provider,
+    )
+    return (ctid, scaffold_owned)
+
+
+def join_close_scene_on_registry(
+    db: Any,
+    *,
+    scene_registry: ChatTurnSceneRegistry,
+    chat_turn_id: int,
+    scaffold_owned: bool = False,
+) -> str:
+    """收夜 scene 汇合：join 既有 registry 桶，返回正文。
+
+    成功后退役 scaffold；失败 abandon + fail_chat_turn 后原样抛出——
+    不重开夜、不自建 Thread/executor。
+    """
+    ctid = int(chat_turn_id or 0)
+    if not ctid or not hasattr(scene_registry, "join"):
+        return ""
+
     try:
-        scene_registry.start_close(
-            db, state,
-            chat_turn_id=ctid,
-            night_id=int(night_id),
-            beat_generator=beat_generator,
-            knowledge_provider=knowledge_provider,
-        )
         generated = scene_registry.join(ctid)
         body = ""
         for _entry_id, text in generated:
@@ -708,12 +718,46 @@ def run_close_scene_on_registry(
                 (int(ctid),),
             )
             db.conn.commit()
-        return (ctid, body)
+        return body
     except BaseException as scene_exc:
         try:
-            scene_registry.abandon(ctid)
+            if hasattr(scene_registry, "abandon"):
+                scene_registry.abandon(ctid)
             if ctid and hasattr(db, "fail_chat_turn"):
                 db.fail_chat_turn(int(ctid))
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise
+
+
+def run_close_scene_on_registry(
+    db: Any,
+    state: Any,
+    *,
+    night_id: int,
+    scene_registry: ChatTurnSceneRegistry,
+    beat_generator: Optional[BeatGenerator],
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    chat_turn_id: int = 0,
+) -> Tuple[int, str]:
+    """收夜 scene 同步便捷封装：start 后立即 join（单线程/测试）。
+
+    生产 close_night 走 start/join 两步，与 endorsement 并行后再汇合。
+    """
+    ctid, scaffold_owned = start_close_scene_on_registry(
+        db, state,
+        night_id=int(night_id),
+        scene_registry=scene_registry,
+        beat_generator=beat_generator,
+        knowledge_provider=knowledge_provider,
+        chat_turn_id=int(chat_turn_id or 0),
+    )
+    if beat_generator is None or not ctid:
+        return (int(ctid or 0), "")
+    body = join_close_scene_on_registry(
+        db,
+        scene_registry=scene_registry,
+        chat_turn_id=ctid,
+        scaffold_owned=scaffold_owned,
+    )
+    return (ctid, body)

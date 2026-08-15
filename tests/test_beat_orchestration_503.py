@@ -520,8 +520,11 @@ def test_open_and_close_beat_bodies_land(game):
     assert "tod=戌时" in open_body and "loc=乾清宫" in open_body
 
     _land_reply(db, state, minister, _cid, night_id)
-    an.close_night(db, state, night_id=night_id, content=content,
-                   beat_generator=_echo_generator)
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    an.close_night(
+        db, state, night_id=night_id, content=content,
+        beat_generator=_echo_generator, scene_registry=registry,
+    )
     close_body = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
     assert close_body and close_body.startswith(f"kind={BEAT_CLOSE}")
 
@@ -658,9 +661,10 @@ def test_four_beat_scroll_e2e_via_real_player_entries(web_game):
     game.db.persist_minister_reply(minister, game.state.turn, "臣请据实核账。", int(ctid))
     game.db.settle_story_extraction(int(ctid), night_id, [], 0)
     game.db.conn.commit()
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     an.close_night(
         game.db, game.state, night_id=night_id, content=game.content,
-        beat_generator=fake_gen, wait_timeout_s=0.0,
+        beat_generator=fake_gen, scene_registry=registry, wait_timeout_s=0.0,
     )
     by_beat = {
         m["beat"]: m for m in an.read_night_scroll(game.db, night_id)
@@ -911,8 +915,12 @@ def test_frame_beats_flow_from_provider_and_vary(game):
     assert f"{subject}独有见闻#A" in open_a
 
     _land_reply(db, state, minister, _cid, night_id)
-    an.close_night(db, state, night_id=night_id, content=content,
-                   beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"))
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    an.close_night(
+        db, state, night_id=night_id, content=content,
+        beat_generator=_echo_generator, knowledge_provider=_fake_provider("A"),
+        scene_registry=registry,
+    )
     close_a = _ledger_body(db, night_id, an.TAG_CLOSE_NIGHT)
     assert f"{subject}独有见闻#A" in close_a
 
