@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +30,7 @@ from ming_sim.audience_extraction import (
     parse_extraction_facts,
     run_extraction_for_turn,
 )
+from ming_sim.models import LLMConfig
 
 
 # ── canned 抽取边界（唯一 fake）──────────────────────────────────────────
@@ -130,6 +132,16 @@ def test_run_extraction_ledgers_staging_fact(game):
     assert entry["person_names"] == ["毕自严", "洪承畴"]  # 涉及人正确
     assert entry["audibility"] == "殿上公开"               # 可闻性正确
     assert entry["tags"] == ["站台"]
+    # Finished turn reclaims single-flight ownership (no Future/result store):
+    # a second claim completes immediately via durable done watermark, no double ledger.
+    again = run_extraction_for_turn(
+        db=db, minister_name=minister, reply="臣为洪承畴作保。",
+        chat_turn_id=ctid, night_id=nid, source_night_seq=seq,
+        llm_config=object(), write_gate=threading.Lock(),
+        extractor_agent=_FactsAgent(_STAGE_FACT_JSON),
+    )
+    assert again["status"] == "done"
+    assert len([e for e in an.list_ledger(db, nid) if e["source_chat_turn_id"] == ctid]) == 1
 
 
 def test_run_extraction_bad_shape_writes_error_pack_and_marks_pending(game, tmp_path, monkeypatch):
@@ -243,6 +255,60 @@ def test_catch_up_persistent_failure_does_not_lock_and_marks_pending(game, tmp_p
     )
     assert again["extracted"] == 1
     assert db.get_story_extract_status(ctid) == "done"
+
+
+def test_catch_up_processes_source_turns_serially_even_on_parallel_safe_backend(game):
+    """跨轮补跑不得并行：在场派生只认已落账，后轮必须看见前轮已 settle 的进出账。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    an.ensure_summon_enter(db, nid, minister)
+    first = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "臣请退至殿侧。", first)
+    second = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "近前再奏。", second)
+    seen_present: list[tuple[str, list[str]]] = []
+    started = threading.Event()
+    release_first = threading.Event()
+
+    class _PresenceAwareAgent:
+        def run(self, materials):
+            payload = __import__("json").loads(materials)
+            reply = str(payload.get("回话原文") or "")
+            seen_present.append((reply, list(payload.get("当前在场") or [])))
+            if "退至殿侧" in reply:
+                started.set()
+                assert release_first.wait(5)
+                return (
+                    '{"facts":[{"body":"自行退至殿侧","person_names":["'
+                    + minister + '"],"presence_effect":"exit"}]}'
+                )
+            return (
+                '{"facts":[{"body":"近前再奏","person_names":["'
+                + minister + '"],"presence_effect":"enter"}]}'
+            )
+
+    cfg = LLMConfig(
+        api_key="cli-backend", base_url="", model="m",
+        channel="cli", cli_runner="codex",
+    )
+    worker = threading.Thread(target=lambda: catch_up_pending_extractions(
+        db=db, llm_config=cfg, write_gate=threading.Lock(),
+        extractor_agent=_PresenceAwareAgent(),
+    ))
+    worker.start()
+    assert started.wait(5)
+    time.sleep(0.05)
+    assert len(seen_present) == 1
+    release_first.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    assert [reply for reply, _present in seen_present] == [
+        "臣请退至殿侧。", "近前再奏。",
+    ]
+    assert minister not in seen_present[1][1]
+    assert minister in an.persons_present_tonight(db, nid)
 
 
 # ── 在场派生只认已落账 + 机器可读在场效果（AC2/AC9）──────────────────────
@@ -478,8 +544,8 @@ def test_cli_trail_extraction_failure_marks_pending_not_raises(game, monkeypatch
     assert db.get_story_extract_status(ctid) == "pending"
 
 
-def test_web_await_inflight_drains_pending_before_close(web_game, monkeypatch):
-    """收夜前门（_await_audience_inflight_clear）：带待补 → fail-closed 抛，夜保持开（AC10）。"""
+def test_web_await_inflight_does_not_pre_drain_pending(web_game, monkeypatch):
+    """Web 前门只等在飞；待补留给创建案卷后的 close-night 单一 owner。"""
     game = web_game
     minister = _minister(game.db, game.content)
     ctid, _snap = game._start_chat_turn(minister)
@@ -488,21 +554,11 @@ def test_web_await_inflight_drains_pending_before_close(web_game, monkeypatch):
         "SELECT night_id FROM chat_turns WHERE id=?", (ctid,)
     ).fetchone()["night_id"])
 
-    # 持续失败抽取员 → drain fail-closed 中止收夜。
     monkeypatch.setattr(
         agents_mod, "create_audience_extractor_agent", lambda cfg: _BoomAgent())
-    with pytest.raises(an.AudienceNightError) as ei:
-        web_app._await_audience_inflight_clear(game)
-    assert ei.value.code == "pending_extraction"
-    assert an.get_night(game.db, nid)["status"] != an.NIGHT_STATUS_CLOSED
-
-    # 换好抽取员 → drain 清空、门放行（收夜可继续）。
-    monkeypatch.setattr(
-        agents_mod, "create_audience_extractor_agent",
-        lambda cfg: _FactsAgent(_STAGE_FACT_JSON),
-    )
     web_app._await_audience_inflight_clear(game)
-    assert game.db.count_pending_story_extractions(night_id=nid) == 0
+    assert game.db.count_pending_story_extractions(night_id=nid) == 1
+    assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_OPEN
 
 
 # ── L2 落账走账本唯一入口：closed 夜 / 死账 enter 护栏不被旁路 ──────────────
@@ -520,6 +576,27 @@ def test_settle_refuses_on_closed_night(game):
         db.settle_story_extraction(
             ctid, nid, [{"body": "站台", "person_names": [minister]}], 1)
     assert ei.value.code == "night_closed"
+
+    # CLOSING：默认调用拒写（不得仅凭 status 自动授权）；close-owned 显式 allow_closing 成功。
+    night2 = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid2 = int(night2["id"])
+    ctid2 = db.create_chat_turn(state, minister, "s", 0, night_id=nid2)
+    db.conn.execute(
+        "UPDATE audience_nights SET status=? WHERE id=?",
+        (an.NIGHT_STATUS_CLOSING, nid2),
+    )
+    db.conn.commit()
+    with pytest.raises(an.AudienceNightError) as ei_closing:
+        db.settle_story_extraction(
+            ctid2, nid2, [{"body": "默认拒", "person_names": [minister]}], 1,
+        )
+    assert ei_closing.value.code == "night_closing"
+    assert db.get_story_extract_status(ctid2) != "done"
+    ids = db.settle_story_extraction(
+        ctid2, nid2, [{"body": "close-owned 落账", "person_names": [minister]}], 1,
+        allow_closing=True,
+    )
+    assert len(ids) == 1 and db.get_story_extract_status(ctid2) == "done"
 
 
 def test_settle_refuses_dead_actor_enter_but_allows_mention(game):
@@ -612,12 +689,18 @@ def test_engine_close_night_drains_pending_success(game, monkeypatch):
     minister = _minister(db, content)
     nid, ctid, seq = _open_night_with_persisted_reply(db, state, minister, reply="臣作保。")
     assert db.count_pending_story_extractions(night_id=nid) == 1
-    # 带 llm/write_gate → 引擎 close 强制 drain → 收夜成功、水位 done
+    # 带 llm/write_gate → 引擎 close 强制 drain（显式 allow_closing）→ 收夜成功、水位 done
     result = an.close_night(
         db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock())
     assert result["closed"] is True
     assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert db.get_story_extract_status(ctid) == "done"
+    # close-owned drain 落出的抽取账真实存在（非跳过）。
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM story_ledger_entries "
+        "WHERE night_id=? AND source_chat_turn_id=?",
+        (nid, ctid),
+    ).fetchone()["c"] >= 1
 
 
 def test_engine_close_night_fail_closed_on_boom(game, monkeypatch, tmp_path):

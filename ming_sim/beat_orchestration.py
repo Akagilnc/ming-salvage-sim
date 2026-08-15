@@ -203,9 +203,11 @@ def assemble_beat_inputs(
     )
 
 
-def _run_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
+def run_beat_generator(beat_generator: Optional[BeatGenerator], inputs: BeatInputs) -> str:
     """调内容生成器——只递 BeatInputs 一件，绝不附加长度/结构等形式约束参数。
 
+    共用薄 seam：generate_* 与 close_night worker 同走此处。
+    调用方须已在主线程 assemble 完全部 DB-backed BeatInputs；本 seam 零 DB。
     生产 scene 的空白输出是失败，不得伪装成模板成功；异常由 chat-turn 生命周期处理。
     """
     if beat_generator is None:
@@ -263,6 +265,52 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
     return generate
 
 
+def production_beat_generator(inputs: BeatInputs) -> str:
+    """#503 生产默认生成器：把编排层路由后的 BeatInputs 落成日记式账正文。
+
+    内容质量/声音形态仍归 #472/#478（#542 真实 LLM 走 create_llm_beat_generator 同一 seam）；
+    本生成器保证 Web/CLI/收夜生产路径**接通**编排缝，使入殿账随身份/召法/时地输入不同而不同
+    （AC1，不做文案质量断言），不再永久塌成 #498 一行兜底。
+
+    只读 BeatInputs（零形式约束、无裸数值），失败/空输入返回 ""；run_beat_generator 对空白 fail-loud。
+    """
+    tod = str(inputs.time_of_day or "").strip()
+    loc = str(inputs.location or "").strip()
+    place_time = "·".join(p for p in (loc, tod) if p)
+    tension = str(inputs.court_tension or "").strip()
+
+    if inputs.beat_kind == BEAT_OPEN:
+        head = f"{place_time}，召对夜启。" if place_time else "召对夜启。"
+        if tension:
+            return f"{head}{tension}"
+        return head
+
+    if inputs.beat_kind == BEAT_ENTER:
+        method = str(inputs.summon_method or METHOD_XUANRU).strip() or METHOD_XUANRU
+        name = str(inputs.person_name or "").strip()
+        if not name:
+            return ""
+        identity = _identity_snippet(inputs.characterization)
+        # 二次入殿与首次不同（US5 输入面已含 prior；生产正文用「再入/初入」区分）。
+        visit = "再入" if inputs.prior_appearances else "初入"
+        head = f"{place_time}，" if place_time else ""
+        who = f"{method}{name}"
+        if identity:
+            who = f"{who}（{identity}）"
+        body = f"{head}{who}{visit}殿。"
+        if tension:
+            body = f"{body}{tension}"
+        return body
+
+    if inputs.beat_kind == BEAT_CLOSE:
+        head = f"{place_time}，退朝，今夜召对到此。" if place_time else "退朝，今夜召对到此。"
+        if tension:
+            return f"{head}{tension}"
+        return head
+
+    return ""
+
+
 def generate_open_beat_body(
     db: Any,
     state: Any,
@@ -280,7 +328,7 @@ def generate_open_beat_body(
         time_of_day=time_of_day, location=location,
         knowledge_provider=knowledge_provider,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def generate_enter_beat_body(
@@ -310,7 +358,7 @@ def generate_enter_beat_body(
         knowledge_provider=knowledge_provider,
         extra_public_layer=extra_public_layer,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def generate_exit_beat_body(
@@ -332,7 +380,7 @@ def generate_exit_beat_body(
         night_id=int(night.get("id") or 0), person_name=person_name,
         knowledge_provider=knowledge_provider,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def generate_close_beat_body(
@@ -343,7 +391,11 @@ def generate_close_beat_body(
     beat_generator: Optional[BeatGenerator] = None,
     knowledge_provider: Optional[KnowledgeProvider] = None,
 ) -> str:
-    """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。"""
+    """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。
+
+    单线程调用方可直接用本入口（内部 assemble + run）。跨线程路径须在主线程
+    assemble_beat_inputs(BEAT_CLOSE) 后只调 run_beat_generator——见 close_night。
+    """
     if beat_generator is None:
         return ""
     inputs = assemble_beat_inputs(
@@ -353,7 +405,7 @@ def generate_close_beat_body(
         night_id=int(night.get("id") or 0),
         knowledge_provider=knowledge_provider,
     )
-    return _run_generator(beat_generator, inputs)
+    return run_beat_generator(beat_generator, inputs)
 
 
 def beat_input_field_names() -> Tuple[str, ...]:

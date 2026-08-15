@@ -62,7 +62,10 @@ from ming_sim.simulation import (
     extract_scores_by_modules_with_agno,
     simulate_season_with_payload,
 )
-from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS, validate_rejection_verdict
+from ming_sim.strict_types import (
+    IMPERIAL_AUTHORITY_BANDS, validate_affected_parties, validate_rejection_verdict,
+    validate_verdict_affected_parties,
+)
 from ming_sim.token_stats import tlog
 
 # 20 年自动结算：开局 1627.10（turn=1），每回合 +1 月。到 1647.10 = (1647-1627)*12 + 1 = 241 回合。
@@ -122,11 +125,8 @@ def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
     dossiers: Sequence[Dict[str, object]],
-    *,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
 ) -> Dict[str, object]:
-    """Build the deterministic, satisfaction-free snapshot for the single judge call."""
-    break_rank = break_rank_by_dossier or {}
+    """Build the deterministic snapshot from persisted dossier evidence only."""
     faction_rows = db.conn.execute(
         "SELECT name,leverage,agenda FROM factions ORDER BY name"
     ).fetchall()
@@ -146,15 +146,13 @@ def build_promulgation_judge_context(
             payload = json.loads(str(row.get("payload_json") or "{}"))
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
-        authorization_ids = payload.get("authorization_ids", [])
-        if not isinstance(authorization_ids, list):
-            authorization_ids = []
-        authorization_id = payload.get("authorization_id")
-        if authorization_id and str(authorization_id) not in authorization_ids:
-            authorization_ids = [*authorization_ids, str(authorization_id)]
-        endorsement_ids = payload.get("endorsement_entry_ids", [])
-        if not isinstance(endorsement_ids, list):
-            endorsement_ids = []
+        # #612: endorsements are DB-backed spoken facts, not payload-only ids.
+        endorsements = db.list_dossier_endorsements(int(row["id"]))
+        endorsement_ids = [int(item["id"]) for item in endorsements]
+        # #611: authorization_ids come only from the unique applicability projection.
+        # Never read payload authorization_id(s) as a parallel authority identity source.
+        held_authorities = db.project_applicable_authorities(state.turn, row)
+        authorization_ids = [str(item["id"]) for item in held_authorities]
         dossier_rows.append({
             "id": int(row["id"]),
             "action_type": str(row.get("action_type") or ""),
@@ -163,11 +161,13 @@ def build_promulgation_judge_context(
             "target_id": target_id,
             "mode": str(payload.get("mode") or "ordinary"),
             "appointment_tenure": appointment_tenure,
-            "break_rank": break_rank.get(int(row["id"])),
+            "break_rank": payload.get("break_rank"),
+            "endorsements": endorsements,
+            "held_authorities": held_authorities,
             "criteria_snapshot_source": {
                 "imperial_authority_band": authority_band,
                 "appointment_tenure": appointment_tenure,
-                "authorization_ids": sorted(set(map(str, authorization_ids))),
+                "authorization_ids": authorization_ids,
                 "endorsement_entry_ids": sorted(set(endorsement_ids)),
             },
         })
@@ -238,13 +238,10 @@ def _require_promulgation_verdict_list(
 def llm_promulgation_verdicts(
     dossiers: Sequence[Dict[str, object]], state: GameState, *, db: GameDB,
     agno_db: SqliteDb, llm_config: LLMConfig,
-    break_rank_by_dossier: Optional[Dict[int, object]] = None,
     prepared_context: Optional[Dict[str, object]] = None,
 ) -> List[Dict[str, object]]:
     """Run exactly one LLM call for one reviewed promulgation batch."""
-    context = prepared_context or build_promulgation_judge_context(
-        db, state, dossiers, break_rank_by_dossier=break_rank_by_dossier,
-    )
+    context = prepared_context or build_promulgation_judge_context(db, state, dossiers)
     agent = create_promulgation_judge_agent(llm_config, agno_db)
     raw = run_agent_text(
         agent, json.dumps(context, ensure_ascii=False, sort_keys=True),
@@ -334,33 +331,16 @@ def _validate_promulgation_verdict_item(
             unknown_keys = set(row) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
-            needs_affected = (
-                decision == "rejected"
-                or mode == "midzhi"
+            validate_verdict_affected_parties(
+                row, mode, faction_names=faction_names, class_names=class_names,
             )
-            if needs_affected and "affected_parties" not in row:
-                raise ValueError("打回或中旨判决必须携带受损方 typed 清单")
-            if not needs_affected and "affected_parties" in row:
-                raise ValueError("普通顺颁判决不得携带受损方")
-            affected = row.get("affected_parties", [])
-            if not isinstance(affected, list):
-                raise ValueError("受损方必须为 typed 清单")
-            if needs_affected and not affected:
-                raise ValueError("打回或中旨判决的受损方清单不得为空")
         else:
             affected = row.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
-        for party in affected:
-            if not isinstance(party, dict) or set(party) != {"kind", "key", "severity"}:
-                raise ValueError("受损方须且仅含 kind/key/severity")
-            kind, key = party.get("kind"), str(party.get("key") or "")
-            if kind not in {"faction", "class"}:
-                raise ValueError("受损方 kind 只能为 faction 或 class")
-            if party.get("severity") not in {"大怒", "不满"}:
-                raise ValueError("受损方程度只能为大怒或不满")
-            if key not in (faction_names if kind == "faction" else class_names):
-                raise ValueError(f"未知受损方：{kind}:{key}")
+            validate_affected_parties(
+                affected, faction_names=faction_names, class_names=class_names,
+            )
         if row.get("decision") == "rejected":
             validate_rejection_verdict(
                 row, {"cabinet_drafting", "palace_rescript", "six_offices"},
@@ -635,7 +615,8 @@ class _NeedsFullSettlement(Exception):
 
 
 def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None) -> bool:
+                          inflight_wait_s: float | None = None,
+                          llm_config=None, write_gate=None) -> bool:
     # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
     # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
     # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
@@ -655,10 +636,16 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
     # #503：收夜 beat 生产路径接通编排缝。
     from ming_sim.audience_night import auto_close_open_night
     from ming_sim.beat_orchestration import create_llm_beat_generator
-    beat_generator = create_llm_beat_generator(getattr(db, "llm_config", None))
+    # Forward llm_config/write_gate so close-night can catch up ordinary story
+    # facts and run the gate-free endorsement-only batch. Callers must not hold
+    # an outer non-reentrant runtime write gate while passing nullcontext.
+    # #503/#542：收夜 beat 与开夜/入殿共用真实 scene LLM adapter。
+    effective_llm = llm_config if llm_config is not None else getattr(db, "llm_config", None)
+    beat_generator = create_llm_beat_generator(effective_llm)
     auto_close_open_night(db, state, content=content, registry=registry,
                           wait_timeout_s=inflight_wait_s,
-                          beat_generator=beat_generator)
+                          beat_generator=beat_generator,
+                          llm_config=effective_llm, write_gate=write_gate)
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
@@ -1779,11 +1766,19 @@ def settle_with_delta(
                 db.apply_dossier_verdicts(
                     state, dossier_verdicts, content=content, registry=registry,
                 )
+            # Player disposition rows are not Judge verdicts: no affected_parties,
+            # no midzhi validator, no apply_dossier_verdicts. Route each chosen
+            # rescript action through the existing promulgation seam under this
+            # outer atomic batch (ADR 0056 force reads current-turn Judge evidence).
             if dossier_rescript_actions:
-                db.apply_dossier_verdicts(
-                    state, dossier_rescript_actions,
-                    content=content, registry=registry,
-                )
+                for action in dossier_rescript_actions:
+                    db.apply_dossier_promulgation(
+                        state,
+                        int(action["dossier_id"]),
+                        str(action["decision"]),
+                        content=content,
+                        registry=registry,
+                    )
             full_report = _settle_after_extract_body(
                 state, db, extracted,
                 before_turn=before_turn, content=content, registry=registry,
