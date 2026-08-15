@@ -507,6 +507,8 @@ class ChatTurnSceneRegistry:
         chat_turn_id: int,
         tasks: List[Tuple[int, BeatInputs]],
         beat_generator: Optional[BeatGenerator],
+        *,
+        create: bool = True,
     ) -> None:
         if not chat_turn_id or not tasks:
             return
@@ -515,7 +517,14 @@ class ChatTurnSceneRegistry:
             return (int(entry_id), run_beat_generator(beat_generator, inputs))
 
         with self._lock:
-            bucket = self._futures.setdefault(int(chat_turn_id), [])
+            key = int(chat_turn_id)
+            if create:
+                bucket = self._futures.setdefault(key, [])
+            else:
+                # Claimed bucket already drained by join/abandon — never rebuild.
+                bucket = self._futures.get(key)
+                if bucket is None:
+                    return
             for entry_id, inputs in tasks:
                 bucket.append(self._executor.submit(_run, int(entry_id), inputs))
 
@@ -541,7 +550,9 @@ class ChatTurnSceneRegistry:
         tasks = discover_open_enter_tasks(
             db, state, minister_name=minister_name, chat_turn_id=key,
         )
-        self._submit(key, tasks, beat_generator)
+        # create=False: join/abandon may have popped the empty claim during
+        # discover; do not setdefault-rebuild a late-living bucket.
+        self._submit(key, tasks, beat_generator, create=False)
 
     def start_exit(
         self,

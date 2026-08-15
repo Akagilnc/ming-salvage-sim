@@ -2551,7 +2551,6 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
     if db is None or not hasattr(db, "conn"):
         return
     from ming_sim.audience_night import auto_close_open_night
-    from ming_sim.beat_orchestration import production_beat_generator
 
     session = getattr(game, "session", None)
     auto_close_open_night(
@@ -2560,7 +2559,7 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
         content=getattr(game, "content", None),
         registry=getattr(session, "registry", None) if session is not None else None,
         wait_timeout_s=float(inflight_wait_s),
-        beat_generator=production_beat_generator,
+        beat_generator=getattr(session, "_beat_generator", None) if session is not None else None,
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
     )
