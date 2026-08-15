@@ -1088,15 +1088,25 @@ def close_night(
         if not need_close_scene or reg is None or close_started:
             return
         from ming_sim import beat_orchestration as beats
-        close_ctid, close_scaffold_owned = beats.start_close_scene_on_registry(
-            db, state,
-            night_id=int(night_id),
-            scene_registry=reg,
-            beat_generator=beat_generator,
-            knowledge_provider=knowledge_provider,
-            chat_turn_id=int(close_ctid or 0),
-        )
-        close_started = bool(close_ctid)
+        # #542 r6e: start_close 同步抛错时 helper 经异常交出 ctid；finally 置
+        # close_started，使既有 abandon/fail/OPEN 清理必跑到。
+        try:
+            close_ctid, close_scaffold_owned = beats.start_close_scene_on_registry(
+                db, state,
+                night_id=int(night_id),
+                scene_registry=reg,
+                beat_generator=beat_generator,
+                knowledge_provider=knowledge_provider,
+                chat_turn_id=int(close_ctid or 0),
+            )
+        except BaseException as start_exc:
+            owned = getattr(start_exc, "close_scene_ownership", None)
+            if owned is not None:
+                close_ctid = int(owned[0])
+                close_scaffold_owned = bool(owned[1])
+            raise
+        finally:
+            close_started = bool(close_ctid)
 
     def _cleanup_close_scene_early(primary_exc: BaseException) -> None:
         """T15: after start_close through phase-1, any failure drains/fails scaffold and reopens."""

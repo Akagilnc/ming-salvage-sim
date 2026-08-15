@@ -1817,6 +1817,38 @@ def test_failed_turn_does_not_consume_opening_and_clears_enter_placeholder(game)
     assert BEAT_ENTER in kinds
 
 
+def test_close_start_sync_failure_fails_scaffold_and_keeps_night_open(game, monkeypatch):
+    """#542 r6e: start_close 在 create scaffold 后同步抛错，调用方仍持 ctid，abandon/fail/OPEN 必跑到。"""
+    db, state, content = game
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    night_id = int(night["id"])
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+
+    def boom_start(_db, _state, **_kwargs):
+        raise RuntimeError("start_close sync boom")
+
+    monkeypatch.setattr(registry, "start_close", boom_start)
+
+    with pytest.raises(RuntimeError, match="start_close sync boom"):
+        an.close_night(
+            db, state, night_id=night_id, content=content,
+            beat_generator=_echo_generator, scene_registry=registry,
+            wait_timeout_s=0.0,
+        )
+
+    failed = an.get_night(db, night_id)
+    assert failed is not None
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+    assert not registry.active_turn_ids()
+    rows = db.conn.execute(
+        "SELECT status FROM chat_turns WHERE night_id = ? AND minister_name = '收夜'",
+        (night_id,),
+    ).fetchall()
+    assert rows, "scaffold must have been created before start_close threw"
+    assert all(str(r["status"]) == "failed" for r in rows)
+
+
 def test_close_scene_early_phase1_failure_drains_and_reopens(game, monkeypatch):
     """T15: exception after close start through phase-1 must drain/fail scaffold and OPEN."""
     db, state, content = game

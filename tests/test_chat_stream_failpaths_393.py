@@ -219,3 +219,111 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     # gate + counter 已释放
     assert not runtime._write_gate.locked()
     assert runtime._pending_writes_count == 0
+
+
+# ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
+
+
+def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None):
+    """Minimal WebGame double for non-stream chat/retry prologue fail paths."""
+    abandoned: list[int] = []
+    failed: list[int] = []
+    restored: list[int] = []
+
+    class _DB:
+        def create_chat_turn(self, *a, **k):
+            return 7
+
+        def capture_chat_rollback_snapshot(self):
+            return {}
+
+        def record_chat_turn_rollback_diffs(self, *a, **k):
+            return None
+
+        def append_chat_message(self, *a, **k):
+            if append_error is not None:
+                raise append_error
+            return 1
+
+        def update_chat_turn_messages(self, *a, **k):
+            return None
+
+        def fail_chat_turn(self, chat_turn_id):
+            failed.append(int(chat_turn_id))
+
+        def load_all_chat_history(self):
+            return {}
+
+        def get_interrupted_reply_retries(self, minister_name):
+            return [{
+                "chat_turn_id": 7,
+                "question": "辽东军情如何？",
+                "turn": 1,
+            }]
+
+        def reopen_interrupted_chat_turn_for_retry(self, chat_turn_id):
+            return True
+
+        def restore_interrupted_after_failed_retry(self, chat_turn_id):
+            restored.append(int(chat_turn_id))
+
+    db = _DB()
+    character = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+
+    def _start_scene(minister_name, chat_turn_id):
+        if start_scene is not None:
+            return start_scene(minister_name, chat_turn_id)
+        return None
+
+    runtime = object.__new__(web_app.WebGame)
+    runtime._write_gate = threading.Lock()
+    runtime.session = SimpleNamespace(
+        temporary_characters=set(),
+        content=SimpleNamespace(characters={character.name: character}),
+        state=state,
+        db=db,
+        start_chat_turn_scene=_start_scene,
+        start_chat_turn_exit_scene=lambda *_a, **_k: None,
+        join_chat_turn_scene=lambda *_a, **_k: [],
+        persist_chat_turn_scene=lambda *_a, **_k: None,
+        abandon_chat_turn_scene=lambda ctid: abandoned.append(int(ctid or 0)),
+        chat=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("session.chat should not run")),
+    )
+    runtime.chat_history = {character.name: []}
+    runtime._runtime_write_gate = lambda: runtime._write_gate
+    runtime._reject_if_settlement_phase = lambda: None
+    runtime._persistent_chat_minister = lambda name: True
+    runtime._audience_turn_in_flight = lambda name: False
+    runtime._start_chat_turn = lambda name: (7, {})
+    runtime._record_chat_rollback_items = lambda *a, **k: None
+    return runtime, db, character.name, abandoned, failed, restored
+
+
+def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
+    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail。"""
+    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
+    runtime, _db, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
+        append_error=boom,
+    )
+    with pytest.raises(RuntimeError, match="非流 prologue"):
+        runtime.chat(minister, "辽东军情如何？")
+    assert abandoned == [7]
+    assert failed == [7]
+    assert not runtime._write_gate.locked()
+
+
+def test_retry_start_scene_failure_restores_interrupted_and_abandons():
+    """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore interrupted。"""
+    def _boom_start(_minister, _ctid):
+        raise RuntimeError("start_chat_turn_scene boom")
+
+    runtime, _db, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
+        start_scene=_boom_start,
+    )
+    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom"):
+        runtime.retry_interrupted_reply(minister)
+    assert abandoned == [7]
+    assert restored == [7]
+    assert failed == []  # retry 失败翻回 interrupted，不 fail
+    assert not runtime._write_gate.locked()

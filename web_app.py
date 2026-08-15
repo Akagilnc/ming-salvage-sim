@@ -1604,23 +1604,25 @@ class WebGame:
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
-        with gate:
-            self._reject_if_settlement_phase()
-            # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import assert_night_accepts_player_input
-                assert_night_accepts_player_input(self.db, what="召对")
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            accepted_turn = int(self.state.turn)
-            if self._persistent_chat_minister(minister_name):
-                chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
-            self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
-            if minister_name not in self.session.temporary_characters:
-                message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
-                if chat_turn_id:
-                    self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
+        # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
+        # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
+            with gate:
+                self._reject_if_settlement_phase()
+                # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
+                if self._audience_turn_in_flight(minister_name):
+                    raise HTTPException(status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                accepted_turn = int(self.state.turn)
+                if self._persistent_chat_minister(minister_name):
+                    chat_turn_id, before_snapshot = self._start_chat_turn(minister_name)
+                self.chat_history.setdefault(minister_name, []).append({"role": "user", "content": text})
+                if minister_name not in self.session.temporary_characters:
+                    message_id = self.db.append_chat_message(minister_name, accepted_turn, "user", text)
+                    if chat_turn_id:
+                        self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
             chat_signature = inspect.signature(self.session.chat)
             try:
                 chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
@@ -1668,6 +1670,8 @@ class WebGame:
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
             return payload
         except Exception:
+            # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
+            self.session.abandon_chat_turn_scene(chat_turn_id)
             with gate:
                 if chat_turn_id:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
@@ -1675,7 +1679,6 @@ class WebGame:
                     self.chat_history = {name: [] for name in self.session.content.characters}
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
-            self.session.abandon_chat_turn_scene(chat_turn_id)
             raise
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
@@ -1701,26 +1704,28 @@ class WebGame:
         self._reject_if_settlement_phase()
         gate = self._runtime_write_gate()
         before_snapshot: Dict[str, Any] = {}
-        with gate:
-            self._reject_if_settlement_phase()
-            # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
-            if hasattr(self.db, "conn"):
-                from ming_sim.audience_night import assert_night_accepts_player_input
-                assert_night_accepts_player_input(self.db, what="召对")
-            if self._audience_turn_in_flight(minister_name):
-                raise HTTPException(
-                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
-            # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
-            if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
-                raise HTTPException(
-                    status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
-            # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
-            # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
-            # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
-            before_snapshot = self.db.capture_chat_rollback_snapshot()
-            self.session.start_chat_turn_scene(minister_name, chat_turn_id)
+        # #542 r6e：reopen + start_chat_turn_scene 纳入既有 try/except；
+        # 失败复用 abandon + restore interrupted；drain 在 write_gate 外。
         try:
+            with gate:
+                self._reject_if_settlement_phase()
+                # #612：CLOSING 冻结重试召对——与 chat 共用唯一玩家输入准入真源，CAS reopen 前拒绝。
+                if hasattr(self.db, "conn"):
+                    from ming_sim.audience_night import assert_night_accepts_player_input
+                    assert_night_accepts_player_input(self.db, what="召对")
+                if self._audience_turn_in_flight(minister_name):
+                    raise HTTPException(
+                        status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                # #505 finding3：reopen 是 CAS（interrupted→generating）。未赢（并发/双击重试
+                # 已被别的调用翻走）→ 响亮 409，绝不 generate/persist 出第二条大臣回话。
+                if not self.db.reopen_interrupted_chat_turn_for_retry(chat_turn_id):
+                    raise HTTPException(
+                        status_code=409, detail=f"{minister_name}上一轮回奏仍在进行，请稍候再问。")
+                # #505 finding1：与 chat 同 snapshot→record rollback 缝——session.chat 在返回前
+                # 即可 durable 落副作用（dismiss 账/拟旨/任免候选等，session.py tool 环）。捕于
+                # reopen 后、session.chat 前，成功后记 diff 供撤回、失败时回滚，杜绝双 stage/粘滞。
+                before_snapshot = self.db.capture_chat_rollback_snapshot()
+                self.session.start_chat_turn_scene(minister_name, chat_turn_id)
             result = self.session.chat(minister_name, question, chat_turn_id=chat_turn_id)
             proposed = None
             if result.proposed_directive is not None:
