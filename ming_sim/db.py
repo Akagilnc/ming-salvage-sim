@@ -1856,6 +1856,8 @@ class GameDB:
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("event_triggers", "choice_json", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("pending_decisions", "event_id", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "rejection_reason", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("pending_decisions", "opposition", "TEXT NOT NULL DEFAULT ''")
         self._backfill_event_triggers_from_event_pool_issues()
         # 步骤7：回合阶段（旧库迁移，schema 升级非 fallback）
         self.ensure_column("game_state", "turn_phase", "TEXT NOT NULL DEFAULT 'summoning'")
@@ -10000,13 +10002,16 @@ class GameDB:
         for idx, d in enumerate(decisions):
             self.conn.execute(
                 """INSERT INTO pending_decisions
-                   (turn, idx, event_id, title, context, options_json, choice_json, status)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'pending')""",
+                   (turn, idx, event_id, title, context, rejection_reason, opposition,
+                    options_json, choice_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'pending')""",
                 (
                     int(turn), idx,
                     str(d.get("event_id") or ""),
                     str(d.get("title") or ""),
                     str(d.get("context") or ""),
+                    str(d.get("rejection_reason") or ""),
+                    str(d.get("opposition") or ""),
                     json.dumps(d.get("options") or [], ensure_ascii=False),
                 ),
             )
@@ -10015,7 +10020,8 @@ class GameDB:
     def list_pending_decisions(self, turn: int) -> List[Dict[str, object]]:
         """读本回合决策点（按 idx）。options 反序列化；choice 为已选则带出。"""
         rows = self.conn.execute(
-            "SELECT idx, event_id, title, context, options_json, choice_json, status "
+            "SELECT idx, event_id, title, context, rejection_reason, opposition, "
+            "options_json, choice_json, status "
             "FROM pending_decisions WHERE turn = ? ORDER BY idx",
             (int(turn),),
         ).fetchall()
@@ -10037,6 +10043,8 @@ class GameDB:
                 "event_id": r["event_id"],
                 "title": r["title"],
                 "context": r["context"],
+                "rejection_reason": r["rejection_reason"],
+                "opposition": r["opposition"],
                 "options": options if isinstance(options, list) else [],
                 "choice": choice,
                 "status": r["status"],
@@ -11524,8 +11532,9 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                # A predeclared midzhi rejection already stigmatized this one attempt;
-                # force-promulgation only adds the imperial-authority cost (ADR 0056).
+                # Predeclared midzhi already took stigma + party reactions on
+                # rejection; force only adds authority (parties_already_applied).
+                # Ordinary force adds rescript stigma and both cost legs here.
                 if not predeclared_midzhi:
                     self._append_midzhi_stigma(
                         dossier_id, decision="force_promulgated", turn=state.turn,
@@ -11984,10 +11993,18 @@ class GameDB:
                      dossier_id),
                 )
                 dossier = self.get_decree_dossier(dossier_id)
+                # ADR 0055/0056: midzhi attempt lands typed party reactions even
+                # on reject; authority only when actually promulgated/forced.
+                # #614: 批红收回/留中不追加强颁账——反应已在打回落、幂等不双记。
                 if dossier and dossier.get("mode") == "midzhi":
                     self._apply_override_costs(
-                        state, dossier_id, include_authority=(decision == "promulgated"),
-                        include_parties=True, stigma_reason="预先中旨直发" if decision == "promulgated" else "中旨被打回",
+                        state, dossier_id,
+                        include_authority=(decision == "promulgated"),
+                        include_parties=True,
+                        stigma_reason=(
+                            "预先中旨直发" if decision == "promulgated"
+                            else "中旨被打回"
+                        ),
                         commit=False,
                     )
             # Consumption belongs to the same atomic unit as effect application;

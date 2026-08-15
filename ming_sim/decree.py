@@ -52,7 +52,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
-from ming_sim.qualitative import qualitative_band, qualitative_character_axis
+from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -207,7 +207,10 @@ def build_promulgation_judge_context(
         "turn": {"turn": state.turn, "year": state.year, "period": state.period},
         "dossiers": dossier_rows,
         "factions": [
-            {"name": str(row["name"]), "leverage": int(row["leverage"]),
+            # #614 / ADR 0143: player-visible judge reasons inherit this input;
+            # project resistance as the same qualitative band as imperial_authority_band.
+            {"name": str(row["name"]),
+             "leverage": power_band(row["leverage"]),
              "agenda": str(row["agenda"] or "")}
             for row in faction_rows
         ],
@@ -426,10 +429,18 @@ def _rescript_decisions(
         dossier = by_id.get(dossier_id)
         if dossier is None:
             continue
+        opponents = [
+            str(item.get("key") or "").strip()
+            for item in verdict.get("primary_opponents", [])
+            if isinstance(item, dict) and str(item.get("key") or "").strip()
+        ]
+        opposition = "、".join(opponents)
         decisions.append({
             "event_id": f"dossier:{dossier_id}",
             "title": "批红待裁",
             "context": str(dossier.get("decree_text") or ""),
+            "rejection_reason": str(verdict.get("reason") or "").strip(),
+            "opposition": opposition,
             "options": [
                 *([] if verdict.get("midzhi_unpromulgatable") is True else [{
                     "label": "强颁",

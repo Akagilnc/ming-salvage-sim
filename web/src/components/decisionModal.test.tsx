@@ -174,15 +174,25 @@ describe("DecisionModal", () => {
 
   it("requires a listed rescript action for dossier memorials", () => {
     const onResolve = vi.fn();
+    const rejectionReasonMarker = "__opaque_rejection_reason_614__";
+    const oppositionMarker = "__opaque_opposition_614__";
     const dossierDecision: PendingDecision = {
       ...decisions[0],
       event_id: "dossier:42",
+      rejection_reason: rejectionReasonMarker,
+      opposition: oppositionMarker,
       options: [{
         label: "强颁", hint: "以中旨颁行。",
         dossier_id: 42, dossier_decision: "force_promulgated",
       }],
     };
     const cleanup = render(<DecisionModal decisions={[dossierDecision]} onResolve={onResolve} />);
+    const rejectionSection = Array.from(document.querySelectorAll(".decision-document-section")).find((section) => {
+      const paragraphs = Array.from(section.querySelectorAll("p")).map((p) => p.textContent || "");
+      return paragraphs.some((text) => text === rejectionReasonMarker)
+        && paragraphs.some((text) => text.includes(oppositionMarker));
+    });
+    expect(rejectionSection).toBeTruthy();
     const note = document.querySelector<HTMLTextAreaElement>("textarea")!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "朕意已决。");
