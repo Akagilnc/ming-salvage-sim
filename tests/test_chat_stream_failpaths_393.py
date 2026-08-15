@@ -10,6 +10,15 @@ import pytest
 
 import web_app
 
+# #542 scene lifecycle seams — production chat_stream fail/cleanup call these.
+_SCENE_STUBS = dict(
+    start_chat_turn_scene=lambda *_a, **_k: None,
+    start_chat_turn_exit_scene=lambda *_a, **_k: None,
+    join_chat_turn_scene=lambda *_a, **_k: [],
+    persist_chat_turn_scene=lambda *_a, **_k: None,
+    abandon_chat_turn_scene=lambda *_a, **_k: None,
+)
+
 
 class _FailingPrologueDB:
     def __init__(self):
@@ -54,6 +63,7 @@ def _runtime_with_failing_prologue():
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
+        **_SCENE_STUBS,
     )
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
@@ -120,6 +130,7 @@ def test_prologue_cleanup_failure_still_releases_gate_and_counter():
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
+        **_SCENE_STUBS,
     )
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
@@ -193,6 +204,7 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
         registry=SimpleNamespace(get=lambda _c: agent),
         _character=lambda name: character,
         _start_cli_action_intent=lambda *_a, **_k: None,
+        **_SCENE_STUBS,
     )
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True

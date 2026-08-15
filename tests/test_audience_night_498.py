@@ -624,6 +624,12 @@ def test_cli_minister_chat_anchors_turn_to_night(game, monkeypatch):
 
     session = SimpleNamespace(
         db=db, state=state, content=content, temporary_characters=set(), chat=chat,
+        # #542 scene lifecycle seams — CLI minister_chat start/join/persist/abandon.
+        start_chat_turn_scene=lambda *_a, **_k: None,
+        start_chat_turn_exit_scene=lambda *_a, **_k: None,
+        join_chat_turn_scene=lambda *_a, **_k: [],
+        persist_chat_turn_scene=lambda *_a, **_k: None,
+        abandon_chat_turn_scene=lambda *_a, **_k: None,
     )
     answers = iter(["朕问卿边事如何？", "done"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))

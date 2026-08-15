@@ -153,6 +153,69 @@ def _isolated_user_data_dir(tmp_path):
     mp.undo()
 
 
+def deterministic_test_beat_generator(inputs) -> str:
+    """#542 测试用确定性 scene 旁白——非空、可区分 beat_kind，零真 LLM。"""
+    kind = str(getattr(inputs, "beat_kind", "") or "scene")
+    person = str(getattr(inputs, "person_name", "") or "").strip()
+    if person:
+        return f"kind={kind}‖person={person}"
+    return f"kind={kind}"
+
+
+class _OfflineSceneRegistry:
+    """GameSession.__new__ 轻壳默认 scene registry——start/join/persist/abandon 全 no-op。"""
+
+    def start_open_enter(self, *_a, **_k):
+        return None
+
+    def start_exit(self, *_a, **_k):
+        return None
+
+    def join(self, _chat_turn_id):
+        return []
+
+    def abandon(self, _chat_turn_id):
+        return None
+
+    def active_turn_ids(self):
+        return []
+
+    def has(self, _chat_turn_id):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _offline_scene_beat_generator():
+    """#542：一处共享注入 session._beat_generator / create_llm_beat_generator 测试缝。
+
+    生产 r4 已删 web production_beat_generator 旁路；GameSession.__init__ 与
+    decree auto-close 均走 create_llm_beat_generator。未注入时全量会 NoneType.base_url
+    （db.llm_config is None）或 sk-test 401。
+
+    - factory 缝：create_llm_beat_generator → 确定性假 generator（覆盖真 init + decree）
+    - 类属性缝：GameSession._beat_generator / _scene_registry 默认假
+      （覆盖 __new__ 轻壳 resolve_turn / start_chat_turn_scene）
+    实例赋值（dual-fail / 503 e2e / 竞态）仍优先于类属性。不改生产。
+    独立 MonkeyPatch：测试内 monkeypatch.undo() 不会撤掉本兜底。
+    """
+    import ming_sim.beat_orchestration as bo
+    from ming_sim.session import GameSession
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        bo, "create_llm_beat_generator",
+        lambda _cfg: deterministic_test_beat_generator,
+    )
+    mp.setattr(
+        GameSession, "_beat_generator", deterministic_test_beat_generator, raising=False,
+    )
+    mp.setattr(
+        GameSession, "_scene_registry", _OfflineSceneRegistry(), raising=False,
+    )
+    yield
+    mp.undo()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_cli_bin_resolution():
     """全套测试隔离 runner 可执行定位：清 _BIN_CACHE，并把登录 shell 探测短路成
