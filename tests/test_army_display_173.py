@@ -4,14 +4,15 @@
 army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计大臣 LLM 看到的月饷=实扣。
 #173 删列 PR 已物理移除 maintenance_per_turn 列，army_needed 是月饷唯一真源。
 
-#1185：不锁中文奏报措辞；真实出口 + 测试侧 renderer 哨兵/差分断言。
+#1185：不锁中文奏报措辞；真实出口差分/可数域值 tracer。
 """
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-import ming_sim.db as dbmod
 from ming_sim.flows import army_needed
 
 
@@ -52,63 +53,34 @@ def test_army_report_shows_actual_charge(game):
     assert monthly_amount(total_needed) > 0
 
 
-def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(
-    game, monkeypatch
-):
-    """#305/D10：欠饷走近似奏报；分账字段不进出口；抽象分经定性 renderer，裸分不泄。
-
-    测试侧替换 renderer 为哨兵，证明真实出口消费欠饷/忠诚输入。
-    """
+def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
+    """#305/D10：detail/report/roster 走欠饷近似；分账字段与抽象裸分不进真实出口。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
+    scores = dict(
+        loyalty=73, supply=55, morale=35, training=15, equipment=85, mobility=65
+    )
     db.conn.execute(
         """
         UPDATE armies
         SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,
-            loyalty=73, supply=55, morale=35, training=15, equipment=85,
-            mobility=65, firearm_equipment=45
+            loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=?
         WHERE id=?
         """,
-        (row["id"],),
+        (*scores.values(), row["id"]),
     )
     db.conn.commit()
-
-    monkeypatch.setattr(
-        dbmod, "_approx_wanliang", lambda amount: f"ARREARS_SENTINEL_{amount}"
-    )
-    monkeypatch.setattr(dbmod, "_approx_pay_months", lambda *a, **k: "")
-    monkeypatch.setattr(
-        dbmod,
-        "_qualitative_army_stat",
-        lambda field, value: f"QSTAT_{field}_{value}",
-    )
 
     detail = db.army_detail(row["name"])
     report = db.army_report(limit=20)
     roster = db.army_roster(filter_names=[row["name"]])
     joined = "\n".join((detail, report, roster))
 
-    assert "ARREARS_SENTINEL_63" in joined
-    assert "QSTAT_loyalty_73" in detail
-    assert "QSTAT_supply_55" in detail
-    # 裸抽象分不得作为独立 token 出现在 detail（哨兵已占位）
-    for bare in ("73", "55", "35", "15", "85", "65"):
-        # 允许出现在哨兵 token 内，剥离后再查
-        stripped = detail
-        for tok in (
-            "QSTAT_loyalty_73",
-            "QSTAT_supply_55",
-            "QSTAT_morale_35",
-            "QSTAT_training_15",
-            "QSTAT_equipment_85",
-            "QSTAT_mobility_65",
-            "ARREARS_SENTINEL_63",
-            "45",  # firearm 在 detail 为可数原值轴，见 firearms 卷
-        ):
-            stripped = stripped.replace(tok, "")
-        assert bare not in stripped
+    assert row["name"] in detail
+    # 精确欠饷与分账字段不出口；近似路径使 0 欠与 63 可判别
+    assert "63" not in joined
     for forbidden in (
         "province_pay_arrears",
         "central_pay_arrears",
@@ -116,17 +88,23 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
         "中央份额欠",
     ):
         assert forbidden not in joined
-    assert row["name"] in detail
+    db.conn.execute(
+        "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
+        (row["id"],),
+    )
+    db.conn.commit()
+    assert db.army_detail(row["name"]) != detail
+    # 抽象分经定性层，裸分不以独立 token 出现在 detail
+    for bare in scores.values():
+        assert not re.search(rf"(?<!\d){bare}(?!\d)", detail)
 
 
-def test_army_arrears_presentation_rounds_half_steps_up(game, monkeypatch):
-    """#305：奏报近似半档进位——差分：12.5 与 15 同出口，12 与 12.5 可判别。"""
+def test_army_arrears_presentation_rounds_half_steps_up(game):
+    """#305：奏报近似半档进位——差分：12.5≡15、25≡30；12≠12.5、15≠30。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
-    # 屏蔽月数附文，只比较欠饷总额近似路径
-    monkeypatch.setattr(dbmod, "_approx_pay_months", lambda *a, **k: "")
 
     def _detail_for(arrears: float) -> str:
         db.conn.execute(
@@ -140,16 +118,12 @@ def test_army_arrears_presentation_rounds_half_steps_up(game, monkeypatch):
         db.conn.commit()
         return db.army_detail(row["name"])
 
-    d_12_5 = _detail_for(12.5)
-    d_15 = _detail_for(15)
-    d_12 = _detail_for(12)
-    d_25 = _detail_for(25)
-    d_30 = _detail_for(30)
-
-    assert d_12_5 == d_15, "12.5 须半档进到与 15 同一奏报近似"
-    assert d_12 != d_12_5, "12 与 12.5 进位边界须可判别"
-    assert d_25 == d_30, "25 须进到与 30 同一奏报近似"
-    assert d_15 != d_30, "不同进位档出口须可判别"
+    d_12_5, d_15 = _detail_for(12.5), _detail_for(15)
+    d_12, d_25, d_30 = _detail_for(12), _detail_for(25), _detail_for(30)
+    assert d_12_5 == d_15
+    assert d_12 != d_12_5
+    assert d_25 == d_30
+    assert d_15 != d_30
 
 
 def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):

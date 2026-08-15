@@ -1,7 +1,7 @@
 """#492 督抚官缺与近臣回奏的外部 seam。
 
 #1185：不绑定仅测用 result_kind；经 build_return_report / persist_return_report
-真实出口断言 source_kind/source_ref/statement 行为与域 reader 复用。
+真实出口断言 source/statement 行为与域 reader 复用。来源元数据集中一条 tracer。
 """
 
 import inspect
@@ -42,6 +42,35 @@ def test_vacancy_projection_recognises_acting_office_text(game):
         assert row["holder_name"] == "胡廷宴"
 
 
+def test_return_report_source_metadata_contract(game):
+    """来源元数据集中 tracer：inquiry 官缺/域 reader、派生规则、unsupported。"""
+    db, state, _content = game
+
+    office = build_return_report(db, "陕西巡抚可有？")
+    assert office["source_kind"] == "inquiry"
+    assert office["source_ref"] == "吏部查访"
+    assert "result_kind" not in office
+
+    arrears = build_return_report(db, "各镇欠饷如何？")
+    assert arrears["source_kind"] == "inquiry"
+    assert arrears["source_ref"] == "查访/armies"
+
+    bandits = build_return_report(db, "流寇势如何？")
+    assert bandits["source_kind"] == "inquiry"
+    assert bandits["source_ref"] == "查访/powers"
+
+    assert source_kind_for_query("军情如何？") == "firsthand"
+    forced = build_return_report(db, "军情如何？", source_ref="伪造来源")
+    assert forced["source_kind"] == "inquiry"
+    assert forced["source_ref"] == "查访/powers"
+    assert "伪造来源" not in forced["source_ref"]
+
+    minister = next(iter(db.content.characters))
+    unsupported = persist_return_report(db, state, minister, "请查访宫中流言真假。")
+    assert unsupported["source_kind"] == "unsupported"
+    assert "result_kind" not in unsupported
+
+
 def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(game):
     db, _state, _content = game
 
@@ -52,22 +81,14 @@ def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(ga
     known_statements = []
     for title in authorized:
         report = build_return_report(db, f"{title}可有？")
-        assert report["source_kind"] == "inquiry"
-        assert report["source_ref"] == "吏部查访"
         assert title in report["statement"]
         row = next(r for r in db.list_office_vacancies() if r["office_title"] == title)
         assert row["holder_name"] is None
         known_statements.append(report["statement"])
-        # 报告出口不得夹带仅测用 discriminator
-        assert "result_kind" not in report
 
-    # 未授权官缺：statement 不含该职衔、也不误报已授权空缺；与命中可判别
     unknown_title = "两广总督"
     assert unknown_title not in vacancy_titles
     unknown = build_return_report(db, f"{unknown_title}可有？")
-    assert unknown["source_kind"] == "inquiry"
-    assert unknown["source_ref"] == "吏部查访"
-    assert "result_kind" not in unknown
     assert unknown_title not in unknown["statement"]
     assert not any(title in unknown["statement"] for title in authorized)
     assert all(unknown["statement"] != known for known in known_statements)
@@ -85,13 +106,11 @@ def test_generic_office_queries_return_current_vacancies(game):
 
     for query in ("督抚官缺如何？", "有哪些官缺？"):
         report = build_return_report(db, query)
-        assert report["source_kind"] == "inquiry"
-        assert report["source_ref"] == "吏部查访"
         for title in vacant_titles:
             assert title in report["statement"]
 
 
-def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatch):
+def test_return_report_keeps_countable_facts(game, monkeypatch):
     db, _state, _content = game
     countable_army = "辽镇兵额12000，欠饷25月，士气低迷"
     monkeypatch.setattr(db, "army_report", lambda **_: countable_army)
@@ -102,26 +121,10 @@ def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatc
         source_kind="inquiry",
         source_ref="吏部查访",
     )
-
-    assert report["source_kind"] == "inquiry"
-    assert report["source_ref"] == "吏部查访"
     assert "陕西巡抚" in report["statement"]
     assert all(isinstance(value, str) for value in report.values())
     arrears = build_return_report(db, "各镇欠饷如何？")
-    assert arrears["source_kind"] == "inquiry"
-    assert arrears["source_ref"] == "查访/armies"
     assert arrears["statement"] == countable_army
-
-
-def test_report_source_is_derived_from_query_not_caller_label(game):
-    db, _state, _content = game
-
-    report = build_return_report(db, "军情如何？", source_ref="伪造来源")
-
-    assert source_kind_for_query("军情如何？") == "firsthand"
-    assert report["source_kind"] == "inquiry"
-    assert report["source_ref"] == "查访/powers"
-    assert "伪造来源" not in report["source_ref"]
 
 
 def test_domain_reports_reuse_existing_qualitative_readers(game, monkeypatch):
@@ -140,11 +143,7 @@ def test_domain_reports_reuse_existing_qualitative_readers(game, monkeypatch):
     bandits = build_return_report(db, "流寇势如何？")
 
     assert calls == ["army", "power"]
-    assert arrears["source_kind"] == "inquiry"
-    assert arrears["source_ref"] == "查访/armies"
     assert arrears["statement"] == army_reader_out
-    assert bandits["source_kind"] == "inquiry"
-    assert bandits["source_ref"] == "查访/powers"
     assert bandits["statement"] == power_reader_out
 
 
@@ -172,79 +171,49 @@ def test_production_report_is_durable_and_scoped_to_the_questioned_minister(game
     )
 
 
-def test_firsthand_requires_a_persisted_witness_record(game):
+def test_firsthand_witness_matrix(game):
+    """firsthand 见闻：匹配/域不符/用词伪造/显式查访覆盖/取最新一条。"""
     db, state, _content = game
     minister = next(iter(db.content.characters))
-    db.register_character_knowledge_source(
-        state, [{"character_id": minister}], "witness", "边地见闻", "边地有报",
-        source_id="witness:492:test",
-    )
 
-    report = persist_return_report(db, state, minister, "军情如何？")
+    # 无见闻 → inquiry
+    bare = persist_return_report(db, state, minister, "军情如何？")
+    assert bare["source_kind"] == "inquiry"
 
-    assert report["source_kind"] == "firsthand"
+    # 用词不能伪造 firsthand
+    wording = persist_return_report(db, state, minister, "请据见闻说说军情。")
+    assert wording["source_kind"] == "inquiry"
 
-
-def test_firsthand_witness_must_match_questioned_domain(game):
-    db, state, _content = game
-    minister = next(iter(db.content.characters))
+    # 无关域见闻不升格
     db.register_character_knowledge_source(
         state, [{"character_id": minister}], "witness", "河工见闻", "河道有报",
         source_id="witness:492:unrelated",
     )
+    unrelated = persist_return_report(db, state, minister, "军情如何？")
+    assert unrelated["source_kind"] == "inquiry"
+    assert unrelated["source_ref"].startswith("查访/")
 
-    report = persist_return_report(db, state, minister, "军情如何？")
-
-    assert report["source_kind"] == "inquiry"
-    assert report["source_ref"].startswith("查访/")
-
-
-def test_firsthand_report_uses_the_matching_witness_body(game):
-    db, state, _content = game
-    minister = next(iter(db.content.characters))
-    witness_body = "辽东有报"
-    source_id = "witness:492:matching"
+    # 匹配见闻 → firsthand + body
+    old_body, new_body = "辽东旧报", "辽东新报"
     db.register_character_knowledge_source(
-        state, [{"character_id": minister}], "witness", "边地见闻", witness_body,
-        source_id=source_id,
+        state, [{"character_id": minister}], "witness", "边地见闻", old_body,
+        source_id="witness:old",
     )
-
-    report = persist_return_report(db, state, minister, "军情如何？")
-
-    assert report["source_kind"] == "firsthand"
-    assert report["source_ref"] == "见闻/持久见闻"
-    knowledge = db.get_character_knowledge(state, minister)
-    witness_bodies = [
-        str(item.get("body") or "")
-        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
-        if str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
-        or str(item.get("source_id") or "") == source_id
-    ]
-    assert witness_body in witness_bodies
-    assert report["statement"] == witness_body
-
-
-def test_question_wording_cannot_create_firsthand_provenance(game):
-    db, state, _content = game
-    minister = next(iter(db.content.characters))
-
-    report = persist_return_report(db, state, minister, "请据见闻说说军情。")
-
-    assert report["source_kind"] == "inquiry"
-
-
-def test_explicit_inquiry_overrides_matching_firsthand_witness(game):
-    db, state, _content = game
-    minister = next(iter(db.content.characters))
+    state.turn += 1
     db.register_character_knowledge_source(
-        state, [{"character_id": minister}], "witness", "边地见闻", "辽东有报",
-        source_id="witness:492:explicit-inquiry",
+        state, [{"character_id": minister}], "witness", "边地见闻", new_body,
+        source_id="witness:new",
     )
+    matched = persist_return_report(db, state, minister, "军情如何？")
+    assert matched["source_kind"] == "firsthand"
+    assert matched["source_ref"] == "见闻/持久见闻"
+    assert matched["statement"] == new_body
+    assert matched["statement"] != old_body
 
-    report = persist_return_report(db, state, minister, "请查访军情如何？")
-
-    assert report["source_kind"] == "inquiry"
-    assert report["source_ref"] == "查访/powers"
+    # 显式查访覆盖匹配见闻
+    override = persist_return_report(db, state, minister, "请查访军情如何？")
+    assert override["source_kind"] == "inquiry"
+    assert override["source_ref"] == "查访/powers"
 
 
 def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
@@ -261,7 +230,6 @@ def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
     ).fetchone()[0]
     assert report["source_kind"] == "unsupported"
     assert after == before
-    assert "result_kind" not in report
 
 
 def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
@@ -270,37 +238,5 @@ def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
     report = build_return_report(db, "流寇势如何？")
 
     assert "势力未建档" not in report["statement"]
-    # 差分：流寇域 statement 与无关官缺 unknown 可判别，且含势力名线索
     unknown = build_return_report(db, "两广总督可有？")
     assert report["statement"] != unknown["statement"]
-    assert report["source_ref"] == "查访/powers"
-
-
-def test_firsthand_report_prefers_newest_matching_durable_witness(game):
-    db, state, _content = game
-    minister = next(iter(db.content.characters))
-    old_body, new_body = "辽东旧报", "辽东新报"
-    db.register_character_knowledge_source(
-        state, [{"character_id": minister}], "witness", "边地见闻", old_body,
-        source_id="witness:old",
-    )
-    state.turn += 1
-    db.register_character_knowledge_source(
-        state, [{"character_id": minister}], "witness", "边地见闻", new_body,
-        source_id="witness:new",
-    )
-
-    report = persist_return_report(db, state, minister, "军情如何？")
-    assert report["source_kind"] == "firsthand"
-    assert report["source_ref"] == "见闻/持久见闻"
-    knowledge = db.get_character_knowledge(state, minister)
-    witnesses = [
-        item
-        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
-        if str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
-        and str(item.get("body") or "").strip()
-    ]
-    newest = max(witnesses, key=lambda item: int(item.get("turn") or 0))
-    assert newest["body"] == new_body
-    assert report["statement"] == newest["body"]
-    assert report["statement"] != old_body
