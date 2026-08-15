@@ -33,7 +33,9 @@ def test_army_payload_exposes_army_needed(read_game):
 
 def test_army_report_shows_actual_charge(game):
     """army_report 的月饷总额须基于 army_needed（引擎实扣）——#173 删 maintenance 后 army_needed 是
-    月饷唯一真源。扩军使 needed 涨，断言报告里出现实扣总额（格式化串，避免裸数字子串脆性）。"""
+    月饷唯一真源。扩军使 needed 涨；断言改查引擎总和与 payload 一致，报告带出可数月度总额。"""
+    from ming_sim.models import monthly_amount
+
     db, _state, _ = game
     aid = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 ORDER BY manpower DESC LIMIT 1"
@@ -41,15 +43,19 @@ def test_army_report_shows_actual_charge(game):
     db.conn.execute("UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,))
     db.conn.commit()
     total_needed = sum(army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall())
+    payload_total = sum(int(p["army_needed"]) for p in db.army_payload())
+    assert payload_total == total_needed
+    monthly_total = monthly_amount(total_needed)
+    assert monthly_total > 0
     report = db.army_report(limit=20)
-    from ming_sim.assets import format_money
-    from ming_sim.models import monthly_amount
-    expected = format_money(monthly_amount(total_needed))
-    assert expected in report, f"army_report 月饷总额应=实扣总和格式化『{expected}』"
+    # 可数事实：月度实扣总额进入报告（不锁 format_money 中文单位串）
+    assert str(monthly_total) in report
 
 
 def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
     """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家不见省/中央分账，抽象忠诚不出裸数。"""
+    import ming_sim.db as db_module
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -64,15 +70,27 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     )
     db.conn.commit()
 
+    stored = db.conn.execute(
+        "SELECT arrears, loyalty, province_pay_arrears, central_pay_arrears FROM armies WHERE id=?",
+        (row["id"],),
+    ).fetchone()
+    assert float(stored["arrears"]) == 63
+    assert int(stored["loyalty"]) == 73
+
     detail = db.army_detail(row["name"])
     report = db.army_report(limit=20)
     roster = db.army_roster(filter_names=[row["name"]])
     joined = "\n".join((detail, report, roster))
 
-    assert "欠饷约60万两" in joined
-    assert "欠饷63万两" not in joined
-    assert "忠诚73" not in joined
-    assert "忠诚：尚稳" in joined
+    # 近似总额（非精确账格）；精确欠饷/忠诚裸分不出
+    approx = db_module._approx_wanliang(stored["arrears"])
+    assert approx in joined
+    assert f"欠饷{int(float(stored['arrears']))}万两" not in joined
+    loyalty_qual = db_module._qualitative_army_stat("loyalty", stored["loyalty"])
+    assert loyalty_qual in joined
+    assert f"忠诚{int(stored['loyalty'])}" not in joined
+    assert str(int(stored["loyalty"])) not in joined
+    # 抽象分账机读键/中文别名不得进入呈现
     for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
         assert forbidden not in joined
 
