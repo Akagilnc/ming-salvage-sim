@@ -1,4 +1,8 @@
-"""#491 近臣读心：独立生成、定性输入与流水线边界。"""
+"""#491 近臣读心：独立生成、定性输入与流水线边界。
+
+#1185：不锁自由散文措辞；经 build_mindreading_materials 真实入口证明 ledger
+域值进入模型材料且裸分/机读键不泄。
+"""
 
 from dataclasses import replace
 import inspect
@@ -124,6 +128,7 @@ def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monk
 
 
 def test_model_receives_complete_qualitative_sources_and_result_enters_payload(game):
+    """结构键 + 回话/见闻入模 + payload 边界；裸机读键不泄。"""
     db, state, content = game
     reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
@@ -146,52 +151,76 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
         "narration": model.text,
     }
     assert "忠诚=98" not in json.dumps(payload, ensure_ascii=False)
-    assert "工心计" in material["底案"]
-    assert "案情分量：无" in material["底案"]
     rendered = json.dumps(material, ensure_ascii=False)
     assert "identity" not in rendered
     assert "loyalty" not in rendered
     assert "seed_guilt" not in rendered
-    assert str(target.identity) not in f"{material['党账']}{material['君臣账']}"
-    assert str(target.loyalty) not in f"{material['党账']}{material['君臣账']}"
+    assert "truth_struct" not in materials
 
 
-def test_default_seed_mindreading_materials_do_not_expose_integration_markers(game):
+def test_mindreading_ledger_sample_and_diff_without_raw_scores(game):
+    """ledger 域值入材料；单轴 identity/loyalty 隔离；默认 seed 不泄协议键。"""
     db, state, content = game
-    reader = content.characters["王承恩"]
-
-    for name in ("温体仁", "周延儒"):
-        materials = build_mindreading_materials(
-            db, state, reader, content.characters[name], "臣有本奏。",
-        )
-        assert "仅线索" not in materials["truths"]["底案"]
-        assert "integ" not in materials["truths"]["底案"]
-
-
-def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
-    db, state, content = game
-    reader = content.characters["王承恩"]
-    target = content.characters["温体仁"]
+    reader, target = content.characters["王承恩"], content.characters["温体仁"]
+    guilt_payload = {"crime": "合谋", "severity": "重"}
     db.conn.execute(
         "UPDATE characters SET faction=?, identity=?, loyalty=?, seed_guilt=? WHERE name=?",
-        ("皇党", 92, 15, '{"crime":"合谋","severity":"重"}', target.name),
+        ("皇党", 92, 15, json.dumps(guilt_payload, ensure_ascii=False), target.name),
     )
     db.conn.commit()
     model = _SpyMindreadingAgent()
-
-    _materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
-
-    material = model.inputs[0]
-    assert "名义党派：皇党" in material["党账"]
-    assert "党色极深" in material["党账"]
-    assert "离心已显" in material["君臣账"]
-    assert "合谋" in material["底案"]
-    assert "92" not in json.dumps(material, ensure_ascii=False)
-    assert "15" not in json.dumps(material, ensure_ascii=False)
+    materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
+    material, truths = model.inputs[0], materials["truths"]
+    assert set(truths) == {"党账", "君臣账", "底案"}
+    assert "皇党" in material["党账"] and guilt_payload["crime"] in material["底案"]
+    assert guilt_payload["severity"] in material["底案"]
+    blob = json.dumps(material, ensure_ascii=False)
+    for tok in ("92", "15", "identity", "loyalty", "seed_guilt"):
+        assert tok not in blob
+    assert "truth_struct" not in materials and "integ" not in blob.lower()
     assert payload["narration"] == model.text
 
+    base = dict(truths)
 
-def test_mindreading_record_survives_restore_without_entering_shared_history(tmp_path, content):
+    def _axis(identity=None, loyalty=None):
+        sets, vals = [], []
+        if identity is not None:
+            sets.append("identity=?"); vals.append(identity)
+        if loyalty is not None:
+            sets.append("loyalty=?"); vals.append(loyalty)
+        db.conn.execute(
+            f"UPDATE characters SET {', '.join(sets)} WHERE name=?", (*vals, target.name),
+        )
+        db.conn.commit()
+        return _generate(db, state, reader, target, "臣有本奏。", _SpyMindreadingAgent())[0]["truths"]
+
+    # 单轴只改 identity → 仅党账变
+    id_t = _axis(identity=10)
+    assert id_t["党账"] != base["党账"] and id_t["君臣账"] == base["君臣账"] and id_t["底案"] == base["底案"]
+    assert "10" not in json.dumps(id_t, ensure_ascii=False)
+    # 单轴只改 loyalty → 仅君臣账变
+    loy_t = _axis(identity=92, loyalty=90)
+    assert loy_t["君臣账"] != base["君臣账"] and loy_t["党账"] == base["党账"] and loy_t["底案"] == base["底案"]
+    assert "90" not in json.dumps(loy_t, ensure_ascii=False)
+
+    # 恢复温体仁原始行后再做默认 seed 协议键检查
+    o = content.characters[target.name]
+    db.conn.execute(
+        "UPDATE characters SET faction=?, identity=?, loyalty=?, seed_guilt=? WHERE name=?",
+        (o.faction, int(o.identity), int(o.loyalty), json.dumps(o.seed_guilt, ensure_ascii=False), target.name),
+    )
+    db.conn.commit()
+    for name in ("温体仁", "周延儒"):
+        seeded = build_mindreading_materials(
+            db, state, reader, content.characters[name], "臣有本奏。",
+        )
+        assert "truth_struct" not in seeded
+        assert "integ" not in json.dumps(seeded["truths"], ensure_ascii=False).lower()
+
+
+def test_mindreading_record_survives_restore_without_entering_shared_history(
+    tmp_path, content
+):
     path = tmp_path / "mindreading.db"
     db = GameDB(str(path), content)
     try:
@@ -200,7 +229,8 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
         reader = content.characters["王承恩"]
         target = content.characters["温体仁"]
         _materials, payload = _generate(
-            db, state, reader, target, "臣有本奏。", _SpyMindreadingAgent("近臣低声陈明未尽之意。"),
+            db, state, reader, target, "臣有本奏。",
+            _SpyMindreadingAgent("近臣低声陈明未尽之意。"),
         )
         chat_turn_id = db.create_chat_turn(state, target.name, "record-test", 0)
         db.record_mindreading(chat_turn_id, payload)
@@ -209,7 +239,6 @@ def test_mindreading_record_survives_restore_without_entering_shared_history(tmp
 
     restored = GameDB(str(path), content)
     try:
-        # 记录带持久身份 id（#499：前端按 (chat_turn_id, id) 去重/归位）；其余字段原样留存。
         records = restored.list_mindreading_records(chat_turn_id)
         assert len(records) == 1
         assert records[0].pop("id") > 0
