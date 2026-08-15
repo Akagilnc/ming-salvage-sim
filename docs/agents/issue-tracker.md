@@ -15,7 +15,7 @@ This repo is a fork (upstream = `wangwei-ying3/ming-salvage-sim`). `gh` resolves
 - **Apply / remove labels**: `gh issue edit <number> --repo Akagilnc/ming-salvage-sim --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --repo Akagilnc/ming-salvage-sim --comment "..."`
 
-Labels are **Matt-pure** (2026-06-17): only the seven — `bug` / `enhancement` (category) + `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix` (state). The old `priority/*` / `type/*` / `area/*` system was deleted. See [triage-labels.md](triage-labels.md) and [../DEV_WORKFLOW.md](../DEV_WORKFLOW.md).
+Labels are **Matt-pure** (2026-06-17): only the seven — `bug` / `enhancement` (category) + `needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix` (state). The old `priority/*` / `type/*` / `area/*` system was deleted. See [triage-labels.md](triage-labels.md).
 
 ## ⚠️ `Closes #N` 是子串匹配 — 想*引用* issue 而不关它，别用关闭动词
 

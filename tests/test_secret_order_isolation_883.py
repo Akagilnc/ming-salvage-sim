@@ -840,6 +840,13 @@ def test_883_public_llm_contexts_never_preload_secret_orders(game):
     assert all(marker not in str(context) for context in public_contexts)
     assert secret_context["secret_orders"]["在办"][0]["content"] == marker
 
+    # 默认路径（不传 secret_orders）：公共 payload 不得出现 secret_orders 键/空壳
+    default_sim = build_simulator_payload(state, db, "", "")
+    assert "secret_orders" not in default_sim
+    for module in ("internal", "military_external", "issues"):
+        ctx = build_extractor_shared_context(db, state, "", "", module=module)
+        assert "secret_orders" not in ctx
+
 
 def test_976_cross_person_speaker_user_origin_withheld_not_shared(game):
     """跨人承办：密令口谕在召对 speaker 侧，分类须绑 speaker 血缘，不得 release 进共享。
