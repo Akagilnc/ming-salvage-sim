@@ -1777,9 +1777,11 @@ class GameSession:
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522).
 
-        Pacification cues + a mentioned target stage through the same helper as
-        classifier materialize (mode + upsert + commit-time admission). Generic
-        drafts keep stage_explicit_directive → special_decree.
+        Pacification cues stay inside the pacification admission seam: a single
+        resolvable target stages via stage_pacification_candidate; unknown or
+        ambiguous targets fail loud (return 0) and never degrade to
+        stage_explicit_directive → special_decree. Generic drafts without a
+        pacification cue keep the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
@@ -1787,18 +1789,18 @@ class GameSession:
         combined = f"{message_text or ''}\n{text}"
         if any(cue in combined for cue in self._PACIFICATION_TOOL_CUES):
             target = self._mentioned_pacification_target(combined)
-            if target:
-                from ming_sim.action_materialize import stage_pacification_candidate
-                pending_id = stage_pacification_candidate(
-                    self.db,
-                    self.state.turn,
-                    minister_name,
-                    text=text,
-                    target_id=target,
-                    emperor_text=message_text,
-                )
-                if pending_id:
-                    return int(pending_id)
+            if not target:
+                return 0
+            from ming_sim.action_materialize import stage_pacification_candidate
+            pending_id = stage_pacification_candidate(
+                self.db,
+                self.state.turn,
+                minister_name,
+                text=text,
+                target_id=target,
+                emperor_text=message_text,
+            )
+            return int(pending_id or 0)
         return self.db.stage_explicit_directive(
             self.state.turn, minister_name, text, mode=message_text,
         )

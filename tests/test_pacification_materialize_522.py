@@ -575,6 +575,82 @@ def test_api_tool_propose_directive_stages_pacification_with_admission(game):
     assert list(db.list_decree_dossiers()) == bad_before
 
 
+def _directive_session(db, state, content):
+    """Minimal session bound to the API/stream shared staging seam."""
+    from ming_sim.session import GameSession
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    return sess
+
+
+def _pending_directive_payloads(db, turn, minister):
+    rows = [
+        p for p in db.list_pending_actions(turn, minister_name=minister)
+        if p.get("kind") == "directive" and p.get("status") == "pending"
+    ]
+    out = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        out.append((int(row["id"]), payload if isinstance(payload, dict) else {}))
+    return out
+
+
+def test_api_tool_pacification_unknown_target_fails_loud_not_special_decree(game):
+    """C3 r2：招抚 cue 命中但目标未知 → fail-loud，不得降级 special_decree。"""
+    db, state, content = game
+    _activate_canonical_bandit(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    before = _pending_directive_payloads(db, state.turn, minister)
+
+    pending_id = sess._stage_directive_tool_candidate(
+        "着招抚流寇归顺朝廷，授游击将军。",
+        minister,
+        "中旨直发，着即招抚。",
+    )
+
+    assert pending_id == 0
+    after = _pending_directive_payloads(db, state.turn, minister)
+    assert after == before
+    assert not any(
+        p.get("dossier_action_type") == "special_decree" for _, p in after
+    )
+
+
+def test_api_tool_pacification_ambiguous_target_fails_loud_not_special_decree(game):
+    """C3 r2：招抚 cue 命中但同长多目标歧义 → fail-loud，不得降级 special_decree。"""
+    db, state, content = game
+    _activate_canonical_bandit(db, content, "张献忠")
+    _activate_canonical_bandit(db, content, "李自成")
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    before = _pending_directive_payloads(db, state.turn, minister)
+
+    pending_id = sess._stage_directive_tool_candidate(
+        "着招抚张献忠与李自成归顺朝廷。",
+        minister,
+        "中旨直发，招抚张献忠李自成。",
+    )
+
+    assert pending_id == 0
+    after = _pending_directive_payloads(db, state.turn, minister)
+    assert after == before
+    assert not any(
+        p.get("dossier_action_type") in {"special_decree", "pacification"}
+        for _, p in after
+    )
+
+
 def test_special_decree_origin_cannot_authorize_pacification_allegiance(game):
     """C3：generic special_decree 不得授权招抚式易主。"""
     db, state, content = game
