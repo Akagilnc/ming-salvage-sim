@@ -10,8 +10,6 @@ export const UNREST_MAP_COLOR = "#b83a31";
 
 export const EXTERNAL_MAP_COLOR = "#5f6366";
 
-export const DEFAULT_MAP_COLOR = EXTERNAL_MAP_COLOR;
-
 export const UNREST_DANGER_THRESHOLD = 60;
 
 export const MING_MAP_OPACITY = 0.2;
@@ -856,14 +854,5 @@ export function NodeIntel({ node }: { node: MapNode }) {
         </>
       ) : null}
     </>
-  );
-}
-
-export function Info({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
-  return (
-    <div className={`info-cell ${tone || ""}`}>
-      <span>{label}</span>
-      <b>{value}</b>
-    </div>
   );
 }

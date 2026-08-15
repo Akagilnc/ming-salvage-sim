@@ -62,7 +62,7 @@ def _log(msg: str) -> None:
         pass
 
 
-WINDOW_TITLE = "明末力挽狂澜"
+WINDOW_TITLE = "残明朱批：崇祯"
 WINDOW_WIDTH = 1366
 WINDOW_HEIGHT = 880
 WINDOW_MIN_WIDTH = 1024
