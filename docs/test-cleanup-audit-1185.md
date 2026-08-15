@@ -1,11 +1,12 @@
 # test-cleanup-audit-1185 — 二阶段全量测试处置清单
 
 > 票面：[#1185](https://github.com/Akagilnc/ming-salvage-sim/issues/1185) 测试大清理 · **二阶段审计**（只审计、**零改测试代码**）  
-> 分支：`audit/issue-1185-test-cleanup` @ `132839e1`  
+> 分支：`audit/issue-1185-test-cleanup`  
 > 采集：`.venv/bin/python -m pytest --collect-only -q` → **3081 tests / 130 files**  
 > 前序：一阶段分级政策已 merge = [PR#1186](https://github.com/Akagilnc/ming-salvage-sim/pull/1186)；冻结件 `TEST_AUDIT_1185.md`（Batch1 前 3024p/11s in 1060s）  
 > 约束：本轮交付 = 本报告 + issue 评论 + commit；**不动任何 `tests/**`**。不跑烧额度用例。  
-> 法源：仓宪测试五尺（全局宪法 #13 / 票面升格段）+ [`docs/DEV_WORKFLOW.md`](DEV_WORKFLOW.md) §测试分级
+> 法源：仓宪测试五尺（全局宪法 #13 / 票面升格段）+ [`docs/DEV_WORKFLOW.md`](DEV_WORKFLOW.md) §测试分级 + ADR 0001 + ADR 0094  
+> **修订（判官 run `01a0043e-8c06-7cef-98e6-2dd0a749aeed` 七类判词）**：撤回误删/误 merge；盯文改 rewrite；merge 拆 keep/move/delete-as-duplicate；泄漏全称降级并补调用点表；复杂度账去未授权机制。
 
 ---
 
@@ -15,36 +16,48 @@
 |---|---|
 | 当前收集 | **3081** nodes / **130** files / 2555 函数级用例 |
 | 相对 PR#1186 审计基线 | 基线 3035 nodes/129 files；已删 helper×2；新增 #564/#611/#612 三卷 |
-| P0 CLI 泄漏（一阶段已堵） | `session_cli_fallback` + `isolation_883` 已 `preclassified_intent` / classify stub；本轮复核 **无残留裸 apply→agy subprocess** |
-| 建议 delete（节点） | **33** |
-| 建议 merge（节点） | **99**（估可净减 ~44 重叠） |
-| 建议 rewrite（节点） | **398**（改造不先删契约） |
-| 建议 keep（节点） | **2551** |
-| 估执行后节点 | **~3004**（−33 delete −~44 merge 重叠） |
-| 时长目标（票面终线） | 全量墙钟 ≤120s（开发机）；P0 已指向 −480s 级，本清单供过庭后执行 |
+| P0 CLI 泄漏（一阶段已堵） | `session_cli_fallback` + `isolation_883` 已 `preclassified_intent` / classify stub；**已点名样本确认已堵**；全称见 §1.2 静态清单（不足以宣称「无任何残留裸 apply→agy」） |
+| 建议 delete（节点） | **24**（本轮 0 条 delete-as-duplicate；须点名等价才入） |
+| 建议 move（节点） | **20**（迁入点名目标文件；契约保留，**不计入净减**） |
+| 建议 rewrite（节点） | **420**（改造不先删契约；含盯文结构化） |
+| 建议 keep（节点） | **2617** |
+| 估执行后节点 | **~3057**（仅 −24 delete；move 不减节点） |
+| 时长目标（票面终线） | 全量墙钟 ≤120s（开发机）；**本清单不把 xdist/夹具池化/新 lint 钩列为既定施工项**（无本轮授权或未过护栏三问） |
 
 ### 五尺对照（本清单标签）
 
 | 尺 | 含义 | 本轮刀口 |
 |---|---|---|
-| ① 泄漏 | subprocess/LLM/网络会烧额度或本地/CI 分叉 | 第一刀点名；P0 已堵主泄漏，纪律固化进 rewrite/keep 理由 |
-| ② 盯文 | 对自由文本建机械依赖 | display/prompt/rendered 精确中文 → rewrite |
-| ③ 重复 | 同根多套夹具/一契约多 tracer | knowledge↔489、night core↔web、LLM 三叠、status_cn↔883 |
-| ④ helper | 只测 helper/内部结构/常量自证 | 整文件或单测 delete |
+| ① 泄漏 | subprocess/LLM/网络会烧额度或本地/CI 分叉 | 第一刀：P0 样本 + 全量 apply 调用点静态表；纪律写进 keep/rewrite 理由 |
+| ② 盯文 | 对自由文本建机械依赖 | display/prompt/rendered/statement 精确中文 → **rewrite**（typed/source_kind/空缺集合/countable） |
+| ③ 重复 | 同根多套夹具/一契约多 tracer | 仅在点名「现存等价测试 + 同一外部断言」时 **delete-as-duplicate**；否则 keep 或 **move**（带目标文件） |
+| ④ helper | 只测 helper/内部结构/常量自证 | 整文件或单测 delete——**但负向边界/ADR 直接契约除外** |
 | ⑤ 可改造 | 既有测试可改成真行为 | rewrite，优先不另加平行测 |
+
+### 判官七类修订对照
+
+| # | 判词边界 | 本修订 |
+|---|---|---|
+| 1 | `test_distance_matrix.py` 四案 | **delete→keep**（ADR 0094 直接契约） |
+| 2 | `test_llm_key_helpers.py` 五案 | **delete→keep**（ADR 0001：`__keep__`/placeholder/空白不入 API 通道） |
+| 3 | `#612 endorsement` web 案 | **merge→keep**（非 #498 重复；gate-free/CLOSING/重试负向闸） |
+| 4 | mindreading / near-minister 盯文 | 点名案 **keep→rewrite**，写明结构化改法 |
+| 5 | 原 99 merge 节点 | 逐节点拆 **keep / move / rewrite**（本轮 0 条 delete-as-duplicate：未能点名同一外部断言） |
+| 6 | 泄漏全称 | 降级为 P0 样本主张 + §1.2 全调用点表 |
+| 7 | 复杂度账 | 删 lint 钩建议；xdist/池化标无授权；财政/event 撤回统包 |
 
 ---
 
-## 1. 第一刀：subprocess / LLM / 网络泄漏点名
+## 1. 第一刀：subprocess / LLM / 网络泄漏
 
-### 1.1 已在 PR#1186 堵上的主泄漏（复证：仍 keep 契约，禁回退）
+### 1.1 P0 已堵样本（复证：仍 keep 契约，禁回退）
 
 | 文件 | 原症 | 现状 | 处置 |
 |---|---|---|---|
-| `tests/test_session_cli_fallback.py` | `apply_cli_conversation_actions` → `classify_cli_action_intent` → `_run_agy` 实打 subprocess（单案 ~45s，整文件 ~386s） | 非 classifier 契约案已传 `preclassified_intent` 或 stub classify；显式 `_run_agy` mock 保留错误路径 | **keep** 契约 / 文件级纪律 **rewrite** 防回退 |
-| `tests/test_secret_order_isolation_883.py` | production extract 路径未 mock classify（~90s+） | `test_976_production_*` 已 `preclassified_intent` | **keep** 🔒闸类 |
+| `tests/test_session_cli_fallback.py` | `apply_cli_conversation_actions` → classify → `_run_agy` 实打 subprocess（历史单案 ~45s） | 非 classifier 契约案已 `preclassified_intent` 或 stub classify；错误路径显式 `_run_*` mock | **keep** 契约 / 文件级纪律 **rewrite** 防回退 |
+| `tests/test_secret_order_isolation_883.py` | production extract 未 mock classify | `test_976_production_*` 已 `preclassified_intent` | **keep** 🔒闸类 |
 
-点名（历史烧额度案，现已堵，执行期回归时若再裸跑 classify 即违规）：
+点名（历史烧额度案，现已堵；执行期若再裸跑 classify 即违规）：
 
 - `test_session_cli_fallback.py::test_conversation_rush_skips_pending_review`
 - `test_session_cli_fallback.py::test_secret_conversation_actions_persist_complete_minister_reply[*]`
@@ -54,36 +67,62 @@
 - `test_secret_order_isolation_883.py::test_976_production_extract_rush_progress_no_pure_public_pin`
 - `test_secret_order_isolation_883.py::test_976_production_session_extract_update_withholds_oral`
 
-### 1.2 本轮复核不构成泄漏的 apply 路径（曾被启发式打标，人工核后排除）
+**主张级别**：以上为 **已点名 P0 样本** 的堵塞复证。  
+**不**再主张「全套 tests 无残留裸 apply→agy subprocess」——该全称需 §1.2 逐调用点闭环后方可升格。
 
-下列调用 `apply_cli_conversation_actions` 但 **未** 走裸 classify→subprocess：恢复窗短接 / resolve+extract stub / `_run_json_extractor_for_config` mock / API channel / session 方法桩。
+### 1.2 静态检索：所有 `apply_cli_conversation_actions` 调用点
 
-| 文件::测试 | 为何不是泄漏 | 处置 |
+方法：对 `tests/**/*.py` 检索标识符；将测试函数体与一层 helper 展开后标记短接类别。  
+类别：`preclassified` / `classifier_stub` / `api_channel` / `extract_or_resolve_stub` / `_run_*_or_subprocess_mock` / `method_stub`（测试内替换 apply 本身）/ `cli+_run_backend_for_config mock`（canned JSON，不经真二进制）。
+
+| 文件 | 调用测试数（估） | 短接结论 |
+|---|---:|---|
+| `test_session_cli_fallback.py` | ~27 真调用 + 多处 bind | P0 样本：`preclassified` / `api_channel` / `extract stub` / `_run_* mock`；其余多 `MethodType` bind 后走同一已短接路径 |
+| `test_secret_order_isolation_883.py` | 2 production | `preclassified` + extract stub（P0） |
+| `test_pending_actions.py` | ~32 | 主流：`monkeypatch.setattr(cb, "_run_backend_for_config", canned)` → **classifier/backend stub**，非真 subprocess；FRONT_HALF 案另 stub `extract_confirmation_intent` |
+| `test_conversational_draft.py` | ~23–26 | helper `_run_conversational_draft` 带 `preclassified_intent` 与/或 `_run_backend_for_config` canned；前缀案 mock extract |
+| `test_multi_directive_502.py` | ~9–10 | draft 路 `preclassified_intent`；确认/驳回路 `_run_backend_for_config` canned |
+| `test_action_cluster_registry_515.py` | 3 | `preclassified` + extract stub |
+| `test_decree_dossiers_571.py` | 2 | `preclassified` |
+| `test_office_hedge_504.py` | 5 | 4× `preclassified`；1× extract stub（密令前缀不跑任命 classifier） |
+| `test_chat_mutations_freeze.py` | 2 | stub `resolve_minister_actions`+extract；恢复窗短接 |
+| `test_dossier_links_559.py` | 3 | CLI：`_run_json_extractor_for_config` mock；web：`method_stub` apply + API channel |
+| `test_audience_background.py` | 引用/桩 | Fake/`MethodType` **method_stub** apply；API 案 mock `_run_api_for_config` |
+| `test_menu_lifecycle_drain_396.py` | 定义桩 | **method_stub**（drain 生命周期，不实打 classify） |
+| `test_web_chat_serialization_393.py` | 定义桩 | **method_stub** |
+
+**样本级可确认已堵（非全称）**：P0 两文件 + 上表凡标 `preclassified` / `api_channel` / `method_stub` / `_run_backend_for_config` canned 的路径。  
+**不足以自动闭环的点**：仅标 `cli_channel`、依赖 fixture 间接 stub、或动态 `MethodType` 复用生产 apply 但 classify 短接在夹具外的用例——执行期须按函数再核，**不得**用本表升格「零泄漏全称」。
+
+曾被启发式打标、人工核后排除的 **示例**（保持）：
+
+| 文件::测试 | 短接 | 处置 |
 |---|---|---|
-| `test_chat_mutations_freeze.py::test_cli_prefix_secret_order_blocked_in_recovery_window` | stub `resolve_minister_actions`+extract；恢复窗短接 | keep 🔒 |
-| `test_chat_mutations_freeze.py::test_nl_staged_actions_blocked_in_recovery_window` | 同上；断言 extractor 零调用 | keep 🔒 |
-| `test_pending_actions.py::test_chat_proposal_not_staged_at_front_half_done` | FRONT_HALF_DONE 源头堵，不进 classify | keep 🔒 |
-| `test_pending_actions.py::test_chat_confirm_defers_commit_at_front_half_done` | stub `extract_confirmation_intent` only | keep 🔒 |
+| `test_chat_mutations_freeze.py::test_cli_prefix_secret_order_blocked_in_recovery_window` | resolve+extract stub；恢复窗短接 | keep 🔒 |
+| `test_chat_mutations_freeze.py::test_nl_staged_actions_blocked_in_recovery_window` | 同上；extractor 零调用 | keep 🔒 |
+| `test_pending_actions.py::test_chat_proposal_not_staged_at_front_half_done` | FRONT_HALF_DONE 源头堵 | keep 🔒 |
+| `test_pending_actions.py::test_chat_confirm_defers_commit_at_front_half_done` | stub `extract_confirmation_intent` | keep 🔒 |
 | `test_pending_actions.py::test_front_half_done_directive_confirmation_commits_without_second_review` | 同上 | keep 🔒 |
 | `test_dossier_links_559.py::test_real_cli_materialize_path_commits_only_semantically_confirmed_link` | mock `_run_json_extractor_for_config` | keep |
 | `test_dossier_links_559.py::test_parallel_cli_bad_link_does_not_roll_back_valid_secret_order` | 同上 | keep |
-| `test_dossier_links_559.py::test_real_web_stream_pending_commit_traces_only_confirmed_visible_links` | session.apply 桩返回空；API channel | keep |
+| `test_dossier_links_559.py::test_real_web_stream_pending_commit_traces_only_confirmed_visible_links` | apply method_stub；API channel | keep |
 | `test_audience_background.py::test_stream_confirmation_ignores_same_turn_secret_order_tool_output` | mock `_run_api_for_config` + FakeAgent | keep |
-| `test_audience_background.py::test_background_audience_secret_order_persists_after_observer_departure` | `_cli_web_game` 桩 apply_calls，不实打 CLI | keep |
+| `test_audience_background.py::test_background_audience_secret_order_persists_after_observer_departure` | apply_calls 桩 | keep |
 
 ### 1.3 `test_cli_backend.py` runner 单测（subprocess **均 mock**，不烧额度；属 ④/⑤ 非 ①）
 
-`test_run_agy_*` / `test_run_codex_*` / `test_run_claude_*` 全部 `monkeypatch.setattr(cb.subprocess, ...)`。**不删泄漏帽**；处置见 §4 该文件：rewrite 为公开 argv/错误契约或保持 mock 单测。
+`test_run_agy_*` / `test_run_codex_*` / `test_run_claude_*` 全部 `monkeypatch.setattr(cb.subprocess, ...)`。**不删泄漏帽**；处置见 §4：rewrite 为公开 argv/错误契约或保持 mock 单测。
 
 ### 1.4 网络
 
-全套 `tests/**` 未发现未 mock 的 `requests`/`httpx`/`urlopen` 实网调用。**网络泄漏：无。**
+全套 `tests/**` 未发现未 mock 的 `requests`/`httpx`/`urlopen` 实网调用。**网络泄漏：无（静态检索级）。**
 
 ### 1.5 纪律（执行期）
 
 1. 测试禁真 `subprocess` 调 agy/codex/claude 二进制。
 2. `MING_SIM_LLM_BACKEND=agy|codex|claude` 出现时，必须同时有 `preclassified_intent` 或 `classify_cli_action_intent` stub 或 `_run_*`/`subprocess` mock。
 3. 若遇 grok/agy **额度 403**：立即停，不重试烧额度。
+4. **不**新增 CI lint 钩作为本清单施工项（无真实失败证据与接缝归属；护栏三问未过）。防回退靠评审核 §1.1 样本 + 聚焦测试，不靠新机制。
 
 ---
 
@@ -102,52 +141,97 @@
 
 | 动作 | 函数级 | 节点级 | 说明 |
 |---|---:|---:|---|
-| keep | 2108 | 2551 | 含 🔒 闸类 |
-| rewrite | 320 | 398 | 改造成真行为/去盯文/参数化；节点数未必降 |
-| merge | 94 | 99 | 合并后估净减 ~44 重叠节点 |
-| delete | 33 | 33 | helper/私有/同义反复 |
-| **预计净减节点** | | **−33 ~ −77** | delete + merge 重叠 |
-| **预计保留节点** | | **~3004** | 相对 3081 |
+| keep | 2174 | 2617 | 含 🔒 闸类 / ADR 直接契约 / 未证等价的原 merge |
+| rewrite | 340 | 420 | 去盯文/伪行为→真接缝；**节点数未必降** |
+| move | 17 | 20 | 迁文件保留契约；**净减 = 0** |
+| delete | 24 | 24 | helper/私有/同义反复；**本轮无 delete-as-duplicate 入账** |
+| **预计净减节点** | | **−24** | 仅 delete；禁止把 move 算进净减 |
+| **预计保留节点** | | **~3057** | 相对 3081 |
 
-时长账（继承冻结件粗算，本轮未重跑全量 durations，避免与评审争资源）：
+#### 原「merge 99 / 净减 ~44」撤回说明
 
-| 项 | 粗算 |
-|---|---|
-| 冻结基线墙钟 | 1060s（17m40s） |
-| P0 堵漏期望 | −480s 级（一阶段已落地，待收尾全量复证） |
-| delete helper | −~2s |
-| merge 去重 + setup 池化/参数化 | −20–40s 级（event_trigger/fiscal/conversational） |
-| 票面终线 | ≤120s（需 xdist + 夹具池化，超出本审计腿） |
+- 旧账把 knowledge / LLM 三叠 / status_cn / web#498 等 **未裁明** 的节点统称 merge，并估净减 ~44，**未点名 44 项等价删除** → 不可施工、不可审计。
+- 本修订后：**move=20**（全部为 `test_knowledge.py`→`test_character_knowledge_489.py`，契约保留）；其余原 merge 在未能点名「现存等价测试 + 同一外部断言」前一律 **keep** 或（盯文）**rewrite**。
+- **净减仅来自 §5.1 delete 清单（24）**。
+
+时长账（继承冻结件粗算；本轮未重跑全量 durations）：
+
+| 项 | 粗算 | 本清单地位 |
+|---|---|---|
+| 冻结基线墙钟 | 1060s（17m40s） | 基线数字 |
+| P0 堵漏期望 | −480s 级（一阶段已落地，待收尾全量复证） | 已落地，收尾复证 |
+| delete helper | −~2s | 本清单可执行项 |
+| 机械重复合并 | 仅在最小化耗时诊断后、点名重复断言时 | **先诊断，禁止统包** |
+| xdist `-n auto` | 票面终线层提到 | **无本轮授权，不作本清单既定施工项** |
+| 夹具池化 / 共享 setup 池 | 票面终线层提到 | **无本轮授权；禁止新建平行 fixture 基建** |
+| CI lint 钩 | （旧稿建议） | **删除该建议**（无真实失败与接缝归属） |
+| 票面终线 ≤120s | 开发机 | 收官目标；达成路径另授权，不由本审计腿锁定机制 |
+
+#### 财政 / event 大文件（撤回统包）
+
+| 文件 | 节点 | 旧稿问题 | 修订处方 |
+|---|---:|---|---|
+| `test_fiscal_substrate_bridge.py` | 184（其中 rewrite 标签 146） | 一句「参数化/池化」统包 | **先**对最慢 case 做最小化 `--durations` 诊断；**只**合并经点名的机械重复断言；禁止新建平行 fixture 基础设施；闸类/fail-loud **keep** |
+| `test_event_trigger_gate.py` | 203 | 文件级「参数化减 setup」统包 | 同上：先诊断 setup vs call；负向闸 **keep**；仅机械重复可合并，不搞共享池 |
 
 ---
 
-## 3. 合并簇与整文件 delete 总表
+## 3. 整文件 delete 与 move 总表（原「merge 簇」已拆）
 
 ### 3.1 建议整文件 delete
 
 | 文件 | 节点 | 理由 |
 |---|---:|---|
 | `test_suggestions_chips_527.py` | 1 | ④ `assert items == _PREFIX_ONLY` 同义反复 |
-| `test_llm_key_helpers.py` | 5 | ④ 纯函数真值表；channel/runtime 已覆盖 |
 | `test_qualitative.py` | 3 | ④ band/bucket 纯函数；projection 出口已用 |
-| `test_distance_matrix.py` | 4 | ④ 纯矩阵数学，无游戏接缝 |
 | `test_person_write_inventory.py` | 5 | ④ AST 扫描器/disposition 自测 |
+
+**已撤回整文件 delete（判官）**：
+
+| 文件 | 节点 | 改判 | 法源 |
+|---|---:|---|---|
+| `tests/test_distance_matrix.py`（整文件 4 节点） | 4 | 改 keep | ADR 0094 直接契约（半权/对角0、最快路、纯查表、图=烘焙/全集/对称） |
+| `tests/test_llm_key_helpers.py`（整文件 5 节点） | 5 | 改 keep | ADR 0001 负向：`__keep__`/CLI placeholder/空白 key 不入 API 通道 |
 
 （`test_load_observability.py` / `test_read_game_fixture.py` 已在 PR#1186 删除，不重复入账。）
 
-### 3.2 建议 merge 簇
+### 3.2 原 merge 簇 → 逐簇拆分结果
 
-| 簇 | 成员 | 策略 |
-|---|---|---|
-| #489 知识投影 | `test_knowledge.py` + `test_character_knowledge_489.py` | 以 489 为锚；迁 knowledge 独有 archive/source_scope；删重叠 exclusion/counterpart |
-| #498 夜宴 | `test_audience_night_498.py` + `test_web_audience_night_498.py` | core 留引擎；web 只留 ASGI/event-loop/fail-closed/inflight |
-| 城防 | `test_region_citydefense.py` + `test_region_citydefense_display.py` | display 文案并入结构断言或删 |
-| 密令状态/隔离 | `test_secret_order_status_cn.py` + `test_secret_order_isolation_883.py` | 隔离断言迁 883；状态桶改结构 |
-| LLM 配置三叠 | `test_llm_channel_config.py` + `test_runtime_llm_config.py` + `test_web_llm_runtime_config.py` | 共享 load/save/placeholder 下沉；web 留 HTTP/menu |
+| 原簇 | 节点 | 拆分 |
+|---|---:|---|
+| #489 知识投影 `test_knowledge.py` | 20 | **move×20** → `test_character_knowledge_489.py`（下表逐条契约）；**0 delete-as-duplicate**（489 现网无逐条同一外部断言可点名） |
+| LLM channel `test_llm_channel_config.py` | 23 | **keep×23**（channel/create/verify 真源锚） |
+| LLM runtime `test_runtime_llm_config.py` | 22 | **keep×22**（runtime 槽位真源锚） |
+| LLM web `test_web_llm_runtime_config.py` 原 merge 子集 | 14 | **keep×14**（HTTP/menu 接缝；未证与 channel/runtime 同一断言） |
+| 城防 display | 5 | **rewrite×5**（文案→结构；不删契约） |
+| 密令 status_cn | 12 | **rewrite×8**（中文桶盯文）+ **keep×4**（payload 隔离 + 恢复 roundtrip） |
+| web #498 原 merge×3 | 3 | **keep×3**（含 #612 endorsement 负向闸 + 2 条 ASGI 独有） |
 
-### 3.3 闸类锁定（整文件默认 keep；内部可参数化不可删负向）
+### 3.3 move 完整点名（20 节点 = 20 函数，exclusion 案 4 节点）
 
-见冻结件 §3.4；本轮增补：`test_override_breach_costs_564.py`、`test_authority_ledger_611.py`。
+| 测试 | 节点 | 目标文件 | 契约 |
+|---|---:|---|---|
+| `test_regional_world_keeps_qualitative_and_countable_region_facts` | 1 | `test_character_knowledge_489.py` | 区域 world 定性+可数 facts |
+| `test_knowledge_exclusion_reads_current_office_without_nameerror` | 4 | 同上 | exclusion 读当前 office |
+| `test_knowledge_projects_gazette_and_chapter_sources_per_character` | 1 | 同上 | gazette/chapter 按角色 |
+| `test_knowledge_projects_mixed_archive_from_durable_source_scope` | 1 | 同上 | mixed archive←source_scope |
+| `test_rewritten_archive_cannot_reintroduce_restricted_source` | 1 | 同上 | 改写不回引受限源 |
+| `test_archive_write_materializes_unmirrored_source_scope` | 1 | 同上 | 写入物化 unmirrored scope |
+| `test_chapter_public_counterpart_keeps_only_independent_public_sources` | 1 | 同上 | public counterpart 仅独立源 |
+| `test_chapter_counterpart_never_uses_aggregate_when_sources_exist` | 1 | 同上 | 有源不用 aggregate |
+| `test_turn_report_counterpart_never_uses_aggregate_when_sources_exist` | 1 | 同上 | turn_report 同左 |
+| `test_chapter_counterpart_does_not_repeat_derived_turn_report_source` | 1 | 同上 | 不重复 derived |
+| `test_character_projection_shows_monthly_public_source_once_after_chapter_write` | 1 | 同上 | monthly public 一次 |
+| `test_shared_archive_storage_never_writes_restricted_aggregate` | 1 | 同上 | 不写受限 aggregate |
+| `test_character_added_after_archive_cannot_read_old_participant_source` | 1 | 同上 | 后加入不可读旧源 |
+| `test_chapter_with_only_derived_report_does_not_publish_its_body_again` | 1 | 同上 | 不二次发布 body |
+| `test_chapter_counterpart_filters_derived_report_before_reaggregating_sources` | 1 | 同上 | reaggregate 前过滤 |
+| `test_chapter_counterpart_filters_settlement_narrative_derived_with_report` | 1 | 同上 | settlement narrative 同滤 |
+| `test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge` | 1 | 同上 | legacy aggregate 不授权 |
+
+### 3.4 闸类锁定（整文件默认 keep；内部可参数化不可删负向）
+
+见冻结件 §3.4；本轮增补：`test_override_breach_costs_564.py`、`test_authority_ledger_611.py`、`test_dossier_endorsements_612.py`、**`test_web_audience_night_498.py::test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier`**（#612 负向闸）、**`test_distance_matrix.py`（ADR 0094）**、**`test_llm_key_helpers.py`（ADR 0001 负向）**。
 
 ---
 
@@ -1280,14 +1364,14 @@
 
 ### `tests/test_distance_matrix.py`
 
-- 规模：81 行 / 4 函数 / 4 节点 · 处置分布：`{'delete': 4}` · 主注：④ 纯矩阵数学无游戏接缝
+- 规模：81 行 / 4 函数 / 4 节点 · 处置分布：`{'keep': 4}`  · 主注：🔒 ADR 0094 烘焙距离矩阵直接契约（非纯数学可删）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_bake_uses_half_endpoint_weights_and_zero_diagonal` | 1 | **delete** | ④ 纯矩阵数学无游戏接缝 |
-| `test_bake_selects_fastest_route_and_preserves_triangle_inequality` | 1 | **delete** | ④ 纯矩阵数学无游戏接缝 |
-| `test_runtime_reader_is_lookup_only` | 1 | **delete** | ④ 纯矩阵数学无游戏接缝 |
-| `test_baked_content_covers_all_regions_and_three_golden_anchors` | 1 | **delete** | ④ 纯矩阵数学无游戏接缝 |
+| `test_bake_uses_half_endpoint_weights_and_zero_diagonal` | 1 | **keep** | 🔒 ADR 0094 直接契约：头尾各半权重 + 对角 0 |
+| `test_bake_selects_fastest_route_and_preserves_triangle_inequality` | 1 | **keep** | 🔒 ADR 0094 直接契约：最小/最快路线 + 三角不等式 |
+| `test_runtime_reader_is_lookup_only` | 1 | **keep** | 🔒 ADR 0094 直接契约：运行时 DistanceMatrix 纯查表（未知键 KeyError） |
+| `test_baked_content_covers_all_regions_and_three_golden_anchors` | 1 | **keep** | 🔒 ADR 0094 直接契约：图与烘焙物一致 / 节点全集 / 对称性 + 金锚 |
 
 ### `tests/test_dossier_endorsements_612.py`
 
@@ -1505,203 +1589,203 @@
 
 ### `tests/test_event_trigger_gate.py` 🔒
 
-- 规模：5908 行 / 193 函数 / 203 节点 · 处置分布：`{'keep': 193}` · 主注：⑤🔒 闸类保留；参数化减 setup
+- 规模：5908 行 / 193 函数 / 203 节点 · 处置分布：`{'keep': 193}` · 主注：🔒 闸类 keep；禁止 setup 池化统包，先 durations 诊断
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_gated_historical_event_excluded_when_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gated_historical_event_included_when_satisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_ungated_historical_event_unchanged` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_event_gate_can_read_event_triggered_record` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_event_latest_month_is_still_inside_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_event_triggered_gate_ignores_obsolete_terminal` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_open_window_historical_event_never_expires` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_open_window_historical_event_still_waits_for_earliest_time` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_seed_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_event_terminal_states_does_not_commit_existing_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_passed_tolerates_none` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_passed_tolerates_nonstring_cond` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_event_none_gate_no_crash` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_key_form_error_accepts_valid_forms` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_key_form_error_rejects_typo_metric_table_structure` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_cond_form_error_numeric_and_text` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_fail_loud_on_bad_gate_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_rejects_default_terminal_reason_outside_labels` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_requires_latest_or_open_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_rejects_non_boolean_open_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_rejects_strategic_foreign_situation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_rejects_latest_before_earliest` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_event_rejects_month_out_of_range` | 4 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_typo_field_gate_raises_clear_not_operationalerror` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_cond_numeric_neq_rejected_text_neq_ok` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_key_rejects_empty_segments` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_typo_field_text_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_key_rejects_empty_class_name` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_text_cond_requires_text_capable_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_load_fail_loud_on_text_cond_multi_id_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_text_cond_field_must_be_text_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gate_key_rejects_empty_region_after_at` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_numeric_cond_on_text_field_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_numeric_gate_supports_comparison` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_numeric_gate_supports_aggregation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_army_numeric_gate_preserves_fractional_arrears_tail` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_gate_rejects_malformed_field_before_sql` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_numeric_field_text_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_text_gate_supports_equality` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_typo_field_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_text_typo_field_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_text_gate_key_passes_content_validation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_text_gate_rejects_serialized_list_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_character_text_gate_rejects_numeric_character_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_event_effect_uses_unified_person_change_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_auto_trigger_historical_event_to_issue_uses_outer_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_content_rejects_falsy_person_core_subjects` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_excluded_after_appeasement` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_excluded_after_player_relocates_mao` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_excluded_after_player_reassigns_yuan` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_trigger_lands_character_status` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_missing_origin_rejects_whole_result_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_event_lands_new_army_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_new_army_result_rejects_existing_army_collision` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_new_army_result_rejects_nonpositive_manpower` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_records_outcome_label_with_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_outcome_label_normalizes_known_synonym` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_delta_requires_outcome_label_without_mutation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_outcome_label_unknown_fails_loud_without_mutation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_anchored_strategic_new_army_without_event_trigger_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_anchored_strategic_region_outcome_without_reason_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_event_rejects_trigger_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_anchored_strategic_result_delta_without_event_trigger_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_henan_place_policy_delta_does_not_capture_untriggered_fall_events` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_noncandidate_strategic_event_with_unknown_label_preserves_unrelated_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_foreign_event_does_not_land_battle_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_foreign_event_preserves_unrelated_region_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_event_preserves_unanchored_target_region_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_event_preserves_unrelated_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_previously_triggered_strategic_event_rejects_duplicate_without_landing_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_event_does_not_land_substitute_commander_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_invalid_strategic_event_result_delta_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_army_clamp_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_person_travel_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_person_same_status_noop_does_not_mark_event_triggered` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_person_same_office_noop_does_not_mark_event_triggered` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_person_tenure_change_is_material_world_state` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_invalid_person_tenure_rejects_whole_result_envelope` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_accepts_power_update_as_material_world_state` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_power_update_requires_event_anchor` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_accepted_strategic_event_applies_power_updates_after_main_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_invalid_strategic_power_update_blocks_main_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_orphan_strategic_power_update_without_event_issue_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_jisi_border_contained_outcome_rejects_invasion_world_state` | 2 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_event_person_result_rejection_blocks_other_result_deltas` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_person_alias_stays_in_rejected_event_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_rejected_strategic_person_preflight_restores_content_power_id` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_person_backlash_rejection_blocks_event_result_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_event_lands_soft_result_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_trigger_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_rollback_restores_bound_content_when_content_omitted` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_rollback_removes_dynamic_character_attrs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_situation_insert_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_pool_rechecks_gate_before_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_person_core_event_obsoletes_when_named_subject_is_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_yuan_xialing_event_excluded_without_jisi_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_yuan_xialing_event_included_after_jisi_event_issue_triggers` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_person_write_state_restore_removes_dynamic_character_attrs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_legacy_person_core_static_fields_backfill_reachability` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_person_core_static_backfill_preserves_relocated_mao` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_li_chenghai_event_opens_after_li_zicheng_historical_debut` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_191_person_core_events_are_explicitly_classified` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_strategic_foreign_classification_requires_outcome_targets` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_194_dalingghe_requires_world_state_main_ledger_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_huabei_plague_auto_triggers_with_deterministic_core_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_auto_trigger_core_effect_is_applied_once` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_auto_trigger_historical_events_use_preloaded_terminal_refs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_auto_trigger_event_expires_after_latest_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_huabei_plague_keeps_soft_degree_axis_as_situation_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_jingshi_plague_auto_triggers_and_weakens_capital_garrison` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_huangtaiji_chengdi_auto_triggers_and_renames_houjin` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_historical_power_rename_tick_reads_huangtaiji_event_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_rechecks_after_advances_close_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_rechecks_after_prior_event_effect_closes_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_advance_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_advance_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_close_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_close_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_issue_entities_person_changes_respect_commit_false` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_class_delta_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_person_location_change_blocks_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_invalid_appointment_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_invalid_allegiance_change_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_disposition_clears_office_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_location_change_clears_transit_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_rejected_legacy_gate_change_does_not_block` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_legacy_power_change_blocks_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_allegiance_backlash_blocks_power_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_person_changes_are_simulated_sequentially` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_alias_appointment_blocks_canonical_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_alias_disposition_blocks_canonical_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_pending_person_gate_prefetches_character_rows_for_displacement` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_appointment_clears_reason_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_appointment_updates_office_type_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_pending_appointment_normalizes_equivalent_office` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_cancel_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_issue_tracker_cancel_cost_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_invalid_pending_person_change_does_not_block_event_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_obsolete_when_core_subject_already_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_excluded_when_yuan_unavailable` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_event_pool_current_candidate_recheck_cached_until_state_changes` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
-| `test_mao_wenlong_event_pool_duplicate_emit_is_idempotent` | 1 | **keep** | 🔒 事件前提门闸类负向不可删（文件级 rewrite=参数化减 setup） |
+| `test_gated_historical_event_excluded_when_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gated_historical_event_included_when_satisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_ungated_historical_event_unchanged` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_event_gate_can_read_event_triggered_record` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_event_latest_month_is_still_inside_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_event_triggered_gate_ignores_obsolete_terminal` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_open_window_historical_event_never_expires` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_open_window_historical_event_still_waits_for_earliest_time` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_seed_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_auto_trigger_seed_event_expires_after_latest_window_when_gate_unsatisfied` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gather_candidate_events_filters_expired_auto_trigger_seed_without_writing` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_apply_uses_pushed_candidate_snapshot_not_fresh_recompute` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_event_terminal_states_does_not_commit_existing_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_passed_tolerates_none` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_passed_tolerates_nonstring_cond` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_event_none_gate_no_crash` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_key_form_error_accepts_valid_forms` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_key_form_error_rejects_typo_metric_table_structure` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_cond_form_error_numeric_and_text` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_fail_loud_on_bad_gate_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_rejects_default_terminal_reason_outside_labels` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_requires_latest_or_open_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_rejects_non_boolean_open_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_rejects_strategic_foreign_situation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_rejects_latest_before_earliest` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_event_rejects_month_out_of_range` | 4 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_typo_field_gate_raises_clear_not_operationalerror` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_cond_numeric_neq_rejected_text_neq_ok` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_key_rejects_empty_segments` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_typo_field_text_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_key_rejects_empty_class_name` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_text_cond_requires_text_capable_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_load_fail_loud_on_text_cond_multi_id_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_text_cond_field_must_be_text_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gate_key_rejects_empty_region_after_at` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_numeric_cond_on_text_field_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_numeric_gate_supports_comparison` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_numeric_gate_supports_aggregation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_army_numeric_gate_preserves_fractional_arrears_tail` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_gate_rejects_malformed_field_before_sql` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_numeric_field_text_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_text_gate_supports_equality` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_typo_field_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_text_typo_field_gate_raises_clear` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_text_gate_key_passes_content_validation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_text_gate_rejects_serialized_list_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_character_text_gate_rejects_numeric_character_field` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_event_effect_uses_unified_person_change_key` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_auto_trigger_historical_event_to_issue_uses_outer_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_content_rejects_falsy_person_core_subjects` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_excluded_after_appeasement` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_excluded_after_player_relocates_mao` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_excluded_after_player_reassigns_yuan` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_trigger_lands_character_status` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_result_delta_is_all_or_nothing_on_rejected_item` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_missing_origin_rejects_whole_result_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_event_lands_new_army_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_new_army_result_rejects_existing_army_collision` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_new_army_result_rejects_nonpositive_manpower` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_records_outcome_label_with_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_outcome_label_normalizes_known_synonym` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_outcome_retry_ignores_non_landable_event_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_delta_requires_outcome_label_without_mutation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_outcome_label_unknown_fails_loud_without_mutation` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_anchored_strategic_new_army_without_event_trigger_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_anchored_strategic_region_outcome_without_reason_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_ordinary_jinzhou_preparedness_delta_is_not_rejected_as_songshan_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_event_survives_named_commander_death_with_soft_result_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_event_rejects_trigger_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_direct_issue_tracker_rejects_strategic_event_without_world_state_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_anchored_strategic_result_delta_without_event_trigger_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_ordinary_army_station_delta_with_strategic_place_anchor_is_not_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_194_lindan_xiqian_requires_world_state_main_ledger_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_lindan_xiqian_does_not_capture_untriggered_beizhili_border_policy_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_shared_jinzhou_result_does_not_double_consume_dalingghe_and_songshan` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_henan_place_policy_delta_does_not_capture_untriggered_fall_events` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_henan_bandit_policy_delta_does_not_capture_untriggered_luoyang_event` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_unrelated_region_delta_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_target_region_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_unrelated_person_delta_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_unrelated_person_delta_with_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_target_person_delta_without_event_anchor_does_not_satisfy_strategic_event_result_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_noncandidate_strategic_event_with_unknown_label_preserves_unrelated_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_foreign_event_does_not_land_battle_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_foreign_event_preserves_unrelated_region_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_event_preserves_unanchored_target_region_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_event_preserves_unrelated_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_previously_triggered_strategic_event_rejects_duplicate_without_landing_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_event_does_not_land_substitute_commander_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_invalid_controlled_by_suppresses_sibling_deltas` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_invalid_strategic_event_result_delta_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_cannon_clamp_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_army_clamp_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_person_travel_noop_does_not_mark_event_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_person_same_status_noop_does_not_mark_event_triggered` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_person_same_office_noop_does_not_mark_event_triggered` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_person_tenure_change_is_material_world_state` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_invalid_person_tenure_rejects_whole_result_envelope` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_accepts_power_update_as_material_world_state` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_power_update_requires_event_anchor` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_accepted_strategic_event_applies_power_updates_after_main_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_invalid_strategic_power_update_blocks_main_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_orphan_strategic_power_update_without_event_issue_is_rejected` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_jisi_border_contained_outcome_rejects_invasion_world_state` | 2 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_event_person_result_rejection_blocks_other_result_deltas` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_person_alias_stays_in_rejected_event_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_rejected_strategic_person_preflight_restores_content_power_id` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_person_backlash_rejection_blocks_event_result_envelope` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_event_lands_soft_result_person_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_wuyin_lubian_content_treats_lu_death_as_soft_battle_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_trigger_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_rollback_restores_bound_content_when_content_omitted` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_rollback_removes_dynamic_character_attrs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_metric_delta_restores_runtime_on_outer_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_situation_insert_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_pool_rechecks_gate_before_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_person_core_event_obsoletes_when_named_subject_is_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_yuan_xialing_event_excluded_without_jisi_triggered` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_yuan_xialing_event_excluded_after_jisi_border_contained_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_yuan_xialing_event_included_after_jisi_event_issue_triggers` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_legacy_event_pool_issue_backfills_trigger_without_guessing_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_legacy_event_trigger_terminal_reason_can_be_filled_by_real_outcome` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_person_write_state_restore_removes_dynamic_character_attrs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_legacy_person_core_static_fields_backfill_reachability` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_person_core_static_backfill_preserves_relocated_mao` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_luoyang_fallen_not_obsoleted_when_fu_wang_is_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_li_chenghai_event_opens_after_li_zicheng_historical_debut` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_zhangxianzhong_event_opens_after_historical_debut_and_surrender_path` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_191_person_core_events_are_explicitly_classified` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_194_strategic_foreign_events_are_explicitly_classified_and_gated` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_strategic_foreign_classification_requires_outcome_targets` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_194_dead_named_general_does_not_obsolete_strategic_foreign_event` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_194_dalingghe_requires_world_state_main_ledger_result` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_huabei_plague_auto_triggers_with_deterministic_core_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_auto_trigger_core_effect_is_applied_once` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_auto_trigger_historical_events_use_preloaded_terminal_refs` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_auto_trigger_event_expires_after_latest_window` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_gated_auto_trigger_seed_event_can_recur_after_previous_issue_resolved` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_huabei_plague_keeps_soft_degree_axis_as_situation_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_situation_auto_trigger_rolls_back_soft_issue_when_core_effect_fails` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_situation_auto_trigger_backfills_core_effect_for_existing_soft_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_jingshi_plague_auto_triggers_and_weakens_capital_garrison` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_huangtaiji_chengdi_auto_triggers_and_renames_houjin` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_huangtaiji_chengdi_keeps_diplomatic_response_axis_as_situation_issue` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_historical_power_rename_tick_reads_huangtaiji_event_effect` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_pool_uses_candidate_snapshot_before_advances` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_uses_candidate_snapshot_before_top_level_metric_delta` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_rechecks_after_advances_close_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_rechecks_after_prior_event_effect_closes_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_decree_new_issue_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_advance_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_advance_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_close_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_close_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_close_entity_effects_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_close_legacy_expiry_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_issue_entities_person_changes_respect_commit_false` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_top_level_economy_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_fiscal_changes_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_class_delta_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_top_level_entity_deltas_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_fiscal_create_and_remove_respect_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_person_location_change_blocks_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_invalid_appointment_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_invalid_allegiance_change_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_disposition_clears_office_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_location_change_clears_transit_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_rejected_legacy_gate_change_does_not_block` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_legacy_power_change_blocks_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_same_power_allegiance_noop_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_allegiance_backlash_blocks_power_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_person_changes_are_simulated_sequentially` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_apply_score_extraction_registry_refresh_rolls_back_with_outer_transaction` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_alias_appointment_blocks_canonical_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_alias_disposition_blocks_canonical_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_pending_person_gate_prefetches_character_rows_for_displacement` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_gate_reuses_shadow_prefetch_across_new_issues` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_rejected_vassal_appointment_does_not_block_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_appointment_displacement_blocks_displaced_office_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_appointment_clears_reason_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_appointment_updates_office_type_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_pending_appointment_normalizes_equivalent_office` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_cancel_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_issue_tracker_cancel_cost_respects_outer_transaction_rollback` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_pool_rechecks_after_same_turn_loyalty_assessment` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_pool_rechecks_after_same_turn_yuan_dismissal` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_invalid_pending_person_change_does_not_block_event_gate` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_obsolete_when_core_subject_already_dead` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_excluded_when_yuan_unavailable` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_event_pool_current_candidate_recheck_cached_until_state_changes` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
+| `test_mao_wenlong_event_pool_duplicate_emit_is_idempotent` | 1 | **keep** | 🔒 事件前提门闸类负向不可删；大文件先最小化耗时诊断，仅机械重复可合并，禁止新建池化基建 |
 
 ### `tests/test_extractor_misroute_surface.py`
 
@@ -1837,114 +1921,114 @@
 
 ### `tests/test_fiscal_substrate_bridge.py`
 
-- 规模：5333 行 / 130 函数 / 184 节点 · 处置分布：`{'rewrite': 105, 'keep': 25}` · 主注：⑤🔒 seed 变体瘦身
+- 规模：5333 行 / 130 函数 / 184 节点 · 处置分布：`{'rewrite': 105, 'keep': 25}` · 主注：keep 闸类 + rewrite 仅点名机械重复；禁池化统包
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_seed_royal_stipends_use_wanli_accounting_by_province` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_region_loader_expands_shared_settle_meta_defaults` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_self_funded_seed_arrears_log_preserves_fractional_delta` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fresh_save_pay_source_prefers_content_army_fields` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_seed_royal_stipends_use_wanli_accounting_by_province` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_region_loader_expands_shared_settle_meta_defaults` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_pay_source_spine_seed_splits_arrears_and_reconciles_tusi` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_self_funded_seed_arrears_log_preserves_fractional_delta` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fresh_save_pay_source_prefers_content_army_fields` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_province_tick_derives_due_and_allocates_province_arrears_by_pay_source` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_conservation_rejects_excluded_army_with_pay_source_debt` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_conservation_rejects_province_source_army_without_settle_base` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_fixed_flows_substrate_hub_retires_global_central_pay_route` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_legacy_engine_keeps_global_army_pay_route` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_budget_lines_read_persisted_substrate_hub_income_source` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_treasury_budget_summary_names_substrate_hub_surfaces` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_treasury_budget_summary_names_fixed_salary_display` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_fixed_flows_substrate_hub_retires_global_central_pay_route` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_legacy_engine_keeps_global_army_pay_route` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_does_not_allocate_legacy_central_pool` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_hub_dual_track_sanity_keeps_legacy_calc_as_reference` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_hub_cutover_runs_multi_tick_treasury_trajectory` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_ready_context_retry_does_not_recompute_substrate_hub_pre_settle` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_central_capacity_reduces_current_central_arrears` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_central_pay_shares_hub_tier_with_jingyun_grants` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_central_pay_carries_transport_loss_without_jingyun` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_books_split_treasury_income_and_central_losses` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_budget_projection_passes_copied_settle_snapshots_to_fiscal_tick` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_budget_lines_read_persisted_substrate_hub_income_source` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_hub_skip_uses_internal_marker_not_user_fixed_display` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_treasury_budget_summary_names_substrate_hub_surfaces` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_treasury_budget_summary_names_fixed_salary_display` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_hub_uses_month_opening_treasury_before_lower_priority_expenses` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_substrate_hub_integer_allocation_drives_all_consumers` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_substrate_hub_debit_fails_loud_when_required_debit_not_booked` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_region_army_pay_tick_treats_missing_breakdown_as_no_delta` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_fixed_flows_substrate_hub_fractional_due_caps_integer_debit` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_region_army_pay_tick_treats_missing_breakdown_as_no_delta` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_fixed_flows_substrate_hub_failure_rolls_back_cutover_writes` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_budget_lines_read_fiscal_engine_gate_for_army_pay` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fiscal_config_v8_migration_preserves_deleted_old_keys` | 2 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_province_pay_shortfall_reduces_pure_province_army_morale` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_armies_provision_empty_mutiny_status_flag` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_zero_due_province_army_morale_short_circuits` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_tusi_self_funded_army_skips_pay_morale_channel` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_pay_morale_formula_clamps_shortfall_and_old_arrears_gate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_arrears_rejects_exempt_army_under_cutover` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_arrears_reconciles_pay_source_container_immediately` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_budget_lines_read_fiscal_engine_gate_for_army_pay` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_pre_s6_cutover_save_without_fiscal_engine_migrates_to_substrate_hub` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fiscal_config_v8_migration_preserves_deleted_old_keys` | 2 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_province_pay_shortfall_reduces_pure_province_army_morale` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_armies_provision_empty_mutiny_status_flag` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_zero_due_province_army_morale_short_circuits` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_tusi_self_funded_army_skips_pay_morale_channel` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_pay_morale_formula_clamps_shortfall_and_old_arrears_gate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flows_cutover_uses_total_source_shortfall_for_mixed_army_morale` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_arrears_splits_positive_and_rejects_negative_under_cutover` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_arrears_rejects_exempt_army_under_cutover` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_arrears_reconciles_pay_source_container_immediately` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_pay_source_conservation_rejects_per_army_derived_arrears_drift` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_army_delta_manpower_reconciles_pay_source_due_immediately` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_owner_power_to_ming_requires_same_delta_pay_source` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_rejects_unknown_owner_power_without_clearing_arrears` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_rejects_pay_source_without_ming_settle_substrate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_owner_power_from_ming_clears_pay_source_arrears` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff` | 2 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_economy_pay_arrears_preserves_fractional_pay_source_tail` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies` | 2 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_new_ming_army_requires_valid_pay_source_under_cutover` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_new_ming_army_rejects_non_ming_pay_source_region` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_new_ming_army_stores_pay_source_columns_under_cutover` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_new_ming_army_rejects_initial_arrears_under_cutover` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_army_delta_manpower_reconciles_pay_source_due_immediately` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_owner_power_to_ming_requires_same_delta_pay_source` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_rejects_unknown_owner_power_without_clearing_arrears` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_rejects_pay_source_without_ming_settle_substrate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_owner_power_from_ming_clears_pay_source_arrears` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_army_delta_rejects_ming_exempt_flag_before_pay_arrears_writeoff` | 2 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_economy_pay_arrears_from_central_account_splits_by_current_debt_ratio` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_economy_pay_arrears_from_central_account_can_repay_pure_province_source_army` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_economy_pay_arrears_preserves_fractional_pay_source_tail` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_economy_pay_arrears_clamps_integer_spend_and_preserves_tail` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_economy_pay_arrears_rejects_missing_or_unknown_target_without_repaying_other_armies` | 2 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_manpower_zero_writeoffs_pay_source_arrears_before_retiring_army` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_manpower_zero_then_arrears_delta_does_not_resurrect_writeoff_debt` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_new_ming_army_requires_valid_pay_source_under_cutover` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_new_ming_army_rejects_non_ming_pay_source_region` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_new_ming_army_stores_pay_source_columns_under_cutover` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_new_ming_army_rejects_initial_arrears_under_cutover` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_region_loader_rejects_bad_shared_settle_meta_defaults_container` | 3 | **keep** | 🔒 fail-loud 负向 |
 | `test_region_loader_rejects_bad_plain_settle_meta` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_region_loader_rejects_bad_settle_meta_defaults` | 4 | **keep** | 🔒 fail-loud 负向 |
-| `test_all_15_regular_provinces_first_tick_golden` | 15 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_zhongyuan_jingshi_primary_source_refinement` | 3 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_south_southwest_seeds_have_valid_historical_settle_substrate` | 6 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_south_southwest_settle_tick_golden_and_bridge_persist` | 6 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_shaanxi_seed_has_valid_settle_substrate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_shaanxi_seed_is_relabelled_to_historical_shadow_scale` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_border_remainder_seeds_have_valid_settle_substrate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_border_slice_raw_content_keeps_primary_source_anchors` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_liaodong_and_dongjiang_are_pure_military_pay_funnels` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_liaodong_pay_source_rows_add_to_standalone_military_funnel` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_all_15_regular_provinces_first_tick_golden` | 15 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_zhongyuan_jingshi_primary_source_refinement` | 3 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_south_southwest_seeds_have_valid_historical_settle_substrate` | 6 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_south_southwest_settle_tick_golden_and_bridge_persist` | 6 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_shaanxi_seed_has_valid_settle_substrate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_shaanxi_seed_is_relabelled_to_historical_shadow_scale` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_border_remainder_seeds_have_valid_settle_substrate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_shanxi_seed_stacks_frontier_pay_and_jin_vassal_dues` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_border_slice_raw_content_keeps_primary_source_anchors` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_liaodong_and_dongjiang_are_pure_military_pay_funnels` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_liaodong_primary_source_due_survives_fresh_db_pay_source_reconcile` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_liaodong_pay_source_rows_add_to_standalone_military_funnel` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_liaodong_settle_tick_keeps_standalone_funnel_deficit_out_of_pay_rows` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_dongjiang_content_pay_funnel_survives_fresh_db_pay_source_reconcile` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_old_dongjiang_pay_funnel_due_backfills_before_new_pay_rows` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_primary_source_army_pay_due_rejects_dirty_annual_amount` | 5 | **keep** | 🔒 fail-loud 负向 |
 | `test_standalone_army_pay_funnel_rejects_malformed_settle_shapes` | 4 | **keep** | 🔒 fail-loud 负向 |
-| `test_standalone_army_pay_container_total_uses_grouped_arrears` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_standalone_army_pay_container_total_uses_grouped_arrears` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_standalone_army_pay_container_total_rejects_malformed_region_shapes` | 2 | **keep** | 🔒 fail-loud 负向 |
-| `test_jiangnan_core_seeds_have_positive_remittance_golden` | 4 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_zhongyuan_jingshi_seeds_have_valid_historical_settle` | 3 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_henan_royal_grants_make_zonglu_due_heavy` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_zhongyuan_jingshi_settle_province_tick_golden` | 3 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_settle_province_tick_persists_shaanxi_historical_shadow_golden` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_settle_province_tick_persists_border_remainder_golden` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_settle_province_tick_qingzhang_action` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_jiangnan_core_seeds_have_positive_remittance_golden` | 4 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_huguang_seed_stacks_jiangnan_surplus_with_chu_princely_due` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_zhongyuan_jingshi_seeds_have_valid_historical_settle` | 3 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_beizhili_huangzhuang_is_inner_treasury_not_transport_quota` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_henan_royal_grants_make_zonglu_due_heavy` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_zhongyuan_jingshi_settle_province_tick_golden` | 3 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_settle_province_tick_persists_shaanxi_historical_shadow_golden` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_settle_province_tick_persists_border_remainder_golden` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_settle_province_tick_qingzhang_action` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_settle_province_tick_port_lock_no_persist_on_raise` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_settle_province_tick_unknown_region_raises` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_settle_province_tick_nondict_fiscal_raises` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_apply_fixed_period_flows_advances_shaanxi_substrate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_logs_border_remainder_substrate` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_logs_zhongyuan_jingshi_shadow_ticks` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_absent_does_not_break_flows` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_corrupt_isolated_from_flows` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_corrupt_due_isolated` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_corrupt_stock_isolated` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_malformed_settle_shape_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_malformed_fiscal_container_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_apply_fixed_period_flows_advances_shaanxi_substrate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_uses_dynamic_ming_settle_spine` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_logs_border_remainder_substrate` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_logs_zhongyuan_jingshi_shadow_ticks` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_absent_does_not_break_flows` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_corrupt_isolated_from_flows` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_corrupt_due_isolated` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_corrupt_stock_isolated` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_malformed_settle_shape_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_malformed_fiscal_container_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_cutover_pay_source_errors_abort_fixed_flows` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_cutover_substrate_bad_state_uses_settlement_abort_error_pack` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_cutover_jingyun_gross_bool_uses_settlement_abort_error_pack` | 1 | **keep** | 🔒 fail-loud 负向 |
@@ -1955,22 +2039,22 @@
 | `test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pack` | 1 | **keep** | 🔒 fail-loud 负向 |
 | `test_resolve_directives_nested_cutover_bad_state_uses_settlement_abort_error_pack` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_apply_fixed_period_flows_malformed_fiscal_container_isolated` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_substrate_malformed_fiscal_json_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_malformed_fiscal_json_isolated` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated` | 2 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flow_loader_accepts_already_decoded_fiscal_dict` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flow_loader_rejects_non_finite_numeric_values` | 3 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_fixed_flow_loader_rejects_decoded_non_dict_payloads` | 3 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_apply_fixed_period_flows_malformed_fiscal_container_isolated` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_substrate_malformed_fiscal_json_is_logged_not_prefiltered` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_malformed_fiscal_json_isolated` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_malformed_fiscal_scalar_isolated` | 2 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flow_loader_accepts_already_decoded_fiscal_dict` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flow_loader_rejects_non_finite_numeric_values` | 3 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_fixed_flow_loader_rejects_decoded_non_dict_payloads` | 3 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_commits_shadow_substrate_when_standalone` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 | `test_advance_province_fiscal_substrate_rolls_back_inside_outer_atomic` | 1 | **keep** | 🔒 fail-loud 负向 |
-| `test_apply_fixed_period_flows_advances_and_logs_jiangnan_core` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_apply_fixed_period_flows_logs_south_southwest_shadow_ticks` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_all_ming_settle_substrates_advance_with_observable_shadow_tlog` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_shadow_spine_uses_batch_bridge_without_per_region_reload` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_seeded_substrates_keep_multi_tick_historical_trajectories` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_all_settle_substrate_provisional_meta_covers_virtual_fields` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
-| `test_jiangnan_core_uses_wanli_huiji_lu_primary_seed` | 1 | **rewrite** | ⑤ 重复 seed/账户变体可参数化合并 |
+| `test_apply_fixed_period_flows_advances_and_logs_jiangnan_core` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_apply_fixed_period_flows_logs_south_southwest_shadow_ticks` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_all_ming_settle_substrates_advance_with_observable_shadow_tlog` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_shadow_spine_uses_batch_bridge_without_per_region_reload` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_seeded_substrates_keep_multi_tick_historical_trajectories` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_all_settle_substrate_provisional_meta_covers_virtual_fields` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
+| `test_jiangnan_core_uses_wanli_huiji_lu_primary_seed` | 1 | **rewrite** | ⑤ 仅在耗时诊断后合并机械重复 seed/账户变体；禁止统包参数化/新建池化基建 |
 
 ### `tests/test_fiscal_tick.py` 🔒
 
@@ -2075,69 +2159,69 @@
 
 ### `tests/test_knowledge.py`
 
-- 规模：467 行 / 17 函数 / 20 节点 · 处置分布：`{'merge': 17}` · 主注：③ 与 character_knowledge_489 同根 #489
+- 规模：467 行 / 17 函数 / 20 节点 · 处置分布：`{'move': 17}`  · 主注：move→character_knowledge_489（archive/source_scope 独有契约）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_regional_world_keeps_qualitative_and_countable_region_facts` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_knowledge_exclusion_reads_current_office_without_nameerror` | 4 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_knowledge_projects_gazette_and_chapter_sources_per_character` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_knowledge_projects_mixed_archive_from_durable_source_scope` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_rewritten_archive_cannot_reintroduce_restricted_source` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_archive_write_materializes_unmirrored_source_scope` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_public_counterpart_keeps_only_independent_public_sources` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_counterpart_never_uses_aggregate_when_sources_exist` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_turn_report_counterpart_never_uses_aggregate_when_sources_exist` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_counterpart_does_not_repeat_derived_turn_report_source` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_character_projection_shows_monthly_public_source_once_after_chapter_write` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_shared_archive_storage_never_writes_restricted_aggregate` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_character_added_after_archive_cannot_read_old_participant_source` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_with_only_derived_report_does_not_publish_its_body_again` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_counterpart_filters_derived_report_before_reaggregating_sources` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_chapter_counterpart_filters_settlement_narrative_derived_with_report` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
-| `test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge` | 1 | **merge** | ③ 独有 archive/source_scope 迁 character_knowledge_489，重叠 exclusion/counterpart 删 |
+| `test_regional_world_keeps_qualitative_and_countable_region_facts` | 1 | **move** | move→test_character_knowledge_489.py｜契约：区域 world 保留定性+可数 region facts、隐藏抽象轴 |
+| `test_knowledge_exclusion_reads_current_office_without_nameerror` | 4 | **move** | move→test_character_knowledge_489.py｜契约：exclusion 读当前 office 不 NameError（含 parametrize 变体） |
+| `test_knowledge_projects_gazette_and_chapter_sources_per_character` | 1 | **move** | move→test_character_knowledge_489.py｜契约：gazette/chapter 源按角色投影 |
+| `test_knowledge_projects_mixed_archive_from_durable_source_scope` | 1 | **move** | move→test_character_knowledge_489.py｜契约：混合 archive 自 durable source_scope 投影 |
+| `test_rewritten_archive_cannot_reintroduce_restricted_source` | 1 | **move** | move→test_character_knowledge_489.py｜契约：改写 archive 不得回引受限源 |
+| `test_archive_write_materializes_unmirrored_source_scope` | 1 | **move** | move→test_character_knowledge_489.py｜契约：archive 写入物化未镜像 source_scope |
+| `test_chapter_public_counterpart_keeps_only_independent_public_sources` | 1 | **move** | move→test_character_knowledge_489.py｜契约：chapter public counterpart 仅独立 public 源 |
+| `test_chapter_counterpart_never_uses_aggregate_when_sources_exist` | 1 | **move** | move→test_character_knowledge_489.py｜契约：有源时 counterpart 不用 aggregate |
+| `test_turn_report_counterpart_never_uses_aggregate_when_sources_exist` | 1 | **move** | move→test_character_knowledge_489.py｜契约：turn_report counterpart 同左 |
+| `test_chapter_counterpart_does_not_repeat_derived_turn_report_source` | 1 | **move** | move→test_character_knowledge_489.py｜契约：counterpart 不重复 derived turn_report 源 |
+| `test_character_projection_shows_monthly_public_source_once_after_chapter_write` | 1 | **move** | move→test_character_knowledge_489.py｜契约：chapter 写入后 monthly public 源只投影一次 |
+| `test_shared_archive_storage_never_writes_restricted_aggregate` | 1 | **move** | move→test_character_knowledge_489.py｜契约：shared archive 永不写受限 aggregate |
+| `test_character_added_after_archive_cannot_read_old_participant_source` | 1 | **move** | move→test_character_knowledge_489.py｜契约：archive 后加入角色不可读旧 participant 源 |
+| `test_chapter_with_only_derived_report_does_not_publish_its_body_again` | 1 | **move** | move→test_character_knowledge_489.py｜契约：仅 derived report 的 chapter 不再发布 body |
+| `test_chapter_counterpart_filters_derived_report_before_reaggregating_sources` | 1 | **move** | move→test_character_knowledge_489.py｜契约：reaggregate 前滤 derived report |
+| `test_chapter_counterpart_filters_settlement_narrative_derived_with_report` | 1 | **move** | move→test_character_knowledge_489.py｜契约：settlement narrative derived 同滤 |
+| `test_883_legacy_aggregate_without_source_rows_does_not_authorize_knowledge` | 1 | **move** | move→test_character_knowledge_489.py｜契约：无 source 行的 legacy aggregate 不授权 knowledge |
 
 ### `tests/test_llm_channel_config.py`
 
-- 规模：434 行 / 23 函数 / 23 节点 · 处置分布：`{'merge': 23}` · 主注：③ 与 runtime/web_llm 三叠
+- 规模：434 行 / 23 函数 / 23 节点 · 处置分布：`{'keep': 23}`  · 主注：keep｜channel/create/verify 真源锚（非三叠可删）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_create_chat_model_respects_api_channel_over_backend_env` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_create_chat_model_uses_cli_channel_without_backend_env` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_load_llm_config_records_backend_env_as_cli_channel` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_loaded_api_config_is_not_rerouted_by_later_backend_env` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_load_llm_config_migrates_legacy_none_thinking_to_off` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_create_chat_model_maps_off_reasoning_to_openai_none` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_create_chat_model_leaves_openai_reasoning_default_unset` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_create_chat_model_maps_reasoning_strength_to_minimax_thinking` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_minimax_reasoning_strength_overrides_stale_thinking_level` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_legacy_backend_env_uses_runner_default_model_not_api_model` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_verify_llm_available_respects_api_channel_over_backend_env` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_verify_llm_available_smokes_cli_channel_without_backend_env` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_verify_llm_available_cli_channel_failure_raises` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_verify_llm_available_smokes_legacy_env_only_backend` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_verify_llm_available_legacy_env_only_failure_raises` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_for_role_preserves_cli_channel_fields_for_advanced_roles` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_config_constants_single_source_in_models` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_load_llm_config_cli_env_uses_cli_default_timeout_not_api` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_web_runtime_cli_no_saved_timeout_uses_cli_default` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_for_role_advanced_empty_cli_model_no_api_model_leak` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
-| `test_cli_empty_cli_model_does_not_leak_api_model_to_runner` | 1 | **merge** | ③ 共享 load/save/smoke 形状下沉一处；本文件作 channel 真源锚 |
+| `test_create_chat_model_respects_api_channel_over_backend_env` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_create_chat_model_uses_cli_channel_without_backend_env` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_load_llm_config_records_backend_env_as_cli_channel` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_loaded_api_config_is_not_rerouted_by_later_backend_env` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_load_llm_config_migrates_legacy_advanced_thinking_to_reasoning` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_load_llm_config_migrates_legacy_none_thinking_to_off` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_create_chat_model_maps_off_reasoning_to_openai_none` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_create_chat_model_leaves_openai_reasoning_default_unset` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_create_chat_model_maps_reasoning_strength_to_dashscope_thinking_budget` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_create_chat_model_maps_reasoning_strength_to_minimax_thinking` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_minimax_reasoning_strength_overrides_stale_thinking_level` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_legacy_backend_env_uses_runner_default_model_not_api_model` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_verify_llm_available_respects_api_channel_over_backend_env` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_verify_llm_available_smokes_cli_channel_without_backend_env` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_verify_llm_available_cli_channel_failure_raises` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_verify_llm_available_smokes_legacy_env_only_backend` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_verify_llm_available_legacy_env_only_failure_raises` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_for_role_preserves_cli_channel_fields_for_advanced_roles` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_config_constants_single_source_in_models` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_load_llm_config_cli_env_uses_cli_default_timeout_not_api` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_web_runtime_cli_no_saved_timeout_uses_cli_default` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_for_role_advanced_empty_cli_model_no_api_model_leak` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
+| `test_cli_empty_cli_model_does_not_leak_api_model_to_runner` | 1 | **keep** | keep｜`test_llm_channel_config.py` 为 channel/create/verify 真源锚；与 runtime 槽位/web HTTP 不同接缝，禁止当重复删 |
 
 ### `tests/test_llm_key_helpers.py`
 
-- 规模：45 行 / 5 函数 / 5 节点 · 处置分布：`{'delete': 5}` · 主注：④ 纯函数真值表
+- 规模：45 行 / 5 函数 / 5 节点 · 处置分布：`{'keep': 5}`  · 主注：🔒 ADR 0001 API key 负向边界（__keep__/placeholder/空白）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_is_real_api_key_rejects_none_empty_placeholder_whitespace` | 1 | **delete** | ④ 纯函数真值表 |
-| `test_is_real_api_key_rejects_keep_sentinel` | 1 | **delete** | ④ 纯函数真值表 |
-| `test_is_real_api_key_accepts_real_key_trimmed` | 1 | **delete** | ④ 纯函数真值表 |
-| `test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty` | 1 | **delete** | ④ 纯函数真值表 |
-| `test_real_api_key_or_empty_returns_trimmed_real_key` | 1 | **delete** | ④ 纯函数真值表 |
+| `test_is_real_api_key_rejects_none_empty_placeholder_whitespace` | 1 | **keep** | 🔒 ADR 0001 负向：None/空/空白/CLI_BACKEND_PLACEHOLDER 不得识别为真 key（不入 API 通道） |
+| `test_is_real_api_key_rejects_keep_sentinel` | 1 | **keep** | 🔒 ADR 0001 负向：`__keep__` sentinel 不得当真 key 存盘/送 OpenAI（历史 footgun） |
+| `test_is_real_api_key_accepts_real_key_trimmed` | 1 | **keep** | 🔒 真 key 正对照：trim 后识别；与负向边界成对，禁裸删 |
+| `test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty` | 1 | **keep** | 🔒 ADR 0001 负向：falsy/placeholder 归一为空串，阻断占位符流入 client |
+| `test_real_api_key_or_empty_returns_trimmed_real_key` | 1 | **keep** | 🔒 真 key 正对照：trim 后原样返回；与归一空串成对 |
 
 ### `tests/test_memory_person_changes.py`
 
@@ -2181,7 +2265,7 @@
 
 ### `tests/test_mindreading_491.py`
 
-- 规模：302 行 / 14 函数 / 14 节点 · 处置分布：`{'keep': 14}`
+- 规模：302 行 / 14 函数 / 14 节点 · 处置分布：`{'keep': 11, 'rewrite': 3}` · 主注：真行为+② 盯文案 rewrite（typed/无裸数值）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
@@ -2190,9 +2274,9 @@
 | `test_multi_office_attendant_survives_persistence_without_weakening_unique_slot` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_mindreading_agent_has_no_minister_session_history_or_tools` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_mindreading_and_scouting_consume_the_same_precision_contract` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_model_receives_complete_qualitative_sources_and_result_enters_payload` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_default_seed_mindreading_materials_do_not_expose_integration_markers` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_mindreading_reads_current_structured_ledger_without_raw_scores` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_model_receives_complete_qualitative_sources_and_result_enters_payload` | 1 | **rewrite** | ② 盯文：`工心计`/`案情分量：无` 等自由文案 → 改查 typed 定性字段/无裸数值边界（material 键集合 + band 枚举），保留「完整定性源入 payload」契约 |
+| `test_default_seed_mindreading_materials_do_not_expose_integration_markers` | 1 | **rewrite** | ② 盯文：`仅线索`/integ 子串 → 改查 materials 结构不含 integration marker 字段/枚举；保留种子材料不泄内部标记契约 |
+| `test_mindreading_reads_current_structured_ledger_without_raw_scores` | 1 | **rewrite** | ② 盯文：`名义党派：皇党`/`党色极深`/`离心已显`/`合谋` 自由文案 → 改查 source 结构字段与无裸分数字符串；保留「读当前 ledger、不泄 raw scores」契约 |
 | `test_mindreading_record_survives_restore_without_entering_shared_history` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_undo_chat_turn_permanently_removes_mindreading_record` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_runtime_uses_existing_model_config_factory` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
@@ -2300,27 +2384,27 @@
 
 ### `tests/test_near_minister_reports_492.py`
 
-- 规模：220 行 / 17 函数 / 17 节点 · 处置分布：`{'keep': 17}`
+- 规模：220 行 / 17 函数 / 17 节点 · 处置分布：`{'keep': 11, 'rewrite': 6}` · 主注：真行为+② 盯文案 rewrite（source_kind/空缺/countable）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
 | `test_frontier_vacancies_are_seeded_and_restore_from_characters` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_vacancy_projection_recognises_acting_office_text` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_generic_office_queries_return_current_vacancies` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_return_report_records_source_and_keeps_countable_facts` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere` | 1 | **rewrite** | ② 盯文：unknown 整句相等 → 改查 source_kind/空缺集合/结构化 unknown 标记；保留授权种子可答、他处 unknown 契约 |
+| `test_generic_office_queries_return_current_vacancies` | 1 | **rewrite** | ② 盯文：`陕西巡抚当前虚悬` 子串 → 改查 vacancy 投影空缺集合与 office_title 结构化事实；保留泛询问返回当前虚悬契约 |
+| `test_return_report_records_source_and_keeps_countable_facts` | 1 | **rewrite** | ② 盯文：`12000`/`25月` statement 子串 → 改查 source_kind/source_ref + countable facts 结构字段；保留来源记录与可数事实不丢契约 |
 | `test_report_source_is_derived_from_query_not_caller_label` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_domain_reports_reuse_existing_qualitative_readers` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_domain_reports_reuse_existing_qualitative_readers` | 1 | **rewrite** | ② 盯文：statement 整句相等 qualitative 读者输出 → 改查调用域 reader + source_kind；保留复用既有定性读者契约 |
 | `test_return_report_interface_does_not_depend_on_minister_reply` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_production_report_is_durable_and_scoped_to_the_questioned_minister` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_firsthand_requires_a_persisted_witness_record` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_firsthand_witness_must_match_questioned_domain` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_firsthand_report_uses_the_matching_witness_body` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_firsthand_report_uses_the_matching_witness_body` | 1 | **rewrite** | ② 盯文：witness body 整句相等 → 改查 source_kind=firsthand + source_ref/statement 结构化同源；保留匹配见闻正文契约 |
 | `test_question_wording_cannot_create_firsthand_provenance` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_explicit_inquiry_overrides_matching_firsthand_witness` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_unsupported_inquiry_is_not_persisted_as_false_office_report` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
 | `test_bandit_inquiry_uses_shipped_inner_rebellion_kind` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
-| `test_firsthand_report_prefers_newest_matching_durable_witness` | 1 | **keep** | 真行为 经公共接缝观察外部行为 |
+| `test_firsthand_report_prefers_newest_matching_durable_witness` | 1 | **rewrite** | ② 盯文：最新 witness statement 整句 → 改查耐久见闻序与 source_ref；保留「最新匹配见闻优先」契约 |
 
 ### `tests/test_new_game_smoke.py`
 
@@ -2898,13 +2982,13 @@
 
 ### `tests/test_region_citydefense_display.py`
 
-- 规模：47 行 / 3 函数 / 5 节点 · 处置分布：`{'merge': 3}` · 主注：③② display 文案孪生 citydefense
+- 规模：47 行 / 3 函数 / 5 节点 · 处置分布：`{'rewrite': 3}`  · 主注：rewrite｜② 文案→结构字段
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_region_report_shows_city_defense` | 1 | **merge** | ②③ 文案 contains 并入 citydefense 结构断言或删 |
-| `test_region_detail_shows_city_level_and_cannon` | 1 | **merge** | ②③ 文案 contains 并入 citydefense 结构断言或删 |
-| `test_region_detail_uses_the_discrete_city_defense_scale` | 3 | **merge** | ②③ 文案 contains 并入 citydefense 结构断言或删 |
+| `test_region_report_shows_city_defense` | 1 | **rewrite** | rewrite｜② 文案 contains → 改查 region 结构字段 city_level/cannon；可与 `test_region_citydefense.py` 同断言风格，但不删结构契约 |
+| `test_region_detail_shows_city_level_and_cannon` | 1 | **rewrite** | rewrite｜② 文案 contains → 结构字段 city_level/cannon；保留 detail 出口契约 |
+| `test_region_detail_uses_the_discrete_city_defense_scale` | 3 | **rewrite** | rewrite｜② 离散城防文案 → 结构枚举/等级边界；保留 discrete scale 契约 |
 
 ### `tests/test_rejection_wiring.py` 🔒
 
@@ -3000,32 +3084,32 @@
 
 ### `tests/test_runtime_llm_config.py`
 
-- 规模：472 行 / 22 函数 / 22 节点 · 处置分布：`{'merge': 22}` · 主注：③ 与 channel/web 三叠
+- 规模：472 行 / 22 函数 / 22 节点 · 处置分布：`{'keep': 22}`  · 主注：keep｜runtime 槽位 load/save 真源锚
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_load_runtime_llm_missing_file_keeps_empty_dict_contract` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_malformed_json_returns_empty` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_coerces_stringified_numeric_fields` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_non_dict_payload_returns_empty` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_migrates_flat_api_config` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_persists_channel_slots` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_persists_api_reasoning_strength` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_api_save_preserves_cli_reasoning_strength` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_cli_save_preserves_api_reasoning_strength` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_cli_save_can_seed_api_reasoning_strength` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_can_clear_reasoning_strength_to_default` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_exposes_api_aliases_when_cli_is_active` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_llm_preserves_cli_reasoning_strength` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_preserves_existing_cli_slot_when_saving_api` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_runtime_flat_cli_backend_placeholder_not_api_channel` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_cli_backend_active_total_on_unsupported_runner` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_create_chat_model_unsupported_cli_runner_raises_unavailable` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_for_role_advanced_drops_placeholder_key` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
-| `test_load_llm_config_api_mode_clears_placeholder` | 1 | **merge** | ③ 持久化槽与 channel/web 重叠，独有 slot 案迁入锚后删重叠 |
+| `test_load_runtime_llm_missing_file_keeps_empty_dict_contract` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_malformed_json_returns_empty` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_coerces_stringified_numeric_fields` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_garbage_numeric_fields_fall_back_to_default` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_non_dict_payload_returns_empty` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_migrates_flat_api_config` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_persists_channel_slots` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_persists_api_reasoning_strength` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_api_save_preserves_cli_reasoning_strength` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_cli_save_preserves_api_reasoning_strength` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_cli_save_can_seed_api_reasoning_strength` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_can_clear_reasoning_strength_to_default` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_exposes_api_aliases_when_cli_is_active` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_llm_preserves_cli_reasoning_strength` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_preserves_existing_cli_slot_when_saving_api` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_save_runtime_llm_preserves_existing_api_slot_when_saving_cli` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_runtime_flat_cli_backend_placeholder_not_api_channel` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_cli_backend_active_explicit_cli_bogus_runner_false_despite_env` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_cli_backend_active_total_on_unsupported_runner` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_create_chat_model_unsupported_cli_runner_raises_unavailable` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_for_role_advanced_drops_placeholder_key` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
+| `test_load_llm_config_api_mode_clears_placeholder` | 1 | **keep** | keep｜`test_runtime_llm_config.py` 为 runtime 槽位 load/save/placeholder 真源锚；与 channel 模型工厂/web HTTP 不同接缝，未点名同一外部断言前不作 delete-as-duplicate |
 
 ### `tests/test_secret_order_injection.py`
 
@@ -3138,22 +3222,22 @@
 
 ### `tests/test_secret_order_status_cn.py`
 
-- 规模：234 行 / 12 函数 / 12 节点 · 处置分布：`{'merge': 12}` · 主注：③② 状态桶盯文+隔离面与 883 重叠
+- 规模：234 行 / 12 函数 / 12 节点 · 处置分布：`{'keep': 4, 'rewrite': 8}`  · 主注：rewrite 盯文桶 + keep 隔离/恢复
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_group_buckets_by_status_into_cn_keys` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_strips_english_status_field` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_preserves_carry_fields_and_maps_progress` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_truncates_content_to_120` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_drops_done_and_failed_orders` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_empty_input_returns_both_empty_groups` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_hardens_against_malformed_input` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_simulator_payload_never_contains_secret_orders` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_build_simulator_payload_omits_secret_orders_when_none_are_present` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_group_reads_progress_from_legacy_progress_key` | 1 | **merge** | ②③ 中文状态桶盯文→结构枚举；文件并入密令簇 |
-| `test_recovered_grouped_normalizes_legacy_list` | 1 | **merge** | ③ 隔离断言迁 isolation_883；状态标签改结构桶 |
-| `test_resolve_context_roundtrips_grouped_secret_orders_as_dict` | 1 | **merge** | ③ 隔离断言迁 isolation_883；状态标签改结构桶 |
+| `test_group_buckets_by_status_into_cn_keys` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_strips_english_status_field` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_preserves_carry_fields_and_maps_progress` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_truncates_content_to_120` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_drops_done_and_failed_orders` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_empty_input_returns_both_empty_groups` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_group_hardens_against_malformed_input` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_simulator_payload_never_contains_secret_orders` | 1 | **keep** | keep｜密令不得进入 simulator payload 的外部隔离契约；883 管 shared archive，非同一断言 |
+| `test_build_simulator_payload_omits_secret_orders_when_none_are_present` | 1 | **keep** | keep｜无密令时 payload 形状稳定；与上条成对 |
+| `test_group_reads_progress_from_legacy_progress_key` | 1 | **rewrite** | rewrite｜② 中文状态桶/截断盯文 → 结构枚举 status→bucket 映射与字段保留；不迁文件除非断言已与 883 同一外部观测 |
+| `test_recovered_grouped_normalizes_legacy_list` | 1 | **keep** | keep｜恢复路径 legacy list→grouped dict 归一；883 无同一外部断言 |
+| `test_resolve_context_roundtrips_grouped_secret_orders_as_dict` | 1 | **keep** | keep｜resolve_context roundtrip grouped dict；独有恢复契约 |
 
 ### `tests/test_secret_order_update.py`
 
@@ -3487,14 +3571,14 @@
 
 ### `tests/test_web_audience_night_498.py`
 
-- 规模：784 行 / 8 函数 / 8 节点 · 处置分布：`{'keep': 5, 'merge': 3}` · 主注：③ 与 audience_night_498 同根 #498
+- 规模：784 行 / 8 函数 / 8 节点 · 处置分布：`{'keep': 8}`  · 主注：keep｜web/ASGI + #612 endorsement 负向闸
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
 | `test_asgi_inflight_reply_lands_then_issue_closes_and_advances` | 1 | **keep** | 真行为 web/ASGI 独有接缝，合并簇时保留 |
-| `test_night_approved_directive_closes_into_month_end_without_second_review` | 1 | **merge** | ③ 与 core audience_night_498 交叉的 advance/close 断言可去重 |
-| `test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier` | 1 | **merge** | ③ 与 core audience_night_498 交叉的 advance/close 断言可去重 |
-| `test_legacy_pending_only_advances_to_durable_dossier_without_review_api` | 1 | **merge** | ③ 与 core audience_night_498 交叉的 advance/close 断言可去重 |
+| `test_night_approved_directive_closes_into_month_end_without_second_review` | 1 | **keep** | keep｜web/ASGI 夜准奏牍入月末无二次 review 的 HTTP 接缝；core `test_audience_night_498` 无同一 ASGI 断言，非可删重复 |
+| `test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier` | 1 | **keep** | 🔒 #612 独有：endorsement 调用 gate-free/无 DB 事务占用、CLOSING 全入口冻结、失败重开恢复 admission、重试收敛；非 #498 advance/close 重复，负向闸不可删 |
+| `test_legacy_pending_only_advances_to_durable_dossier_without_review_api` | 1 | **keep** | keep｜web 退役 review API 后 legacy pending→durable dossier；ASGI 独有，非 core 重复 |
 | `test_asgi_hanging_chat_makes_issue_fail_closed` | 1 | **keep** | 真行为 web/ASGI 独有接缝，合并簇时保留 |
 | `test_sync_advance_endpoint_does_not_stall_event_loop` | 1 | **keep** | 真行为 web/ASGI 独有接缝，合并簇时保留 |
 | `test_asgi_phase_flip_while_waiting_gate_rejected` | 1 | **keep** | 真行为 web/ASGI 独有接缝，合并簇时保留 |
@@ -3568,26 +3652,26 @@
 
 ### `tests/test_web_llm_runtime_config.py`
 
-- 规模：973 行 / 38 函数 / 38 节点 · 处置分布：`{'merge': 14, 'keep': 24}` · 主注：③ 共享槽下沉；HTTP 独有 keep
+- 规模：973 行 / 38 函数 / 38 节点 · 处置分布：`{'keep': 38}`  · 主注：keep｜web/menu/HTTP 接缝（未证等价不删）
 
 | 测试 | 节点 | 处置 | 理由 |
 |---|---:|---|---|
-| `test_runtime_cli_slot_builds_cli_llm_config_without_backend_env` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_advanced_llm_verification_preserves_api_channel_over_backend_env` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_advanced_llm_verification_preserves_reasoning_strength` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_runtime_api_reasoning_strength_builds_llm_config` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
+| `test_runtime_cli_slot_builds_cli_llm_config_without_backend_env` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_advanced_llm_verification_preserves_api_channel_over_backend_env` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_advanced_llm_verification_preserves_reasoning_strength` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_runtime_api_reasoning_strength_builds_llm_config` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_runtime_env_legacy_advanced_thinking_builds_reasoning_strength` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
 | `test_build_llm_config_switches_to_api_on_real_key_over_backend_env` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
 | `test_build_llm_config_recovers_preserved_api_key_on_switch_back` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
-| `test_set_llm_config_cli_placeholder_not_real_api_key` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
+| `test_set_llm_config_cli_placeholder_not_real_api_key` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
 | `test_api_set_llm_config_response_reports_reasoning_capability` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
-| `test_api_set_llm_config_explicit_cli_channel_switch` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_api_set_llm_config_keep_sentinels_pass_none_to_build` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_commit_cli_seeds_api_slot_from_session_when_slot_empty` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_commit_cli_preserves_when_slot_already_has_key` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_api_set_llm_config_commit_runs_on_event_loop` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_api_set_llm_config_verify_runs_off_event_loop` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
-| `test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
+| `test_api_set_llm_config_explicit_cli_channel_switch` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_api_set_llm_config_keep_sentinels_pass_none_to_build` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_commit_cli_seeds_api_slot_from_session_when_slot_empty` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_commit_cli_preserves_when_slot_already_has_key` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_api_set_llm_config_commit_runs_on_event_loop` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_api_set_llm_config_verify_runs_off_event_loop` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
+| `test_api_set_llm_config_verify_failure_skips_commit_and_passes_through_httpexception` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
 | `test_menu_status_active_cli_unsupported_runner_not_ready_despite_preserved_api_key` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
 | `test_menu_status_active_cli_placeholder_api_key_not_counted` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
 | `test_menu_status_reports_reasoning_strength_capability_for_cli_runner` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
@@ -3609,7 +3693,7 @@
 | `test_reset_cli_verify_failure_keeps_existing_main_db` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
 | `test_menu_save_llm_api_channel_rejects_placeholder_existing_key` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
 | `test_build_llm_config_does_not_reuse_placeholder_as_api_key` | 1 | **keep** | 真行为 web/menu/HTTP 独有接缝 |
-| `test_llm_config_from_runtime_api_channel_drops_placeholder_key` | 1 | **merge** | ③ 与 channel/runtime 共享 load/save/placeholder 下沉 |
+| `test_llm_config_from_runtime_api_channel_drops_placeholder_key` | 1 | **keep** | keep｜web/menu/HTTP 或 runtime-from-web 接缝；与 channel/runtime 单测非自动同一外部断言。未逐条证明等价前不作 delete-as-duplicate |
 
 ### `tests/test_yuan_arrival_185.py`
 
@@ -3624,7 +3708,7 @@
 
 ## 5. Kill-list 精粹（过庭素材）
 
-### 5.1 delete（节点级完整点名）
+### 5.1 delete（节点级完整点名；净减唯一来源）
 
 | 文件::测试 | 节点 | 理由 |
 |---|---:|---|
@@ -3638,16 +3722,7 @@
 | `test_cli_backend.py::test_infer_tag_each_branch` | 1 | ④ 私有 _extract_assignee/_infer_tag，无独立外部行为 |
 | `test_cli_backend.py::test_infer_tag_order_minister_wins_over_decree` | 1 | ④ 私有 _extract_assignee/_infer_tag，无独立外部行为 |
 | `test_cli_backend.py::test_infer_tag_chapter_memory_before_extractor` | 1 | ④ 私有 _extract_assignee/_infer_tag，无独立外部行为 |
-| `test_distance_matrix.py::test_bake_uses_half_endpoint_weights_and_zero_diagonal` | 1 | ④ 纯矩阵数学无游戏接缝 |
-| `test_distance_matrix.py::test_bake_selects_fastest_route_and_preserves_triangle_inequality` | 1 | ④ 纯矩阵数学无游戏接缝 |
-| `test_distance_matrix.py::test_runtime_reader_is_lookup_only` | 1 | ④ 纯矩阵数学无游戏接缝 |
-| `test_distance_matrix.py::test_baked_content_covers_all_regions_and_three_golden_anchors` | 1 | ④ 纯矩阵数学无游戏接缝 |
 | `test_extractor_misroute_surface.py::test_field_owner_map_covers_all_modules` | 1 | ④ 私有 _FIELD_OWNER_MODULE 表断言 |
-| `test_llm_key_helpers.py::test_is_real_api_key_rejects_none_empty_placeholder_whitespace` | 1 | ④ 纯函数真值表 |
-| `test_llm_key_helpers.py::test_is_real_api_key_rejects_keep_sentinel` | 1 | ④ 纯函数真值表 |
-| `test_llm_key_helpers.py::test_is_real_api_key_accepts_real_key_trimmed` | 1 | ④ 纯函数真值表 |
-| `test_llm_key_helpers.py::test_real_api_key_or_empty_normalizes_falsy_and_placeholder_to_empty` | 1 | ④ 纯函数真值表 |
-| `test_llm_key_helpers.py::test_real_api_key_or_empty_returns_trimmed_real_key` | 1 | ④ 纯函数真值表 |
 | `test_minister_chat_timeout.py::test_minister_chat_timeout_shorter_than_settlement_timeout` | 1 | ④ 常量数值比较，非行为 |
 | `test_minister_chat_timeout.py::test_minister_chat_timeout_reasonable_value` | 1 | ④ 常量数值比较，非行为 |
 | `test_person_archive_contract_index.py::test_person_archive_contract_index_exposes_canonical_terms_and_scenarios` | 1 | ④ 常量矩阵/术语表自证，非 applier 行为 |
@@ -3662,53 +3737,78 @@
 | `test_qualitative.py::test_building_qualitative_fields_is_shared_public_interface` | 1 | ④ 纯函数 band/bucket |
 | `test_suggestions_chips_527.py::test_suggestions_for_returns_exactly_two_prefix_chips` | 1 | ④ 同义反复 helper |
 
-### 5.2 merge 簇执行序建议
+**delete 合计 = 24 节点。**  
+**已从 delete 撤回**：distance_matrix×4（ADR 0094）、llm_key_helpers×5（ADR 0001）。
 
-1. LLM 三叠（低风险、低时长）
-2. 城防 display + status_cn 隔离迁徙
-3. #498 web 去交叉
-4. #489 knowledge 并入 489（中风险，需对照密令 exclusion）
+### 5.1b delete-as-duplicate
 
-### 5.3 rewrite 优先序
+本轮 **0 条**。凡原 merge 未能同时点名「现存等价测试函数 + 同一外部断言」者，不得以重复为名删除；改 keep 或 move。
 
-| 优先级 | 文件 | 刀口 |
+### 5.2 move 执行序
+
+1. 将 §3.3 二十条迁入 `test_character_knowledge_489.py`（或该文件的 archive/source_scope 分区），保持断言对外契约不变。  
+2. 迁完后删除空壳 `test_knowledge.py` 仅当文件已无用例。  
+3. **不**把 move 计入净减。
+
+### 5.3 rewrite 优先序（删简优先；无新机制）
+
+| 优先级 | 范围 | 刀口 | 何以不直接删 |
+|---|---|---|---|
+| P0 纪律 | `test_session_cli_fallback.py` 等 | 禁止新增无 preclassified/mock 的 CLI apply；**不加 lint 钩** | 契约仍要，只加固短接纪律 |
+| P1 盯文点名 | `test_mindreading_491.py` 中 3 案；`test_near_minister_reports_492.py` 中 6 案 | typed/无裸数值；source_kind/空缺集合/countable facts | 结构契约仍在，只去自由文案依赖 |
+| P1 | `test_cli_backend.py` | 删 `_extract_assignee*`/`_infer_tag*`（已在 delete）；runner 保持 mock | — |
+| P1 | `test_minister_context.py` / timeout | 去盯文与 kwargs 伪行为 | 真接缝仍要 |
+| P2 | display/prompt 盯文簇（含 citydefense_display、status_cn group_*） | 结构断言替换精确散文 | 同上 |
+| P2 大文件 | `test_event_trigger_gate.py` / `test_fiscal_substrate_bridge.py` / `test_conversational_draft.py` | **先**最小化耗时诊断 → **只**合并机械重复断言 | 禁止池化基建、禁止参数化统包 |
+
+### 5.4 复杂度账（删码/简化优先）
+
+| 机制 | 旧稿 | 本修订 |
 |---|---|---|
-| P0 纪律 | `test_session_cli_fallback.py` | 禁止新增无 preclassified/mock 的 CLI apply；CI 可加 lint 钩 |
-| P1 | `test_cli_backend.py` | 删 `_extract_assignee*`/`_infer_tag*`；runner 保持 mock |
-| P1 | `test_minister_context.py` / `test_minister_chat_timeout.py` | 去盯文与 kwargs 伪行为 |
-| P2 | display/prompt 盯文簇 | 结构断言替换精确散文 |
-| P2 | `test_event_trigger_gate.py` / `test_fiscal_substrate_bridge.py` / `test_conversational_draft.py` | 参数化 + 夹具池化减 setup |
+| CI lint 钩防 CLI 泄漏 | 建议加 | **删除建议**（无真实失败证据、无接缝归属） |
+| pytest-xdist | 终线路径 | **无本轮授权**，不写入执行清单 |
+| 夹具池化 / 共享 setup 池 | 终线路径 | **无本轮授权**；禁止本清单新建平行 fixture 基建 |
+| 财政 146 rewrite / event 203 keep 统包「参数化/池化」 | 有 | **撤回**；改「诊断→点名机械重复才合并」 |
+| move 共享文件 | 与 merge 混写 | move 仅 knowledge→489，目标与契约已点名 |
+| 新共享 fixture 为 merge 服务 | 隐含 | **禁止**除非有可复现失败且删除不足 |
 
 ---
 
 ## 6. 方法与局限
 
-- 收集：`.venv/bin/python -m pytest --collect-only -q` → 3081 passed-collect / 4.08s
-- 静态扫描：AST 切测试函数 + 启发式（apply/classify/subprocess/中文断言/私有符号）+ 人工复核泄漏嫌疑 10 路
-- **未**重跑全量 `--durations`（避免与评审争资源、且 P0 烧额度路径已在一阶段堵；时长数字继承 `TEST_AUDIT_1185.md` 冻结基线）
-- 未改任何 `tests/**`；本文件为二阶段唯一产物
+- 收集：`.venv/bin/python -m pytest --collect-only -q` → 3081 collected
+- 静态扫描：AST 切测试函数 + 启发式（apply/classify/subprocess/中文断言/私有符号）+ **apply_cli_conversation_actions 全文件检索与一层 helper 展开**
+- 泄漏主张：**样本级**（§1.1 P0 + §1.2 表）；**非**「无残留裸 apply→agy」全称
+- **未**重跑全量 `--durations`（时长数字继承 `TEST_AUDIT_1185.md` 冻结基线）
+- 未改任何 `tests/**`；本文件为二阶段审计产物（本 commit 为判官七类修订）
 - 参数化节点归到函数级处置（同函数同处置）；若单参需例外，过庭执行时再拆
-- 分类误差：偏 keep（闸类从宽）；delete 仅在无独立外部契约时下手
+- 分类误差：偏 keep（闸类从宽；未证等价不删）；delete 仅在无独立外部契约时下手
+- merge 类别已废除 → **keep / move / rewrite / delete**
 
 ## 7. 验收钩（执行阶段，非本腿）
 
-- [ ] 过庭通过本 kill-list
-- [ ] 分批 delete/merge/rewrite；闸类负向不删
+- [ ] 过庭通过本 kill-list（含撤回项与 move 表）
+- [ ] 分批 delete / move / rewrite；闸类负向与 ADR 直接契约不删
 - [ ] 家族收尾全量 `.venv/bin/python -m pytest -q` 一次绿灯
-- [ ] 终线墙钟 ≤120s（含 xdist/夹具池化，另腿）
+- [ ] 终线墙钟 ≤120s——**路径另授权**；本清单不捆绑 xdist/池化/lint 钩
 
 ---
 
 ## 附录 A. 处置计数（节点）
 
 ```
-keep=2551 rewrite=398 merge=99 delete=33 total=3081
-funcs keep=2108 rewrite=320 merge=94 delete=33 total=2555
+keep=2617 rewrite=420 move=20 delete=24 total=3081
+funcs keep=2174 rewrite=340 move=17 delete=24 total=2555
+net_node_reduction_if_executed=-24  # move does not reduce
 ```
+
+判官修订前（作废）：`keep=2551 rewrite=398 merge=99 delete=33` 及「净减 ~44」。
+
+---
 
 ## 附录 B. 文件主处置一览
 
-| 文件 | 节点 | keep | rewrite | merge | delete |
+| 文件 | 节点 | keep | rewrite | move | delete |
 |---|---:|---:|---:|---:|---:|
 | `test_action_cluster_registry_515.py` | 16 | 16 | 0 | 0 | 0 |
 | `test_adr0015_per_item_rejection.py` | 8 | 8 | 0 | 0 | 0 |
@@ -3750,7 +3850,7 @@ funcs keep=2108 rewrite=320 merge=94 delete=33 total=2555
 | `test_decree_commitment_schema_136.py` | 34 | 34 | 0 | 0 | 0 |
 | `test_decree_commitment_settlement_229.py` | 34 | 34 | 0 | 0 | 0 |
 | `test_decree_dossiers_571.py` | 171 | 171 | 0 | 0 | 0 |
-| `test_distance_matrix.py` | 4 | 0 | 0 | 0 | 4 |
+| `test_distance_matrix.py` | 4 | 4 | 0 | 0 | 0 |
 | `test_dossier_endorsements_612.py` | 11 | 11 | 0 | 0 | 0 |
 | `test_dossier_links_559.py` | 42 | 42 | 0 | 0 | 0 |
 | `test_driver.py` | 35 | 35 | 0 | 0 | 0 |
@@ -3775,16 +3875,16 @@ funcs keep=2108 rewrite=320 merge=94 delete=33 total=2555
 | `test_issue_entities.py` | 32 | 32 | 0 | 0 | 0 |
 | `test_junxin_alias_loyalty_313.py` | 3 | 3 | 0 | 0 | 0 |
 | `test_knowledge.py` | 20 | 0 | 0 | 20 | 0 |
-| `test_llm_channel_config.py` | 23 | 0 | 0 | 23 | 0 |
-| `test_llm_key_helpers.py` | 5 | 0 | 0 | 0 | 5 |
+| `test_llm_channel_config.py` | 23 | 23 | 0 | 0 | 0 |
+| `test_llm_key_helpers.py` | 5 | 5 | 0 | 0 | 0 |
 | `test_memory_person_changes.py` | 5 | 0 | 5 | 0 | 0 |
 | `test_menu_lifecycle_drain_396.py` | 21 | 21 | 0 | 0 | 0 |
-| `test_mindreading_491.py` | 14 | 14 | 0 | 0 | 0 |
+| `test_mindreading_491.py` | 14 | 11 | 3 | 0 | 0 |
 | `test_minister_chat_timeout.py` | 5 | 0 | 3 | 0 | 2 |
 | `test_minister_context.py` | 47 | 2 | 45 | 0 | 0 |
 | `test_multi_directive_502.py` | 18 | 18 | 0 | 0 | 0 |
 | `test_named_characters_seed_484.py` | 8 | 8 | 0 | 0 | 0 |
-| `test_near_minister_reports_492.py` | 17 | 17 | 0 | 0 | 0 |
+| `test_near_minister_reports_492.py` | 17 | 11 | 6 | 0 | 0 |
 | `test_new_game_smoke.py` | 7 | 7 | 0 | 0 | 0 |
 | `test_new_issues_section_rejections.py` | 42 | 42 | 0 | 0 | 0 |
 | `test_office_hedge_504.py` | 5 | 5 | 0 | 0 | 0 |
@@ -3808,19 +3908,19 @@ funcs keep=2108 rewrite=320 merge=94 delete=33 total=2555
 | `test_recommendations.py` | 14 | 14 | 0 | 0 | 0 |
 | `test_region_cannon_delta.py` | 6 | 6 | 0 | 0 | 0 |
 | `test_region_citydefense.py` | 5 | 5 | 0 | 0 | 0 |
-| `test_region_citydefense_display.py` | 5 | 0 | 0 | 5 | 0 |
+| `test_region_citydefense_display.py` | 5 | 0 | 5 | 0 | 0 |
 | `test_rejection_wiring.py` | 24 | 24 | 0 | 0 | 0 |
 | `test_relation_store_632.py` | 5 | 5 | 0 | 0 | 0 |
 | `test_release_bundle_assets.py` | 2 | 0 | 2 | 0 | 0 |
 | `test_rescript_choices_563.py` | 13 | 13 | 0 | 0 | 0 |
 | `test_resolve_context_recovery.py` | 16 | 16 | 0 | 0 | 0 |
-| `test_runtime_llm_config.py` | 22 | 0 | 0 | 22 | 0 |
+| `test_runtime_llm_config.py` | 22 | 22 | 0 | 0 | 0 |
 | `test_secret_order_injection.py` | 4 | 4 | 0 | 0 | 0 |
 | `test_secret_order_isolation_883.py` | 42 | 42 | 0 | 0 | 0 |
 | `test_secret_order_monthly_progress_566.py` | 24 | 24 | 0 | 0 | 0 |
 | `test_secret_order_refresh.py` | 1 | 1 | 0 | 0 | 0 |
 | `test_secret_order_section_rejections.py` | 9 | 9 | 0 | 0 | 0 |
-| `test_secret_order_status_cn.py` | 12 | 0 | 0 | 12 | 0 |
+| `test_secret_order_status_cn.py` | 12 | 4 | 8 | 0 | 0 |
 | `test_secret_order_update.py` | 12 | 12 | 0 | 0 | 0 |
 | `test_section4_rejections.py` | 47 | 47 | 0 | 0 | 0 |
 | `test_section_fiscal_rejections.py` | 44 | 44 | 0 | 0 | 0 |
@@ -3833,17 +3933,18 @@ funcs keep=2108 rewrite=320 merge=94 delete=33 total=2555
 | `test_suggestions_chips_527.py` | 1 | 0 | 0 | 0 | 1 |
 | `test_transaction_boundary.py` | 27 | 27 | 0 | 0 | 0 |
 | `test_transit_aging_346.py` | 12 | 12 | 0 | 0 | 0 |
-| `test_web_audience_night_498.py` | 8 | 5 | 0 | 3 | 0 |
+| `test_web_audience_night_498.py` | 8 | 8 | 0 | 0 | 0 |
 | `test_web_budget_payload.py` | 2 | 2 | 0 | 0 | 0 |
 | `test_web_chat_serialization_393.py` | 8 | 8 | 0 | 0 | 0 |
 | `test_web_court_visibility.py` | 22 | 22 | 0 | 0 | 0 |
 | `test_web_issue_condition_display.py` | 9 | 0 | 9 | 0 | 0 |
-| `test_web_llm_runtime_config.py` | 38 | 24 | 0 | 14 | 0 |
+| `test_web_llm_runtime_config.py` | 38 | 38 | 0 | 0 | 0 |
 | `test_yuan_arrival_185.py` | 2 | 2 | 0 | 0 | 0 |
 
 ## 附录 C. 与 `TEST_AUDIT_1185.md` 关系
 
 - 一阶段冻结件：计时基线 + 文件主类 + 初版 kill-list（根目录 `TEST_AUDIT_1185.md`）
-- 本文件：二阶段 **逐测试处置清单** + 泄漏复核 + 净增减账，路径 `docs/test-cleanup-audit-1185.md`
+- 本文件：二阶段 **逐测试处置清单** + 泄漏复核（样本级）+ 净增减账 + 判官七类修订，路径 `docs/test-cleanup-audit-1185.md`
 - 冲突时：以本文件处置列为执行票面；计时数字仍以冻结件为基线直至收尾全量复测
+- 处置枚举：`keep` / `rewrite` / `move` / `delete`（**无**笼统 `merge`）
 
