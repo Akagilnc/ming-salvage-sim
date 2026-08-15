@@ -2,4 +2,4 @@
 
 本仓 agent 指令真源 = [`CLAUDE.md`](CLAUDE.md)，**所有 agent（Claude / codex / 其它）一律先读它并遵守**。
 
-全局纪律（授权词、输出语言、分支/评审/merge/PR 前缀等）见 owner 全局规则；项目知识、探针铁律、Skill routing、issue tracker 等均在 CLAUDE.md，本文件不重复。
+全局纪律（授权词、输出语言、分支/评审/merge/PR 前缀等）见 owner 全局规则；项目知识、探针铁律、issue tracker 等均在 CLAUDE.md，本文件不重复。
