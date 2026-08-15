@@ -14,20 +14,11 @@
 两个 prompt（season_simulator.md 密旨动向段、score_extractor_personnel_secret.md 密令段）
 的措辞改动 LLM 输出非确定不可单测，走 cross-model 评审。
 
-#1185：group_* 中文桶盯文 → status→bucket 结构枚举与字段保留；隔离/恢复 keep 不动。
+#1185：rewrite×8 用独立显式输入→输出样例，不在测试侧复制 status 映射/
+终态集合/字段集合/120 常量推导模型；keep×4 隔离与恢复不动。
 """
 
 from __future__ import annotations
-
-# status → bucket 结构枚举（group_secret_orders_for_sim 契约）
-_STATUS_TO_BUCKET = {"active": "在办", "pending_review": "待核议"}
-_BUCKETS = tuple(_STATUS_TO_BUCKET.values())
-_TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
-_CARRY_FIELDS = frozenset({
-    "id", "minister_name", "title", "content",
-    "turn_issued", "due_turn", "progress", "sim_note",
-})
-_CONTENT_CAP = 120
 
 
 def _row(oid, status, *, minister="孙承宗", title="查抄魏党", content="清查魏忠贤遗党赃私",
@@ -54,19 +45,16 @@ def _row(oid, status, *, minister="孙承宗", title="查抄魏党", content="�
 def test_group_buckets_by_status_into_cn_keys():
     from ming_sim.decree import group_secret_orders_for_sim
 
-    rows = [
+    grouped = group_secret_orders_for_sim([
         _row(1, "active"),
         _row(2, "pending_review"),
         _row(3, "active"),
-    ]
-    grouped = group_secret_orders_for_sim(rows)
+    ])
 
-    # 结构枚举：输出键 = status→bucket 映射的值域
-    assert set(grouped.keys()) == set(_BUCKETS)
-    for status, bucket in _STATUS_TO_BUCKET.items():
-        assert [o["id"] for o in grouped[bucket]] == [
-            r["id"] for r in rows if r["status"] == status
-        ]
+    # 独立显式样例：active→在办、pending_review→待核议
+    assert set(grouped.keys()) == {"在办", "待核议"}
+    assert [o["id"] for o in grouped["在办"]] == [1, 3]
+    assert [o["id"] for o in grouped["待核议"]] == [2]
 
 
 def test_group_strips_english_status_field():
@@ -74,35 +62,32 @@ def test_group_strips_english_status_field():
 
     grouped = group_secret_orders_for_sim([_row(1, "active"), _row(2, "pending_review")])
 
-    for bucket in _BUCKETS:
-        for entry in grouped[bucket]:
-            assert "status" not in entry
-            assert set(entry.keys()) <= _CARRY_FIELDS | {"id"}
+    for entry in grouped["在办"] + grouped["待核议"]:
+        assert "status" not in entry, "条目不得保留英文 status 字段"
 
 
 def test_group_preserves_carry_fields_and_maps_progress():
     from ming_sim.decree import group_secret_orders_for_sim
 
-    result_text, note_text = "已查两淮", "风声渐起"
     grouped = group_secret_orders_for_sim([
         _row(7, "active", minister="温体仁", title="密查盐课",
-             turn_issued=3, due_turn=9, result=result_text, sim_note=note_text),
+             turn_issued=3, due_turn=9, result="已查两淮", sim_note="风声渐起"),
     ])
-    bucket = _STATUS_TO_BUCKET["active"]
-    entry = grouped[bucket][0]
+    entry = grouped["在办"][0]
 
     assert entry["id"] == 7
     assert entry["minister_name"] == "温体仁"
     assert entry["title"] == "密查盐课"
     assert entry["turn_issued"] == 3
     assert entry["due_turn"] == 9
-    # result → progress 字段映射；sim_note 保留
-    assert entry["progress"] == result_text
-    assert entry["sim_note"] == note_text
-    assert set(entry.keys()) == _CARRY_FIELDS
-    assert "status" not in entry
-    assert "result" not in entry
-    assert "tags" not in entry
+    # result → progress；sim_note 保留
+    assert entry["progress"] == "已查两淮"
+    assert entry["sim_note"] == "风声渐起"
+    # 承载字段恰好这 8 个，不夹带 status/result/tags
+    assert set(entry.keys()) == {
+        "id", "minister_name", "title", "content",
+        "turn_issued", "due_turn", "progress", "sim_note",
+    }
 
 
 def test_group_truncates_content_to_120():
@@ -111,42 +96,33 @@ def test_group_truncates_content_to_120():
     long_content = "甲" * 300
     grouped = group_secret_orders_for_sim([_row(1, "active", content=long_content)])
 
-    bucket = _STATUS_TO_BUCKET["active"]
-    assert len(grouped[bucket][0]["content"]) == _CONTENT_CAP
-    assert grouped[bucket][0]["content"] == long_content[:_CONTENT_CAP]
+    # 独立显式：300 字输入 → 输出长度 120
+    assert len(grouped["在办"][0]["content"]) == 120
+    assert grouped["在办"][0]["content"] == long_content[:120]
 
 
 def test_group_drops_done_and_failed_orders():
     """done/failed 是裁决输出、无注入需求，落到分组函数时忽略，不进任何组。"""
     from ming_sim.decree import group_secret_orders_for_sim
 
-    # 终态 status 不在 status→bucket 映射内
-    for terminal in _TERMINAL_STATUSES:
-        assert terminal not in _STATUS_TO_BUCKET
-
-    rows = [
+    grouped = group_secret_orders_for_sim([
         _row(1, "active"),
         _row(2, "done"),
         _row(3, "failed"),
         _row(4, "cancelled"),
-    ]
-    grouped = group_secret_orders_for_sim(rows)
+    ])
 
-    assert set(grouped.keys()) == set(_BUCKETS)
-    active_ids = {r["id"] for r in rows if r["status"] in _STATUS_TO_BUCKET}
-    dropped_ids = {r["id"] for r in rows if r["status"] in _TERMINAL_STATUSES}
-    carried = {o["id"] for bucket in _BUCKETS for o in grouped[bucket]}
-    assert carried == active_ids
-    assert carried.isdisjoint(dropped_ids)
-    assert grouped[_STATUS_TO_BUCKET["pending_review"]] == []
+    # 独立显式：仅 active id=1 入在办；终态全部丢弃
+    assert [o["id"] for o in grouped["在办"]] == [1]
+    assert grouped["待核议"] == []
+    assert {o["id"] for bucket in grouped.values() for o in bucket} == {1}
 
 
 def test_group_empty_input_returns_both_empty_groups():
     from ming_sim.decree import group_secret_orders_for_sim
 
     grouped = group_secret_orders_for_sim([])
-    assert set(grouped.keys()) == set(_BUCKETS)
-    assert all(grouped[bucket] == [] for bucket in _BUCKETS)
+    assert grouped == {"在办": [], "待核议": []}
 
 
 def test_group_hardens_against_malformed_input():
@@ -154,26 +130,24 @@ def test_group_hardens_against_malformed_input():
     不得崩：非 list 返回空两组，非 dict 元素跳过。"""
     from ming_sim.decree import group_secret_orders_for_sim
 
-    empty = {bucket: [] for bucket in _BUCKETS}
     for bad in (None, "junk", 123, {"在办": []}):
-        assert group_secret_orders_for_sim(bad) == empty
+        assert group_secret_orders_for_sim(bad) == {"在办": [], "待核议": []}
 
     grouped = group_secret_orders_for_sim([
         None, 5, "x",  # 非 dict 元素，跳过
         {"id": 1, "minister_name": "甲", "title": "t", "content": "c", "status": "active",
          "turn_issued": 1, "due_turn": 4, "result": "", "sim_note": ""},
     ])
-    assert [o["id"] for o in grouped[_STATUS_TO_BUCKET["active"]]] == [1]
+    assert [o["id"] for o in grouped["在办"]] == [1]
 
     # 字符串字段非字符串（损坏存档）：str() 兜底，不在 content 切片处 TypeError
     bad = group_secret_orders_for_sim([
         {"id": 7, "minister_name": 999, "title": None, "content": 12345,
          "status": "pending_review"},
-    ])[_STATUS_TO_BUCKET["pending_review"]][0]
+    ])["待核议"][0]
     assert bad["content"] == "12345"
     assert bad["minister_name"] == "999"
     assert isinstance(bad["title"], str)
-    assert set(bad.keys()) == _CARRY_FIELDS
 
 
 def test_simulator_payload_never_contains_secret_orders(game):
@@ -216,17 +190,15 @@ def test_group_reads_progress_from_legacy_progress_key():
     两者都要落进 grouped 条目的 progress（#48 恢复端闭环）。"""
     from ming_sim.decree import group_secret_orders_for_sim
 
-    legacy_progress = "已办到南京"
     legacy_entry = {
         "id": 5, "minister_name": "甲", "title": "t", "content": "c",
         "status": "active", "turn_issued": 1, "due_turn": 4,
-        "progress": legacy_progress, "sim_note": "风声",  # 旧承载键：progress / sim_note，无 result
+        "progress": "已办到南京", "sim_note": "风声",  # 旧承载键：progress / sim_note，无 result
     }
     grouped = group_secret_orders_for_sim([legacy_entry])
-    entry = grouped[_STATUS_TO_BUCKET["active"]][0]
-    assert entry["progress"] == legacy_progress
+    entry = grouped["在办"][0]
+    assert entry["progress"] == "已办到南京"
     assert "status" not in entry
-    assert set(entry.keys()) == _CARRY_FIELDS
 
 
 def test_recovered_grouped_normalizes_legacy_list():

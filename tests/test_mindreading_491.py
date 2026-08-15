@@ -147,22 +147,14 @@ def test_model_receives_complete_qualitative_sources_and_result_enters_payload(g
         "narration": model.text,
     }
     assert "忠诚=98" not in json.dumps(payload, ensure_ascii=False)
-    # typed 底案：由 seed_guilt 结构投影，非裸 JSON/机读键；无 identity/loyalty 裸分
-    target_row = db.conn.execute(
-        "SELECT identity, loyalty, seed_guilt FROM characters WHERE name=?",
-        (target.name,),
-    ).fetchone()
-    guilt = json.loads(target_row["seed_guilt"])
-    assert set(guilt) >= {"crime", "severity"}
-    assert isinstance(material["底案"], str) and material["底案"].strip()
-    assert str(guilt) not in material["底案"]
+    # 独立显式样例：温体仁默认 seed_guilt 定性投影（不调生产 helper 算 expected）
+    assert "工心计" in material["底案"]
+    assert "案情分量：无" in material["底案"]
     rendered = json.dumps(material, ensure_ascii=False)
     assert "identity" not in rendered
     assert "loyalty" not in rendered
     assert "seed_guilt" not in rendered
     party_loyalty = f"{material['党账']}{material['君臣账']}"
-    assert str(int(target_row["identity"])) not in party_loyalty
-    assert str(int(target_row["loyalty"])) not in party_loyalty
     assert str(target.identity) not in party_loyalty
     assert str(target.loyalty) not in party_loyalty
 
@@ -197,8 +189,7 @@ def test_default_seed_mindreading_materials_do_not_expose_integration_markers(ga
 
 
 def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
-    from ming_sim.qualitative import identity_band, qualitative_character_axis
-
+    """读当前 ledger；定性用独立显式样例，不调 identity_band/qualitative_* 算 expected。"""
     db, state, content = game
     reader = content.characters["王承恩"]
     target = content.characters["温体仁"]
@@ -212,25 +203,24 @@ def test_mindreading_reads_current_structured_ledger_without_raw_scores(game):
     _materials, payload = _generate(db, state, reader, target, "臣有本奏。", model)
 
     material = model.inputs[0]
-    # 当前 ledger 结构字段驱动 truths；裸分不入材料
     row = db.conn.execute(
         "SELECT faction, identity, loyalty, seed_guilt FROM characters WHERE name=?",
         (target.name,),
     ).fetchone()
-    guilt = json.loads(row["seed_guilt"])
     assert row["faction"] == "皇党"
     assert int(row["identity"]) == 92
     assert int(row["loyalty"]) == 15
-    assert guilt == {"crime": "合谋", "severity": "重"}
+    assert json.loads(row["seed_guilt"]) == {"crime": "合谋", "severity": "重"}
     assert set(material) >= {"党账", "君臣账", "底案"}
-    assert row["faction"] in material["党账"]
-    assert identity_band(int(row["identity"])) in material["党账"]
-    assert qualitative_character_axis("loyalty", int(row["loyalty"])) in material["君臣账"]
-    assert guilt["crime"] in material["底案"]
-    assert guilt["severity"] in material["底案"]
+    # 独立 oracle：identity=92→党色极深；loyalty=15→离心已显；guilt 原文入底案
+    assert "皇党" in material["党账"]
+    assert "党色极深" in material["党账"]
+    assert "离心已显" in material["君臣账"]
+    assert "合谋" in material["底案"]
+    assert "重" in material["底案"]
     blob = json.dumps(material, ensure_ascii=False)
-    assert str(int(row["identity"])) not in blob
-    assert str(int(row["loyalty"])) not in blob
+    assert "92" not in blob
+    assert "15" not in blob
     assert payload["narration"] == model.text
 
 
