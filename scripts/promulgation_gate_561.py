@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
+from ming_sim.cli_backend import cli_backend_parallel_safe
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -55,8 +56,9 @@ VITAL_MIDZHI_TEXT = "中旨绕开户部，强夺太仓全部钱粮交内廷支�
 BASE_DONGLIN_AGENDA = "反对清丈，维护田赋旧例"
 # person_leader sole mutation: leader appeased via agenda, not character status.
 LEADER_APPEASED_AGENDA = "钱谦益已受安抚，东林首领息争"
-# person_gatekeeper sole mutation: dismiss 许誉卿 and seat a registered successor.
-GATEKEEPER_SUCCESSOR = "倪元璐"
+# person_gatekeeper sole mutation: dismiss 许誉卿 and seat a registered successor
+# whose faction/posture actually removes the 东林 gatekeeper block (not another 东林).
+GATEKEEPER_SUCCESSOR = "崔呈秀"
 GATEKEEPER_OFFICE = "兵科给事中"
 GATEKEEPER_OFFICE_TYPE = "六科"
 
@@ -104,7 +106,12 @@ def _choose_rescripts(
         elif decision["event_id"] in {f"dossier:{vital}", f"dossier:{appointment}"}:
             choice = next(row for row in options if row.get("dossier_decision") == "withdrawn")
         else:
-            choice = options[0]
+            # authority_edge and any other reject: explicit non-force via dossier_decision.
+            # Never fall through to options[0] (force_promulgated on ordinary rejects).
+            choice = next(
+                row for row in options
+                if row.get("dossier_decision") in {"withdrawn", "hold"}
+            )
         db.conn.execute(
             "UPDATE pending_decisions SET choice_json=?,status='chosen' WHERE turn=? AND idx=?",
             (json.dumps(choice, ensure_ascii=False), int(turn), int(decision["idx"])),
@@ -262,6 +269,27 @@ def _select_second_verdict(
     return verdict
 
 
+def _arm_pool_size(cfg: LLMConfig, job_count: int) -> int:
+    """Reuse production cli_backend_parallel_safe: Codex concurrent, Claude serial."""
+    return int(job_count) if cli_backend_parallel_safe(cfg) else 1
+
+
+def _resolve_arm_verdicts(
+    db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
+) -> list[dict]:
+    """Pending while awaiting; else applied history at the pre-resolve turn."""
+    if awaiting:
+        return db.get_pending_promulgation_verdicts(resolve_turn)
+    verdicts = []
+    for dossier_id in sorted(ids.values()):
+        history = [
+            row for row in db.list_decree_dossier_decisions(dossier_id)
+            if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
+        ]
+        verdicts.append(_select_second_verdict(False, dossier_id, [], history))
+    return verdicts
+
+
 def _open_scene(root: str, name: str, content: GameContent) -> tuple[GameDB, object, SqliteDb]:
     """One isolated temporary DB pair for a single arm."""
     arm_dir = Path(root) / name
@@ -350,19 +378,24 @@ def _run_resolve_arm(
         proposed = db.list_decree_dossiers(status="proposed")
         context = build_promulgation_judge_context(db, state, proposed)
         label = decree_label or name
+        # Capture turn before resolve: non-awaiting settlement advances state.turn
+        # and consumes pending_promulgation_verdicts.
+        resolve_turn = state.turn
         result = resolve_directives(
             state, db, agno, cfg, [object()], label, content=content,
         )
-        turn = state.turn
-        verdicts = db.get_pending_promulgation_verdicts(turn)
-        resolve_ctx = db.get_resolve_context(turn) or {}
+        awaiting = bool(result.awaiting)
+        verdicts = _resolve_arm_verdicts(
+            db, resolve_turn=resolve_turn, awaiting=awaiting, ids=ids,
+        )
+        resolve_ctx = db.get_resolve_context(resolve_turn) or {}
         return {
             "name": name,
             "authority": authority,
             "ids": ids,
             "context": context,
             "verdicts": verdicts,
-            "awaiting": bool(result.awaiting),
+            "awaiting": awaiting,
             "resolve_context": resolve_ctx,
             "report": str(result.report or ""),
         }
@@ -489,7 +522,7 @@ def main() -> int:
             "low_hold_rail": lambda: _run_low_hold_rail(tmp, content, cfg),
         }
         results: dict[str, dict] = {}
-        with ThreadPoolExecutor(max_workers=len(arm_jobs)) as executor:
+        with ThreadPoolExecutor(max_workers=_arm_pool_size(cfg, len(arm_jobs))) as executor:
             futures = {executor.submit(job): name for name, job in arm_jobs.items()}
             for future in as_completed(futures):
                 name = futures[future]
@@ -637,7 +670,11 @@ def main() -> int:
                        "reasoning_strength": cfg.reasoning_strength},
             "method": {
                 "runner": "resolve_directives",
-                "scheduling": "concurrent isolated temporary DBs",
+                "scheduling": (
+                    "cli_backend_parallel_safe isolated temporary DBs"
+                    if cli_backend_parallel_safe(cfg)
+                    else "serial isolated temporary DBs"
+                ),
                 "arms": sorted(arm_jobs),
                 "controls": {
                     "authority_slider": "only 皇威 differs between low_hold_rail and high_authority",

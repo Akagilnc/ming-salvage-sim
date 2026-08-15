@@ -311,6 +311,154 @@ def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
             _select_second_verdict(True, 7, rows, [])
 
 
+def test_run_resolve_arm_recovers_settled_verdicts_from_history(game, monkeypatch, tmp_path):
+    """Non-awaiting arms must read applied history at the pre-resolve turn."""
+    from ming_sim.content import GameContent
+    from ming_sim.models import LLMConfig
+    from scripts import promulgation_gate_561 as gate
+
+    content = GameContent.load()
+    cfg = LLMConfig(
+        api_key="", base_url="", model="test", channel="cli",
+        cli_runner="codex", cli_model="test",
+    )
+
+    def fake_resolve(state, db, *_a, **_k):
+        dossiers = db.list_decree_dossiers(status="proposed")
+        verdicts = [
+            {"dossier_id": int(row["id"]), "decision": "promulgated"}
+            for row in dossiers
+        ]
+        db.save_pending_promulgation_verdicts(state.turn, verdicts)
+        db.apply_dossier_verdicts(state, verdicts, content=content)
+        # Settlement consumes pending and advances turn — the bug surface.
+        assert db.get_pending_promulgation_verdicts(state.turn) == []
+        state.turn += 1
+        db.save_state(state)
+        return decree_mod.ResolveResult(awaiting=False, report="settled")
+
+    monkeypatch.setattr(gate, "resolve_directives", fake_resolve)
+    result = gate._run_resolve_arm(
+        str(tmp_path), content, cfg,
+        name="settled_arm", authority=100, kinds=("hostile",),
+    )
+    assert result["awaiting"] is False
+    assert result["verdicts"], "settled arm must recover applied verdicts"
+    assert {int(row["dossier_id"]) for row in result["verdicts"]} == set(
+        result["ids"].values()
+    )
+    assert all(row["decision"] == "promulgated" for row in result["verdicts"])
+
+
+def test_gatekeeper_successor_removes_donglin_block_posture(game):
+    """TD-9 successor must be registered and not recreate the 东林 block."""
+    from scripts.promulgation_gate_561 import (
+        GATEKEEPER_SUCCESSOR,
+        _gatekeeper_names,
+        _mutate_gatekeeper_replace,
+    )
+
+    db, state, _content = game
+    seeded = db.conn.execute(
+        "SELECT name, faction, status, power_id FROM characters WHERE name=?",
+        (GATEKEEPER_SUCCESSOR,),
+    ).fetchone()
+    assert seeded is not None, f"successor {GATEKEEPER_SUCCESSOR!r} must be registered"
+    assert seeded["power_id"] == "ming"
+    assert seeded["faction"] != "东林"
+
+    _mutate_gatekeeper_replace(db, state)
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    names = _gatekeeper_names(context)
+    assert GATEKEEPER_SUCCESSOR in names
+    assert "许誉卿" not in names
+    successor = next(
+        row for row in context["gatekeepers"] if row["name"] == GATEKEEPER_SUCCESSOR
+    )
+    assert successor["faction"] != "东林"
+
+
+def test_gate_arm_pool_size_follows_cli_backend_parallel_safe():
+    """Arm scheduler workers must reuse production parallel-safe policy."""
+    from scripts.promulgation_gate_561 import _arm_pool_size
+
+    codex = LLMConfig(
+        api_key="", base_url="", model="x", channel="cli", cli_runner="codex",
+    )
+    claude = LLMConfig(
+        api_key="", base_url="", model="x", channel="cli", cli_runner="claude",
+    )
+    assert _arm_pool_size(codex, 5) == 5
+    assert _arm_pool_size(claude, 5) == 1
+
+
+def test_choose_rescripts_keeps_authority_edge_off_force_promulgated(game):
+    """Rejected authority_edge must pick withdrawn/hold, never options[0] force."""
+    from scripts.promulgation_gate_561 import _choose_rescripts
+
+    db, state, _content = game
+    hostile = _dossier(db, state, "敌对清丈")
+    vital = _dossier(db, state, "命门中旨", mode="midzhi")
+    appointment = db.create_decree_dossier(
+        state, action_type="appointment", decree_text="调任",
+        target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+    )
+    authority_edge = _dossier(db, state, "越一级特授")
+    ordinary_opts = [
+        {"label": "强颁", "dossier_id": authority_edge,
+         "dossier_decision": "force_promulgated"},
+        {"label": "收回", "dossier_id": authority_edge,
+         "dossier_decision": "withdrawn"},
+        {"label": "留中", "dossier_id": authority_edge,
+         "dossier_decision": "hold"},
+    ]
+    decisions = [
+        {"event_id": f"dossier:{hostile}", "title": "批红", "context": "h",
+         "options": [
+             {"label": "强颁", "dossier_id": hostile,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": hostile,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": hostile,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{vital}", "title": "批红", "context": "v",
+         "options": [
+             {"label": "收回", "dossier_id": vital,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": vital,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{appointment}", "title": "批红", "context": "a",
+         "options": [
+             {"label": "强颁", "dossier_id": appointment,
+              "dossier_decision": "force_promulgated"},
+             {"label": "收回", "dossier_id": appointment,
+              "dossier_decision": "withdrawn"},
+             {"label": "留中", "dossier_id": appointment,
+              "dossier_decision": "hold"},
+         ]},
+        {"event_id": f"dossier:{authority_edge}", "title": "批红", "context": "e",
+         "options": ordinary_opts},
+    ]
+    db.save_pending_decisions(state.turn, decisions)
+    chosen = _choose_rescripts(
+        db, state.turn, hostile, vital, appointment,
+    )
+    by_event = {row["event_id"]: row["choice"] for row in chosen}
+    assert by_event[f"dossier:{hostile}"]["dossier_decision"] == "hold"
+    assert by_event[f"dossier:{vital}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{appointment}"]["dossier_decision"] == "withdrawn"
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] in {
+        "withdrawn", "hold",
+    }
+    assert by_event[f"dossier:{authority_edge}"]["dossier_decision"] != (
+        "force_promulgated"
+    )
+
+
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
     seen = {}
     monkeypatch.setattr(agents_mod, "create_chat_model", lambda _cfg, **kwargs: seen.update(kwargs) or object())
