@@ -191,16 +191,106 @@ def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
 
 
 def _record_audience_exit(session: GameSession, name: str) -> None:
-    """CLI「退下」控制口令的告退账落地（此路不经 session.chat，须自落）。
-    tool 触发的 court_action=dismiss 由 session.chat 单缝落账，不走此处。
-    无开夜/不在场时既有 no-op；缺 conn 的轻量 session double（与 attach 同款能力门）跳过。"""
+    """CLI「退下」控制口令：垫位告退 + 唯一 scene registry 生成 exit 旁白。
+
+    此路不经 session.chat，须自落；tool dismiss 由 session.chat 单缝处理。
+    禁止同步 beat_generator（#542）：失败走 abandon + fail/回滚，与回话中断同族。
+    无开夜/不在场时既有 no-op；缺 conn 的轻量 session double 跳过。
+    """
     if not hasattr(session.db, "conn"):
         return
-    from ming_sim.audience_night import dismiss_from_audience
-    dismiss_from_audience(
-        session.db, name, state=session.state,
-        beat_generator=getattr(session, "_beat_generator", None),
+    from ming_sim.applier import atomic
+    from ming_sim.audience_night import dismiss_from_audience, get_open_night
+
+    open_n = get_open_night(session.db)
+    if open_n is None:
+        dismiss_from_audience(session.db, name, state=session.state)
+        return
+    night_id = int(open_n["id"])
+
+    can_scene = all(
+        hasattr(session, attr)
+        for attr in (
+            "start_chat_turn_exit_scene",
+            "join_chat_turn_scene",
+            "persist_chat_turn_scene",
+            "abandon_chat_turn_scene",
+        )
     )
+    can_turn = hasattr(session.db, "create_chat_turn") and hasattr(session.db, "fail_chat_turn")
+
+    chat_turn_id = 0
+    scaffold_owned = False
+    before_snapshot = None
+    if can_scene and can_turn:
+        row = session.db.conn.execute(
+            "SELECT id FROM chat_turns WHERE night_id = ? AND minister_name = ? "
+            "AND status IN ('active', 'generating') ORDER BY id DESC LIMIT 1",
+            (night_id, name),
+        ).fetchone()
+        if row is not None:
+            chat_turn_id = int(row["id"])
+        else:
+            if hasattr(session.db, "capture_chat_rollback_snapshot"):
+                before_snapshot = session.db.capture_chat_rollback_snapshot()
+            chat_turn_id = int(session.db.create_chat_turn(
+                session.state, name, f"cli-exit:{name}", 0, night_id=night_id,
+            ))
+            scaffold_owned = True
+        if before_snapshot is None and hasattr(session.db, "capture_chat_rollback_snapshot"):
+            before_snapshot = session.db.capture_chat_rollback_snapshot()
+
+    entry_id = dismiss_from_audience(
+        session.db, name, night_id=night_id,
+        origin_chat_turn_id=int(chat_turn_id or 0),
+        state=session.state,
+    )
+    if not entry_id:
+        if scaffold_owned and chat_turn_id:
+            session.db.fail_chat_turn(int(chat_turn_id))
+        return
+    if not (can_scene and chat_turn_id):
+        return
+
+    session.start_chat_turn_exit_scene(
+        name, int(chat_turn_id), int(entry_id), night_id=night_id,
+    )
+    try:
+        generated = session.join_chat_turn_scene(int(chat_turn_id))
+        with atomic(session.db):
+            session.persist_chat_turn_scene(generated)
+        # Scaffold turn has no minister reply — retire so in-flight guards stay clear.
+        # Exit ledger keeps origin binding; success path does not record rollback diffs.
+        if scaffold_owned:
+            session.db.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' "
+                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
+                (int(chat_turn_id),),
+            )
+            session.db.conn.commit()
+    except BaseException as exc:
+        session.abandon_chat_turn_scene(int(chat_turn_id))
+        try:
+            if scaffold_owned:
+                if before_snapshot is not None and hasattr(
+                    session.db, "record_chat_turn_rollback_diffs",
+                ):
+                    session.db.record_chat_turn_rollback_diffs(
+                        int(chat_turn_id),
+                        before_snapshot,
+                        session.db.capture_chat_rollback_snapshot(),
+                    )
+                session.db.fail_chat_turn(int(chat_turn_id))
+            else:
+                # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
+                session.db.conn.execute(
+                    "DELETE FROM story_ledger_entries WHERE id = ?",
+                    (int(entry_id),),
+                )
+                session.db.conn.commit()
+        except BaseException:
+            pass
+        print(f"退下旁白失败：{exc}\n")
 
 
 def _handle_court_command(
