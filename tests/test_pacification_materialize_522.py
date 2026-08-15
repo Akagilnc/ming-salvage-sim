@@ -195,8 +195,20 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
     if decision == "promulgated":
         assert row["power_id"] == "ming"
         assert row["office"] == "归附"
-        # 反噬字段经 #190 落账；空对象不改兵力，势力行仍可读。
+        # 顺颁反噬须按 #190 给目标原势力真实失方削弱并落账（非空对象）。
         assert power_after["id"] == power_before["id"]
+        expected_strength = max(0, int(power_before["military_strength"]) - 1)
+        assert int(power_after["military_strength"]) == expected_strength
+        log = db.conn.execute(
+            "SELECT field, delta, reason, origin_ref FROM power_logs "
+            "WHERE power_id=? AND field='military_strength' "
+            "ORDER BY id DESC LIMIT 1",
+            ("bandit_zhang_xianzhong",),
+        ).fetchone()
+        assert log is not None
+        assert int(log["delta"]) == expected_strength - int(power_before["military_strength"])
+        assert "受抚" in str(log["reason"] or "")
+        assert str(log["origin_ref"] or "").startswith("dossier:")
     else:
         assert dict(row) == before
         assert power_after == power_before
