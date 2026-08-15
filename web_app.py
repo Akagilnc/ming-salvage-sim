@@ -2500,12 +2500,26 @@ def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
 
     Shared converter for player-input boundaries (chat / reply-retry) and sync
     decree endpoints (issue / advance_without_edict). AudienceNightError keeps
-    ``detail=str(exc)``; close_night dual ExceptionGroup surfaces both nested
-    diagnostics in detail. No new exception protocol — existing 409 only.
+    ``detail=str(exc)`` and walks ``__cause__`` so endorsement∥close-scene dual
+    failures still surface both nested diagnostics (CI5 dropped ExceptionGroup
+    bus; chain is primary from join). Legacy ExceptionGroup still flattened.
+    No new exception protocol — existing 409 only.
     """
     from ming_sim.audience_night import AudienceNightError
     if isinstance(exc, AudienceNightError):
-        return HTTPException(status_code=409, detail=str(exc))
+        parts: list[str] = []
+        cur: BaseException | None = exc
+        seen: set[int] = set()
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            text = str(cur).strip()
+            if text and text not in parts:
+                parts.append(text)
+            cur = cur.__cause__  # type: ignore[assignment]
+        return HTTPException(
+            status_code=409,
+            detail="；".join(parts) if parts else str(exc),
+        )
     if isinstance(exc, ExceptionGroup):
         parts = [str(sub) for sub in exc.exceptions]
         return HTTPException(

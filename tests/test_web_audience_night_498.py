@@ -378,8 +378,16 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     no_db_tx = []
     entered = threading.Event()
     release = threading.Event()
+    # Baseline excludes close-scene scaffold (minister=收夜 / session=close-scene):
+    # start_close may lawfully add that registry bucket before status=CLOSING.
+    # Freeze still forbids concurrent admission smuggling turns only.
     turns_before = game.db.conn.execute(
-        "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+        """
+        SELECT COUNT(*) AS c FROM chat_turns
+        WHERE night_id=?
+          AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+        """,
+        (night_id,),
     ).fetchone()["c"]
     pending_before = game.db.conn.execute(
         "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
@@ -472,8 +480,15 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
                 game.db.flag_directive_needs_clarification(directive_id)
             assert flag_exc.value.code == "night_closing"
             assert an.get_night(game.db, night_id)["status"] == an.NIGHT_STATUS_CLOSING
+            # Close-scene scaffold is the night-closing registry bucket, not admission
+            # smuggling; count only non-scaffold turns under the freeze.
             assert game.db.conn.execute(
-                "SELECT COUNT(*) AS c FROM chat_turns WHERE night_id=?", (night_id,),
+                """
+                SELECT COUNT(*) AS c FROM chat_turns
+                WHERE night_id=?
+                  AND NOT (minister_name = '收夜' AND agno_session_id = 'close-scene')
+                """,
+                (night_id,),
             ).fetchone()["c"] == turns_before
             assert game.db.conn.execute(
                 "SELECT COUNT(*) AS c FROM pending_actions WHERE night_id=?", (night_id,),
