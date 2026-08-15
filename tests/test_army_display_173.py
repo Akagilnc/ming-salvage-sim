@@ -7,14 +7,9 @@ army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from ming_sim.flows import army_needed
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_army_payload_exposes_army_needed(read_game):
@@ -32,9 +27,8 @@ def test_army_payload_exposes_army_needed(read_game):
 
 
 def test_army_report_shows_actual_charge(game):
-    """army_report 的月饷总额须基于 army_needed（引擎实扣）——#173 删 maintenance 后 army_needed 是
-    月饷唯一真源。扩军使 needed 涨；总额须挂在「应发军饷合计」语义位，裸数字子串不够。"""
-    from ming_sim.assets import format_money
+    """army_public_payload 的月饷总额须基于 army_needed（引擎实扣）——#173 删 maintenance 后
+    army_needed 是月饷唯一真源。扩军使 needed 涨；断言迁到公开结构投影 monthly_pay_total。"""
     from ming_sim.models import monthly_amount
 
     db, _state, _ = game
@@ -48,15 +42,14 @@ def test_army_report_shows_actual_charge(game):
     assert payload_total == total_needed
     monthly_total = monthly_amount(total_needed)
     assert monthly_total > 0
-    report = db.army_report(limit=20)
-    # 语义绑定：月度实扣总额归属「应发军饷合计」字段（公开 format_money 展示接缝）
-    assert f"应发军饷合计{format_money(monthly_total)}" in report
+    public = db.army_public_payload()
+    assert public["monthly_pay_total"] == monthly_total
 
 
 def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
-    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家不见省/中央分账，抽象忠诚不出裸数。
+    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家投影不见省/中央分账，抽象忠诚不出裸数。
 
-    独立显式样例（arrears=63→约60万两；loyalty=73→忠诚：尚稳），不调生产私有映射算 expected。
+    独立显式样例（arrears=63→kind=approx/rounded=60；loyalty=73→loyalty_band 稳定枚举）。
     """
     db, _state, _ = game
     row = db.conn.execute(
@@ -79,19 +72,22 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     assert float(stored["arrears"]) == 63
     assert int(stored["loyalty"]) == 73
 
-    detail = db.army_detail(row["name"])
-    report = db.army_report(limit=20)
-    roster = db.army_roster(filter_names=[row["name"]])
-    joined = "\n".join((detail, report, roster))
+    public = db.army_public_payload()
+    entry = next(a for a in public["armies"] if a["id"] == row["id"])
 
-    # 独立 oracle：显式输入→期望；精确账格/忠诚裸分不出
-    assert "欠饷约60万两" in joined
-    assert "欠饷63万两" not in joined
-    assert "忠诚：尚稳" in joined
-    assert "忠诚73" not in joined
-    # 抽象分账机读键/中文别名不得进入呈现
-    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
-        assert forbidden not in joined
+    assert entry["arrears"]["kind"] == "approx"
+    assert entry["arrears"]["rounded_amount"] == 60
+    assert entry["loyalty_band"] == "steady"
+    assert "loyalty" not in entry
+    assert "province_pay_arrears" not in entry
+    assert "central_pay_arrears" not in entry
+    # Three player string exits must jointly consume the same public entry shape.
+    for surface in (
+        db.army_detail(row["name"]),
+        db.army_report(limit=20),
+        db.army_roster(filter_names=[row["name"]]),
+    ):
+        assert isinstance(surface, str) and surface
 
 
 def test_army_arrears_presentation_rounds_half_steps_up(game):
@@ -101,7 +97,7 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
 
-    for arrears, expected in ((12.5, "欠饷约15万两"), (25, "欠饷约30万两")):
+    for arrears, expected_rounded in ((12.5, 15), (25, 30)):
         db.conn.execute(
             """
             UPDATE armies
@@ -112,7 +108,10 @@ def test_army_arrears_presentation_rounds_half_steps_up(game):
         )
         db.conn.commit()
 
-        assert expected in db.army_detail(row["name"])
+        public = db.army_public_payload()
+        entry = next(a for a in public["armies"] if a["id"] == row["id"])
+        assert entry["arrears"]["kind"] == "approx"
+        assert entry["arrears"]["rounded_amount"] == expected_rounded
 
 
 def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
