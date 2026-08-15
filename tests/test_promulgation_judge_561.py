@@ -585,7 +585,11 @@ def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
 
 
 def test_leader_only_mutation_changes_faction_posture_not_roster(game):
-    """TD-9: 安抚首领 = 东林 leverage/agenda; 许誉卿 stays; no 钱谦益 roster swap."""
+    """TD-9: 安抚首领 = 东林 agenda posture; 许誉卿 stays; no 钱谦益 roster swap."""
+    import inspect
+    from pathlib import Path
+
+    from scripts import promulgation_gate_561 as gate
     from scripts.promulgation_gate_561 import (
         BASE_DONGLIN_AGENDA,
         LEADER_APPEASED_AGENDA,
@@ -620,14 +624,23 @@ def test_leader_only_mutation_changes_faction_posture_not_roster(game):
     after_faction = _faction_row(after, "东林")
     assert before_faction["agenda"] == BASE_DONGLIN_AGENDA
     assert after_faction["agenda"] == LEADER_APPEASED_AGENDA
-    # Judge-visible posture must move (agenda and/or leverage).
-    assert (
-        after_faction["agenda"] != before_faction["agenda"]
-        or int(after_faction["leverage"]) != int(before_faction["leverage"])
-    )
+    # Posture moves only via fixed agenda pair (ADR 0143: no int() on qualitative leverage).
+    assert after_faction["agenda"] != before_faction["agenda"]
+    assert before_faction["leverage"] == after_faction["leverage"]
+    assert isinstance(before_faction["leverage"], str)
+    assert before_faction["leverage"] in IMPERIAL_AUTHORITY_BANDS
     # Full payload distinguishable so evidence trace can pair leader vs baseline.
     assert after["factions"] != before["factions"]
     assert after != before
+
+    # Evidence script must not numericize qualitative faction leverage (dead int branch).
+    gate_source = Path(inspect.getfile(gate)).read_text(encoding="utf-8")
+    assert "int(_faction_row" not in gate_source
+    assert "int(after_faction[\"leverage\"])" not in gate_source
+    assert "int(before_faction[\"leverage\"])" not in gate_source
+    # Leader-arm posture check keeps agenda pair only — no leverage fallback.
+    assert "LEADER_APPEASED_AGENDA" in gate_source
+    assert "BASE_DONGLIN_AGENDA" in gate_source
 
     # Forbidden: only rehab 钱谦益 roster and pretend that is 安抚.
     qian_after = db.conn.execute(
