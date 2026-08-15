@@ -11525,9 +11525,9 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                # Predeclared midzhi already took the stigma on rejection;
-                # ordinary force adds the rescript stigma here. Party costs always
-                # land on the force choice itself (#614: never prepaid on reject).
+                # Predeclared midzhi already took stigma + party reactions on
+                # rejection; force only adds authority (parties_already_applied).
+                # Ordinary force adds rescript stigma and both cost legs here.
                 if not predeclared_midzhi:
                     self._append_midzhi_stigma(
                         dossier_id, decision="force_promulgated", turn=state.turn,
@@ -11535,7 +11535,7 @@ class GameDB:
                     )
                 self._apply_override_costs(
                     state, dossier_id, include_authority=True,
-                    include_parties=True,
+                    include_parties=not predeclared_midzhi,
                     stigma_reason="批红强颁", commit=False,
                 )
             else:
@@ -11986,15 +11986,18 @@ class GameDB:
                      dossier_id),
                 )
                 dossier = self.get_decree_dossier(dossier_id)
-                # Midzhi 直发仍落 override 代价。打回不预写派系流水——代价只在
-                # 批红强颁选择落下；收回/留中保持零流水（#614 / ADR 0069）。
-                if (
-                    dossier and dossier.get("mode") == "midzhi"
-                    and decision == "promulgated"
-                ):
+                # ADR 0055/0056: midzhi attempt lands typed party reactions even
+                # on reject; authority only when actually promulgated/forced.
+                # #614: 批红收回/留中不追加强颁账——反应已在打回落、幂等不双记。
+                if dossier and dossier.get("mode") == "midzhi":
                     self._apply_override_costs(
-                        state, dossier_id, include_authority=True,
-                        include_parties=True, stigma_reason="预先中旨直发",
+                        state, dossier_id,
+                        include_authority=(decision == "promulgated"),
+                        include_parties=True,
+                        stigma_reason=(
+                            "预先中旨直发" if decision == "promulgated"
+                            else "中旨被打回"
+                        ),
                         commit=False,
                     )
             # Consumption belongs to the same atomic unit as effect application;
