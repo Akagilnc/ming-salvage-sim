@@ -1458,10 +1458,12 @@ class WebGame:
         """召对中断/失败的统一善后：记 rollback 项、标 chat_turn=failed、从 DB 重载聊天缓存。
         所有「已建 chat_turn 但本轮未能正常完成」的路径都必须调用——否则留下 status=active 且
         minister_message_id 为空的孤儿轮，`_audience_turn_in_flight` 会把该大臣永久判为「上一轮
-        仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。"""
+        仍在进行」而拒收后续问话（cmr Gate2 F-B）。chat_turn_id=0（无持久轮）时为 no-op。
+
+        Scene abandon/drain 由调用方在 write_gate 外先完成（C9/T1/T10）；本方法只做短事务写。
+        """
         if not chat_turn_id:
             return
-        self.session.abandon_chat_turn_scene(chat_turn_id)
         self._record_chat_rollback_items(chat_turn_id, before_snapshot)
         self.db.fail_chat_turn(chat_turn_id)
         self.chat_history = {name: [] for name in self.session.content.characters}
@@ -1844,11 +1846,14 @@ class WebGame:
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
 
+        # Join scene outside write_gate (same as non-stream chat); gate only wraps short writes.
+        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
             return self._chat_stream_payload_commit(
                 minister_name, text, character, answer, run_output,
                 action_intent_future, chat_turn_id, before_snapshot, accepted_turn,
+                scene_generated=scene_generated,
             )
 
     def _chat_stream_payload_commit(
@@ -1862,6 +1867,7 @@ class WebGame:
         chat_turn_id: int,
         before_snapshot: Dict[str, Any],
         accepted_turn: int,
+        scene_generated: Optional[list] = None,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -2074,9 +2080,10 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
-        scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
+        # scene_generated joined outside the gate by _chat_stream_payload; persist only here.
+        generated = scene_generated if scene_generated is not None else []
         with atomic(self.db):
-            self.session.persist_chat_turn_scene(scene_generated)
+            self.session.persist_chat_turn_scene(generated)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,
                 proposed_directive=proposed, appointed_minister=appointed,
@@ -2331,14 +2338,23 @@ class WebGame:
                 if chat_turn_id:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
+            # Release gate before scene drain — prologue may have already started futures.
             try:
-                self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
+                write_gate.release()
+            except RuntimeError:
+                pass
+            try:
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
+                with write_gate:
+                    self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
                 pass
             self._complete_pending_write()
             raise
         finally:
-            write_gate.release()
+            if write_gate.locked():
+                write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         identity = {
@@ -2359,6 +2375,8 @@ class WebGame:
                 ev_queue.put({"type": "accepted", **identity})
         except Exception as error:  # noqa: BLE001
             try:
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:
@@ -2391,7 +2409,10 @@ class WebGame:
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
                     # 否则 error 事件不会被投进 queue、消费者永久挂死。
+                    # Scene drain stays outside write_gate (C9/T1/T10).
                     try:
+                        if chat_turn_id:
+                            self.session.abandon_chat_turn_scene(chat_turn_id)
                         with write_gate:
                             self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
                     except Exception:
@@ -2438,6 +2459,8 @@ class WebGame:
             thread.start()
         except Exception:
             try:
+                if chat_turn_id:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
                 with write_gate:
                     self._fail_chat_turn_and_reload(chat_turn_id, before_snapshot)
             except Exception:

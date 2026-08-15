@@ -670,9 +670,14 @@ class GameSession:
         _bind_all_content(self.content)
         self.llm_config = llm_config
         from ming_sim.beat_orchestration import ChatTurnSceneRegistry, create_llm_beat_generator
+        from ming_sim.cli_backend import cli_backend_parallel_safe
         self._beat_generator = create_llm_beat_generator(llm_config)
         # Scene lifecycle lives in beat_orchestration; session only holds the registry handle.
-        self._scene_registry = ChatTurnSceneRegistry(_CLI_ACTION_INTENT_EXECUTOR)
+        # Reuse cli_backend_parallel_safe — no dedicated scene executor (C6 rejected).
+        self._scene_registry = ChatTurnSceneRegistry(
+            _CLI_ACTION_INTENT_EXECUTOR,
+            parallel_safe=cli_backend_parallel_safe(llm_config),
+        )
         if verify_llm:
             verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)

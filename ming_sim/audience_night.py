@@ -1098,53 +1098,79 @@ def close_night(
         )
         close_started = bool(close_ctid)
 
-    if night["status"] == NIGHT_STATUS_OPEN:
-        # In-flight wait is gate-free (may sleep).
-        wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
-        # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
-        _start_close_scene()
+    def _cleanup_close_scene_early(primary_exc: BaseException) -> None:
+        """T15: after start_close through phase-1, any failure drains/fails scaffold and reopens."""
+        cleanup_exc: BaseException | None = None
+        if close_started and reg is not None:
+            try:
+                if hasattr(reg, "abandon"):
+                    reg.abandon(int(close_ctid))
+                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
+                    db.fail_chat_turn(int(close_ctid))
+            except BaseException as exc:
+                cleanup_exc = exc
         with gate:
-            _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
-        night = get_night(db, night_id)
-        assert night is not None
-    else:
-        # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
-        _start_close_scene()
-
-    cursor = int(night["close_commit_cursor"] or 0)
-
-    def _advance(step: int) -> None:
-        nonlocal cursor
-        _set_night_fields(db, night_id, close_commit_cursor=int(step))
-        cursor = int(step)
-        if on_step is not None:
-            on_step(step, get_night(db, night_id) or {})
-        if crash_after_step is not None and int(crash_after_step) == int(step):
-            raise AudienceNightError(
-                f"收夜提交崩溃注入：step={step}",
-                code="close_crash",
-                detail={"night_id": int(night_id), "step": int(step)},
+            _set_night_fields(
+                db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
+                close_commit_cursor=0,
             )
+        if cleanup_exc is not None:
+            raise primary_exc from cleanup_exc
+        raise primary_exc
 
-    # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
-    with gate:
-        if cursor < CLOSE_STEP_COMMIT_OFFICE:
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_OFFICE,
-                content=content, registry=registry,
-            )
-            _advance(CLOSE_STEP_COMMIT_OFFICE)
+    try:
+        if night["status"] == NIGHT_STATUS_OPEN:
+            # In-flight wait is gate-free (may sleep).
+            wait_in_flight_clear(db, night_id, timeout_s=wait_timeout_s)
+            # Start close scene on caller registry only — never join here; no ephemeral lifecycle.
+            _start_close_scene()
+            with gate:
+                _set_night_fields(db, night_id, status=NIGHT_STATUS_CLOSING)
+            night = get_night(db, night_id)
+            assert night is not None
+        else:
+            # Resume CLOSING：仍无 body 时 start 同一 registry 缝（不自建平行生命周期）。
+            _start_close_scene()
 
-        if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
-            _commit_night_approved(
-                db, state, int(night_id),
-                kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
-                content=content, registry=registry,
-                directive_status="draft",
-            )
-            # Draft dossiers / turn_directives are durable prerequisites only.
-            _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+        cursor = int(night["close_commit_cursor"] or 0)
+
+        def _advance(step: int) -> None:
+            nonlocal cursor
+            _set_night_fields(db, night_id, close_commit_cursor=int(step))
+            cursor = int(step)
+            if on_step is not None:
+                on_step(step, get_night(db, night_id) or {})
+            if crash_after_step is not None and int(crash_after_step) == int(step):
+                raise AudienceNightError(
+                    f"收夜提交崩溃注入：step={step}",
+                    code="close_crash",
+                    detail={"night_id": int(night_id), "step": int(step)},
+                )
+
+        # ── Phase 1: short writes for draft-dossier prerequisites only ─────────
+        with gate:
+            if cursor < CLOSE_STEP_COMMIT_OFFICE:
+                _commit_night_approved(
+                    db, state, int(night_id),
+                    kinds=_CLOSE_COMMIT_KINDS_OFFICE,
+                    content=content, registry=registry,
+                )
+                _advance(CLOSE_STEP_COMMIT_OFFICE)
+
+            if cursor < CLOSE_STEP_TRANSFER_CANDIDATES:
+                _commit_night_approved(
+                    db, state, int(night_id),
+                    kinds=_CLOSE_COMMIT_KINDS_DIRECTIVE,
+                    content=content, registry=registry,
+                    directive_status="draft",
+                )
+                # Draft dossiers / turn_directives are durable prerequisites only.
+                _advance(CLOSE_STEP_TRANSFER_CANDIDATES)
+    except BaseException as early_exc:
+        # Only clean when close scene was started; bare pre-start failures pass through.
+        if close_started:
+            _cleanup_close_scene_early(early_exc)
+        raise
 
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
