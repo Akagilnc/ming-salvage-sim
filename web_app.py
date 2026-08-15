@@ -1444,6 +1444,17 @@ class WebGame:
             self.session.start_chat_turn_scene(minister_name, chat_turn_id)
         return chat_turn_id, snapshot
 
+    def _chat_scene_write_cm(self):
+        """Scene body + reply short write.
+
+        Real GameDB: atomic(conn). Lifecycle test stubs without conn (same seam as
+        _start_chat_turn's create_chat_turn fallback) use nullcontext — join/persist
+        no-ops still run; no SuspendableConnection required.
+        """
+        if hasattr(self.db, "conn"):
+            return atomic(self.db)
+        return contextlib.nullcontext()
+
     def _record_chat_rollback_items(
         self,
         chat_turn_id: int,
@@ -1629,9 +1640,8 @@ class WebGame:
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
             scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
-                from ming_sim.applier import atomic
                 # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
-                with atomic(self.db):
+                with self._chat_scene_write_cm():
                     self.session.persist_chat_turn_scene(scene_generated)
                     # _chat_payload 持久化 minister 消息 + 更新 chat_turn。
                     payload = self._chat_payload(
@@ -1723,8 +1733,7 @@ class WebGame:
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
             scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
             with gate:
-                from ming_sim.applier import atomic
-                with atomic(self.db):
+                with self._chat_scene_write_cm():
                     self.session.persist_chat_turn_scene(scene_generated)
                     payload = self._chat_payload(
                     minister_name, result.answer,
@@ -2077,8 +2086,7 @@ class WebGame:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
-        from ming_sim.applier import atomic
-        with atomic(self.db):
+        with self._chat_scene_write_cm():
             self.session.persist_chat_turn_scene(scene_generated)
             payload = self._chat_payload(
                 minister_name, answer, court_action=court_action, next_minister=next_minister,

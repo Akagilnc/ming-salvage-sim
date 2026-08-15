@@ -86,6 +86,22 @@ class _FakeSession:
     def pending_count(self):
         return 0
 
+    # #542 scene lifecycle seams — production chat_stream/_start_chat_turn call these.
+    def start_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def start_chat_turn_exit_scene(self, *_a, **_k):
+        return None
+
+    def join_chat_turn_scene(self, *_a, **_k):
+        return []
+
+    def persist_chat_turn_scene(self, *_a, **_k):
+        return None
+
+    def abandon_chat_turn_scene(self, *_a, **_k):
+        return None
+
 
 class _RecordingDB:
     def __init__(self, settlement_holding: threading.Event):

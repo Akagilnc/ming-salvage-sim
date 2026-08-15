@@ -605,6 +605,22 @@ def test_nonstream_web_chat_surfaces_ambiguous():
         def _character(self, n):
             return self.content.characters[n]
 
+        # #542 scene lifecycle seams — production chat start/join/persist/abandon.
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def start_chat_turn_exit_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
+
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()
     rt.chat_history = {name: []}
@@ -645,6 +661,22 @@ def test_nonstream_web_chat_no_ambiguous_key_is_none():
 
         def _character(self, n):
             return self.content.characters[n]
+
+        # #542 scene lifecycle seams — production chat start/join/persist/abandon.
+        def start_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def start_chat_turn_exit_scene(self, *_a, **_k):
+            return None
+
+        def join_chat_turn_scene(self, *_a, **_k):
+            return []
+
+        def persist_chat_turn_scene(self, *_a, **_k):
+            return None
+
+        def abandon_chat_turn_scene(self, *_a, **_k):
+            return None
 
     rt = object.__new__(web_app.WebGame)
     rt.session = _Sess()

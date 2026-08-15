@@ -247,6 +247,9 @@ class _RetrySession:
     def start_chat_turn_scene(self, *_a, **_k):
         return None
 
+    def start_chat_turn_exit_scene(self, *_a, **_k):
+        return None
+
     def join_chat_turn_scene(self, *_a, **_k):
         return []
 
