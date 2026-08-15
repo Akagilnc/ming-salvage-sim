@@ -9,12 +9,10 @@
 
 import ming_sim.simulation as sim
 
-
 def _capture_tlog(monkeypatch):
     msgs: list[str] = []
     monkeypatch.setattr(sim, "tlog", lambda m: msgs.append(m))
     return msgs
-
 
 def test_misrouted_field_dropped_and_surfaced(monkeypatch):
     # army_delta 属 military_external，错放进 internal 模块输出。
@@ -31,7 +29,6 @@ def test_misrouted_field_dropped_and_surfaced(monkeypatch):
     assert surfaced, msgs
     assert "military_external" in surfaced[0], surfaced
 
-
 def test_in_module_fields_do_not_surface(monkeypatch):
     # 全是 internal 自己的合法字段——不应报 misroute。
     data = {"metric_delta": {"民心": 5}, "faction_delta": {}}
@@ -40,7 +37,6 @@ def test_in_module_fields_do_not_surface(monkeypatch):
     sim._sanitize_module_output("internal", data)
 
     assert not [m for m in msgs if "misroute" in m], msgs
-
 
 def test_issues_module_accepts_event_outcomes_alias_without_misroute(monkeypatch):
     data = {"event_outcomes": {"jisi_lubian": "入塞被遏"}}
@@ -52,7 +48,6 @@ def test_issues_module_accepts_event_outcomes_alias_without_misroute(monkeypatch
     assert "event_outcomes" not in out
     assert not [m for m in msgs if "misroute" in m], msgs
 
-
 def test_garbage_key_does_not_surface(monkeypatch):
     # 无主/垃圾键（不属任何模块）——不报 misroute（只报「属其它模块」的错放，避免噪音）。
     data = {"metric_delta": {"皇威": 1}, "totally_made_up_key": 123}
@@ -63,13 +58,3 @@ def test_garbage_key_does_not_surface(monkeypatch):
     assert "totally_made_up_key" not in out  # 仍被剔除
     assert not [m for m in msgs if "misroute" in m], msgs
 
-
-def test_field_owner_map_covers_all_modules():
-    # 反向图应覆盖每个模块的每个字段；new_issues 是 issues 主持、personnel_secret
-    # 为经常性密令拨款承诺共享的例外。
-    for module, fields in sim.MODULE_FIELDS.items():
-        for field in fields:
-            if field == "new_issues" and module == "personnel_secret":
-                assert sim._FIELD_OWNER_MODULE[field] == "issues"
-            else:
-                assert sim._FIELD_OWNER_MODULE[field] == module

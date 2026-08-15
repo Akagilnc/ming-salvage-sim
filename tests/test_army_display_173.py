@@ -3,18 +3,17 @@
 #44 后引擎按 army_needed=ceil(manpower×salary_rate/10000) 扣应发；呈现端（army_payload/
 army_report/欠饷月数/simulator TSV）统一到 army_needed，玩家与审计大臣 LLM 看到的月饷=实扣。
 #173 删列 PR 已物理移除 maintenance_per_turn 列，army_needed 是月饷唯一真源。
+
+#1185：不锁中文奏报措辞；真实出口差分/可数域值 tracer。
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
 
 import pytest
 
 from ming_sim.flows import army_needed
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_army_payload_exposes_army_needed(read_game):
@@ -32,74 +31,89 @@ def test_army_payload_exposes_army_needed(read_game):
 
 
 def test_army_report_shows_actual_charge(game):
-    """army_report 的月饷总额须基于 army_needed（引擎实扣）——#173 删 maintenance 后 army_needed 是
-    月饷唯一真源。扩军使 needed 涨，断言报告里出现实扣总额（格式化串，避免裸数字子串脆性）。"""
-    db, _state, _ = game
-    aid = db.conn.execute(
-        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 ORDER BY manpower DESC LIMIT 1"
-    ).fetchone()["id"]
-    db.conn.execute("UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,))
-    db.conn.commit()
-    total_needed = sum(army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall())
-    report = db.army_report(limit=20)
+    """army_report 月饷总额须基于 army_needed（引擎实扣）——格式化金额串出现在真实出口。"""
     from ming_sim.assets import format_money
     from ming_sim.models import monthly_amount
+
+    db, _state, _ = game
+    aid = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 "
+        "ORDER BY manpower DESC LIMIT 1"
+    ).fetchone()["id"]
+    db.conn.execute(
+        "UPDATE armies SET manpower = manpower + 100000 WHERE id=?", (aid,)
+    )
+    db.conn.commit()
+    total_needed = sum(
+        army_needed(r) for r in db.conn.execute("SELECT * FROM armies").fetchall()
+    )
     expected = format_money(monthly_amount(total_needed))
-    assert expected in report, f"army_report 月饷总额应=实扣总和格式化『{expected}』"
+    report = db.army_report(limit=20)
+    assert expected in report
+    assert monthly_amount(total_needed) > 0
 
 
-def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
-    """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家不见省/中央分账，抽象忠诚不出裸数。"""
+def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
+    """#305/D10：detail/report/roster 走欠饷近似；分账字段与抽象裸分不进真实出口。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
+    # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
+    scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
     db.conn.execute(
-        """
-        UPDATE armies
-        SET arrears=63, province_pay_arrears=17, central_pay_arrears=46, loyalty=73
-        WHERE id=?
-        """,
+        "UPDATE armies SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,"
+        "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
+        "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
+        (*scores.values(), row["id"]),
+    )
+    db.conn.commit()
+    name = row["name"]
+    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
+    report = db.army_report(limit=100)
+    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
+    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
+    exits = (detail, seg, roster)
+    joined = "\n".join(exits)
+    assert name in detail and "63" not in joined
+    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
+        assert forbidden not in joined
+    db.conn.execute(
+        "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (row["id"],),
     )
     db.conn.commit()
-
-    detail = db.army_detail(row["name"])
-    report = db.army_report(limit=20)
-    roster = db.army_roster(filter_names=[row["name"]])
-    joined = "\n".join((detail, report, roster))
-
-    assert "欠饷约60万两" in joined
-    assert "欠饷63万两" not in joined
-    assert "忠诚73" not in joined
-    assert "忠诚：尚稳" in joined
-    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
-        assert forbidden not in joined
+    assert db.army_detail(name) != detail
+    for text in exits:
+        for bare in scores.values():
+            assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
 
 
 def test_army_arrears_presentation_rounds_half_steps_up(game):
-    """#305 review fix：奏报近似数须显式半档进位，避免 Python bankers rounding 压低欠饷。"""
+    """#305：半档进位只比欠饷近似事实（不拿含 pay_months 的整份 detail 当 oracle）。"""
+    from ming_sim.db import _approx_wanliang
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
 
-    for arrears, expected in ((12.5, "欠饷约15万两"), (25, "欠饷约30万两")):
+    def _arrears_fact(arrears: float) -> str:
         db.conn.execute(
-            """
-            UPDATE armies
-            SET arrears=?, province_pay_arrears=?, central_pay_arrears=0
-            WHERE id=?
-            """,
+            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
             (arrears, arrears, row["id"]),
         )
         db.conn.commit()
+        approx = _approx_wanliang(arrears)
+        assert approx in db.army_detail(row["name"])
+        return approx
 
-        assert expected in db.army_detail(row["name"])
+    assert _arrears_fact(12.5) == _arrears_fact(15) != _arrears_fact(12)
+    assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
 
 
 def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
-    """#305 cmr：web 只读 army_payload；12.5 万两不可被截成 12，否则前端近似会报约10万两。"""
+    """#305 cmr：web 只读 army_payload；12.5 万两不可被截成 12。"""
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -115,21 +129,20 @@ def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):
     db.conn.commit()
 
     payload = {army["id"]: army for army in db.army_payload()}
-
     assert payload[row["id"]]["arrears"] == pytest.approx(12.5)
 
 
 def test_simulator_payload_exposes_army_needed(game):
-    """#173 cmr（codex high + Claude medium concur）：simulator/extractor 盘面（裁判/审计大臣读的 TSV）
-    须暴露引擎实扣 army_needed，否则审计大臣读到的月饷≠实扣、「账本一致」机制误判。
-    #173：maintenance_per_turn 列已删，army_needed 列是月应发唯一真源。"""
+    """simulator/extractor 盘面须暴露引擎实扣 army_needed。"""
     from ming_sim.simulation import build_simulator_payload, _extractor_context_payload
+
     db, _state, _ = game
-    # 扩军造可观测的 army_needed 变化。
     aid = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 1"
     ).fetchone()["id"]
-    db.conn.execute("UPDATE armies SET manpower=manpower+100000 WHERE id=?", (aid,))
+    db.conn.execute(
+        "UPDATE armies SET manpower=manpower+100000 WHERE id=?", (aid,)
+    )
     db.conn.commit()
     full = db.conn.execute("SELECT * FROM armies WHERE id=?", (aid,)).fetchone()
     name = full["name"]
@@ -140,19 +153,15 @@ def test_simulator_payload_exposes_army_needed(game):
         _extractor_context_payload(db, _state, "y", "x"),
     ):
         armies = payload["armies"]
-        assert "army_needed" in armies["cols"], "simulator/extractor 盘面须含 army_needed 列"
+        assert "army_needed" in armies["cols"]
         ni = armies["cols"].index("army_needed")
         nidx = armies["cols"].index("name")
         row = next(r for r in armies["rows"] if r[nidx] == name)
-        assert int(row[ni]) == expected, (
-            f"simulator 盘面 {name} army_needed={row[ni]} 应=引擎 {expected}"
-        )
+        assert int(row[ni]) == expected
 
 
 def test_danger_order_uses_army_needed_for_arrears_months(game):
-    """#173 cmr（Claude medium 测试覆盖）：army_rows(danger_order=True) 的欠饷月数归一须按 army_needed
-    （非退役 maintenance）。两明军同短板/同 arrears、唯 salary_rate 不同（→army_needed 不同）：
-    army_needed 低（欠饷月数高）者更危、排更前。锁 SQL ORDER BY→Python sorted 重构的归一口径。"""
+    """army_rows(danger_order=True) 欠饷月数归一须按 army_needed。"""
     db, _state, _ = game
     rows = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2"
@@ -162,20 +171,19 @@ def test_danger_order_uses_army_needed_for_arrears_months(game):
     a, b = rows
     for aid in (a["id"], b["id"]):
         db.conn.execute(
-            "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,arrears=50,manpower=20000 WHERE id=?",
+            "UPDATE armies SET supply=80,morale=80,loyalty=80,training=80,"
+            "arrears=50,manpower=20000 WHERE id=?",
             (aid,),
         )
-    db.conn.execute("UPDATE armies SET salary_rate=5.0 WHERE id=?", (a["id"],))   # army_needed=10→月数低
-    db.conn.execute("UPDATE armies SET salary_rate=0.5 WHERE id=?", (b["id"],))   # army_needed=1→月数高→更危
+    db.conn.execute("UPDATE armies SET salary_rate=5.0 WHERE id=?", (a["id"],))
+    db.conn.execute("UPDATE armies SET salary_rate=0.5 WHERE id=?", (b["id"],))
     db.conn.commit()
     ordered = [r["name"] for r in db.army_rows(danger_order=True)]
-    assert ordered.index(b["name"]) < ordered.index(a["name"]), (
-        f"欠饷月数高(army_needed 低)者应排更前(更危)；danger 归一须用 army_needed。序={ordered[:6]}"
-    )
+    assert ordered.index(b["name"]) < ordered.index(a["name"])
 
 
 def test_danger_order_preserves_fractional_arrears(game):
-    """#305 same-pattern：danger_order 的欠饷月数排序键也不得截断小数。"""
+    """danger_order 欠饷月数排序键不得截断小数。"""
     db, _state, _ = game
     rows = db.conn.execute(
         "SELECT id FROM armies WHERE owner_power='ming' AND salary_rate>0 LIMIT 2"
@@ -192,21 +200,24 @@ def test_danger_order_preserves_fractional_arrears(game):
             """,
             (aid,),
         )
-    db.conn.execute("UPDATE armies SET name='A低欠饷军', arrears=12.1 WHERE id=?", (low["id"],))
-    db.conn.execute("UPDATE armies SET name='Z高欠饷军', arrears=12.9 WHERE id=?", (high["id"],))
+    db.conn.execute(
+        "UPDATE armies SET name='A低欠饷军', arrears=12.1 WHERE id=?", (low["id"],)
+    )
+    db.conn.execute(
+        "UPDATE armies SET name='Z高欠饷军', arrears=12.9 WHERE id=?", (high["id"],)
+    )
     db.conn.commit()
 
     ordered = [r["name"] for r in db.army_rows(danger_order=True)]
-
     assert ordered.index("Z高欠饷军") < ordered.index("A低欠饷军")
 
 
 def test_army_rows_non_danger_sorted_by_theater_name(read_game):
-    """#173 cmr：非 danger 路（走 SQL ORDER BY theater,name）排序保持原语义、limit 生效。"""
+    """非 danger 路按 theater,name 升序；limit 生效。"""
     db, _state, _ = read_game
     rows = db.army_rows(danger_order=False)
     if len(rows) < 2:
         pytest.skip("需≥2 支军队验排序/limit（数据前提）")
     keys = [(str(r["theater"]), str(r["name"])) for r in rows]
-    assert keys == sorted(keys), "非 danger 路应按 theater,name 升序"
-    assert len(db.army_rows(limit=2, danger_order=False)) == 2, "limit 应生效"
+    assert keys == sorted(keys)
+    assert len(db.army_rows(limit=2, danger_order=False)) == 2
