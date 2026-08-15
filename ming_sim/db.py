@@ -11525,8 +11525,9 @@ class GameDB:
                     """,
                     (int(dossier_id), current_turn),
                 )
-                # A predeclared midzhi rejection already stigmatized this one attempt;
-                # force-promulgation only adds the imperial-authority cost (ADR 0056).
+                # Predeclared midzhi already took the stigma on rejection;
+                # ordinary force adds the rescript stigma here. Party costs always
+                # land on the force choice itself (#614: never prepaid on reject).
                 if not predeclared_midzhi:
                     self._append_midzhi_stigma(
                         dossier_id, decision="force_promulgated", turn=state.turn,
@@ -11534,7 +11535,7 @@ class GameDB:
                     )
                 self._apply_override_costs(
                     state, dossier_id, include_authority=True,
-                    include_parties=not predeclared_midzhi,
+                    include_parties=True,
                     stigma_reason="批红强颁", commit=False,
                 )
             else:
@@ -11985,10 +11986,15 @@ class GameDB:
                      dossier_id),
                 )
                 dossier = self.get_decree_dossier(dossier_id)
-                if dossier and dossier.get("mode") == "midzhi":
+                # Midzhi 直发仍落 override 代价。打回不预写派系流水——代价只在
+                # 批红强颁选择落下；收回/留中保持零流水（#614 / ADR 0069）。
+                if (
+                    dossier and dossier.get("mode") == "midzhi"
+                    and decision == "promulgated"
+                ):
                     self._apply_override_costs(
-                        state, dossier_id, include_authority=(decision == "promulgated"),
-                        include_parties=True, stigma_reason="预先中旨直发" if decision == "promulgated" else "中旨被打回",
+                        state, dossier_id, include_authority=True,
+                        include_parties=True, stigma_reason="预先中旨直发",
                         commit=False,
                     )
             # Consumption belongs to the same atomic unit as effect application;
