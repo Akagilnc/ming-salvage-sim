@@ -131,6 +131,11 @@ export function DecisionModal({
             <h3 id="decision-document-title">{cur.title}</h3>
             <p>{cur.context || "臣等谨陈时局，请陛下裁夺。"}</p>
           </div>
+          {cur.rejection_reason || cur.opposition ? <div className="decision-document-section">
+            <span className="decision-section-label">封驳具由</span>
+            {cur.rejection_reason ? <p>{cur.rejection_reason}</p> : null}
+            {cur.opposition ? <p>持议者：{cur.opposition}</p> : null}
+          </div> : null}
           <div className="decision-document-section">
             <span className="decision-section-label">内阁票拟</span>
             <div className="decision-options">
