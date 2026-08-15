@@ -490,6 +490,14 @@ def apply_appointment(
     return (name, displaced)
 
 
+def coalesce_pending_action_id(prior: int, staged: int) -> int:
+    """Same-turn tool aggregation: non-zero staged wins; zero must not erase prior success."""
+    staged_id = int(staged or 0)
+    if staged_id > 0:
+        return staged_id
+    return int(prior or 0)
+
+
 def _pending_action_brief(pa: Dict[str, Any]) -> str:
     """暂存动作的一句话摘要，供对话确认意图判定时告诉 LLM『有哪些待皇帝定夺』。"""
     import json as _json
@@ -1104,9 +1112,12 @@ class GameSession:
                 if draft_text:
                     # #502 L2 / #522：tool 拟旨与 CLI 共用候选 seam；招抚走 admission。
                     stage_failures: List[Dict[str, Any]] = []
-                    result.pending_action_id = self._stage_directive_tool_candidate(
-                        draft_text, character.name, message_text,
-                        failures_out=stage_failures,
+                    result.pending_action_id = coalesce_pending_action_id(
+                        result.pending_action_id,
+                        self._stage_directive_tool_candidate(
+                            draft_text, character.name, message_text,
+                            failures_out=stage_failures,
+                        ),
                     )
                     if stage_failures:
                         result.pending_action_failures = list(
@@ -1119,8 +1130,11 @@ class GameSession:
                     continue
                 payload = tool_result.removeprefix("__pending_recommendation__")
                 payload = payload.removeprefix("__pending_appointment__").strip()
-                result.pending_action_id = self._stage_appointment_candidate(
-                    payload, character, message_text,
+                result.pending_action_id = coalesce_pending_action_id(
+                    result.pending_action_id,
+                    self._stage_appointment_candidate(
+                        payload, character, message_text,
+                    ),
                 )
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
@@ -1163,10 +1177,13 @@ class GameSession:
                                 payload = self.db.attach_secret_oral_pin(
                                     character.name, int(self.state.turn), payload,
                                 )
-                            result.pending_action_id = self.db.stage_pending_action(
-                                self.state.turn, kind="secret_order", action=action,
-                                minister_name=character.name, target_id=order_id,
-                                payload=payload,
+                            result.pending_action_id = coalesce_pending_action_id(
+                                result.pending_action_id,
+                                self.db.stage_pending_action(
+                                    self.state.turn, kind="secret_order", action=action,
+                                    minister_name=character.name, target_id=order_id,
+                                    payload=payload,
+                                ),
                             )
                 elif tool_result.startswith("__secret_order__"):
                     payload_json = tool_result.removeprefix("__secret_order__").strip()
@@ -1175,26 +1192,29 @@ class GameSession:
                     except (ValueError, TypeError):
                         payload = {}
                     if isinstance(payload, dict):
-                        result.pending_action_id = self.db.stage_pending_action(
-                            self.state.turn, kind="secret_order", action="新建",
-                            minister_name=character.name, target_id=None,
-                            payload={
-                                "title": str(payload.get("title") or "").strip(),
-                                "content": str(payload.get("content") or "").strip(),
-                                "assignee": str(payload.get("assignee") or character.name).strip(),
-                                "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
-                                "deadline_months": payload.get("deadline_months") or 0,
-                                "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
-                                "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
-                                "dossier_links": __import__(
-                                    "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
-                                ).confirm_dossier_links(
-                                    answer,
-                                    self.db.list_referenceable_dossiers(character.name, self.state.turn),
-                                    payload.get("dossier_links"),
-                                    llm_config=self.llm_config,
-                                ),
-                            },
+                        result.pending_action_id = coalesce_pending_action_id(
+                            result.pending_action_id,
+                            self.db.stage_pending_action(
+                                self.state.turn, kind="secret_order", action="新建",
+                                minister_name=character.name, target_id=None,
+                                payload={
+                                    "title": str(payload.get("title") or "").strip(),
+                                    "content": str(payload.get("content") or "").strip(),
+                                    "assignee": str(payload.get("assignee") or character.name).strip(),
+                                    "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
+                                    "deadline_months": payload.get("deadline_months") or 0,
+                                    "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                    "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
+                                    "dossier_links": __import__(
+                                        "ming_sim.cli_backend", fromlist=["confirm_dossier_links"]
+                                    ).confirm_dossier_links(
+                                        answer,
+                                        self.db.list_referenceable_dossiers(character.name, self.state.turn),
+                                        payload.get("dossier_links"),
+                                        llm_config=self.llm_config,
+                                    ),
+                                },
+                            ),
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
                     try:
@@ -1204,8 +1224,11 @@ class GameSession:
                     except Exception:
                         order_id = 0
                     if order_id:
-                        result.pending_action_id = self._stage_legacy_registered_secret_order(
-                            order_id, character.name)
+                        result.pending_action_id = coalesce_pending_action_id(
+                            result.pending_action_id,
+                            self._stage_legacy_registered_secret_order(
+                                order_id, character.name),
+                        )
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         self._cli_backend_fallback_actions(
             result, character, message,
@@ -1776,18 +1799,20 @@ class GameSession:
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522).
 
-        Pacification cues stay inside the pacification admission seam: a single
-        resolvable target stages via stage_pacification_candidate; unknown or
-        ambiguous targets fail loud (return 0 + pending_action_failures diagnostic)
-        and never degrade to stage_explicit_directive → special_decree. Generic
-        drafts without a pacification cue keep the special_decree path.
+        Pacification cue/target admission reads only the tool draft (拟旨).
+        Session chatter must not hijack an ordinary draft into pacification.
+        When the draft itself is pacification, a single resolvable target stages
+        via stage_pacification_candidate; unknown or ambiguous targets fail loud
+        (return 0 + pending_action_failures diagnostic) and never degrade to
+        stage_explicit_directive → special_decree. Generic drafts without a
+        pacification cue keep the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
             return 0
-        combined = f"{message_text or ''}\n{text}"
-        if any(cue in combined for cue in GameSession._PACIFICATION_TOOL_CUES):
-            target = self._mentioned_pacification_target(combined)
+        # Cue + target bind only to propose_directive draft_text — never message_text.
+        if any(cue in text for cue in GameSession._PACIFICATION_TOOL_CUES):
+            target = self._mentioned_pacification_target(text)
             if not target:
                 failure = {
                     "id": 0,

@@ -30,6 +30,8 @@ _DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
 _DOSSIER_IMMEDIATE_ACTIONS = frozenset({"secret_order"})
 _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "authorization", "secret_authorization", "secret_order", "dismiss_assignment",
+    # #522：招抚顺颁物化 #190 后即终局，复用通用 terminal 分支（禁止 db.py 动作特判）。
+    "pacification",
 })
 
 DOSSIER_ACTION_POLICY = {
