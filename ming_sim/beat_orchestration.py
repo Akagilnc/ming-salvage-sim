@@ -528,15 +528,20 @@ class ChatTurnSceneRegistry:
         chat_turn_id: int,
         beat_generator: Optional[BeatGenerator],
     ) -> None:
-        if not chat_turn_id or self.has(int(chat_turn_id)):
+        """锁内一次原子 claim：同 chat_turn_id 至多启动一轮 discover/submit。"""
+        if not chat_turn_id:
             return
-        tasks = discover_open_enter_tasks(
-            db, state, minister_name=minister_name, chat_turn_id=int(chat_turn_id),
-        )
-        # 即使无任务也占桶，避免同轮重复 discover；join 得 [].
+        key = int(chat_turn_id)
+        # Claim under lock before any discover work — closes TOCTOU where two
+        # callers both pass has() then each submit a full open/enter round.
         with self._lock:
-            self._futures.setdefault(int(chat_turn_id), [])
-        self._submit(int(chat_turn_id), tasks, beat_generator)
+            if key in self._futures:
+                return
+            self._futures[key] = []
+        tasks = discover_open_enter_tasks(
+            db, state, minister_name=minister_name, chat_turn_id=key,
+        )
+        self._submit(key, tasks, beat_generator)
 
     def start_exit(
         self,

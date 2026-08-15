@@ -1399,9 +1399,13 @@ def dismiss_from_audience(
 
     不在场者令退 = 幂等 no-op（不落账、返 None）；名不填 → 响亮 empty_person。
 
+    只落垫位/显式 body——exit 旁白由调用方登记本轮 ChatTurnSceneRegistry（#542）。
+    `beat_generator` / `knowledge_provider` 形参保留兼容，**故意忽略**（禁止同步旁路）。
+
     `origin_chat_turn_id`（#506 L1）：tool 触发的令退发生在某一对话轮内时绑该轮 chat_turn_id，
     使撤回本轮据 origin 删掉告退账、令退者在场复原（否则告退账残留 → 按夜取数 ≠ 未发生，
-    且被令退者永久差出）。0=不属某轮的独立令退（如 CLI「退下」控制口令，无对话轮、无撤回目标）。"""
+    且被令退者永久差出）。0=不属某轮的独立令退（无撤回目标）。
+    """
     name = str(person_name or "").strip()
     if not name:
         raise AudienceNightError("令退人名不能为空", code="empty_person")
@@ -1413,20 +1417,13 @@ def dismiss_from_audience(
         nid = int(open_n["id"])
     if name not in present_names_at(db, int(nid)):
         return None
-    generated = ""
-    if not body and beat_generator is not None:
-        from ming_sim import beat_orchestration as beats
-
-        night = get_night(db, int(nid)) or {}
-        generated = beats.generate_exit_beat_body(
-            db, state, night=night, person_name=name,
-            beat_generator=beat_generator, knowledge_provider=knowledge_provider,
-        )
+    # state/beat_generator/knowledge_provider: compatibility only — no sync LLM here.
+    _ = (state, beat_generator, knowledge_provider)
     return append_ledger_entry(
         db, int(nid),
         person_names=[name],
         audibility=AUDIBILITY_PUBLIC,
-        body=body or generated or f"帝令{name}退下，{name}告退。",
+        body=body or f"帝令{name}退下，{name}告退。",
         tags=[TAG_EXIT],
         check_dead=False,
         origin_chat_turn_id=origin_chat_turn_id,
