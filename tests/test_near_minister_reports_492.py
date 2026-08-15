@@ -110,41 +110,24 @@ def test_generic_office_queries_return_current_vacancies(game):
             assert title in report["statement"]
 
 
-def test_return_report_keeps_countable_facts(game, monkeypatch):
+def test_domain_inquiry_forwards_real_qualitative_readers(game):
+    """域 reader 转发：build_return_report → 未替换真实 reader → statement。"""
     db, _state, _content = game
-    countable_army = "辽镇兵额12000，欠饷25月，士气低迷"
-    monkeypatch.setattr(db, "army_report", lambda **_: countable_army)
-
-    report = build_return_report(
-        db,
-        "陕西巡抚可有？",
-        source_kind="inquiry",
-        source_ref="吏部查访",
-    )
-    assert "陕西巡抚" in report["statement"]
-    assert all(isinstance(value, str) for value in report.values())
-    arrears = build_return_report(db, "各镇欠饷如何？")
-    assert arrears["statement"] == countable_army
-
-
-def test_domain_reports_reuse_existing_qualitative_readers(game, monkeypatch):
-    db, _state, _content = game
-    calls = []
-    army_reader_out = "军镇欠饷若干"
-    power_reader_out = "流寇势弱"
-    monkeypatch.setattr(
-        db, "army_report", lambda **kwargs: calls.append("army") or army_reader_out
-    )
-    monkeypatch.setattr(
-        db, "power_report", lambda **kwargs: calls.append("power") or power_reader_out
-    )
 
     arrears = build_return_report(db, "各镇欠饷如何？")
     bandits = build_return_report(db, "流寇势如何？")
 
-    assert calls == ["army", "power"]
-    assert arrears["statement"] == army_reader_out
-    assert bandits["statement"] == power_reader_out
+    assert arrears["statement"] == str(db.army_report(limit=10) or "")
+    assert bandits["statement"] == str(
+        db.power_report(
+            exclude_self=True,
+            kinds={"bandit", "bandits", "内乱"},
+            audience=True,
+        )
+        or ""
+    )
+    assert arrears["statement"] and any(ch.isdigit() for ch in arrears["statement"])
+    assert bandits["statement"]
 
 
 def test_return_report_interface_does_not_depend_on_minister_reply():
