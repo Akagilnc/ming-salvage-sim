@@ -1458,6 +1458,106 @@ def test_stream_join_and_abandon_do_not_hold_write_gate(monkeypatch):
     assert any(e.get("type") == "error" for e in events2)
 
 
+def test_web_stream_dismiss_registers_exit_before_join_and_persists(web_game):
+    """#542: stream dismiss 先登记 exit、gate 外统一 join，再与 reply 原子落账。
+
+    现码若 join 早于 start_exit，垫位文案残留、exit future 脱轮。
+    """
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    exit_body = f"【退下旁白·特征化】{minister}告退。"
+    order: list[str] = []
+    join_entered = threading.Event()
+    release_join = threading.Event()
+
+    real_start_exit = game.session.start_chat_turn_exit_scene
+    real_join = game.session.join_chat_turn_scene
+
+    def tracking_start_exit(*a, **k):
+        order.append("start_exit")
+        return real_start_exit(*a, **k)
+
+    def tracking_join(ctid):
+        order.append("join")
+        join_entered.set()
+        assert release_join.wait(2), "join was not released"
+        return real_join(ctid)
+
+    game.session.start_chat_turn_exit_scene = tracking_start_exit
+    game.session.join_chat_turn_scene = tracking_join
+    game.session._beat_generator = lambda inputs: (
+        exit_body if inputs.beat_kind == BEAT_EXIT else f"body-{inputs.beat_kind}"
+    )
+
+    # 类名须为 RunOutput：_chat_stream_payload 按 type(event).__name__ 识别终事件。
+    class RunOutput:
+        def __init__(self):
+            self.content = "臣告退。"
+            self.messages = []
+            self.tools = [
+                SimpleNamespace(tool_name="dismiss_minister", result="__dismiss__"),
+            ]
+
+    class _DismissAgent:
+        def run(self, *_a, **_k):
+            yield SimpleNamespace(event="RunContent", content="臣告退。")
+            yield RunOutput()
+
+    game.session.registry.get = lambda _c: _DismissAgent()
+
+    ctid, snap = game._start_chat_turn(minister)
+    night_id = int(game.db.conn.execute(
+        "SELECT night_id FROM chat_turns WHERE id=?", (ctid,),
+    ).fetchone()["night_id"])
+    # 入殿后大臣须在场，dismiss 才能落 exit 垫位。
+    if minister not in an.present_names_at(game.db, night_id):
+        an.summon_enter(game.db, night_id, minister)
+
+    gate = game._runtime_write_gate()
+    # 占住 write_gate：证明 join 等待在 gate 外（与 C9/T1/T10 同纪律）。
+    assert gate.acquire(timeout=0.2)
+    try:
+        result_box: dict = {}
+
+        def run_stream():
+            try:
+                result_box["payload"] = game._chat_stream_payload(
+                    minister, "卿且退下", int(ctid), snap, int(game.state.turn),
+                    lambda _d: None, write_gate=gate,
+                )
+            except BaseException as exc:
+                result_box["exc"] = exc
+
+        worker = threading.Thread(target=run_stream)
+        worker.start()
+        assert join_entered.wait(2), "stream never reached join"
+        # join 已进入且 start_exit 必先于 join；gate 仍被本测试持有 → join 不在 gate 内。
+        assert order == ["start_exit", "join"], order
+        assert gate.locked()
+        release_join.set()
+        gate.release()
+        worker.join(3)
+        assert not worker.is_alive()
+    finally:
+        if gate.locked():
+            gate.release()
+        release_join.set()
+
+    assert "exc" not in result_box, result_box.get("exc")
+    payload = result_box["payload"]
+    assert payload["court_action"] == "dismiss"
+    assert payload["answer"] == "臣告退。"
+
+    exit_rows = [
+        e for e in an.list_ledger(game.db, night_id)
+        if an.TAG_EXIT in (e.get("tags") or []) and minister in (e.get("person_names") or [])
+    ]
+    assert exit_rows, "dismiss must write exit ledger"
+    assert exit_rows[-1]["body"] == exit_body
+    # 成功路径不得残留脱轮 future。
+    assert not game.session._scene_registry.has(int(ctid))
+
+
 def test_failed_turn_does_not_consume_opening_and_clears_enter_placeholder(game):
     """C12/T13/T16: failed turns lose opening eligibility; enter placeholder is cleared."""
     db, state, content = game

@@ -1846,17 +1846,38 @@ class WebGame:
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
 
-        # Join scene outside write_gate (same as non-stream chat); gate only wraps short writes.
+        # #542：先完成 action/tool 解释并登记 exit scene（与非流式 session.chat 同序），
+        # 再在 write_gate 外统一 join，最后短事务原子持久化 reply + 本轮全部 scene。
+        # join 不得早于 start_exit，否则 exit future 脱轮、卷轴留垫位。
+        interpreted = self._chat_stream_interpret_tools(
+            minister_name, text, character, answer, run_output,
+            action_intent_future, chat_turn_id,
+        )
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
         with cm:
-            return self._chat_stream_payload_commit(
-                minister_name, text, character, answer, run_output,
-                action_intent_future, chat_turn_id, before_snapshot, accepted_turn,
-                scene_generated=scene_generated,
-            )
+            with atomic(self.db):
+                self.session.persist_chat_turn_scene(scene_generated or [])
+                payload = self._chat_payload(
+                    minister_name,
+                    interpreted["answer"],
+                    court_action=interpreted["court_action"],
+                    next_minister=interpreted["next_minister"],
+                    proposed_directive=interpreted["proposed"],
+                    appointed_minister=interpreted["appointed"],
+                    registered_minister=interpreted["registered"],
+                    displaced_minister=interpreted["displaced"],
+                    secret_order_id=interpreted["secret_order_id"],
+                    pending_action_id=interpreted["pending_action_id"],
+                    pending_action_failures=interpreted["pending_action_failures"],
+                    chat_turn_id=chat_turn_id,
+                    accepted_turn=accepted_turn,
+                    directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
+                )
+                self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            return payload
 
-    def _chat_stream_payload_commit(
+    def _chat_stream_interpret_tools(
         self,
         minister_name: str,
         text: str,
@@ -1865,9 +1886,6 @@ class WebGame:
         run_output: Any,
         action_intent_future: Any,
         chat_turn_id: int,
-        before_snapshot: Dict[str, Any],
-        accepted_turn: int,
-        scene_generated: Optional[list] = None,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -2080,24 +2098,20 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
-        # scene_generated joined outside the gate by _chat_stream_payload; persist only here.
-        generated = scene_generated if scene_generated is not None else []
-        with atomic(self.db):
-            self.session.persist_chat_turn_scene(generated)
-            payload = self._chat_payload(
-                minister_name, answer, court_action=court_action, next_minister=next_minister,
-                proposed_directive=proposed, appointed_minister=appointed,
-                registered_minister=registered,
-                displaced_minister=displaced,
-                secret_order_id=secret_order_id,
-                pending_action_id=pending_action_id,
-                pending_action_failures=pending_action_failures,
-                chat_turn_id=chat_turn_id,
-                accepted_turn=accepted_turn,
-                directive_confirmation_ambiguous=directive_ambiguous,
-            )
-            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        return payload
+        # 仅解释/登记；join + 短事务落账由 _chat_stream_payload 在 gate 外/内分阶完成。
+        return {
+            "answer": answer,
+            "court_action": court_action,
+            "next_minister": next_minister,
+            "proposed": proposed,
+            "appointed": appointed,
+            "registered": registered,
+            "displaced": displaced,
+            "secret_order_id": secret_order_id,
+            "pending_action_id": pending_action_id,
+            "pending_action_failures": pending_action_failures,
+            "directive_ambiguous": directive_ambiguous,
+        }
 
     def _trail_mindreading_after_reply(
         self,
