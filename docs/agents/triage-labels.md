@@ -12,4 +12,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-This repo is **Matt-pure** (2026-06-17): the old `priority/*` / `type/*` / `area/*` label system was deleted; the only labels are the seven Matt ones — these five **state** roles above plus the two **category** roles `bug` / `enhancement`. Full flow: [docs/DEV_WORKFLOW.md](../DEV_WORKFLOW.md).
+This repo is **Matt-pure** (2026-06-17): the old `priority/*` / `type/*` / `area/*` label system was deleted; the only labels are the seven Matt ones — these five **state** roles above plus the two **category** roles `bug` / `enhancement`.
