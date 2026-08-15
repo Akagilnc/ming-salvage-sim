@@ -46,12 +46,15 @@ def test_army_report_shows_actual_charge(game):
     assert public["monthly_pay_total"] == monthly_total
 
 
-def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game):
+def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats(game, monkeypatch):
     """#305/D10：军饷欠是真钱，可奏报 approximate 总额；玩家投影不见省/中央分账，抽象评分不出裸数。
 
     独立显式样例（arrears=63→kind=approx/rounded=60；loyalty=73→loyalty_band 稳定枚举；
-    其余 0-100 抽象轴同为 *_band，三出口真实消费 army_public_payload）。
+    其余 0-100 抽象轴同为 *_band）。三出口经 tracer 证明真实调用并消费 army_public_payload。
     """
+    import copy
+    from typing import Any, Callable, Dict, List
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
@@ -97,36 +100,81 @@ def test_army_arrears_presentation_reports_approx_total_and_hides_abstract_stats
     assert "province_pay_arrears" not in entry
     assert "central_pay_arrears" not in entry
 
-    # Mechanical proof: three player exits consume the sole public projection.
-    resolved = db._resolve_army_row(row["name"])
-    detail_entry = db.army_public_payload(rows=[resolved])["armies"][0]
-    assert detail_entry == entry
+    # --- Mechanical exit consumption via tracer + sentinel mutation ---
+    def _install_army_tracer(mutate: bool = False) -> List[Dict[str, Any]]:
+        calls: List[Dict[str, Any]] = []
+        original: Callable[..., Dict[str, object]] = db.army_public_payload
 
-    report_public = db.army_public_payload(limit=20, danger_order=True)
-    report_entry = next(a for a in report_public["armies"] if a["id"] == row["id"])
-    assert report_entry["loyalty_band"] == entry["loyalty_band"]
-    assert report_entry["supply_band"] == entry["supply_band"]
-    assert report_entry["firearm_equipment_band"] == entry["firearm_equipment_band"]
+        def wrapper(*args, **kwargs):
+            result = original(*args, **kwargs)
+            out = {
+                "armies": [dict(a) for a in result["armies"]],  # type: ignore[index]
+                "monthly_pay_total": result.get("monthly_pay_total", 0),
+                "manpower_total": result.get("manpower_total", 0),
+            }
+            if mutate:
+                for a in out["armies"]:
+                    if a["id"] == row["id"]:
+                        a["name"] = f"ZTRACE_{a['name']}"
+                        # Force a distinct band label path: steady→firm so exit text shifts.
+                        a["loyalty_band"] = "firm"
+                        a["firearm_equipment_band"] = "critical"
+            calls.append(
+                {
+                    "args": args,
+                    "kwargs": dict(kwargs),
+                    "result": copy.deepcopy(out),
+                }
+            )
+            return out
 
-    roster_rows = [
-        r for r in db.conn.execute(
-            "SELECT * FROM armies ORDER BY owner_power='ming' DESC, theater, name"
-        ).fetchall()
-        if r["name"] == row["name"] or r["id"] == row["id"]
-    ]
-    roster_entry = db.army_public_payload(rows=roster_rows)["armies"][0]
-    assert roster_entry == entry
+        monkeypatch.setattr(db, "army_public_payload", wrapper)
+        return calls
 
+    # army_detail: must call projection with rows= slice and consume band fields.
+    detail_calls = _install_army_tracer(mutate=True)
     detail = db.army_detail(row["name"])
-    report = db.army_report(limit=20)
-    roster = db.army_roster(filter_names=[row["name"]])
-    for surface in (detail, report, roster):
-        assert isinstance(surface, str) and surface
-    # Detail is single-army: raw abstract scores must not leak as bare ints.
+    assert len(detail_calls) == 1, "army_detail must call army_public_payload"
+    assert detail_calls[0]["kwargs"].get("rows") is not None
+    d_entry = detail_calls[0]["result"]["armies"][0]
+    assert d_entry["id"] == row["id"]
+    assert d_entry["loyalty_band"] == "firm"
+    assert d_entry["firearm_equipment_band"] == "critical"
+    assert d_entry["name"] in detail
+    assert "忠诚：稳固" in detail  # firm sentinel rendered from projection
+    assert "火器：残破" in detail  # critical firearm band → equipment word
+    # Raw abstract scores must not leak as bare ints on detail (band path).
     assert "73" not in detail
     assert "55" not in detail
-    assert "忠诚：尚稳" in detail  # loyalty_band steady rendered
-    assert "火器：短缺" in detail  # firearm 45 → unstable → 短缺
+    assert "45" not in detail
+
+    # army_report: must call full projection (no rows=) and consume name/bands.
+    monkeypatch.undo()
+    report_calls = _install_army_tracer(mutate=True)
+    report = db.army_report(limit=20)
+    assert len(report_calls) == 1, "army_report must call army_public_payload"
+    assert report_calls[0]["kwargs"].get("rows") is None
+    r_entry = next(
+        a for a in report_calls[0]["result"]["armies"] if a["id"] == row["id"]
+    )
+    assert r_entry["name"] in report
+    assert r_entry["firearm_equipment_band"] == "critical"
+    assert "火器：残破" in report  # report consumes firearm band from projection
+
+    # army_roster: must call projection with rows=; consumes arrears/name structure.
+    monkeypatch.undo()
+    roster_calls = _install_army_tracer(mutate=True)
+    roster = db.army_roster(filter_names=[row["name"]])
+    assert len(roster_calls) == 1, "army_roster must call army_public_payload"
+    assert roster_calls[0]["kwargs"].get("rows") is not None
+    rost_entry = roster_calls[0]["result"]["armies"][0]
+    assert rost_entry["id"] == row["id"]
+    assert rost_entry["name"] in roster
+    assert rost_entry["arrears"]["rounded_amount"] == 60
+    # Default qualitative_equipment=False → raw firearm count cell (dual-state).
+    line = next(l for l in roster.splitlines() if l.startswith(rost_entry["name"] + "|"))
+    cells = line.split("|")
+    assert "45" in cells
 
 
 def test_army_arrears_presentation_rounds_half_steps_up(game):
