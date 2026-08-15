@@ -217,6 +217,36 @@ def _offline_scene_beat_generator():
 
 
 @pytest.fixture(autouse=True)
+def _atomic_connless_test_shell_compat():
+    """#542：无 conn 生命周期测试壳的 atomic 兼容——只改测试，不改生产事务语义。
+
+    生产 chat/retry/stream 落回话无条件 `with atomic(self.db)`（不得按 db.conn 走
+    nullcontext）。轻壳故意无 conn，以便 `_start_chat_turn` / night 准入等仍走
+    create_chat_turn 等 stub 缝；真库仍走真实 atomic（_SuspendableConnection）。
+    """
+    import contextlib
+
+    import ming_sim.applier as applier
+    import web_app
+
+    real_atomic = applier.atomic
+
+    @contextlib.contextmanager
+    def atomic_for_tests(db):
+        if getattr(db, "conn", None) is None:
+            yield
+            return
+        with real_atomic(db):
+            yield
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(applier, "atomic", atomic_for_tests)
+    mp.setattr(web_app, "atomic", atomic_for_tests)
+    yield
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cli_bin_resolution():
     """全套测试隔离 runner 可执行定位：清 _BIN_CACHE，并把登录 shell 探测短路成
     "不触发"（_DISCOVERED_LOGIN_PATH="" → _login_shell_path 立即返 None）。
