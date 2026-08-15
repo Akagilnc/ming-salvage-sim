@@ -739,13 +739,22 @@ def start_close_scene_on_registry(
         ))
         scaffold_owned = True
 
-    scene_registry.start_close(
-        db, state,
-        chat_turn_id=ctid,
-        night_id=int(night_id),
-        beat_generator=beat_generator,
-        knowledge_provider=knowledge_provider,
-    )
+    try:
+        scene_registry.start_close(
+            db, state,
+            chat_turn_id=ctid,
+            night_id=int(night_id),
+            beat_generator=beat_generator,
+            knowledge_provider=knowledge_provider,
+        )
+    except BaseException as start_exc:
+        # #542 r6e: create 后 start 同步抛错时，把 ctid/ownership 挂到异常上，
+        # 调用方仍拿得到 ownership，既有 abandon/fail/OPEN 清理才能跑到。
+        try:
+            start_exc.close_scene_ownership = (int(ctid), bool(scaffold_owned))  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        raise
     return (ctid, scaffold_owned)
 
 
