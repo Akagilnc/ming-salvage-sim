@@ -11672,11 +11672,23 @@ class GameDB:
                     return
             elif row["action_type"] == "pacification":
                 # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
+                # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
                 target = str(
                     payload.get("target_id") or row.get("target_id") or ""
                 ).strip()
                 if not target:
                     raise ValueError("招抚案卷缺少 canonical target")
+                person_row = self.conn.execute(
+                    "SELECT power_id FROM characters WHERE name = ?",
+                    (target,),
+                ).fetchone()
+                if person_row is None:
+                    raise ValueError(f"招抚案卷目标不存在：{target}")
+                old_power = str(person_row["power_id"] or "").strip()
+                if not old_power or old_power == "ming":
+                    raise ValueError(
+                        f"招抚案卷目标原势力不可反噬：{target}@{old_power or '∅'}"
+                    )
                 origin_ref = f"dossier:{int(dossier_id)}"
                 item = {
                     "name": target,
@@ -11684,7 +11696,12 @@ class GameDB:
                     "动作": "易主",
                     "new_power": "ming",
                     "方式": "主动归附",
-                    "反噬": {},
+                    "反噬": {
+                        old_power: {
+                            "military_strength": -1,
+                            "reason": "受抚",
+                        }
+                    },
                     "reason": str(
                         payload.get("text") or row.get("decree_text") or "受抚归明"
                     ),
