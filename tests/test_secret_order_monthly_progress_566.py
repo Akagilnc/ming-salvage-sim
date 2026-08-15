@@ -70,6 +70,7 @@ def _settle(db, state, content, narrative="本月邸报", progress=None):
     return turn
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, monkeypatch):
     """Real CLI production entry; only simulator/extractor LLM calls are canned."""
     from ming_sim.db import GameDB
@@ -350,6 +351,7 @@ def _stage_routed_secret_order(db, state, action, deadline):
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_pending_long_secret_order_routes_real_cli_to_full_settlement(game, monkeypatch, action):
     db, state, content = game
     turn = state.turn
@@ -369,6 +371,7 @@ def test_pending_long_secret_order_routes_real_cli_to_full_settlement(game, monk
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_pending_short_secret_order_uses_real_cli_fast_advance(game, monkeypatch, action):
     import ming_sim.decree as decree
 
@@ -396,6 +399,7 @@ def test_pending_short_secret_order_uses_real_cli_fast_advance(game, monkeypatch
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_no_edict_endpoint_routes_real_long_order_to_full_settlement(game, monkeypatch, action):
     from contextlib import contextmanager
     from types import SimpleNamespace
@@ -509,6 +513,7 @@ def _rollback_snapshot(db, state, pending_ids):
 
 
 @pytest.mark.parametrize("entry", ["cli", "web"])
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write(
     game, monkeypatch, entry,
 ):
