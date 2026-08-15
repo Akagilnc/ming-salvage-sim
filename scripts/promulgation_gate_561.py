@@ -4,6 +4,12 @@ Runs the production ``resolve_directives`` judge/simulator assembly, the product
 rescript hold transition, and the next-month production reconsideration rail.
 No model provider or production collaborator is replaced.
 
+Authority slider + TD-9 person arms share one scene constructor and the same
+production ``resolve_directives`` runner on isolated temporary DBs (P5 concurrent).
+TD-9 is three hostile-only arms: unchanged baseline / leader faction posture only /
+real gatekeeper replacement with a registered successor. Trigger-face coverage
+comes from the low full batch, not extra live arms.
+
   MING_SIM_TRACE_PATH=/tmp/issue-561-trace.jsonl \
     ../Ming_LLM/.venv/bin/python scripts/promulgation_gate_561.py \
       --runner codex --model gpt-5.6-sol --output docs/evidence/issue-561-gate.json
@@ -14,8 +20,10 @@ import argparse
 import json
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import sys
+from typing import Callable, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -23,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
+from ming_sim.cli_backend import cli_backend_parallel_safe
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -36,6 +45,32 @@ from ming_sim.issues import (
     bind_content as bind_issue_content,
 )
 from ming_sim.models import LLMConfig
+
+HOSTILE_TEXT = "许誉卿执掌封驳时，不经部议清丈天下田亩并追夺东林士绅隐田"
+ORDINARY_TEXT = "循户部成例补发边军一月欠饷"
+AUTHORITY_EDGE_TEXT = "越一级特授边将虚衔，仍循兵部具题复核"
+APPOINTMENT_TEXT = "调任许誉卿出京"
+ADMIN_MIDZHI_TEXT = "中旨命内廷整理既有文册，不动外廷钱权"
+VITAL_MIDZHI_TEXT = "中旨绕开户部，强夺太仓全部钱粮交内廷支配"
+# Judge-visible faction posture (agenda expresses leader arm; never satisfaction).
+BASE_DONGLIN_AGENDA = "反对清丈，维护田赋旧例"
+# person_leader sole mutation: 安抚首领 via Donglin agenda posture only,
+# not a character roster swap and not leverage numericization. Gatekeeper bench stays.
+LEADER_APPEASED_AGENDA = "钱谦益已受安抚，东林首领息争"
+# person_gatekeeper sole mutation: dismiss 许誉卿 and seat a registered successor
+# whose faction/posture actually removes the 东林 gatekeeper block (not another 东林).
+GATEKEEPER_SUCCESSOR = "崔呈秀"
+GATEKEEPER_OFFICE = "兵科给事中"
+GATEKEEPER_OFFICE_TYPE = "六科"
+_BLOCKED_LAYERS = frozenset({"cabinet_drafting", "palace_rescript", "six_offices"})
+
+# Full low/high authority batch: same planted dossiers, only 皇威 differs.
+FULL_KINDS = (
+    "hostile", "ordinary", "authority_edge", "appointment",
+    "admin_midzhi", "vital_midzhi",
+)
+# TD-9 person control: identical hostile-only plant across three arms.
+PERSON_KINDS = ("hostile",)
 
 
 def _args() -> argparse.Namespace:
@@ -61,17 +96,24 @@ def _cfg(args: argparse.Namespace) -> LLMConfig:
     )
 
 
-def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[dict]:
+def _choose_rescripts(
+    db: GameDB, turn: int, hostile: int, vital: int, appointment: int,
+) -> list[dict]:
     """Persist choices exactly as the normal session boundary does, then phase2 owns them."""
     chosen = []
     for decision in db.list_pending_decisions(turn):
         options = decision["options"]
         if decision["event_id"] == f"dossier:{hostile}":
             choice = next(row for row in options if row.get("dossier_decision") == "hold")
-        elif decision["event_id"] == f"dossier:{vital}":
+        elif decision["event_id"] in {f"dossier:{vital}", f"dossier:{appointment}"}:
             choice = next(row for row in options if row.get("dossier_decision") == "withdrawn")
         else:
-            choice = options[0]
+            # authority_edge and any other reject: explicit non-force via dossier_decision.
+            # Never fall through to options[0] (force_promulgated on ordinary rejects).
+            choice = next(
+                row for row in options
+                if row.get("dossier_decision") in {"withdrawn", "hold"}
+            )
         db.conn.execute(
             "UPDATE pending_decisions SET choice_json=?,status='chosen' WHERE turn=? AND idx=?",
             (json.dumps(choice, ensure_ascii=False), int(turn), int(decision["idx"])),
@@ -81,7 +123,7 @@ def _choose_rescripts(db: GameDB, turn: int, hostile: int, vital: int) -> list[d
     return chosen
 
 
-def _trace_records(path: Path, start: int) -> tuple[list[dict], int]:
+def _trace_records(path: Path, start: int = 0) -> tuple[list[dict], int]:
     """Read complete records appended by the existing real-CLI trace seam."""
     if not path.exists():
         raise RuntimeError(f"CLI trace was not created: {path}")
@@ -229,6 +271,252 @@ def _select_second_verdict(
     return verdict
 
 
+def _arm_pool_size(cfg: LLMConfig, job_count: int) -> int:
+    """Reuse production cli_backend_parallel_safe: Codex concurrent, Claude serial."""
+    return int(job_count) if cli_backend_parallel_safe(cfg) else 1
+
+
+def _resolve_arm_verdicts(
+    db: GameDB, *, resolve_turn: int, awaiting: bool, ids: dict[str, int],
+) -> list[dict]:
+    """Pending while awaiting; else applied history at the pre-resolve turn."""
+    if awaiting:
+        return db.get_pending_promulgation_verdicts(resolve_turn)
+    verdicts = []
+    for dossier_id in sorted(ids.values()):
+        history = [
+            row for row in db.list_decree_dossier_decisions(dossier_id)
+            if int(row["turn"]) == resolve_turn and not row.get("rescript_action")
+        ]
+        verdicts.append(_select_second_verdict(False, dossier_id, [], history))
+    return verdicts
+
+
+def _open_scene(root: str, name: str, content: GameContent) -> tuple[GameDB, object, SqliteDb]:
+    """One isolated temporary DB pair for a single arm."""
+    arm_dir = Path(root) / name
+    arm_dir.mkdir(parents=True, exist_ok=True)
+    db = GameDB(str(arm_dir / "gate.db"), content)
+    db.seed_static_data()
+    state = db.load_state()
+    agno = SqliteDb(db_file=str(arm_dir / "agno.db"))
+    return db, state, agno
+
+
+def _apply_base_board(db: GameDB, state, *, authority: int) -> None:
+    """Shared minimal board. Arms may then change exactly one tested variable."""
+    db.conn.execute(
+        "UPDATE factions SET leverage=95, agenda=? WHERE name='东林'",
+        (BASE_DONGLIN_AGENDA,),
+    )
+    state.metrics["皇威"] = int(authority)
+    db.save_state(state)
+    db.conn.commit()
+
+
+def _plant_dossiers(db: GameDB, state, kinds: tuple[str, ...] | list[str]) -> dict[str, int]:
+    """Plant the named dossier kinds; kind set is the only dossier-level difference."""
+    ids: dict[str, int] = {}
+    for kind in kinds:
+        if kind == "hostile":
+            ids["hostile"] = _dossier(db, state, HOSTILE_TEXT)
+        elif kind == "ordinary":
+            ids["ordinary"] = _dossier(db, state, ORDINARY_TEXT)
+        elif kind == "authority_edge":
+            ids["authority_edge"] = _dossier(db, state, AUTHORITY_EDGE_TEXT)
+        elif kind == "appointment":
+            ids["appointment"] = db.create_decree_dossier(
+                state, action_type="appointment", decree_text=APPOINTMENT_TEXT,
+                target_kind="character", target_id="许誉卿", payload={"任别": "真除"},
+            )
+        elif kind == "admin_midzhi":
+            ids["admin_midzhi"] = _dossier(db, state, ADMIN_MIDZHI_TEXT, mode="midzhi")
+        elif kind == "vital_midzhi":
+            ids["vital_midzhi"] = _dossier(db, state, VITAL_MIDZHI_TEXT, mode="midzhi")
+        else:
+            raise RuntimeError(f"unknown dossier kind: {kind}")
+    return ids
+
+
+def _mutate_leader_only(db: GameDB, state) -> None:
+    """TD-9 leader arm: only 东林 agenda expresses leader appeasement."""
+    del state
+    db.conn.execute(
+        "UPDATE factions SET agenda=? WHERE name='东林'",
+        (LEADER_APPEASED_AGENDA,),
+    )
+    db.conn.commit()
+
+
+def _mutate_gatekeeper_replace(db: GameDB, state) -> None:
+    """TD-9 gatekeeper arm: dismiss 许誉卿 and seat a registered successor in-office."""
+    del state
+    db.conn.execute("UPDATE characters SET status='dismissed' WHERE name='许誉卿'")
+    db.conn.execute(
+        "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
+        (GATEKEEPER_OFFICE, GATEKEEPER_OFFICE_TYPE, GATEKEEPER_SUCCESSOR),
+    )
+    db.conn.commit()
+
+
+def _run_resolve_arm(
+    root: str,
+    content: GameContent,
+    cfg: LLMConfig,
+    *,
+    name: str,
+    authority: int,
+    kinds: tuple[str, ...] | list[str],
+    mutation: Optional[Callable] = None,
+    decree_label: str = "",
+) -> dict:
+    """Shared production resolve_directives runner on an isolated temporary DB."""
+    db, state, agno = _open_scene(root, name, content)
+    try:
+        _apply_base_board(db, state, authority=authority)
+        ids = _plant_dossiers(db, state, kinds)
+        if mutation is not None:
+            mutation(db, state)
+        proposed = db.list_decree_dossiers(status="proposed")
+        context = build_promulgation_judge_context(db, state, proposed)
+        label = decree_label or name
+        # Capture turn before resolve: non-awaiting settlement advances state.turn
+        # and consumes pending_promulgation_verdicts.
+        resolve_turn = state.turn
+        result = resolve_directives(
+            state, db, agno, cfg, [object()], label, content=content,
+        )
+        awaiting = bool(result.awaiting)
+        verdicts = _resolve_arm_verdicts(
+            db, resolve_turn=resolve_turn, awaiting=awaiting, ids=ids,
+        )
+        resolve_ctx = db.get_resolve_context(resolve_turn) or {}
+        return {
+            "name": name,
+            "authority": authority,
+            "ids": ids,
+            "context": context,
+            "verdicts": verdicts,
+            "awaiting": awaiting,
+            "resolve_context": resolve_ctx,
+            "report": str(result.report or ""),
+        }
+    finally:
+        db.close()
+
+
+def _run_low_hold_rail(root: str, content: GameContent, cfg: LLMConfig) -> dict:
+    """Low-authority full batch through production hold + next-month reconsideration."""
+    db, state, agno = _open_scene(root, "low_hold_rail", content)
+    try:
+        _apply_base_board(db, state, authority=0)
+        ids = _plant_dossiers(db, state, FULL_KINDS)
+        first_context = build_promulgation_judge_context(
+            db, state, db.list_decree_dossiers(status="proposed"),
+        )
+        first_result = resolve_directives(
+            state, db, agno, cfg, [object()], "四旨并下", content=content,
+        )
+        if not first_result.awaiting:
+            raise RuntimeError("real gate expected rejected dossiers to reach rescript")
+        first_turn = state.turn
+        first_ctx = db.get_resolve_context(first_turn) or {}
+        first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
+        choices = _choose_rescripts(
+            db, first_turn, ids["hostile"], ids["vital_midzhi"], ids["appointment"],
+        )
+        resolve_decisions_phase2(state, db, agno, cfg, content=content)
+        held = db.get_decree_dossier(ids["hostile"])
+        held_history = db.list_decree_dossier_decisions(ids["hostile"])
+        text_after_hold = str(held["decree_text"])
+
+        second_context = _prepare_reconsideration_facts(
+            db, state, ids["hostile"], first_context,
+        )
+        second_turn = state.turn
+        second_result = resolve_directives(
+            state, db, agno, cfg, [], "留中案下月重判", content=content,
+        )
+        second_pending = db.get_pending_promulgation_verdicts(second_turn)
+        second_history = [
+            row for row in db.list_decree_dossier_decisions(ids["hostile"])
+            if int(row["turn"]) == second_turn and not row.get("rescript_action")
+        ]
+        second_verdict = _select_second_verdict(
+            second_result.awaiting, ids["hostile"], second_pending, second_history,
+        )
+        second_ctx = db.get_resolve_context(second_turn) or {}
+        second_narrative = (
+            str(second_ctx.get("narrative") or "")
+            if second_result.awaiting else str(second_result.report or "")
+        )
+        return {
+            "name": "low_hold_rail",
+            "ids": ids,
+            "first_context": first_context,
+            "first_verdicts": first_verdicts,
+            "first_resolve_context": first_ctx,
+            "first_turn": first_turn,
+            "choices": choices,
+            "held": held,
+            "held_history": held_history,
+            "text_after_hold": text_after_hold,
+            "second_context": second_context,
+            "second_verdict": second_verdict,
+            "second_narrative": second_narrative,
+            "second_awaiting": bool(second_result.awaiting),
+        }
+    finally:
+        db.close()
+
+
+def _gatekeeper_names(context: dict) -> set[str]:
+    return {str(row["name"]) for row in context.get("gatekeepers", [])}
+
+
+def _faction_row(context: dict, name: str) -> dict:
+    for row in context.get("factions", []):
+        if str(row.get("name")) == name:
+            return dict(row)
+    raise RuntimeError(f"faction not in judge context: {name}")
+
+
+def _appointment_rejection_proves_faction_gate(
+    verdict: dict, *, gatekeeper: str = "许誉卿", faction: str = "东林",
+) -> bool:
+    """True when rejection is structured as the named gatekeeper/faction block."""
+    if verdict.get("decision") != "rejected":
+        return False
+    if str(verdict.get("gatekeeper_id") or "") != gatekeeper:
+        return False
+    if str(verdict.get("blocked_layer") or "") not in _BLOCKED_LAYERS:
+        return False
+    opponents = verdict.get("primary_opponents") or []
+    return any(
+        isinstance(op, dict)
+        and op.get("kind") == "faction"
+        and op.get("key") == faction
+        for op in opponents
+    )
+
+
+def _by_id(verdicts: list[dict]) -> dict[int, dict]:
+    return {int(row["dossier_id"]): row for row in verdicts}
+
+
+def _ordinary_class_all_promulgated(
+    arms: list[tuple[dict[str, int], dict[int, dict]]],
+) -> bool:
+    """TD-1 / ADR 0055 S6: every planted ordinary-class (寻常补饷) dossier passes."""
+    outcomes: list[bool] = []
+    for ids, by_id in arms:
+        ordinary_id = ids.get("ordinary")
+        if ordinary_id is None:
+            continue
+        outcomes.append(by_id[int(ordinary_id)]["decision"] == "promulgated")
+    return bool(outcomes) and all(outcomes)
+
+
 def main() -> int:
     args = _args()
     content = GameContent.load()
@@ -241,107 +529,166 @@ def main() -> int:
     trace_path = Path(trace_setting).resolve()
     if trace_path.exists():
         raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
-    trace_offset = 0
+    cfg = _cfg(args)
 
     with tempfile.TemporaryDirectory(prefix="ming-561-gate-") as tmp:
-        db = GameDB(os.path.join(tmp, "gate.db"), content)
-        db.seed_static_data()
-        state = db.load_state()
-        agno = SqliteDb(db_file=os.path.join(tmp, "agno.db"))
-        cfg = _cfg(args)
+        # Shared scene + resolve_directives runner; each arm owns one temp DB.
+        arm_jobs = {
+            "high_authority": lambda: _run_resolve_arm(
+                tmp, content, cfg, name="high_authority", authority=100,
+                kinds=FULL_KINDS, decree_label="高皇威对照",
+            ),
+            # TD-9 shortest three arms: same hostile-only plant / 皇威 / leverage.
+            "person_baseline": lambda: _run_resolve_arm(
+                tmp, content, cfg, name="person_baseline", authority=100,
+                kinds=PERSON_KINDS, decree_label="按人·hostile-only 未变基线",
+            ),
+            "person_leader": lambda: _run_resolve_arm(
+                tmp, content, cfg, name="person_leader", authority=100,
+                kinds=PERSON_KINDS, mutation=_mutate_leader_only,
+                decree_label="按人·只安抚首领",
+            ),
+            "person_gatekeeper": lambda: _run_resolve_arm(
+                tmp, content, cfg, name="person_gatekeeper", authority=100,
+                kinds=PERSON_KINDS, mutation=_mutate_gatekeeper_replace,
+                decree_label="按人·替换把关人并任命继任",
+            ),
+            "low_hold_rail": lambda: _run_low_hold_rail(tmp, content, cfg),
+        }
+        results: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=_arm_pool_size(cfg, len(arm_jobs))) as executor:
+            futures = {executor.submit(job): name for name, job in arm_jobs.items()}
+            for future in as_completed(futures):
+                name = futures[future]
+                results[name] = future.result()
 
-        db.conn.execute(
-            "UPDATE factions SET leverage=95, agenda='反对清丈，维护田赋旧例' WHERE name='东林'"
-        )
-        db.conn.commit()
-        hostile_text = "不经部议，清丈天下田亩并追夺士绅隐田"
-        hostile = _dossier(db, state, hostile_text)
-        ordinary = _dossier(db, state, "循户部成例补发边军一月欠饷")
-        admin_midzhi = _dossier(
-            db, state, "中旨命内廷整理既有文册，不动外廷钱权", mode="midzhi",
-        )
-        vital_midzhi = _dossier(
-            db, state, "中旨绕开户部，强夺太仓全部钱粮交内廷支配", mode="midzhi",
-        )
-        first_context = build_promulgation_judge_context(
-            db, state, db.list_decree_dossiers(status="proposed"),
-        )
+        trace_records, _ = _trace_records(trace_path)
 
-        # Production owns judge invocation, validation, dossier filtering,
-        # promulgation_instruction injection, simulator creation and invocation.
-        first_result = resolve_directives(
-            state, db, agno, cfg, [object()], "四旨并下", content=content,
-        )
-        if not first_result.awaiting:
-            raise RuntimeError("real gate expected rejected dossiers to reach rescript")
-        trace_records, trace_offset = _trace_records(trace_path, trace_offset)
+        low = results["low_hold_rail"]
+        high = results["high_authority"]
+        baseline = results["person_baseline"]
+        leader = results["person_leader"]
+        gatekeeper = results["person_gatekeeper"]
+
         first_actual_input, first_provenance = _captured_judge_payload(
-            trace_records, first_context,
+            trace_records, low["first_context"],
         )
-        first_turn = state.turn
-        first_ctx = db.get_resolve_context(first_turn) or {}
-        first_verdicts = db.get_pending_promulgation_verdicts(first_turn)
-        by_id = {int(row["dossier_id"]): row for row in first_verdicts}
-        choices = _choose_rescripts(db, first_turn, hostile, vital_midzhi)
-
-        # This is the production hold owner: phase2 reads the persisted choice,
-        # applies the verdict batch and rescript action atomically, then advances.
-        resolve_decisions_phase2(
-            state, db, agno, cfg, content=content,
+        high_actual_input, high_provenance = _captured_judge_payload(
+            trace_records, high["context"],
         )
-        held = db.get_decree_dossier(hostile)
-        held_history = db.list_decree_dossier_decisions(hostile)
-        text_after_hold = str(held["decree_text"])
-
-        # Change only the first named blocker and its faction posture.  The
-        # other production-derived gatekeepers remain a real reconsideration bench.
-        second_context = _prepare_reconsideration_facts(
-            db, state, hostile, first_context,
+        baseline_actual_input, baseline_provenance = _captured_judge_payload(
+            trace_records, baseline["context"],
         )
-        second_turn = state.turn
-        second_result = resolve_directives(
-            state, db, agno, cfg, [], "留中案下月重判", content=content,
+        leader_actual_input, leader_provenance = _captured_judge_payload(
+            trace_records, leader["context"],
         )
-        trace_records, trace_offset = _trace_records(trace_path, trace_offset)
+        gatekeeper_actual_input, gatekeeper_provenance = _captured_judge_payload(
+            trace_records, gatekeeper["context"],
+        )
         second_actual_input, second_provenance = _captured_judge_payload(
-            trace_records, second_context,
-        )
-        second_pending = db.get_pending_promulgation_verdicts(second_turn)
-        second_history = [
-            row for row in db.list_decree_dossier_decisions(hostile)
-            if int(row["turn"]) == second_turn and not row.get("rescript_action")
-        ]
-        second_verdict = _select_second_verdict(
-            second_result.awaiting, hostile, second_pending, second_history,
-        )
-        second_ctx = db.get_resolve_context(second_turn) or {}
-        second_narrative = (
-            str(second_ctx.get("narrative") or "")
-            if second_result.awaiting else str(second_result.report or "")
+            trace_records, low["second_context"],
         )
 
+        ids = low["ids"]
+        hostile = ids["hostile"]
+        ordinary = ids["ordinary"]
+        authority_edge = ids["authority_edge"]
+        appointment = ids["appointment"]
+        admin_midzhi = ids["admin_midzhi"]
+        vital_midzhi = ids["vital_midzhi"]
+        by_id = _by_id(low["first_verdicts"])
+        high_by_id = _by_id(high["verdicts"])
+        baseline_by_id = _by_id(baseline["verdicts"])
+        leader_by_id = _by_id(leader["verdicts"])
+        gatekeeper_by_id = _by_id(gatekeeper["verdicts"])
+        gk_names = _gatekeeper_names(gatekeeper["context"])
+
+        first_ctx = low["first_resolve_context"]
         sent_payload = first_ctx.get("simulator_payload") or {}
         sent_ids = {
             int(row["id"]) for row in sent_payload.get("decree_dossiers", [])
             if isinstance(row, dict)
         }
-        rejected_texts = [
-            row["decree_text"] for row in db.list_decree_dossiers()
-            if int(row["id"]) in {hostile, vital_midzhi}
-        ]
         first_narrative = str(first_ctx.get("narrative") or "")
         forbidden = ("清丈已经完成", "清丈已完成", "太仓已交内廷", "旨意已生效")
+        all_verdicts = (
+            list(low["first_verdicts"])
+            + list(high["verdicts"])
+            + list(baseline["verdicts"])
+            + list(leader["verdicts"])
+            + list(gatekeeper["verdicts"])
+            + [low["second_verdict"]]
+        )
+        all_payloads = [
+            first_actual_input, high_actual_input, baseline_actual_input,
+            leader_actual_input, gatekeeper_actual_input, second_actual_input,
+        ]
         checks = {
             "hostile_land_rejected": by_id[hostile]["decision"] == "rejected",
-            "ordinary_pay_promulgated": by_id[ordinary]["decision"] == "promulgated",
-            "held_by_production_rescript": (
-                int(held["held_turn"]) == first_turn
-                and any(row.get("rescript_action") == "hold" for row in held_history)
+            # TD-1: ordinary class = 寻常补饷; assert the whole planted class passes.
+            "ordinary_pay_promulgated": _ordinary_class_all_promulgated([
+                (ids, by_id),
+                (high["ids"], high_by_id),
+            ]),
+            # Three trigger faces ride the low full batch (no extra live arms).
+            "three_trigger_faces_reject_at_low_authority": all(
+                by_id[ids[key]]["decision"] == "rejected"
+                for key in ("authority_edge", "hostile", "appointment")
             ),
-            "held_decree_text_unchanged": text_after_hold == hostile_text,
+            "authority_edge_passes_only_at_high_authority": (
+                by_id[authority_edge]["decision"] == "rejected"
+                and high_by_id[high["ids"]["authority_edge"]]["decision"] == "promulgated"
+            ),
+            "vital_exception_still_rejects_at_high_authority": (
+                high_by_id[high["ids"]["vital_midzhi"]]["decision"] == "rejected"
+            ),
+            "leader_change_does_not_remove_named_gatekeeper_block": (
+                baseline_by_id[baseline["ids"]["hostile"]]["decision"] == "rejected"
+                and leader_by_id[leader["ids"]["hostile"]]["decision"] == "rejected"
+                and "许誉卿" in _gatekeeper_names(leader["context"])
+                and _gatekeeper_names(leader["context"])
+                == _gatekeeper_names(baseline["context"])
+                and _faction_row(leader["context"], "东林")["agenda"]
+                == LEADER_APPEASED_AGENDA
+                and _faction_row(baseline["context"], "东林")["agenda"]
+                == BASE_DONGLIN_AGENDA
+                # Posture moved by fixed agenda pair only (no int() on qualitative leverage).
+                and _faction_row(leader["context"], "东林")["agenda"]
+                != _faction_row(baseline["context"], "东林")["agenda"]
+                and leader["context"] != baseline["context"]
+            ),
+            "gatekeeper_appointment_is_judged_and_rejected": (
+                appointment in {int(row["dossier_id"]) for row in low["first_verdicts"]}
+                and _appointment_rejection_proves_faction_gate(by_id[appointment])
+            ),
+            "named_gatekeeper_change_unblocks_same_decree": (
+                gatekeeper_by_id[gatekeeper["ids"]["hostile"]]["decision"] == "promulgated"
+                and GATEKEEPER_SUCCESSOR in gk_names
+                and "许誉卿" not in gk_names
+            ),
+            "decisions_are_binary_and_batches_cover_inputs": (
+                {row["decision"] for row in all_verdicts}
+                <= {"promulgated", "rejected"}
+                and {int(row["dossier_id"]) for row in low["first_verdicts"]}
+                == {int(row["id"]) for row in low["first_context"]["dossiers"]}
+                and {int(row["dossier_id"]) for row in high["verdicts"]}
+                == {int(row["id"]) for row in high["context"]["dossiers"]}
+                and {int(row["dossier_id"]) for row in baseline["verdicts"]}
+                == {int(row["id"]) for row in baseline["context"]["dossiers"]}
+            ),
+            "real_judge_payloads_exclude_satisfaction": all(
+                "satisfaction" not in json.dumps(payload, ensure_ascii=False)
+                and "满意" not in json.dumps(payload, ensure_ascii=False)
+                for payload in all_payloads
+            ),
+            "held_by_production_rescript": (
+                int(low["held"]["held_turn"]) == low["first_turn"]
+                and any(row.get("rescript_action") == "hold" for row in low["held_history"])
+            ),
+            "held_decree_text_unchanged": low["text_after_hold"] == HOSTILE_TEXT,
             "held_land_changes_after_board_change": (
-                second_verdict["decision"] == "promulgated"
-                and second_verdict["decision"] != by_id[hostile]["decision"]
+                low["second_verdict"]["decision"] == "promulgated"
+                and low["second_verdict"]["decision"] != by_id[hostile]["decision"]
             ),
             "administrative_midzhi_promulgated_with_stigma": (
                 by_id[admin_midzhi]["decision"] == "promulgated"
@@ -361,41 +708,111 @@ def main() -> int:
             "gate": "issue-561-production-judge-rescript-and-simulator",
             "config": {"channel": "cli", "runner": args.runner, "model": args.model,
                        "reasoning_strength": cfg.reasoning_strength},
+            "method": {
+                "runner": "resolve_directives",
+                "scheduling": (
+                    "cli_backend_parallel_safe isolated temporary DBs"
+                    if cli_backend_parallel_safe(cfg)
+                    else "serial isolated temporary DBs"
+                ),
+                "arms": sorted(arm_jobs),
+                "controls": {
+                    "authority_slider": "only 皇威 differs between low_hold_rail and high_authority",
+                    "td9_person_three_arms": (
+                        "person_baseline / person_leader / person_gatekeeper share "
+                        "hostile-only plant, 皇威=100, and authorization; "
+                        "leader only sets 东林 agenda to leader-appeased posture "
+                        "(agenda pair proves posture; leverage untouched/qualitative; "
+                        "gatekeepers fixed; payload distinguishable); "
+                        f"gatekeeper dismisses 许誉卿 and seats {GATEKEEPER_SUCCESSOR} "
+                        f"as {GATEKEEPER_OFFICE}"
+                    ),
+                    "three_trigger_faces": (
+                        "covered by low_hold_rail full batch "
+                        "(authority_edge / hostile / appointment); no extra live arms"
+                    ),
+                },
+            },
             "scenarios": {
                 "ids": {"hostile_land": hostile, "ordinary_pay": ordinary,
+                        "authority_edge": authority_edge, "appointment": appointment,
                         "administrative_midzhi": admin_midzhi,
                         "vital_midzhi": vital_midzhi},
-                "rescript_choices": choices,
-                "hold_state": {"held_turn": held["held_turn"], "history": held_history},
+                "rescript_choices": low["choices"],
+                "hold_state": {
+                    "held_turn": low["held"]["held_turn"],
+                    "history": low["held_history"],
+                },
                 "reconsideration_facts": {
-                    "factions": [first_context["factions"], second_context["factions"]],
-                    "皇威": [first_context["imperial_authority_band"],
-                             second_context["imperial_authority_band"]],
-                    "gatekeepers": [first_context["gatekeepers"],
-                                    second_context["gatekeepers"]],
+                    "factions": [low["first_context"]["factions"],
+                                 low["second_context"]["factions"]],
+                    "皇威": [low["first_context"]["imperial_authority_band"],
+                             low["second_context"]["imperial_authority_band"]],
+                    "gatekeepers": [low["first_context"]["gatekeepers"],
+                                    low["second_context"]["gatekeepers"]],
                     "authorization_ids": [
-                        first_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"],
-                        second_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"],
+                        low["first_context"]["dossiers"][0]["criteria_snapshot_source"][
+                            "authorization_ids"
+                        ],
+                        low["second_context"]["dossiers"][0]["criteria_snapshot_source"][
+                            "authorization_ids"
+                        ],
                     ],
                     "decree_text": [
-                        first_context["dossiers"][0]["decree_text"],
-                        second_context["dossiers"][0]["decree_text"],
+                        low["first_context"]["dossiers"][0]["decree_text"],
+                        low["second_context"]["dossiers"][0]["decree_text"],
                     ],
+                },
+                "person_arms": {
+                    "baseline": {
+                        "ids": baseline["ids"],
+                        "gatekeepers": baseline["context"]["gatekeepers"],
+                        "factions": baseline["context"]["factions"],
+                    },
+                    "leader": {
+                        "ids": leader["ids"],
+                        "gatekeepers": leader["context"]["gatekeepers"],
+                        "factions": leader["context"]["factions"],
+                        "leader_appeased_agenda": LEADER_APPEASED_AGENDA,
+                    },
+                    "gatekeeper": {
+                        "ids": gatekeeper["ids"],
+                        "gatekeepers": gatekeeper["context"]["gatekeepers"],
+                        "factions": gatekeeper["context"]["factions"],
+                        "successor": GATEKEEPER_SUCCESSOR,
+                    },
                 },
             },
             "judge_first": {
                 "input": first_actual_input, "input_provenance": first_provenance,
-                "output": first_verdicts,
+                "output": low["first_verdicts"],
+            },
+            "judge_after_authority_change": {
+                "input": high_actual_input, "input_provenance": high_provenance,
+                "output": high["verdicts"],
+            },
+            "judge_person_baseline": {
+                "input": baseline_actual_input, "input_provenance": baseline_provenance,
+                "output": baseline["verdicts"],
+            },
+            "judge_person_leader_only": {
+                "input": leader_actual_input, "input_provenance": leader_provenance,
+                "output": leader["verdicts"],
+            },
+            "judge_person_gatekeeper_only": {
+                "input": gatekeeper_actual_input,
+                "input_provenance": gatekeeper_provenance,
+                "output": gatekeeper["verdicts"],
             },
             "judge_after_hold_and_board_change": {
                 "input": second_actual_input, "input_provenance": second_provenance,
-                "output": second_verdict,
+                "output": low["second_verdict"],
             },
             "simulator": {
                 "assembly": "resolve_directives production simulator_payload",
                 "input": sent_payload, "output": first_narrative,
-                "rejected_decree_texts": rejected_texts,
-                "reconsideration_output": second_narrative,
+                "rejected_decree_texts": [HOSTILE_TEXT, VITAL_MIDZHI_TEXT],
+                "reconsideration_output": low["second_narrative"],
             },
             "checks": checks,
         }
@@ -404,7 +821,6 @@ def main() -> int:
         output.write_text(
             json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
         )
-        db.close()
     failed = [name for name, passed in checks.items() if not passed]
     print(json.dumps({"output": args.output, "checks": checks}, ensure_ascii=False, indent=2))
     return 1 if failed else 0
