@@ -111,6 +111,8 @@ def test_army_detail_shows_firearm_cannon(game, monkeypatch):
     """army_detail 经 public 投影：火器为定性 band，随军大炮为可数门数（P4/#1185）。"""
     import copy
 
+    import ming_sim.db as dbmod
+
     db, state, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute("UPDATE armies SET firearm_equipment=45, cannon_equipment=3 WHERE id=?", (aid,))
@@ -120,6 +122,11 @@ def test_army_detail_shows_firearm_cannon(game, monkeypatch):
     assert entry["firearm_equipment_band"] == "unstable"  # 45 → mid band
     assert int(entry["cannon_equipment"]) == 3
     assert "firearm_equipment" not in entry
+
+    # Non-copy renderer sentinel: prove band consumption without Chinese pins.
+    monkeypatch.setattr(
+        dbmod, "_army_stat_label", lambda field, band: f"XBAND_{field}_{band}"
+    )
 
     calls = []
     original = db.army_public_payload
@@ -146,7 +153,7 @@ def test_army_detail_shows_firearm_cannon(game, monkeypatch):
     traced = calls[0]["result"]["armies"][0]
     assert traced["name"] in detail
     assert "777" in detail  # cannon_equipment consumed from projection
-    assert "火器：残破" in detail  # band sentinel consumed
+    assert "XBAND_equipment_critical" in detail  # firearm band via renderer sentinel
     assert "45" not in detail
 
 
@@ -154,11 +161,17 @@ def test_army_report_shows_firearm_and_cannon(read_game, monkeypatch):
     """army_report 必须调用 army_public_payload 并消费火器 band + 炮门数。"""
     import copy
 
+    import ming_sim.db as dbmod
+
     db, _, _ = read_game
     # Pick one army present in danger-ordered report window.
     sample = db.army_rows(limit=8, danger_order=True)
     assert sample
     target_id = sample[0]["id"]
+
+    monkeypatch.setattr(
+        dbmod, "_army_stat_label", lambda field, band: f"XBAND_{field}_{band}"
+    )
 
     calls = []
     original = db.army_public_payload
@@ -183,7 +196,7 @@ def test_army_report_shows_firearm_and_cannon(read_game, monkeypatch):
     assert len(calls) == 1, "army_report must call army_public_payload"
     traced = next(a for a in calls[0]["result"]["armies"] if a["id"] == target_id)
     assert traced["name"] in rpt
-    assert "火器：残破" in rpt
+    assert "XBAND_equipment_critical" in rpt  # firearm band via renderer sentinel
     assert "炮666门" in rpt
 
 
@@ -274,6 +287,8 @@ def test_army_roster_shows_firearm_cannon(game, monkeypatch):
     """army_roster 双态：False=原数值火器；True=投影 band 定性；均消费同一投影。"""
     import copy
 
+    import ming_sim.db as dbmod
+
     db, _, _ = game
     aid = db.conn.execute("SELECT id FROM armies WHERE owner_power='ming' LIMIT 1").fetchone()["id"]
     db.conn.execute(
@@ -315,11 +330,16 @@ def test_army_roster_shows_firearm_cannon(game, monkeypatch):
     line = next(l for l in roster.splitlines() if l.startswith(traced_name + "|"))
     cells = line.split("|")
     assert "30" in cells  # False path: raw firearm count
-    assert not any(c.startswith("火器：") for c in cells)
+    # Dual-state False: firearm column is the bare numeric cell (last-but-one).
+    assert cells[-2] == "30"
     assert "888" in cells  # cannon_equipment consumed from projection
 
     # True: qualitative firearm from projection band (minister tool path).
+    # Renderer sentinel replaces free Chinese so exit proves band id propagation.
     monkeypatch.undo()
+    monkeypatch.setattr(
+        dbmod, "_army_stat_label", lambda field, band: f"XBAND_{field}_{band}"
+    )
     calls_q = []
 
     def wrap_q(*args, **kwargs):
@@ -343,6 +363,8 @@ def test_army_roster_shows_firearm_cannon(game, monkeypatch):
     q_name = next(a["name"] for a in calls_q[0]["result"]["armies"] if a["id"] == aid)
     q_line = next(l for l in roster_q.splitlines() if l.startswith(q_name + "|"))
     q_cells = q_line.split("|")
-    assert any(c == "火器：残破" for c in q_cells)
+    # True path firearm cell carries band sentinel (not raw score).
+    assert any("XBAND_equipment_critical" in c for c in q_cells)
+    assert q_cells[-2] != "30"
     assert "30" not in q_cells
     assert "4" in q_cells
