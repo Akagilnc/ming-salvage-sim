@@ -393,7 +393,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
 
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
-            "execution_surface", "assignee", "authorization_id", "deadline_months",
+            "execution_surface", "assignee", "deadline_months",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):

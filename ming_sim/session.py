@@ -2160,12 +2160,18 @@ class GameSession:
         from ming_sim.audience_night import auto_close_open_night
         from ming_sim.beat_orchestration import production_beat_generator
         # #503：收夜 beat 生产路径接通编排缝（与 attach 入殿同 generator）。
+        # Close-night owns short write sections + gate-free endorsement LLM.
+        # Web callers must invoke auto_close outside any outer runtime write gate
+        # (see web_app issue/stream/no-edict) so this is typically already-closed.
+        # CLI is single-writer: None write_gate = no lock around LLM.
         auto_close_open_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=inflight_wait_s,
             beat_generator=production_beat_generator,
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=None,
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
@@ -2338,6 +2344,8 @@ class GameSession:
             self.state, self.db,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
+            llm_config=getattr(self, "llm_config", None),
+            write_gate=None,
         )
         if not advanced:
             return self.resolve_turn()

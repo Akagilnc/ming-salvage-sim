@@ -1,9 +1,10 @@
-"""faction_delta / class_delta 两段迁入逐项拒收契约（ADR 0008 决定 1，#14/#63）。
+"""faction_delta / class_delta 两段逐项拒收契约及不同输入形状（ADR 0008 决定 1，#14/#63）。
 
 原先 `db.adjust_factions`/`adjust_classes` 对查无此派系/阶级名 `if not row: continue`
 零痕迹静默丢（#63 死法 3、#14 模式 C），`_apply_*_dict` 对非整数值也 `continue` 静默跳
 （#14 模式 A）。改为：未知名 → missing_ref 逐项拒收、坏值（含 bool/float）→ invalid_enum
-逐项拒收，好项照落、坏一项不带走整批；合法扁平 int / 0 增量仍照旧不误拒。
+逐项拒收，好项照落、坏一项不带走整批；faction 合法扁平 int / 0 增量不误拒，
+class 则只收嵌套字段 dict、扁平 int 逐项拒收。
 
 拒收项落独立 *_rejections 段（不复用 faction_delta/class_delta，后者仍载 web 面板的
 已落 delta dict——cmr r1 claude：复用同 key 会令面板误渲染拒收项）。
@@ -200,6 +201,29 @@ def test_valid_flat_int_faction_not_rejected(game):
     after = db.conn.execute(
         "SELECT satisfaction FROM factions WHERE name=?", (good,)).fetchone()[0]
     assert after == max(0, before - 5)
+
+
+def test_flat_class_delta_rejected_while_nested_sibling_lands(game):
+    """#564：同一真实结算信封内，扁平坏项不静默丢，也不带走嵌套好项。"""
+    db, state, content = game
+    turn = state.turn
+    good = _valid_class_key(db)
+    before = _class_satisfaction(db, good)
+    assert 0 < before < 100, "开局阶级满意度需留有增量断言空间"
+
+    run_settle(db, state, content, {
+        "class_delta": {
+            "扁平坏项": -4,
+            good: {"satisfaction": 6},
+        },
+    }, narrative="x", decree_text="y")
+
+    invalid_enum_rows = [
+        row for row in _rejection_rows(db, turn, CLASS_REJ_SECTION)
+        if row["category"] == "invalid_enum"
+    ]
+    assert len(invalid_enum_rows) == 1, invalid_enum_rows
+    assert _class_satisfaction(db, good) == before + 6
 
 
 def test_zero_delta_faction_not_rejected(game):

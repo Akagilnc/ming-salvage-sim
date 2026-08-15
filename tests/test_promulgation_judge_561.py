@@ -9,7 +9,7 @@ from ming_sim.exceptions import LLMContractError, SettlementAbort
 from ming_sim.models import LLMConfig
 from ming_sim.qualitative import qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
-from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from tests.dossier_test_helpers import rejected_verdict
 
 
 def _dossier(db, state, text="清丈天下田亩", **payload):
@@ -21,15 +21,29 @@ def _dossier(db, state, text="清丈天下田亩", **payload):
 
 def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     db, state, _content = game
-    dossier_id = _dossier(db, state, mode="midzhi")
+    # break_rank is persisted dossier evidence read from payload (#562).
+    # endorsement_entry_ids are positive ints from DB-backed spoken endorsements (#612).
+    dossier_id = _dossier(
+        db, state, mode="midzhi",
+        break_rank={"office_rank": "越三级"},
+    )
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
+    chat_a = db.create_chat_turn(state, minister, "promulgation-561-a", 0)
+    chat_b = db.create_chat_turn(state, minister, "promulgation-561-b", 0)
+    first_id = db.add_dossier_endorsement(
+        dossier_id, form="会签", endorser_id=minister, source_chat_turn_id=chat_a,
+    )
+    second_id = db.add_dossier_endorsement(
+        dossier_id, form="当面站台", endorser_id=minister, source_chat_turn_id=chat_b,
+    )
     context = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
-        break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
     )
 
     assert context == decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
-        break_rank_by_dossier={dossier_id: {"office_rank": "越三级"}},
     )
     encoded = json.dumps(context, ensure_ascii=False, sort_keys=True)
     assert "satisfaction" not in encoded
@@ -62,8 +76,14 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
     assert context["dossiers"][0]["criteria_snapshot_source"] == {
         "imperial_authority_band": context["imperial_authority_band"],
         "appointment_tenure": "", "authorization_ids": [],
-        "endorsement_entry_ids": [],
+        "endorsement_entry_ids": sorted({first_id, second_id}),
     }
+    assert all(
+        isinstance(item, int) and not isinstance(item, bool) and item > 0
+        for item in context["dossiers"][0]["criteria_snapshot_source"][
+            "endorsement_entry_ids"
+        ]
+    )
 
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
@@ -190,33 +210,92 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     } == {
         name: facts for name, facts in original_factions.items() if name != "东林"
     }
-    assert second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
-        "御笔特准清丈不经部议",
-    ]
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    assert authority["dossier_id"] != dossier_id
+    assert db.dossier_authorizes_effects(int(authority["dossier_id"]))
+    assert second["dossiers"][0]["held_authorities"]
+    assert second["dossiers"][0]["held_authorities"][0]["privilege"] == "便宜行事"
     assert second["imperial_authority_band"] == "强盛"
+
+
+def test_gate_reconsideration_resolves_missing_target_to_land_survey(game):
+    from scripts.promulgation_gate_561 import _prepare_reconsideration_facts
+
+    db, state, _content = game
+    dossier_id = _dossier(db, state, "不经部议，清丈天下田亩并追夺士绅隐田")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET target_kind='', target_id='' WHERE id=?",
+        (dossier_id,),
+    )
+    first = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+
+    second = _prepare_reconsideration_facts(db, state, dossier_id, first)
+
+    held = db.get_decree_dossier(dossier_id)
+    assert held["target_kind"] == "issue"
+    assert held["target_id"] == "清丈田亩"
+    auth_ids = second["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    assert auth_ids and all(item.isdigit() for item in auth_ids)
+    authority = db.get_authority(int(auth_ids[0]))
+    grant = db.get_decree_dossier(int(authority["dossier_id"]))
+    assert authority["scope"] == "issue:清丈田亩"
+    assert grant["target_kind"] == "issue"
+    assert grant["target_id"] == "清丈田亩"
+    assert second["dossiers"][0]["held_authorities"][0]["scope"] == "issue:清丈田亩"
 
 
 def test_gate_evidence_reloads_dossier_after_reconsideration_mutation(game):
     from scripts.promulgation_gate_561 import _judge_context_for_dossier
+    from ming_sim.issues import apply_score_extraction
 
-    db, state, _content = game
+    db, state, content = game
     dossier_id = _dossier(db, state)
+    holder = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
+        "ORDER BY name LIMIT 1"
+    ).fetchone()["name"]
     stale = db.get_decree_dossier(dossier_id)
+    # Payload authorization strings must not become authorization_ids (#611).
     payload = json.loads(stale["payload_json"])
     payload["authorization_ids"] = ["fresh-authorization"]
     db.conn.execute(
-        "UPDATE decree_dossiers SET payload_json=? WHERE id=?",
-        (json.dumps(payload), dossier_id),
+        "UPDATE decree_dossiers SET payload_json=?, executor_kind='character', "
+        "executor_id=? WHERE id=?",
+        (json.dumps(payload), holder, dossier_id),
     )
     db.conn.commit()
+    grant_dossier_id = db.create_decree_dossier(
+        state, action_type="authorization", decree_text="另案授以便宜行事",
+        target_kind="issue", target_id=f"policy-{state.turn}",
+        executor_kind="character", executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办"}],
+        payload={"mode": "ordinary"},
+    )
+    db.record_dossier_decision(grant_dossier_id, "promulgated")
+    grant = apply_score_extraction(db, state, {"authority_changes": [{
+        "动作": "授予", "holder_id": holder, "privilege": "便宜行事",
+        "scope": f"issue:policy-{state.turn}", "dossier_id": grant_dossier_id,
+    }]}, content=content)["authority_changes"][0]
+    assert grant.get("rejected") is not True
+    authority_id = int(grant["authority_id"])
+    assert db.get_authority(authority_id)["dossier_id"] == grant_dossier_id
+    assert grant_dossier_id != dossier_id
 
     stale_context = decree_mod.build_promulgation_judge_context(db, state, [stale])
     fresh_context = _judge_context_for_dossier(db, state, dossier_id)
 
+    # Stale row still lacks executor/target projection inputs until reloaded.
     assert stale_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == []
     assert fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"] == [
-        "fresh-authorization",
+        str(authority_id),
     ]
+    assert "fresh-authorization" not in (
+        fresh_context["dossiers"][0]["criteria_snapshot_source"]["authorization_ids"]
+    )
 
 
 def test_gate_second_verdict_reads_pending_or_applied_history_strictly():
@@ -243,6 +322,15 @@ def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
     assert seen["max_tokens"] == 321
 
 
+def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
+    # Preserve suite-specific reason/intensity differences via builder knobs.
+    return rejected_verdict(
+        dossier_id, authority_band, midzhi=midzhi,
+        reason="触犯钱粮命门，科臣封驳。", intensity="strong",
+    )
+
+
+
 @pytest.mark.parametrize(
     ("mode", "decision"),
     [("ordinary", "promulgated"), ("midzhi", "promulgated"),
@@ -257,7 +345,7 @@ def test_promulgation_verdict_accepts_exact_keys_for_each_mode(game, mode, decis
         verdict = {"dossier_id": dossier_id, "decision": decision}
         if mode == "midzhi":
             verdict["affected_parties"] = [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]
     else:
         verdict = _rejected_verdict(
@@ -651,7 +739,7 @@ def test_judge_gate_examples_and_simulator_rejection_narrative_boundary(game, mo
             _rejected_verdict(hostile_land, band),
             {"dossier_id": ordinary_pay, "decision": "promulgated"},
             {"dossier_id": midzhi_pay, "decision": "promulgated", "affected_parties": [
-                {"kind": "faction", "key": "东林", "severity": "不满"},
+                {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
             ]},
             _rejected_verdict(vital_midzhi, band, midzhi=True),
         ]}, ensure_ascii=False)
