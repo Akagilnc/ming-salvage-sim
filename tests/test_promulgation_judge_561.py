@@ -7,7 +7,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import audience_night
 from ming_sim.exceptions import LLMContractError, SettlementAbort
 from ming_sim.models import LLMConfig
-from ming_sim.qualitative import qualitative_character_axis
+from ming_sim.qualitative import power_band, qualitative_character_axis
 from ming_sim.strict_types import IMPERIAL_AUTHORITY_BANDS
 from tests.dossier_test_helpers import rejected_verdict
 
@@ -84,6 +84,42 @@ def test_promulgation_context_is_deterministic_and_excludes_satisfaction(game):
             "endorsement_entry_ids"
         ]
     )
+
+
+def test_promulgation_context_projects_faction_leverage_as_qualitative_band(game):
+    """#614: player-visible judge reasons inherit input-side leverage bands only."""
+    db, state, _content = game
+    _dossier(db, state, "清丈天下田亩")
+    db.conn.execute(
+        "UPDATE factions SET leverage=5, agenda='反对清丈' WHERE name='东林'"
+    )
+    db.conn.execute(
+        "UPDATE factions SET leverage=95, agenda='附议清丈' WHERE name='阉党'"
+    )
+    db.conn.commit()
+
+    context = decree_mod.build_promulgation_judge_context(
+        db, state, db.list_decree_dossiers(status="proposed"),
+    )
+    by_name = {row["name"]: row for row in context["factions"]}
+
+    assert by_name["东林"] == {
+        "name": "东林", "leverage": "极弱", "agenda": "反对清丈",
+    }
+    assert by_name["阉党"] == {
+        "name": "阉党", "leverage": "强盛", "agenda": "附议清丈",
+    }
+    assert by_name["东林"]["leverage"] == power_band(5)
+    assert by_name["阉党"]["leverage"] == power_band(95)
+    assert all(
+        isinstance(row["leverage"], str)
+        and not isinstance(row["leverage"], bool)
+        and row["leverage"] in IMPERIAL_AUTHORITY_BANDS
+        for row in context["factions"]
+    )
+    # Resistance remains present; only the projection is qualitative.
+    assert all(set(row) == {"name", "leverage", "agenda"} for row in context["factions"])
+    assert any(row["agenda"] for row in context["factions"])
 
 
 def test_promulgation_history_only_projects_forced_and_midzhi_markers(game):
@@ -203,7 +239,8 @@ def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(g
     ).fetchone()["status"] == "dismissed"
     second_factions = {row["name"]: row for row in second["factions"]}
     assert second_factions["东林"] == {
-        "name": "东林", "leverage": 5, "agenda": "失去许誉卿封驳支点，转入复议",
+        "name": "东林", "leverage": power_band(5),
+        "agenda": "失去许誉卿封驳支点，转入复议",
     }
     assert {
         name: facts for name, facts in second_factions.items() if name != "东林"

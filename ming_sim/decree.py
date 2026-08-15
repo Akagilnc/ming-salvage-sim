@@ -207,7 +207,12 @@ def build_promulgation_judge_context(
         "turn": {"turn": state.turn, "year": state.year, "period": state.period},
         "dossiers": dossier_rows,
         "factions": [
-            {"name": str(row["name"]), "leverage": int(row["leverage"]),
+            # #614 / ADR 0143: player-visible judge reasons inherit this input;
+            # project resistance as the same qualitative band as imperial_authority_band.
+            {"name": str(row["name"]),
+             "leverage": qualitative_band(
+                 row["leverage"], ("极弱", "偏弱", "中等", "偏强", "强盛"),
+             ),
              "agenda": str(row["agenda"] or "")}
             for row in faction_rows
         ],
