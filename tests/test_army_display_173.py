@@ -59,71 +59,57 @@ def test_army_public_exits_approx_arrears_and_hide_split_accounts(game):
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
-    scores = dict(
-        loyalty=73, supply=55, morale=35, training=15, equipment=85, mobility=65
-    )
+    # 受控裸分 token：不与兵额/合计饷银等合法可数事实混淆
+    scores = dict(loyalty=67, supply=69, morale=61, training=59, equipment=53, mobility=47)
     db.conn.execute(
-        """
-        UPDATE armies
-        SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,
-            loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=?
-        WHERE id=?
-        """,
+        "UPDATE armies SET arrears=63, province_pay_arrears=17, central_pay_arrears=46,"
+        "manpower=20000, cannon_equipment=0, firearm_equipment=0,"
+        "loyalty=?, supply=?, morale=?, training=?, equipment=?, mobility=? WHERE id=?",
         (*scores.values(), row["id"]),
     )
     db.conn.commit()
-
-    detail = db.army_detail(row["name"])
-    report = db.army_report(limit=20)
-    roster = db.army_roster(filter_names=[row["name"]])
-    joined = "\n".join((detail, report, roster))
-
-    assert row["name"] in detail
-    # 精确欠饷与分账字段不出口；近似路径使 0 欠与 63 可判别
-    assert "63" not in joined
-    for forbidden in (
-        "province_pay_arrears",
-        "central_pay_arrears",
-        "省份额欠",
-        "中央份额欠",
-    ):
+    name = row["name"]
+    detail, roster = db.army_detail(name), db.army_roster(filter_names=[name])
+    report = db.army_report(limit=100)
+    # 按出口结构隔离目标军字段（report 只扫目标段，避开合计饷银）
+    seg = next(p for p in report.split("：", 1)[-1].split("；") if p.startswith(name + "："))
+    exits = (detail, seg, roster)
+    joined = "\n".join(exits)
+    assert name in detail and "63" not in joined
+    for forbidden in ("province_pay_arrears", "central_pay_arrears", "省份额欠", "中央份额欠"):
         assert forbidden not in joined
     db.conn.execute(
         "UPDATE armies SET arrears=0, province_pay_arrears=0, central_pay_arrears=0 WHERE id=?",
         (row["id"],),
     )
     db.conn.commit()
-    assert db.army_detail(row["name"]) != detail
-    # 抽象分经定性层，裸分不以独立 token 出现在 detail
-    for bare in scores.values():
-        assert not re.search(rf"(?<!\d){bare}(?!\d)", detail)
+    assert db.army_detail(name) != detail
+    for text in exits:
+        for bare in scores.values():
+            assert not re.search(rf"(?<!\d){bare}(?!\d)", text)
 
 
 def test_army_arrears_presentation_rounds_half_steps_up(game):
-    """#305：奏报近似半档进位——差分：12.5≡15、25≡30；12≠12.5、15≠30。"""
+    """#305：半档进位只比欠饷近似事实（不拿含 pay_months 的整份 detail 当 oracle）。"""
+    from ming_sim.db import _approx_wanliang
+
     db, _state, _ = game
     row = db.conn.execute(
         "SELECT id,name FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
     ).fetchone()
 
-    def _detail_for(arrears: float) -> str:
+    def _arrears_fact(arrears: float) -> str:
         db.conn.execute(
-            """
-            UPDATE armies
-            SET arrears=?, province_pay_arrears=?, central_pay_arrears=0
-            WHERE id=?
-            """,
+            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
             (arrears, arrears, row["id"]),
         )
         db.conn.commit()
-        return db.army_detail(row["name"])
+        approx = _approx_wanliang(arrears)
+        assert approx in db.army_detail(row["name"])
+        return approx
 
-    d_12_5, d_15 = _detail_for(12.5), _detail_for(15)
-    d_12, d_25, d_30 = _detail_for(12), _detail_for(25), _detail_for(30)
-    assert d_12_5 == d_15
-    assert d_12 != d_12_5
-    assert d_25 == d_30
-    assert d_15 != d_30
+    assert _arrears_fact(12.5) == _arrears_fact(15) != _arrears_fact(12)
+    assert _arrears_fact(25) == _arrears_fact(30) != _arrears_fact(15)
 
 
 def test_army_payload_preserves_fractional_arrears_for_web_rendering(game):

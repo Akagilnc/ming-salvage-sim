@@ -184,11 +184,14 @@ def test_resolve_context_roundtrips_grouped_secret_orders_as_dict(game):
                   "turn_issued": 1, "due_turn": 4, "progress": "", "sim_note": ""}],
         "待核议": [],
     }
-    db.save_resolve_context(state.turn, "诏", "邸报", {"secret_orders": grouped},
-                            secret_orders=grouped, relevant_memories=[])
+    # 首 save 不重复塞 grouped 进 general context，只经专用 secret_orders 参数
+    db.save_resolve_context(
+        state.turn, "诏", "邸报", {}, secret_orders=grouped, relevant_memories=[],
+    )
     ctx = db.get_resolve_context(state.turn)
     assert isinstance(ctx["secret_orders"], dict)
     assert set(ctx["secret_orders"].keys()) == {"在办", "待核议"}
+    assert "secret_orders" not in (ctx.get("simulator_payload") or {})
 
     db.save_resolve_context(state.turn, "诏", "邸报", {}, secret_orders={}, relevant_memories=[])
     assert db.get_resolve_context(state.turn)["secret_orders"] == {}
