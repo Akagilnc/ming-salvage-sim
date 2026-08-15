@@ -4,9 +4,11 @@ Runs the production ``resolve_directives`` judge/simulator assembly, the product
 rescript hold transition, and the next-month production reconsideration rail.
 No model provider or production collaborator is replaced.
 
-Independent authority / person / trigger-face arms share one scene constructor and
-the same production ``resolve_directives`` runner on isolated temporary DBs, and
-are scheduled concurrently (P5).
+Authority slider + TD-9 person arms share one scene constructor and the same
+production ``resolve_directives`` runner on isolated temporary DBs (P5 concurrent).
+TD-9 is three hostile-only arms: unchanged baseline / leader agenda only /
+real gatekeeper replacement with a registered successor. Trigger-face coverage
+comes from the low full batch, not extra live arms.
 
   MING_SIM_TRACE_PATH=/tmp/issue-561-trace.jsonl \
     ../Ming_LLM/.venv/bin/python scripts/promulgation_gate_561.py \
@@ -53,12 +55,18 @@ VITAL_MIDZHI_TEXT = "中旨绕开户部，强夺太仓全部钱粮交内廷支�
 BASE_DONGLIN_AGENDA = "反对清丈，维护田赋旧例"
 # person_leader sole mutation: leader appeased via agenda, not character status.
 LEADER_APPEASED_AGENDA = "钱谦益已受安抚，东林首领息争"
+# person_gatekeeper sole mutation: dismiss 许誉卿 and seat a registered successor.
+GATEKEEPER_SUCCESSOR = "倪元璐"
+GATEKEEPER_OFFICE = "兵科给事中"
+GATEKEEPER_OFFICE_TYPE = "六科"
 
 # Full low/high authority batch: same planted dossiers, only 皇威 differs.
 FULL_KINDS = (
     "hostile", "ordinary", "authority_edge", "appointment",
     "admin_midzhi", "vital_midzhi",
 )
+# TD-9 person control: identical hostile-only plant across three arms.
+PERSON_KINDS = ("hostile",)
 
 
 def _args() -> argparse.Namespace:
@@ -301,8 +309,8 @@ def _plant_dossiers(db: GameDB, state, kinds: tuple[str, ...] | list[str]) -> di
 
 
 def _mutate_leader_only(db: GameDB, state) -> None:
-    """按人对照·首领臂：只改东林 agenda 表达首领已安抚；不改 leverage/把关人/皇威。"""
-    del state  # board authority already fixed by the arm
+    """TD-9 leader arm: only 东林 agenda expresses leader appeasement."""
+    del state
     db.conn.execute(
         "UPDATE factions SET agenda=? WHERE name='东林'",
         (LEADER_APPEASED_AGENDA,),
@@ -310,10 +318,14 @@ def _mutate_leader_only(db: GameDB, state) -> None:
     db.conn.commit()
 
 
-def _mutate_gatekeeper_only(db: GameDB, state) -> None:
-    """按人对照·把关人臂：只撤许誉卿，不改皇威/首领/派系 leverage/授权。"""
+def _mutate_gatekeeper_replace(db: GameDB, state) -> None:
+    """TD-9 gatekeeper arm: dismiss 许誉卿 and seat a registered successor in-office."""
     del state
     db.conn.execute("UPDATE characters SET status='dismissed' WHERE name='许誉卿'")
+    db.conn.execute(
+        "UPDATE characters SET status='active', office=?, office_type=? WHERE name=?",
+        (GATEKEEPER_OFFICE, GATEKEEPER_OFFICE_TYPE, GATEKEEPER_SUCCESSOR),
+    )
     db.conn.commit()
 
 
@@ -453,34 +465,26 @@ def main() -> int:
     cfg = _cfg(args)
 
     with tempfile.TemporaryDirectory(prefix="ming-561-gate-") as tmp:
-        # Independent arms share one scene constructor + resolve_directives runner;
-        # each arm owns an isolated temporary DB and changes only its tested variable.
+        # Shared scene + resolve_directives runner; each arm owns one temp DB.
         arm_jobs = {
             "high_authority": lambda: _run_resolve_arm(
                 tmp, content, cfg, name="high_authority", authority=100,
                 kinds=FULL_KINDS, decree_label="高皇威对照",
             ),
+            # TD-9 shortest three arms: same hostile-only plant / 皇威 / leverage.
+            "person_baseline": lambda: _run_resolve_arm(
+                tmp, content, cfg, name="person_baseline", authority=100,
+                kinds=PERSON_KINDS, decree_label="按人·hostile-only 未变基线",
+            ),
             "person_leader": lambda: _run_resolve_arm(
                 tmp, content, cfg, name="person_leader", authority=100,
-                kinds=("hostile",), mutation=_mutate_leader_only,
+                kinds=PERSON_KINDS, mutation=_mutate_leader_only,
                 decree_label="按人·只安抚首领",
             ),
             "person_gatekeeper": lambda: _run_resolve_arm(
                 tmp, content, cfg, name="person_gatekeeper", authority=100,
-                kinds=("hostile",), mutation=_mutate_gatekeeper_only,
-                decree_label="按人·只换把关人",
-            ),
-            "face_rank": lambda: _run_resolve_arm(
-                tmp, content, cfg, name="face_rank", authority=0,
-                kinds=("authority_edge",), decree_label="触发面·越制破格",
-            ),
-            "face_faction": lambda: _run_resolve_arm(
-                tmp, content, cfg, name="face_faction", authority=0,
-                kinds=("hostile",), decree_label="触发面·派系逆鳞",
-            ),
-            "face_office": lambda: _run_resolve_arm(
-                tmp, content, cfg, name="face_office", authority=0,
-                kinds=("appointment",), decree_label="触发面·把关关口任免",
+                kinds=PERSON_KINDS, mutation=_mutate_gatekeeper_replace,
+                decree_label="按人·替换把关人并任命继任",
             ),
             "low_hold_rail": lambda: _run_low_hold_rail(tmp, content, cfg),
         }
@@ -495,11 +499,9 @@ def main() -> int:
 
         low = results["low_hold_rail"]
         high = results["high_authority"]
+        baseline = results["person_baseline"]
         leader = results["person_leader"]
         gatekeeper = results["person_gatekeeper"]
-        face_rank = results["face_rank"]
-        face_faction = results["face_faction"]
-        face_office = results["face_office"]
 
         first_actual_input, first_provenance = _captured_judge_payload(
             trace_records, low["first_context"],
@@ -507,20 +509,14 @@ def main() -> int:
         high_actual_input, high_provenance = _captured_judge_payload(
             trace_records, high["context"],
         )
+        baseline_actual_input, baseline_provenance = _captured_judge_payload(
+            trace_records, baseline["context"],
+        )
         leader_actual_input, leader_provenance = _captured_judge_payload(
             trace_records, leader["context"],
         )
         gatekeeper_actual_input, gatekeeper_provenance = _captured_judge_payload(
             trace_records, gatekeeper["context"],
-        )
-        face_rank_input, face_rank_provenance = _captured_judge_payload(
-            trace_records, face_rank["context"],
-        )
-        face_faction_input, face_faction_provenance = _captured_judge_payload(
-            trace_records, face_faction["context"],
-        )
-        face_office_input, face_office_provenance = _captured_judge_payload(
-            trace_records, face_office["context"],
         )
         second_actual_input, second_provenance = _captured_judge_payload(
             trace_records, low["second_context"],
@@ -535,11 +531,10 @@ def main() -> int:
         vital_midzhi = ids["vital_midzhi"]
         by_id = _by_id(low["first_verdicts"])
         high_by_id = _by_id(high["verdicts"])
+        baseline_by_id = _by_id(baseline["verdicts"])
         leader_by_id = _by_id(leader["verdicts"])
         gatekeeper_by_id = _by_id(gatekeeper["verdicts"])
-        face_rank_by_id = _by_id(face_rank["verdicts"])
-        face_faction_by_id = _by_id(face_faction["verdicts"])
-        face_office_by_id = _by_id(face_office["verdicts"])
+        gk_names = _gatekeeper_names(gatekeeper["context"])
 
         first_ctx = low["first_resolve_context"]
         sent_payload = first_ctx.get("simulator_payload") or {}
@@ -552,28 +547,22 @@ def main() -> int:
         all_verdicts = (
             list(low["first_verdicts"])
             + list(high["verdicts"])
+            + list(baseline["verdicts"])
             + list(leader["verdicts"])
             + list(gatekeeper["verdicts"])
-            + list(face_rank["verdicts"])
-            + list(face_faction["verdicts"])
-            + list(face_office["verdicts"])
             + [low["second_verdict"]]
         )
         all_payloads = [
-            first_actual_input, high_actual_input, leader_actual_input,
-            gatekeeper_actual_input, face_rank_input, face_faction_input,
-            face_office_input, second_actual_input,
+            first_actual_input, high_actual_input, baseline_actual_input,
+            leader_actual_input, gatekeeper_actual_input, second_actual_input,
         ]
         checks = {
             "hostile_land_rejected": by_id[hostile]["decision"] == "rejected",
             "ordinary_pay_promulgated": by_id[ordinary]["decision"] == "promulgated",
+            # Three trigger faces ride the low full batch (no extra live arms).
             "three_trigger_faces_reject_at_low_authority": all(
-                arm_by_id[arm_ids[key]]["decision"] == "rejected"
-                for arm_by_id, arm_ids, key in (
-                    (face_rank_by_id, face_rank["ids"], "authority_edge"),
-                    (face_faction_by_id, face_faction["ids"], "hostile"),
-                    (face_office_by_id, face_office["ids"], "appointment"),
-                )
+                by_id[ids[key]]["decision"] == "rejected"
+                for key in ("authority_edge", "hostile", "appointment")
             ),
             "authority_edge_passes_only_at_high_authority": (
                 by_id[authority_edge]["decision"] == "rejected"
@@ -583,16 +572,17 @@ def main() -> int:
                 high_by_id[high["ids"]["vital_midzhi"]]["decision"] == "rejected"
             ),
             "leader_change_does_not_remove_named_gatekeeper_block": (
-                leader_by_id[leader["ids"]["hostile"]]["decision"] == "rejected"
+                baseline_by_id[baseline["ids"]["hostile"]]["decision"] == "rejected"
+                and leader_by_id[leader["ids"]["hostile"]]["decision"] == "rejected"
                 and "许誉卿" in _gatekeeper_names(leader["context"])
                 and _gatekeeper_names(leader["context"])
-                == _gatekeeper_names(high["context"])
+                == _gatekeeper_names(baseline["context"])
                 and _faction_row(leader["context"], "东林")["agenda"]
                 == LEADER_APPEASED_AGENDA
-                and _faction_row(high["context"], "东林")["agenda"]
+                and _faction_row(baseline["context"], "东林")["agenda"]
                 == BASE_DONGLIN_AGENDA
                 and int(_faction_row(leader["context"], "东林")["leverage"])
-                == int(_faction_row(high["context"], "东林")["leverage"])
+                == int(_faction_row(baseline["context"], "东林")["leverage"])
             ),
             "gatekeeper_appointment_is_judged_and_rejected": (
                 by_id[appointment]["decision"] == "rejected"
@@ -600,6 +590,8 @@ def main() -> int:
             ),
             "named_gatekeeper_change_unblocks_same_decree": (
                 gatekeeper_by_id[gatekeeper["ids"]["hostile"]]["decision"] == "promulgated"
+                and GATEKEEPER_SUCCESSOR in gk_names
+                and "许誉卿" not in gk_names
             ),
             "decisions_are_binary_and_batches_cover_inputs": (
                 {row["decision"] for row in all_verdicts}
@@ -608,6 +600,8 @@ def main() -> int:
                 == {int(row["id"]) for row in low["first_context"]["dossiers"]}
                 and {int(row["dossier_id"]) for row in high["verdicts"]}
                 == {int(row["id"]) for row in high["context"]["dossiers"]}
+                and {int(row["dossier_id"]) for row in baseline["verdicts"]}
+                == {int(row["id"]) for row in baseline["context"]["dossiers"]}
             ),
             "real_judge_payloads_exclude_satisfaction": all(
                 "satisfaction" not in json.dumps(payload, ensure_ascii=False)
@@ -647,14 +641,15 @@ def main() -> int:
                 "arms": sorted(arm_jobs),
                 "controls": {
                     "authority_slider": "only 皇威 differs between low_hold_rail and high_authority",
-                    "person_not_leader": (
-                        "person_leader only sets 东林 agenda to leader-appeased text; "
-                        "person_gatekeeper only dismisses 许誉卿; "
-                        "both keep 许誉卿-or-not as the sole person variable, "
-                        "share 皇威=100 / leverage / the same hostile decree"
+                    "td9_person_three_arms": (
+                        "person_baseline / person_leader / person_gatekeeper share "
+                        "hostile-only plant, 皇威=100, leverage, authorization; "
+                        "leader only changes 东林 agenda; gatekeeper dismisses 许誉卿 "
+                        f"and seats {GATEKEEPER_SUCCESSOR} as {GATEKEEPER_OFFICE}"
                     ),
                     "three_trigger_faces": (
-                        "face_rank / face_faction / face_office each plant one dossier"
+                        "covered by low_hold_rail full batch "
+                        "(authority_edge / hostile / appointment); no extra live arms"
                     ),
                 },
             },
@@ -689,6 +684,11 @@ def main() -> int:
                     ],
                 },
                 "person_arms": {
+                    "baseline": {
+                        "ids": baseline["ids"],
+                        "gatekeepers": baseline["context"]["gatekeepers"],
+                        "factions": baseline["context"]["factions"],
+                    },
                     "leader": {
                         "ids": leader["ids"],
                         "gatekeepers": leader["context"]["gatekeepers"],
@@ -699,12 +699,8 @@ def main() -> int:
                         "ids": gatekeeper["ids"],
                         "gatekeepers": gatekeeper["context"]["gatekeepers"],
                         "factions": gatekeeper["context"]["factions"],
+                        "successor": GATEKEEPER_SUCCESSOR,
                     },
-                },
-                "trigger_face_arms": {
-                    "rank": face_rank["ids"],
-                    "faction": face_faction["ids"],
-                    "office": face_office["ids"],
                 },
             },
             "judge_first": {
@@ -715,6 +711,10 @@ def main() -> int:
                 "input": high_actual_input, "input_provenance": high_provenance,
                 "output": high["verdicts"],
             },
+            "judge_person_baseline": {
+                "input": baseline_actual_input, "input_provenance": baseline_provenance,
+                "output": baseline["verdicts"],
+            },
             "judge_person_leader_only": {
                 "input": leader_actual_input, "input_provenance": leader_provenance,
                 "output": leader["verdicts"],
@@ -723,22 +723,6 @@ def main() -> int:
                 "input": gatekeeper_actual_input,
                 "input_provenance": gatekeeper_provenance,
                 "output": gatekeeper["verdicts"],
-            },
-            "judge_trigger_faces": {
-                "rank": {
-                    "input": face_rank_input, "input_provenance": face_rank_provenance,
-                    "output": face_rank["verdicts"],
-                },
-                "faction": {
-                    "input": face_faction_input,
-                    "input_provenance": face_faction_provenance,
-                    "output": face_faction["verdicts"],
-                },
-                "office": {
-                    "input": face_office_input,
-                    "input_provenance": face_office_provenance,
-                    "output": face_office["verdicts"],
-                },
             },
             "judge_after_hold_and_board_change": {
                 "input": second_actual_input, "input_provenance": second_provenance,
