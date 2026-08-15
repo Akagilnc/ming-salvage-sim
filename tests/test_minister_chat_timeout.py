@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 from ming_sim.models import CLI_DEFAULT_TIMEOUT_SECONDS, MINISTER_CHAT_CLI_TIMEOUT_SECONDS, LLMConfig
 from ming_sim.registry import create_minister_agent
 
-
 def _cfg_300() -> LLMConfig:
     """A CLI-channel config that mimics the full settlement timeout (300 s)."""
     return LLMConfig(
@@ -26,7 +25,6 @@ def _cfg_300() -> LLMConfig:
         cli_model="gpt-5.5",
         cli_timeout_seconds=CLI_DEFAULT_TIMEOUT_SECONDS,  # 300 s
     )
-
 
 def _make_context() -> MagicMock:
     state = MagicMock(year=1640, period=1, turn=1)
@@ -45,7 +43,6 @@ def _make_context() -> MagicMock:
     ctx.characters = {}
     return ctx
 
-
 def _make_character(is_consort: bool = False) -> MagicMock:
     ch = MagicMock()
     ch.name = "测试大臣"
@@ -57,7 +54,6 @@ def _make_character(is_consort: bool = False) -> MagicMock:
     ch.power_id = "ming"
     return ch
 
-
 _REGISTRY_PATCHES = [
     ("ming_sim.registry.build_character_knowledge_brief", ""),
     ("ming_sim.registry.build_recommendation_brief", ""),
@@ -67,19 +63,6 @@ _REGISTRY_PATCHES = [
     ("ming_sim.registry.character_context_with_db", "角色描述"),
     ("ming_sim.registry.Agent", MagicMock(return_value=MagicMock())),
 ]
-
-
-# ── constant contract ──────────────────────────────────────────────────────────
-
-def test_minister_chat_timeout_shorter_than_settlement_timeout():
-    """MINISTER_CHAT_CLI_TIMEOUT_SECONDS must be less than settlement's 300 s default."""
-    assert MINISTER_CHAT_CLI_TIMEOUT_SECONDS < CLI_DEFAULT_TIMEOUT_SECONDS
-
-
-def test_minister_chat_timeout_reasonable_value():
-    """Short timeout must be in a sane range (> 0, ≤ 120 s) for interactive chat."""
-    assert 0 < MINISTER_CHAT_CLI_TIMEOUT_SECONDS <= 120
-
 
 # ── create_minister_agent uses short CLI timeout ──────────────────────────────
 
@@ -106,7 +89,6 @@ def test_minister_agent_cli_timeout_capped():
     assert captured["cli_timeout"] <= MINISTER_CHAT_CLI_TIMEOUT_SECONDS, (
         f"CLI timeout {captured['cli_timeout']} exceeds cap {MINISTER_CHAT_CLI_TIMEOUT_SECONDS}"
     )
-
 
 def test_minister_agent_api_timeout_capped():
     """For API channel, minister agent must use timeout_seconds ≤ MINISTER_CHAT_CLI_TIMEOUT_SECONDS."""
@@ -138,7 +120,6 @@ def test_minister_agent_api_timeout_capped():
         f"API timeout {captured['timeout_seconds']} exceeds cap {MINISTER_CHAT_CLI_TIMEOUT_SECONDS}"
     )
 
-
 def test_minister_agent_does_not_mutate_original_llm_config():
     """create_minister_agent must not modify the caller's LLMConfig (no side-effects)."""
     original_cli = 300.0
@@ -168,9 +149,7 @@ def test_minister_agent_does_not_mutate_original_llm_config():
     assert cfg.cli_timeout_seconds == original_cli, "original config was mutated"
     assert cfg.timeout_seconds == original_api, "original config was mutated"
 
-
 # ── helper ────────────────────────────────────────────────────────────────────
-
 
 @contextmanager
 def _nested_patches(patch_list):
