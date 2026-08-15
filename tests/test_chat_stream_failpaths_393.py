@@ -83,6 +83,51 @@ def test_prologue_failure_fails_orphan_turn_and_releases_gate():
     assert not runtime._write_gate.locked()
 
 
+def test_prologue_finally_does_not_release_foreign_gate_holder():
+    """#542 r6g: cleanup 的 with write_gate 退出后、finally 前另一写者取得 gate，
+    本线程不得因 locked() 误放他人锁（threading.Lock.locked() 不记 owner）。"""
+    runtime, db, minister = _runtime_with_failing_prologue()
+    gate = runtime._write_gate
+    other_acquired = threading.Event()
+    allow_other_release = threading.Event()
+    other_release_ok: list[bool] = []
+
+    def other_writer():
+        gate.acquire()
+        other_acquired.set()
+        # Hold across the buggy finally; only then attempt our own release.
+        assert allow_other_release.wait(timeout=2.0)
+        try:
+            gate.release()
+            other_release_ok.append(True)
+        except RuntimeError:
+            other_release_ok.append(False)
+
+    other = threading.Thread(target=other_writer, name="foreign-gate-holder")
+    original_complete = runtime._complete_pending_write
+
+    def complete_then_hand_gate_to_other():
+        # Runs after cleanup `with write_gate` exited and released, before finally.
+        original_complete()
+        other.start()
+        assert other_acquired.wait(timeout=2.0), "foreign writer did not acquire gate"
+
+    runtime._complete_pending_write = complete_then_hand_gate_to_other
+
+    gen = runtime.chat_stream(minister, "辽东军情如何？")
+    with pytest.raises(RuntimeError):
+        next(gen)
+
+    assert db.failed_turns == [7]
+    # Foreign holder must still own the gate after prologue finally.
+    assert gate.locked(), "foreign holder's gate was released by prologue finally"
+    allow_other_release.set()
+    other.join(timeout=2.0)
+    assert not other.is_alive()
+    assert other_release_ok == [True], "foreign holder could not release its own gate"
+    assert not gate.locked()
+
+
 class _DoubleFailDB:
     """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
     write_gate + _pending_writes_count are still released (R3 self-check)."""
