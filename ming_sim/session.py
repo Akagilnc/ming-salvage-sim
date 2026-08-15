@@ -1746,30 +1746,28 @@ class GameSession:
     _PACIFICATION_TOOL_CUES = ("招抚", "招安", "受抚", "抚贼", "抚寇")
 
     def _mentioned_pacification_target(self, text: str) -> Optional[str]:
-        """Pick the single canonical character mentioned for a 招抚 tool draft.
+        """Pick the single eligible canonical mentioned for a 招抚 tool draft.
 
-        Aggregate every name/alias hit by canonical. Distinct canonicals at any
-        length are ambiguous. Longest match only collapses nested aliases of the
-        same canonical (e.g. 八大王 + 张献忠).
+        Each name/alias hit is resolved through db._find_pacification_target;
+        only qualified canonicals aggregate. Exactly one stages; zero or many
+        fail loud (None). Nested aliases of one canonical collapse to one hit.
         """
         blob = str(text or "")
         if not blob or getattr(self, "content", None) is None:
             return None
-        hit_canonicals: Dict[str, int] = {}
+        hit_canonicals: set[str] = set()
         for name, character in self.content.characters.items():
             needles = [name, *list(getattr(character, "aliases", None) or [])]
-            best = 0
             for needle in needles:
                 token = str(needle or "").strip()
-                if token and token in blob and len(token) > best:
-                    best = len(token)
-            if best:
-                hit_canonicals[name] = best
-        if not hit_canonicals:
-            return None
+                if not token or token not in blob:
+                    continue
+                matched = self.db._find_pacification_target(self.content, token)
+                if matched:
+                    hit_canonicals.add(matched)
         if len(hit_canonicals) == 1:
             return next(iter(hit_canonicals))
-        # Multiple distinct canonicals mentioned → ambiguous (length irrelevant).
+        # Zero qualified → unknown; multiple qualified canonicals → ambiguous.
         return None
 
     def _stage_directive_tool_candidate(
