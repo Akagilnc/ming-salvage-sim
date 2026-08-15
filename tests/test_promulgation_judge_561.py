@@ -499,10 +499,39 @@ def test_appointment_rejection_check_requires_faction_gate_structure():
     ) is False
 
 
-def test_leader_only_mutation_keeps_faction_posture_and_gatekeepers(game):
-    """TD-9 leader arm: rehabilitate 钱谦益 only; agenda/leverage/gatekeepers fixed."""
+def test_ordinary_class_all_promulgated_covers_planted_ordinary_only():
+    """TD-1 / ADR 0055 S6: ordinary class = 寻常补饷; every planted one must pass."""
+    from scripts.promulgation_gate_561 import (
+        ORDINARY_TEXT,
+        _ordinary_class_all_promulgated,
+    )
+
+    # Class is the pay edict itself — not an invented multi-sample roster.
+    assert "补" in ORDINARY_TEXT and "饷" in ORDINARY_TEXT
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1, "hostile": 2},
+         {1: {"decision": "promulgated"}, 2: {"decision": "rejected"}}),
+        ({"ordinary": 3},
+         {3: {"decision": "promulgated"}}),
+    ]) is True
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "rejected"}}),
+    ]) is False
+    assert _ordinary_class_all_promulgated([
+        ({"ordinary": 1}, {1: {"decision": "promulgated"}}),
+        ({"ordinary": 4}, {4: {"decision": "rejected"}}),
+    ]) is False
+    # Arms without ordinary do not invent a sample; empty plant is not a pass.
+    assert _ordinary_class_all_promulgated([
+        ({"hostile": 2}, {2: {"decision": "rejected"}}),
+    ]) is False
+
+
+def test_leader_only_mutation_changes_faction_posture_not_roster(game):
+    """TD-9: 安抚首领 = 东林 leverage/agenda; 许誉卿 stays; no 钱谦益 roster swap."""
     from scripts.promulgation_gate_561 import (
         BASE_DONGLIN_AGENDA,
+        LEADER_APPEASED_AGENDA,
         _apply_base_board,
         _faction_row,
         _gatekeeper_names,
@@ -516,30 +545,39 @@ def test_leader_only_mutation_keeps_faction_posture_and_gatekeepers(game):
     before = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
-    assert db.conn.execute(
-        "SELECT status FROM characters WHERE name='钱谦益'"
-    ).fetchone()["status"] == "dismissed"
+    qian_before = db.conn.execute(
+        "SELECT status, office FROM characters WHERE name='钱谦益'"
+    ).fetchone()
 
     _mutate_leader_only(db, state)
     after = decree_mod.build_promulgation_judge_context(
         db, state, db.list_decree_dossiers(status="proposed"),
     )
 
-    leader = db.conn.execute(
+    # Gatekeeper bench unchanged — 安抚首领 ≠ 换把关人.
+    assert "许誉卿" in _gatekeeper_names(after)
+    assert _gatekeeper_names(after) == _gatekeeper_names(before)
+    assert after["gatekeepers"] == before["gatekeepers"]
+
+    before_faction = _faction_row(before, "东林")
+    after_faction = _faction_row(after, "东林")
+    assert before_faction["agenda"] == BASE_DONGLIN_AGENDA
+    assert after_faction["agenda"] == LEADER_APPEASED_AGENDA
+    # Judge-visible posture must move (agenda and/or leverage).
+    assert (
+        after_faction["agenda"] != before_faction["agenda"]
+        or int(after_faction["leverage"]) != int(before_faction["leverage"])
+    )
+    # Full payload distinguishable so evidence trace can pair leader vs baseline.
+    assert after["factions"] != before["factions"]
+    assert after != before
+
+    # Forbidden: only rehab 钱谦益 roster and pretend that is 安抚.
+    qian_after = db.conn.execute(
         "SELECT status, office FROM characters WHERE name='钱谦益'"
     ).fetchone()
-    assert leader["status"] == "active"
-    assert leader["office"]
-    assert _gatekeeper_names(after) == _gatekeeper_names(before)
-    assert "钱谦益" not in _gatekeeper_names(after)
-    assert _faction_row(after, "东林")["agenda"] == BASE_DONGLIN_AGENDA
-    assert _faction_row(after, "东林")["agenda"] == _faction_row(before, "东林")["agenda"]
-    assert int(_faction_row(after, "东林")["leverage"]) == int(
-        _faction_row(before, "东林")["leverage"]
-    )
-    # Judge-visible snapshot equals baseline except turn noise — factions+gatekeepers.
-    assert after["factions"] == before["factions"]
-    assert after["gatekeepers"] == before["gatekeepers"]
+    assert qian_after["status"] == qian_before["status"]
+    assert qian_after["office"] == qian_before["office"]
 
 
 def test_promulgation_judge_preserves_role_resolved_token_budget(monkeypatch):
