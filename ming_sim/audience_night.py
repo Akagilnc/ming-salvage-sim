@@ -1148,14 +1148,15 @@ def close_night(
 
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
+    # Close scene already started: drain/join on failure; never swallow cleanup.
     try:
         _drain_story_extraction_or_fail_closed(
             db, int(night_id), llm_config=llm_config, write_gate=gate,
             extractor_agent=extractor_agent,
         )
-    except Exception:
+    except Exception as drain_exc:
+        cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
-            # Drain in-flight close Future + retire scaffold before reopen.
             try:
                 from ming_sim import beat_orchestration as beats
                 beats.join_close_scene_on_registry(
@@ -1164,18 +1165,22 @@ def close_night(
                     chat_turn_id=int(close_ctid),
                     scaffold_owned=bool(close_scaffold_owned),
                 )
-            except BaseException:
-                pass
+            except BaseException as exc:
+                cleanup_exc = exc
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
+        if cleanup_exc is not None:
+            raise drain_exc from cleanup_exc
         raise
 
     # ── Phase 2: endorsement LLM ∥ close scene (join before finalize) ──────
-    # Both branches end before finalize or reopen. No second registry/executor/Thread.
-    branch_errors: List[BaseException] = []
+    # Both branches end before finalize or reopen. No ExceptionGroup bus /
+    # second registry/executor/Thread. First observed failure propagates;
+    # sibling still drains; join/cleanup chains via __cause__.
+    primary_exc: BaseException | None = None
     try:
         from ming_sim.audience_extraction import run_endorsement_batch_for_night
 
@@ -1188,8 +1193,9 @@ def close_night(
             extractor_agent=endorsement_extractor_agent,
         )
     except Exception as exc:
-        branch_errors.append(exc)
+        primary_exc = exc
 
+    join_exc: BaseException | None = None
     if close_started and reg is not None:
         try:
             from ming_sim import beat_orchestration as beats
@@ -1202,20 +1208,19 @@ def close_night(
             if joined_body and not close_body:
                 close_body = str(joined_body)
         except Exception as exc:
-            branch_errors.append(exc)
+            join_exc = exc
 
-    if branch_errors:
+    if primary_exc is not None or join_exc is not None:
         with gate:
             _set_night_fields(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
-        if len(branch_errors) == 1:
-            raise branch_errors[0]
-        raise ExceptionGroup(
-            "close_night endorsement/beat failures",
-            branch_errors,
-        )
+        if primary_exc is not None:
+            if join_exc is not None:
+                raise primary_exc from join_exc
+            raise primary_exc
+        raise join_exc
 
     # ── Phase 3: short writes — final effects, 明发, close ledger, CLOSED ──
     # Close body joined above (or explicit body=); no generator under the runtime

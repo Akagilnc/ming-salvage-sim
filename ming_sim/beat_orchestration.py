@@ -34,6 +34,7 @@ import threading
 from ming_sim.audience_night import (
     AUDIBILITY_PUBLIC,
     METHOD_XUANRU,
+    SUMMON_METHODS,
     TAG_ENTER,
     TAG_OPEN_NIGHT,
     get_night,
@@ -464,11 +465,18 @@ def discover_open_enter_tasks(
         and TAG_ENTER in (e.get("tags") or [])
     ), None)
     if entering is not None:
+        # Recover real summon method from enter-ledger tags (same source as
+        # night_archive_metadata); never hardcode 宣入 over 越次/传召.
+        enter_tags = entering.get("tags") or []
+        summon_method = next(
+            (method for method in SUMMON_METHODS if method in enter_tags),
+            METHOD_XUANRU,
+        )
         tasks.append((int(entering["id"]), assemble_beat_inputs(
             db, state, beat_kind=BEAT_ENTER,
             time_of_day=str(night.get("time_of_day") or ""),
             location=str(night.get("location") or ""), night_id=night_id,
-            person_name=minister_name, summon_method=METHOD_XUANRU,
+            person_name=minister_name, summon_method=summon_method,
         )))
     return tasks
 

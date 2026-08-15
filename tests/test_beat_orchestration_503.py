@@ -209,6 +209,43 @@ def test_open_and_enter_scene_beats_run_concurrently(game):
     assert kinds == {"open", "enter"} and max_active >= 2
 
 
+def test_discover_open_enter_tasks_restores_yueci_summon_method(game):
+    """#542: discover_open_enter_tasks 从入殿账 tags 恢复真实召法；registry 路径不写死宣入。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night_id, ctid = an.attach_chat_turn_to_night(
+        db, state, minister,
+        agno_session_id="yueci-discover", agno_runs_before=0,
+        summon_method=an.METHOD_YUECI,
+    )
+    # Ledger tags already carry 越次; discovery must restore it (not METHOD_XUANRU).
+    enter_row = next(
+        e for e in an.list_ledger(db, night_id)
+        if an.TAG_ENTER in (e.get("tags") or [])
+        and int(e.get("origin_chat_turn_id") or 0) == int(ctid)
+    )
+    assert an.METHOD_YUECI in (enter_row.get("tags") or [])
+
+    tasks = bo.discover_open_enter_tasks(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+    )
+    enter_inputs = [inp for _eid, inp in tasks if inp.beat_kind == BEAT_ENTER]
+    assert len(enter_inputs) == 1
+    assert enter_inputs[0].summon_method == an.METHOD_YUECI
+
+    def echo(inputs: BeatInputs) -> str:
+        return f"kind={inputs.beat_kind}|method={inputs.summon_method}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    registry.start_open_enter(
+        db, state, minister_name=minister, chat_turn_id=ctid,
+        beat_generator=echo,
+    )
+    bodies = [body for _eid, body in registry.join(ctid)]
+    assert any(f"method={an.METHOD_YUECI}" in b for b in bodies), bodies
+    assert not any(f"method={an.METHOD_XUANRU}" in b and "enter" in b for b in bodies), bodies
+
+
 def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeypatch):
     """#542: 同 chat_turn_id 并发 start_open_enter 至多一轮 discover/submit。"""
     db, state, content = game
