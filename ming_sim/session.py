@@ -1049,6 +1049,23 @@ class GameSession:
             beat_generator=self._beat_generator,
         )
 
+    def start_chat_turn_close_scene(
+        self, chat_turn_id: int, *,
+        night_id: int = 0,
+    ) -> None:
+        """收夜 scene 登记进本轮同一 ChatTurnSceneRegistry（无平行 Thread 生命周期）。"""
+        if not night_id and chat_turn_id:
+            row = self.db.conn.execute(
+                "SELECT night_id FROM chat_turns WHERE id = ?", (int(chat_turn_id),),
+            ).fetchone()
+            night_id = int(row["night_id"] or 0) if row is not None else 0
+        self._scene_registry.start_close(
+            self.db, self.state,
+            chat_turn_id=int(chat_turn_id or 0),
+            night_id=int(night_id or 0),
+            beat_generator=self._beat_generator,
+        )
+
     def join_chat_turn_scene(self, chat_turn_id: int) -> list[tuple[int, str]]:
         """委托编排层等待本轮 scene；调用方在短事务内 persist。"""
         return self._scene_registry.join(int(chat_turn_id or 0))
@@ -2222,6 +2239,7 @@ class GameSession:
             beat_generator=self._beat_generator,
             llm_config=getattr(self, "llm_config", None),
             write_gate=None,
+            scene_registry=self._scene_registry,
         )
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的

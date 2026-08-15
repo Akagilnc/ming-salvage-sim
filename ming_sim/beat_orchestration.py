@@ -407,8 +407,8 @@ def generate_close_beat_body(
 ) -> str:
     """收夜账正文（收尾余韵）。时辰/地点取自夜容器持久属性（cmr R7）。
 
-    单线程调用方可直接用本入口（内部 assemble + run）。跨线程路径须在主线程
-    assemble_beat_inputs(BEAT_CLOSE) 后只调 run_beat_generator——见 close_night。
+    单线程调用方可直接用本入口（内部 assemble + run）。生产收夜路径经
+    ChatTurnSceneRegistry.start_close / run_close_scene_on_registry（#542 CI2）。
     """
     if beat_generator is None:
         return ""
@@ -579,6 +579,30 @@ class ChatTurnSceneRegistry:
         )
         self._submit(int(chat_turn_id), [(int(entry_id), inputs)], beat_generator)
 
+    def start_close(
+        self,
+        db: Any,
+        state: Any,
+        *,
+        chat_turn_id: int,
+        night_id: int,
+        beat_generator: Optional[BeatGenerator],
+        knowledge_provider: Optional[KnowledgeProvider] = None,
+    ) -> None:
+        """收夜 scene：与 open/enter/exit 同桶，entry_id=0 表示只产正文、finalize 再落账。"""
+        if not chat_turn_id:
+            return
+        night = get_night(db, int(night_id)) or {}
+        inputs = assemble_beat_inputs(
+            db, state, beat_kind=BEAT_CLOSE,
+            time_of_day=str(night.get("time_of_day") or ""),
+            location=str(night.get("location") or ""),
+            night_id=int(night_id),
+            knowledge_provider=knowledge_provider,
+        )
+        # entry_id=0：close 账仍由 close_night finalize 落；此处只经 registry 产正文。
+        self._submit(int(chat_turn_id), [(0, inputs)], beat_generator)
+
     @staticmethod
     def _drain(
         futures: List[Future],
@@ -624,3 +648,72 @@ class ChatTurnSceneRegistry:
         if not futures:
             return
         self._drain(futures, keep_results=False)
+
+
+def run_close_scene_on_registry(
+    db: Any,
+    state: Any,
+    *,
+    night_id: int,
+    scene_registry: ChatTurnSceneRegistry,
+    beat_generator: Optional[BeatGenerator],
+    knowledge_provider: Optional[KnowledgeProvider] = None,
+    chat_turn_id: int = 0,
+) -> Tuple[int, str]:
+    """收夜 scene 唯一生命周期：进既有 ChatTurnSceneRegistry，join 后返回正文。
+
+    无 chat_turn_id 时 scaffold 一轮（与 CLI exit 同族）；成功后退役 scaffold，
+    失败 abandon + fail_chat_turn 后原样抛出——不重开夜、不自建 Thread。
+    """
+    if beat_generator is None:
+        return (int(chat_turn_id or 0), "")
+
+    scaffold_owned = False
+    ctid = int(chat_turn_id or 0)
+    if not ctid:
+        if not hasattr(db, "create_chat_turn"):
+            night = get_night(db, int(night_id)) or {}
+            inputs = assemble_beat_inputs(
+                db, state, beat_kind=BEAT_CLOSE,
+                time_of_day=str(night.get("time_of_day") or ""),
+                location=str(night.get("location") or ""),
+                night_id=int(night_id),
+                knowledge_provider=knowledge_provider,
+            )
+            return (0, run_beat_generator(beat_generator, inputs) or "")
+        ctid = int(db.create_chat_turn(
+            state, "收夜", "close-scene", 0, night_id=int(night_id),
+        ))
+        scaffold_owned = True
+
+    try:
+        scene_registry.start_close(
+            db, state,
+            chat_turn_id=ctid,
+            night_id=int(night_id),
+            beat_generator=beat_generator,
+            knowledge_provider=knowledge_provider,
+        )
+        generated = scene_registry.join(ctid)
+        body = ""
+        for _entry_id, text in generated:
+            if text:
+                body = str(text)
+                break
+        if scaffold_owned and hasattr(db, "conn") and getattr(db, "conn", None) is not None:
+            # 成功后退役 scaffold，避免 wait_in_flight 把 generating 空轮当在飞。
+            db.conn.execute(
+                "UPDATE chat_turns SET status = 'failed' "
+                "WHERE id = ? AND status = 'generating' AND minister_message_id IS NULL",
+                (int(ctid),),
+            )
+            db.conn.commit()
+        return (ctid, body)
+    except BaseException as scene_exc:
+        try:
+            scene_registry.abandon(ctid)
+            if ctid and hasattr(db, "fail_chat_turn"):
+                db.fail_chat_turn(int(ctid))
+        except BaseException as cleanup_exc:
+            raise scene_exc from cleanup_exc
+        raise
