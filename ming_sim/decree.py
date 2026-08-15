@@ -52,7 +52,7 @@ from ming_sim.issues import (
 )
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
-from ming_sim.qualitative import qualitative_band, qualitative_character_axis
+from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -210,9 +210,7 @@ def build_promulgation_judge_context(
             # #614 / ADR 0143: player-visible judge reasons inherit this input;
             # project resistance as the same qualitative band as imperial_authority_band.
             {"name": str(row["name"]),
-             "leverage": qualitative_band(
-                 row["leverage"], ("极弱", "偏弱", "中等", "偏强", "强盛"),
-             ),
+             "leverage": power_band(row["leverage"]),
              "agenda": str(row["agenda"] or "")}
             for row in faction_rows
         ],
