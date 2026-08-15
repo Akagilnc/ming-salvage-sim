@@ -6,22 +6,7 @@ import pytest
 import ming_sim.cli_backend as cli_backend
 import ming_sim.issues as issue_engine
 from ming_sim.session import GameSession
-
-
-def _rejected_verdict(dossier_id):
-    return {
-        "dossier_id": dossier_id, "decision": "rejected",
-        "blocked_layer": "six_offices",
-        "primary_opponents": [{"kind": "faction", "key": "东林"}],
-        "gatekeeper_id": None, "reason": "科臣封驳。",
-        "affected_parties": [
-            {"kind": "faction", "key": "东林", "severity": "不满"},
-        ],
-        "criteria_snapshot": {
-            "imperial_authority_band": "偏弱", "appointment_tenure": "",
-            "authorization_ids": [], "endorsement_entry_ids": [],
-        },
-    }
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 
 
 def _active_people(db, count):
@@ -1601,7 +1586,7 @@ def test_force_promulgated_dossier_authorizes_same_batch_effect_after_execution_
         state, action_type="policy", decree_text="强颁赈济",
         target_kind="issue", target_id="forced-relief",
     )
-    db.apply_dossier_promulgation(state, dossier_id, "rejected", reason="封驳")
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier_id)])
     db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
     before = state.metrics["国库"]
 
@@ -1692,7 +1677,6 @@ def test_appointment_alias_uses_canonical_dossier_identity(game):
         }),
         ("cli", "authorization", {
             "动作类型": "secret_authorization", "目标类型": "character",
-            "授权ID": "理财",
         }),
         ("web", "controlled_verb", {
             "动作类型": "secret_investigation", "目标类型": "issue",
@@ -1796,8 +1780,8 @@ def test_manual_directive_capture_reaches_structured_dossier(
         ).fetchone()
         assert (row["status"], row["office"]) == ("dismissed", "")
     else:
-        assert "理财" in db.active_skill_grants(actor)
-        assert db.list_skill_grants_for_dossier(dossier["id"])[0]["dossier_id"] == dossier["id"]
+        assert db.list_skill_grants_for_dossier(dossier["id"]) == []
+        assert "authorization_id" not in json.loads(dossier["payload_json"])
 
 
 @pytest.mark.parametrize(("entry", "bad_roster"), [
@@ -3160,7 +3144,7 @@ def test_cli_protection_execution_closes_from_next_month_extractor(game, monkeyp
     assert closed["execution_note"] == "护行已妥"
 
 
-def test_secret_authorization_uses_canonical_authorization_boundary(game):
+def test_secret_authorization_dossier_does_not_map_payload_to_skill_grant(game):
     db, state, content = game
     character = next(
         item for item in content.characters.values()
@@ -3175,6 +3159,7 @@ def test_secret_authorization_uses_canonical_authorization_boundary(game):
             "dossier_action_type": "secret_authorization",
             "target_kind": "character", "target_id": character.aliases[0],
             "assignee": character.aliases[0], "authorization_id": "理财",
+            "authorization_ids": ["伪授权"],
         },
     )
     db.ensure_dossiers_for_draft_directives(state)
@@ -3185,16 +3170,13 @@ def test_secret_authorization_uses_canonical_authorization_boundary(game):
         state, [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    grants = db.list_skill_grants_for_dossier(dossier["id"])
-    assert [(row["character_name"], row["skill_id"]) for row in grants] == [
-        (character.name, "理财"),
-    ]
+    assert db.list_skill_grants_for_dossier(dossier["id"]) == []
+    stored_payload = json.loads(dossier["payload_json"])
+    assert "authorization_id" not in stored_payload
+    assert "authorization_ids" not in stored_payload
 
 
-@pytest.mark.parametrize("missing", ("assignee", "authorization_id"))
-def test_secret_authorization_rejects_incomplete_payload_without_grant(
-    game, missing,
-):
+def test_secret_authorization_rejects_missing_assignee_without_grant(game):
     db, state, content = game
     actor = _active_minister(db)
     payload = {
@@ -3202,12 +3184,12 @@ def test_secret_authorization_rejects_incomplete_payload_without_grant(
         "target_kind": "character", "target_id": actor,
         "assignee": actor, "authorization_id": "理财",
     }
-    payload.pop(missing)
+    payload.pop("assignee")
     before = db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0]
     directive_id = db.add_directive(
         state, None, "残缺密授权", "player_decree", dossier_payload=payload,
     )
-    with pytest.raises(ValueError, match="canonical assignee 或授权字段"):
+    with pytest.raises(ValueError, match="canonical assignee"):
         db.ensure_dossiers_for_draft_directives(state)
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.conn.execute("SELECT COUNT(*) FROM skill_grants").fetchone()[0] == before

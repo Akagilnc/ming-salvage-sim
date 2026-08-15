@@ -37,7 +37,7 @@ describe("MenuPage subtitle", () => {
         setError={() => {}}
       />
     );
-    const subtitle = document.querySelector(".menu-subtitle");
+    const subtitle = document.querySelector(".menu-tagline");
     expect(subtitle?.textContent).not.toContain("崇祯元年");
     cleanup();
   });
@@ -91,7 +91,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -149,7 +149,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -216,7 +216,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -293,7 +293,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const channelSelect = Array.from(document.querySelectorAll("select")).find((select) =>
@@ -376,7 +376,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const channelSelect = Array.from(document.querySelectorAll("select")).find((select) =>
@@ -459,7 +459,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
       act(() => {
         Array.from(document.querySelectorAll("button")).find((button) =>
-          button.textContent?.includes("设置 API")
+          button.textContent?.includes("模型后端")
         )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
 
@@ -526,7 +526,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -582,7 +582,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
@@ -639,7 +639,7 @@ describe("ApiSettingsModal reasoning strength", () => {
 
     act(() => {
       Array.from(document.querySelectorAll("button")).find((button) =>
-        button.textContent?.includes("设置 API")
+        button.textContent?.includes("模型后端")
       )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
