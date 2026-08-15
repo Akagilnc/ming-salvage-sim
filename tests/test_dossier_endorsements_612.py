@@ -308,8 +308,8 @@ def test_post_reply_extracts_ordinary_facts_immediately_even_with_approved_pendi
 
 def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_work(game, monkeypatch):
     """真实收夜：夜级候选；整夜一次 endorsement-only；调用期无 write gate/
-    无 DB transaction；与真实 close beat 重叠；单项畸形走 rejection、合法 sibling 落；
-    他夜/全局 proposed 不入候选。"""
+    无 DB transaction；close beat 经 ChatTurnSceneRegistry 先汇合（#542 CI2）；
+    单项畸形走 rejection、合法 sibling 落；他夜/全局 proposed 不入候选。"""
     db, state, content = game
     minister = _minister(db)
     night_id, chat_turn_id, seq = _night_reply(db, state, minister, reply="臣叩领圣恩。")
@@ -335,13 +335,12 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
     runtime_gate = threading.Lock()
     llm_saw_gate_free = []
     llm_saw_no_db_tx = []
-    beat_overlap = threading.Event()
-    endorsement_entered = threading.Event()
+    close_beat_ran = []
 
     class _EndorsementAgent:
         def run(self, materials):
-            endorsement_entered.set()
-            assert beat_overlap.wait(5)
+            # Close beat already joined via registry before CLOSING/endorsement.
+            assert close_beat_ran == [True]
             llm_saw_gate_free.append(not runtime_gate.locked())
             in_tx = bool(getattr(db.conn, "_commit_suspended", False)) or (
                 int(getattr(db.conn, "_atomic_depth", 0) or 0) > 0
@@ -374,9 +373,8 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
             ]}, ensure_ascii=False)
 
     def _real_close_beat(_inputs):
-        # Production close beat path (threaded by close_night) overlaps endorsement LLM.
-        beat_overlap.set()
-        assert endorsement_entered.wait(5)
+        # #542 CI2: close beat joins via ChatTurnSceneRegistry before CLOSING.
+        close_beat_ran.append(True)
         return "退朝，今夜召对到此。"
 
     monkeypatch.setattr(
@@ -391,7 +389,7 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
     assert result["closed"] is True
     assert llm_saw_gate_free == [True]
     assert llm_saw_no_db_tx == [True]
-    assert beat_overlap.is_set() and endorsement_entered.is_set()
+    assert close_beat_ran == [True]
 
     night_dossiers = [
         row for row in db.list_decree_dossiers(status="proposed")
@@ -415,8 +413,8 @@ def test_close_night_endorsement_batch_once_gate_free_and_parallel_independent_w
 
 
 def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(game, monkeypatch):
-    """真实 close tracer：beat 或 endorsement 代码异常均在 finalize/重开前终结两支；
-    双支同时失败 → ExceptionGroup 保留两条诊断；endorsement_not_bound 前恢复 OPEN。"""
+    """#542 CI2：close beat 经 registry 先汇合（失败不进 CLOSING）；endorsement
+    失败重开 OPEN；不再有 Thread/phase2_errors 双支 ExceptionGroup。"""
     db, state, content = game
     minister = _minister(db)
 
@@ -432,16 +430,14 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
         )
         return nid, cid
 
-    # ── Case A: beat code error while endorsement overlaps ─────────────────
+    # ── Case A: beat code error before CLOSING — night stays OPEN ──────────
     night_id, chat_turn_id = _prep("phase2-exc", "臣愿作保。")
     runtime_gate = threading.Lock()
-    endorsement_entered = threading.Event()
-    beat_entered = threading.Event()
+    endorsement_calls = []
 
     class _OkEndorsement:
         def run(self, materials):
-            endorsement_entered.set()
-            assert beat_entered.wait(5)
+            endorsement_calls.append(True)
             payload = json.loads(materials)
             did = int(payload["可背书案卷"][0]["ref"]["dossier_id"])
             return json.dumps({"endorsements": [{
@@ -451,8 +447,6 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
             }]}, ensure_ascii=False)
 
     def _boom_beat(_inputs):
-        beat_entered.set()
-        assert endorsement_entered.wait(5)
         raise RuntimeError("close beat code fault")
 
     monkeypatch.setattr(
@@ -468,27 +462,25 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     failed = an.get_night(db, night_id)
     assert failed["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed["close_commit_cursor"] or 0) == 0
+    assert endorsement_calls == []  # beat failed before endorsement
     leftover = [
         t for t in threading.enumerate()
         if t.ident not in before_threads and t.is_alive() and not t.daemon
     ]
     assert leftover == [], leftover
 
-    # ── Case B: endorsement boom while real beat overlaps ──────────────────
+    # ── Case B: endorsement boom after close beat already joined ───────────
     night_id2, chat_turn_id2 = _prep("phase2-endorsement-exc", "臣再保。")
     runtime_gate2 = threading.Lock()
-    endorsement_entered2 = threading.Event()
-    beat_done2 = threading.Event()
+    beat_done2 = []
 
     class _BoomEndorsement:
         def run(self, materials):
-            endorsement_entered2.set()
-            assert beat_done2.wait(5)
+            assert beat_done2 == [True]
             raise RuntimeError("endorsement boom with beat")
 
     def _ok_beat(_inputs):
-        assert endorsement_entered2.wait(5)
-        beat_done2.set()
+        beat_done2.append(True)
         return "退朝，今夜召对到此。"
 
     monkeypatch.setattr(
@@ -504,38 +496,32 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     failed2 = an.get_night(db, night_id2)
     assert failed2["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed2["close_commit_cursor"] or 0) == 0
-    assert beat_done2.is_set() and endorsement_entered2.is_set()
+    assert beat_done2 == [True]
 
-    # ── Case C: both branches fail → ExceptionGroup keeps both ─────────────
+    # ── Case C: beat fails first — endorsement never runs (no ExceptionGroup) ─
     night_id3, _cid3 = _prep("phase2-both-exc", "臣三保。")
     runtime_gate3 = threading.Lock()
-    endorsement_entered3 = threading.Event()
-    beat_entered3 = threading.Event()
+    endorsement_calls3 = []
 
     class _BoomBothEndorsement:
         def run(self, materials):
-            endorsement_entered3.set()
-            assert beat_entered3.wait(5)
+            endorsement_calls3.append(True)
             raise RuntimeError("endorsement boom dual")
 
     def _boom_both_beat(_inputs):
-        beat_entered3.set()
-        assert endorsement_entered3.wait(5)
         raise RuntimeError("close beat dual fault")
 
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda cfg: _BoomBothEndorsement(),
     )
-    with pytest.raises(ExceptionGroup) as eg:
+    with pytest.raises(RuntimeError, match="close beat dual fault"):
         an.close_night(
             db, state, night_id=night_id3, content=content,
             llm_config=object(), write_gate=runtime_gate3,
             beat_generator=_boom_both_beat,
         )
-    msgs = [str(exc) for exc in eg.value.exceptions]
-    assert any("endorsement boom dual" in m for m in msgs), msgs
-    assert any("close beat dual fault" in m for m in msgs), msgs
+    assert endorsement_calls3 == []
     failed3 = an.get_night(db, night_id3)
     assert failed3["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed3["close_commit_cursor"] or 0) == 0

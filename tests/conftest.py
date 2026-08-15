@@ -171,6 +171,9 @@ class _OfflineSceneRegistry:
     def start_exit(self, *_a, **_k):
         return None
 
+    def start_close(self, *_a, **_k):
+        return None
+
     def join(self, _chat_turn_id):
         return []
 

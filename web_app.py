@@ -2559,6 +2559,7 @@ def _auto_close_open_night_gate_free(game, *, inflight_wait_s: float = 0.0) -> N
         beat_generator=getattr(session, "_beat_generator", None) if session is not None else None,
         llm_config=getattr(session, "llm_config", None) if session is not None else None,
         write_gate=_game_write_gate(game),
+        scene_registry=getattr(session, "_scene_registry", None) if session is not None else None,
     )
 
 

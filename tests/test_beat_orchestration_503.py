@@ -707,6 +707,83 @@ def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
     assert BEAT_CLOSE in seen and an.get_open_night(game.db) is None
 
 
+def test_close_night_routes_scene_through_chat_turn_registry(game, monkeypatch):
+    """#542 CI2: close scene 进既有 ChatTurnSceneRegistry；无自建 Thread/phase2_errors。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    seen_turns: list[int] = []
+    real_start = registry.start_close
+
+    def _track_start(db_, state_, **kwargs):
+        seen_turns.append(int(kwargs.get("chat_turn_id") or 0))
+        return real_start(db_, state_, **kwargs)
+
+    monkeypatch.setattr(registry, "start_close", _track_start)
+    before = {t.ident for t in threading.enumerate() if t.ident is not None}
+    an.close_night(
+        db, state, night_id=int(night["id"]), content=content,
+        beat_generator=_echo_generator, scene_registry=registry, wait_timeout_s=0.0,
+    )
+    leftover = [
+        t for t in threading.enumerate()
+        if t.ident not in before and t.is_alive() and not t.daemon
+        and t is not threading.current_thread()
+    ]
+    # Registry executor workers may linger briefly; no close_night-owned Thread target.
+    assert not any("close" in (t.name or "").lower() for t in leftover)
+    assert seen_turns and seen_turns[0] > 0
+    close_body = _ledger_body(db, night["id"], an.TAG_CLOSE_NIGHT)
+    assert close_body and close_body.startswith(f"kind={BEAT_CLOSE}")
+    # Beat failure path: night stays OPEN, no CLOSING residue.
+    night2 = an.open_night(db, state, time_of_day="亥时", location="乾清宫")
+
+    def _boom(_inputs):
+        raise RuntimeError("registry close boom")
+
+    with pytest.raises(RuntimeError, match="registry close boom"):
+        an.close_night(
+            db, state, night_id=int(night2["id"]), content=content,
+            beat_generator=_boom, scene_registry=registry, wait_timeout_s=0.0,
+        )
+    failed = an.get_night(db, int(night2["id"]))
+    assert failed["status"] == an.NIGHT_STATUS_OPEN
+    assert int(failed["close_commit_cursor"] or 0) == 0
+
+
+def test_cli_exit_cleanup_failure_chains_to_scene_error(game, monkeypatch):
+    """#542 CI2: _record_audience_exit cleanup 失败须链到原 scene 异常，不得 pass 吞掉。"""
+    import ming_sim.cli.terminal as term
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    minister = _active_minister(db, content)
+    night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
+    an.summon_enter(db, night["id"], minister)
+
+    def boom_exit(_inputs: BeatInputs) -> str:
+        raise RuntimeError("exit scene boom")
+
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.temporary_characters = set()
+    session._beat_generator = boom_exit
+    session._scene_registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+
+    real_fail = db.fail_chat_turn
+
+    def boom_fail(ctid):
+        real_fail(ctid)
+        raise RuntimeError("cleanup boom")
+
+    monkeypatch.setattr(db, "fail_chat_turn", boom_fail)
+    with pytest.raises(RuntimeError, match="exit scene boom") as ei:
+        term._record_audience_exit(session, minister)
+    assert ei.value.__cause__ is not None
+    assert "cleanup boom" in str(ei.value.__cause__)
+
+
 # ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────
 
 

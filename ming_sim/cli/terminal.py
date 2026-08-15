@@ -190,6 +190,39 @@ def _skill_ids_from_text(session: GameSession, text: str) -> List[str]:
     return unique
 
 
+def _fail_cli_chat_turn_scene(
+    session: GameSession,
+    chat_turn_id: int,
+    *,
+    before_snapshot=None,
+    scaffold_owned: bool = False,
+    entry_id: int = 0,
+) -> None:
+    """CLI chat-turn scene 失败清理——与 minister_chat 中断同族（abandon + fail/回滚）。
+
+    cleanup 自身失败由调用方链到原 scene 异常（不得 `except: pass` 吞掉）。
+    """
+    session.abandon_chat_turn_scene(int(chat_turn_id))
+    if scaffold_owned:
+        if before_snapshot is not None and hasattr(
+            session.db, "record_chat_turn_rollback_diffs",
+        ):
+            session.db.record_chat_turn_rollback_diffs(
+                int(chat_turn_id),
+                before_snapshot,
+                session.db.capture_chat_rollback_snapshot(),
+            )
+        session.db.fail_chat_turn(int(chat_turn_id))
+        return
+    if entry_id:
+        # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
+        session.db.conn.execute(
+            "DELETE FROM story_ledger_entries WHERE id = ?",
+            (int(entry_id),),
+        )
+        session.db.conn.commit()
+
+
 def _record_audience_exit(session: GameSession, name: str) -> None:
     """CLI「退下」控制口令：垫位告退 + 唯一 scene registry 生成 exit 旁白。
 
@@ -269,28 +302,17 @@ def _record_audience_exit(session: GameSession, name: str) -> None:
             )
             session.db.conn.commit()
     except BaseException as exc:
-        session.abandon_chat_turn_scene(int(chat_turn_id))
+        # 与 minister_chat 失败清理同族：abandon + rollback/fail；cleanup 失败链到原异常。
         try:
-            if scaffold_owned:
-                if before_snapshot is not None and hasattr(
-                    session.db, "record_chat_turn_rollback_diffs",
-                ):
-                    session.db.record_chat_turn_rollback_diffs(
-                        int(chat_turn_id),
-                        before_snapshot,
-                        session.db.capture_chat_rollback_snapshot(),
-                    )
-                session.db.fail_chat_turn(int(chat_turn_id))
-            else:
-                # Prior Q&A turn must stay intact; only drop the failed exit placeholder.
-                session.db.conn.execute(
-                    "DELETE FROM story_ledger_entries WHERE id = ?",
-                    (int(entry_id),),
-                )
-                session.db.conn.commit()
-        except BaseException:
-            pass
-        print(f"退下旁白失败：{exc}\n")
+            _fail_cli_chat_turn_scene(
+                session, int(chat_turn_id),
+                before_snapshot=before_snapshot,
+                scaffold_owned=scaffold_owned,
+                entry_id=int(entry_id),
+            )
+        except BaseException as cleanup_error:
+            raise exc from cleanup_error
+        raise
 
 
 def _handle_court_command(
