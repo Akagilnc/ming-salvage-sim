@@ -2304,6 +2304,7 @@ class GameSession:
             on_event=on_event,
             content=self.content, registry=self.registry,
             cheat_directive=cheat_directive,
+            scene_registry=self._scene_registry,
             **resolve_kwargs,
         )
         if result.awaiting:
@@ -2414,6 +2415,7 @@ class GameSession:
             registry=getattr(self, "registry", None),
             llm_config=getattr(self, "llm_config", None),
             write_gate=None,
+            scene_registry=self._scene_registry,
         )
         if not advanced:
             return self.resolve_turn()
