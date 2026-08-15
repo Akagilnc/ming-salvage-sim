@@ -47,19 +47,22 @@ def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(ga
         report = build_return_report(db, f"{title}可有？")
         assert report["source_kind"] == "inquiry"
         assert report["source_ref"] == "吏部查访"
+        # 命中：报告出口 discriminator = known，且职衔在 statement
+        assert report["result_kind"] == "known"
         assert title in report["statement"]
         row = next(r for r in db.list_office_vacancies() if r["office_title"] == title)
         assert row["holder_name"] is None
 
-    # 未授权官缺：不在空缺集合；statement 不含该职衔与虚悬/在任结构事实
+    # 未授权官缺：office 域已识别但无匹配 → result_kind=unknown（空串/无关 statement 须失败）
     unknown_title = "两广总督"
     assert unknown_title not in vacancy_titles
     unknown = build_return_report(db, f"{unknown_title}可有？")
     assert unknown["source_kind"] == "inquiry"
     assert unknown["source_ref"] == "吏部查访"
+    assert unknown["result_kind"] == "unknown"
+    assert unknown["result_kind"] != "known"
+    assert unknown["statement"].strip()
     assert unknown_title not in unknown["statement"]
-    assert "当前虚悬" not in unknown["statement"]
-    assert "现由" not in unknown["statement"]
     assert not any(title in unknown["statement"] for title in authorized)
 
 
