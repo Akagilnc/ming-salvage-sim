@@ -57,6 +57,57 @@ def test_abandon_running_scene_drains_without_persisting_result():
     assert not registry.has(7)
 
 
+def test_join_exception_drains_uncancellable_sibling_before_propagating():
+    """#542: join 遇首 Future 异常时仍须 drain 同桶 sibling，排空后再传播原异常。
+
+    seam = ChatTurnSceneRegistry.join 公开边界。
+    首 Future 立即失败；后续 Future 已运行且不可取消并阻塞。
+    """
+    sibling_started = threading.Event()
+    release_sibling = threading.Event()
+    sibling_finished = threading.Event()
+    first_fail = RuntimeError("scene-gen-failed")
+
+    def sibling_gen(inputs: BeatInputs) -> str:
+        sibling_started.set()
+        assert release_sibling.wait(2), "sibling was not released"
+        sibling_finished.set()
+        return f"body-{inputs.beat_kind}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
+    # Ordered bucket: fail-first Future, then running uncancellable sibling.
+    fail_fut: Future = Future()
+    fail_fut.set_exception(first_fail)
+    slow_fut = registry._executor.submit(sibling_gen, BeatInputs(beat_kind=BEAT_ENTER))
+    assert sibling_started.wait(1), "sibling never started"
+    with registry._lock:
+        registry._futures[11] = [fail_fut, slow_fut]
+
+    outcome: dict = {}
+
+    def run_join():
+        try:
+            outcome["result"] = registry.join(11)
+        except BaseException as exc:
+            outcome["exc"] = exc
+
+    waiter = threading.Thread(target=run_join)
+    waiter.start()
+    # join must not return/raise while uncancellable sibling is still running.
+    waiter.join(0.2)
+    assert waiter.is_alive(), "join returned before draining sibling"
+    assert "exc" not in outcome and "result" not in outcome
+    assert not sibling_finished.is_set()
+
+    release_sibling.set()
+    waiter.join(2)
+    assert not waiter.is_alive()
+    assert sibling_finished.is_set()
+    assert outcome.get("exc") is first_fail
+    assert "result" not in outcome
+    assert not registry.has(11)
+
+
 def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     """#542: retry except 路径 drain 不可取消 Future 时，_write_gate 必须可被他者取得。
 

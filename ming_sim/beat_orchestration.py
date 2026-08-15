@@ -563,16 +563,43 @@ class ChatTurnSceneRegistry:
         )
         self._submit(int(chat_turn_id), [(int(entry_id), inputs)], beat_generator)
 
+    @staticmethod
+    def _drain(
+        futures: List[Future],
+        *,
+        keep_results: bool,
+    ) -> List[Tuple[int, str]]:
+        """排空同桶 Future：能 cancel 则 cancel，已在跑则 join。
+
+        keep_results=True（join）：收集成功结果；任一 Future 抛错时仍 drain 剩余 sibling，
+        桶完整排空后再传播首个异常。keep_results=False（abandon）：丢弃结果与异常。
+        """
+        results: List[Tuple[int, str]] = []
+        first_exc: Optional[BaseException] = None
+        for fut in futures:
+            if first_exc is not None or not keep_results:
+                if fut.cancel():
+                    continue
+                try:
+                    fut.result()
+                except BaseException:
+                    pass
+                continue
+            try:
+                results.append(fut.result())
+            except BaseException as exc:
+                first_exc = exc
+        if first_exc is not None:
+            raise first_exc
+        return results
+
     def join(self, chat_turn_id: int) -> List[Tuple[int, str]]:
         """等待本轮全部 scene Future；不持 DB/写锁。"""
         with self._lock:
             futures = self._futures.pop(int(chat_turn_id), None)
         if not futures:
             return []
-        out: List[Tuple[int, str]] = []
-        for fut in futures:
-            out.append(fut.result())
-        return out
+        return self._drain(futures, keep_results=True)
 
     def abandon(self, chat_turn_id: int) -> None:
         """排空本轮 scene：能 cancel 则 cancel，已在跑则 join 丢结果。"""
@@ -580,10 +607,4 @@ class ChatTurnSceneRegistry:
             futures = self._futures.pop(int(chat_turn_id), None)
         if not futures:
             return
-        for fut in futures:
-            if fut.cancel():
-                continue
-            try:
-                fut.result()
-            except BaseException:
-                pass
+        self._drain(futures, keep_results=False)
