@@ -1102,9 +1102,10 @@ class GameSession:
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    # #502 L2：显式拟旨走单一 seam——已有候选则新拟独立一道，不 upsert 压扁前一道。
-                    result.pending_action_id = self.db.stage_explicit_directive(
-                        self.state.turn, character.name, draft_text, mode=message_text)
+                    # #502 L2 / #522：tool 拟旨与 CLI 共用候选 seam；招抚走 admission。
+                    result.pending_action_id = self._stage_directive_tool_candidate(
+                        draft_text, character.name, message_text,
+                    )
             elif (tool_name == "propose_appointment"
                   or tool_result.startswith("__pending_appointment__")
                   or tool_result.startswith("__pending_recommendation__")):
@@ -1732,6 +1733,75 @@ class GameSession:
         except (ValueError, TypeError):
             return ("", "")
         return apply_appointment(self.db, self.state, self.content, self.registry, data, llm_config=self.llm_config)
+
+    _PACIFICATION_TOOL_CUES = ("招抚", "招安", "受抚", "抚贼", "抚寇")
+
+    def _mentioned_pacification_target(self, text: str) -> Optional[str]:
+        """Pick the single character name/alias mentioned for a 招抚 tool draft."""
+        blob = str(text or "")
+        if not blob or getattr(self, "content", None) is None:
+            return None
+        hits: List[Tuple[int, str]] = []
+        for name, character in self.content.characters.items():
+            needles = [name, *list(getattr(character, "aliases", None) or [])]
+            for needle in needles:
+                token = str(needle or "").strip()
+                if token and token in blob:
+                    hits.append((len(token), name))
+        if not hits:
+            return None
+        hits.sort(reverse=True)
+        # Longest mention wins; keep first canonical name at that length.
+        best_len = hits[0][0]
+        names = []
+        seen = set()
+        for length, name in hits:
+            if length < best_len:
+                break
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+        if len(names) == 1:
+            return names[0]
+        # Multiple same-length hits: prefer the one that still needs pacification.
+        eligible = [
+            name for name in names
+            if self.db._find_pacification_target(self.content, name)
+        ]
+        if len(eligible) == 1:
+            return eligible[0]
+        return None
+
+    def _stage_directive_tool_candidate(
+        self, draft_text: str, minister_name: str, message_text: str,
+    ) -> int:
+        """API/stream/CLI tool propose_directive → structured candidate seam (#522).
+
+        Pacification cues + a mentioned target stage through the same helper as
+        classifier materialize (mode + upsert + commit-time admission). Generic
+        drafts keep stage_explicit_directive → special_decree.
+        """
+        text = str(draft_text or "").strip()
+        if not text:
+            return 0
+        combined = f"{message_text or ''}\n{text}"
+        if any(cue in combined for cue in self._PACIFICATION_TOOL_CUES):
+            target = self._mentioned_pacification_target(combined)
+            if target:
+                from ming_sim.action_materialize import stage_pacification_candidate
+                pending_id = stage_pacification_candidate(
+                    self.db,
+                    self.state.turn,
+                    minister_name,
+                    text=text,
+                    target_id=target,
+                    emperor_text=message_text,
+                )
+                if pending_id:
+                    return int(pending_id)
+        return self.db.stage_explicit_directive(
+            self.state.turn, minister_name, text, mode=message_text,
+        )
 
     def _stage_appointment_candidate(
         self, payload: str, appointer: Character, message_text: str,
