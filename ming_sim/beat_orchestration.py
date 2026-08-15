@@ -788,36 +788,3 @@ def join_close_scene_on_registry(
         except BaseException as cleanup_exc:
             raise scene_exc from cleanup_exc
         raise
-
-
-def run_close_scene_on_registry(
-    db: Any,
-    state: Any,
-    *,
-    night_id: int,
-    scene_registry: ChatTurnSceneRegistry,
-    beat_generator: Optional[BeatGenerator],
-    knowledge_provider: Optional[KnowledgeProvider] = None,
-    chat_turn_id: int = 0,
-) -> Tuple[int, str]:
-    """收夜 scene 同步便捷封装：start 后立即 join（单线程/测试）。
-
-    生产 close_night 走 start/join 两步，与 endorsement 并行后再汇合。
-    """
-    ctid, scaffold_owned = start_close_scene_on_registry(
-        db, state,
-        night_id=int(night_id),
-        scene_registry=scene_registry,
-        beat_generator=beat_generator,
-        knowledge_provider=knowledge_provider,
-        chat_turn_id=int(chat_turn_id or 0),
-    )
-    if beat_generator is None or not ctid:
-        return (int(ctid or 0), "")
-    body = join_close_scene_on_registry(
-        db,
-        scene_registry=scene_registry,
-        chat_turn_id=ctid,
-        scaffold_owned=scaffold_owned,
-    )
-    return (ctid, body)
