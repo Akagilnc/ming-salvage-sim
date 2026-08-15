@@ -544,12 +544,12 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
     def _boom_both_beat(_inputs):
         raise RuntimeError("close beat dual fault")
 
-    real_beat = beat_mod.production_beat_generator
+    real_beat = game.session._beat_generator
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _BoomBothEndorsement(),
     )
-    monkeypatch.setattr(beat_mod, "production_beat_generator", _boom_both_beat)
+    game.session._beat_generator = _boom_both_beat
 
     def _detail_text(resp) -> str:
         detail = resp.json().get("detail") if resp.headers.get("content-type", "").startswith("application/json") else None
@@ -582,7 +582,7 @@ def test_web_issue_close_binds_endorsements_gate_free_after_same_night_dossier(w
         agents_mod, "create_endorsement_extractor_agent",
         lambda *a, **k: _TracingEndorsementExtractor(),
     )
-    monkeypatch.setattr(beat_mod, "production_beat_generator", real_beat)
+    game.session._beat_generator = real_beat
 
     # Final close attempt succeeds through the same real Web seam.
     entered.clear()

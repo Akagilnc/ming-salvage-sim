@@ -284,6 +284,79 @@ def test_start_open_enter_claims_atomically_under_concurrent_calls(game, monkeyp
     assert not registry.has(ctid)
 
 
+def _start_open_enter_during_discover(game, monkeypatch, *, drain):
+    """start_open_enter 卡在 discover 时跑 drain（join/abandon）；断言无迟到 Future/无桶重建。"""
+    db, state, content = game
+    minister = _active_minister(db, content)
+    _nid, ctid = an.attach_chat_turn_to_night(
+        db, state, minister, agno_session_id=f"drain-{drain.__name__}", agno_runs_before=0,
+    )
+
+    in_discover = threading.Event()
+    release_discover = threading.Event()
+    real_discover = bo.discover_open_enter_tasks
+
+    def gated_discover(*args, **kwargs):
+        in_discover.set()
+        assert release_discover.wait(2), "discover gate not released"
+        return real_discover(*args, **kwargs)
+
+    monkeypatch.setattr(bo, "discover_open_enter_tasks", gated_discover)
+
+    gen_starts = 0
+    gen_lock = threading.Lock()
+
+    def counting_gen(inputs: BeatInputs) -> str:
+        nonlocal gen_starts
+        with gen_lock:
+            gen_starts += 1
+        return f"kind={inputs.beat_kind}"
+
+    registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=4))
+    starter = threading.Thread(
+        target=registry.start_open_enter,
+        kwargs=dict(
+            db=db, state=state, minister_name=minister, chat_turn_id=ctid,
+            beat_generator=counting_gen,
+        ),
+    )
+    starter.start()
+    assert in_discover.wait(2), "start never entered discover"
+
+    drained = drain(registry, ctid)
+    release_discover.set()
+    starter.join(2)
+    assert not starter.is_alive()
+
+    # drain 返回后：无 Future 迟到、无桶重建、无 scene 活过本轮
+    assert not registry.has(ctid)
+    assert registry.active_turn_ids() == []
+    assert gen_starts == 0, f"generator ran after drain (starts={gen_starts})"
+    late = registry.join(ctid)
+    assert late == []
+    assert not registry.has(ctid)
+    return drained
+
+
+def test_start_open_enter_discover_vs_join_no_late_future(game, monkeypatch):
+    """#542: start 在 discover 阶段与 join 交错——drain 后无迟到 Future/无桶重建。"""
+
+    def do_join(registry, ctid):
+        return registry.join(ctid)
+
+    assert _start_open_enter_during_discover(game, monkeypatch, drain=do_join) == []
+
+
+def test_start_open_enter_discover_vs_abandon_no_late_future(game, monkeypatch):
+    """#542: start 在 discover 阶段与 abandon 交错——drain 后无迟到 Future/无桶重建。"""
+
+    def do_abandon(registry, ctid):
+        registry.abandon(ctid)
+        return None
+
+    assert _start_open_enter_during_discover(game, monkeypatch, drain=do_abandon) is None
+
+
 def test_exit_scene_joins_chat_turn_lifecycle_not_sync_generate(game):
     """#542: 退下旁白登记本轮 scene lifecycle；dismiss 同步路径不得直接跑 LLM。
 
@@ -761,6 +834,33 @@ def test_web_start_chat_turn_wires_session_beat_generator(web_game):
     open_body = _ledger_body(game.db, night_id, an.TAG_OPEN_NIGHT)
     assert enter and minister in enter and enter != f"宣入{minister}入殿。"
     assert open_body and "kind=open" in open_body
+
+
+def test_web_auto_close_uses_session_beat_generator(web_game, monkeypatch):
+    """#542: Web 自动收夜走 session._beat_generator，不旁路 production_beat_generator。"""
+    game = web_game
+    minister = _active_minister(game.db, game.content)
+    an.open_night(game.db, game.state, time_of_day="戌时", location="乾清宫")
+    # drain any open/enter futures started by prior night attach paths
+    for ctid in list(game.session._scene_registry.active_turn_ids()):
+        game.session.abandon_chat_turn_scene(ctid)
+
+    seen = []
+
+    def tracking_gen(inputs: BeatInputs) -> str:
+        seen.append(inputs.beat_kind)
+        return f"session-owned-{inputs.beat_kind}"
+
+    game.session._beat_generator = tracking_gen
+
+    def boom_production(_inputs):
+        raise AssertionError("production_beat_generator must not be used by web auto-close")
+
+    monkeypatch.setattr(bo, "production_beat_generator", boom_production)
+    web_app._auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
+    assert BEAT_CLOSE in seen
+    night = an.get_open_night(game.db)
+    assert night is None
 
 
 # ── AC2：第二次宣入的组装输入含首次入殿/奏对账目 ─────────────────────
