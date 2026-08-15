@@ -2379,6 +2379,8 @@ class WebGame:
         accepted_turn = 0
         # #498 AC10：prologue 持锁写库后立刻释放，LLM 不持 write_gate——
         # 颁诏入口可并发观测 generating 并有界超时 fail-closed，不被挂起回话永久挡死。
+        # #542 r6g：Lock.locked() 不记 owner——本路径自记是否仍持 gate，只放自己的锁。
+        gate_held = True
         write_gate.acquire()
         try:
             # 权威相位复查（持 gate 内，建 chat turn/开夜/写库之前）：等锁期间若被结算改相位则拒。
@@ -2418,10 +2420,12 @@ class WebGame:
                     self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         except Exception:
             # Release gate before scene drain — prologue may have already started futures.
-            try:
-                write_gate.release()
-            except RuntimeError:
-                pass
+            if gate_held:
+                try:
+                    write_gate.release()
+                except RuntimeError:
+                    pass
+                gate_held = False
             try:
                 if chat_turn_id:
                     self.session.abandon_chat_turn_scene(chat_turn_id)
@@ -2432,7 +2436,7 @@ class WebGame:
             self._complete_pending_write()
             raise
         finally:
-            if write_gate.locked():
+            if gate_held:
                 write_gate.release()
 
         ev_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
