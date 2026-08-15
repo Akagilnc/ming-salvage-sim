@@ -6649,6 +6649,50 @@ def _apply_person_changes(
             if origin_error:
                 applied.append(origin_error)
                 continue
+            # #522：招抚案卷效果绑定 canonical target；generic special_decree
+            # 不得授权招抚式易主。其它 dossier/盘面自发路径保持既有授权。
+            if require_origin and str(origin_ref or "").startswith("dossier:"):
+                try:
+                    dossier_id = _parse_sqlite_id(str(origin_ref).split(":", 1)[1])
+                except ValueError:
+                    dossier_id = 0
+                dossier = db.get_decree_dossier(dossier_id) if dossier_id else None
+                if dossier is not None:
+                    action_type = str(dossier.get("action_type") or "").strip()
+                    if (
+                        action_type == "special_decree"
+                        and way == "主动归附"
+                        and requested_new_power == "ming"
+                    ):
+                        applied.append(
+                            rejected(
+                                item,
+                                "special_decree 不得授权招抚易主",
+                                "invalid_origin_ref",
+                            )
+                        )
+                        continue
+                    if action_type == "pacification":
+                        try:
+                            payload = dossier.get("payload") or json.loads(
+                                str(dossier.get("payload_json") or "{}")
+                            )
+                        except (TypeError, ValueError):
+                            payload = {}
+                        if not isinstance(payload, dict):
+                            payload = {}
+                        bound_target = str(
+                            payload.get("target_id") or dossier.get("target_id") or ""
+                        ).strip()
+                        if not bound_target or name != bound_target:
+                            applied.append(
+                                rejected(
+                                    item,
+                                    f"招抚案卷仅可易主 {bound_target or '案卷目标'}，不得易主 {name}",
+                                    "invalid_origin_ref",
+                                )
+                            )
+                            continue
             power_results = db.apply_character_power_changes(
                 [
                     {

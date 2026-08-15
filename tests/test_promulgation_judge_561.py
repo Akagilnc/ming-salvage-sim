@@ -669,6 +669,7 @@ def _rejected_verdict(dossier_id, authority_band, *, midzhi=False):
     )
 
 
+
 @pytest.mark.parametrize(
     ("mode", "decision"),
     [("ordinary", "promulgated"), ("midzhi", "promulgated"),

@@ -69,7 +69,11 @@ from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
-from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
+from ming_sim.session import (
+    AUTO_SAVE_PREFIX,
+    _pending_action_failure_payload,
+    coalesce_pending_action_id,
+)
 from ming_sim.audience_pipeline import run_mindreading_for_turn
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
@@ -1860,6 +1864,7 @@ class WebGame:
         secret_order_id = 0
         pending_action_id = 0
         tool_pending_action_id = 0
+        tool_stage_failures: List[Dict[str, Any]] = []
         if hasattr(self.db, "list_pending_actions"):
             preexisting_pending_action_ids = {
                 int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
@@ -1893,10 +1898,19 @@ class WebGame:
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        # #502 L2：显式拟旨走单一 seam（与 CLI 非流式同真源）——已有候选则新拟独立一道。
-                        pending_action_id = self.db.stage_explicit_directive(
-                            self.state.turn, character.name, draft_text, mode=message_text,
+                        # #502 L2 / #522：与 session 非流式同真源；招抚走 admission seam。
+                        stage_failures: List[Dict[str, Any]] = []
+                        pending_action_id = coalesce_pending_action_id(
+                            pending_action_id,
+                            self.session._stage_directive_tool_candidate(
+                                draft_text, character.name, message_text,
+                                failures_out=stage_failures,
+                            ),
                         )
+                        if stage_failures:
+                            # Merge into method-local channel; confirmation-path
+                            # pending_action_failures are appended below.
+                            tool_stage_failures.extend(stage_failures)
                 elif (
                     tool_name == "propose_appointment"
                     or res.startswith("__pending_appointment__")
@@ -1909,8 +1923,11 @@ class WebGame:
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
-                    pending_action_id = self.session._stage_appointment_candidate(
-                        payload_json, character, message_text,
+                    pending_action_id = coalesce_pending_action_id(
+                        pending_action_id,
+                        self.session._stage_appointment_candidate(
+                            payload_json, character, message_text,
+                        ),
                     )
                 elif tool_name == "register_unlisted_person" or res.startswith("__pending_unlisted_person__"):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
@@ -1975,12 +1992,17 @@ class WebGame:
                                     payload = self.db.attach_secret_oral_pin(
                                         character.name, int(self.state.turn), payload,
                                     )
-                                pending_action_id = self.db.stage_pending_action(
+                                staged_id = self.db.stage_pending_action(
                                     self.state.turn, kind="secret_order", action=action,
                                     minister_name=character.name, target_id=order_id,
                                     payload=payload,
                                 )
-                                tool_pending_action_id = pending_action_id
+                                pending_action_id = coalesce_pending_action_id(
+                                    pending_action_id, staged_id,
+                                )
+                                tool_pending_action_id = coalesce_pending_action_id(
+                                    tool_pending_action_id, staged_id,
+                                )
                     elif res.startswith("__secret_order_registered__"):
                         try:
                             registered_id = int(
@@ -1989,9 +2011,14 @@ class WebGame:
                         except Exception:
                             registered_id = 0
                         if registered_id:
-                            pending_action_id = self.session._stage_legacy_registered_secret_order(
+                            staged_id = self.session._stage_legacy_registered_secret_order(
                                 registered_id, character.name)
-                            tool_pending_action_id = pending_action_id
+                            pending_action_id = coalesce_pending_action_id(
+                                pending_action_id, staged_id,
+                            )
+                            tool_pending_action_id = coalesce_pending_action_id(
+                                tool_pending_action_id, staged_id,
+                            )
                     else:
                         payload_json = res.removeprefix("__secret_order__").strip()
                         if not payload_json:
@@ -2010,7 +2037,7 @@ class WebGame:
                                 payload.get("dossier_links"),
                                 llm_config=getattr(self.session, "llm_config", None),
                             )
-                            pending_action_id = self.db.stage_pending_action(
+                            staged_id = self.db.stage_pending_action(
                                 self.state.turn, kind="secret_order", action="新建",
                                 minister_name=character.name, target_id=None,
                                 payload={
@@ -2024,7 +2051,12 @@ class WebGame:
                                     "dossier_links": dossier_links,
                                 },
                             )
-                            tool_pending_action_id = pending_action_id
+                            pending_action_id = coalesce_pending_action_id(
+                                pending_action_id, staged_id,
+                            )
+                            tool_pending_action_id = coalesce_pending_action_id(
+                                tool_pending_action_id, staged_id,
+                            )
                 # 密令结案不再走大臣工具，由月末推演 + extractor 写入
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
@@ -2055,6 +2087,8 @@ class WebGame:
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
         pending_action_failures = list(res.get("pending_action_failures") or [])
+        if tool_stage_failures:
+            pending_action_failures = pending_action_failures + list(tool_stage_failures)
         payload = self._chat_payload(
             minister_name, answer, court_action=court_action, next_minister=next_minister,
             proposed_directive=proposed, appointed_minister=appointed,

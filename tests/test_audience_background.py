@@ -91,6 +91,10 @@ class _FakeSession:
     def _stage_appointment_candidate(self, *args, **kwargs):
         return GameSession._stage_appointment_candidate(self, *args, **kwargs)
 
+    def _stage_directive_tool_candidate(self, *args, **kwargs):
+        # #522：与 session/web 共用招抚 admission 与 fail-loud 诊断接缝。
+        return GameSession._stage_directive_tool_candidate(self, *args, **kwargs)
+
     def _merge_staged_new_secret_order_content(self, *args, **kwargs):
         return GameSession._merge_staged_new_secret_order_content(self, *args, **kwargs)
 
