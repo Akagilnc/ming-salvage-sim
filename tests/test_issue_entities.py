@@ -319,14 +319,14 @@ def test_apply_score_extraction_splits_bad_nested_entity(game):
 
 
 def test_apply_score_extraction_accepts_flat_faction_scalar(game):
-    """CMR(Claude+codex concur,HIGH):faction_delta 支持旧扁平 int 格式 {"阉党": -10}
-    (extractor prompt 明确允许、_apply_faction_dict 主动消费)。validate 不得把它当二级非 dict
-    误拒,否则合法 extractor 输出会让真实流 settle 整个崩。class 非 dict 同样应被放行(apply 静默跳)。"""
+    """faction_delta 支持旧扁平 int 格式 {"阉党": -10}（extractor prompt 明确允许、
+    _apply_faction_dict 主动消费）。validate 不得把它当二级非 dict 误拒；class 扁平 item
+    则由段适配器按 #564 契约逐项 invalid_enum 拒收，不升级成整批 shape 中止。"""
     db, state, _ = game
-    # 不抛 = 通过;扁平 int faction + 非 dict class 都该被 validate 放行(apply 各自容忍)。
+    # 不抛 = validate 未错杀合法 faction；非法 class item 由 adapter 逐项拒收。
     I.apply_score_extraction(db, state, {
         "faction_delta": {"阉党": -10},
-        "class_delta": {"农民": 0},   # 非 dict 二级:_apply_class_dict 静默跳,validate 不该拒
+        "class_delta": {"农民": 0},   # 非法扁平 class item：adapter 逐项 invalid_enum 拒收
     })
 
 
