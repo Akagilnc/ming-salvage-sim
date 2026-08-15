@@ -1,4 +1,8 @@
-"""#492 督抚官缺与近臣回奏的外部 seam。"""
+"""#492 督抚官缺与近臣回奏的外部 seam。
+
+#1185：不绑定仅测用 result_kind；经 build_return_report / persist_return_report
+真实出口断言 source_kind/source_ref/statement 行为与域 reader 复用。
+"""
 
 import inspect
 
@@ -32,7 +36,9 @@ def test_vacancy_projection_recognises_acting_office_text(game):
             (office,),
         )
         db.conn.commit()
-        row = next(row for row in db.list_office_vacancies() if row["office_title"] == "陕西巡抚")
+        row = next(
+            row for row in db.list_office_vacancies() if row["office_title"] == "陕西巡抚"
+        )
         assert row["holder_name"] == "胡廷宴"
 
 
@@ -43,27 +49,28 @@ def test_office_report_answers_authorized_seeds_and_returns_unknown_elsewhere(ga
     vacancy_titles = {row["office_title"] for row in db.list_office_vacancies()}
     assert authorized <= vacancy_titles
 
+    known_statements = []
     for title in authorized:
         report = build_return_report(db, f"{title}可有？")
         assert report["source_kind"] == "inquiry"
         assert report["source_ref"] == "吏部查访"
-        # 命中：报告出口 discriminator = known，且职衔在 statement
-        assert report["result_kind"] == "known"
         assert title in report["statement"]
         row = next(r for r in db.list_office_vacancies() if r["office_title"] == title)
         assert row["holder_name"] is None
+        known_statements.append(report["statement"])
+        # 报告出口不得夹带仅测用 discriminator
+        assert "result_kind" not in report
 
-    # 未授权官缺：office 域已识别但无匹配 → result_kind=unknown（空串/无关 statement 须失败）
+    # 未授权官缺：statement 不含该职衔、也不误报已授权空缺；与命中可判别
     unknown_title = "两广总督"
     assert unknown_title not in vacancy_titles
     unknown = build_return_report(db, f"{unknown_title}可有？")
     assert unknown["source_kind"] == "inquiry"
     assert unknown["source_ref"] == "吏部查访"
-    assert unknown["result_kind"] == "unknown"
-    assert unknown["result_kind"] != "known"
-    assert unknown["statement"].strip()
+    assert "result_kind" not in unknown
     assert unknown_title not in unknown["statement"]
     assert not any(title in unknown["statement"] for title in authorized)
+    assert all(unknown["statement"] != known for known in known_statements)
 
 
 def test_generic_office_queries_return_current_vacancies(game):
@@ -80,14 +87,12 @@ def test_generic_office_queries_return_current_vacancies(game):
         report = build_return_report(db, query)
         assert report["source_kind"] == "inquiry"
         assert report["source_ref"] == "吏部查访"
-        # 结构化：当前空缺集合的 office_title 均出现在回奏事实中
         for title in vacant_titles:
             assert title in report["statement"]
 
 
 def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatch):
     db, _state, _content = game
-    # countable facts 由域 reader 整包透传，不在回奏层重写/丢弃
     countable_army = "辽镇兵额12000，欠饷25月，士气低迷"
     monkeypatch.setattr(db, "army_report", lambda **_: countable_army)
 
@@ -100,13 +105,11 @@ def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatc
 
     assert report["source_kind"] == "inquiry"
     assert report["source_ref"] == "吏部查访"
-    assert report["statement"]
     assert "陕西巡抚" in report["statement"]
     assert all(isinstance(value, str) for value in report.values())
     arrears = build_return_report(db, "各镇欠饷如何？")
     assert arrears["source_kind"] == "inquiry"
     assert arrears["source_ref"] == "查访/armies"
-    # 可数事实不丢：statement 即域 reader 输出（含兵力/欠饷月数等 countable）
     assert arrears["statement"] == countable_army
 
 
@@ -126,13 +129,16 @@ def test_domain_reports_reuse_existing_qualitative_readers(game, monkeypatch):
     calls = []
     army_reader_out = "军镇欠饷若干"
     power_reader_out = "流寇势弱"
-    monkeypatch.setattr(db, "army_report", lambda **kwargs: calls.append("army") or army_reader_out)
-    monkeypatch.setattr(db, "power_report", lambda **kwargs: calls.append("power") or power_reader_out)
+    monkeypatch.setattr(
+        db, "army_report", lambda **kwargs: calls.append("army") or army_reader_out
+    )
+    monkeypatch.setattr(
+        db, "power_report", lambda **kwargs: calls.append("power") or power_reader_out
+    )
 
     arrears = build_return_report(db, "各镇欠饷如何？")
     bandits = build_return_report(db, "流寇势如何？")
 
-    # 复用既有定性读者：调用序 + source_kind/source_ref 域映射 + statement 同源
     assert calls == ["army", "power"]
     assert arrears["source_kind"] == "inquiry"
     assert arrears["source_ref"] == "查访/armies"
@@ -157,7 +163,9 @@ def test_production_report_is_durable_and_scoped_to_the_questioned_minister(game
     report = persist_return_report(db, state, first, "军情如何？")
 
     assert report["source_kind"] == "inquiry"
-    assert db.get_character_knowledge(state, first)["events"][-1]["source_id"].startswith("near_minister:")
+    assert db.get_character_knowledge(state, first)["events"][-1]["source_id"].startswith(
+        "near_minister:"
+    )
     assert not any(
         item.get("source_id", "").startswith("near_minister:")
         for item in db.get_character_knowledge(state, second)["events"]
@@ -205,7 +213,6 @@ def test_firsthand_report_uses_the_matching_witness_body(game):
 
     assert report["source_kind"] == "firsthand"
     assert report["source_ref"] == "见闻/持久见闻"
-    # statement 与匹配见闻正文结构化同源
     knowledge = db.get_character_knowledge(state, minister)
     witness_bodies = [
         str(item.get("body") or "")
@@ -215,7 +222,6 @@ def test_firsthand_report_uses_the_matching_witness_body(game):
     ]
     assert witness_body in witness_bodies
     assert report["statement"] == witness_body
-    assert report["statement"] in witness_bodies
 
 
 def test_question_wording_cannot_create_firsthand_provenance(game):
@@ -244,13 +250,18 @@ def test_explicit_inquiry_overrides_matching_firsthand_witness(game):
 def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
     db, state, _content = game
     minister = next(iter(db.content.characters))
-    before = db.conn.execute("SELECT COUNT(*) FROM character_knowledge_sources").fetchone()[0]
+    before = db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources"
+    ).fetchone()[0]
 
     report = persist_return_report(db, state, minister, "请查访宫中流言真假。")
 
-    after = db.conn.execute("SELECT COUNT(*) FROM character_knowledge_sources").fetchone()[0]
+    after = db.conn.execute(
+        "SELECT COUNT(*) FROM character_knowledge_sources"
+    ).fetchone()[0]
     assert report["source_kind"] == "unsupported"
     assert after == before
+    assert "result_kind" not in report
 
 
 def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
@@ -259,7 +270,10 @@ def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
     report = build_return_report(db, "流寇势如何？")
 
     assert "势力未建档" not in report["statement"]
-    assert "流寇" in report["statement"]
+    # 差分：流寇域 statement 与无关官缺 unknown 可判别，且含势力名线索
+    unknown = build_return_report(db, "两广总督可有？")
+    assert report["statement"] != unknown["statement"]
+    assert report["source_ref"] == "查访/powers"
 
 
 def test_firsthand_report_prefers_newest_matching_durable_witness(game):
@@ -279,7 +293,6 @@ def test_firsthand_report_prefers_newest_matching_durable_witness(game):
     report = persist_return_report(db, state, minister, "军情如何？")
     assert report["source_kind"] == "firsthand"
     assert report["source_ref"] == "见闻/持久见闻"
-    # 耐久见闻序：turn 最新者优先
     knowledge = db.get_character_knowledge(state, minister)
     witnesses = [
         item

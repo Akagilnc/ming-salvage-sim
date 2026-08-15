@@ -18,22 +18,11 @@ from ming_sim.llm_model import extract_agent_text
 from ming_sim.models import Character
 from ming_sim.qualitative import (
     identity_band,
-    qualitative_bucket,
     qualitative_character_axis,
 )
 
 
 _INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
-
-# Stable band ids for mindreading material structure (P4 / #1185 typed seam).
-# Cutoffs match qualitative_band / identity_band ((20,40,60,80)).
-_MINDREADING_IDENTITY_BANDS: tuple[str, ...] = (
-    "none", "faint", "subtle", "deep", "extreme",
-)
-_MINDREADING_LOYALTY_BANDS: tuple[str, ...] = (
-    "alienated", "wavering", "neutral", "aligned", "devoted",
-)
-_MINDREADING_SCORE_CUTOFFS: tuple[int, ...] = (20, 40, 60, 80)
 def _character_field(character: object, field: str) -> object:
     if isinstance(character, Mapping) or hasattr(character, "keys"):
         try:
@@ -91,38 +80,19 @@ def build_scouting_precision_payload(
     }
 
 
-def _seed_guilt_struct(character: object) -> Dict[str, object]:
-    """Typed guilt projection at the mindreading materials seam."""
+def _seed_guilt_text(character: object) -> str:
     raw = _character_field(character, "seed_guilt") or ""
     try:
         guilt = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError):
         guilt = {}
     if not isinstance(guilt, Mapping):
-        return {"crime": "无", "severity": "无", "has_case": False}
+        return "底案未见坐实之事。"
     crime = str(guilt.get("crime") or "无")
     severity = str(guilt.get("severity") or "无")
-    has_case = not (crime == "无" and severity == "无")
-    return {"crime": crime, "severity": severity, "has_case": has_case}
-
-
-def _seed_guilt_text(character: object) -> str:
-    guilt = _seed_guilt_struct(character)
-    if not guilt.get("has_case"):
+    if crime == "无" and severity == "无":
         return "底案未见坐实之事。"
-    return f"底案留有{guilt['crime']}（案情分量：{guilt['severity']}）。"
-
-
-def _mindreading_identity_band_id(value: object) -> str:
-    idx = qualitative_bucket(value, _MINDREADING_SCORE_CUTOFFS, default=50)
-    idx = max(0, min(idx, len(_MINDREADING_IDENTITY_BANDS) - 1))
-    return _MINDREADING_IDENTITY_BANDS[idx]
-
-
-def _mindreading_loyalty_band_id(value: object) -> str:
-    idx = qualitative_bucket(value, _MINDREADING_SCORE_CUTOFFS, default=0)
-    idx = max(0, min(idx, len(_MINDREADING_LOYALTY_BANDS) - 1))
-    return _MINDREADING_LOYALTY_BANDS[idx]
+    return f"底案留有{crime}（案情分量：{severity}）。"
 
 
 def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]:
@@ -182,9 +152,6 @@ def build_mindreading_materials(
     loyalty = int(_character_field(current_target, "loyalty") or 0)
     faction = str(_character_field(current_target, "faction") or "未明党籍")
     reader_context = _reader_context(db, state, reader)
-    identity_band_id = _mindreading_identity_band_id(identity)
-    loyalty_band_id = _mindreading_loyalty_band_id(loyalty)
-    guilt_struct = _seed_guilt_struct(current_target)
     party_truth = f"名义党派：{faction}；对本党的认同：{identity_band(identity)}。"
     loyalty_truth = f"对君的真心：{qualitative_character_axis('loyalty', loyalty)}。"
     guilt_truth = _seed_guilt_text(current_target)
@@ -198,13 +165,6 @@ def build_mindreading_materials(
             "党账": party_truth,
             "君臣账": loyalty_truth,
             "底案": guilt_truth,
-        },
-        # Typed structure at the materials seam (#1185): tests bind here, not free prose.
-        "truth_struct": {
-            "faction": faction,
-            "identity_band": identity_band_id,
-            "loyalty_band": loyalty_band_id,
-            "guilt": guilt_struct,
         },
         "reply_text": minister_reply,
     }
