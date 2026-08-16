@@ -10531,6 +10531,48 @@ class GameDB:
                 # 无期限调驻/移镇：不写虚假 due
                 normalized.pop("due_turn", None)
                 normalized.pop("deadline_months", None)
+        if action == "referral":
+            # #524：下议=移交程序；必带未来 end_turn 与非空机关/职司列表。
+            # 禁个人 owner/assignee（与交办互斥）——非空即 fail-loud，禁静默 pop。
+            from ming_sim.action_materialize import (
+                assert_responsible_bodies_org_only,
+                character_person_names,
+                parse_responsible_bodies,
+            )
+            for banned in ("owner", "assignee", "assignee_id"):
+                if str(normalized.get(banned) or "").strip():
+                    raise ValueError(f"下议旨意不得携带 {banned}")
+            cleaned = parse_responsible_bodies(normalized.get("responsible_bodies"))
+            if not cleaned:
+                raise ValueError("下议旨意缺少 responsible_bodies")
+            assert_responsible_bodies_org_only(
+                cleaned,
+                known_person_names=character_person_names(self),
+                current_minister=str(
+                    normalized.get("actor") or normalized.get("minister_name") or ""
+                ),
+            )
+            normalized["responsible_bodies"] = cleaned
+            try:
+                end_turn = strict_int(
+                    normalized.get("end_turn"), accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError):
+                end_turn = 0
+            if end_turn <= 0 and current_turn > 0:
+                try:
+                    months = strict_int(
+                        normalized.get("deadline_months"),
+                        accept_numeric_strings=True,
+                    )
+                except (TypeError, ValueError):
+                    months = 0
+                if months > 0:
+                    end_turn = int(current_turn) + months
+            if end_turn <= int(current_turn or 0):
+                raise ValueError("下议缺少有效未来 end_turn/deadline_months")
+            normalized["end_turn"] = end_turn
+            normalized.pop("deadline_months", None)
         target_kind = str(normalized.get("target_kind") or "").strip()
         target_id = str(normalized.get("target_id") or "").strip()
         if target_id in {"narrative", "policy"}:
@@ -11993,6 +12035,12 @@ class GameDB:
                     state, row, payload, dossier_id,
                 ):
                     return
+            elif row["action_type"] == "referral":
+                # #524 / ADR 0055：下议机械效果=initiative（机关 participants + end_turn）。
+                if not self._apply_referral_verdict_effect(
+                    state, row, payload, dossier_id,
+                ):
+                    return
             elif row["action_type"] == "military_order":
                 # #521 / ADR 0055：军令 station/office 自案卷物化；due_turn 已在案卷。
                 self._apply_military_order_verdict_effect(
@@ -12571,6 +12619,96 @@ class GameDB:
             registry=registry,
         )
         # due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
+
+    def _apply_referral_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> bool:
+        """#524：下议案卷顺颁后创建 initiative（机关 participants + end_turn）。
+
+        Returns False on soft-reject (cap 等)；True 时 caller 继续 executing 过渡。
+        禁个人 owner：participants 仅 responsible_bodies 机关/职司名。
+        """
+        from ming_sim.action_materialize import (
+            assert_responsible_bodies_org_only,
+            character_person_names,
+            parse_responsible_bodies,
+        )
+        from ming_sim.issues import apply_score_extraction
+
+        # 与暂存/admission 同一解析；个人名不得落 participants。
+        bodies = parse_responsible_bodies(payload.get("responsible_bodies"))
+        if not bodies:
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", "下议缺少 responsible_bodies",
+                state.turn, close=True, commit=False,
+            )
+            return False
+        try:
+            assert_responsible_bodies_org_only(
+                bodies,
+                known_person_names=character_person_names(self),
+                current_minister=str(
+                    row.get("executor_id")
+                    or payload.get("actor")
+                    or payload.get("assignee_id")
+                    or payload.get("assignee")
+                    or ""
+                ),
+            )
+        except ValueError as exc:
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", str(exc) or "responsible_bodies 禁个人名",
+                state.turn, close=True, commit=False,
+            )
+            return False
+
+        title = str(
+            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
+        ).strip()
+        if not title:
+            title = str(payload.get("target_id") or "下议事项").strip()
+
+        try:
+            end_turn = int(payload.get("end_turn") or 0)
+        except (TypeError, ValueError):
+            end_turn = 0
+        if end_turn <= 0:
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", "下议缺少 end_turn",
+                state.turn, close=True, commit=False,
+            )
+            return False
+
+        origin_ref = f"dossier:{int(dossier_id)}"
+        # end_turn 有值时既有 new_issues 契约要求 commitment_kind 标记
+        # （否则被当成「承诺形态无 marker」拒）；议期=时限承诺，复用 until_stop + end_turn。
+        ni: Dict[str, object] = {
+            "origin_kind": "decree",
+            "origin_ref": origin_ref,
+            "kind": "initiative",
+            "title": title,
+            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            # 机关/职司名字符串列表 → issues.participants JSON
+            "participants": bodies,
+            "end_turn": end_turn,
+            "commitment_kind": "until_stop",
+        }
+        out = apply_score_extraction(
+            self, state, {"new_issues": [ni]}, content=None,
+        )
+        created = (out.get("issue_summary") or {}).get("new_issues") or []
+        item = created[0] if created else {"rejected": True, "reason": "下议 initiative 未落"}
+        if item.get("rejected"):
+            reason = str(item.get("reason") or "下议 initiative 被拒")
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", reason, state.turn, close=True, commit=False,
+            )
+            return False
+        return True
 
     def _apply_assignment_verdict_effect(
         self, state, row, payload, dossier_id,
