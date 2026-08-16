@@ -132,24 +132,38 @@ def test_dismiss_via_cli_command_writes_exit_ledger(game, monkeypatch):
 
 
 def test_court_break_writes_no_exit_ledger(game, monkeypatch):
-    """负向：退朝（court_break）不落个人告退账——夜由上层顺势收夜整体离场。"""
+    """负向：退朝不落个人告退账（#526 收夜链 ≠ dismiss 告退）。"""
     import ming_sim.cli.terminal as term
 
     db, state, content = game
     character = _active_minister(db, content)
     session = _cli_session(db, state, content)
+    closed_nid: dict[str, int] = {}
+
+    # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
+    def _close_ok(court_action: str) -> None:
+        assert court_action == "court_break"
+        open_n = an.get_open_night(db)
+        assert open_n is not None
+        nid = int(open_n["id"])
+        closed_nid["id"] = nid
+        an._set_night_fields(
+            db, nid, status=an.NIGHT_STATUS_CLOSED, closed_at="test",
+        )
+
+    session.close_night_after_chat_if_needed = _close_ok
     answers = iter(["朕问卿边事如何？", "退朝"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     assert term.minister_chat(session, character) == "court_break"
 
-    nid = int(an.get_open_night(db)["id"])
+    nid = closed_nid["id"]
     exits = [
         e for e in an.list_ledger(db, nid)
         if TAG_EXIT in e["tags"] and character.name in e["person_names"]
     ]
-    assert exits == []  # 未落告退账
-    assert character.name in an.present_names_at(db, nid)  # 仍在场（待收夜）
+    assert exits == []  # 未落个人告退账
+    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_CLOSED
 
 
 # ── L1 R2：court_action=dismiss 单缝——非流式 web /api/ministers/{name}/chat
