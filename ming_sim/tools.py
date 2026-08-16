@@ -451,12 +451,25 @@ def build_minister_tools(character: Character, context: CourtContext,
         needle = "" if target.strip() == f"本{TURN_UNIT}急需钱粮处" else target
         return filter_domain("military", needle)
 
-    def propose_directive(decree_text: str) -> str:
-        """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。decree_text 为完整圣旨正文。"""
+    def propose_directive(
+        decree_text: str,
+        punish_action: str = "",
+        target_id: str = "",
+        name: str = "",
+        amount: int = 0,
+    ) -> str:
+        """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。
+
+        decree_text 为完整圣旨正文。若本件为惩处，须同时填 ACTION_CLUSTERS 同名
+        结构化字段：punish_action、单一目标（target_id 或 name）、罚俸时正数 amount。
+        仅在正文讨论廷杖/流放/昭雪等制度、未填结构化字段时，不得当作已决惩处。
+        """
         text = (decree_text or "").strip()
         if not text:
             return "拟旨失败：圣旨正文为空。"
+        # 结构化字段留在 tool arguments，由 session/web 组装进候选 seam（#517 r3）。
         # 返回草稿标记，由 minister_chat / GameSession.chat 截获展示给皇帝确认，不在此入库。
+        _ = (punish_action, target_id, name, amount)
         return f"__pending_directive__{text}"
 
     def propose_appointment(name: str, office: str, faction: str = "中立", reason: str = "", replaces: str = "") -> str:
