@@ -21,6 +21,7 @@ import pytest
 
 import ming_sim.content as content_mod
 from ming_sim.applier import atomic
+from ming_sim.constants import ARMY_FIELD_LABELS
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -416,6 +417,8 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     }
     monkeypatch.setattr(content_mod, "load_json_asset", lambda name: fake_regions)
 
+    # before-image：须在 loader 可能共享/改写同一可变对象之前捕获 expected override
+    expected_province_note = region["fiscal"]["settle"]["_meta"]["notes"]["漕粮"]
     loaded = content_mod.load_region_content()["test_province"].fiscal["settle"]
 
     assert "_meta_defaults" not in loaded
@@ -424,9 +427,8 @@ def test_region_loader_expands_shared_settle_meta_defaults(monkeypatch):
     assert loaded["_meta"]["levies"]["not_seeded"] == ["剿饷", "练饷"]
     assert loaded["_meta"]["postures"] == ["江南财赋核心"]
     assert loaded["_meta"]["notes"]["起运定额"].startswith("#259")
-    # 省份专属 notes 键保留并覆盖默认；与输入同值，不另钉自由说明正文。
-    province_note = region["fiscal"]["settle"]["_meta"]["notes"]["漕粮"]
-    assert loaded["_meta"]["notes"]["漕粮"] == province_note
+    # 省份专属 notes 键保留并覆盖默认；与输入 before-image 同值，不另钉自由说明正文。
+    assert loaded["_meta"]["notes"]["漕粮"] == expected_province_note
     assert "漕粮" not in fake_regions["settle_meta_defaults"]["ming_province"]["notes"]
 
 
@@ -2265,11 +2267,11 @@ def test_province_pay_shortfall_reduces_pure_province_army_morale(fresh_db):
     ).fetchone()
     assert arrears_log is not None and arrears_log["delta"] == pytest.approx(10)
     summary = fresh_db.turn_army_summary(fresh_db.load_state().turn)
-    # summary 出口消费 army_logs：军名入文、抽象字段键不泄漏；不钉自由中文拼句。
-    assert army_name in summary
+    # summary 出口：军名 + 稳定字段标签分别绑定 province_pay_arrears +10 / morale -8；
+    # 抽象键不泄漏。不钉 reason 自由中文整句。
+    assert f"{army_name}{ARMY_FIELD_LABELS['province_pay_arrears']}+10" in summary
+    assert f"{army_name}{ARMY_FIELD_LABELS['morale']}-8" in summary
     assert "province_pay_arrears" not in summary
-    assert "-8" in summary
-    assert "+10" in summary or "10" in summary
 
 
 def test_turn_army_summary_keeps_real_morale_changes_when_log_cap_fills(fresh_db):
@@ -3612,11 +3614,17 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
         assert {"官民田", "正赋应征", "起运定额"} <= provisional
         gap_note = meta["notes"]["山东卷六缺口"]
         assert isinstance(gap_note, str) and gap_note.strip()
-        assert "正赋应征" in gap_note  # 域字段名出现在缺口说明，非自由文案整句
+        # 稳定缺卷来源标识 + 域字段名；不钉缺口说明整句正文
+        assert "卷六《山东布政司田赋》" in gap_note
+        assert "正赋应征" in gap_note
     else:
         source_notes = meta["notes"]["一手核"]
-        assert isinstance(source_notes, str) and source_notes.strip()
-        assert isinstance(meta["notes"].get("扫描图核验"), str) and meta["notes"]["扫描图核验"].strip()
+        # 稳定 title/条目类型标识（对齐别处 source["title"]==《万历会计录》），非整句盯文
+        assert "《万历会计录》" in source_notes
+        assert "本色" in source_notes
+        scan_note = meta["notes"]["扫描图核验"]
+        # 稳定 provider + scan 核验标识（对齐别处 source["scan_checked"]）
+        assert "识典扫描图" in scan_note
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(
@@ -4986,13 +4994,16 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         for row in rows
         if "settle" in json.loads(str(row["fiscal"] or "{}"))
     ]
-    # 协议前缀 + region_id；不钉 tlog 自由中文词（推进/实征/末态欠账…）
+    # 成功推进协议前缀（含 region_id + 推进标记）；隔离/中止路径不计入
     shadow_msgs = [
         m for m in msgs
-        if isinstance(m, str) and m.startswith("[fiscal-substrate] ")
+        if isinstance(m, str)
+        and m.startswith("[fiscal-substrate] ")
+        and " 推进：" in m
     ]
 
     assert len(settle_region_ids) == 17
+    assert len(shadow_msgs) == 17
     assert any(
         flow.get("account") == "国库"
         and flow.get("dir") == "income"
@@ -5002,20 +5013,14 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
     for region_id in settle_region_ids:
         surfaced = [
             m for m in shadow_msgs
-            if m.startswith(f"[fiscal-substrate] {region_id}")
-            or f"[fiscal-substrate] {region_id} " in m
+            if m.startswith(f"[fiscal-substrate] {region_id} 推进：")
         ]
-        assert surfaced, f"{region_id} 缺 shadow tlog: {msgs}"
-        # 成功推进应带可观察数值载荷（breakdown 数字），隔离路径含异常类型名。
-        assert any(ch.isdigit() for ch in surfaced[0]), surfaced[0]
-
-    assert len({
-        region_id
-        for region_id in settle_region_ids
-        for m in shadow_msgs
-        if m.startswith(f"[fiscal-substrate] {region_id}")
-        or f"[fiscal-substrate] {region_id} " in m
-    }) == 17
+        # 每省成功消息恰为 1（总数 17 + 无重复）
+        assert len(surfaced) == 1, f"{region_id} 成功 shadow 计数须恰为 1: {surfaced or msgs}"
+        msg = surfaced[0]
+        # 诊断字段标识（实征/起运/火耗/末态欠账），不钉完整中文句或仅有数字
+        for field in ("实征", "起运", "火耗", "末态欠账"):
+            assert field in msg, f"{region_id} tlog 缺 {field}: {msg}"
 
     # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
     for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
