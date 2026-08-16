@@ -5017,9 +5017,13 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         or f"[fiscal-substrate] {region_id} " in m
     }) == 17
 
-    for region_id in ("zhejiang", "jiangxi", "huguang"):
+    # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
+    for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
         settle = _read_settle(db, region_id)
-        assert settle["st"]["省库库银"] > 0, f"{region_id} 江南核心应有省库盈余"
+        want = expected["first_tick"]["省库库银"]
+        assert settle["st"]["省库库银"] == pytest.approx(want, abs=1e-3), (
+            f"{region_id} flows 后省库库银 {settle['st']['省库库银']} ≠ first_tick {want}"
+        )
     for region_id in ("shaanxi", "shanxi", "liaodong", "dongjiang_area"):
         settle = _read_settle(db, region_id)
         assert settle["st"]["军饷欠"] == pytest.approx(
