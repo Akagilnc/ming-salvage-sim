@@ -110,25 +110,43 @@ def test_explicit_hold_over_marks_named_candidate(game, monkeypatch):
 
 
 def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
-    """含「留中」字面但语义为准（「不必留中，准了」）→ 会话入口获准成案，不得误留中跳过。"""
+    """含「留中」字面但语义为准（「不必留中，准了」）→ 真实会话入口获准成案，不得误留中跳过。"""
     db, state, content = game
     name = _active_minister_name(db, content)
-    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
     an.open_night(db, state, location="乾清宫", time_of_day="夜")
     id_a = db.stage_directive_candidate(
         state.turn, name,
         payload={**_POLICY_FIELDS, "text": "着户部清查三边粮饷，限三月完报。", "actor": name},
     )
-    sess = _fake_session(db, state)
+
+    class Agent:
+        def run(self, _message):
+            return types.SimpleNamespace(content="臣遵旨。", tools=[])
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    # 玩家可调用的真实会话入口：GameSession.chat（不得直调 apply_cli_conversation_actions）
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = types.SimpleNamespace(channel="cli")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_a, **_k: None
+    sess._finish_cli_action_intent = lambda *_a, **_k: None
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
         "confirmation": {"确认": "应允"},
     }))
 
-    GameSession.apply_cli_conversation_actions(
-        sess, ch, player_message="不必留中，准了", answer="臣遵旨。",
-        has_directive=False, secret_order_id=None,
-    )
+    GameSession.chat(sess, name, "不必留中，准了")
 
     # 公开行为结果：默认提交点成案入 turn_directives（误留中则跳过、无此文）
     applied = db.commit_pending_actions(state)
