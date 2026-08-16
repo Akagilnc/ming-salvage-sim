@@ -283,9 +283,9 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
 
 
 def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
-    """结构化判词须内建问/令分界：纯问（含密查/查访字样）→无；祈使令查→新建。
+    """结构化判词须内建问/令分界：纯问→无；另案令查→新建；指向现有密令的补充→更新。
 
-    禁「出现密查/查访字样即 secret」式启发；禁无现有密令时一刀切禁密令动作
+    禁「祈使令查→一律新建」过宽规则；禁字样启发升格；禁无现有密令时一刀切禁密令动作
     （会误伤新建）。不断言 LLM 语义，只钉 prompt 契约。
     """
     prompts: list[str] = []
@@ -299,37 +299,61 @@ def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
     assert prompts, "classify 必须走结构化判词"
     rules = prompts[0].split("【待确认动作】", 1)[0]
 
-    # 正例：祈使令查 → 新建
+    # 正例：另案祈使令查 → 新建
     assert "新建" in rules
     assert any(tok in rules for tok in ("你去查", "祈使", "令查"))
+    # 正例：指向现有密令的补充/续查 → 更新（#516 r3）
+    assert "更新" in rules
+    assert "再去查他在苏州的田产" in rules
+    assert any(tok in rules for tok in ("现有密令", "补充", "续查", "原令"))
     # 反例：纯问 / 含命令词的问 → 无（北极星入集）
     assert "陕西巡抚可有" in rules
     assert any(tok in rules for tok in ("是谁", "整体为问", "问句"))
-    # 不得用字样启发升格；不得用「无现有密令→禁密令动作」误伤新建
+    # 不得把祈使令查一律钉死为新建；不得用字样启发升格
+    assert "祈使令查→密令动作=新建" not in rules
+    assert "一律新建" not in rules
     assert "字样即" not in rules
     assert "没有现有密令时不要硬判密令动作" not in rules
     assert "问询、查账、问军情、泛泛商议填无" not in rules
 
 
 @pytest.mark.parametrize(
-    ("utterance", "raw_payload", "expect_kinds"),
+    ("utterance", "raw_payload", "expect_kinds", "expect_secret_action", "expect_order_id"),
     [
         # 北极星 + 含密查/查访字样的疑问 → 分类无
-        ("陕西巡抚可有？", {"动作类型": "无"}, []),
-        ("可有人密查陕西军饷？", {"动作类型": "无"}, []),
-        ("着人查访陕西军情如何？", {"动作类型": "无"}, []),
+        ("陕西巡抚可有？", {"动作类型": "无"}, [], None, 0),
+        ("可有人密查陕西军饷？", {"动作类型": "无"}, [], None, 0),
+        ("着人查访陕西军情如何？", {"动作类型": "无"}, [], None, 0),
         # 含命令词但整体为问 → 仍无
-        ("命东厂密查其家产的是谁？", {"动作类型": "无"}, []),
-        # 祈使令查 → secret 新建
+        ("命东厂密查其家产的是谁？", {"动作类型": "无"}, [], None, 0),
+        # 另案祈使令查 → secret 新建
         (
             "你去查他家产",
             {"动作类型": "密令动作", "密令动作": "新建"},
             ["secret"],
+            "新建",
+            0,
         ),
         (
             "着东厂密查其家产",
             {"动作类型": "密令动作", "密令动作": "新建"},
             ["secret"],
+            "新建",
+            0,
+        ),
+        # 指向现有密令的补充 → 更新原令（#516 r3）
+        (
+            "再去查他在苏州的田产",
+            {
+                "动作类型": "密令动作",
+                "密令动作": "更新",
+                "目标密令编号": 6,
+                "新标题": "查其家产",
+                "新内容": "再去查他在苏州的田产",
+            },
+            ["secret"],
+            "更新",
+            6,
         ),
     ],
     ids=[
@@ -337,12 +361,14 @@ def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
         "ask_with_micha",
         "ask_with_chafang",
         "ask_with_command_words",
-        "imperative_go_check",
-        "imperative_micha",
+        "imperative_go_check_new",
+        "imperative_micha_new",
+        "supplement_existing_update",
     ],
 )
 def test_classify_soft_path_ask_vs_order_payload_matrix(
     monkeypatch, utterance, raw_payload, expect_kinds,
+    expect_secret_action, expect_order_id,
 ):
     """#515 soft 归一：问/令查表驱动 payload → kind 列表（LLM 语义 externally scripted）。"""
 
@@ -352,27 +378,46 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
         return (json.dumps(raw_payload, ensure_ascii=False), 0)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
-    got = cb.classify_cli_action_intent(utterance)
+    active = None
+    if expect_secret_action == "更新":
+        active = [{"id": expect_order_id, "title": "查其家产", "content": "密查家产"}]
+    got = cb.classify_cli_action_intent(utterance, active_orders=active)
     assert [c["kind"] for c in got] == expect_kinds
-    if expect_kinds == ["secret"]:
-        assert got[0]["secret_action"] == "新建"
+    if expect_secret_action is not None:
+        assert got[0]["secret_action"] == expect_secret_action
+        assert int(got[0].get("order_id") or 0) == int(expect_order_id)
 
 
 @pytest.mark.parametrize(
-    ("utterance", "scripted", "expect_secret_stage"),
+    ("utterance", "scripted", "expect_action", "seed_existing"),
     [
-        ("陕西巡抚可有？", [], False),
-        ("可有人密查陕西军饷？", [], False),
-        ("着人查访陕西军情如何？", [], False),
-        ("命东厂密查其家产的是谁？", [], False),
+        ("陕西巡抚可有？", [], None, False),
+        ("可有人密查陕西军饷？", [], None, False),
+        ("着人查访陕西军情如何？", [], None, False),
+        ("命东厂密查其家产的是谁？", [], None, False),
         (
             "你去查他家产",
             [{"kind": "secret", "secret_action": "新建"}],
-            True,
+            "新建",
+            False,
         ),
         (
             "着东厂密查其家产",
             [{"kind": "secret", "secret_action": "新建"}],
+            "新建",
+            False,
+        ),
+        # 已有相关密令时补充 → 更新原令，不得另建
+        (
+            "再去查他在苏州的田产",
+            [{
+                "kind": "secret",
+                "secret_action": "更新",
+                "order_id": 0,  # filled at runtime
+                "new_title": "查其家产",
+                "new_content": "再去查他在苏州的田产",
+            }],
+            "更新",
             True,
         ),
     ],
@@ -381,14 +426,15 @@ def test_classify_soft_path_ask_vs_order_payload_matrix(
         "stage_ask_micha_zero",
         "stage_ask_chafang_zero",
         "stage_ask_command_words_zero",
-        "stage_imperative_go_check",
-        "stage_imperative_micha",
+        "stage_imperative_go_check_new",
+        "stage_imperative_micha_new",
+        "stage_supplement_existing_update",
     ],
 )
 def test_scripted_ask_vs_order_staging_matrix(
-    game, monkeypatch, utterance, scripted, expect_secret_stage,
+    game, monkeypatch, utterance, scripted, expect_action, seed_existing,
 ):
-    """脚本化判词经真实 apply 入口：纯问零 staging；祈使令查产 secret 候选。"""
+    """脚本化判词经真实 apply：纯问零 staging；另案新建；现有令补充→更新。"""
     db, state, content = game
     minister = _active_ch(db, content)
     _silence_serial(monkeypatch)
@@ -405,6 +451,14 @@ def test_scripted_ask_vs_order_staging_matrix(
             "dossier_links": [],
         },
     )
+    oid = 0
+    if seed_existing:
+        oid = db.create_secret_order(
+            state, minister.name, "查其家产", "密查家产", [],
+        )
+        for cand in scripted:
+            if cand.get("secret_action") == "更新":
+                cand["order_id"] = oid
     sess = _bind_apply(db, state, content)
     before = _count_pending(db, state.turn)
     out = sess.apply_cli_conversation_actions(
@@ -414,16 +468,21 @@ def test_scripted_ask_vs_order_staging_matrix(
     )
     secret_rows = [
         r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
-        if r["kind"] == "secret_order" and r["action"] == "新建"
+        if r["kind"] == "secret_order"
     ]
-    if expect_secret_stage:
-        assert out.get("pending_action_id")
-        assert len(secret_rows) == 1
-        assert _count_pending(db, state.turn) == before + 1
-    else:
+    if expect_action is None:
         assert out.get("pending_action_id") in (None, 0, "")
         assert secret_rows == []
         assert _count_pending(db, state.turn) == before
+        return
+    assert out.get("pending_action_id")
+    assert len(secret_rows) == 1
+    assert secret_rows[0]["action"] == expect_action
+    assert _count_pending(db, state.turn) == before + 1
+    if expect_action == "更新":
+        assert int(secret_rows[0]["target_id"] or 0) == int(oid)
+        # 不得因补充而另建一条新建暂存
+        assert not any(r["action"] == "新建" for r in secret_rows)
 
 
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
