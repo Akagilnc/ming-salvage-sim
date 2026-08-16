@@ -1016,13 +1016,14 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
 
     不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
     当轮句按整行锚接入，禁止 substring 判断把短句吞进前轮长文。
+    recent_context 空时仍须同时保留皇帝任务描述与大臣领命回话（首轮交办）。
     """
     recent = str(ctx.recent_context or "").strip()
     reply = str(ctx.reply or "").strip()
     player = str(ctx.player_message or "").strip()
-    if not recent:
-        return reply or player
-    chunks = [recent]
+    chunks: list[str] = []
+    if recent:
+        chunks.append(recent)
     if player and not _context_line_present(recent, player):
         chunks.append(f"皇帝：{player}")
     if reply and not _context_line_present(recent, reply):

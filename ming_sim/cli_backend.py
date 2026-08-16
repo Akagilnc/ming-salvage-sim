@@ -1002,7 +1002,7 @@ def classify_cli_action_intent(
         f"- 当前回合={turn_n}。相对期限填期限月数=N（连续N月/三月内）；"
         f"或截止回合填绝对回合号（须 > 当前回合，公式=当前回合+N）。\n"
         f"- 停止条件须为可寻址 dict JSON，key 带表前缀（{gate_tables}），"
-        "value 含比较算符，如 {{\"army.guanning.arrears\":\"<=0\"}}；"
+        'value 含比较算符，如 {"army.guanning.arrears":"<=0"}；'
         "自然语言军令状须落成该 shape，不得只写散文。\n\n"
         f"【最近相关召对】\n{context_block}\n"
         f"【待确认动作】{pending_brief}\n"
