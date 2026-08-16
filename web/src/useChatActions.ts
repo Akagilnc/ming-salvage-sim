@@ -50,7 +50,6 @@ export function useChatActions({
   loadHistoryProjection,
   runAudienceTurn,
   invalidateAudienceScroll,
-  advanceWithoutEdictRef,
   currentNightId,
 }: {
   state: GameState | null;
@@ -74,7 +73,6 @@ export function useChatActions({
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
   runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
-  advanceWithoutEdictRef: React.MutableRefObject<() => Promise<void>>;
   currentNightId: number;
 }) {
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
@@ -199,11 +197,8 @@ export function useChatActions({
     }
 
     const fromComposer = text === input;
-    if (["q", "quit", "退朝", "下朝"].includes(message.toLowerCase())) {
-      if (fromComposer) setInput("");
-      await advanceWithoutEdictRef.current();
-      return;
-    }
+    // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
+    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制、不旁路 advanceWithoutEdict。
     setError("");
     setComposerHint("");
     setChatNotice("");

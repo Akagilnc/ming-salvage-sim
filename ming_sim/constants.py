@@ -240,7 +240,13 @@ ARMY_FIELD_ALIASES = {
     "reason": "reason",
 }
 EXIT_COMMANDS = {"exit", "退出游戏", "退出", "exit game"}
-COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝"}
+# #526 / #471 S10：收夜高置信封闭集（口令档确定性层；含「今日且到此」）
+# 单一真源：前端/CLI 不得另复制词表或语义旁路。
+COURT_BREAK_COMMANDS = {"q", "quit", "退朝", "下朝", "今日且到此"}
+# #526：含糊收夜封闭集——戏内确认、不直接收夜（与高置信集互斥）
+AMBIGUOUS_CLOSE_COMMANDS = {"今日就到这里吧？", "今日就到这里吧"}
+# #526：留侍口令封闭集（叙事账、在场不变；「令退下」归 #500）
+STAY_ATTEND_COMMANDS = {"留下听着"}
 MINISTER_DISMISS_COMMANDS = {"done", "退下", "跪安", "退了", "下去"}
 
 # 经济流水（economy_ledger）支出条目的结构化标签。
