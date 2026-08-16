@@ -13310,6 +13310,38 @@ class GameDB:
         })
         return candidate_id
 
+    def update_office_candidate_payload(
+        self, candidate_id: int, payload: Dict[str, object],
+    ) -> int:
+        """#529：原地更新某一道 pending office（任免）候选 payload（特旨/署理路径应答）。
+
+        与 directive 改草同纪律——归属迁到当前开夜并清 night_approved；
+        合并保留下划线控制键。返回该行 id（不存在/非 pending office 则 0）。
+        """
+        from ming_sim.audience_night import assert_night_accepts_player_input
+        assert_night_accepts_player_input(self, what="任免路径应答")
+        row = self.conn.execute(
+            "SELECT id,payload_json,status FROM pending_actions "
+            "WHERE id=? AND kind='office'",
+            (int(candidate_id),),
+        ).fetchone()
+        if row is None:
+            return 0
+        if row["status"] != "pending":
+            raise ValueError("已成案任免不得改路径")
+        merged = self._merge_underscore_control_keys(row["payload_json"], payload)
+        self.conn.execute(
+            "UPDATE pending_actions SET payload_json=?, night_id=?, night_approved=0 WHERE id=?",
+            (json.dumps(merged, ensure_ascii=False),
+             self._current_open_night_id(), int(candidate_id)),
+        )
+        if (
+            not bool(getattr(self.conn, "_commit_suspended", False))
+            and int(getattr(self.conn, "_atomic_depth", 0) or 0) == 0
+        ):
+            self.conn.commit()
+        return int(candidate_id)
+
     def update_directive_candidate(
         self, candidate_id: int, payload: Dict[str, object],
     ) -> int:

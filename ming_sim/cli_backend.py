@@ -1125,7 +1125,8 @@ def extract_draft_intent(
                 break
             seen_texts.add(text)
             if action == "acting_appointment":
-                # #529 尚未接管署理；保留原批次位置，避免后续按候选序号消费时错配 sibling。
+                # #529 署理走既有 pending 人事候选路径应答（0064 任别），不经草案 acting_appointment。
+                # 保留原批次位置，避免后续按候选序号消费时错配 sibling。
                 drafts.append(None)
                 continue
             if action not in DRAFT_ACTION_TYPES:
@@ -1385,10 +1386,13 @@ def extract_appointment_action(
         '  "任免动作": "无|任命|罢免",  // 皇帝命某人任/升/调某官=任命；命革/罢/黜某人=罢免；都不是=无\n'
         '  "姓名": "",                 // 被任/被免者确切姓名\n'
         '  "官职": "",                 // 任命时所授官职；罢免可空\n'
-        '  "颁布方式": "普通|中旨直发" // 皇帝明确预声明中旨时选后者\n'
+        '  "颁布方式": "普通|中旨直发", // 皇帝明确预声明中旨/特旨钦命时选后者\n'
+        '  "任别": ""                  // 署理/兼署/加衔/真除；路径应答「署理」填署理；非任别留空\n'
         "}\n"
-        "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；闲谈、议事、"
-        "下密令、拟旨、惩处都不算。语义判断，别拘字面。无任免 → 任免动作填「无」、其余留空。\n\n"
+        "判定要点：皇帝口语如「着X任/授X为/升X/调X去/革X职/罢X」即任免；"
+        "对已拟任免的路径应答「特旨钦命」→任免动作可无、颁布方式=中旨直发；"
+        "「署理」→任免动作可无、任别=署理。闲谈、议事、下密令、拟旨、惩处都不算。"
+        "语义判断，别拘字面。无任免且无路径应答 → 任免动作填「无」、其余留空。\n\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【回话】" + (minister_reply or "（无）") + "\n"
     )
@@ -1411,6 +1415,9 @@ def extract_appointment_action(
     mode = _directive_mode(obj.get("颁布方式"))
     if mode is not None:
         result["mode"] = mode
+    tenure = str(obj.get("任别") or "").strip()
+    if tenure in {"真除", "署理", "兼署", "加衔"}:
+        result["appointment_tenure"] = tenure
     return result
 
 
