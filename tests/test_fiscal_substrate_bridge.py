@@ -3617,32 +3617,14 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
         assert not isinstance(meta.get("source"), dict)
         assert not isinstance(meta.get("source_grain"), dict)
     else:
-        # 真读结构化 source 的 title/scan_checked（与 jiangnan/south 同形）；
-        # 中原京师田赋尚未迁入 meta.source 时，退回同等 typed 载体，不在 notes 正文搜中文片段。
-        source = meta.get("source")
-        source_grain = meta.get("source_grain")
-        primary_source = meta.get("primary_source")
-        if isinstance(source, dict):
-            assert source["title"] == "《万历会计录》"
-            assert source["scan_checked"] is True
-            checked = set(source.get("checked_fields") or [])
-            assert set(expected["verified"]) <= checked
-        elif isinstance(source_grain, dict):
-            assert source_grain["scan_checked"] is True
-            sg_src = source_grain.get("source")
-            assert isinstance(sg_src, str) and sg_src.startswith("《万历会计录》")
-        elif isinstance(primary_source, dict):
-            work = primary_source.get("work")
-            assert isinstance(work, str) and work.startswith("《万历会计录》")
-            refined = set(primary_source.get("fields_refined") or [])
-            assert set(expected["verified"]) <= refined
-        else:
-            # 同等 typed：一手核/扫描图核验为 notes schema 键；工作名读 royal_stipends_source.source
-            assert "一手核" in meta["notes"]
-            assert "扫描图核验" in meta["notes"]
-            rss = meta.get("royal_stipends_source")
-            assert isinstance(rss, dict), region_id
-            assert rss.get("source") == "《万历会计录》卷三十二「宗藩禄粮」"
+        # 该外部义务在当前生产形态下无 typed 载体（beizhili/henan meta 无 source/
+        # source_grain/primary_source；田赋来源仅 notes 自由文本；不得拿
+        # royal_stipends_source 冒充），按清单不改生产原则保留原断言。
+        source_notes = meta["notes"]["一手核"]
+        assert "《万历会计录》" in source_notes
+        assert "本色" in source_notes
+        assert "扫描图核验" in meta["notes"]
+        assert "识典扫描图" in meta["notes"]["扫描图核验"]
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(
@@ -5048,24 +5030,13 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
             assert "实征0.0" in msg, f"{region_id} 实征值绑定失败: {msg}"
             assert "起运0.0" in msg, f"{region_id} 起运值绑定失败: {msg}"
             assert "火耗入截留0.0" in msg, f"{region_id} 火耗值绑定失败: {msg}"
-        assert "末态欠账" in msg, f"{region_id} tlog 缺 末态欠账: {msg}"
-        arrears_idx = msg.index("末态欠账")
-        arrears_payload = msg[arrears_idx:]
-        for arrears_label in ("军饷欠", "官俸欠", "宗禄欠", "民欠"):
-            label_idx = arrears_payload.find(arrears_label)
-            assert label_idx >= 0, f"{region_id} 末态欠账缺 {arrears_label}: {msg}"
-            pos = label_idx + len(arrears_label)
-            end = pos
-            if end < len(arrears_payload) and arrears_payload[end] in "+-":
-                end += 1
-            while end < len(arrears_payload) and (
-                arrears_payload[end].isdigit() or arrears_payload[end] == "."
-            ):
-                end += 1
-            token = arrears_payload[pos:end]
-            assert token and any(ch.isdigit() for ch in token), (
-                f"{region_id} {arrears_label} 无可判别值绑定: {msg}"
-            )
+        # 末态欠账四子标签：日志值按生产格式（flows.py `.0f`）与落库 st 绑定；
+        # 生产标签「民欠」对应 st 键「民欠旧赋」。错值必须让测试红。
+        st = _read_settle(db, region_id)["st"]
+        assert f"军饷欠{st['军饷欠']:.0f}" in msg, f"{region_id} 军饷欠值绑定失败: {msg} vs st={st.get('军饷欠')}"
+        assert f"官俸欠{st['官俸欠']:.0f}" in msg, f"{region_id} 官俸欠值绑定失败: {msg} vs st={st.get('官俸欠')}"
+        assert f"宗禄欠{st['宗禄欠']:.0f}" in msg, f"{region_id} 宗禄欠值绑定失败: {msg} vs st={st.get('宗禄欠')}"
+        assert f"民欠{st['民欠旧赋']:.0f}" in msg, f"{region_id} 民欠值绑定失败: {msg} vs st={st.get('民欠旧赋')}"
 
     # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
     for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
