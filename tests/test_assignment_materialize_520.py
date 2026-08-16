@@ -1,0 +1,678 @@
+"""#520 交办·责成：军令状→候选→收夜案卷→0055 判后 initiative。
+
+Seams:
+- ACTION_CLUSTERS assignment 行 + materialize_fn
+- run_materialize_pipeline / apply_cli_conversation_actions
+- commit_pending_actions（收夜落案卷，不成 initiative）
+- apply_dossier_verdicts（0055 顺颁才落 initiative）
+- 既有 initiative 校验/cap、ADR 0038 撤回前像
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import types
+from types import SimpleNamespace
+
+import pytest
+
+import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+import ming_sim.cli_backend as cb
+import ming_sim.issues as I
+import ming_sim.session as session_mod
+from ming_sim.action_clusters import (
+    ACTION_CLUSTERS,
+    candidates_from_classifier_payload,
+    cluster_by_kind,
+)
+from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from ming_sim.decree import reload_state_from_db
+from ming_sim.session import GameSession
+from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
+from web_app import WebGame
+
+
+def _ctx(db, character, candidates, turn, *, message, reply):
+    return MaterializeCtx(
+        session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
+        character=SimpleNamespace(name=character, office_type="文官"),
+        player_message=message,
+        reply=reply,
+        message_text=message,
+        explicit_prefixed=False, has_directive=False, pend_for_minister=[], out={},
+        intent=None, intent_kind="none", llm_config=None, intent_candidates=candidates,
+    )
+
+
+def _active_ming(db, content, *, exclude=""):
+    return next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and ch.name != exclude
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+
+
+def _silence_serial(monkeypatch):
+    monkeypatch.setattr(cb, "extract_minister_actions", lambda *a, **k: {
+        "secret_action": "无", "order_id": 0, "new_title": "", "new_content": "",
+        "deadline_months": 0, "cultivate_skill": "", "cultivate_trait": "",
+    })
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": "",
+    })
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "无", "draft_text": "", "target_candidate": "",
+    })
+    monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
+    monkeypatch.setattr(cb, "classify_cli_action_intent", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("must not call serial classifier")))
+
+
+def _bind_apply(db, state, content=None):
+    s = SimpleNamespace(
+        db=db, state=state, registry=None, content=content,
+        llm_config=SimpleNamespace(channel="cli", cli_runner="codex"),
+    )
+    s.apply_cli_conversation_actions = types.MethodType(
+        GameSession.apply_cli_conversation_actions, s)
+    return s
+
+
+def _stage_assignment(
+    db, turn, *, title, target_id=None, assignee=None,
+    commitment_kind="无", stop_condition="", end_turn=0,
+    ongoing_effects="", message=None, reply=None, target_candidate="",
+    actor=None,
+):
+    actor = actor or db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    payload = {
+        "kind": "assignment",
+        "title": title,
+        "target_id": target_id or title,
+        "assignee": assignee or actor,
+        "commitment_kind": commitment_kind,
+    }
+    if stop_condition:
+        payload["stop_condition"] = stop_condition
+    if end_turn:
+        payload["end_turn"] = end_turn
+    if ongoing_effects:
+        payload["ongoing_effects"] = ongoing_effects
+    if target_candidate:
+        payload["target_candidate"] = target_candidate
+    candidate = candidates_from_classifier_payload(payload, soft=False)
+    spoken = message or f"着{payload['assignee']}办{title}。"
+    ctx = _ctx(
+        db, actor, candidate, turn,
+        message=spoken,
+        reply=reply or f"臣请奉行：{title}。请陛下定夺准驳。",
+    )
+    run_materialize_pipeline(ctx)
+    return ctx
+
+
+def _close_night_dossier(db, state, content, pending_id):
+    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
+    return next(
+        d for d in db.list_decree_dossiers()
+        if d["pending_action_id"] == pending_id
+    )
+
+
+def _assignment_pendings(db, turn, *, minister_name=None):
+    rows = []
+    for row in db.list_pending_actions(int(turn), minister_name=minister_name):
+        if row.get("kind") != "directive" or row.get("status") != "pending":
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if str(payload.get("dossier_action_type") or "").strip() != "assignment":
+            continue
+        rows.append((int(row["id"]), payload))
+    return rows
+
+
+def _active_initiatives(db):
+    return list(db.conn.execute(
+        "SELECT * FROM issues WHERE kind='initiative' AND status='active' ORDER BY id"
+    ).fetchall())
+
+
+# ── catalog 挂点 ──────────────────────────────────────────────────────
+
+
+def test_assignment_cluster_registered_with_materialize_fn():
+    cluster = cluster_by_kind("assignment")
+    assert cluster is not None
+    assert cluster.label_zh == "交办·责成"
+    assert cluster.materialize_fn is not None
+    names = {f.name for f in cluster.fields}
+    assert "commitment_kind" in names
+    assert "stop_condition" in names
+    assert "target_candidate" in names
+    assert "assignee" in names
+
+
+# ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────
+
+
+def test_military_order_assignment_lands_initiative_only_after_verdict(game):
+    """军令状：暂存→收夜案卷（无 initiative）→顺颁后 initiative(owner+stop_condition)。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    stop = json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False)
+    ongoing = json.dumps(
+        {"economy": [{
+            "account": "国库", "delta": -10, "category": "补饷",
+            "reason": "每月补边饷", "purpose": "补饷",
+        }]},
+        ensure_ascii=False,
+    )
+
+    before = len(_active_initiatives(db))
+    ctx = _stage_assignment(
+        db, state.turn,
+        title="解决九边欠饷",
+        target_id="jiubian-arrears",
+        assignee=actor.name,
+        commitment_kind="until_stop",
+        stop_condition=stop,
+        ongoing_effects=ongoing,
+        message="朕要你解决九边欠饷，并保证——不会再欠。",
+        reply="臣请立军令状：边饷按月补齐，直至关宁无欠。请陛下定夺准驳。",
+    )
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "assignment"
+    assert pending["commitment_kind"] == "until_stop"
+    assert pending.get("assignee_id") == actor.name or pending.get("assignee") == actor.name
+    assert len(_active_initiatives(db)) == before, "物化前不得创建 initiative"
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    assert dossier["action_type"] == "assignment"
+    assert dossier["status"] == "proposed"
+    assert dossier["executor_id"] == actor.name
+    assert len(_active_initiatives(db)) == before, "收夜只落案卷，initiative 按 0055 下沉"
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    issues = _active_initiatives(db)
+    assert len(issues) == before + 1
+    row = next(r for r in issues if "欠饷" in str(r["title"]))
+    assert row["kind"] == "initiative"
+    assert row["commitment_kind"] == "until_stop"
+    assert row["origin_ref"] == f"dossier:{dossier['id']}"
+    assert json.loads(row["stop_condition"]) == {"army.guanning.arrears": "<=0"}
+    participants = json.loads(row["participants"])
+    assert actor.name in participants
+    roster = json.loads(row["participant_roster"])
+    assert any(
+        p.get("character_id") == actor.name and p.get("tier") == "主办"
+        for p in roster
+    )
+    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+
+
+def test_assignment_rejected_verdict_creates_no_initiative(game):
+    """打回：案卷在、initiative 零落。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    before = len(_active_initiatives(db))
+    ctx = _stage_assignment(
+        db, state.turn, title="清丈田亩", target_id="qingzhang",
+        assignee=actor.name,
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(state, [_rejected_verdict(dossier["id"])], content=content)
+    assert len(_active_initiatives(db)) == before
+
+
+def test_ordinary_assignment_without_commitment_lands(game):
+    """无验收承诺的普通交办可落；stop_condition 空、无 until_stop marker。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    before = len(_active_initiatives(db))
+    ctx = _stage_assignment(
+        db, state.turn, title="核钱粮", target_id="he-qianliang",
+        assignee=actor.name, commitment_kind="无",
+        message="这核钱粮的事你办。",
+    )
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    assert pending.get("commitment_kind") in (None, "", "无")
+    assert not pending.get("stop_condition")
+
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    issues = _active_initiatives(db)
+    assert len(issues) == before + 1
+    row = next(r for r in issues if "核钱粮" in str(r["title"]))
+    assert row["commitment_kind"] in ("", None)
+    assert not str(row["stop_condition"] or "").strip()
+    assert row["origin_ref"] == f"dossier:{dossier['id']}"
+
+
+def test_stop_condition_only_without_marker_still_rejected(game, monkeypatch):
+    """防回归毒样本：stop_condition 形态缺 commitment_kind marker 被既有校验拒。"""
+    db, state, content = game
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    dossier_id = db.create_decree_dossier(
+        state, action_type="assignment", decree_text="毒样本",
+        target_kind="issue", target_id="poison",
+        executor_kind="character",
+        executor_id=_active_ming(db, content).name,
+        payload={"text": "毒样本"},
+    )
+    db.record_dossier_decision(dossier_id, "promulgated")
+    out = I.apply_score_extraction(
+        db, state,
+        {
+            "new_issues": [{
+                "origin_kind": "decree",
+                "origin_ref": f"dossier:{dossier_id}",
+                "kind": "initiative",
+                "title": "缺 marker 毒样本",
+                "stop_condition": {"army.guanning.arrears": "<=0"},
+                "ongoing_effects": {
+                    "economy": [{
+                        "account": "国库", "delta": -1, "category": "x", "reason": "x",
+                    }]
+                },
+            }],
+        },
+        content=content,
+    )
+    created = out["issue_summary"]["new_issues"][0]
+    assert created["rejected"] is True
+    assert "commitment_kind" in created["reason"]
+
+
+# ── 附录 A beat 6/8/10 ───────────────────────────────────────────────
+
+
+def test_beat6_three_matters_fan_out_three_independent_candidates(game):
+    """beat 6：三件事逐事扇出三独立交办候选。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    matters = [
+        ("核钱粮", "he-qianliang"),
+        ("整宗藩", "zheng-zongfan"),
+        ("护内帑", "hu-neitang"),
+    ]
+    candidates = candidates_from_classifier_payload([
+        {
+            "kind": "assignment",
+            "title": title,
+            "target_id": tid,
+            "assignee": actor.name,
+            "commitment_kind": "无",
+        }
+        for title, tid in matters
+    ], soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message="三件事都说得好。朕欲让你负责这三件事。",
+        reply="臣请分办核钱粮、整宗藩、护内帑三事，请陛下定夺准驳。",
+    )
+    run_materialize_pipeline(ctx)
+
+    staged = _assignment_pendings(db, state.turn, minister_name=actor.name)
+    assert len(staged) == 3
+    titles = {p.get("title") or p.get("target_id") for _, p in staged}
+    assert {"核钱粮", "整宗藩", "护内帑"} <= titles or {
+        "he-qianliang", "zheng-zongfan", "hu-neitang",
+    } <= {p.get("target_id") for _, p in staged}
+    assert len({pid for pid, _ in staged}) == 3
+
+
+def test_beat8_reinforce_updates_existing_and_adds_fourth(game):
+    """beat 8：重申三事更新既有 + 追加欠饷=第4候选，不重复建。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    first_ids = []
+    for title, tid in (
+        ("核钱粮", "he-qianliang"),
+        ("整宗藩", "zheng-zongfan"),
+        ("护内帑", "hu-neitang"),
+    ):
+        ctx = _stage_assignment(
+            db, state.turn, title=title, target_id=tid, assignee=actor.name,
+        )
+        first_ids.append(int(ctx.out["pending_action_id"]))
+
+    # 跨轮强化：结构化指向三既有 id，并新增欠饷
+    reinforced = candidates_from_classifier_payload([
+        {
+            "kind": "assignment",
+            "title": "核钱粮（加紧）",
+            "target_id": "he-qianliang",
+            "assignee": actor.name,
+            "target_candidate": str(first_ids[0]),
+            "commitment_kind": "无",
+        },
+        {
+            "kind": "assignment",
+            "title": "整宗藩（加紧）",
+            "target_id": "zheng-zongfan",
+            "assignee": actor.name,
+            "target_candidate": str(first_ids[1]),
+            "commitment_kind": "无",
+        },
+        {
+            "kind": "assignment",
+            "title": "护内帑（加紧）",
+            "target_id": "hu-neitang",
+            "assignee": actor.name,
+            "target_candidate": str(first_ids[2]),
+            "commitment_kind": "无",
+        },
+        {
+            "kind": "assignment",
+            "title": "补九边欠饷",
+            "target_id": "jiubian-arrears",
+            "assignee": actor.name,
+            "commitment_kind": "无",
+        },
+    ], soft=False)
+    ctx = _ctx(
+        db, actor.name, reinforced, state.turn,
+        message="徐徐图之……这三件事你都办。另加一件欠饷。",
+        reply="臣遵旨：三事加紧，并补九边欠饷。",
+    )
+    run_materialize_pipeline(ctx)
+
+    staged = dict(_assignment_pendings(db, state.turn, minister_name=actor.name))
+    assert set(first_ids).issubset(set(staged))
+    assert len(staged) == 4
+    assert "加紧" in str(staged[first_ids[0]].get("title") or staged[first_ids[0]].get("text") or "")
+    fourth = [pid for pid in staged if pid not in first_ids]
+    assert len(fourth) == 1
+    assert staged[fourth[0]].get("target_id") == "jiubian-arrears"
+
+    dossiers = [
+        _close_night_dossier(db, state, content, pid) for pid in staged
+    ]
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": d["id"], "decision": "promulgated"} for d in dossiers
+    ], content=content)
+    owned = [
+        r for r in _active_initiatives(db)
+        if actor.name in json.loads(r["participants"] or "[]")
+        or any(
+            p.get("character_id") == actor.name
+            for p in json.loads(r["participant_roster"] or "[]")
+        )
+    ]
+    # 本批 4 条（可能另有种子 initiative，只数本批 origin）
+    batch_origins = {f"dossier:{d['id']}" for d in dossiers}
+    landed = [r for r in _active_initiatives(db) if r["origin_ref"] in batch_origins]
+    assert len(landed) == 4
+
+
+def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypatch):
+    """beat 10：三事全允 → 扇 3 独立 initiative，owner/origin_ref 落全。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    sess = _bind_apply(db, state, content)
+    _silence_serial(monkeypatch)
+
+    matters = [
+        ("核钱粮", "he-qianliang"),
+        ("整宗藩", "zheng-zongfan"),
+        ("护内帑", "hu-neitang"),
+    ]
+    scripted = candidates_from_classifier_payload([
+        {
+            "kind": "assignment",
+            "title": title,
+            "target_id": tid,
+            "assignee": actor.name,
+            "commitment_kind": "无",
+        }
+        for title, tid in matters
+    ], soft=False)
+    out = sess.apply_cli_conversation_actions(
+        actor, "三事全允。",
+        "臣请分办三事，请陛下定夺准驳。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=scripted,
+    )
+    staged = _assignment_pendings(db, state.turn, minister_name=actor.name)
+    assert len(staged) == 3
+    ids = [pid for pid, _ in staged]
+
+    # 应允三道
+    sess.apply_cli_conversation_actions(
+        actor, "准。", "臣遵旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
+        confirm_target_ids=set(ids),
+    )
+
+    dossiers = []
+    for pid in ids:
+        dossiers.append(_close_night_dossier(db, state, content, pid))
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": d["id"], "decision": "promulgated"} for d in dossiers
+    ], content=content)
+
+    batch_origins = {f"dossier:{d['id']}" for d in dossiers}
+    landed = [r for r in _active_initiatives(db) if r["origin_ref"] in batch_origins]
+    assert len(landed) == 3
+    for row in landed:
+        assert row["origin_ref"].startswith("dossier:")
+        roster = json.loads(row["participant_roster"] or "[]")
+        assert any(
+            p.get("character_id") == actor.name and p.get("tier") == "主办"
+            for p in roster
+        )
+
+
+# ── cap 逐项 ──────────────────────────────────────────────────────────
+
+
+def test_cap15_per_item_reject_overflow_lands_rest(game):
+    """撞 cap=15：超出项拒+戏内回禀朝廷分身乏术，可落项照落。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    for idx in range(14):
+        db.insert_issue(
+            state, kind="initiative", title=f"既有国策{idx}",
+            origin_kind="decree",
+            effect_on_resolve={"metrics": {"民心": 1}},
+        )
+    assert db.count_active_initiatives() == 14
+
+    d_ids = []
+    for title, tid in (("可落交办", "can-land"), ("超出交办", "overflow")):
+        ctx = _stage_assignment(
+            db, state.turn, title=title, target_id=tid, assignee=actor.name,
+        )
+        d_ids.append(_close_night_dossier(db, state, content, ctx.out["pending_action_id"])["id"])
+
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": d_ids[0], "decision": "promulgated"},
+        {"dossier_id": d_ids[1], "decision": "promulgated"},
+    ], content=content)
+
+    assert db.count_active_initiatives() == 15
+    landed = [
+        r for r in _active_initiatives(db)
+        if r["origin_ref"] == f"dossier:{d_ids[0]}"
+    ]
+    assert len(landed) == 1
+    overflow = db.get_decree_dossier(d_ids[1])
+    # 超出项不得创建 initiative；执行失败留痕含戏内回禀
+    assert not any(r["origin_ref"] == f"dossier:{d_ids[1]}" for r in _active_initiatives(db))
+    exec_note = str(overflow.get("execution_note") or overflow.get("status") or "")
+    # 失败关闭或 note 含分身乏术
+    row = db.conn.execute(
+        "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
+        (d_ids[1],),
+    ).fetchone()
+    blob = " ".join(str(row[k] or "") for k in row.keys())
+    assert "分身乏术" in blob or "朝廷分身乏术" in blob
+
+
+# ── 0038 跨轮强化撤回前像 ────────────────────────────────────────────
+
+
+def _wire_web_game(db, state, content, agent, monkeypatch) -> WebGame:
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = SimpleNamespace(
+        get=lambda character: agent,
+        build_draft_line=lambda: "无",
+        session_ids={},
+    )
+    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
+    sess.temporary_characters = set()
+    sess.previous_summary = ""
+    sess.last_decree = ""
+    sess.agno_db = None
+    sess._retrieve_memories_for_message = lambda message: message
+    for name in (
+        "chat", "_start_cli_action_intent", "_finish_cli_action_intent",
+        "_confirmation_intent_for_preexisting_pending",
+        "_cli_backend_fallback_actions", "apply_cli_conversation_actions",
+        "_character", "pending_count", "note_chat_rollback",
+        "_audience_prompt_for_message",
+        "_stage_appointment_candidate",
+        "_merge_staged_new_secret_order_content",
+        "_ensure_confirmation_cue",
+    ):
+        if hasattr(GameSession, name):
+            setattr(sess, name, types.MethodType(getattr(GameSession, name), sess))
+    sess.refresh_runtime_after_chat_rollback = lambda: None
+    sess.note_chat_rollback = lambda **kw: None
+    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
+
+    wg = WebGame.__new__(WebGame)
+    wg.session = sess
+    wg.chat_history = {name: [] for name in content.characters}
+    wg._write_gate = threading.Lock()
+    wg._drain_cond = threading.Condition()
+    wg._pending_writes_count = 0
+    wg._draining = False
+    wg.favorites = set()
+    wg.suggestions_for = lambda _c: []
+    wg._spawn_pending_write_thread = lambda *a, **k: None
+    wg._spawn_extraction_trail = lambda *a, **k: None
+    wg._trail_mindreading_after_reply = lambda *a, **k: None
+    return wg
+
+
+class _SyncAgent:
+    def __init__(self, content: str):
+        self.content = content
+        self.tools = []
+
+    def run(self, *_a, **_k):
+        return SimpleNamespace(content=self.content, tools=self.tools)
+
+
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_cross_round_assignment_update_undo_restores_before_image(game, monkeypatch):
+    """跨轮强化更新既有候选后，撤回本轮恢复前像（ADR 0038）。"""
+    db, state, content = game
+    minister = _active_ming(db, content)
+    _silence_serial(monkeypatch)
+
+    original_title = "核钱粮"
+    updated_title = "核钱粮（加紧催办）"
+    phase = {"n": 0}
+    staged_id = {"id": 0}
+
+    def fake_classify(*_a, **_k):
+        phase["n"] += 1
+        if phase["n"] == 1:
+            return candidates_from_classifier_payload({
+                "kind": "assignment",
+                "title": original_title,
+                "target_id": "he-qianliang",
+                "assignee": minister.name,
+                "commitment_kind": "无",
+            }, soft=False)
+        return candidates_from_classifier_payload({
+            "kind": "assignment",
+            "title": updated_title,
+            "target_id": "he-qianliang",
+            "assignee": minister.name,
+            "commitment_kind": "无",
+            "target_candidate": str(staged_id["id"]),
+        }, soft=False)
+
+    monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
+    wg = _wire_web_game(
+        db, state, content, _SyncAgent("臣请办核钱粮。"), monkeypatch,
+    )
+
+    wg.chat(minister.name, "核钱粮的事你办。")
+    rows = _assignment_pendings(db, state.turn, minister_name=minister.name)
+    assert len(rows) == 1
+    staged_id["id"] = rows[0][0]
+    original_payload = dict(rows[0][1])
+
+    wg.chat(minister.name, "这核钱粮你加紧办。")
+    mid = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (staged_id["id"],),
+    ).fetchone()["payload_json"])
+    assert "加紧" in str(mid.get("title") or mid.get("text") or "")
+
+    assert wg.can_undo_last_chat(minister.name)
+    wg.undo_last_chat(minister.name)
+    restored = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (staged_id["id"],),
+    ).fetchone()["payload_json"])
+    assert restored.get("title") == original_payload.get("title")
+    assert "加紧" not in str(restored.get("title") or "")
+
+
+def test_assignment_restore_from_db_only_is_lossless(game):
+    """P1：restore 只读 DB 能接续 initiative 与案卷。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    ctx = _stage_assignment(
+        db, state.turn, title="修历", target_id="xiu-li", assignee=actor.name,
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    issue = next(
+        r for r in _active_initiatives(db)
+        if r["origin_ref"] == f"dossier:{dossier['id']}"
+    )
+    reload_state_from_db(db, state, content=content)
+    restored_issue = db.conn.execute(
+        "SELECT * FROM issues WHERE id=?", (issue["id"],),
+    ).fetchone()
+    assert restored_issue is not None
+    assert restored_issue["status"] == "active"
+    assert db.get_decree_dossier(dossier["id"])["action_type"] == "assignment"
