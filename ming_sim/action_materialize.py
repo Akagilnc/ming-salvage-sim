@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -1609,6 +1610,242 @@ def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+_RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
+
+
+def re_split_bodies(text: str) -> List[str]:
+    """下议机关名分隔：逗号/顿号/斜线/分号/竖线（三缝共用）。"""
+    return _RESPONSIBLE_BODY_SPLIT.split(str(text or ""))
+
+
+def parse_responsible_bodies(raw: object) -> List[str]:
+    """下议 responsible_bodies 唯一解析（暂存/admission/判后共用）。
+
+    承 list/tuple，或 JSON 数组串，或「吏部、户部」类分隔串；空/不可用 → []。
+    不在此做人物档语义；机关/职司个人名策略见 assert_responsible_bodies_org_only。
+    """
+    value = _parse_json_field(raw)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
+        out: List[str] = []
+        for name in parts:
+            if name not in out:
+                out.append(name)
+        return out
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for item in value:
+        name = str(item or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def character_person_names(db: Any) -> set[str]:
+    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
+    if db is None or not hasattr(db, "conn"):
+        return set()
+    return {
+        str(row["name"]).strip()
+        for row in db.conn.execute("SELECT name FROM characters").fetchall()
+        if str(row["name"] or "").strip()
+    }
+
+
+def assert_responsible_bodies_org_only(
+    bodies: Sequence[str],
+    *,
+    known_person_names: Iterable[str] = (),
+    current_minister: str = "",
+) -> None:
+    """机关/职司语义：个人名与当前召对大臣不得入 responsible_bodies。"""
+    persons = {str(n).strip() for n in known_person_names if str(n or "").strip()}
+    minister = str(current_minister or "").strip()
+    if minister:
+        persons.add(minister)
+    if not persons:
+        return
+    for body in bodies:
+        name = str(body or "").strip()
+        if name and name in persons:
+            raise ValueError(f"responsible_bodies 禁个人名：{name}")
+
+
+def stage_referral_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    title: str = "",
+    target_id: str = "",
+    deadline_months: object = 0,
+    responsible_bodies: object = None,
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared referral candidate write (#524 / #502).
+
+    下议只承 deadline_months(1–36) 与非空机关/职司 responsible_bodies；
+    落 end_turn=turn+N 与 payload.responsible_bodies。禁个人 owner/assignee。
+    initiative 按 ADR 0055 判后创建。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    matter_title = str(title or "").strip()
+    if not matter_title:
+        matter_title = str(emperor_text or "").strip()[:40]
+    if not matter_title:
+        return 0
+    matter_id = str(target_id or "").strip() or matter_title
+
+    try:
+        months = int(deadline_months or 0)
+    except (TypeError, ValueError):
+        months = 0
+    # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
+    if months <= 0:
+        return 0
+    bodies = parse_responsible_bodies(responsible_bodies)
+    if not bodies:
+        return 0
+    try:
+        assert_responsible_bodies_org_only(
+            bodies,
+            known_person_names=character_person_names(db),
+            current_minister=minister_name,
+        )
+    except ValueError:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "referral":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "referral",
+        "target_kind": "issue",
+        "target_id": matter_id,
+        "title": matter_title,
+        "end_turn": int(turn) + months,
+        "deadline_months": months,
+        "responsible_bodies": bodies,
+        "mode": mode,
+    }
+    # 禁个人 owner：显式不写 assignee/assignee_id
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_referral(ctx: MaterializeCtx) -> None:
+    """暂存下议案卷；initiative 按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "referral"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    title = str(intent.get("title") or "").strip()
+    target_id = str(intent.get("target_id") or "").strip()
+    if not title:
+        title = str(ctx.player_message or "").strip()[:40]
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not body and not title and not target_id:
+        return
+    if not body:
+        body = title or target_id
+    pending_id = stage_referral_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=body,
+        title=title,
+        target_id=target_id,
+        deadline_months=intent.get("deadline_months"),
+        responsible_bodies=intent.get("responsible_bodies"),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
+def validate_tingtui_appointment_shape(obj: Any) -> Tuple[bool, str]:
+    """廷推会推产出 shape：须与任免 FieldSpec 同形；本片只验不裁定。
+
+    正例：kind=appointment + appoint_action∈{任命,罢免} + name + (任命须 office)。
+    反例：appoint_action=无；缺 name/office；塞交办 owner/assignee；kind=assignment。
+    """
+    from ming_sim.action_clusters import validate_action_candidate_shape
+
+    if not isinstance(obj, dict):
+        return False, "tingtui result must be a mapping"
+    kind = str(obj.get("kind") or "").strip()
+    if kind != "appointment":
+        return False, f"tingtui result kind must be appointment, got {kind!r}"
+    # 塞交办个人 owner/assignee → 拒（下议/交办语义互斥）
+    for banned in ("owner", "assignee", "assignee_id"):
+        if str(obj.get(banned) or "").strip():
+            return False, f"tingtui appointment must not carry {banned}"
+    ok, reason = validate_action_candidate_shape(obj)
+    if not ok:
+        return False, reason
+    action = str(obj.get("appoint_action") or "").strip()
+    if action not in {"任命", "罢免"}:
+        return False, f"appoint_action must be 任命 or 罢免, got {action!r}"
+    name = str(obj.get("name") or "").strip()
+    if not name:
+        return False, "tingtui appointment missing name"
+    if action == "任命" and not str(obj.get("office") or "").strip():
+        return False, "tingtui 任命 missing office"
+    return True, ""
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -1844,6 +2081,28 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
             ),
             materialize_fn=_materialize_revoke_decree,
+        ),
+        ActionCluster(
+            "下议", "referral", EFFECT_MATERIALIZE, priority=63,
+            fields=(
+                FieldSpec("title", "标题", None, "", max_len=80),
+                # 事项锚；与 grant/assignment 共享 target_id
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                # 议期月数 1–36；stage 换算绝对 end_turn=turn+N
+                FieldSpec(
+                    "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
+                ),
+                # 机关/职司名 JSON 列表（如 ["吏部","廷推会"]）；禁个人名
+                FieldSpec(
+                    "responsible_bodies", "责任机关", None, "", max_len=500,
+                ),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+            ),
+            materialize_fn=_materialize_referral,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,

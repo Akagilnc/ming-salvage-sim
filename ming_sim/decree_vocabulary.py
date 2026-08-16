@@ -20,10 +20,10 @@ DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 # is an exempt palace/private action already materialized at admission.
 _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     "policy", "strategy_selection", "approve_reject", "special_decree",
-    "referral",
     "secret_investigation", "protection",
     # pacification / punishment: payload-owned — 顺颁后自案卷物化（#522/#517 / ADR 0055）
     # revoke_authority / revoke_decree: payload-owned — #523 / ADR 0055 判后物化
+    # referral: payload-owned — #524 下议 initiative 顺颁后落（ADR 0055）
 })
 _DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
     "secret_order", "secret_authorization", "secret_investigation", "protection",
