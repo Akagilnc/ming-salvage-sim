@@ -199,7 +199,9 @@ export function useChatActions({
     }
 
     const fromComposer = text === input;
-    if (["q", "quit", "退朝", "下朝"].includes(message.toLowerCase())) {
+    // #526：收夜高置信封闭集加速器（与后端 COURT_BREAK_COMMANDS 同集；含「今日且到此」）
+    const closeCmd = message.toLowerCase();
+    if (["q", "quit", "退朝", "下朝", "今日且到此"].includes(closeCmd) || message === "今日且到此") {
       if (fromComposer) setInput("");
       await advanceWithoutEdictRef.current();
       return;

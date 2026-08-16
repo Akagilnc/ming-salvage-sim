@@ -1657,6 +1657,10 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            # #526：回话已落库（generating→active）后触发高置信收夜，避免 chat 内自锁 in-flight。
+            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+            if close_after is not None:
+                close_after(getattr(result, "court_action", "") or "")
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
             # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             answer_text = str(getattr(result, "answer", "") or "")
@@ -1751,6 +1755,10 @@ class WebGame:
                 )
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            # #526：重试回话落库后高置信收夜（与 chat 同缝）。
+            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+            if close_after is not None:
+                close_after(getattr(result, "court_action", "") or "")
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
@@ -1822,12 +1830,14 @@ class WebGame:
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
         action_intent_future: Optional[Future] = None,
+        audience_command_future: Optional[Future] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
         agent = self.session.registry.get(character)
         # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
         # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
+        # #526：收夜/留侍口令识别同拓扑并行。
         run_output = None
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
@@ -1878,6 +1888,7 @@ class WebGame:
         interpreted = self._chat_stream_interpret_tools(
             minister_name, text, character, answer, run_output,
             action_intent_future, chat_turn_id,
+            audience_command_future=audience_command_future,
         )
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
@@ -1901,7 +1912,11 @@ class WebGame:
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            return payload
+        # #526：回话落库后高置信收夜（与非流式同缝）。
+        close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+        if close_after is not None:
+            close_after(interpreted.get("court_action") or "")
+        return payload
 
     def _chat_stream_interpret_tools(
         self,
@@ -1912,6 +1927,7 @@ class WebGame:
         run_output: Any,
         action_intent_future: Any,
         chat_turn_id: int,
+        audience_command_future: Any = None,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -1924,6 +1940,20 @@ class WebGame:
         pending_action_id = 0
         tool_pending_action_id = 0
         tool_stage_failures: List[Dict[str, Any]] = []
+        # #526：口令判词与 session.chat 同缝（流式不经 session.chat）。
+        apply_cmd = getattr(self.session, "_apply_audience_command_verdict", None)
+        finish_cmd = getattr(self.session, "_finish_audience_command_recognize", None)
+        if apply_cmd is not None and finish_cmd is not None:
+            from ming_sim.session import ChatTurnResult
+            cmd_result = ChatTurnResult(answer=answer)
+            apply_cmd(
+                cmd_result, character, text,
+                verdict=finish_cmd(audience_command_future, text),
+                chat_turn_id=int(chat_turn_id or 0),
+            )
+            answer = cmd_result.answer
+            if cmd_result.court_action:
+                court_action = cmd_result.court_action
         if hasattr(self.db, "list_pending_actions"):
             preexisting_pending_action_ids = {
                 int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
@@ -2488,6 +2518,10 @@ class WebGame:
                     # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
                     character = self.session._character(minister_name)
                     action_intent_future = self.session._start_cli_action_intent(character, text)
+                    start_cmd = getattr(self.session, "_start_audience_command_recognize", None)
+                    audience_command_future = (
+                        start_cmd(text) if start_cmd is not None else None
+                    )
 
                     # LLM 在无锁窗口跑；落库/会话动作再抢 write_gate（#498 AC10）
                     payload = self._chat_stream_payload(
@@ -2495,6 +2529,7 @@ class WebGame:
                         accepted_turn, emit_delta,
                         write_gate=write_gate,
                         action_intent_future=action_intent_future,
+                        audience_command_future=audience_command_future,
                     )
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
