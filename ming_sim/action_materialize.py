@@ -987,19 +987,24 @@ def stage_assignment_candidate(
         "assignee": owner,
         "mode": mode,
     }
+    # 承诺形状保留：until_stop 正常携带；缺 marker 的毒字段也不得在 stage 洗掉，
+    # 交既有 initiative 校验在判后接缝拒收（#520 commitment-poison-shape-preservation）。
     kind_raw = str(commitment_kind or "").strip()
+    parsed_stop = _parse_json_field(stop_condition)
+    has_stop = parsed_stop not in (None, "", {})
+    absolute_end = _assignment_absolute_end_turn(
+        int(turn), end_turn=end_turn, deadline_months=deadline_months,
+    )
+    parsed_ongoing = _parse_json_field(ongoing_effects)
+    has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-        parsed_stop = _parse_json_field(stop_condition)
-        if parsed_stop not in (None, "", {}):
+    if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing:
+        if has_stop:
             staged["stop_condition"] = parsed_stop
-        absolute_end = _assignment_absolute_end_turn(
-            int(turn), end_turn=end_turn, deadline_months=deadline_months,
-        )
         if absolute_end > 0:
             staged["end_turn"] = absolute_end
-        parsed_ongoing = _parse_json_field(ongoing_effects)
-        if isinstance(parsed_ongoing, dict) and parsed_ongoing:
+        if has_ongoing:
             staged["ongoing_effects"] = parsed_ongoing
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)

@@ -12210,21 +12210,23 @@ class GameDB:
             "stage_text": str(payload.get("text") or row.get("decree_text") or title),
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
         }
+        # 形状保留：承诺字段原样交给 apply_score_extraction。
+        # 缺 commitment_kind marker 的毒形不得在此洗掉后当普通 initiative 落地（#520）。
         if commitment_kind:
             ni["commitment_kind"] = commitment_kind
-            stop_raw = payload.get("stop_condition")
-            if stop_raw not in (None, "", {}):
-                ni["stop_condition"] = stop_raw
-            try:
-                end_turn = int(payload.get("end_turn") or 0)
-            except (TypeError, ValueError):
-                end_turn = 0
-            if end_turn > 0:
-                ni["end_turn"] = end_turn
-            ongoing = payload.get("ongoing_effects")
-            if isinstance(ongoing, dict) and ongoing:
-                ni["ongoing_effects"] = ongoing
-            # ongoing_effects / end_turn 选择规则交既有校验；缺两翼则逐项软拒。
+        stop_raw = payload.get("stop_condition")
+        if stop_raw not in (None, "", {}):
+            ni["stop_condition"] = stop_raw
+        try:
+            end_turn = int(payload.get("end_turn") or 0)
+        except (TypeError, ValueError):
+            end_turn = 0
+        if end_turn > 0:
+            ni["end_turn"] = end_turn
+        ongoing = payload.get("ongoing_effects")
+        if isinstance(ongoing, dict) and ongoing:
+            ni["ongoing_effects"] = ongoing
+        # ongoing_effects / end_turn 选择规则与缺 marker 拒收交既有校验。
 
         out = apply_score_extraction(
             self, state, {"new_issues": [ni]}, content=None,
