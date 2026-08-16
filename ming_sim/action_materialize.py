@@ -44,6 +44,8 @@ class MaterializeCtx:
     intent_candidates: Optional[List[Dict[str, Any]]] = None
     candidate_kind_index: int = 0
     candidate_kind_count: int = 1
+    # #519：一句多旨整表消费（N>1 已注册候选）时为 True；handler 不得 upsert 压扁兄弟项
+    multi_intent_batch: bool = False
     batch_state: Dict[str, Any] = field(default_factory=dict)
     conversation_intent_handled: bool = False
     draft_staged: bool = False
@@ -60,6 +62,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
+        multi_batch = len(ctx.intent_candidates) > 1
         kind_counts: Dict[str, int] = {}
         for candidate in ctx.intent_candidates:
             kind = str(candidate.get("kind") or "")
@@ -84,6 +87,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent_candidates=None,
                 candidate_kind_index=kind_index,
                 candidate_kind_count=kind_counts[kind],
+                multi_intent_batch=multi_batch,
                 conversation_intent_handled=False,
                 draft_staged=False,
             )
@@ -430,6 +434,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 "status": "draft",
                 "notes": f"由{minister_name}拟旨入档",
             }
+        elif ctx.multi_intent_batch:
+            # #519：一句多旨 N 候选整表消费——无显式点名不得 upsert 压扁同批兄弟
+            # directive（如 grant_allocation）。#518 纪律：显式 id 才 update，否则新 stage。
+            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
+                session.state.turn, minister_name,
+                payload=semantic_payload,
+            )
         else:
             pid = session.db.upsert_pending_directive(
                 session.state.turn, minister_name,
