@@ -293,6 +293,73 @@ def test_pure_authority_does_not_classify_as_revoke_decree(game):
     assert not ctx.out.get("pending_action_id")
 
 
+def test_pure_authority_dossier_excluded_from_all_revoke_decree_entries(game):
+    """已颁纯授权不得经直接 dossier / initiative 回指 / 含糊候选入撤回成命。
+
+    三入口共用同一语义资格：status 已颁不够；authorization 归收权·罢差。
+    """
+    db, state, content = game
+    holder = _minister(db)
+    pure_auth = _eligible_dossier(db, state, holder, target_id="纯授权案")
+    pure_id = int(pure_auth["id"])
+    assert pure_auth["action_type"] in {"authorization", "secret_authorization"}
+    assert pure_auth["status"] in {"promulgated", "executing"}
+    # 同盘面放一真实可撤承诺，证明资格收口不误杀
+    real, _ = _promulgated_commitment(
+        db, state, content, holder, title="可撤承诺",
+    )
+    real_id = int(real["id"])
+    # initiative 回指纯授权案卷
+    linked_issue = db.insert_issue(
+        state, kind="initiative", title="纯授权回指",
+        origin_kind="decree", origin_ref=f"dossier:{pure_id}",
+        cancellable="decree",
+    )
+
+    # 1) 直接 dossier
+    ctx_d = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": str(pure_id),
+            "target_kind": "dossier",
+        },
+        actor=holder,
+        message=f"前旨作废，撤回案卷{pure_id}。",
+    )
+    assert not ctx_d.out.get("pending_action_id"), "纯授权案卷不得直接入撤回成命"
+
+    # 2) initiative 回指
+    ctx_i = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": f"issue:{linked_issue}",
+        },
+        actor=holder,
+        message=f"前旨作废，撤回事项{linked_issue}。",
+    )
+    assert not ctx_i.out.get("pending_action_id"), "回指纯授权的 initiative 不得入撤回成命"
+
+    # 3) 含糊候选：只列真实可撤承诺/旨意，不得混入纯授权
+    ctx_a = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": "",
+            "target_candidate": "含糊",
+        },
+        actor=holder,
+        message="前旨都作废。",
+    )
+    assert not ctx_a.out.get("pending_action_id")
+    amb = ctx_a.out.get("directive_confirmation_ambiguous")
+    assert amb is not None
+    cand_ids = {int(c["id"]) for c in (amb.get("candidates") or [])}
+    assert pure_id not in cand_ids, "含糊候选不得列纯授权"
+    assert real_id in cand_ids, "含糊候选须保留真实可撤成命"
+
+
 # ── 撤回成命 ──────────────────────────────────────────────────────────
 
 
@@ -410,24 +477,20 @@ def test_revoke_decree_bundled_authority_reuses_authority_changes(game):
     """旨意捆带授权：主目标是承诺/旨意；授权副作用只走 authority_changes。"""
     db, state, content = game
     holder = _minister(db)
-    # 授权授予案卷（已颁 + 在持权）
-    grant_d = _eligible_dossier(db, state, holder, target_id="捆带事域")
-    authority_id = _grant(
-        db, state, content, holder, "专差督办", "issue:捆带事域", grant_d,
+    # 承诺/旨意为主目标；其上捆带授予（非纯授权案卷）
+    target_d, _issue_id = _promulgated_commitment(
+        db, state, content, holder, title="捆带事域",
     )
-    # 把授予案卷当作可撤成命目标（已颁旨意）
-    target_id = int(grant_d["id"])
-    # 确保可 breach：status 须 promulgated/executing
+    target_id = int(target_d["id"])
+    authority_id = _grant(
+        db, state, content, holder, "专差督办", "issue:捆带事域", target_d,
+    )
     assert db.get_decree_dossier(target_id)["status"] in {
-        "promulgated", "executing", "closed",
+        "promulgated", "executing",
     }
-    if db.get_decree_dossier(target_id)["status"] == "closed":
-        db.conn.execute(
-            "UPDATE decree_dossiers SET status='executing', closed_turn=NULL "
-            "WHERE id=?",
-            (target_id,),
-        )
-        db.conn.commit()
+    assert db.get_decree_dossier(target_id)["action_type"] not in {
+        "authorization", "secret_authorization",
+    }
 
     ctx = _stage(
         db, state.turn,
@@ -638,18 +701,14 @@ def test_revoke_decree_bundled_authority_reject_fails_loud(game, monkeypatch):
 
     db, state, content = game
     holder = _minister(db)
-    grant_d = _eligible_dossier(db, state, holder, target_id="捆带拒收")
-    authority_id = _grant(
-        db, state, content, holder, "专差督办", "issue:捆带拒收", grant_d,
+    # 承诺/旨意为主目标；捆带授权拒收时整单 fail-loud
+    target_d, _issue_id = _promulgated_commitment(
+        db, state, content, holder, title="捆带拒收",
     )
-    target_id = int(grant_d["id"])
-    if db.get_decree_dossier(target_id)["status"] == "closed":
-        db.conn.execute(
-            "UPDATE decree_dossiers SET status='executing', closed_turn=NULL "
-            "WHERE id=?",
-            (target_id,),
-        )
-        db.conn.commit()
+    target_id = int(target_d["id"])
+    authority_id = _grant(
+        db, state, content, holder, "专差督办", "issue:捆带拒收", target_d,
+    )
 
     ctx = _stage(
         db, state.turn,

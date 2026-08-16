@@ -1385,20 +1385,42 @@ def _materialize_revoke_authority(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+# 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
+_PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
+    "authorization", "secret_authorization",
+})
+
+
 def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
-    """可撤成命：已颁/执行中的承诺·旨意案卷（ADR 0056 可走毁约轨）。"""
+    """可撤成命：已颁/执行中的承诺·旨意；纯授权归收权·罢差。
+
+    直接 dossier、initiative 回指、含糊候选三入口共用本资格。
+    """
     status = str(dossier.get("status") or "").strip()
-    return status in {"promulgated", "executing"}
+    if status not in {"promulgated", "executing"}:
+        return False
+    action = str(dossier.get("action_type") or "").strip()
+    if action in _PURE_AUTHORITY_DOSSIER_ACTIONS:
+        return False
+    return True
 
 
 def _list_revocable_decree_candidates(db: Any) -> List[Dict[str, Any]]:
-    """含糊问清候选：当前可撤成命（已颁/执行中案卷）。"""
+    """含糊问清候选：与 admission 同一语义资格的可撤成命。"""
     rows = db.conn.execute(
-        "SELECT id, decree_text, status FROM decree_dossiers "
+        "SELECT id, decree_text, status, action_type FROM decree_dossiers "
         "WHERE status IN ('promulgated', 'executing') ORDER BY id",
     ).fetchall()
     out: List[Dict[str, Any]] = []
     for row in rows:
+        dossier = {
+            "id": int(row["id"]),
+            "decree_text": row["decree_text"],
+            "status": row["status"],
+            "action_type": row["action_type"],
+        }
+        if not _dossier_is_revocable_decree(db, dossier):
+            continue
         text = str(row["decree_text"] or "").strip() or f"案卷{int(row['id'])}"
         out.append({"id": int(row["id"]), "summary": text})
     return out
