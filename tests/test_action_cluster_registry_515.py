@@ -428,6 +428,57 @@ def test_scripted_ask_vs_order_staging_matrix(
 
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
 
+# #516 问/令查样本：并入 P5 真实 session.chat barrier/poison 矩阵（不经 preclassified_intent）
+_P5_ASK_VS_ORDER_UTTERANCES = (
+    "陕西巡抚可有？",
+    "可有人密查陕西军饷？",
+    "着人查访陕西军情如何？",
+    "命东厂密查其家产的是谁？",
+    "你去查他家产",
+    "着东厂密查其家产",
+)
+_P5_ASK_VS_ORDER_BARRIER_CASES = (
+    # utterance, classify_result, reply, expect_secret_stage, expect_directive_stage
+    ("拟一道旨赈陕西。", [{"kind": "draft"}], "着户部发银赈陕西。", False, True),
+    ("陕西巡抚可有？", [], "臣回奏：容臣查明再报。", False, False),
+    ("可有人密查陕西军饷？", [], "臣回奏：容臣查明再报。", False, False),
+    ("着人查访陕西军情如何？", [], "臣回奏：容臣查明再报。", False, False),
+    ("命东厂密查其家产的是谁？", [], "臣回奏：容臣查明再报。", False, False),
+    (
+        "你去查他家产",
+        [{"kind": "secret", "secret_action": "新建"}],
+        "臣领旨密查。",
+        True,
+        False,
+    ),
+    (
+        "着东厂密查其家产",
+        [{"kind": "secret", "secret_action": "新建"}],
+        "臣领旨密查。",
+        True,
+        False,
+    ),
+)
+_P5_ASK_VS_ORDER_BARRIER_IDS = (
+    "draft_parallel",
+    "north_star_pure_ask",
+    "ask_with_micha",
+    "ask_with_chafang",
+    "ask_with_command_words",
+    "imperative_go_check",
+    "imperative_micha",
+)
+_P5_POISON_UTTERANCES = ("卿且坐。",) + _P5_ASK_VS_ORDER_UTTERANCES
+_P5_POISON_UTTERANCE_IDS = (
+    "neutral",
+    "north_star_pure_ask",
+    "ask_with_micha",
+    "ask_with_chafang",
+    "ask_with_command_words",
+    "imperative_go_check",
+    "imperative_micha",
+)
+
 
 def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
     db, state, content = game
@@ -535,10 +586,19 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     assert payloads[2]["assignee"] == "孙传庭"
 
 
-def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
+@pytest.mark.parametrize(
+    ("utterance", "classify_result", "reply", "expect_secret_stage", "expect_directive_stage"),
+    _P5_ASK_VS_ORDER_BARRIER_CASES,
+    ids=_P5_ASK_VS_ORDER_BARRIER_IDS,
+)
+def test_real_chat_bidirectional_barrier_parallel_required(
+    game, monkeypatch, utterance, classify_result, reply,
+    expect_secret_stage, expect_directive_stage,
+):
     """双向 barrier：classifier 进入后等 reply 进入；reply 进入后确认 classifier 在飞。
 
     若生产先同步跑完 classifier 再回话，reply 永远等不到 classifier_entered → 红。
+    #516：纯问/含命令词疑问/祈使令查样本并入真实 session.chat，不经 preclassified_intent。
     """
     db, state, content = game
     minister = _active_ch(db, content)
@@ -554,7 +614,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
         # 必须等 reply 线程已进入 agent.run，证明重叠
         assert reply_entered.wait(2), "serial classify-before-reply would fail this barrier"
         allow_classify.set()
-        return [{"kind": "draft"}]
+        return list(classify_result)
 
     class FakeAgent:
         def run(self, _msg):
@@ -563,7 +623,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
             # 等 classify 完成（并行 join 前不必；此处只证明重叠后放行）
             assert allow_classify.wait(2)
             allow_reply.set()
-            return SimpleNamespace(content="着户部发银赈陕西。", tools=[])
+            return SimpleNamespace(content=reply, tools=[])
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -589,30 +649,73 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
         "draft_action": "拟旨", "draft_text": "【毒化串行】", "target_candidate": "",
     })
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *a, **k: {
+            "title": "查家产",
+            "content": utterance,
+            "assignee": minister.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+            "dossier_links": [],
+        },
+    )
 
     before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, "拟一道旨赈陕西。")
+    result = sess.chat(minister.name, utterance)
     assert allow_reply.is_set()
     assert calls == ["classify"]
-    assert "赈陕西" in (result.answer or "")
-    assert result.pending_action_id
-    assert _count_pending(db, state.turn) == before + 1
-    row = [
+    # 有 pending 时 _ensure_confirmation_cue 会追加准驳提示，只钉回话正文。
+    assert reply in (result.answer or "")
+
+    secret_rows = [
+        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
+        if r["kind"] == "secret_order" and r["action"] == "新建"
+    ]
+    directive_rows = [
         r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
         if r["kind"] == "directive"
-    ][-1]
-    text = json.loads(row["payload_json"])["text"]
-    assert "赈陕西" in text
-    assert "毒化" not in text
+    ]
+    if expect_directive_stage:
+        assert result.pending_action_id
+        assert _count_pending(db, state.turn) == before + 1
+        assert len(directive_rows) == 1
+        text = json.loads(directive_rows[-1]["payload_json"])["text"]
+        assert "赈陕西" in text
+        assert "毒化" not in text
+        assert secret_rows == []
+    elif expect_secret_stage:
+        assert result.pending_action_id
+        assert _count_pending(db, state.turn) == before + 1
+        assert len(secret_rows) == 1
+        assert directive_rows == []
+    else:
+        assert result.answer == reply
+        assert not result.pending_action_id
+        assert _count_pending(db, state.turn) == before
+        assert secret_rows == []
+        assert directive_rows == []
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    _P5_POISON_UTTERANCES,
+    ids=_P5_POISON_UTTERANCE_IDS,
+)
 @pytest.mark.parametrize(
     "classify_mode",
     ["bad_shape", "raises"],
     ids=["bad_shape_return", "classifier_raises"],
 )
-def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch, classify_mode):
-    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。"""
+def test_real_chat_poisoned_classifier_zero_writes(
+    game, monkeypatch, classify_mode, utterance,
+):
+    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。
+
+    #516：问/令查样本同走并发分类毒化路，不经 preclassified_intent。
+    """
     db, state, content = game
     minister = _active_ch(db, content)
 
@@ -637,7 +740,7 @@ def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch, classify_m
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     _silence_serial(monkeypatch)
     before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, "卿且坐。")
+    result = sess.chat(minister.name, utterance)
     assert result.answer == "臣惶恐。"
     assert not result.pending_action_id
     assert _count_pending(db, state.turn) == before
