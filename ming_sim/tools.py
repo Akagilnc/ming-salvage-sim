@@ -467,9 +467,9 @@ def build_minister_tools(character: Character, context: CourtContext,
         text = (decree_text or "").strip()
         if not text:
             return "拟旨失败：圣旨正文为空。"
-        # 结构化字段留在 tool arguments，由 session/web 组装进候选 seam（#517 r3）。
+        # punish_action/target_id|name/amount：tool schema 显式字段（#517 r3），
+        # 真源在 tool arguments，由 session/web 组装进候选 seam；标记串只带正文。
         # 返回草稿标记，由 minister_chat / GameSession.chat 截获展示给皇帝确认，不在此入库。
-        _ = (punish_action, target_id, name, amount)
         return f"__pending_directive__{text}"
 
     def propose_appointment(name: str, office: str, faction: str = "中立", reason: str = "", replaces: str = "") -> str:
