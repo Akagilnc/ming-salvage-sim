@@ -1425,9 +1425,6 @@ def extract_confirmation_intent(
     失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。"""
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
     if compact:
-        # #525：显式留中（「留中不发」等）优先于准/驳字面，避免「不发」落入拒绝。
-        if "留中" in compact:
-            return "留中"
         reject_hit = any(
             token in compact
             for token in (
