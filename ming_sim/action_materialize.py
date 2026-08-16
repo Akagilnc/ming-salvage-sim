@@ -504,6 +504,115 @@ def stage_pacification_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
+PUNISH_ACTIONS = frozenset({
+    "无", "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸", "削籍", "放归", "昭雪", "流放",
+})
+PUNISH_IMPRISON = frozenset({"拿问下狱", "拿问去职"})
+PUNISH_PARDON = frozenset({"放归", "昭雪"})
+
+
+def stage_punishment_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    target_id: str,
+    punish_action: str,
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    amount: object = 0,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared punishment candidate write: mode + same-target update."""
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    target = str(target_id or "").strip()
+    action = str(punish_action or "").strip()
+    if not target or action not in (PUNISH_ACTIONS - {"无"}):
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    existing_id = 0
+    existing_mode = None
+    for row in pending_rows:
+        if row.get("kind") != "directive":
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("dossier_action_type") or "").strip() != "punishment":
+            continue
+        if str(payload.get("target_id") or "").strip() != target:
+            continue
+        existing_id = int(row["id"])
+        existing_mode = payload.get("mode")
+        break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "punishment",
+        "target_kind": "character",
+        "target_id": target,
+        "punish_action": action,
+        "mode": mode,
+    }
+    try:
+        n = int(amount or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        staged["amount"] = n
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_punishment(ctx: MaterializeCtx) -> None:
+    """暂存惩处案卷；人物效果按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "punishment"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    target_id = str(intent.get("name") or intent.get("target_id") or "").strip()
+    punish_action = str(intent.get("punish_action") or "").strip()
+    if not target_id or punish_action not in (PUNISH_ACTIONS - {"无"}):
+        return
+    pending_id = stage_punishment_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=ctx.reply,
+        target_id=target_id,
+        punish_action=punish_action,
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        amount=intent.get("amount"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_pacification(ctx: MaterializeCtx) -> None:
     """暂存招抚案卷；确认与判后人物易主仍走既有案卷链。"""
     if (
@@ -635,6 +744,23 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
             ),
             materialize_fn=_materialize_pacification,
+        ),
+        ActionCluster(
+            "惩处", "punishment", EFFECT_MATERIALIZE, priority=58,
+            fields=(
+                FieldSpec(
+                    "punish_action", "惩处动作",
+                    PUNISH_ACTIONS, "无",
+                ),
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_punishment,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
