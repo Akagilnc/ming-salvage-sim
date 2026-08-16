@@ -311,9 +311,9 @@ def resolve_primary_intent(preclassified_intent: Any) -> Optional[Dict[str, Any]
 
 
 def is_confirmation_decision(intent: Optional[Mapping[str, Any]]) -> bool:
-    """确认回合屏蔽：kind=confirmation 且 应允/拒绝。"""
+    """确认回合屏蔽：kind=confirmation 且 应允/拒绝/留中（#525 第三态）。"""
     return (
         isinstance(intent, Mapping)
         and str(intent.get("kind") or "") == "confirmation"
-        and str(intent.get("confirmation") or "") in {"应允", "拒绝"}
+        and str(intent.get("confirmation") or "") in {"应允", "拒绝", "留中"}
     )
