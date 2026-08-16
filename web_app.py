@@ -1657,10 +1657,6 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            # #526：回话已落库（generating→active）后触发高置信收夜，避免 chat 内自锁 in-flight。
-            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-            if close_after is not None:
-                close_after(getattr(result, "court_action", "") or "")
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
             # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             answer_text = str(getattr(result, "answer", "") or "")
@@ -1672,7 +1668,6 @@ class WebGame:
                 )
                 # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
-            return payload
         except Exception:
             # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
             self.session.abandon_chat_turn_scene(chat_turn_id)
@@ -1684,6 +1679,11 @@ class WebGame:
                     for name, msgs in self.db.load_all_chat_history().items():
                         self.chat_history.setdefault(name, []).extend(msgs)
             raise
+        # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
+        close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+        if close_after is not None:
+            close_after(getattr(result, "court_action", "") or "")
+        return payload
 
     def interrupted_reply_retries(self, minister_name: str) -> List[Dict[str, Any]]:
         """#505：某大臣重开后待重试的中断回话轮（问话已落、回话未落）——恢复提示取数。
@@ -1755,10 +1755,6 @@ class WebGame:
                 )
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            # #526：重试回话落库后高置信收夜（与 chat 同缝）。
-            close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-            if close_after is not None:
-                close_after(getattr(result, "court_action", "") or "")
             answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
@@ -1767,7 +1763,6 @@ class WebGame:
                     "audience-p5-mindreading",
                 )
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
-            return payload
         except Exception:
             # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
             # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
@@ -1778,6 +1773,11 @@ class WebGame:
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                 self.db.restore_interrupted_after_failed_retry(chat_turn_id)
             raise
+        # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
+        close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+        if close_after is not None:
+            close_after(getattr(result, "court_action", "") or "")
+        return payload
 
     def mindreading_for_minister(
         self, minister_name: str, chat_turn_id: int = 0,
@@ -1830,14 +1830,12 @@ class WebGame:
         emit_delta,
         write_gate: Optional[threading.Lock] = None,
         action_intent_future: Optional[Future] = None,
-        audience_command_future: Optional[Future] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
         chunks: List[str] = []
         agent = self.session.registry.get(character)
         # 动作意图分类只读皇帝消息，是唯一可与回话重叠的独立调用：由 worker 先于回话
         # 发出（跨越回话流式在飞），此处消费一次；不再在本轮内二次发起。
-        # #526：收夜/留侍口令识别同拓扑并行。
         run_output = None
         # The session audience seam is per-character: passing only the message
         # makes a web-streamed question bypass that perspective.
@@ -1888,7 +1886,6 @@ class WebGame:
         interpreted = self._chat_stream_interpret_tools(
             minister_name, text, character, answer, run_output,
             action_intent_future, chat_turn_id,
-            audience_command_future=audience_command_future,
         )
         scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
         cm = write_gate if write_gate is not None else contextlib.nullcontext()
@@ -1912,10 +1909,6 @@ class WebGame:
                     directive_confirmation_ambiguous=interpreted["directive_ambiguous"],
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-        # #526：回话落库后高置信收夜（与非流式同缝）。
-        close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
-        if close_after is not None:
-            close_after(interpreted.get("court_action") or "")
         return payload
 
     def _chat_stream_interpret_tools(
@@ -1927,7 +1920,6 @@ class WebGame:
         run_output: Any,
         action_intent_future: Any,
         chat_turn_id: int,
-        audience_command_future: Any = None,
     ) -> Dict[str, Any]:
         # 截 propose_directive：入 pending_actions；截 propose_appointment：吏部铨选建档
         proposed = None
@@ -1940,15 +1932,15 @@ class WebGame:
         pending_action_id = 0
         tool_pending_action_id = 0
         tool_stage_failures: List[Dict[str, Any]] = []
-        # #526：口令判词与 session.chat 同缝（流式不经 session.chat）。
+        # #526：口令判词与 session.chat 同缝（流式不经 session.chat；同步封闭集，无 Future）。
         apply_cmd = getattr(self.session, "_apply_audience_command_verdict", None)
-        finish_cmd = getattr(self.session, "_finish_audience_command_recognize", None)
-        if apply_cmd is not None and finish_cmd is not None:
+        recognize_cmd = getattr(self.session, "_recognize_audience_command_verdict", None)
+        if apply_cmd is not None and recognize_cmd is not None:
             from ming_sim.session import ChatTurnResult
             cmd_result = ChatTurnResult(answer=answer)
             apply_cmd(
                 cmd_result, character, text,
-                verdict=finish_cmd(audience_command_future, text),
+                verdict=recognize_cmd(text),
                 chat_turn_id=int(chat_turn_id or 0),
             )
             answer = cmd_result.answer
@@ -2518,10 +2510,6 @@ class WebGame:
                     # 由 _audience_prompt_for_message 单次落地，不在此重复发起。
                     character = self.session._character(minister_name)
                     action_intent_future = self.session._start_cli_action_intent(character, text)
-                    start_cmd = getattr(self.session, "_start_audience_command_recognize", None)
-                    audience_command_future = (
-                        start_cmd(text) if start_cmd is not None else None
-                    )
 
                     # LLM 在无锁窗口跑；落库/会话动作再抢 write_gate（#498 AC10）
                     payload = self._chat_stream_payload(
@@ -2529,7 +2517,6 @@ class WebGame:
                         accepted_turn, emit_delta,
                         write_gate=write_gate,
                         action_intent_future=action_intent_future,
-                        audience_command_future=audience_command_future,
                     )
                 except Exception as error:  # noqa: BLE001
                     # R3 self-check: _fail_chat_turn_and_reload 自身可能再抛（DB 已坏）——必须吞掉，
@@ -2547,6 +2534,22 @@ class WebGame:
                     else:
                         ev_queue.put({"type": "error", "message": str(error), **identity})
                     return
+
+                # #526：回话已落库后收夜。失败响亮可见，不得回滚已成回话；夜可恢复。
+                close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
+                if close_after is not None:
+                    try:
+                        close_after((payload or {}).get("court_action") or "")
+                    except Exception as close_err:
+                        from ming_sim.audience_night import AudienceNightError
+                        if isinstance(close_err, AudienceNightError):
+                            ev_queue.put({
+                                "type": "error",
+                                "message": str(close_err),
+                                **identity,
+                            })
+                            return
+                        raise
 
                 # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
                 ev_queue.put({"type": "done", "payload": payload or {}})
