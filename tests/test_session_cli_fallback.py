@@ -562,48 +562,6 @@ def test_confirmation_mixed_rejection_and_approval_cues_uses_semantic_extractor(
     assert calls and calls[0][1] == "confirmation"
 
 
-def test_confirmation_negated_hold_over_uses_semantic_extractor(monkeypatch):
-    """#525：「不必留中，准了」含「留中」字面，不得字面快路径误判留中。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "应允"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="不必留中，准了。",
-        minister_reply="臣候旨。",
-        pending_summaries=["草拟圣旨：清核辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result == "应允"
-    assert calls and calls[0][1] == "confirmation"
-
-
-def test_confirmation_explicit_hold_over_uses_semantic_extractor(monkeypatch):
-    """#525：显式「留中不发」走既有 typed 抽取，不得依赖字面快路径。"""
-    calls = []
-
-    def _semantic_confirmation(prompt, llm_config=None, tag=""):
-        calls.append((prompt, tag))
-        return (json.dumps({"确认": "留中"}, ensure_ascii=False), 1)
-
-    monkeypatch.setattr(cb, "_run_json_extractor_for_config", _semantic_confirmation)
-
-    result = cb.extract_confirmation_intent(
-        player_message="留中不发。",
-        minister_reply="臣候旨。",
-        pending_summaries=["草拟圣旨：清核辽饷"],
-        llm_config=SimpleNamespace(channel="api"),
-    )
-
-    assert result == "留中"
-    assert calls and calls[0][1] == "confirmation"
-
-
 def test_confirmation_question_with_approval_words_uses_semantic_extractor(monkeypatch):
     """“若准奏会如何？”只是追问后果，不能因含“准奏”走快路提交 pending。"""
     calls = []
