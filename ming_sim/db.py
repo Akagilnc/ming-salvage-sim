@@ -10402,6 +10402,86 @@ class GameDB:
             # authority_records; legacy dossier payload ids are not retained.
             normalized.pop("authorization_id", None)
             normalized.pop("authorization_ids", None)
+        if action == "revoke_authority":
+            # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
+            try:
+                aid = strict_int(
+                    normalized.get("authority_id"), accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError):
+                aid = 0
+            if aid <= 0:
+                raise ValueError("收权旨意缺少 authority_id")
+            normalized["authority_id"] = aid
+            holder = str(
+                normalized.get("holder_id")
+                or normalized.get("name")
+                or normalized.get("target_id")
+                or ""
+            ).strip()
+            if holder:
+                normalized["holder_id"] = holder
+                normalized["name"] = holder
+                normalized["target_kind"] = "character"
+                normalized["target_id"] = holder
+            try:
+                grant_did = strict_int(
+                    normalized.get("grant_dossier_id"), accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError):
+                grant_did = 0
+            if grant_did > 0:
+                normalized["grant_dossier_id"] = grant_did
+            # 身份真源在 authority_records；禁保留并行 authorization_id(s)
+            normalized.pop("authorization_id", None)
+            normalized.pop("authorization_ids", None)
+        if action == "revoke_decree":
+            # #523：目标仅承诺/旨意；纯授权不得入撤回成命。
+            raw_target = str(normalized.get("target_id") or "").strip()
+            if raw_target.startswith("authority:"):
+                raise ValueError("撤回成命目标不得为纯授权")
+            revoke_did = 0
+            revoke_iid = 0
+            try:
+                revoke_did = strict_int(
+                    normalized.get("revoke_target_dossier_id"),
+                    accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError):
+                revoke_did = 0
+            try:
+                revoke_iid = strict_int(
+                    normalized.get("revoke_target_issue_id"),
+                    accept_numeric_strings=True,
+                )
+            except (TypeError, ValueError):
+                revoke_iid = 0
+            if revoke_did <= 0 and revoke_iid <= 0:
+                kind = str(normalized.get("target_kind") or "").strip()
+                raw = raw_target
+                if raw.startswith("dossier:"):
+                    kind = "dossier"
+                    raw = raw.split(":", 1)[1].strip()
+                elif raw.startswith("issue:"):
+                    kind = "issue"
+                    raw = raw.split(":", 1)[1].strip()
+                try:
+                    tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+                except (TypeError, ValueError):
+                    tid = 0
+                if tid <= 0:
+                    raise ValueError("撤回成命缺少目标成命标识")
+                if kind == "issue":
+                    revoke_iid = tid
+                else:
+                    revoke_did = tid
+                    kind = kind or "dossier"
+                normalized["target_kind"] = kind or "dossier"
+                normalized["target_id"] = str(tid)
+            if revoke_did > 0:
+                normalized["revoke_target_dossier_id"] = revoke_did
+            if revoke_iid > 0:
+                normalized["revoke_target_issue_id"] = revoke_iid
         if action == "punishment":
             # #517：与 grant_allocation / military_order 一致——合法非空动作在 admission 强制。
             # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
@@ -11895,6 +11975,16 @@ class GameDB:
                 # only by settlement's authority_changes slot. Skill grants are
                 # a distinct character-skill mechanic, not an authority map.
                 pass
+            elif row["action_type"] == "revoke_authority":
+                # #523 / #611：收权只接 authority_changes 收回槽；判后物化。
+                self._apply_revoke_authority_verdict_effect(
+                    state, row, payload, dossier_id,
+                )
+            elif row["action_type"] == "revoke_decree":
+                # #523：撤回成命=breach 目标 + 停 initiative；捆带授权走 authority_changes。
+                self._apply_revoke_decree_verdict_effect(
+                    state, row, payload, dossier_id,
+                )
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
@@ -12285,6 +12375,145 @@ class GameDB:
             if results and isinstance(results[0], dict):
                 fail_reason = str(results[0].get("reason") or "")
             raise ValueError(fail_reason or "军令职守变更物化失败")
+
+    def _apply_revoke_authority_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#523：收权案卷顺颁后走 #611 authority_changes 收回槽。
+
+        生产项显式携 authority_id + 本项 dossier_id；观感边由 #611 槽写入。
+        不直写 skill_grants，不走 0056 毁约轨。
+        """
+        from ming_sim.issues import apply_score_extraction
+        from ming_sim.strict_types import strict_int
+
+        try:
+            authority_id = strict_int(
+                payload.get("authority_id"), accept_numeric_strings=True,
+            )
+        except (TypeError, ValueError):
+            authority_id = 0
+        if authority_id <= 0:
+            raise ValueError("收权案卷缺少 authority_id")
+        out = apply_score_extraction(
+            self, state,
+            {
+                "authority_changes": [{
+                    "动作": "收回",
+                    "authority_id": authority_id,
+                    "dossier_id": int(dossier_id),
+                }],
+            },
+            content=None,
+        )
+        rows = out.get("authority_changes") or []
+        item = rows[0] if rows else {"rejected": True, "reason": "收权未落"}
+        if item.get("rejected"):
+            reason = str(item.get("reason") or "收权被拒")
+            raise ValueError(reason)
+
+    def _apply_revoke_decree_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#523：撤回成命顺颁后终结目标承诺/旨意；捆带授权走 authority_changes。
+
+        非 undo、不删旧账。代价归 ADR 0056（breach_decree_dossier）。
+        """
+        from ming_sim.issues import apply_score_extraction
+        from ming_sim.strict_types import strict_int
+
+        try:
+            target_dossier_id = strict_int(
+                payload.get("revoke_target_dossier_id"),
+                accept_numeric_strings=True,
+            )
+        except (TypeError, ValueError):
+            target_dossier_id = 0
+        try:
+            target_issue_id = strict_int(
+                payload.get("revoke_target_issue_id"),
+                accept_numeric_strings=True,
+            )
+        except (TypeError, ValueError):
+            target_issue_id = 0
+
+        if target_dossier_id <= 0 and target_issue_id <= 0:
+            raw = str(payload.get("target_id") or row.get("target_id") or "").strip()
+            kind = str(
+                payload.get("target_kind") or row.get("target_kind") or ""
+            ).strip()
+            if raw.startswith("dossier:"):
+                kind = "dossier"
+                raw = raw.split(":", 1)[1].strip()
+            elif raw.startswith("issue:"):
+                kind = "issue"
+                raw = raw.split(":", 1)[1].strip()
+            try:
+                tid = strict_int(raw, accept_numeric_strings=True) if raw else 0
+            except (TypeError, ValueError):
+                tid = 0
+            if tid <= 0:
+                raise ValueError("撤回成命案卷缺少目标")
+            if kind == "issue":
+                target_issue_id = tid
+            else:
+                target_dossier_id = tid
+
+        # issue 目标：经 origin_ref 回指案卷；无案卷则只停 initiative
+        if target_dossier_id <= 0 and target_issue_id > 0:
+            issue_row = self.conn.execute(
+                "SELECT origin_ref FROM issues WHERE id=?", (target_issue_id,),
+            ).fetchone()
+            if issue_row is not None:
+                origin = str(issue_row["origin_ref"] or "").strip()
+                if origin.startswith("dossier:"):
+                    try:
+                        target_dossier_id = int(origin.split(":", 1)[1])
+                    except (TypeError, ValueError):
+                        target_dossier_id = 0
+
+        reason = str(
+            payload.get("text") or row.get("decree_text") or "撤回成命"
+        )[:400]
+
+        if target_dossier_id > 0:
+            # 0056 毁约轨：皇威 + 观感 + 派系（既有 breach 缝）
+            self.breach_decree_dossier(
+                state, int(target_dossier_id), reason=reason, commit=False,
+            )
+            # 捆带授权：授予源=被撤案卷 → authority_changes 收回（本项 dossier 为来源）
+            bundled = self.conn.execute(
+                "SELECT id FROM authority_records "
+                "WHERE dossier_id=? AND revoked=0 ORDER BY id",
+                (int(target_dossier_id),),
+            ).fetchall()
+            if bundled:
+                changes = [{
+                    "动作": "收回",
+                    "authority_id": int(b["id"]),
+                    "dossier_id": int(dossier_id),
+                } for b in bundled]
+                apply_score_extraction(
+                    self, state, {"authority_changes": changes}, content=None,
+                )
+            # 同源 active initiative 停 tick
+            origin_ref = f"dossier:{int(target_dossier_id)}"
+            for iss in self.conn.execute(
+                "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
+                (origin_ref,),
+            ).fetchall():
+                self.cancel_issue(
+                    state, int(iss["id"]), narrative=reason, commit=False,
+                )
+
+        if target_issue_id > 0:
+            row_i = self.conn.execute(
+                "SELECT status FROM issues WHERE id=?", (int(target_issue_id),),
+            ).fetchone()
+            if row_i is not None and str(row_i["status"]) == "active":
+                self.cancel_issue(
+                    state, int(target_issue_id), narrative=reason, commit=False,
+                )
 
     def _apply_military_order_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,
