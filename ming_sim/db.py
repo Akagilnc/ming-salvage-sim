@@ -12459,53 +12459,67 @@ class GameDB:
             else:
                 target_dossier_id = tid
 
-        # issue 目标：经 origin_ref 回指案卷；无案卷则只停 initiative
+        # issue 目标：经 origin_ref 回指案卷；无合法案卷来源不得免代价终结
         if target_dossier_id <= 0 and target_issue_id > 0:
             issue_row = self.conn.execute(
-                "SELECT origin_ref FROM issues WHERE id=?", (target_issue_id,),
+                "SELECT kind, status, origin_ref FROM issues WHERE id=?",
+                (target_issue_id,),
             ).fetchone()
-            if issue_row is not None:
-                origin = str(issue_row["origin_ref"] or "").strip()
-                if origin.startswith("dossier:"):
-                    try:
-                        target_dossier_id = int(origin.split(":", 1)[1])
-                    except (TypeError, ValueError):
-                        target_dossier_id = 0
+            if issue_row is None:
+                raise ValueError("撤回成命目标事项不存在")
+            if str(issue_row["kind"] or "").strip() != "initiative":
+                raise ValueError("撤回成命目标须为承诺/initiative")
+            origin = str(issue_row["origin_ref"] or "").strip()
+            if origin.startswith("dossier:"):
+                try:
+                    target_dossier_id = int(origin.split(":", 1)[1])
+                except (TypeError, ValueError):
+                    target_dossier_id = 0
+
+        if target_dossier_id <= 0:
+            # 删除 standalone issue 免代价旁路（dossier_id=0 仍 cancel_issue）
+            raise ValueError("撤回成命目标无合法案卷来源，不得免代价终结")
 
         reason = str(
             payload.get("text") or row.get("decree_text") or "撤回成命"
         )[:400]
 
-        if target_dossier_id > 0:
-            # 0056 毁约轨：皇威 + 观感 + 派系（既有 breach 缝）
-            self.breach_decree_dossier(
-                state, int(target_dossier_id), reason=reason, commit=False,
+        # 0056 毁约轨：任何获准终结路径均须走同根代价（皇威+观感+派系）
+        self.breach_decree_dossier(
+            state, int(target_dossier_id), reason=reason, commit=False,
+        )
+        # 捆带授权：授予源=被撤案卷 → authority_changes 收回（本项 dossier 为来源）
+        # ADR 0005：落库失败不得静默——对齐 _apply_revoke_authority_verdict_effect
+        bundled = self.conn.execute(
+            "SELECT id FROM authority_records "
+            "WHERE dossier_id=? AND revoked=0 ORDER BY id",
+            (int(target_dossier_id),),
+        ).fetchall()
+        if bundled:
+            changes = [{
+                "动作": "收回",
+                "authority_id": int(b["id"]),
+                "dossier_id": int(dossier_id),
+            } for b in bundled]
+            out = apply_score_extraction(
+                self, state, {"authority_changes": changes}, content=None,
             )
-            # 捆带授权：授予源=被撤案卷 → authority_changes 收回（本项 dossier 为来源）
-            bundled = self.conn.execute(
-                "SELECT id FROM authority_records "
-                "WHERE dossier_id=? AND revoked=0 ORDER BY id",
-                (int(target_dossier_id),),
-            ).fetchall()
-            if bundled:
-                changes = [{
-                    "动作": "收回",
-                    "authority_id": int(b["id"]),
-                    "dossier_id": int(dossier_id),
-                } for b in bundled]
-                apply_score_extraction(
-                    self, state, {"authority_changes": changes}, content=None,
-                )
-            # 同源 active initiative 停 tick
-            origin_ref = f"dossier:{int(target_dossier_id)}"
-            for iss in self.conn.execute(
-                "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
-                (origin_ref,),
-            ).fetchall():
-                self.cancel_issue(
-                    state, int(iss["id"]), narrative=reason, commit=False,
-                )
-
+            rows = out.get("authority_changes") or []
+            for item in rows:
+                if isinstance(item, dict) and item.get("rejected"):
+                    reason_r = str(item.get("reason") or "捆带授权收回被拒")
+                    raise ValueError(reason_r)
+            if len(rows) < len(changes):
+                raise ValueError("捆带授权收回未完整落库")
+        # 同源 active initiative 停 tick
+        origin_ref = f"dossier:{int(target_dossier_id)}"
+        for iss in self.conn.execute(
+            "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
+            (origin_ref,),
+        ).fetchall():
+            self.cancel_issue(
+                state, int(iss["id"]), narrative=reason, commit=False,
+            )
         if target_issue_id > 0:
             row_i = self.conn.execute(
                 "SELECT status FROM issues WHERE id=?", (int(target_issue_id),),

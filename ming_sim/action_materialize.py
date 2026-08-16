@@ -1385,13 +1385,37 @@ def _materialize_revoke_authority(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
+    """可撤成命：已颁/执行中的承诺·旨意案卷（ADR 0056 可走毁约轨）。"""
+    status = str(dossier.get("status") or "").strip()
+    return status in {"promulgated", "executing"}
+
+
+def _list_revocable_decree_candidates(db: Any) -> List[Dict[str, Any]]:
+    """含糊问清候选：当前可撤成命（已颁/执行中案卷）。"""
+    rows = db.conn.execute(
+        "SELECT id, decree_text, status FROM decree_dossiers "
+        "WHERE status IN ('promulgated', 'executing') ORDER BY id",
+    ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        text = str(row["decree_text"] or "").strip() or f"案卷{int(row['id'])}"
+        out.append({"id": int(row["id"]), "summary": text})
+    return out
+
+
 def _parse_revoke_decree_target(
     db: Any, *,
     target_id: object = "",
     target_kind: object = "",
     target_candidate: object = "",
 ) -> Optional[Dict[str, Any]]:
-    """解析撤回成命目标：仅承诺/旨意（dossier/issue）；纯授权拒。"""
+    """解析撤回成命目标：仅承诺/旨意（dossier/initiative）；须可走 0056。
+
+    - 纯授权拒（归收权·罢差）
+    - issue 仅 active initiative，且 origin_ref 回指可撤案卷（禁 standalone 免代价）
+    - dossier 须已颁/执行中
+    """
     if str(target_candidate or "").strip() == "含糊":
         return None
     raw = str(target_id or "").strip()
@@ -1418,6 +1442,10 @@ def _parse_revoke_decree_target(
         row = db.conn.execute("SELECT * FROM issues WHERE id=?", (tid,)).fetchone()
         if row is None:
             return None
+        if str(row["kind"] or "").strip() != "initiative":
+            return None
+        if str(row["status"] or "").strip() != "active":
+            return None
         linked = 0
         origin = str(row["origin_ref"] or "").strip()
         if origin.startswith("dossier:"):
@@ -1425,6 +1453,12 @@ def _parse_revoke_decree_target(
                 linked = int(origin.split(":", 1)[1])
             except (TypeError, ValueError):
                 linked = 0
+        # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
+        if linked <= 0:
+            return None
+        dossier = db.get_decree_dossier(linked)
+        if dossier is None or not _dossier_is_revocable_decree(db, dossier):
+            return None
         return {
             "target_kind": "issue",
             "target_id": str(tid),
@@ -1432,7 +1466,7 @@ def _parse_revoke_decree_target(
             "dossier_id": linked,
         }
     dossier = db.get_decree_dossier(tid)
-    if dossier is None:
+    if dossier is None or not _dossier_is_revocable_decree(db, dossier):
         return None
     return {
         "target_kind": "dossier",
@@ -1529,7 +1563,10 @@ def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
         return
     intent = ctx.intent or {}
     if str(intent.get("target_candidate") or "").strip() == "含糊":
-        ctx.out["directive_confirmation_ambiguous"] = {"candidates": []}
+        # #502 含糊三态：给出真实可撤成命候选，供皇帝点名；不静默暂存
+        ctx.out["directive_confirmation_ambiguous"] = {
+            "candidates": _list_revocable_decree_candidates(ctx.session.db),
+        }
         return
     body = str(ctx.reply or ctx.player_message or "").strip()
     if not body:
