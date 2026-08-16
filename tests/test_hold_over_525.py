@@ -109,6 +109,35 @@ def test_explicit_hold_over_marks_named_candidate(game, monkeypatch):
     assert id_a not in {p["id"] for p in _pending_directives(db, state.turn)}
 
 
+def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
+    """含「留中」字面但语义为准（「不必留中，准了」）→ 应允成 night_approved，不得误入 held_over。"""
+    db, state, content = game
+    name = _active_minister_name(db, content)
+    ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
+    an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    id_a = db.stage_directive_candidate(
+        state.turn, name,
+        payload={**_POLICY_FIELDS, "text": "着户部清查三边粮饷，限三月完报。", "actor": name},
+    )
+    sess = _fake_session(db, state)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _canned_by_tag({
+        "confirmation": {"确认": "应允"},
+    }))
+
+    GameSession.apply_cli_conversation_actions(
+        sess, ch, player_message="不必留中，准了", answer="臣遵旨。",
+        has_directive=False, secret_order_id=None,
+    )
+
+    row = db.conn.execute(
+        "SELECT status, night_approved FROM pending_actions WHERE id=?", (int(id_a),),
+    ).fetchone()
+    assert str(row["status"]) == "pending"
+    assert int(row["night_approved"] or 0) == 1
+    assert id_a in {p["id"] for p in _pending_directives(db, state.turn)}
+
+
 def test_hold_over_skipped_at_default_commit_sibling_still_approves(game, monkeypatch):
     """留中态在默认提交点被跳过（不成案）；未点名兄弟仍走默认准（0038/502）。"""
     db, state, content = game
