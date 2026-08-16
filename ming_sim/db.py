@@ -10533,31 +10533,25 @@ class GameDB:
                 normalized.pop("deadline_months", None)
         if action == "referral":
             # #524：下议=移交程序；必带未来 end_turn 与非空机关/职司列表。
-            # 禁个人 owner/assignee（与交办互斥）。
-            normalized.pop("assignee", None)
-            normalized.pop("assignee_id", None)
-            bodies_raw = normalized.get("responsible_bodies")
-            if isinstance(bodies_raw, str):
-                text = bodies_raw.strip()
-                if not text:
-                    bodies: list = []
-                else:
-                    try:
-                        parsed = json.loads(text)
-                    except (TypeError, ValueError):
-                        parsed = [p.strip() for p in text.replace("，", ",").split(",") if p.strip()]
-                    bodies = parsed if isinstance(parsed, list) else []
-            elif isinstance(bodies_raw, (list, tuple)):
-                bodies = list(bodies_raw)
-            else:
-                bodies = []
-            cleaned = []
-            for item in bodies:
-                name = str(item or "").strip()
-                if name and name not in cleaned:
-                    cleaned.append(name)
+            # 禁个人 owner/assignee（与交办互斥）——非空即 fail-loud，禁静默 pop。
+            from ming_sim.action_materialize import (
+                assert_responsible_bodies_org_only,
+                character_person_names,
+                parse_responsible_bodies,
+            )
+            for banned in ("owner", "assignee", "assignee_id"):
+                if str(normalized.get(banned) or "").strip():
+                    raise ValueError(f"下议旨意不得携带 {banned}")
+            cleaned = parse_responsible_bodies(normalized.get("responsible_bodies"))
             if not cleaned:
                 raise ValueError("下议旨意缺少 responsible_bodies")
+            assert_responsible_bodies_org_only(
+                cleaned,
+                known_person_names=character_person_names(self),
+                current_minister=str(
+                    normalized.get("actor") or normalized.get("minister_name") or ""
+                ),
+            )
             normalized["responsible_bodies"] = cleaned
             try:
                 end_turn = strict_int(
@@ -12634,21 +12628,38 @@ class GameDB:
         Returns False on soft-reject (cap 等)；True 时 caller 继续 executing 过渡。
         禁个人 owner：participants 仅 responsible_bodies 机关/职司名。
         """
+        from ming_sim.action_materialize import (
+            assert_responsible_bodies_org_only,
+            character_person_names,
+            parse_responsible_bodies,
+        )
         from ming_sim.issues import apply_score_extraction
 
-        bodies_raw = payload.get("responsible_bodies")
-        if isinstance(bodies_raw, str):
-            try:
-                bodies_raw = json.loads(bodies_raw)
-            except (TypeError, ValueError):
-                bodies_raw = []
-        if not isinstance(bodies_raw, (list, tuple)):
-            bodies_raw = []
-        bodies = [str(b).strip() for b in bodies_raw if str(b).strip()]
+        # 与暂存/admission 同一解析；个人名不得落 participants。
+        bodies = parse_responsible_bodies(payload.get("responsible_bodies"))
         if not bodies:
             self.transition_decree_dossier(dossier_id, "executing", commit=False)
             self.record_dossier_execution(
                 dossier_id, "failed", "下议缺少 responsible_bodies",
+                state.turn, close=True, commit=False,
+            )
+            return False
+        try:
+            assert_responsible_bodies_org_only(
+                bodies,
+                known_person_names=character_person_names(self),
+                current_minister=str(
+                    row.get("executor_id")
+                    or payload.get("actor")
+                    or payload.get("assignee_id")
+                    or payload.get("assignee")
+                    or ""
+                ),
+            )
+        except ValueError as exc:
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", str(exc) or "responsible_bodies 禁个人名",
                 state.turn, close=True, commit=False,
             )
             return False

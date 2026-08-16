@@ -390,3 +390,160 @@ def test_tingtui_appointment_shape_rejects_bad_samples(bad, label):
     """廷推会推反例被拒（只验 shape，不实现会推裁定）。"""
     ok, reason = validate_tingtui_appointment_shape(bad)
     assert ok is False, f"{label} 应拒，got ok reason={reason!r}"
+
+
+# ── #524 r1：forbidden ownership fail-loud + responsible_bodies 三缝 ──
+
+
+def _referral_admission_base(db, state, *, bodies=None):
+    return {
+        "text": "交部议清核边饷",
+        "actor": _minister(db),
+        "dossier_action_type": "referral",
+        "target_kind": "issue",
+        "target_id": "边饷",
+        "title": "清核边饷",
+        "end_turn": int(state.turn) + 3,
+        "responsible_bodies": list(bodies if bodies is not None else ["户部"]),
+        "mode": "ordinary",
+    }
+
+
+def _other_character_name(db, *, exclude=""):
+    row = db.conn.execute(
+        "SELECT name FROM characters WHERE status='active' AND name!=? "
+        "ORDER BY name LIMIT 1",
+        (str(exclude or ""),),
+    ).fetchone()
+    assert row is not None, "fixture 须有可用人物档"
+    return str(row["name"])
+
+
+@pytest.mark.parametrize("field", ["owner", "assignee", "assignee_id"])
+def test_referral_admission_rejects_nonempty_ownership_fields(game, field):
+    """下议 admission：非空 owner/assignee/assignee_id fail-loud，禁静默 pop。"""
+    db, state, content = game
+    base = _referral_admission_base(db, state)
+    with pytest.raises(ValueError, match=field):
+        db._normalize_directive_dossier_payload(
+            {**base, field: "某人"},
+            content=content,
+            current_turn=state.turn,
+        )
+
+
+def test_referral_admission_allows_empty_ownership_fields(game):
+    """空/空白 ownership 字段不触发拒绝；不得残留非空个人 owner。"""
+    db, state, content = game
+    base = _referral_admission_base(db, state)
+    ok = db._normalize_directive_dossier_payload(
+        {**base, "owner": "", "assignee": "  ", "assignee_id": ""},
+        content=content,
+        current_turn=state.turn,
+    )
+    assert ok["responsible_bodies"] == ["户部"]
+    assert not str(ok.get("owner") or "").strip()
+    assert not str(ok.get("assignee") or "").strip()
+    assert not str(ok.get("assignee_id") or "").strip()
+
+
+def test_responsible_bodies_personal_name_rejected_at_staging(game):
+    """暂存缝：responsible_bodies 含人物档/召对大臣名 → 不发产项。"""
+    db, state, content = game
+    actor = _minister(db)
+    other = _other_character_name(db, exclude=actor)
+    for bodies in ([actor], [other], ["吏部", other], f"{other}、户部"):
+        ctx = _stage_referral(
+            db, state.turn,
+            title="私名部议",
+            responsible_bodies=bodies,
+            deadline_months=3,
+            actor=actor,
+        )
+        assert not ctx.out.get("pending_action_id"), f"bodies={bodies!r} 不得产项"
+    assert _referral_pendings(db, state.turn, minister_name=actor) == []
+
+
+def test_responsible_bodies_personal_name_rejected_at_admission(game):
+    """admission 缝：个人名 responsible_bodies fail-loud。"""
+    db, state, content = game
+    actor = _minister(db)
+    other = _other_character_name(db, exclude=actor)
+    base = _referral_admission_base(db, state)
+    for bodies in ([actor], [other], ["兵部", other]):
+        with pytest.raises(ValueError, match="个人|responsible_bodies"):
+            db._normalize_directive_dossier_payload(
+                {**base, "responsible_bodies": bodies},
+                content=content,
+                current_turn=state.turn,
+            )
+
+
+def test_responsible_bodies_personal_name_rejected_at_verdict(game):
+    """判后缝：payload 夹带个人名不得落入 initiative.participants。"""
+    db, state, content = game
+    before = len(_active_initiatives(db))
+    actor = _minister(db)
+    other = _other_character_name(db, exclude=actor)
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="referral",
+        decree_text="夹带私名下议",
+        target_kind="issue",
+        target_id="夹带私名",
+        payload={
+            "text": "夹带私名下议",
+            "title": "夹带私名",
+            "end_turn": int(state.turn) + 2,
+            "responsible_bodies": [other, "吏部"],
+            "mode": "ordinary",
+            "actor": actor,
+        },
+    )
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        content=content,
+    )
+    assert len(_active_initiatives(db)) == before
+    assert not any(
+        r["origin_ref"] == f"dossier:{dossier_id}"
+        for r in _active_initiatives(db)
+    )
+    # 不得以个人名落 participants（即便将来软失败改形态，也禁私名入盘）
+    for row in db.conn.execute(
+        "SELECT participants FROM issues WHERE origin_ref=?",
+        (f"dossier:{dossier_id}",),
+    ).fetchall():
+        parts = json.loads(row["participants"] or "[]")
+        assert other not in parts
+        assert actor not in parts
+
+
+def test_responsible_bodies_delimiter_parity_across_seams(game):
+    """三缝同一解析：顿号/斜线等分隔与 JSON 列表等价；机关名可过 admission。"""
+    db, state, content = game
+    actor = _minister(db)
+    expected = ["吏部", "户部"]
+    # 暂存：delimited 字符串与 list 同形
+    ctx = _stage_referral(
+        db, state.turn,
+        title="二部分议",
+        responsible_bodies="吏部、户部",
+        deadline_months=3,
+        actor=actor,
+    )
+    pending_id = ctx.out.get("pending_action_id")
+    assert pending_id
+    pending = _pending_payload(db, pending_id)
+    assert pending["responsible_bodies"] == expected
+
+    # admission：同一 delimited 输入须解析为相同列表（不得只认逗号）
+    for raw in ("吏部、户部", "吏部/户部", "吏部;户部", "吏部／户部", "吏部|户部",
+                "吏部,户部", "吏部，户部", expected, json.dumps(expected, ensure_ascii=False)):
+        ok = db._normalize_directive_dossier_payload(
+            {**_referral_admission_base(db, state), "responsible_bodies": raw},
+            content=content,
+            current_turn=state.turn,
+        )
+        assert ok["responsible_bodies"] == expected, f"raw={raw!r}"
