@@ -22,7 +22,9 @@ from ming_sim.action_clusters import (
     cluster_by_kind,
 )
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
-from ming_sim.context import character_context_with_db
+import pytest
+
+from ming_sim.context import character_context_with_db, held_authority_context
 from ming_sim.db import GameDB
 from ming_sim.models import Character
 from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
@@ -400,6 +402,23 @@ def test_authorization_survives_restore(game):
     )
     assert any(int(r["id"]) == authority_id for r in still)
     restored.close()
+
+
+def test_held_authority_context_load_state_failure_is_fail_loud():
+    """ADR 0005：load_state 失败必须上抛，不得宽吞成假 turn 继续读授权档。"""
+    listed: list[object] = []
+
+    class _BoomDB:
+        def load_state(self):
+            raise RuntimeError("load_state exploded")
+
+        def list_active_authorities(self, turn, *, holder_id=""):
+            listed.append((turn, holder_id))
+            return []
+
+    with pytest.raises(RuntimeError, match="load_state exploded"):
+        held_authority_context(_char("试臣"), _BoomDB())  # type: ignore[arg-type]
+    assert listed == [], "load_state 失败后不得继续 list_active_authorities"
 
 
 def test_minister_context_shows_privilege_not_authority_row_id(game):
