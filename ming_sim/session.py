@@ -1191,20 +1191,27 @@ class GameSession:
             elif tool_name == "propose_directive" or tool_result.startswith("__pending_directive__"):
                 if confirmation_turn or explicit_secret_prefix:
                     continue
+                args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                if not isinstance(args, dict):
+                    args = {}
                 draft_text = tool_result.removeprefix("__pending_directive__").strip()
                 if not draft_text:
-                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                     draft_text = (args.get("decree_text") or "").strip()
                 if draft_text and self._proposal_blocked(self.state):
                     draft_text = ""  # 恢复窗婉拒：不入档（见 _proposal_blocked）
                 if draft_text:
-                    # #502 L2 / #522：tool 拟旨与 CLI 共用候选 seam；招抚走 admission。
+                    # #502 L2 / #522 / #517：tool 拟旨与 CLI 共用候选 seam；
+                    # 惩处结构化字段只从 tool arguments 交付，不扫散文。
                     stage_failures: List[Dict[str, Any]] = []
                     result.pending_action_id = coalesce_pending_action_id(
                         result.pending_action_id,
                         self._stage_directive_tool_candidate(
                             draft_text, character.name, message_text,
                             failures_out=stage_failures,
+                            punish_action=args.get("punish_action"),
+                            target_id=args.get("target_id"),
+                            name=args.get("name"),
+                            amount=args.get("amount"),
                         ),
                     )
                     if stage_failures:
@@ -1881,67 +1888,21 @@ class GameSession:
         # Zero qualified → unknown; multiple qualified canonicals → ambiguous.
         return None
 
-    @staticmethod
-    def _punish_action_in_tool_draft(text: str) -> Optional[str]:
-        """Longest ACTION_CLUSTERS punish_action hit in propose_directive draft."""
-        import re
-        from ming_sim.action_materialize import punish_actions_effective
-
-        blob = str(text or "")
-        if not blob:
-            return None
-        hits = [action for action in punish_actions_effective() if action and action in blob]
-        # 史式拆写「罚某人俸银」仍属罚俸，不得漏识降级 special_decree。
-        if "罚俸" not in hits and re.search(r"罚.{0,12}俸", blob):
-            hits.append("罚俸")
-        if not hits:
-            return None
-        hits.sort(key=len, reverse=True)
-        return hits[0]
-
-    def _mentioned_punishment_target(self, text: str) -> Optional[str]:
-        """Single ming minister canonical mentioned in a 惩处 tool draft."""
-        blob = str(text or "")
-        if not blob or getattr(self, "content", None) is None:
-            return None
-        hit_canonicals: set[str] = set()
-        for name, character in self.content.characters.items():
-            needles = [name, *list(getattr(character, "aliases", None) or [])]
-            for needle in needles:
-                token = str(needle or "").strip()
-                if not token or token not in blob:
-                    continue
-                matched = _find_existing_minister(self.content, token, self.db)
-                if matched:
-                    hit_canonicals.add(matched)
-        if len(hit_canonicals) == 1:
-            return next(iter(hit_canonicals))
-        return None
-
-    @staticmethod
-    def _amount_in_tool_draft(text: str) -> int:
-        """Parse a positive 两 amount from propose_directive draft text."""
-        import re
-
-        match = re.search(r"(\d+)\s*两?", str(text or ""))
-        if not match:
-            return 0
-        try:
-            return int(match.group(1))
-        except (TypeError, ValueError):
-            return 0
-
     def _stage_directive_tool_candidate(
         self, draft_text: str, minister_name: str, message_text: str,
         *, failures_out: Optional[List[Dict[str, Any]]] = None,
+        punish_action: object = None,
+        target_id: object = None,
+        name: object = None,
+        amount: object = None,
     ) -> int:
         """API/stream/CLI tool propose_directive → structured candidate seam (#522/#517).
 
-        Pacification/punishment cue+target admission reads only the tool draft.
-        Session chatter must not hijack an ordinary draft. Unknown/ambiguous/
-        incomplete structured drafts fail loud (return 0 + diagnostic) and never
-        degrade to stage_explicit_directive → special_decree. Generic drafts keep
-        the special_decree path.
+        Pacification cue/target still reads the tool draft. Punishment facts
+        (punish_action / single target / positive fine amount) come only from
+        explicit tool/action-candidate fields — never prose keyword or number
+        guessing. Incomplete structured punishment fails loud and never degrades
+        to special_decree; ordinary prose discussion keeps the special_decree path.
         """
         text = str(draft_text or "").strip()
         if not text:
@@ -1975,13 +1936,24 @@ class GameSession:
             )
             return int(pending_id or 0)
 
-        # #517 r2：惩处复用 ACTION_CLUSTERS / stage_punishment_candidate，不降级 special_decree。
-        # 经 GameSession 显式分派，避免 test double 缺 helper 时 AttributeError 吞 staging。
-        punish_action = GameSession._punish_action_in_tool_draft(text)
-        if punish_action:
-            target = GameSession._mentioned_punishment_target(self, text)
-            amount = GameSession._amount_in_tool_draft(text) if punish_action == "罚俸" else 0
-            if not target or (punish_action == "罚俸" and amount <= 0):
+        # #517 r3：惩处只认 ACTION_CLUSTERS 同名显式字段，不扫散文关键词/数字。
+        from ming_sim.action_materialize import (
+            punish_actions_effective,
+            stage_punishment_candidate,
+        )
+        action = str(punish_action or "").strip()
+        if action in punish_actions_effective():
+            raw_target = str(target_id or name or "").strip()
+            target = (
+                _find_existing_minister(self.content, raw_target, self.db)
+                if raw_target and getattr(self, "content", None) is not None
+                else None
+            )
+            try:
+                n = int(amount) if amount is not None and amount != "" else 0
+            except (TypeError, ValueError):
+                n = 0
+            if not target or (action == "罚俸" and n <= 0):
                 if not target:
                     message = (
                         "惩处目标未知或歧义，未能拟旨入档；"
@@ -2003,16 +1975,15 @@ class GameSession:
                 if failures_out is not None:
                     failures_out.append(failure)
                 return 0
-            from ming_sim.action_materialize import stage_punishment_candidate
             pending_id = stage_punishment_candidate(
                 self.db,
                 self.state.turn,
                 minister_name,
                 text=text,
                 target_id=target,
-                punish_action=punish_action,
+                punish_action=action,
                 emperor_text=message_text,
-                amount=amount if punish_action == "罚俸" else 0,
+                amount=n if action == "罚俸" else 0,
             )
             if not pending_id:
                 failure = {

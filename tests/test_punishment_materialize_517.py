@@ -615,7 +615,7 @@ def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
 
 
 def test_api_tool_punishment_stages_structured_not_special_decree(game):
-    """r2 类4：API propose_directive 惩处走结构化暂存，不降级 special_decree。"""
+    """r2/r3：API propose_directive 惩处只认结构化字段，不降级 special_decree。"""
     db, state, content = game
     target = _active_ming(db, content)
     minister = db.conn.execute(
@@ -631,6 +631,8 @@ def test_api_tool_punishment_stages_structured_not_special_decree(game):
         minister,
         f"拟旨拿问{target.name}。",
         failures_out=failures,
+        punish_action="拿问下狱",
+        target_id=target.name,
     )
     assert pending_id > 0
     assert not failures
@@ -642,7 +644,7 @@ def test_api_tool_punishment_stages_structured_not_special_decree(game):
 
 
 def test_api_tool_punishment_unknown_or_incomplete_fails_loud_not_special_decree(game):
-    """r2 类4：惩处目标未知/罚俸无金额 → fail-loud，不得 special_decree。"""
+    """r2/r3：结构化惩处目标未知/罚俸无金额 → fail-loud，不得 special_decree。"""
     db, state, content = game
     minister = db.conn.execute(
         "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
@@ -656,6 +658,8 @@ def test_api_tool_punishment_unknown_or_incomplete_fails_loud_not_special_decree
         minister,
         "拿问下狱。",
         failures_out=failures,
+        punish_action="拿问下狱",
+        name="并不存在的人",
     )
     assert pending_id == 0
     assert failures
@@ -669,6 +673,8 @@ def test_api_tool_punishment_unknown_or_incomplete_fails_loud_not_special_decree
         minister,
         f"罚{target.name}俸。",
         failures_out=failures2,
+        punish_action="罚俸",
+        target_id=target.name,
     )
     assert pending_id2 == 0
     assert failures2
@@ -681,7 +687,7 @@ def test_api_tool_punishment_unknown_or_incomplete_fails_loud_not_special_decree
 
 
 def test_api_tool_fine_with_amount_stages(game):
-    """r2 类4：罚俸带正数金额经 API 缝结构化暂存。"""
+    """r2/r3：罚俸正数金额经显式 tool 字段结构化暂存，不从散文猜数字。"""
     db, state, content = game
     target = _active_ming(db, content)
     minister = db.conn.execute(
@@ -696,6 +702,9 @@ def test_api_tool_fine_with_amount_stages(game):
         minister,
         f"罚俸{target.name}。",
         failures_out=failures,
+        punish_action="罚俸",
+        target_id=target.name,
+        amount=80,
     )
     assert pending_id > 0
     assert not failures
@@ -704,3 +713,120 @@ def test_api_tool_fine_with_amount_stages(game):
     assert payload["punish_action"] == "罚俸"
     assert payload["target_id"] == target.name
     assert int(payload["amount"]) == 80
+
+
+def test_api_tool_prose_discussion_of_caning_exile_pardon_stays_ordinary(game):
+    """r3：讨论廷杖/流放/昭雪且点名大臣 → 普通拟旨，不升 punishment。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+
+    for prose in (
+        f"臣以为{target.name}若再误事可议廷杖，然今日仅请陛下审慎。",
+        f"流放{target.name}之议尚早，请先查明再议。",
+        f"昭雪{target.name}旧案仍待核部，臣请从长计议。",
+    ):
+        failures = []
+        pending_id = sess._stage_directive_tool_candidate(
+            prose,
+            minister,
+            "拟旨如下：请议处分制度。",
+            failures_out=failures,
+        )
+        assert pending_id > 0, prose
+        assert not failures, prose
+        payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+        assert payload.get("dossier_action_type") != "punishment", prose
+        assert payload.get("punish_action") in (None, "", "无"), prose
+
+
+def test_api_tool_prose_date_number_before_fine_does_not_become_amount(game):
+    """r3：拟旨散文含日期/次数数字且无结构化 amount → 不升罚俸惩处。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    failures = []
+    # 首个数字是日期/次数；若仍走散文猜金额会误取 3 或 15 为罚俸两数。
+    prose = f"三月十五日再议，{target.name}罚俸之例容后核。"
+    pending_id = sess._stage_directive_tool_candidate(
+        prose,
+        minister,
+        "拟旨如下：请议罚俸制度。",
+        failures_out=failures,
+    )
+    assert pending_id > 0
+    assert not failures
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+    assert payload.get("dossier_action_type") != "punishment"
+    assert payload.get("punish_action") in (None, "", "无")
+    assert int(payload.get("amount") or 0) == 0
+
+
+def test_api_tool_args_deliver_punishment_fields_through_chat(game):
+    """r3：propose_directive tool arguments 契约交付 punish_action/目标/金额。
+
+    散文首个数字是日期；金额只认 arguments.amount，防止散文猜数伪绿。
+    """
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (target.name,),
+    ).fetchone()["name"]
+
+    class Agent:
+        def run(self, _message):
+            return SimpleNamespace(
+                content="臣已拟旨，请陛下定夺。",
+                tools=[
+                    SimpleNamespace(
+                        tool_name="propose_directive",
+                        result="",
+                        arguments={
+                            "decree_text": f"三月再议，着罚{target.name}俸示惩。",
+                            "punish_action": "罚俸",
+                            "target_id": target.name,
+                            "amount": 120,
+                        },
+                    )
+                ],
+            )
+
+    class Registry:
+        def get(self, _character):
+            return Agent()
+
+        def build_draft_line(self):
+            return "无"
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = Registry()
+    sess.llm_config = SimpleNamespace(channel="api")
+    sess.temporary_characters = set()
+    sess._audience_prompt_for_message = lambda message: message
+    sess._start_cli_action_intent = lambda *_args, **_kwargs: None
+    sess._finish_cli_action_intent = lambda *_args, **_kwargs: None
+
+    result = GameSession.chat(sess, minister, f"拟旨罚{target.name}俸。")
+    assert result.pending_action_id
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[
+        int(result.pending_action_id)
+    ]
+    assert payload["dossier_action_type"] == "punishment"
+    assert payload["punish_action"] == "罚俸"
+    assert payload["target_id"] == target.name
+    assert int(payload["amount"]) == 120
