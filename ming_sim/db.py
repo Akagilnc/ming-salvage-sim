@@ -10359,28 +10359,32 @@ class GameDB:
         )
         action = str(normalized.get("dossier_action_type") or "").strip()
         if action == "grant_allocation":
-            try:
-                amount = strict_int(
-                    normalized.get("amount"), accept_numeric_strings=False
-                )
-            except ValueError:
-                amount = 0
-            account = str(normalized.get("account") or "").strip()
-            if amount <= 0 or not account:
-                raise ValueError("拨帑旨意缺少正数 amount 或 account")
-            if account not in {"国库", "内库"}:
-                raise ValueError("拨帑旨意 account 仅可为国库或内库")
-            else:
-                normalized["amount"] = amount
-                normalized["account"] = account
-                surface = str(
-                    normalized.get("execution_surface") or "in_transit"
-                ).strip()
-                if surface not in {"immediate", "in_transit"}:
-                    raise ValueError("拨帑旨意 execution_surface 非法")
-                else:
-                    normalized["execution_surface"] = surface
+            grant_action = str(normalized.get("grant_action") or "").strip()
+            if grant_action in {"加衔", "荫叙"}:
                 normalized.pop("delta", None)
+            else:
+                try:
+                    amount = strict_int(
+                        normalized.get("amount"), accept_numeric_strings=False
+                    )
+                except ValueError:
+                    amount = 0
+                account = str(normalized.get("account") or "").strip()
+                if amount <= 0 or not account:
+                    raise ValueError("拨帑旨意缺少正数 amount 或 account")
+                if account not in {"国库", "内库"}:
+                    raise ValueError("拨帑旨意 account 仅可为国库或内库")
+                else:
+                    normalized["amount"] = amount
+                    normalized["account"] = account
+                    surface = str(
+                        normalized.get("execution_surface") or "in_transit"
+                    ).strip()
+                    if surface not in {"immediate", "in_transit"}:
+                        raise ValueError("拨帑旨意 execution_surface 非法")
+                    else:
+                        normalized["execution_surface"] = surface
+                    normalized.pop("delta", None)
         elif action in {
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
@@ -10668,6 +10672,58 @@ class GameDB:
                 (json.dumps(payload, ensure_ascii=False), int(row["id"])),
             )
 
+    @staticmethod
+    def _grant_allocation_is_monthly(payload: Optional[Dict[str, object]]) -> bool:
+        return str((payload or {}).get("cadence") or "").strip() == "每月"
+
+    @staticmethod
+    def _grant_allocation_is_honorific(payload: Optional[Dict[str, object]]) -> bool:
+        return str((payload or {}).get("grant_action") or "").strip() in {"加衔", "荫叙"}
+
+    def _create_grant_fiscal_item(
+        self, state: GameState, payload: Dict[str, object], dossier_id: int,
+        *, account: str, amount: int, text: str,
+    ) -> str:
+        """#518：常项拨帑建月度科目；display 不含口谕数字（P4）。"""
+        display = {
+            "赏赉": "赏赉月拨",
+            "发内帑": "内帑月拨",
+            "赈灾": "赈灾月拨",
+            "项目经费": "项目月拨",
+            "协饷": "协饷月拨",
+        }.get(str(payload.get("grant_action") or "").strip(), "奉旨月拨")
+        created = self.create_fiscal_item(
+            f"奉旨月拨{int(dossier_id)}",
+            account,
+            "expense",
+            display,
+            int(amount),
+            note=str(payload.get("reason") or text or display)[:240],
+            origin_ref=f"dossier:{int(dossier_id)}",
+            turn=int(state.turn),
+            commit=False,
+        )
+        if not created:
+            raise ValueError("拨帑常项科目未能建项")
+        return created
+
+    def _apply_grant_honorific_effect(
+        self, state: GameState, row, payload: Dict[str, object], dossier_id: int,
+    ) -> None:
+        """#518 interim：加衔/荫叙只落叙事开放标签，不改主官职。"""
+        target = str(
+            payload.get("target_id") or payload.get("name") or row.get("target_id") or ""
+        ).strip()
+        action = str(payload.get("grant_action") or "").strip()
+        if not target or action not in {"加衔", "荫叙"}:
+            raise ValueError("恩赏案卷缺少加衔/荫叙目标")
+        origin_ref = f"dossier:{int(dossier_id)}"
+        self.record_person_log(
+            state, target, action,
+            payload_summary="加衔示恩" if action == "加衔" else "荫叙示恩",
+            source="grant_allocation", origin_ref=origin_ref, commit=False,
+        )
+
     def create_decree_dossier(
         self,
         state: GameState,
@@ -10798,14 +10854,20 @@ class GameDB:
         )
         dossier_id = int(cur.lastrowid)
         if immediate_allocation:
-            self.record_issue_economy_move(
-                state, "内库", -allocation_amount,
-                str(canonical_payload.get("category") or "奉旨拨帑"),
-                str(canonical_payload.get("reason") or text),
-                purpose=str(canonical_payload.get("purpose") or "") or None,
-                target_kind=canonical_target_kind, target_id=canonical_target_id,
-                origin_ref=f"dossier:{dossier_id}", commit=False,
-            )
+            if self._grant_allocation_is_monthly(canonical_payload):
+                self._create_grant_fiscal_item(
+                    state, canonical_payload, dossier_id,
+                    account="内库", amount=allocation_amount, text=text,
+                )
+            else:
+                self.record_issue_economy_move(
+                    state, "内库", -allocation_amount,
+                    str(canonical_payload.get("category") or "奉旨拨帑"),
+                    str(canonical_payload.get("reason") or text),
+                    purpose=str(canonical_payload.get("purpose") or "") or None,
+                    target_kind=canonical_target_kind, target_id=canonical_target_id,
+                    origin_ref=f"dossier:{dossier_id}", commit=False,
+                )
         if roster and action != "secret_order":
             self.register_character_knowledge_source(
                 state, roster, "assignment", "旨意案卷", text,
@@ -11611,27 +11673,46 @@ class GameDB:
                     )
                 elif row["action_type"] == "grant_allocation":
                     amount = int(payload.get("amount") or 0)
-                    moves = self.list_economy_moves_for_dossier(dossier_id)
-                    actual = int(moves[0]["delta"]) if moves else 0
-                    if actual != -amount:
-                        if policy["execution_surface"] == "in_transit":
+                    if self._grant_allocation_is_monthly(payload):
+                        fiscal = self.list_fiscal_effects_for_dossier(dossier_id)
+                        landed = any(
+                            str(item.get("key") or "").endswith("_base")
+                            and int(item.get("value") or 0) == amount
+                            for item in fiscal
+                        )
+                        if not landed:
+                            self.record_dossier_execution(
+                                dossier_id, "failed",
+                                "拨帑常项未建项",
+                                state.turn, close=True, commit=False,
+                            )
+                        else:
+                            self.record_dossier_execution(
+                                dossier_id, "fulfilled", "成案时建月度科目",
+                                state.turn, close=True, commit=False,
+                            )
+                    else:
+                        moves = self.list_economy_moves_for_dossier(dossier_id)
+                        actual = int(moves[0]["delta"]) if moves else 0
+                        if actual != -amount:
+                            if policy["execution_surface"] == "in_transit":
+                                self.transition_decree_dossier(
+                                    dossier_id, "executing", commit=False,
+                                )
+                            self.record_dossier_execution(
+                                dossier_id, "failed",
+                                f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                                state.turn, close=True, commit=False,
+                            )
+                        elif policy["execution_surface"] == "in_transit":
                             self.transition_decree_dossier(
                                 dossier_id, "executing", commit=False,
                             )
-                        self.record_dossier_execution(
-                            dossier_id, "failed",
-                            f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
-                            state.turn, close=True, commit=False,
-                        )
-                    elif policy["execution_surface"] == "in_transit":
-                        self.transition_decree_dossier(
-                            dossier_id, "executing", commit=False,
-                        )
-                    else:
-                        self.record_dossier_execution(
-                            dossier_id, "fulfilled", "成案时足额拨付",
-                            state.turn, close=True, commit=False,
-                        )
+                        else:
+                            self.record_dossier_execution(
+                                dossier_id, "fulfilled", "成案时足额拨付",
+                                state.turn, close=True, commit=False,
+                            )
                 else:
                     self.record_dossier_execution(
                         dossier_id, "fulfilled", "成案时即生效",
@@ -11658,34 +11739,53 @@ class GameDB:
                 finally:
                     self.conn._materializing_dossier_id = previous_materializing
             elif row["action_type"] == "grant_allocation":
-                amount = int(payload.get("amount") or 0)
-                if amount <= 0:
-                    raise ValueError("拨帑案卷 amount 必须为正数")
-                actual = self.record_issue_economy_move(
-                    state,
-                    str(payload.get("account") or payload.get("target_account") or ""),
-                    -amount,
-                    str(payload.get("category") or "奉旨拨帑"),
-                    str(payload.get("reason") or row["decree_text"]),
-                    purpose=str(payload.get("purpose") or "") or None,
-                    target_kind=str(payload.get("target_kind") or "") or None,
-                    target_id=str(payload.get("target_id") or "") or None,
-                    origin_ref=f"dossier:{dossier_id}",
-                    commit=False,
-                )
-                if actual != -amount:
-                    if self._dossier_has_execution_surface(
-                        row["action_type"], payload,
-                    ):
-                        self.transition_decree_dossier(
-                            dossier_id, "executing", commit=False,
-                        )
-                    self.record_dossier_execution(
-                        dossier_id, "failed",
-                        f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
-                        state.turn, close=True, commit=False,
+                if self._grant_allocation_is_honorific(payload):
+                    self._apply_grant_honorific_effect(
+                        state, row, payload, dossier_id,
                     )
-                    return
+                elif self._grant_allocation_is_monthly(payload):
+                    amount = int(payload.get("amount") or 0)
+                    if amount <= 0:
+                        raise ValueError("拨帑案卷 amount 必须为正数")
+                    account = str(
+                        payload.get("account") or payload.get("target_account") or ""
+                    ).strip()
+                    if account not in {"国库", "内库"}:
+                        raise ValueError("拨帑案卷 account 仅可为国库或内库")
+                    self._create_grant_fiscal_item(
+                        state, payload, dossier_id,
+                        account=account, amount=amount,
+                        text=str(row["decree_text"]),
+                    )
+                else:
+                    amount = int(payload.get("amount") or 0)
+                    if amount <= 0:
+                        raise ValueError("拨帑案卷 amount 必须为正数")
+                    actual = self.record_issue_economy_move(
+                        state,
+                        str(payload.get("account") or payload.get("target_account") or ""),
+                        -amount,
+                        str(payload.get("category") or "奉旨拨帑"),
+                        str(payload.get("reason") or row["decree_text"]),
+                        purpose=str(payload.get("purpose") or "") or None,
+                        target_kind=str(payload.get("target_kind") or "") or None,
+                        target_id=str(payload.get("target_id") or "") or None,
+                        origin_ref=f"dossier:{dossier_id}",
+                        commit=False,
+                    )
+                    if actual != -amount:
+                        if self._dossier_has_execution_surface(
+                            row["action_type"], payload,
+                        ):
+                            self.transition_decree_dossier(
+                                dossier_id, "executing", commit=False,
+                            )
+                        self.record_dossier_execution(
+                            dossier_id, "failed",
+                            f"拨帑不足额：应拨{amount}两，实拨{abs(actual)}两",
+                            state.turn, close=True, commit=False,
+                        )
+                        return
             elif row["action_type"] == "pacification":
                 # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
                 # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
