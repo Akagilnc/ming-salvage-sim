@@ -1268,6 +1268,167 @@ def _resolve_unique_active_authority(
     return matches[0]
 
 
+def _authorization_scope_parts(
+    target_id: object = "",
+    *,
+    target_kind: object = "",
+    scope: object = "",
+) -> Optional[Tuple[str, str, str]]:
+    """公开委任事域：典范键 target_kind:target_id；缺事域 → None。"""
+    raw_scope = str(scope or "").strip()
+    if raw_scope and ":" in raw_scope:
+        kind, _, tid = raw_scope.partition(":")
+        kind = kind.strip()
+        tid = tid.strip()
+        if kind and tid:
+            return kind, tid, f"{kind}:{tid}"
+    tid = str(target_id or "").strip()
+    kind = str(target_kind or "").strip()
+    if tid and ":" in tid and not kind:
+        kind, _, rest = tid.partition(":")
+        kind = kind.strip()
+        rest = rest.strip()
+        if kind and rest:
+            return kind, rest, f"{kind}:{rest}"
+    if not tid:
+        return None
+    if not kind:
+        kind = "issue"
+    return kind, tid, f"{kind}:{tid}"
+
+
+def _authorization_privilege(raw: object) -> str:
+    """公开委任默认 privilege=便宜行事；显式四闭集权项原样保留。"""
+    from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+
+    priv = str(raw or "").strip()
+    if priv in {"", "无"}:
+        return "便宜行事"
+    if priv in AUTHORITY_PRIVILEGE_SET:
+        return priv
+    return ""
+
+
+def stage_authorization_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    privilege: object = "",
+    target_id: object = "",
+    target_kind: object = "",
+    scope: object = "",
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared authorization candidate write (#528 / #611).
+
+    holder = 确认闸对象 = 当前大臣；收夜只成案卷；授予走 authority_changes，判后物化。
+    禁止技能 id / grant_skill 镜像。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    if str(target_candidate or "").strip() == "含糊":
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    holder = str(minister_name or "").strip()
+    if not holder:
+        return 0
+    priv = _authorization_privilege(privilege)
+    if not priv:
+        return 0
+    parts = _authorization_scope_parts(
+        target_id, target_kind=target_kind, scope=scope,
+    )
+    if parts is None:
+        return 0
+    kind, tid, scope_key = parts
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "authorization":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "authorization",
+        "target_kind": kind,
+        "target_id": tid,
+        "assignee": holder,
+        "holder_id": holder,
+        "name": holder,
+        "privilege": priv,
+        "scope": scope_key,
+        "mode": mode,
+    }
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_authorization(ctx: MaterializeCtx) -> None:
+    """暂存公开委任授权案卷；authority_changes 授予按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "authorization"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    if str(intent.get("target_candidate") or "").strip() == "含糊":
+        ctx.out["directive_confirmation_ambiguous"] = {"candidates": []}
+        return
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not body:
+        return
+    pending_id = stage_authorization_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=body,
+        privilege=intent.get("privilege"),
+        target_id=intent.get("target_id"),
+        target_kind=intent.get("target_kind"),
+        scope=intent.get("scope"),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def stage_revoke_authority_candidate(
     db: Any,
     turn: int,
@@ -2001,6 +2162,25 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
             materialize_fn=_materialize_grant_allocation,
+        ),
+        ActionCluster(
+            "委任授权", "authorization", EFFECT_MATERIALIZE, priority=56,
+            fields=(
+                FieldSpec(
+                    "privilege", "权项",
+                    frozenset({
+                        "无", "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
+                    }), "无",
+                ),
+                # 事域：确认闸落典范键 target_kind:target_id（缺 kind 默认 issue）
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_authorization,
         ),
         ActionCluster(
             "惩处", "punishment", EFFECT_MATERIALIZE, priority=58,
