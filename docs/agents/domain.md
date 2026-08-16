@@ -44,7 +44,7 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 ## ADR 生命周期：「Accepted」≠「已实现」（Matt skills #299）
 
 > [!warning] ADR 生命周期：「Accepted」≠「已实现」（Matt skills #299）
-> `grill-with-docs` 在 grill 阶段（远早于实现）就把 ADR 写进 `docs/adr/`，而下游 skill 默认 `docs/adr/` 是**现行**架构。于是「已定、未建」的决策和「代码已反映」的决策长得一样，可能让接邻近活的 agent 围着不存在的代码写——Matt 自己仓库 issue #299（radmen 提、Matt 认、未合）正是这个。**本项目对策**：ADR 带 Status 行，但本项目 `Accepted` 语义 = 「设计经评审收敛、可去实现」**不等于**「代码已建」——所以读 ADR 必须交叉看对应 issue 的 open/close 才知道建没建（#63 = ADR 0015 已 Accepted 但实现 OPEN，就是这种「已定未建」态）。
+> `grill-with-docs` 在 grill 阶段（远早于实现）就把 ADR 写进 `docs/adr/`，而下游 skill 默认 `docs/adr/` 是**现行**架构。于是「已定、未建」的决策和「代码已反映」的决策长得一样，可能让接邻近活的 agent 围着不存在的代码写——Matt 自己仓库 issue #299（radmen 提、Matt 认、未合）正是这个。**本项目对策**：ADR 带 Status 行，但本项目 `Accepted` 语义 = 「设计经评审收敛、可去实现」**不等于**「代码已建」——所以读 ADR 必须交叉看对应 issue 的 open/close 才知道建没建（历史例子：#63 = ADR 0015 曾 Accepted 但实现 OPEN，即「已定未建」；#63 已于 2026-06-20 CLOSED、实现已合并——例子过期不改判据，须交叉看当下 issue）。
 
 ## 真 user story（2026-06-18 立，实证栽过）
 
