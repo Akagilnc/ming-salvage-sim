@@ -15,9 +15,12 @@ import json
 import types
 from types import SimpleNamespace
 
+import pytest
+
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
+import ming_sim.action_materialize as am
 import ming_sim.cli_backend as cb
-from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_clusters import candidates_from_classifier_payload, cluster_by_kind
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import GameSession
@@ -389,3 +392,70 @@ def test_zhaoxue_restores_dismissed_to_active_after_verdict(game):
     )
     assert db.get_character_status(target.name)[0] == "active"
     assert content.characters[target.name].status == "active"
+
+
+def test_punish_action_enum_is_cluster_fieldspec_sole_source():
+    """类1：ACTION_CLUSTERS FieldSpec 为 punish_action 唯一真源；无未用 PUNISH_* 分裂。"""
+    assert not hasattr(am, "PUNISH_IMPRISON")
+    assert not hasattr(am, "PUNISH_PARDON")
+    cluster = cluster_by_kind("punishment")
+    assert cluster is not None
+    spec = next(f for f in cluster.fields if f.name == "punish_action")
+    assert spec.allowed is not None
+    assert "流放" in spec.allowed
+    assert "无" in spec.allowed
+    # 物化/准入 helper 必须读同一 FieldSpec，不得另抄 frozenset
+    assert am.punish_actions_allowed() is spec.allowed
+    assert am.punish_actions_effective() == (spec.allowed - {"无"})
+
+
+def test_punishment_admission_rejects_missing_blank_or_illegal_action(game):
+    """类2：admission 对缺失/空白/非法 punish_action 响亮拒绝。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    base = {
+        "text": f"将{target.name}拿问下狱。",
+        "actor": target.name,
+        "dossier_action_type": "punishment",
+        "target_kind": "character",
+        "target_id": target.name,
+        "mode": "ordinary",
+    }
+    with pytest.raises(ValueError, match="punish_action"):
+        db._normalize_directive_dossier_payload(
+            dict(base), content=content, current_turn=state.turn,
+        )
+    with pytest.raises(ValueError, match="punish_action"):
+        db._normalize_directive_dossier_payload(
+            {**base, "punish_action": "   "},
+            content=content, current_turn=state.turn,
+        )
+    with pytest.raises(ValueError, match="punish_action"):
+        db._normalize_directive_dossier_payload(
+            {**base, "punish_action": "抄家"},
+            content=content, current_turn=state.turn,
+        )
+    ok = db._normalize_directive_dossier_payload(
+        {**base, "punish_action": "拿问下狱"},
+        content=content, current_turn=state.turn,
+    )
+    assert ok["punish_action"] == "拿问下狱"
+
+
+def test_pardon_refuses_dead_keeps_terminal_status(game):
+    """类3：宥赦拒绝 dead，人物保持终态。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    db.set_character_status(state, target.name, "dead", "旧案赐死")
+    content.characters[target.name].status = "dead"
+    ctx = _stage_punishment(db, state.turn, target.name, action="放归")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    assert db.get_character_status(target.name)[0] == "dead"
+    with pytest.raises(ValueError, match="dead|终态|宥赦|放归"):
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+    assert db.get_character_status(target.name)[0] == "dead"
+    assert content.characters[target.name].status == "dead"

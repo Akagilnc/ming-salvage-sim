@@ -10399,14 +10399,15 @@ class GameDB:
             normalized.pop("authorization_id", None)
             normalized.pop("authorization_ids", None)
         if action == "punishment":
+            # #517：与 grant_allocation / military_order 一致——合法非空动作在 admission 强制。
+            # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
+            from ming_sim.action_materialize import punish_actions_effective
             punish_action = str(normalized.get("punish_action") or "").strip()
-            if punish_action:
-                if punish_action not in {
-                    "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸", "削籍",
-                    "放归", "昭雪", "流放",
-                }:
-                    raise ValueError(f"惩处旨意 punish_action 非法：{punish_action}")
-                normalized["punish_action"] = punish_action
+            if not punish_action or punish_action not in punish_actions_effective():
+                raise ValueError(
+                    f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
+                )
+            normalized["punish_action"] = punish_action
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -12101,6 +12102,12 @@ class GameDB:
                 raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
             return
         if punish_action in {"放归", "昭雪"}:
+            # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
+            current_status, _ = self.get_character_status(target)
+            if current_status not in {"imprisoned", "dismissed", "exiled"}:
+                raise ValueError(
+                    f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
+                )
             self.set_character_status(
                 state, target, "active", reason, reason_code="", commit=False,
             )
