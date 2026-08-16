@@ -485,6 +485,240 @@ def test_revoke_decree_ambiguous_target_does_not_stage_silently(game):
     )
 
 
+def test_revoke_decree_rejects_standalone_issue_without_dossier_origin(game):
+    """无 dossier 来源的 standalone initiative 不得入撤回成命（免 0056 旁路）。"""
+    db, state, content = game
+    holder = _minister(db)
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="无源承诺",
+        origin_kind="manual", origin_ref="", cancellable="decree",
+    )
+    authority_before = state.metrics["皇威"]
+    ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": f"issue:{issue_id}",
+        },
+        actor=holder,
+        message=f"前旨作废，撤回事项{issue_id}。",
+    )
+    assert not ctx.out.get("pending_action_id"), "standalone issue 不得暂存撤回成命"
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"] == "active"
+    assert state.metrics["皇威"] == authority_before
+
+
+def test_revoke_decree_rejects_ineligible_targets(game):
+    """目标域仅承诺/旨意：situation、未颁案卷不得入闸。"""
+    db, state, content = game
+    holder = _minister(db)
+    situation_id = db.insert_issue(
+        state, kind="situation", title="边警",
+        origin_kind="event", origin_ref="event:x",
+    )
+    ctx_sit = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": f"issue:{situation_id}",
+        },
+        actor=holder,
+        message="撤回边警。",
+    )
+    assert not ctx_sit.out.get("pending_action_id")
+
+    proposed_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="未颁之旨",
+        target_kind="issue",
+        target_id="未颁",
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        payload={"mode": "ordinary", "text": "未颁之旨"},
+    )
+    assert db.get_decree_dossier(proposed_id)["status"] == "proposed"
+    ctx_prop = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": f"dossier:{proposed_id}",
+        },
+        actor=holder,
+        message=f"撤回案卷{proposed_id}。",
+    )
+    assert not ctx_prop.out.get("pending_action_id")
+
+
+def test_revoke_decree_issue_target_pays_0056_via_origin_dossier(game):
+    """issue 目标经 origin_ref 回指案卷，终结必走 0056 毁约代价。"""
+    db, state, content = game
+    holder = _minister(db)
+    target_dossier, issue_id = _promulgated_commitment(
+        db, state, content, holder, title="河工承诺",
+    )
+    target_dossier_id = int(target_dossier["id"])
+    authority_before = state.metrics["皇威"]
+    ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": f"issue:{issue_id}",
+        },
+        actor=holder,
+        message=f"前旨作废，撤回事项{issue_id}。",
+    )
+    pending_id = ctx.out.get("pending_action_id")
+    assert pending_id
+    pending = _pending_payload(db, pending_id)
+    assert int(pending.get("revoke_target_issue_id") or 0) == issue_id
+    assert int(pending.get("revoke_target_dossier_id") or 0) == target_dossier_id
+
+    revoke_dossier = _close_night_dossier(db, state, content, pending_id)
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": revoke_dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert db.get_decree_dossier(target_dossier_id)["status"] == "closed"
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"] == "dropped"
+    assert state.metrics["皇威"] == max(0, authority_before - 5)
+
+
+def test_revoke_decree_verdict_without_dossier_source_fails_loud(game):
+    """判决缝防御：无案卷来源不得 cancel_issue 免代价旁路。"""
+    db, state, content = game
+    holder = _minister(db)
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="旁路",
+        origin_kind="manual", origin_ref="orphan", cancellable="decree",
+    )
+    # 直接造已过 admission 的撤回案卷（模拟旧旁路 payload）
+    revoke_id = db.create_decree_dossier(
+        state,
+        action_type="revoke_decree",
+        decree_text="撤回旁路",
+        target_kind="issue",
+        target_id=str(issue_id),
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        payload={
+            "mode": "ordinary",
+            "text": "撤回旁路",
+            "dossier_action_type": "revoke_decree",
+            "revoke_target_issue_id": issue_id,
+            "revoke_target_dossier_id": 0,
+            "target_kind": "issue",
+            "target_id": str(issue_id),
+        },
+    )
+    authority_before = state.metrics["皇威"]
+    import pytest
+    with pytest.raises(ValueError, match="案卷|代价|来源|目标"):
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": revoke_id, "decision": "promulgated"}],
+            content=content,
+        )
+    assert db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()["status"] == "active"
+    assert state.metrics["皇威"] == authority_before
+
+
+def test_revoke_decree_bundled_authority_reject_fails_loud(game, monkeypatch):
+    """捆带授权 apply_score_extraction 拒收 → 不得当撤回成功静默提交。"""
+    import ming_sim.issues as issue_engine
+
+    db, state, content = game
+    holder = _minister(db)
+    grant_d = _eligible_dossier(db, state, holder, target_id="捆带拒收")
+    authority_id = _grant(
+        db, state, content, holder, "专差督办", "issue:捆带拒收", grant_d,
+    )
+    target_id = int(grant_d["id"])
+    if db.get_decree_dossier(target_id)["status"] == "closed":
+        db.conn.execute(
+            "UPDATE decree_dossiers SET status='executing', closed_turn=NULL "
+            "WHERE id=?",
+            (target_id,),
+        )
+        db.conn.commit()
+
+    ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": str(target_id),
+            "target_kind": "dossier",
+        },
+        actor=holder,
+        message="前授专差之旨作废。",
+    )
+    revoke_dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    authority_before = state.metrics["皇威"]
+
+    def _reject_authority(db_, state_, extracted, content=None, **kwargs):
+        changes = list(extracted.get("authority_changes") or [])
+        return {
+            "authority_changes": [
+                {
+                    "rejected": True,
+                    "reason": "dossier_not_effect_eligible",
+                    "item": item,
+                }
+                for item in changes
+            ],
+        }
+
+    monkeypatch.setattr(issue_engine, "apply_score_extraction", _reject_authority)
+    import pytest
+    with pytest.raises(ValueError):
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": revoke_dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+    # 整单回滚：目标案卷、授权、皇威均未变
+    assert db.get_authority(authority_id)["revoked"] is False
+    assert db.get_decree_dossier(target_id)["status"] in {"promulgated", "executing"}
+    assert state.metrics["皇威"] == authority_before
+
+
+def test_revoke_decree_ambiguous_supplies_real_candidates(game):
+    """含糊三态问清：须给出真实可撤成命候选，禁止空 candidates 结束。"""
+    db, state, content = game
+    holder = _minister(db)
+    d1, _ = _promulgated_commitment(db, state, content, holder, title="事甲")
+    d2, _ = _promulgated_commitment(db, state, content, holder, title="事乙")
+    id1, id2 = int(d1["id"]), int(d2["id"])
+    ctx = _stage(
+        db, state.turn,
+        {
+            "kind": "revoke_decree",
+            "target_id": "",
+            "target_candidate": "含糊",
+        },
+        actor=holder,
+        message="前旨都作废。",
+    )
+    assert not ctx.out.get("pending_action_id"), "含糊不得静默暂存"
+    amb = ctx.out.get("directive_confirmation_ambiguous")
+    assert amb is not None, "须进入含糊三态"
+    cands = amb.get("candidates") or []
+    assert cands, "含糊须给出真实候选，不得空列表结束"
+    cand_ids = {int(c["id"]) for c in cands}
+    assert id1 in cand_ids and id2 in cand_ids
+    for c in cands:
+        assert str(c.get("summary") or "").strip(), "候选须带可读摘要"
+
+
 def test_accept_does_not_touch_authority_or_skill_grants_before_night(game):
     """应允不直写 authority_records / skill_grants（0038 白名单）。"""
     db, state, content = game
