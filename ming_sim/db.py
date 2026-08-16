@@ -12201,6 +12201,7 @@ class GameDB:
 
         # cap / 「分身乏术」单一真源 = apply_score_extraction（issues.py）；
         # 本接缝只组装 item 并消费逐项 rejected → 案卷执行失败。
+        # #520 只授权捕获与落库；不夹带民心等兑现效果（兑现归 #476）。
         ni: Dict[str, object] = {
             "origin_kind": "decree",
             "origin_ref": origin_ref,
@@ -12208,7 +12209,6 @@ class GameDB:
             "title": title,
             "stage_text": str(payload.get("text") or row.get("decree_text") or title),
             "participant_roster": [{"character_id": owner, "tier": "主办"}],
-            "effect_on_resolve": {"metrics": {"民心": 1}},
         }
         if commitment_kind:
             ni["commitment_kind"] = commitment_kind

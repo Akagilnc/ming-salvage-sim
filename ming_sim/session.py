@@ -970,6 +970,7 @@ class GameSession:
             summaries,
             getattr(self, "llm_config", None),
             recent_context,
+            int(self.state.turn),
         )
 
     def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
@@ -1631,6 +1632,7 @@ class GameSession:
                 ],
                 llm_config,
                 recent_context,
+                int(self.state.turn),
             )
             # 空判词仍保留既有任免结构化 extractor 兜底；只有 classifier
             # 真给出候选时才阻断后续类别专用 extractor。

@@ -860,6 +860,51 @@ def _parse_json_field(raw: object) -> Any:
     return value
 
 
+def _assignment_absolute_end_turn(
+    turn: int, end_turn: object = 0, deadline_months: object = 0,
+) -> int:
+    """相对期限 → 绝对 end_turn（既有 initiative 契约：end_turn = turn + N）。
+
+    - 显式期限月数优先：deadline_months=N → turn+N
+    - end_turn 已严格大于当前 turn → 视为绝对回合
+    - 否则 0<end_turn≤turn → 视为相对月数 turn+end_turn
+    """
+    try:
+        et = int(end_turn or 0)
+    except (TypeError, ValueError):
+        et = 0
+    try:
+        months = int(deadline_months or 0)
+    except (TypeError, ValueError):
+        months = 0
+    cur = int(turn)
+    if months > 0:
+        return cur + months
+    if et > cur:
+        return et
+    if et > 0:
+        return cur + et
+    return 0
+
+
+def _context_line_present(haystack: str, needle: str) -> bool:
+    """整行/整句相等才算已在上下文中；禁止 substring 吞掉当轮短句。"""
+    n = str(needle or "").strip()
+    if not n:
+        return False
+    for raw in str(haystack or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line == n:
+            return True
+        if "：" in line:
+            content = line.split("：", 1)[1].strip()
+            if content == n:
+                return True
+    return False
+
+
 def stage_assignment_candidate(
     db: Any,
     turn: int,
@@ -868,12 +913,12 @@ def stage_assignment_candidate(
     text: str,
     title: str = "",
     target_id: str = "",
-    assignee: str = "",
     emperor_text: object = None,
     extracted_mode: object = None,
     commitment_kind: object = None,
     stop_condition: object = None,
     end_turn: object = 0,
+    deadline_months: object = 0,
     ongoing_effects: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
@@ -883,15 +928,22 @@ def stage_assignment_candidate(
     Independent matters each stage a new candidate; only a structured
     target_candidate id updates the named pending assignment (cross-round
     reinforce / ADR 0038 before-image).
+    owner 单一来源 = 当前召对大臣（minister_name）；不接受分类器改派。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
     body = str(text or "").strip()
     if not body:
         return 0
-    matter_title = str(title or "").strip() or body[:40]
+    # 标题须调用方给当轮锚；禁止缺 title 时吃多轮 body 前 40（前轮头）
+    matter_title = str(title or "").strip()
+    if not matter_title:
+        # 最后兜底：当轮皇帝句，仍不用跨轮 body 头
+        matter_title = str(emperor_text or "").strip()[:40]
+    if not matter_title:
+        return 0
     matter_id = str(target_id or "").strip() or matter_title
-    owner = str(assignee or "").strip() or str(minister_name or "").strip()
+    owner = str(minister_name or "").strip()
     if not owner:
         return 0
 
@@ -941,12 +993,11 @@ def stage_assignment_candidate(
         parsed_stop = _parse_json_field(stop_condition)
         if parsed_stop not in (None, "", {}):
             staged["stop_condition"] = parsed_stop
-        try:
-            et = int(end_turn or 0)
-        except (TypeError, ValueError):
-            et = 0
-        if et > 0:
-            staged["end_turn"] = et
+        absolute_end = _assignment_absolute_end_turn(
+            int(turn), end_turn=end_turn, deadline_months=deadline_months,
+        )
+        if absolute_end > 0:
+            staged["end_turn"] = absolute_end
         parsed_ongoing = _parse_json_field(ongoing_effects)
         if isinstance(parsed_ongoing, dict) and parsed_ongoing:
             staged["ongoing_effects"] = parsed_ongoing
@@ -959,6 +1010,7 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
     """案卷 text：ADR 0028 最近相关对话上下文链 + 本轮皇帝/大臣句。
 
     不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
+    当轮句按整行锚接入，禁止 substring 判断把短句吞进前轮长文。
     """
     recent = str(ctx.recent_context or "").strip()
     reply = str(ctx.reply or "").strip()
@@ -966,9 +1018,9 @@ def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
     if not recent:
         return reply or player
     chunks = [recent]
-    if player and player not in recent:
+    if player and not _context_line_present(recent, player):
         chunks.append(f"皇帝：{player}")
-    if reply and reply not in recent:
+    if reply and not _context_line_present(recent, reply):
         chunks.append(f"大臣：{reply}")
     return "\n".join(chunks).strip()
 
@@ -986,9 +1038,9 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     title = str(intent.get("title") or "").strip()
     target_id = str(intent.get("target_id") or "").strip()
-    assignee = str(
-        intent.get("assignee") or intent.get("name") or ctx.character.name or ""
-    ).strip()
+    # 标题来源：分类 title → 当轮皇帝句；不得在缺 title 时吃跨轮 body 头
+    if not title:
+        title = str(ctx.player_message or "").strip()[:40]
     body = _assignment_dossier_text(ctx)
     if not title and not target_id and not body:
         return
@@ -999,12 +1051,12 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         text=body,
         title=title,
         target_id=target_id,
-        assignee=assignee,
         emperor_text=ctx.player_message,
         extracted_mode=intent.get("mode"),
         commitment_kind=intent.get("commitment_kind"),
         stop_condition=intent.get("stop_condition"),
         end_turn=intent.get("end_turn"),
+        deadline_months=intent.get("deadline_months"),
         ongoing_effects=intent.get("ongoing_effects"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
@@ -1121,8 +1173,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
             fields=(
                 FieldSpec("title", "标题", None, "", max_len=80),
-                FieldSpec("name", "姓名", None, "", max_len=20),
-                FieldSpec("assignee", "承办人", None, "", max_len=40),
+                # owner=当前召对大臣；不设 assignee/name 改派字段（#520 r2）
                 # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
                 FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
@@ -1130,6 +1181,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     frozenset({"无", "until_stop"}), "无",
                 ),
                 FieldSpec("stop_condition", "停止条件", None, "", max_len=500),
+                # 相对月数（共享 secret 的期限月数）由 stage 换算绝对 end_turn
                 FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
                 FieldSpec("ongoing_effects", "持续效果", None, "", max_len=1000),
                 FieldSpec(
