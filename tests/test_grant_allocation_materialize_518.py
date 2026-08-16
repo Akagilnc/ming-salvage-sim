@@ -499,3 +499,172 @@ def test_confirm_accept_does_not_spend_treasury(game, monkeypatch):
         confirm_target_ids={int(pending_id)},
     )
     assert int(state.metrics["国库"]) == treasury_before
+
+
+def _grant_pending_payloads(db, turn, *, target_id, grant_action):
+    rows = []
+    for row in db.list_pending_actions(int(turn)):
+        if row.get("kind") != "directive" or row.get("status") != "pending":
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
+            continue
+        if str(payload.get("target_id") or "").strip() != target_id:
+            continue
+        if str(payload.get("grant_action") or "").strip() != grant_action:
+            continue
+        rows.append((int(row["id"]), payload))
+    return rows
+
+
+def test_oneshot_and_monthly_same_target_stage_as_independent_candidates(game):
+    """同句拆出：赏某臣一次性 + 同目标每月再拨 → 两道独立候选，不得互相覆盖。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    candidates = candidates_from_classifier_payload([
+        {
+            "kind": "grant_allocation", "grant_action": "赏赉",
+            "amount": 10, "account": "国库", "cadence": "一次性", "name": target.name,
+        },
+        {
+            "kind": "grant_allocation", "grant_action": "赏赉",
+            "amount": 5, "account": "国库", "cadence": "每月", "name": target.name,
+        },
+    ], soft=False)
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message=f"赏{target.name}十万两，另每月再给五万两。",
+        reply=f"臣请赏{target.name}银十万两，并自国库每月再拨五万两。请陛下定夺准驳。",
+    )
+    run_materialize_pipeline(ctx)
+
+    staged = _grant_pending_payloads(
+        db, state.turn, target_id=target.name, grant_action="赏赉",
+    )
+    assert len(staged) == 2, f"同目标两笔独立拨款应各自成条，实际 {len(staged)} 条"
+    by_cadence = {payload.get("cadence"): int(payload.get("amount") or 0) for _, payload in staged}
+    assert by_cadence == {"一次性": 10, "每月": 5}
+
+    dossiers = []
+    for pending_id, _ in staged:
+        dossiers.append(_close_night_dossier(db, state, content, pending_id))
+    assert len({d["id"] for d in dossiers}) == 2
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": d["id"], "decision": "promulgated"} for d in dossiers
+    ], content=content)
+    oneshot_moves = []
+    monthly_fiscal = []
+    for d in dossiers:
+        oneshot_moves.extend(db.list_economy_moves_for_dossier(d["id"]))
+        monthly_fiscal.extend(
+            row for row in db.list_fiscal_effects_for_dossier(d["id"])
+            if str(row["key"]).endswith("_base")
+        )
+    assert len(oneshot_moves) == 1 and int(oneshot_moves[0]["delta"]) == -10
+    assert len(monthly_fiscal) == 1 and int(monthly_fiscal[0]["value"]) == 5
+
+
+def test_later_additional_grant_same_target_stages_independently(game):
+    """稍后再赏：无明确修改指向时，同目标第二笔另成候选，不覆盖首笔。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+
+    first = _stage_grant(
+        db, state.turn, action="赏赉", amount=10, account="国库", cadence="一次性",
+        name=target.name,
+        message=f"赏{target.name}十万两。",
+        reply=f"臣请赏{target.name}银十万两。",
+    )
+    first_id = int(first.out["pending_action_id"])
+    second = _stage_grant(
+        db, state.turn, action="赏赉", amount=5, account="国库", cadence="一次性",
+        name=target.name,
+        message=f"再赏{target.name}五万两。",
+        reply=f"臣请再赏{target.name}银五万两。",
+    )
+    second_id = int(second.out["pending_action_id"])
+
+    assert second_id != first_id
+    staged = _grant_pending_payloads(
+        db, state.turn, target_id=target.name, grant_action="赏赉",
+    )
+    assert len(staged) == 2
+    amounts = sorted(int(payload.get("amount") or 0) for _, payload in staged)
+    assert amounts == [5, 10]
+    first_payload = next(p for i, p in staged if i == first_id)
+    assert int(first_payload.get("amount") or 0) == 10, "首笔不得被再赏覆盖"
+
+    d1 = _close_night_dossier(db, state, content, first_id)
+    d2 = _close_night_dossier(db, state, content, second_id)
+    db.apply_dossier_verdicts(state, [
+        {"dossier_id": d1["id"], "decision": "promulgated"},
+        {"dossier_id": d2["id"], "decision": "promulgated"},
+    ], content=content)
+    moves = (
+        db.list_economy_moves_for_dossier(d1["id"])
+        + db.list_economy_moves_for_dossier(d2["id"])
+    )
+    assert sorted(int(m["delta"]) for m in moves) == [-10, -5]
+
+
+def test_explicit_target_candidate_still_updates_named_grant(game):
+    """明确结构化修改指向时，仍只更新被点名的那一道拨款候选。"""
+    from ming_sim.action_materialize import stage_grant_allocation_candidate
+
+    db, state, content = game
+    target = _active_ming(db, content)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+
+    first_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text=f"赏{target.name}银十万两。",
+        grant_action="赏赉",
+        target_kind="character",
+        target_id=target.name,
+        amount=10,
+        account="国库",
+        cadence="一次性",
+    )
+    other_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text=f"另赏{target.name}银三万两。",
+        grant_action="赏赉",
+        target_kind="character",
+        target_id=target.name,
+        amount=3,
+        account="国库",
+        cadence="一次性",
+    )
+    assert first_id and other_id and first_id != other_id
+
+    updated_id = stage_grant_allocation_candidate(
+        db, state.turn, actor,
+        text=f"前道赏银改作每月五万两。",
+        grant_action="赏赉",
+        target_kind="character",
+        target_id=target.name,
+        amount=5,
+        account="国库",
+        cadence="每月",
+        target_candidate=str(first_id),
+    )
+    assert updated_id == first_id
+
+    staged = dict(_grant_pending_payloads(
+        db, state.turn, target_id=target.name, grant_action="赏赉",
+    ))
+    assert set(staged) == {first_id, other_id}
+    assert int(staged[first_id].get("amount") or 0) == 5
+    assert staged[first_id].get("cadence") == "每月"
+    assert int(staged[other_id].get("amount") or 0) == 3
+    assert staged[other_id].get("cadence") == "一次性"
