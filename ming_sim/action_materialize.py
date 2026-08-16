@@ -798,7 +798,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
             fields=(
-                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+                # 与 grant_allocation 共享 target_id：须能承载人物/地区/项目/军队
+                FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
@@ -814,7 +815,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     GRANT_ACTIONS, "无",
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
-                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+                # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
+                FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec("amount", "金额", None, 0, as_int=True),
                 FieldSpec(
                     "account", "账户",
@@ -828,6 +830,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
+                # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
             materialize_fn=_materialize_grant_allocation,
         ),
