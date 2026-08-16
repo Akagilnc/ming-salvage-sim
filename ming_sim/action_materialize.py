@@ -393,7 +393,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
 
         mechanical_fields = (
             "dossier_action_type", "target_kind", "target_id", "mode", "amount", "account",
-            "execution_surface", "assignee", "deadline_months",
+            "execution_surface", "assignee", "deadline_months", "punish_action",
         )
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
@@ -504,11 +504,22 @@ def stage_pacification_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
-PUNISH_ACTIONS = frozenset({
-    "无", "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸", "削籍", "放归", "昭雪", "流放",
-})
-PUNISH_IMPRISON = frozenset({"拿问下狱", "拿问去职"})
-PUNISH_PARDON = frozenset({"放归", "昭雪"})
+def punish_actions_allowed() -> frozenset:
+    """#517：punish_action 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec.allowed。"""
+    cluster = cluster_by_kind("punishment")
+    if cluster is None:
+        raise RuntimeError("punishment cluster not installed")
+    for field in cluster.fields:
+        if field.name == "punish_action":
+            if field.allowed is None:
+                raise RuntimeError("punish_action FieldSpec.allowed missing")
+            return field.allowed
+    raise RuntimeError("punish_action FieldSpec missing")
+
+
+def punish_actions_effective() -> frozenset:
+    """可物化的惩处动作（排除分类器占位「无」）。"""
+    return punish_actions_allowed() - {"无"}
 
 
 def stage_punishment_candidate(
@@ -529,7 +540,7 @@ def stage_punishment_candidate(
 
     target = str(target_id or "").strip()
     action = str(punish_action or "").strip()
-    if not target or action not in (PUNISH_ACTIONS - {"无"}):
+    if not target or action not in punish_actions_effective():
         return 0
     body = str(text or "").strip()
     if not body:
@@ -595,7 +606,7 @@ def _materialize_punishment(ctx: MaterializeCtx) -> None:
     intent = ctx.intent or {}
     target_id = str(intent.get("name") or intent.get("target_id") or "").strip()
     punish_action = str(intent.get("punish_action") or "").strip()
-    if not target_id or punish_action not in (PUNISH_ACTIONS - {"无"}):
+    if not target_id or punish_action not in punish_actions_effective():
         return
     pending_id = stage_punishment_candidate(
         ctx.session.db,
@@ -750,7 +761,10 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
             fields=(
                 FieldSpec(
                     "punish_action", "惩处动作",
-                    PUNISH_ACTIONS, "无",
+                    frozenset({
+                        "无", "拿问下狱", "拿问去职", "赐死", "廷杖", "罚俸",
+                        "削籍", "放归", "昭雪", "流放",
+                    }), "无",
                 ),
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("target_id", "目标人物", None, "", max_len=80),
