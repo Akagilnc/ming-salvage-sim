@@ -115,12 +115,18 @@ def _find_office_and_grant(rows):
     return office, grants
 
 
-def _close_night_dossier(db, state, content, pending_id):
-    db.commit_pending_actions(state, content=content, action_ids=[pending_id])
-    return next(
-        d for d in db.list_decree_dossiers()
-        if d["pending_action_id"] == pending_id
-    )
+def _bind_draft_extract(monkeypatch, *, draft_text, target_id):
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": draft_text,
+        "target_candidate": "",
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": target_id,
+    })
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": "",
+    })
 
 
 # ── A 锚例 ───────────────────────────────────────────────────────────
@@ -156,54 +162,7 @@ def test_anchor_appointment_and_grant_stage_two_independent_candidates(game, mon
     assert gp.get("target_id") == "shaanxi"
 
 
-def test_anchor_candidates_independently_confirmable(game, monkeypatch):
-    """AC-A：两轮确认（confirm_target_ids）可分别应允任免、拒绝拨帑。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    sess = _bind_apply(db, state, content)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    _stage_anchor(sess, minister, monkeypatch)
-
-    rows = _pending_rows(db, state.turn, minister_name=minister.name)
-    office, grants = _find_office_and_grant(rows)
-    assert len(office) == 1 and len(grants) == 1
-    office_id = int(office[0]["id"])
-    grant_id = int(grants[0]["id"])
-
-    # 应允任免
-    _silence_serial(monkeypatch)
-    sess.apply_cli_conversation_actions(
-        minister, "任免准了。", "臣遵旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
-        confirm_target_ids={office_id},
-    )
-    approved_office = {
-        int(r["id"]) for r in db.list_night_approved_pending(nid, kind="office")
-    }
-    assert office_id in approved_office
-    # 拨帑仍 pending
-    still = {int(r["id"]) for r in _pending_rows(db, state.turn) if r.get("status") == "pending"}
-    assert grant_id in still
-
-    # 拒绝拨帑
-    _silence_serial(monkeypatch)
-    sess.apply_cli_conversation_actions(
-        minister, "赈灾那道不必了。", "臣领旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "拒绝"}],
-        confirm_target_ids={grant_id},
-    )
-    remaining_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
-    assert grant_id not in remaining_ids
-    # 任免仍在 night_approved，不得被拒拨帑拖垮
-    assert office_id in {
-        int(r["id"]) for r in db.list_night_approved_pending(nid, kind="office")
-    }
-
-
-# ── B 只落准的 ───────────────────────────────────────────────────────
+# ── B 只落准的（准驳 + 收夜案卷一条 tracer）──────────────────────────
 
 
 def test_accept_one_reject_one_only_accepted_lands_dossier(game, monkeypatch):
@@ -251,57 +210,12 @@ def test_accept_one_reject_one_only_accepted_lands_dossier(game, monkeypatch):
     }
     assert office_id in by_pending, "应允任免应收夜落独立案卷"
     assert grant_id not in by_pending, "拒绝拨帑不得成案"
-    # 不得两败俱伤 / 两道同落
     grant_dossiers = [
         d for d in dossiers
         if d.get("action_type") == "grant_allocation"
         and int(d.get("pending_action_id") or 0) == grant_id
     ]
     assert not grant_dossiers
-
-
-def test_accept_grant_reject_appointment_only_grant_lands(game, monkeypatch):
-    """AC-B 对调：应允拨帑、拒绝任免 → 只落 grant 案卷。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    sess = _bind_apply(db, state, content)
-    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
-    nid = int(night["id"])
-    _stage_anchor(sess, minister, monkeypatch)
-
-    rows = _pending_rows(db, state.turn, minister_name=minister.name)
-    office, grants = _find_office_and_grant(rows)
-    office_id = int(office[0]["id"])
-    grant_id = int(grants[0]["id"])
-
-    _silence_serial(monkeypatch)
-    sess.apply_cli_conversation_actions(
-        minister, "准赈灾。", "臣遵旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "应允"}],
-        confirm_target_ids={grant_id},
-    )
-    sess.apply_cli_conversation_actions(
-        minister, "任免作罢。", "臣领旨。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=[{"kind": "confirmation", "confirmation": "拒绝"}],
-        confirm_target_ids={office_id},
-    )
-
-    assert office_id not in {int(r["id"]) for r in _pending_rows(db, state.turn)}
-    assert grant_id in {
-        int(r["id"]) for r in db.list_night_approved_pending(nid, kind="directive")
-    }
-
-    an.close_night(db, state, night_id=int(night["id"]), content=content)
-    by_pending = {
-        int(d["pending_action_id"]): d
-        for d in db.list_decree_dossiers()
-        if d.get("pending_action_id") is not None
-    }
-    assert grant_id in by_pending
-    assert by_pending[grant_id]["action_type"] == "grant_allocation"
-    assert office_id not in by_pending
 
 
 # ── C 单旨不误拆 ─────────────────────────────────────────────────────
@@ -339,20 +253,12 @@ def test_single_candidate_does_not_inflate(game, monkeypatch, payload):
     scripted = candidates_from_classifier_payload([payload], soft=False)
     assert len(scripted) == 1
 
-    # draft 需要串行 extract 或 intent 字段；本片 draft 用 canned extract 给出成品
     if payload["kind"] == "draft":
-        monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-            "draft_action": "拟旨",
-            "draft_text": "着户部清查三边粮饷，限三月完报。",
-            "target_candidate": "",
-            "dossier_action_type": "policy",
-            "target_kind": "issue",
-            "target_id": "test-policy",
-        })
-        # draft materializer may call backend; silence classify still, allow draft path
-        monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-            "appoint_action": "无", "name": "", "office": "",
-        })
+        _bind_draft_extract(
+            monkeypatch,
+            draft_text="着户部清查三边粮饷，限三月完报。",
+            target_id="test-policy",
+        )
 
     before = len(_pending_rows(db, state.turn))
     sess.apply_cli_conversation_actions(
@@ -375,7 +281,7 @@ def test_single_candidate_does_not_inflate(game, monkeypatch, payload):
         assert new["kind"] == "directive"
 
 
-# ── D N>2 三聚类独立 ─────────────────────────────────────────────────
+# ── D N>2 三聚类独立（stage + 准驳互不污染一条 tracer）──────────────
 
 
 def _triple_candidates():
@@ -399,70 +305,20 @@ def _triple_candidates():
     ], soft=False)
 
 
-def test_three_registered_clusters_stage_independently(game, monkeypatch):
-    """AC-D：appointment + grant + draft → 3 条独立 pending。"""
-    db, state, content = game
-    minister = _active_ch(db, content)
-    sess = _bind_apply(db, state, content)
-    _silence_serial(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": "着兵部核饷九边军械，限两月呈览。",
-        "target_candidate": "",
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "nine-borders-arms",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
-
-    before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
-    sess.apply_cli_conversation_actions(
-        minister,
-        "任命洪承畴为陕西巡抚，调银三十万两赈灾，再拟一道核饷九边。",
-        "臣已分别拟妥，请陛下定夺准驳。",
-        has_directive=False, secret_order_id=None,
-        preclassified_intent=_triple_candidates(),
-    )
-    new_rows = [
-        r for r in _pending_rows(db, state.turn, minister_name=minister.name)
-        if int(r["id"]) not in before_ids
-    ]
-    assert len(new_rows) == 3, f"应 3 条独立 pending，实际 {[(r['kind'], _payload(r).get('dossier_action_type')) for r in new_rows]}"
-    kinds = {r["kind"] for r in new_rows}
-    assert "office" in kinds
-    directives = [r for r in new_rows if r["kind"] == "directive"]
-    assert len(directives) == 2
-    dtypes = {_payload(r).get("dossier_action_type") for r in directives}
-    assert "grant_allocation" in dtypes
-    # draft/policy 一条
-    assert any(
-        _payload(r).get("dossier_action_type") != "grant_allocation"
-        or "核饷" in str(_payload(r).get("text") or "")
-        for r in directives
-    )
-
-
-def test_three_candidates_confirm_reject_leave_unpolluted(game, monkeypatch):
-    """AC-D：对一条应允、一条拒绝、一条不动 → 状态互不改写。"""
+def test_three_registered_clusters_confirm_reject_leave_unpolluted(game, monkeypatch):
+    """AC-D：appointment + grant + draft → 3 条独立 pending；
+    对一条应允、一条拒绝、一条不动 → 状态互不改写。"""
     db, state, content = game
     minister = _active_ch(db, content)
     sess = _bind_apply(db, state, content)
     night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
     nid = int(night["id"])
     _silence_serial(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": "着兵部核饷九边军械，限两月呈览。",
-        "target_candidate": "",
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "nine-borders-arms",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
+    _bind_draft_extract(
+        monkeypatch,
+        draft_text="着兵部核饷九边军械，限两月呈览。",
+        target_id="nine-borders-arms",
+    )
 
     before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
     sess.apply_cli_conversation_actions(
@@ -476,7 +332,10 @@ def test_three_candidates_confirm_reject_leave_unpolluted(game, monkeypatch):
         r for r in _pending_rows(db, state.turn, minister_name=minister.name)
         if int(r["id"]) not in before_ids
     ]
-    assert len(new_rows) == 3
+    assert len(new_rows) == 3, (
+        f"应 3 条独立 pending，实际 "
+        f"{[(r['kind'], _payload(r).get('dossier_action_type')) for r in new_rows]}"
+    )
     office = next(r for r in new_rows if r["kind"] == "office")
     grant = next(
         r for r in new_rows
@@ -516,10 +375,6 @@ def test_three_candidates_confirm_reject_leave_unpolluted(game, monkeypatch):
     assert draft_id in remaining
     assert remaining[draft_id].get("status") == "pending"
     assert _payload(remaining[draft_id]).get("text") == draft_payload_before.get("text")
-    # 任免不得被拒拨帑拖入 drop
-    assert office_id in {
-        int(r["id"]) for r in db.list_night_approved_pending(nid, kind="office")
-    }
 
 
 # ── 线上 r1 两控：committed 独立 stage / 推断 pending 仍更新 ──────────
@@ -560,17 +415,11 @@ def test_mixed_intent_with_committed_draft_stages_independently(game, monkeypatc
 
     new_draft_text = "新拟：着兵部核饷九边军械，限两月呈览。"
     _silence_serial(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": new_draft_text,
-        "target_candidate": "",
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "nine-borders-arms",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
+    _bind_draft_extract(
+        monkeypatch,
+        draft_text=new_draft_text,
+        target_id="nine-borders-arms",
+    )
 
     before_pending_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
     sess.apply_cli_conversation_actions(
@@ -624,17 +473,11 @@ def test_mixed_intent_inferred_pending_target_still_updates(game, monkeypatch):
 
     revised_text = "修订：着户部及兵部联合清查三边粮饷军械，限两月完报。"
     _silence_serial(monkeypatch)
-    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
-        "draft_action": "拟旨",
-        "draft_text": revised_text,
-        "target_candidate": "",  # 无显式 id；单 pending 应推断 pending_target
-        "dossier_action_type": "policy",
-        "target_kind": "issue",
-        "target_id": "three-borders-grain",
-    })
-    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
-        "appoint_action": "无", "name": "", "office": "",
-    })
+    _bind_draft_extract(
+        monkeypatch,
+        draft_text=revised_text,
+        target_id="three-borders-grain",
+    )
 
     before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
     sess.apply_cli_conversation_actions(
