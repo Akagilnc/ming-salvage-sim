@@ -110,7 +110,7 @@ def test_explicit_hold_over_marks_named_candidate(game, monkeypatch):
 
 
 def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
-    """含「留中」字面但语义为准（「不必留中，准了」）→ 应允成 night_approved，不得误入 held_over。"""
+    """含「留中」字面但语义为准（「不必留中，准了」）→ 会话入口获准成案，不得误留中跳过。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -130,12 +130,17 @@ def test_negated_hold_over_phrase_approves_not_held_over(game, monkeypatch):
         has_directive=False, secret_order_id=None,
     )
 
-    row = db.conn.execute(
-        "SELECT status, night_approved FROM pending_actions WHERE id=?", (int(id_a),),
-    ).fetchone()
-    assert str(row["status"]) == "pending"
-    assert int(row["night_approved"] or 0) == 1
-    assert id_a in {p["id"] for p in _pending_directives(db, state.turn)}
+    # 公开行为结果：默认提交点成案入 turn_directives（误留中则跳过、无此文）
+    applied = db.commit_pending_actions(state)
+    applied_ids = {
+        int(a.get("pending_action_id") or a.get("id") or 0) for a in applied
+    }
+    assert id_a in applied_ids
+    rows = db.conn.execute(
+        "SELECT text FROM turn_directives WHERE turn=?", (state.turn,),
+    ).fetchall()
+    joined = "".join(str(r["text"] or "") for r in rows)
+    assert "户部清查" in joined, "否定留中须获准成案，不得误留中跳过"
 
 
 def test_hold_over_skipped_at_default_commit_sibling_still_approves(game, monkeypatch):
