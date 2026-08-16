@@ -248,15 +248,6 @@ def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatc
             ("查辽东军饷有无侵冒", "三月内回奏", "封存兵部辽饷册", "密访关宁诸将"),
             "王在晋",
         ),
-        (
-            "action_word_generalized",
-            "查辽东军饷有无侵冒，着周延儒承办",
-            "周延儒",
-            "臣领密旨，可由周延儒协办此事。",
-            "密令如下：查辽东军饷有无侵冒",
-            ("查辽东军饷有无侵冒", "协办"),
-            "周延儒",
-        ),
     ],
     ids=[
         "bad_llm_ack_content",
@@ -264,7 +255,6 @@ def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatc
         "drops_minister_assignee",
         "assignee_field_ok_content_drops_name",
         "drops_non_assignee_supplements",
-        "action_word_generalized",
     ],
 )
 def test_secret_prefix_merge_guards(
@@ -281,6 +271,33 @@ def test_secret_prefix_merge_guards(
         assert bit in so["content"], (case_id, bit, so["content"])
     assert so["assignee"] == expect_assignee
     assert so["deadline_months"] == 3
+
+
+@pytest.mark.parametrize(
+    "action_verb,person,reply",
+    [
+        ("协办", "周延儒", "臣领密旨，可由周延儒协办此事。"),
+        ("监督", "周延儒", "臣领密旨，可委周延儒监督此事。"),
+        ("处理", "周延儒", "臣领密旨，可委周延儒处理。"),
+        ("负责", "李若琏", "臣领密旨，可委李若琏负责。"),
+    ],
+    ids=["协办", "监督", "处理", "负责"],
+)
+def test_secret_action_verb_not_swallowed_by_generic_chengban(
+    monkeypatch, action_verb, person, reply,
+):
+    """公开 resolve：LLM 把大臣动作词泛化成『承办』时，协办/监督/处理/负责须各自保留。"""
+    task = "查辽东军饷有无侵冒"
+    so = _resolve_secret(
+        monkeypatch, reply, f"密令如下：{task}",
+        payload=_so_json(
+            内容=f"{task}，着{person}承办", 承办人=person, 期限月数=3, 标签=["辽饷"],
+        ),
+    )
+    assert so is not None
+    assert task in so["content"]
+    assert action_verb in so["content"], (action_verb, so["content"])
+    assert so["assignee"] == person
 
 
 def test_secret_assignee_defaults_when_unspecified(monkeypatch):
@@ -305,16 +322,44 @@ def test_secret_ack_only_reply_does_not_force_merge(monkeypatch):
     assert so["assignee"] == "李若琏"
 
 
-def test_secret_clause_split_merges_multiline_supplements(monkeypatch):
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "领命：可授李若琏暗查\n并封存兵部辽饷册。",
+        "领命，即办。可授李若琏暗查并封存兵部辽饷册。",
+        "谨遵。可授李若琏暗查并封存兵部辽饷册，三月内回奏。",
+        "遵旨。可授李若琏暗查并封存兵部辽饷册。",
+    ],
+    ids=["colon_multiline", "领命_即办", "谨遵", "遵旨"],
+)
+def test_secret_mixed_ack_clauses_stripped_from_persisted_content(monkeypatch, reply):
+    """混合领命+实质补充：分句剥领命后守门放行完整 LLM 正文；领命/即办/谨遵/遵旨不得入档。"""
     task, material = "查辽东军饷有无侵冒", "封存兵部辽饷册"
+    llm_content = f"{task}，着李若琏暗查并{material}，三月内回奏"
     so = _resolve_secret(
-        monkeypatch,
-        f"领命：可授李若琏暗查\n并{material}。",
-        f"密令如下：{task}",
-        payload=_so_json(内容=task, 承办人="李若琏", 期限月数=3),
+        monkeypatch, reply, f"密令如下：{task}，三月内回奏",
+        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
     )
     assert so is not None
+    assert so["content"] == llm_content
     assert task in so["content"] and material in so["content"]
+    for ack in ("领命", "即办", "谨遵", "遵旨"):
+        assert ack not in so["content"], (ack, so["content"])
+    assert so["assignee"] == "李若琏"
+
+
+def test_secret_repeated_assignee_name_accepts_clean_backend_content(monkeypatch):
+    """公开 resolve：回话 speaker 前缀重复承办人名时，完整 LLM 正文须原样采纳、不并入噪声回话。"""
+    task = "查辽东军饷有无侵冒"
+    reply = "李若琏：可委派李若琏暗查并封存兵部辽饷册。"
+    llm_content = f"{task}，着李若琏暗查并封存兵部辽饷册"
+    so = _resolve_secret(
+        monkeypatch, reply, f"密令如下：{task}",
+        payload=_so_json(内容=llm_content, 承办人="李若琏", 期限月数=3),
+    )
+    assert so is not None
+    assert so["content"] == llm_content
+    assert "李若琏：" not in so["content"]
     assert so["assignee"] == "李若琏"
 
 
@@ -1078,10 +1123,6 @@ def test_extract_minister_actions_unknown_action_floored(monkeypatch):
         ("prefix {bad: json,} suffix", "无", 0),
         ('{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n}', "更新", 6),
         ('{"密令动作":"更新","目标密令编号":6,}', "更新", 6),
-        ('{"密令动作": "更新", "目标密令编号": 6, "note":"a//b"}', "更新", 6),
-        ('{"密令动作": "更新", "目标密令编号": 6, "url":"http://x.com//y"}', "更新", 6),
-        ('{"密令动作":"更新","目标密令编号":6,"note":"x,}"}', "更新", 6),
-        ('{"密令动作":"更新","目标密令编号":6,"a":"he said \\"hi\\" //x"}', "更新", 6),
     ],
 )
 def test_extract_parses_lenient_backend_json(monkeypatch, raw, expect_action, expect_order_id):
@@ -1090,6 +1131,33 @@ def test_extract_parses_lenient_backend_json(monkeypatch, raw, expect_action, ex
     act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
     assert act["secret_action"] == expect_action
     assert act["order_id"] == expect_order_id
+
+
+@pytest.mark.parametrize(
+    "raw,expect_new_content",
+    [
+        # 外层尾逗号/注释迫使走 JSONC cleaner；串内 //、URL、,}、转义引号须原样进入 new_content
+        ('{"密令动作":"更新","目标密令编号":6,"新内容":"a//b",}', "a//b"),
+        ('{"密令动作":"更新","目标密令编号":6,"新内容":"http://x.com//y",}', "http://x.com//y"),
+        ('{"密令动作":"更新","目标密令编号":6,"新内容":"x,}",}', "x,}"),
+        ('{"密令动作":"更新","目标密令编号":6,"新内容":"he said \\"hi\\" //x",}', 'he said "hi" //x'),
+        (
+            '{\n  "密令动作": "更新", // c\n  "目标密令编号": 6,\n  "新内容": "a//b",\n}',
+            "a//b",
+        ),
+    ],
+    ids=["slash_in_string", "url_in_string", "comma_brace_in_string",
+         "escaped_quote_slash", "comment_plus_slash_string"],
+)
+def test_extract_lenient_cleaner_preserves_quoted_delimiters(
+    monkeypatch, raw, expect_new_content,
+):
+    """畸形外层分隔迫使 quote-aware 清洗；消费字段 new_content 保留串内精确字节。"""
+    monkeypatch.setattr(cb, "_run_backend", lambda p: (raw, 1))
+    act = cb.extract_minister_actions("x", "y", [{"id": 6, "title": "t", "content": "c"}])
+    assert act["secret_action"] == "更新"
+    assert act["order_id"] == 6
+    assert act["new_content"] == expect_new_content
 
 
 def test_extract_preserves_array_trailing_comma_via_loads_path(monkeypatch):
@@ -1141,6 +1209,28 @@ def test_clichat_invoke_builds_prompt_and_strips_narration(monkeypatch):
     assert "12345" in p
     assert "【执行约束·必读】" in p
     assert captured["text"] == "BODY_ZH_REPLY"
+
+
+def test_clichat_invoke_all_narration_falls_back_to_original(monkeypatch):
+    """全英文 narration 无中文正文 → strip 退回原文，非空 completion 抵达 _fake_completion。"""
+    cc = cb.CliChat(id="cli-test", backend="agy")
+    raw = "I will do this.\nLet me start."
+    monkeypatch.setattr(cc, "_call_cli", lambda p: (raw, 1))
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    captured = {}
+    real_fake = cb._fake_completion
+
+    def spy(text, model_id, *a, **k):
+        captured["text"] = text
+        return real_fake(text, model_id, *a, **k)
+
+    monkeypatch.setattr(cb, "_fake_completion", spy)
+    cc.invoke(
+        [SimpleNamespace(role="user", content="USER_MSG")],
+        Message(role="assistant"),
+    )
+    assert captured["text"] == raw.strip()
+    assert captured["text"]  # nonempty fail-safe, not emptied by strip
 
 
 def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
@@ -1329,9 +1419,13 @@ def test_run_agy_nonzero_exit_retries_then_raises(monkeypatch):
         ("请拟一道诏书，颁行天下", "decree"),
         ("只输出合法 JSON，无多余字", "sanitizer"),
         ("今日天气如何", "other"),
-        # 优先级：minister 先于 decree；chapter_memory 先于 extractor/邸报词
+        # 优先级：minister 先于 decree；chapter_memory 先于 extractor（须同框 extractor 标识）
         ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
-        ('【起居注】崇祯二年……本卷章节……"body": "…" tags: […]', "chapter_memory"),
+        (
+            '【起居注】崇祯二年……本卷章节……"body": "…" tags: […]'
+            " 本月结算抽取 module_allowed_fields score_extractor",
+            "chapter_memory",
+        ),
     ],
     ids=[
         "minister", "chapter_memory", "extractor", "simulator",
