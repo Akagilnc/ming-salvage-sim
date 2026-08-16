@@ -5,7 +5,7 @@
 > 采集：`.venv/bin/python -m pytest --collect-only -q` → **3081 tests / 130 files**  
 > 前序：一阶段分级政策已 merge = [PR#1186](https://github.com/Akagilnc/ming-salvage-sim/pull/1186)；冻结件 `TEST_AUDIT_1185.md`（Batch1 前 3024p/11s in 1060s）  
 > 约束：本轮交付 = 本报告 + issue 评论 + commit；**不动任何 `tests/**`**。不跑烧额度用例。  
-> 法源：仓宪测试五尺（全局宪法 #13 / 票面升格段）+ [`docs/DEV_WORKFLOW.md`](DEV_WORKFLOW.md) §测试分级 + ADR 0001 + ADR 0094  
+> 法源：仓宪测试五尺（全局宪法 #13 / 票面升格段）+ [`CLAUDE.md`](../CLAUDE.md)「## 测试分级」+ ADR 0001 + ADR 0094  
 > **修订（判官 run `01a0043e-8c06-7cef-98e6-2dd0a749aeed` 七类判词）**：撤回误删/误 merge；盯文改 rewrite；merge 拆 keep/move/delete-as-duplicate；泄漏全称降级并补调用点表；复杂度账去未授权机制。
 
 ---

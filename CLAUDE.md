@@ -63,7 +63,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 正向口径：切片只跑聚焦；全量在最终待合并状态跑到绿（失败/修复后重跑）。同构于仓外 `ak-pi-workflow-roles` 司天家族测试策略（该仓 #215 provenance）；worker prompt / reviewer 验收面属外部编排器仓，由其维护，本仓不改。
 
-## ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁入）
+## ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁出 → DEV_WORKFLOW；PR #1193 迁回）
 
 进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进。Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。
 
@@ -85,4 +85,4 @@ GitHub Issues（`Akagilnc/ming-salvage-sim`，已设为本 clone 的 gh 默认�
 
 ### Domain docs
 
-单语境：根目录 `CONTEXT.md` + `docs/adr/`。See `docs/agents/domain.md`.
+单语境：根目录 `CONTEXT.md` + `docs/adr/`。设计判据（真 user story / 文档三层+ADR 颗粒度 / Accepted≠已实现 / 评审强度跟反悔成本）与用法见 `docs/agents/domain.md`。
