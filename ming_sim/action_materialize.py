@@ -2007,6 +2007,243 @@ def validate_tingtui_appointment_shape(obj: Any) -> Tuple[bool, str]:
     return True, ""
 
 
+def _list_pending_office_rows(
+    db: Any,
+    turn: int,
+    *,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """本夜/本回合 pending 人事候选（kind=office）。不另建索引。"""
+    rows = list(pend_for_minister or [])
+    if not rows:
+        rows = list(db.list_pending_actions(int(turn)))
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        if row.get("kind") != "office":
+            continue
+        if str(row.get("status") or "pending") != "pending":
+            continue
+        out.append(row)
+    return out
+
+
+def _office_payload(row: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        payload = json.loads(str(row.get("payload_json") or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _match_office_row_by_name_office(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    name: str,
+    office: str,
+    content: Any = None,
+    db: Any = None,
+) -> List[Dict[str, Any]]:
+    from ming_sim.session import _canonical_minister_key
+
+    want_name = str(name or "").strip()
+    want_office = str(office or "").strip()
+    if not want_name:
+        return []
+    key = _canonical_minister_key(content, want_name, db) if want_name else ""
+    hits: List[Dict[str, Any]] = []
+    for row in rows:
+        payload = _office_payload(row)
+        staged_name = str(payload.get("name") or "").strip()
+        if not staged_name:
+            continue
+        staged_key = (
+            _canonical_minister_key(content, staged_name, db) if staged_name else staged_name
+        )
+        if staged_key != key and staged_name != want_name:
+            continue
+        if want_office:
+            staged_office = str(payload.get("office") or "").strip()
+            if staged_office != want_office:
+                continue
+        hits.append(row)
+    return hits
+
+
+def _select_pending_office_for_path(
+    db: Any,
+    turn: int,
+    *,
+    name: str = "",
+    office: str = "",
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+    content: Any = None,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """在本夜 pending 人事候选上选对应条。
+
+    返回 (row|None, status)：hit / ambiguous / miss / 含糊。
+    单条直取；多条仅人+职唯一命中；含糊/歧义零改。
+    """
+    pointed = str(target_candidate or "").strip()
+    if pointed == "含糊":
+        return None, "含糊"
+
+    rows = _list_pending_office_rows(
+        db, turn, pend_for_minister=pend_for_minister,
+    )
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in rows:
+            if int(row["id"]) == want_id:
+                return row, "hit"
+        return None, "miss"
+
+    if not rows:
+        return None, "miss"
+    if len(rows) == 1:
+        return rows[0], "hit"
+
+    hits = _match_office_row_by_name_office(
+        rows, name=name, office=office, content=content, db=db,
+    )
+    if len(hits) == 1:
+        return hits[0], "hit"
+    if len(hits) >= 2:
+        return None, "ambiguous"
+    # 多条且无人+职命中：无消歧 → 歧义零改（不得默改最新/第一条）
+    if not str(name or "").strip():
+        return None, "ambiguous"
+    return None, "miss"
+
+
+def _path_marks_from_appt(appt: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """从结构化意图取路径标记：特旨→mode=midzhi；署理→任别=署理。互不写对方字段。"""
+    mode_mark: Optional[str] = None
+    raw_mode = str(appt.get("mode") or "").strip()
+    if raw_mode == "midzhi":
+        mode_mark = "midzhi"
+
+    tenure_mark: Optional[str] = None
+    for key in ("appointment_tenure", "任别"):
+        if key not in appt:
+            continue
+        raw = appt.get(key)
+        if raw is None:
+            continue
+        val = str(raw).strip()
+        if val == "署理":
+            tenure_mark = "署理"
+        break
+    return mode_mark, tenure_mark
+
+
+def _annotate_office_pending_path(
+    db: Any,
+    row: Dict[str, Any],
+    *,
+    mode_mark: Optional[str] = None,
+    tenure_mark: Optional[str] = None,
+    minister_name: str = "",
+    turn: int = 0,
+) -> int:
+    """原地改写 office pending：特旨只写 mode；署理只写 任别。返回 pending id。"""
+    if not mode_mark and not tenure_mark:
+        return 0
+    pending_id = int(row["id"])
+    payload = dict(_office_payload(row))
+    changed = False
+    if mode_mark == "midzhi" and payload.get("mode") != "midzhi":
+        payload["mode"] = "midzhi"
+        changed = True
+    if tenure_mark == "署理" and payload.get("任别") != "署理":
+        payload["任别"] = "署理"
+        payload.pop("appointment_tenure", None)
+        changed = True
+    if not changed and (
+        (mode_mark == "midzhi" and payload.get("mode") == "midzhi")
+        or (tenure_mark == "署理" and payload.get("任别") == "署理")
+    ):
+        # 语义已在：仍回 id（no-op 去重存活），可补留痕
+        _write_path_nature_ledger(
+            db,
+            pending_id=pending_id,
+            payload=payload,
+            mode_mark=mode_mark,
+            tenure_mark=tenure_mark,
+            minister_name=minister_name,
+            turn=turn,
+        )
+        return pending_id
+    if not changed:
+        return pending_id
+
+    updated = db.update_office_candidate_payload(pending_id, payload)
+    if updated:
+        _write_path_nature_ledger(
+            db,
+            pending_id=pending_id,
+            payload=payload,
+            mode_mark=mode_mark,
+            tenure_mark=tenure_mark,
+            minister_name=minister_name,
+            turn=turn,
+        )
+    return int(updated or pending_id)
+
+
+def _write_path_nature_ledger(
+    db: Any,
+    *,
+    pending_id: int,
+    payload: Dict[str, Any],
+    mode_mark: Optional[str],
+    tenure_mark: Optional[str],
+    minister_name: str,
+    turn: int,
+) -> None:
+    """0035 故事账开放标签：关联候选 id / 本轮 origin；撤回走 0038 按 source 删。"""
+    from ming_sim.audience_night import append_ledger_entry, get_open_night
+
+    open_n = get_open_night(db)
+    if open_n is None:
+        return
+    tags: List[str] = [f"pending:{int(pending_id)}"]
+    labels: List[str] = []
+    if mode_mark == "midzhi":
+        tags.append("特旨")
+        labels.append("特旨")
+    if tenure_mark == "署理":
+        tags.append("署理")
+        labels.append("署理")
+    if not labels:
+        return
+    name = str(payload.get("name") or "").strip()
+    office = str(payload.get("office") or "").strip()
+    body = (
+        f"路径应答：{'/'.join(labels)}"
+        + (f" · {name}" if name else "")
+        + (f"/{office}" if office else "")
+        + f" · pending:{int(pending_id)}"
+    )
+    source_cid = 0
+    try:
+        last = db.get_last_active_chat_turn(str(minister_name or ""), int(turn))
+    except Exception:
+        last = None
+    if last is not None:
+        source_cid = int(last.get("id") or 0)
+    persons = [name] if name else ([minister_name] if minister_name else [])
+    append_ledger_entry(
+        db,
+        int(open_n["id"]),
+        person_names=persons,
+        body=body,
+        tags=tags,
+        source_chat_turn_id=source_cid,
+        check_dead=False,
+    )
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -2027,13 +2264,108 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
     intent_kind = ctx.intent_kind
 
     if intent is not None:
-        appt = intent if intent_kind == "appointment" else {"appoint_action": "无", "name": "", "office": ""}
+        appt = (
+            intent if intent_kind == "appointment"
+            else {"appoint_action": "无", "name": "", "office": ""}
+        )
     else:
         appt = extract_appointment_action(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config)
 
     content_ref = getattr(session, "content", None)
-    appt_name = appt.get("name", "")
+    mode_mark, tenure_mark = _path_marks_from_appt(appt)
+    appt_name = str(appt.get("name") or "").strip()
+    appt_office = str(appt.get("office") or "").strip()
+    target_candidate = appt.get("target_candidate")
+
+    # #529 路径应答：特旨/署理在既有 pending 人事候选上原地改；歧义零改。
+    if mode_mark or tenure_mark:
+        if str(target_candidate or "").strip() == "含糊":
+            ctx.out["directive_confirmation_ambiguous"] = {
+                "candidates": [
+                    {"id": int(r["id"]), "summary": _pending_office_brief(r)}
+                    for r in _list_pending_office_rows(
+                        session.db, int(session.state.turn),
+                        pend_for_minister=ctx.pend_for_minister,
+                    )
+                ],
+            }
+            return
+        row, status = _select_pending_office_for_path(
+            session.db,
+            int(session.state.turn),
+            name=appt_name,
+            office=appt_office,
+            target_candidate=target_candidate,
+            pend_for_minister=ctx.pend_for_minister,
+            content=content_ref,
+        )
+        if status in {"ambiguous", "含糊"}:
+            ctx.out["directive_confirmation_ambiguous"] = {
+                "candidates": [
+                    {"id": int(r["id"]), "summary": _pending_office_brief(r)}
+                    for r in _list_pending_office_rows(
+                        session.db, int(session.state.turn),
+                        pend_for_minister=ctx.pend_for_minister,
+                    )
+                ],
+            }
+            return
+        if status == "hit" and row is not None:
+            # 同人同职再发任命+路径：no-op 去重，中旨/任别并入既有条
+            pending_id = _annotate_office_pending_path(
+                session.db,
+                row,
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=int(session.state.turn),
+            )
+            if pending_id:
+                ctx.out["pending_action_id"] = pending_id
+            # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
+            if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
+                same = _match_office_row_by_name_office(
+                    [row], name=appt_name, office=appt_office,
+                    content=content_ref, db=session.db,
+                )
+                if same or not appt_name:
+                    return
+            else:
+                return
+        # miss：无对应暂存 → fallback 走下方普通人事管线（需完整任命字段）
+
+    # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入路径语义，不双落。
+    # 不得命中反向「罢免」暂存——那条由下方 _cancel_staged_opposing_office 对冲（#504）。
+    if appt.get("appoint_action") == "任命" and appt_name:
+        existing_hits = [
+            r for r in _match_office_row_by_name_office(
+                _list_pending_office_rows(
+                    session.db, int(session.state.turn),
+                    pend_for_minister=ctx.pend_for_minister,
+                ),
+                name=appt_name,
+                office=appt_office,
+                content=content_ref,
+                db=session.db,
+            )
+            if str(r.get("action") or "") == "任命"
+        ]
+        if len(existing_hits) == 1:
+            pending_id = _annotate_office_pending_path(
+                session.db,
+                existing_hits[0],
+                mode_mark=mode_mark,
+                tenure_mark=tenure_mark,
+                minister_name=minister_name,
+                turn=int(session.state.turn),
+            )
+            # 无新路径标记时仍回既有 id，避免双落
+            ctx.out["pending_action_id"] = int(
+                pending_id or existing_hits[0]["id"]
+            )
+            return
+
     if appt.get("appoint_action") == "任命" and appt_name:
         hedged = _cancel_staged_opposing_office(
             session.db, "罢免", appt_name, int(session.state.turn), content=content_ref)
@@ -2047,15 +2379,35 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 session.db, appt_name, content=content_ref):
             appt = {"appoint_action": "无", "name": "", "office": ""}
     if appt.get("appoint_action") in ("任命", "罢免") and appt.get("name"):
+        payload = {
+            "name": appt["name"], "office": appt.get("office", ""),
+            "appointer": minister_name,
+            "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+        }
+        # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
+        if tenure_mark == "署理":
+            payload["任别"] = "署理"
+        elif str(appt.get("appointment_tenure") or appt.get("任别") or "").strip() in {
+            "真除", "署理", "兼署", "加衔",
+        }:
+            payload["任别"] = str(
+                appt.get("appointment_tenure") or appt.get("任别")
+            ).strip()
         ctx.out["pending_action_id"] = session.db.stage_pending_action(
             session.state.turn, kind="office", action=appt["appoint_action"],
             minister_name=minister_name, target_id=None,
-            payload={
-                "name": appt["name"], "office": appt.get("office", ""),
-                "appointer": minister_name,
-                "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
-            },
+            payload=payload,
         )
+
+
+def _pending_office_brief(row: Dict[str, Any]) -> str:
+    payload = _office_payload(row)
+    name = str(payload.get("name") or "").strip()
+    office = str(payload.get("office") or "").strip()
+    action = str(row.get("action") or "").strip()
+    if name and office:
+        return f"{action}{name}为{office}" if action else f"{name}/{office}"
+    return name or office or f"pending:{row.get('id')}"
 
 
 def _build_catalog() -> Tuple[ActionCluster, ...]:
@@ -2297,6 +2649,12 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
+                # #529 / 0064：任别轴；路径应答署理只写此字段
+                FieldSpec(
+                    "appointment_tenure", "任别",
+                    frozenset({"真除", "署理", "兼署", "加衔"}), "",
+                ),
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
             ),
             materialize_fn=_materialize_appointment,
         ),
