@@ -220,6 +220,7 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
         ({"kind": "pacification", "target_id": "张献忠"}, None, "pacification"),
         ({"kind": "draft"}, {
             "dossier_action_type": "punishment", "target_kind": "character",
+            "punish_action": "拿问下狱",
         }, "punishment"),
         ({"kind": "draft"}, {
             "dossier_action_type": "military_order", "target_kind": "region",
