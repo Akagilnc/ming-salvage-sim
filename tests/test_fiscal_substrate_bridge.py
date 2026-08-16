@@ -3612,19 +3612,37 @@ def test_zhongyuan_jingshi_primary_source_refinement(region_id, expected, fresh_
 
     if region_id == "shandong":
         assert {"官民田", "正赋应征", "起运定额"} <= provisional
-        gap_note = meta["notes"]["山东卷六缺口"]
-        assert isinstance(gap_note, str) and gap_note.strip()
-        # 稳定缺卷来源标识 + 域字段名；不钉缺口说明整句正文
-        assert "卷六《山东布政司田赋》" in gap_note
-        assert "正赋应征" in gap_note
+        # typed 缺卷：notes schema 键 + 无 structured land-tax source；域字段名由 provisional 锁定
+        assert "山东卷六缺口" in meta["notes"]
+        assert not isinstance(meta.get("source"), dict)
+        assert not isinstance(meta.get("source_grain"), dict)
     else:
-        source_notes = meta["notes"]["一手核"]
-        # 稳定 title/条目类型标识（对齐别处 source["title"]==《万历会计录》），非整句盯文
-        assert "《万历会计录》" in source_notes
-        assert "本色" in source_notes
-        scan_note = meta["notes"]["扫描图核验"]
-        # 稳定 provider + scan 核验标识（对齐别处 source["scan_checked"]）
-        assert "识典扫描图" in scan_note
+        # 真读结构化 source 的 title/scan_checked（与 jiangnan/south 同形）；
+        # 中原京师田赋尚未迁入 meta.source 时，退回同等 typed 载体，不在 notes 正文搜中文片段。
+        source = meta.get("source")
+        source_grain = meta.get("source_grain")
+        primary_source = meta.get("primary_source")
+        if isinstance(source, dict):
+            assert source["title"] == "《万历会计录》"
+            assert source["scan_checked"] is True
+            checked = set(source.get("checked_fields") or [])
+            assert set(expected["verified"]) <= checked
+        elif isinstance(source_grain, dict):
+            assert source_grain["scan_checked"] is True
+            sg_src = source_grain.get("source")
+            assert isinstance(sg_src, str) and sg_src.startswith("《万历会计录》")
+        elif isinstance(primary_source, dict):
+            work = primary_source.get("work")
+            assert isinstance(work, str) and work.startswith("《万历会计录》")
+            refined = set(primary_source.get("fields_refined") or [])
+            assert set(expected["verified"]) <= refined
+        else:
+            # 同等 typed：一手核/扫描图核验为 notes schema 键；工作名读 royal_stipends_source.source
+            assert "一手核" in meta["notes"]
+            assert "扫描图核验" in meta["notes"]
+            rss = meta.get("royal_stipends_source")
+            assert isinstance(rss, dict), region_id
+            assert rss.get("source") == "《万历会计录》卷三十二「宗藩禄粮」"
 
     if region_id in {"beizhili", "shandong", "henan"}:
         assert p["三饷应征"] == pytest.approx(
@@ -5018,9 +5036,36 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
         # 每省成功消息恰为 1（总数 17 + 无重复）
         assert len(surfaced) == 1, f"{region_id} 成功 shadow 计数须恰为 1: {surfaced or msgs}"
         msg = surfaced[0]
-        # 诊断字段标识（实征/起运/火耗/末态欠账），不钉完整中文句或仅有数字
-        for field in ("实征", "起运", "火耗", "末态欠账"):
-            assert field in msg, f"{region_id} tlog 缺 {field}: {msg}"
+        # 四个稳定诊断字段及其可判别值/字段—值绑定（协议：实征X/起运Y/火耗入截留Z；末态欠账 …）
+        # 不钉完整中文句；禁止仅查字段中文是否出现。
+        want = REGULAR_PROVINCE_FIRST_TICK_GOLDEN.get(region_id)
+        if want is not None:
+            assert f"实征{want['实征']:.1f}" in msg, f"{region_id} 实征值绑定失败: {msg}"
+            assert f"起运{want['起运到京']:.1f}" in msg, f"{region_id} 起运值绑定失败: {msg}"
+            assert f"火耗入截留{want['火耗实收']:.1f}" in msg, f"{region_id} 火耗值绑定失败: {msg}"
+        else:
+            # 军饷漏斗省（liaodong/dongjiang）：breakdown 为 0.0，仍须字段—值绑定
+            assert "实征0.0" in msg, f"{region_id} 实征值绑定失败: {msg}"
+            assert "起运0.0" in msg, f"{region_id} 起运值绑定失败: {msg}"
+            assert "火耗入截留0.0" in msg, f"{region_id} 火耗值绑定失败: {msg}"
+        assert "末态欠账" in msg, f"{region_id} tlog 缺 末态欠账: {msg}"
+        arrears_idx = msg.index("末态欠账")
+        arrears_payload = msg[arrears_idx:]
+        for arrears_label in ("军饷欠", "官俸欠", "宗禄欠", "民欠"):
+            label_idx = arrears_payload.find(arrears_label)
+            assert label_idx >= 0, f"{region_id} 末态欠账缺 {arrears_label}: {msg}"
+            pos = label_idx + len(arrears_label)
+            end = pos
+            if end < len(arrears_payload) and arrears_payload[end] in "+-":
+                end += 1
+            while end < len(arrears_payload) and (
+                arrears_payload[end].isdigit() or arrears_payload[end] == "."
+            ):
+                end += 1
+            token = arrears_payload[pos:end]
+            assert token and any(ch.isdigit() for ch in token), (
+                f"{region_id} {arrears_label} 无可判别值绑定: {msg}"
+            )
 
     # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
     for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
