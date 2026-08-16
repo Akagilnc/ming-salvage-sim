@@ -516,6 +516,13 @@ def _pending_action_brief(pa: Dict[str, Any]) -> str:
     if kind == "consort":
         return f"调教「{payload.get('name') or ''}」"
     if kind == "directive":
+        dat = str(payload.get("dossier_action_type") or "").strip()
+        if dat == "assignment":
+            title = str(
+                payload.get("title") or payload.get("target_id") or ""
+            ).strip()
+            if title:
+                return f"交办「{title[:30]}」"
         text = str(payload.get("text") or "")
         return f"草拟圣旨：{text[:30]}"
     return f"{action}密令"
@@ -943,10 +950,17 @@ class GameSession:
         confirm_targets = _confirmation_targets_for_message(pend_for_minister, text)
         if GameSession._proposal_blocked(self.state) and not confirm_targets:
             return None
-        summaries = [_pending_action_brief(p) for p in confirm_targets]
+        # 本夜已暂存（含 id）供跨轮指代/改草填 target_candidate；确认优先仍由 prompt 规则约束。
+        summaries = [
+            f"#{int(p['id'])} {_pending_action_brief(p)}"
+            for p in pend_for_minister
+        ]
         is_consort = getattr(character, "office_type", "") == "后宫"
         active_orders = [] if GameSession._proposal_blocked(self.state) else self.db.get_active_secret_orders_for_minister(minister_name)
         has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+        recent_context = _recent_audience_context_for_secret_order(
+            self.db, minister_name, int(self.state.turn), text,
+        )
         return _CLI_ACTION_INTENT_EXECUTOR.submit(
             classify_cli_action_intent,
             text,
@@ -955,6 +969,7 @@ class GameSession:
             has_pending_draft,
             summaries,
             getattr(self, "llm_config", None),
+            recent_context,
         )
 
     def _finish_cli_action_intent(self, future: Optional[Future]) -> Optional[List[Dict[str, Any]]]:
@@ -1602,13 +1617,20 @@ class GameSession:
             from ming_sim.cli_backend import classify_cli_action_intent
 
             has_pending_draft = any(p["kind"] == "directive" for p in pend_for_minister)
+            recent_context = _recent_audience_context_for_secret_order(
+                getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
+            )
             serial_candidates = classify_cli_action_intent(
                 message_text,
                 active_orders,
                 is_consort,
                 has_pending_draft,
-                [_pending_action_brief(p) for p in confirm_targets],
+                [
+                    f"#{int(p['id'])} {_pending_action_brief(p)}"
+                    for p in pend_for_minister
+                ],
                 llm_config,
+                recent_context,
             )
             # 空判词仍保留既有任免结构化 extractor 兜底；只有 classifier
             # 真给出候选时才阻断后续类别专用 extractor。
@@ -1662,6 +1684,10 @@ class GameSession:
         # #515：登记表驱动物化——handler 挂在 ACTION_CLUSTERS 行上；pipeline 只读表。
         import ming_sim.action_materialize  # noqa: F401 — install catalog
         from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+        # ADR 0028：案卷正文与分类同源，取最近相关召对上下文（复用密令喂料 helper，不平行）。
+        recent_context = _recent_audience_context_for_secret_order(
+            getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
+        )
         mat_ctx = MaterializeCtx(
             session=self,
             character=character,
@@ -1676,6 +1702,7 @@ class GameSession:
             intent_kind=intent_kind,
             llm_config=llm_config,
             intent_candidates=intent_candidates,
+            recent_context=recent_context,
         )
         run_materialize_pipeline(mat_ctx)
         return out

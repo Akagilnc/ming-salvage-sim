@@ -949,12 +949,14 @@ def classify_cli_action_intent(
     has_pending_draft: bool = False,
     pending_summaries: Optional[List[str]] = None,
     llm_config: Any = None,
+    recent_context: str = "",
 ) -> List[Dict[str, Any]]:
-    """召对动作 typed 判断：只读皇帝本条消息，不读大臣回话。
+    """召对动作 typed 判断：读皇帝本条消息 + ADR 0028 最近相关召对上下文，不读本轮大臣回话。
 
     输出契约（#515）：动作候选**列表**（单动作 = 长度 1；认不出/失败 = []）。
     枚举与 kind map 唯一真源 = ming_sim.action_clusters 登记表。
-    这条调用可与大臣回话并发；后续落地只从大臣回话取文本。LLM 软判坏 shape → []。
+    这条调用可与大臣回话并发；跨轮指代（「这三件事你都办」）靠 recent_context /
+    待确认动作解析前轮事项并逐事产候选。LLM 软判坏 shape → []。
     """
     from ming_sim.action_clusters import (
         candidates_from_classifier_payload,
@@ -966,14 +968,18 @@ def classify_cli_action_intent(
         for o in (active_orders or [])
     ) or "（无）"
     pending_brief = "；".join(pending_summaries or []) or "（无）"
+    context_block = (recent_context or "").strip() or "（无）"
     # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
     schema_obj = classifier_json_fields_prompt()
     prompt = (
-        "你是召对动作意图分类器，只读皇帝本条消息，不读也不等待大臣回话。"
-        "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话中直接确定的结构字段。"
+        "你是召对动作意图分类器，读皇帝本条消息与【最近相关召对】上下文，"
+        "不读也不等待大臣本轮回话。"
+        "判断本轮是否属于一个或多个政务动作，并抽出可从皇帝话与相关上下文直接确定的结构字段。"
         "单动作输出一个 JSON 对象，多动作输出 JSON 对象数组（无代码围栏、无多余字）：\n"
         + schema_obj + "\n"
         "规则：确认优先于新动作；拟旨优先于任免。\n"
+        "跨轮指代（如「这三件事你都办」「三事全允」）须结合最近相关召对上下文与"
+        "待确认动作列表解析所指事项，逐事各产一条候选；更新既有候选时填目标候选=该道 id。\n"
         "拿问、下狱、赐死、廷杖、罚俸、削籍、放归、昭雪属惩处，不得判任免罢免。\n"
         "问/令查分界（语义整体判断，禁字样启发）：\n"
         "- 纯问句→动作类型填无（零动作）。含「密查/查访」字样的疑问仍是问，"
@@ -987,6 +993,7 @@ def classify_cli_action_intent(
         "整体为令时按是否指向现有密令选更新或新建。\n"
         "- 更新/催办/提交核议/记进展仅针对【现有密令】；无现有密令时不要硬判这四者"
         "（新建不受此限）。非妃嫔不要硬判调教。\n\n"
+        f"【最近相关召对】\n{context_block}\n"
         f"【待确认动作】{pending_brief}\n"
         f"【现有密令】{orders_brief}\n"
         f"【此人是否妃嫔】{'是' if is_consort else '否'}\n"
