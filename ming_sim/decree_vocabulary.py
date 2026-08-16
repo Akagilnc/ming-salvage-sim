@@ -20,9 +20,9 @@ DIRECTIVE_ACTION_TYPES = DOSSIER_ACTION_TYPES - {"appointment", "secret_order"}
 # is an exempt palace/private action already materialized at admission.
 _DOSSIER_NARRATIVE_ACTIONS = frozenset({
     "policy", "strategy_selection", "approve_reject", "special_decree",
-    "punishment", "referral", "revoke_decree",
+    "referral", "revoke_decree",
     "secret_investigation", "protection",
-    # pacification: payload-owned — 顺颁后自案卷构造 #190 易主（#522 / ADR 0055）
+    # pacification / punishment: payload-owned — 顺颁后自案卷物化（#522/#517 / ADR 0055）
 })
 _DOSSIER_EXTERNAL_REVIEW_EXEMPT = frozenset({
     "secret_order", "secret_authorization", "secret_investigation", "protection",
@@ -32,6 +32,8 @@ _DOSSIER_TERMINAL_ACTIONS = frozenset({
     "authorization", "secret_authorization", "secret_order", "dismiss_assignment",
     # #522：招抚顺颁物化 #190 后即终局，复用通用 terminal 分支（禁止 db.py 动作特判）。
     "pacification",
+    # #517：惩处/宥赦顺颁即终局（下狱/削籍/罚俸/叙事廷杖）。
+    "punishment",
 })
 
 DOSSIER_ACTION_POLICY = {

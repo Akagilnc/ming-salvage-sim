@@ -1950,20 +1950,27 @@ class WebGame:
                 if tool_name == "propose_directive" or res.startswith("__pending_directive__"):
                     if confirmation_turn or explicit_secret_prefix:
                         continue
+                    args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
+                    if not isinstance(args, dict):
+                        args = {}
                     draft_text = res.removeprefix("__pending_directive__").strip()
                     if not draft_text:
-                        args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         draft_text = (args.get("decree_text") or "").strip()
                     if draft_text and GameSession._proposal_blocked(self.state):
                         draft_text = ""  # 恢复窗婉拒（ship-pre r2 软死锁环源头，同 session 路）
                     if draft_text:
-                        # #502 L2 / #522：与 session 非流式同真源；招抚走 admission seam。
+                        # #502 L2 / #522 / #517：与 session 非流式同真源；
+                        # 惩处结构化字段只从 tool arguments 交付。
                         stage_failures: List[Dict[str, Any]] = []
                         pending_action_id = coalesce_pending_action_id(
                             pending_action_id,
                             self.session._stage_directive_tool_candidate(
                                 draft_text, character.name, message_text,
                                 failures_out=stage_failures,
+                                punish_action=args.get("punish_action"),
+                                target_id=args.get("target_id"),
+                                name=args.get("name"),
+                                amount=args.get("amount"),
                             ),
                         )
                         if stage_failures:

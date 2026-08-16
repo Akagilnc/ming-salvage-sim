@@ -10402,6 +10402,27 @@ class GameDB:
             # authority_records; legacy dossier payload ids are not retained.
             normalized.pop("authorization_id", None)
             normalized.pop("authorization_ids", None)
+        if action == "punishment":
+            # #517：与 grant_allocation / military_order 一致——合法非空动作在 admission 强制。
+            # 枚举唯一真源 = ACTION_CLUSTERS punishment FieldSpec（经 punish_actions_effective）。
+            from ming_sim.action_materialize import punish_actions_effective
+            punish_action = str(normalized.get("punish_action") or "").strip()
+            if not punish_action or punish_action not in punish_actions_effective():
+                raise ValueError(
+                    f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
+                )
+            normalized["punish_action"] = punish_action
+            # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
+            if punish_action == "罚俸":
+                try:
+                    amount = strict_int(
+                        normalized.get("amount"), accept_numeric_strings=False,
+                    )
+                except ValueError:
+                    amount = 0
+                if amount <= 0:
+                    raise ValueError("罚俸旨意缺少正数 amount")
+                normalized["amount"] = amount
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -11786,6 +11807,11 @@ class GameDB:
                             state.turn, close=True, commit=False,
                         )
                         return
+            elif row["action_type"] == "punishment":
+                # #517 / ADR 0055：结构化惩处效果自案卷物化，判决后才落人物/钱粮。
+                self._apply_punishment_verdict_effect(
+                    state, row, payload, dossier_id, content=content, registry=registry,
+                )
             elif row["action_type"] == "pacification":
                 # #522 / ADR 0055：结构化招抚效果自案卷物化，交既有 #190 易主。
                 # 反噬绑定目标当前原势力真实失方削弱（ADR 0009 决定 3）；禁止空对象。
@@ -12132,6 +12158,114 @@ class GameDB:
                 ) from exc
             result.append(value)
         return result
+
+    def _apply_punishment_verdict_effect(
+        self, state, row, payload, dossier_id, *, content=None, registry=None,
+    ) -> None:
+        """#517：惩处案卷顺颁后的结构化效果（受判类，打回不进此函数）。"""
+        target = str(
+            payload.get("target_id") or row.get("target_id") or ""
+        ).strip()
+        if not target:
+            raise ValueError("惩处案卷缺少 canonical target")
+        punish_action = str(payload.get("punish_action") or "").strip()
+        origin_ref = f"dossier:{int(dossier_id)}"
+        reason = str(
+            payload.get("text") or row.get("decree_text") or punish_action
+        )
+        status_by_action = {
+            "拿问下狱": "imprisoned",
+            "拿问去职": "imprisoned",
+            "赐死": "dead",
+            "流放": "exiled",
+            "削籍": "dismissed",
+        }
+        if punish_action in status_by_action:
+            item = {
+                "name": target,
+                "origin_ref": origin_ref,
+                "动作": "处置",
+                "status": status_by_action[punish_action],
+                "reason": reason,
+            }
+            if punish_action == "削籍":
+                item["reason_code"] = "获罪削籍"
+                item["reason"] = "获罪削籍"
+            from ming_sim.issues import _apply_person_changes
+            results = _apply_person_changes(
+                self,
+                state,
+                [item],
+                content=content,
+                registry=registry,
+                origin_ref=origin_ref,
+                require_origin=True,
+                external_transaction=True,
+            )
+            accepted = [
+                r for r in results
+                if isinstance(r, dict) and not r.get("rejected")
+            ]
+            if not accepted:
+                fail_reason = ""
+                if results and isinstance(results[0], dict):
+                    fail_reason = str(results[0].get("reason") or "")
+                raise ValueError(fail_reason or "惩处案卷人物效果物化失败")
+            return
+        if punish_action in {"放归", "昭雪"}:
+            # #517：宥赦只回迁在世处置态；dead 等终态响亮拒绝，不得复活。
+            current_status, _ = self.get_character_status(target)
+            if current_status not in {"imprisoned", "dismissed", "exiled"}:
+                raise ValueError(
+                    f"宥赦不可回迁：{target} 当前状态={current_status or '(空)'}"
+                )
+            self.set_character_status(
+                state, target, "active", reason, reason_code="", commit=False,
+            )
+            if content is not None and target in content.characters:
+                ch = content.characters[target]
+                ch.status = "active"
+                ch.status_reason = reason
+                ch.reason_code = ""
+            self.record_person_log(
+                state, target, "处置", payload_summary=punish_action,
+                source="punishment", origin_ref=origin_ref, commit=False,
+            )
+            return
+        if punish_action == "罚俸":
+            amount = int(payload.get("amount") or 0)
+            if amount <= 0:
+                raise ValueError("罚俸案卷缺少正数 amount")
+            # #517 r2：消费 actual；不足额/零落账响亮失败，事务回滚，不得 fulfilled。
+            # 方向保持减项（票面钱粮减项），不得改成国库正收入。
+            actual = self.record_issue_economy_move(
+                state,
+                "国库",
+                -amount,
+                "罚俸",
+                "罚俸示惩",
+                purpose=None,
+                target_kind="character",
+                target_id=target,
+                origin_ref=origin_ref,
+                commit=False,
+            )
+            if actual != -amount:
+                raise ValueError(
+                    f"罚俸不足额：应减{amount}两，实减{abs(int(actual))}两"
+                )
+            self.record_person_log(
+                state, target, "罚俸", payload_summary="罚俸示惩",
+                source="punishment", origin_ref=origin_ref, commit=False,
+            )
+            return
+        if punish_action == "廷杖":
+            self.record_person_log(
+                state, target, "廷杖", payload_summary="廷杖示惩",
+                source="punishment", origin_ref=origin_ref, commit=False,
+            )
+            return
+        raise ValueError(f"惩处案卷动作无法物化：{punish_action}")
 
     def apply_dossier_verdicts(
         self, state: GameState, verdicts: Iterable[Dict[str, object]], *,
