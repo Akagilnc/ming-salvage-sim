@@ -279,7 +279,264 @@ def test_scripted_confirmation_answer_existing_no_new_stage(game, monkeypatch):
     assert out.get("pending_action_id") in (None, 0, "")
 
 
+# ── #516：问/令查分界（扩 #515 表驱动正反例 + 结构化判词契约）──────────
+
+
+def test_action_intent_prompt_encodes_ask_vs_order_boundary(monkeypatch):
+    """结构化判词须内建问/令分界：纯问→无；另案令查→新建；指向现有密令的补充→更新。
+
+    禁「祈使令查→一律新建」过宽规则；禁字样启发升格；禁无现有密令时一刀切禁密令动作
+    （会误伤新建）。不断言 LLM 语义，只钉 prompt 契约。
+    """
+    prompts: list[str] = []
+
+    def _capture(prompt, llm_config=None, tag=""):
+        prompts.append(prompt)
+        return ('{"动作类型":"无"}', 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    assert cb.classify_cli_action_intent("陕西巡抚可有？") == []
+    assert prompts, "classify 必须走结构化判词"
+    rules = prompts[0].split("【待确认动作】", 1)[0]
+
+    # 正例：另案祈使令查 → 新建
+    assert "新建" in rules
+    assert any(tok in rules for tok in ("你去查", "祈使", "令查"))
+    # 正例：指向现有密令的补充/续查 → 更新（#516 r3）
+    assert "更新" in rules
+    assert "再去查他在苏州的田产" in rules
+    assert any(tok in rules for tok in ("现有密令", "补充", "续查", "原令"))
+    # 反例：纯问 / 含命令词的问 → 无（北极星入集）
+    assert "陕西巡抚可有" in rules
+    assert any(tok in rules for tok in ("是谁", "整体为问", "问句"))
+    # 不得把祈使令查一律钉死为新建；不得用字样启发升格
+    assert "祈使令查→密令动作=新建" not in rules
+    assert "一律新建" not in rules
+    assert "字样即" not in rules
+    assert "没有现有密令时不要硬判密令动作" not in rules
+    assert "问询、查账、问军情、泛泛商议填无" not in rules
+
+
+@pytest.mark.parametrize(
+    ("utterance", "raw_payload", "expect_kinds", "expect_secret_action", "expect_order_id"),
+    [
+        # 北极星 + 含密查/查访字样的疑问 → 分类无
+        ("陕西巡抚可有？", {"动作类型": "无"}, [], None, 0),
+        ("可有人密查陕西军饷？", {"动作类型": "无"}, [], None, 0),
+        ("着人查访陕西军情如何？", {"动作类型": "无"}, [], None, 0),
+        # 含命令词但整体为问 → 仍无
+        ("命东厂密查其家产的是谁？", {"动作类型": "无"}, [], None, 0),
+        # 另案祈使令查 → secret 新建
+        (
+            "你去查他家产",
+            {"动作类型": "密令动作", "密令动作": "新建"},
+            ["secret"],
+            "新建",
+            0,
+        ),
+        (
+            "着东厂密查其家产",
+            {"动作类型": "密令动作", "密令动作": "新建"},
+            ["secret"],
+            "新建",
+            0,
+        ),
+        # 指向现有密令的补充 → 更新原令（#516 r3）
+        (
+            "再去查他在苏州的田产",
+            {
+                "动作类型": "密令动作",
+                "密令动作": "更新",
+                "目标密令编号": 6,
+                "新标题": "查其家产",
+                "新内容": "再去查他在苏州的田产",
+            },
+            ["secret"],
+            "更新",
+            6,
+        ),
+    ],
+    ids=[
+        "north_star_pure_ask",
+        "ask_with_micha",
+        "ask_with_chafang",
+        "ask_with_command_words",
+        "imperative_go_check_new",
+        "imperative_micha_new",
+        "supplement_existing_update",
+    ],
+)
+def test_classify_soft_path_ask_vs_order_payload_matrix(
+    monkeypatch, utterance, raw_payload, expect_kinds,
+    expect_secret_action, expect_order_id,
+):
+    """#515 soft 归一：问/令查表驱动 payload → kind 列表（LLM 语义 externally scripted）。"""
+
+    def _scripted(prompt, llm_config=None, tag=""):
+        assert tag == "action_intent"
+        assert utterance in prompt
+        return (json.dumps(raw_payload, ensure_ascii=False), 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
+    active = None
+    if expect_secret_action == "更新":
+        active = [{"id": expect_order_id, "title": "查其家产", "content": "密查家产"}]
+    got = cb.classify_cli_action_intent(utterance, active_orders=active)
+    assert [c["kind"] for c in got] == expect_kinds
+    if expect_secret_action is not None:
+        assert got[0]["secret_action"] == expect_secret_action
+        assert int(got[0].get("order_id") or 0) == int(expect_order_id)
+
+
+@pytest.mark.parametrize(
+    ("utterance", "scripted", "expect_action", "seed_existing"),
+    [
+        ("陕西巡抚可有？", [], None, False),
+        ("可有人密查陕西军饷？", [], None, False),
+        ("着人查访陕西军情如何？", [], None, False),
+        ("命东厂密查其家产的是谁？", [], None, False),
+        (
+            "你去查他家产",
+            [{"kind": "secret", "secret_action": "新建"}],
+            "新建",
+            False,
+        ),
+        (
+            "着东厂密查其家产",
+            [{"kind": "secret", "secret_action": "新建"}],
+            "新建",
+            False,
+        ),
+        # 已有相关密令时补充 → 更新原令，不得另建
+        (
+            "再去查他在苏州的田产",
+            [{
+                "kind": "secret",
+                "secret_action": "更新",
+                "order_id": 0,  # filled at runtime
+                "new_title": "查其家产",
+                "new_content": "再去查他在苏州的田产",
+            }],
+            "更新",
+            True,
+        ),
+    ],
+    ids=[
+        "stage_north_star_zero",
+        "stage_ask_micha_zero",
+        "stage_ask_chafang_zero",
+        "stage_ask_command_words_zero",
+        "stage_imperative_go_check_new",
+        "stage_imperative_micha_new",
+        "stage_supplement_existing_update",
+    ],
+)
+def test_scripted_ask_vs_order_staging_matrix(
+    game, monkeypatch, utterance, scripted, expect_action, seed_existing,
+):
+    """脚本化判词经真实 apply：纯问零 staging；另案新建；现有令补充→更新。"""
+    db, state, content = game
+    minister = _active_ch(db, content)
+    _silence_serial(monkeypatch)
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *a, **k: {
+            "title": "查家产",
+            "content": utterance,
+            "assignee": minister.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+            "dossier_links": [],
+        },
+    )
+    oid = 0
+    if seed_existing:
+        oid = db.create_secret_order(
+            state, minister.name, "查其家产", "密查家产", [],
+        )
+        for cand in scripted:
+            if cand.get("secret_action") == "更新":
+                cand["order_id"] = oid
+    sess = _bind_apply(db, state, content)
+    before = _count_pending(db, state.turn)
+    out = sess.apply_cli_conversation_actions(
+        minister, utterance, "臣领旨。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=scripted,
+    )
+    secret_rows = [
+        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
+        if r["kind"] == "secret_order"
+    ]
+    if expect_action is None:
+        assert out.get("pending_action_id") in (None, 0, "")
+        assert secret_rows == []
+        assert _count_pending(db, state.turn) == before
+        return
+    assert out.get("pending_action_id")
+    assert len(secret_rows) == 1
+    assert secret_rows[0]["action"] == expect_action
+    assert _count_pending(db, state.turn) == before + 1
+    if expect_action == "更新":
+        assert int(secret_rows[0]["target_id"] or 0) == int(oid)
+        # 不得因补充而另建一条新建暂存
+        assert not any(r["action"] == "新建" for r in secret_rows)
+
+
 # ── P5：双向 barrier，串行实现必须红 ──────────────────────────────────
+
+# #516 问/令查样本：并入 P5 真实 session.chat barrier/poison 矩阵（不经 preclassified_intent）
+_P5_ASK_VS_ORDER_UTTERANCES = (
+    "陕西巡抚可有？",
+    "可有人密查陕西军饷？",
+    "着人查访陕西军情如何？",
+    "命东厂密查其家产的是谁？",
+    "你去查他家产",
+    "着东厂密查其家产",
+)
+_P5_ASK_VS_ORDER_BARRIER_CASES = (
+    # utterance, classify_result, reply, expect_secret_stage, expect_directive_stage
+    ("拟一道旨赈陕西。", [{"kind": "draft"}], "着户部发银赈陕西。", False, True),
+    ("陕西巡抚可有？", [], "臣回奏：容臣查明再报。", False, False),
+    ("可有人密查陕西军饷？", [], "臣回奏：容臣查明再报。", False, False),
+    ("着人查访陕西军情如何？", [], "臣回奏：容臣查明再报。", False, False),
+    ("命东厂密查其家产的是谁？", [], "臣回奏：容臣查明再报。", False, False),
+    (
+        "你去查他家产",
+        [{"kind": "secret", "secret_action": "新建"}],
+        "臣领旨密查。",
+        True,
+        False,
+    ),
+    (
+        "着东厂密查其家产",
+        [{"kind": "secret", "secret_action": "新建"}],
+        "臣领旨密查。",
+        True,
+        False,
+    ),
+)
+_P5_ASK_VS_ORDER_BARRIER_IDS = (
+    "draft_parallel",
+    "north_star_pure_ask",
+    "ask_with_micha",
+    "ask_with_chafang",
+    "ask_with_command_words",
+    "imperative_go_check",
+    "imperative_micha",
+)
+_P5_POISON_UTTERANCES = ("卿且坐。",) + _P5_ASK_VS_ORDER_UTTERANCES
+_P5_POISON_UTTERANCE_IDS = (
+    "neutral",
+    "north_star_pure_ask",
+    "ask_with_micha",
+    "ask_with_chafang",
+    "ask_with_command_words",
+    "imperative_go_check",
+    "imperative_micha",
+)
 
 
 def test_finish_poisoned_classifier_yields_empty_list_not_none(game):
@@ -388,10 +645,19 @@ def test_non_parallel_cli_chat_materializes_each_top_level_candidate(game, monke
     assert payloads[2]["assignee"] == "孙传庭"
 
 
-def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
+@pytest.mark.parametrize(
+    ("utterance", "classify_result", "reply", "expect_secret_stage", "expect_directive_stage"),
+    _P5_ASK_VS_ORDER_BARRIER_CASES,
+    ids=_P5_ASK_VS_ORDER_BARRIER_IDS,
+)
+def test_real_chat_bidirectional_barrier_parallel_required(
+    game, monkeypatch, utterance, classify_result, reply,
+    expect_secret_stage, expect_directive_stage,
+):
     """双向 barrier：classifier 进入后等 reply 进入；reply 进入后确认 classifier 在飞。
 
     若生产先同步跑完 classifier 再回话，reply 永远等不到 classifier_entered → 红。
+    #516：纯问/含命令词疑问/祈使令查样本并入真实 session.chat，不经 preclassified_intent。
     """
     db, state, content = game
     minister = _active_ch(db, content)
@@ -407,7 +673,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
         # 必须等 reply 线程已进入 agent.run，证明重叠
         assert reply_entered.wait(2), "serial classify-before-reply would fail this barrier"
         allow_classify.set()
-        return [{"kind": "draft"}]
+        return list(classify_result)
 
     class FakeAgent:
         def run(self, _msg):
@@ -416,7 +682,7 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
             # 等 classify 完成（并行 join 前不必；此处只证明重叠后放行）
             assert allow_classify.wait(2)
             allow_reply.set()
-            return SimpleNamespace(content="着户部发银赈陕西。", tools=[])
+            return SimpleNamespace(content=reply, tools=[])
 
     sess = GameSession.__new__(GameSession)
     sess.db = db
@@ -442,30 +708,73 @@ def test_real_chat_bidirectional_barrier_parallel_required(game, monkeypatch):
         "draft_action": "拟旨", "draft_text": "【毒化串行】", "target_candidate": "",
     })
     monkeypatch.setattr(cb, "extract_confirmation_intent", lambda *a, **k: "无")
+    monkeypatch.setattr(
+        cb, "_extract_secret_order",
+        lambda *a, **k: {
+            "title": "查家产",
+            "content": utterance,
+            "assignee": minister.name,
+            "tags": [],
+            "deadline_months": 0,
+            "excluded_names": [],
+            "excluded_offices": [],
+            "dossier_links": [],
+        },
+    )
 
     before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, "拟一道旨赈陕西。")
+    result = sess.chat(minister.name, utterance)
     assert allow_reply.is_set()
     assert calls == ["classify"]
-    assert "赈陕西" in (result.answer or "")
-    assert result.pending_action_id
-    assert _count_pending(db, state.turn) == before + 1
-    row = [
+    # 有 pending 时 _ensure_confirmation_cue 会追加准驳提示，只钉回话正文。
+    assert reply in (result.answer or "")
+
+    secret_rows = [
+        r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
+        if r["kind"] == "secret_order" and r["action"] == "新建"
+    ]
+    directive_rows = [
         r for r in db.list_pending_actions(int(state.turn), minister_name=minister.name)
         if r["kind"] == "directive"
-    ][-1]
-    text = json.loads(row["payload_json"])["text"]
-    assert "赈陕西" in text
-    assert "毒化" not in text
+    ]
+    if expect_directive_stage:
+        assert result.pending_action_id
+        assert _count_pending(db, state.turn) == before + 1
+        assert len(directive_rows) == 1
+        text = json.loads(directive_rows[-1]["payload_json"])["text"]
+        assert "赈陕西" in text
+        assert "毒化" not in text
+        assert secret_rows == []
+    elif expect_secret_stage:
+        assert result.pending_action_id
+        assert _count_pending(db, state.turn) == before + 1
+        assert len(secret_rows) == 1
+        assert directive_rows == []
+    else:
+        assert result.answer == reply
+        assert not result.pending_action_id
+        assert _count_pending(db, state.turn) == before
+        assert secret_rows == []
+        assert directive_rows == []
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    _P5_POISON_UTTERANCES,
+    ids=_P5_POISON_UTTERANCE_IDS,
+)
 @pytest.mark.parametrize(
     "classify_mode",
     ["bad_shape", "raises"],
     ids=["bad_shape_return", "classifier_raises"],
 )
-def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch, classify_mode):
-    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。"""
+def test_real_chat_poisoned_classifier_zero_writes(
+    game, monkeypatch, classify_mode, utterance,
+):
+    """真实 session.chat：坏 shape 与 classifier 抛异常均保留回话、零 pending。
+
+    #516：问/令查样本同走并发分类毒化路，不经 preclassified_intent。
+    """
     db, state, content = game
     minister = _active_ch(db, content)
 
@@ -490,7 +799,7 @@ def test_real_chat_poisoned_classifier_zero_writes(game, monkeypatch, classify_m
     monkeypatch.setattr(cb, "classify_cli_action_intent", fake_classify)
     _silence_serial(monkeypatch)
     before = _count_pending(db, state.turn)
-    result = sess.chat(minister.name, "卿且坐。")
+    result = sess.chat(minister.name, utterance)
     assert result.answer == "臣惶恐。"
     assert not result.pending_action_id
     assert _count_pending(db, state.turn) == before
