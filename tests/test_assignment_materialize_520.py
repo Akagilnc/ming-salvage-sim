@@ -334,6 +334,64 @@ def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, g
     assert "stop_condition" in prompt or "停止条件" in prompt
 
 
+def test_classify_prompt_stop_condition_example_is_single_layer_json(monkeypatch, game):
+    """#520 r4：停止条件示例须为单层合法 JSON；核验最终 prompt 字节，禁双花括号。"""
+    db, state, content = game
+    captured = {}
+
+    def _scripted(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        assert tag == "action_intent"
+        return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
+    cb.classify_cli_action_intent(
+        "连续三个月补齐边饷，并保证不会再欠。",
+        recent_context="",
+        current_turn=int(state.turn),
+    )
+    prompt = captured["prompt"]
+    # 最终 prompt 字节：示例为单层 dict JSON，不得残留 {{ / }}
+    assert '{{"army.guanning.arrears":"<=0"}}' not in prompt
+    assert '{"army.guanning.arrears":"<=0"}' in prompt
+    # 示例片段本身须是可解析的单层 dict JSON
+    marker = '{"army.guanning.arrears":"<=0"}'
+    assert json.loads(marker) == {"army.guanning.arrears": "<=0"}
+    assert marker in prompt
+
+
+def test_assignment_empty_recent_context_keeps_emperor_and_minister_in_body(game):
+    """#520 r4：recent_context 空时案卷正文须同时保留皇帝任务描述与大臣领命回话。
+
+    真实物化接缝：run_materialize_pipeline → pending payload text。
+    """
+    db, state, content = game
+    actor = _active_ming(db, content)
+    player = "朕要你解决九边欠饷，并保证——不会再欠。"
+    reply = "臣请立军令状：边饷按月补齐，直至关宁无欠。请陛下定夺准驳。"
+    payload = {
+        "kind": "assignment",
+        "title": "解决九边欠饷",
+        "target_id": "jiubian-arrears",
+        "commitment_kind": "until_stop",
+        "stop_condition": json.dumps({"army.guanning.arrears": "<=0"}, ensure_ascii=False),
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message=player, reply=reply, recent_context="",  # 首轮无历史
+    )
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    body = str(pending.get("text") or "")
+    assert player in body, f"须保留皇帝本轮原话，got={body!r}"
+    assert reply in body, f"须保留大臣领命回话，got={body!r}"
+
+
 def test_assignment_title_and_body_keep_current_turn_anchor(game):
     """缺 title 不得吃前轮 body 头；当轮短句不得被前文子串吞掉。"""
     db, state, content = game
