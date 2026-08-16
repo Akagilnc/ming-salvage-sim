@@ -11876,6 +11876,11 @@ class GameDB:
             elif row["action_type"] == "assignment":
                 if not str(row.get("executor_id") or ""):
                     raise ValueError("交办案卷缺少 executor")
+                # #520 / ADR 0055：交办机械效果=initiative，顺颁后落；cap 逐项软拒。
+                if not self._apply_assignment_verdict_effect(
+                    state, row, payload, dossier_id,
+                ):
+                    return
             if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
@@ -12158,6 +12163,92 @@ class GameDB:
                 ) from exc
             result.append(value)
         return result
+
+    def _apply_assignment_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> bool:
+        """#520：交办案卷顺颁后创建 initiative（owner + 可选军令状承诺）。
+
+        Returns False when the item was soft-rejected (cap / invalid commitment
+        shape) and terminal failure already recorded — caller must return early.
+        Returns True when initiative landed and caller should continue to the
+        shared executing/terminal transition.
+        """
+        from ming_sim.issues import (
+            INITIATIVE_ACTIVE_CAP,
+            INITIATIVE_ACTIVE_CAP_LABEL,
+            _normalize_commitment_kind,
+            apply_score_extraction,
+        )
+
+        owner = str(
+            row.get("executor_id")
+            or payload.get("assignee_id")
+            or payload.get("assignee")
+            or ""
+        ).strip()
+        if not owner:
+            raise ValueError("交办案卷缺少 executor")
+
+        title = str(
+            payload.get("title") or row.get("decree_text") or payload.get("text") or ""
+        ).strip()
+        if not title:
+            title = str(payload.get("target_id") or "交办差事").strip()
+
+        origin_ref = f"dossier:{int(dossier_id)}"
+        commitment_kind = _normalize_commitment_kind(payload.get("commitment_kind"))
+        if commitment_kind == "无":
+            commitment_kind = ""
+
+        if self.count_active_initiatives() >= INITIATIVE_ACTIVE_CAP:
+            note = f"已有{INITIATIVE_ACTIVE_CAP_LABEL}事在办，朝廷分身乏术，难再添新工。"
+            # in_transit 执行面须先入 executing 才能写失败执行格（同 grant 不足额）。
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", note, state.turn, close=True, commit=False,
+            )
+            return False
+
+        ni: Dict[str, object] = {
+            "origin_kind": "decree",
+            "origin_ref": origin_ref,
+            "kind": "initiative",
+            "title": title,
+            "stage_text": str(payload.get("text") or row.get("decree_text") or title),
+            "participant_roster": [{"character_id": owner, "tier": "主办"}],
+            "effect_on_resolve": {"metrics": {"民心": 1}},
+        }
+        if commitment_kind:
+            ni["commitment_kind"] = commitment_kind
+            stop_raw = payload.get("stop_condition")
+            if stop_raw not in (None, "", {}):
+                ni["stop_condition"] = stop_raw
+            try:
+                end_turn = int(payload.get("end_turn") or 0)
+            except (TypeError, ValueError):
+                end_turn = 0
+            if end_turn > 0:
+                ni["end_turn"] = end_turn
+            ongoing = payload.get("ongoing_effects")
+            if isinstance(ongoing, dict) and ongoing:
+                ni["ongoing_effects"] = ongoing
+            # ongoing_effects / end_turn 选择规则交既有校验；缺两翼则逐项软拒。
+
+        out = apply_score_extraction(
+            self, state, {"new_issues": [ni]}, content=None,
+        )
+        created = (out.get("issue_summary") or {}).get("new_issues") or []
+        item = created[0] if created else {"rejected": True, "reason": "交办 initiative 未落"}
+        if item.get("rejected"):
+            reason = str(item.get("reason") or "交办 initiative 被拒")
+            # cap 文案保持戏内回禀；其它校验失败同样逐项软拒，不掀整批。
+            self.transition_decree_dossier(dossier_id, "executing", commit=False)
+            self.record_dossier_execution(
+                dossier_id, "failed", reason, state.turn, close=True, commit=False,
+            )
+            return False
+        return True
 
     def _apply_punishment_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,

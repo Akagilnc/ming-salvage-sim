@@ -844,6 +844,154 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+def _parse_json_field(raw: object) -> Any:
+    """Classifier FieldSpec 只能承字符串；dict/list JSON 串在此还原。"""
+    if isinstance(raw, (dict, list)):
+        return raw
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    return value
+
+
+def stage_assignment_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    title: str = "",
+    target_id: str = "",
+    assignee: str = "",
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    commitment_kind: object = None,
+    stop_condition: object = None,
+    end_turn: object = 0,
+    ongoing_effects: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared assignment candidate write (#520 / #502).
+
+    Independent matters each stage a new candidate; only a structured
+    target_candidate id updates the named pending assignment (cross-round
+    reinforce / ADR 0038 before-image).
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    matter_title = str(title or "").strip() or body[:40]
+    matter_id = str(target_id or "").strip() or matter_title
+    owner = str(assignee or "").strip() or str(minister_name or "").strip()
+    if not owner:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "assignment":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "assignment",
+        "target_kind": "issue",
+        "target_id": matter_id,
+        "title": matter_title,
+        "assignee": owner,
+        "mode": mode,
+    }
+    kind_raw = str(commitment_kind or "").strip()
+    if kind_raw == "until_stop":
+        staged["commitment_kind"] = "until_stop"
+        parsed_stop = _parse_json_field(stop_condition)
+        if parsed_stop not in (None, "", {}):
+            staged["stop_condition"] = parsed_stop
+        try:
+            et = int(end_turn or 0)
+        except (TypeError, ValueError):
+            et = 0
+        if et > 0:
+            staged["end_turn"] = et
+        parsed_ongoing = _parse_json_field(ongoing_effects)
+        if isinstance(parsed_ongoing, dict) and parsed_ongoing:
+            staged["ongoing_effects"] = parsed_ongoing
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_assignment(ctx: MaterializeCtx) -> None:
+    """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "assignment"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    title = str(intent.get("title") or "").strip()
+    target_id = str(intent.get("target_id") or "").strip()
+    assignee = str(
+        intent.get("assignee") or intent.get("name") or ctx.character.name or ""
+    ).strip()
+    if not title and not target_id and not str(ctx.reply or "").strip():
+        return
+    pending_id = stage_assignment_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=ctx.reply or ctx.player_message,
+        title=title,
+        target_id=target_id,
+        assignee=assignee,
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        commitment_kind=intent.get("commitment_kind"),
+        stop_condition=intent.get("stop_condition"),
+        end_turn=intent.get("end_turn"),
+        ongoing_effects=intent.get("ongoing_effects"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -947,6 +1095,30 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
             ),
             materialize_fn=_materialize_pacification,
+        ),
+        ActionCluster(
+            "交办·责成", "assignment", EFFECT_MATERIALIZE, priority=56,
+            fields=(
+                FieldSpec("title", "标题", None, "", max_len=80),
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("assignee", "承办人", None, "", max_len=40),
+                # 与 grant/pacification 共享 target_id：事项锚（跨轮强化身份）
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec(
+                    "commitment_kind", "承诺类型",
+                    frozenset({"无", "until_stop"}), "无",
+                ),
+                FieldSpec("stop_condition", "停止条件", None, "", max_len=500),
+                FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
+                FieldSpec("ongoing_effects", "持续效果", None, "", max_len=1000),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+                # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+            ),
+            materialize_fn=_materialize_assignment,
         ),
         ActionCluster(
             "恩赏·拨帑", "grant_allocation", EFFECT_MATERIALIZE, priority=57,
