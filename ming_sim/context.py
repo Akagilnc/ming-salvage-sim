@@ -239,11 +239,45 @@ def character_context(character: Character) -> str:
     )
 
 
-def character_context_with_db(character: Character, db: GameDB) -> str:
+# 权项定性呈现（P4 / #528）：读授权档 privilege 名，不暴露档行 id。
+_PRIVILEGE_QUALITATIVE = {
+    "便宜行事": "便宜行事（全权／门生听调）",
+    "尚方剑密授": "尚方剑密授（节钺）",
+    "专差督办": "专差督办",
+    "新机构专办": "新机构专办",
+}
+
+
+def held_authority_context(
+    character: Character, db: GameDB, *, turn: Optional[int] = None,
+) -> str:
+    """大臣可见的在持授权定性摘要；裸 authority_records.id 永不入面。"""
+    if turn is None:
+        turn = int(db.load_state().turn)
+    rows = db.list_active_authorities(int(turn), holder_id=character.name)
+    if not rows:
+        return ""
+    labels: List[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        priv = str(row.get("privilege") or "").strip()
+        if not priv or priv in seen:
+            continue
+        seen.add(priv)
+        labels.append(_PRIVILEGE_QUALITATIVE.get(priv, priv))
+    if not labels:
+        return ""
+    return f"【在持授权】{'、'.join(labels)}。"
+
+
+def character_context_with_db(
+    character: Character, db: GameDB, *, turn: Optional[int] = None,
+) -> str:
     return (
         character_context(character)
         + "【通用特征】人物档料不足处，以其现职、经历与当下处境推知。"
         + faction_context_with_db(character, db)
+        + held_authority_context(character, db, turn=turn)
         + f"当前可用技能：{available_skill_names(character, db)}"
     )
 
