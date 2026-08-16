@@ -1090,7 +1090,7 @@ def stage_military_order_candidate(
     """Shared military_order candidate write (#521 / #502).
 
     收夜只成案卷；station/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
-    期限只落 due_turn（admission 亦强制未来 due）。
+    期限只落 due_turn；admission 仅对限期出战（无 station）强制未来 due。
     """
     from ming_sim.cli_backend import resolve_directive_mode
 
@@ -1391,7 +1391,7 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 承办人 / 责任军将（admission 映 assignee_id）
                 FieldSpec("name", "姓名", None, "", max_len=20),
                 FieldSpec("station", "驻地", None, "", max_len=80),
-                # 与 secret 共享期限月数；stage/admission 换算绝对 due_turn
+                # 与 secret 共享期限月数；限期出战 stage/admission 换算绝对 due_turn
                 FieldSpec(
                     "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
                 ),
