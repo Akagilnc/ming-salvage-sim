@@ -370,6 +370,66 @@ def test_secret_assignee_uses_emperor_imperative_hint_when_llm_blank(monkeypatch
     assert so["assignee"] == "李若琏"
 
 
+@pytest.mark.parametrize(
+    "reply,expect",
+    [
+        ("臣领密旨，可授曹化淳暗查东厂线索。", "曹化淳"),
+        ("可委曹文诏征讨流贼。", "曹文诏"),
+    ],
+    ids=["cao_huachun", "cao_wenzhao"],
+)
+def test_secret_assignee_keeps_cao_surname_characters(monkeypatch, reply, expect):
+    """公开 resolve：曹姓不得被机关字滤误拒（#397）。"""
+    so = _resolve_secret(
+        monkeypatch, reply, "密令如下：TASK_BODY",
+        default="王在晋",
+        payload=_so_json(内容="TASK_BODY", 承办人=""),
+    )
+    assert so is not None
+    assert so["assignee"] == expect
+
+
+def test_secret_assignee_keeps_wei_and_si_surnames(monkeypatch):
+    """公开 resolve：卫/司 作姓保留；锦衣卫/布政司整词仍滤回默认。"""
+    blank = _so_json(内容="TASK_BODY", 承办人="")
+    so_wei = _resolve_secret(
+        monkeypatch, "可授卫景瑗暗查东厂线索。", "密令如下：TASK_BODY",
+        default="王在晋", payload=blank,
+    )
+    assert so_wei["assignee"] == "卫景瑗"
+    so_si = _resolve_secret(
+        monkeypatch, "可委司马懿督师。", "密令如下：TASK_BODY",
+        default="王在晋", payload=blank,
+    )
+    assert so_si["assignee"] == "司马懿"
+    so_jinyi = _resolve_secret(
+        monkeypatch, "可授锦衣卫查办。", "密令如下：TASK_BODY",
+        default="王在晋", payload=blank,
+    )
+    assert so_jinyi["assignee"] == "王在晋"
+    so_buzheng = _resolve_secret(
+        monkeypatch, "可授布政司核对。", "密令如下：TASK_BODY",
+        default="王在晋", payload=blank,
+    )
+    assert so_buzheng["assignee"] == "王在晋"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["可委派李若琏暗查辽饷。", "可差派李若琏暗查辽饷。"],
+    ids=["wei_pai", "chai_pai"],
+)
+def test_secret_assignee_prefers_long_compound_prefixes(monkeypatch, reply):
+    """公开 resolve：可委派/可差派整前缀优先，『派』不并进人名。"""
+    so = _resolve_secret(
+        monkeypatch, reply, "密令如下：TASK_BODY",
+        default="王在晋",
+        payload=_so_json(内容="TASK_BODY", 承办人=""),
+    )
+    assert so is not None
+    assert so["assignee"] == "李若琏"
+
+
 # ── enrich_initiative_effects ──
 
 def test_enrich_army_parsed_and_normalized(monkeypatch):
@@ -942,7 +1002,7 @@ def test_extract_minister_actions_update(monkeypatch):
     )
     assert act["secret_action"] == "更新"
     assert act["order_id"] == 6
-    assert act["new_content"]  # opaque non-empty after parse
+    assert "月月百万" in act["new_content"] or "每月" in act["new_content"]
 
 
 def test_extract_minister_actions_preserves_long_new_title(monkeypatch):
@@ -1258,6 +1318,39 @@ def test_run_agy_nonzero_exit_retries_then_raises(monkeypatch):
 
 
 # ── trace throat ──
+
+@pytest.mark.parametrize(
+    "prompt,expect_tag",
+    [
+        ("你扮演被皇帝召见的大臣，回话……", "minister"),
+        ('起居注……本朝章节……"body" tags 整理', "chapter_memory"),
+        ("本月结算抽取，输出 delta……", "extractor"),
+        ("simulator_payload: 当前盘面 TSV……", "simulator"),
+        ("请拟一道诏书，颁行天下", "decree"),
+        ("只输出合法 JSON，无多余字", "sanitizer"),
+        ("今日天气如何", "other"),
+        # 优先级：minister 先于 decree；chapter_memory 先于 extractor/邸报词
+        ("你扮演被皇帝召见的大臣，臣请拟诏书一道……", "minister"),
+        ('【起居注】崇祯二年……本卷章节……"body": "…" tags: […]', "chapter_memory"),
+    ],
+    ids=[
+        "minister", "chapter_memory", "extractor", "simulator",
+        "decree", "sanitizer", "other",
+        "minister_over_decree", "chapter_memory_before_extractor",
+    ],
+)
+def test_run_backend_infers_trace_tag_from_prompt(monkeypatch, prompt, expect_tag):
+    """公共咽喉 _run_backend_for_config：tag 空时从 prompt 推断 trace.tag（不直测 helper）。"""
+    recs = []
+    monkeypatch.setattr(cb, "_trace", lambda rec: recs.append(rec))
+    monkeypatch.setattr(
+        cb, "_run_codex",
+        lambda prompt, model=None, timeout=None, **kwargs: ("ok", 1),
+    )
+    cb._run_backend_for_config(prompt, _cli_codex_cfg())  # no explicit tag
+    assert len(recs) == 1
+    assert recs[0]["tag"] == expect_tag
+
 
 def test_run_backend_for_config_traces_every_call(monkeypatch):
     recs = []
