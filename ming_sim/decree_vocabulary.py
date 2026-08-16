@@ -56,9 +56,18 @@ def dossier_action_policy(action_type: object, payload=None):
     action = str(action_type or "")
     policy = dict(DOSSIER_ACTION_POLICY[action])
     if action == "grant_allocation":
-        if str((payload or {}).get("account") or "") == "内库":
+        payload = payload or {}
+        grant_action = str(payload.get("grant_action") or "").strip()
+        cadence = str(payload.get("cadence") or "").strip()
+        if grant_action in {"加衔", "荫叙"}:
+            policy["execution_surface"] = "terminal"
+            return policy
+        if str(payload.get("account") or "") == "内库":
             policy.update(external_review=False, effect_owner="immediate")
-        surface = str((payload or {}).get("execution_surface") or "in_transit")
+        if cadence == "每月":
+            policy["execution_surface"] = "terminal"
+            return policy
+        surface = str(payload.get("execution_surface") or "in_transit")
         if surface not in {"immediate", "in_transit"}:
             raise ValueError("拨帑旨意 execution_surface 非法")
         policy["execution_surface"] = surface

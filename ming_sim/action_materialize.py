@@ -533,6 +533,176 @@ def _materialize_pacification(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+GRANT_ACTIONS = frozenset({
+    "无", "赏赉", "发内帑", "加衔", "荫叙", "赈灾", "项目经费", "协饷",
+})
+GRANT_HONORIFICS = frozenset({"加衔", "荫叙"})
+GRANT_MONEY_ACTIONS = GRANT_ACTIONS - {"无"} - GRANT_HONORIFICS
+
+
+def _grant_account(intent: Dict[str, Any]) -> str:
+    action = str(intent.get("grant_action") or "").strip()
+    account = str(intent.get("account") or "").strip()
+    if action == "发内帑":
+        return "内库"
+    if account in {"国库", "内库"}:
+        return account
+    if action in GRANT_MONEY_ACTIONS:
+        return "国库"
+    return ""
+
+
+def _grant_cadence(intent: Dict[str, Any]) -> str:
+    cadence = str(intent.get("cadence") or "").strip()
+    if cadence in {"一次性", "每月"}:
+        return cadence
+    if str(intent.get("grant_action") or "").strip() in GRANT_MONEY_ACTIONS:
+        return "一次性"
+    return ""
+
+
+def _grant_target(intent: Dict[str, Any]) -> Tuple[str, str]:
+    action = str(intent.get("grant_action") or "").strip()
+    name = str(intent.get("name") or "").strip()
+    target_id = str(intent.get("target_id") or "").strip()
+    if action in {"赏赉", "发内帑", "加衔", "荫叙"}:
+        return "character", name or target_id
+    if action == "项目经费":
+        return "issue", target_id or name or action
+    if action == "协饷":
+        return "army", target_id or name or action
+    if action == "赈灾":
+        kind = "region" if target_id and target_id != action else "issue"
+        return kind, target_id or name or action
+    return "issue", target_id or name or action
+
+
+def stage_grant_allocation_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    grant_action: str,
+    target_kind: str,
+    target_id: str,
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    amount: object = 0,
+    account: str = "",
+    cadence: str = "",
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared grant candidate write: mode + explicit-target update only.
+
+    Same grant_action+target_id alone must not overwrite. Independent 另拨/再赏
+    each stage a new candidate (#502 / #518); only a structured target_candidate
+    id updates the named pending grant.
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    action = str(grant_action or "").strip()
+    target = str(target_id or "").strip()
+    kind = str(target_kind or "").strip()
+    if not target or not kind or action not in (GRANT_ACTIONS - {"无"}):
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    # #502 semantics: update only when structured pointing names a candidate id.
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "grant_allocation",
+        "target_kind": kind,
+        "target_id": target,
+        "grant_action": action,
+        "mode": mode,
+    }
+    if account in {"国库", "内库"}:
+        staged["account"] = account
+    if cadence in {"一次性", "每月"}:
+        staged["cadence"] = cadence
+    try:
+        n = int(amount or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        staged["amount"] = n
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
+    """暂存恩赏·拨帑案卷；钱粮按 ADR 0055 分流落地。"""
+    if (
+        ctx.intent_kind != "grant_allocation"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    grant_action = str(intent.get("grant_action") or "").strip()
+    if grant_action not in (GRANT_ACTIONS - {"无"}):
+        return
+    target_kind, target_id = _grant_target(intent)
+    if not target_id:
+        return
+    pending_id = stage_grant_allocation_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=ctx.reply,
+        grant_action=grant_action,
+        target_kind=target_kind,
+        target_id=target_id,
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        amount=intent.get("amount"),
+        account=_grant_account(intent),
+        cadence=_grant_cadence(intent),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -628,13 +798,42 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
         ActionCluster(
             "招抚", "pacification", EFFECT_MATERIALIZE, priority=55,
             fields=(
-                FieldSpec("target_id", "目标人物", None, "", max_len=80),
+                # 与 grant_allocation 共享 target_id：须能承载人物/地区/项目/军队
+                FieldSpec("target_id", "目标", None, "", max_len=80),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
                 ),
             ),
             materialize_fn=_materialize_pacification,
+        ),
+        ActionCluster(
+            "恩赏·拨帑", "grant_allocation", EFFECT_MATERIALIZE, priority=57,
+            fields=(
+                FieldSpec(
+                    "grant_action", "恩赏拨帑",
+                    GRANT_ACTIONS, "无",
+                ),
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                # 政务拨款对象：赈灾地区 / 项目 / 协饷军队 / 恩赏人物
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("amount", "金额", None, 0, as_int=True),
+                FieldSpec(
+                    "account", "账户",
+                    frozenset({"国库", "内库"}), "",
+                ),
+                FieldSpec(
+                    "cadence", "拨付节奏",
+                    frozenset({"一次性", "每月"}), "",
+                ),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+                # 明确改草指向：分类归一化须保留，供 stage 只更新点名候选
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+            ),
+            materialize_fn=_materialize_grant_allocation,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
