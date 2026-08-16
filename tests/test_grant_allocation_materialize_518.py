@@ -17,7 +17,10 @@ from types import SimpleNamespace
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.cli_backend as cb
-from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_clusters import (
+    ACTION_CLUSTERS,
+    candidates_from_classifier_payload,
+)
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.flows import apply_fixed_period_flows
@@ -659,6 +662,129 @@ def test_explicit_target_candidate_still_updates_named_grant(game):
         target_candidate=str(first_id),
     )
     assert updated_id == first_id
+
+    staged = dict(_grant_pending_payloads(
+        db, state.turn, target_id=target.name, grant_action="赏赉",
+    ))
+    assert set(staged) == {first_id, other_id}
+    assert int(staged[first_id].get("amount") or 0) == 5
+    assert staged[first_id].get("cadence") == "每月"
+    assert int(staged[other_id].get("amount") or 0) == 3
+    assert staged[other_id].get("cadence") == "一次性"
+
+
+def _grant_field_zh(name: str) -> str:
+    from ming_sim.action_clusters import cluster_by_kind
+
+    grant = cluster_by_kind("grant_allocation")
+    assert grant is not None
+    for spec in grant.fields:
+        if spec.name == name:
+            return spec.zh
+    raise AssertionError(f"grant_allocation missing FieldSpec {name!r}")
+
+
+def test_grant_target_field_carries_region_project_army_through_normalize(game):
+    """政务拨款目标字段须能表达赈灾地区/项目/协饷军队，并经真实归一化到物化。"""
+    from ming_sim.action_clusters import classifier_json_fields_prompt, cluster_by_kind
+
+    target_zh = _grant_field_zh("target_id")
+    assert target_zh != "目标人物", "目标字段不得限缩为人物，否则赈灾/项目/协饷无法入契约"
+    schema = classifier_json_fields_prompt()
+    assert f'"{target_zh}"' in schema
+    assert '"目标人物"' not in schema
+
+    # 共享 target_id 契约须与 grant 行一致，分类中文键能贯通
+    shared = next(f for c in ACTION_CLUSTERS for f in c.fields if f.name == "target_id")
+    assert shared.zh == target_zh
+
+    db, state, content = game
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+
+    cases = (
+        ("赈灾", "陕西", "region"),
+        ("项目经费", "运河疏浚", "issue"),
+        ("协饷", "辽东边军", "army"),
+    )
+    for action, target, expected_kind in cases:
+        payload = {
+            "动作类型": "恩赏·拨帑",
+            "恩赏拨帑": action,
+            target_zh: target,
+            "金额": 12,
+            "账户": "国库",
+        }
+        candidates = candidates_from_classifier_payload(payload, soft=False)
+        assert len(candidates) == 1, action
+        assert candidates[0]["target_id"] == target, action
+
+        ctx = _ctx(
+            db, actor, candidates, state.turn,
+            message=f"{action}{target}银十二万两。",
+            reply=f"臣请{action}{target}银十二万两，请陛下定夺准驳。",
+        )
+        run_materialize_pipeline(ctx)
+        pending_id = ctx.out.get("pending_action_id")
+        assert pending_id, action
+        staged = json.loads(db.conn.execute(
+            "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+        ).fetchone()["payload_json"])
+        assert staged["grant_action"] == action
+        assert staged["target_id"] == target
+        assert staged["target_kind"] == expected_kind
+
+
+def test_target_candidate_survives_classifier_normalize_to_materialize(game):
+    """明确改草：target_candidate 进 FieldSpec，经真实分类归一化贯通到物化更新。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+
+    first = _stage_grant(
+        db, state.turn, action="赏赉", amount=10, account="国库", cadence="一次性",
+        name=target.name,
+        message=f"赏{target.name}十万两。",
+        reply=f"臣请赏{target.name}银十万两。",
+    )
+    other = _stage_grant(
+        db, state.turn, action="赏赉", amount=3, account="国库", cadence="一次性",
+        name=target.name,
+        message=f"另赏{target.name}三万两。",
+        reply=f"臣请另赏{target.name}银三万两。",
+    )
+    first_id = int(first.out["pending_action_id"])
+    other_id = int(other.out["pending_action_id"])
+    assert first_id != other_id
+
+    target_zh = _grant_field_zh("target_id")
+    candidate_zh = _grant_field_zh("target_candidate")
+    payload = {
+        "动作类型": "恩赏·拨帑",
+        "恩赏拨帑": "赏赉",
+        "姓名": target.name,
+        target_zh: target.name,
+        "金额": 5,
+        "账户": "国库",
+        "拨付节奏": "每月",
+        candidate_zh: str(first_id),
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    assert len(candidates) == 1
+    assert candidates[0].get("target_candidate") == str(first_id), (
+        "target_candidate 必须经分类归一化保留，不得在 FieldSpec 外被丢掉"
+    )
+
+    ctx = _ctx(
+        db, actor, candidates, state.turn,
+        message=f"前道赏{target.name}改作每月五万两。",
+        reply=f"臣请将前道赏银改作每月五万两予{target.name}。",
+    )
+    run_materialize_pipeline(ctx)
+    assert int(ctx.out["pending_action_id"]) == first_id
 
     staged = dict(_grant_pending_payloads(
         db, state.turn, target_id=target.name, grant_action="赏赉",
