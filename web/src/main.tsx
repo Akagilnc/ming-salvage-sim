@@ -92,7 +92,6 @@ export function App() {
   const [undoneChatIdentity, setUndoneChatIdentity] = React.useState<ChatIdentity | null>(null);
   const [audienceScrollGeneration, setAudienceScrollGeneration] = React.useState(0);
   const audienceScrollPositionsRef = React.useRef(new Map<string, number>());
-  const advanceWithoutEdictRef = React.useRef<() => Promise<void>>(async () => {});
   const invalidateAudienceScroll = React.useCallback(() => {
     setAudienceScrollGeneration((generation) => generation + 1);
   }, []);
@@ -179,7 +178,6 @@ export function App() {
     loadHistoryProjection,
     runAudienceTurn,
     invalidateAudienceScroll,
-    advanceWithoutEdictRef,
     currentNightId,
   });
 
@@ -219,7 +217,6 @@ export function App() {
     surfacePendingActionFailures,
     state,
   });
-  advanceWithoutEdictRef.current = advanceWithoutEdict;
 
 
   const uploadPortrait = React.useCallback(async (ministerName: string, file: File) => {

@@ -50,7 +50,6 @@ export function useChatActions({
   loadHistoryProjection,
   runAudienceTurn,
   invalidateAudienceScroll,
-  advanceWithoutEdictRef,
   currentNightId,
 }: {
   state: GameState | null;
@@ -74,7 +73,6 @@ export function useChatActions({
   loadHistoryProjection: (minister: string) => Promise<AudienceHistoryData | null>;
   runAudienceTurn: (minister: string, message: string, cb: SendChatCallbacks) => Promise<void>;
   invalidateAudienceScroll: () => void;
-  advanceWithoutEdictRef: React.MutableRefObject<() => Promise<void>>;
   currentNightId: number;
 }) {
   const [suggestions, setSuggestions] = React.useState<Suggestion[]>([]);
@@ -199,13 +197,8 @@ export function useChatActions({
     }
 
     const fromComposer = text === input;
-    // #526：收夜高置信封闭集加速器（与后端 COURT_BREAK_COMMANDS 同集；含「今日且到此」）
-    const closeCmd = message.toLowerCase();
-    if (["q", "quit", "退朝", "下朝", "今日且到此"].includes(closeCmd) || message === "今日且到此") {
-      if (fromComposer) setInput("");
-      await advanceWithoutEdictRef.current();
-      return;
-    }
+    // #526 / ADR 0047：退朝钮与手输口令同一收夜管线（chat stream）；
+    // 词表真源在后端 COURT_BREAK_COMMANDS，前端不复制、不旁路 advanceWithoutEdict。
     setError("");
     setComposerHint("");
     setChatNotice("");

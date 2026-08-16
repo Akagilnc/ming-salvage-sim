@@ -269,7 +269,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }
   });
 
-  it("退朝按钮与手输下朝都走既有 advance 服务，普通问话仍走 chat stream", async () => {
+  it("退朝按钮与手输下朝都走召对 chat stream 同一收夜管线，不旁路 advance", async () => {
     const paths: string[] = [];
     const roster = [{ id: "a", name: "温体仁", office: "首辅", summary: "", status: "active" }];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -280,7 +280,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
       if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], roster));
       if (u.pathname.endsWith("/api/decree/advance_without_edict")) return jsonResp({ state: makeState(2, [], roster), pending_action_failures: [] });
-      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣在", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [] });
+      if (u.pathname.endsWith("/chat/stream")) return sseResp("done", { response: "臣等恭送", directives: [], pending_count: 0, suggestions: [], can_undo_last_chat: false, pending_action_failures: [], court_action: "court_break" });
       if (/\/api\/ministers\/[^/]+\/chat$/.test(u.pathname)) return jsonResp({ minister: roster[0], history: [], suggestions: [], campaign_id: "c1", night_id: 77, pending_turn_ids: [] });
       if (u.pathname.endsWith("/api/audience/extraction/pending")) return jsonResp({ count: 0 });
       return jsonResp({});
@@ -300,7 +300,9 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(findButton(host, "发送"));
-    await act(async () => { await vi.waitFor(() => expect(paths.filter((path) => path === "POST /api/decree/advance_without_edict")).toHaveLength(1)); });
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.some((path) => path.endsWith("/chat/stream"))).toBe(true));
+    });
 
     const secondHost = document.createElement("div"); document.body.appendChild(secondHost);
     await act(async () => { createRoot(secondHost).render(<App />); });
@@ -310,10 +312,11 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await click(Array.from(secondHost.querySelectorAll("button")).find((b) => b.textContent?.includes("温体仁")));
     await tick();
     await click(findButton(secondHost, "退朝"));
-    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(paths.filter((path) => path.endsWith("/chat/stream")).length).toBeGreaterThanOrEqual(2));
+    });
 
-    expect(paths.filter((path) => path === "POST /api/decree/advance_without_edict")).toHaveLength(2);
-    expect(paths.some((path) => path.endsWith("/chat/stream"))).toBe(false);
+    expect(paths.some((path) => path === "POST /api/decree/advance_without_edict")).toBe(false);
   });
 
   it("成功密令经过真实召对发送链后不显示系统通知", async () => {

@@ -1530,20 +1530,18 @@ def normalize_audience_command_verdict(raw: Any) -> str:
     return CMD_NONE
 
 
-def recognize_audience_command(
-    message: str,
-    *,
-    scripted_verdict: Any = None,
-) -> str:
+def recognize_audience_command(message: str) -> str:
     """收夜/留侍口令结构化判词（#526）。
 
-    - scripted_verdict 优先（P5 脚本化判词缝 / 软判注入）；引擎不重解析散文。
-    - 否则确定性封闭集（COURT_BREAK_COMMANDS / STAY_ATTEND_COMMANDS）。
-    - 不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
+    确定性封闭集（COURT_BREAK / AMBIGUOUS_CLOSE / STAY_ATTEND）；引擎不重解析散文。
+    不进 ACTION_CLUSTERS；非第二 parser（无自由散文正则启发）。
+    无耗时软判——同步直调即可；坏 shape 由 normalize 归一，不在此宽吞异常。
     """
-    if scripted_verdict is not None:
-        return normalize_audience_command_verdict(scripted_verdict)
-    from ming_sim.constants import COURT_BREAK_COMMANDS, STAY_ATTEND_COMMANDS
+    from ming_sim.constants import (
+        AMBIGUOUS_CLOSE_COMMANDS,
+        COURT_BREAK_COMMANDS,
+        STAY_ATTEND_COMMANDS,
+    )
 
     text = str(message or "").strip()
     if not text:
@@ -1553,6 +1551,8 @@ def recognize_audience_command(
         return CMD_STAY_ATTEND
     if lowered in COURT_BREAK_COMMANDS or text in COURT_BREAK_COMMANDS:
         return CMD_CLOSE_NIGHT
+    if text in AMBIGUOUS_CLOSE_COMMANDS or lowered in AMBIGUOUS_CLOSE_COMMANDS:
+        return CMD_AMBIGUOUS_CLOSE
     return CMD_NONE
 
 

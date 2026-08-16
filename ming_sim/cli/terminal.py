@@ -617,20 +617,21 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
-            # #526：高置信收夜口令 → 尽量收夜提交；待补/无 LLM 时软失败，上层 advance 再收。
+            # #526：高置信收夜口令 → 收夜提交；失败响亮可观察，夜可恢复，不假成功退朝。
+            from ming_sim.audience_night import AudienceNightError, auto_close_open_night
             close_fn = getattr(session, "close_night_after_chat_if_needed", None)
-            if close_fn is not None:
-                close_fn("court_break")
-            else:
-                from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-                try:
+            try:
+                if close_fn is not None:
+                    close_fn("court_break")
+                else:
                     auto_close_open_night(
                         session.db, session.state,
                         content=getattr(session, "content", None),
                         wait_timeout_s=0.0,
                     )
-                except AudienceNightError:
-                    pass
+            except AudienceNightError as err:
+                print(f"\n收夜未成：{err}\n")
+                continue
             print(f"{character.name}退下。\n")
             return "court_break"
         if cmd and cmd.startswith("summon:"):

@@ -11,7 +11,6 @@ Seams:
 
 from __future__ import annotations
 
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -137,23 +136,55 @@ def test_high_confidence_close_command_submits_full_chain(game, monkeypatch, utt
 
 
 def test_ambiguous_close_asks_in_character_without_closing(game, monkeypatch):
+    """真实话语路径须自产 ambiguous_close——禁止 monkeypatch/scripted 顶替生产识别。"""
     db, state, content = game
     _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
     sess = _session(db, state, content, reply="臣……")
 
-    # 判词缝注入含糊收夜（不靠散文正则）
-    monkeypatch.setattr(
-        an, "recognize_audience_command",
-        lambda message, **kw: an.CMD_AMBIGUOUS_CLOSE,
-    )
     result = sess.chat(minister.name, "今日就到这里吧？")
 
+    assert an.recognize_audience_command("今日就到这里吧？") == an.CMD_AMBIGUOUS_CLOSE
     assert result.court_action != "court_break"
     assert an.get_night(db, nid)["status"] == "open"
     assert "陛下是要退朝么" in (result.answer or "")
     closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
     assert closes == []
+
+
+def test_close_night_failure_does_not_silent_court_break(game, monkeypatch):
+    """收夜提交失败不得静默保留 court_break 成功信号（ADR 0005）。"""
+    db, state, content = game
+    _silence_action_extractors(monkeypatch)
+    minister, nid = _open_with_minister(db, state, content)
+    sess = _session(db, state, content, reply="臣等恭送。")
+
+    def _boom(*_a, **_k):
+        raise an.AudienceNightError("close boom", code="test_close_boom")
+
+    monkeypatch.setattr(an, "close_night", _boom)
+    with pytest.raises(an.AudienceNightError, match="close boom"):
+        sess.chat(minister.name, "退朝")
+
+    assert an.get_night(db, nid)["status"] == "open"
+    closes = [e for e in an.list_ledger(db, nid) if an.TAG_CLOSE_NIGHT in (e.get("tags") or [])]
+    assert closes == []
+
+
+def test_close_night_after_chat_propagates_failure(game, monkeypatch):
+    """epilogue 收夜失败须上抛，不得 return/pass 成成功。"""
+    db, state, content = game
+    minister, nid = _open_with_minister(db, state, content)
+    sess = _session(db, state, content)
+    assert an.get_night(db, nid)["status"] == "open"
+
+    def _boom(*_a, **_k):
+        raise an.AudienceNightError("epilogue boom", code="test_epilogue_boom")
+
+    monkeypatch.setattr(an, "close_night", _boom)
+    with pytest.raises(an.AudienceNightError, match="epilogue boom"):
+        sess.close_night_after_chat_if_needed("court_break")
+    assert an.get_night(db, nid)["status"] == "open"
 
 
 # ── AC：闲聊负例零误触 ────────────────────────────────────────────────
@@ -219,34 +250,32 @@ def test_stay_attend_engine_seam_no_presence_delta(game):
 # ── 结构化判词缝（确定性封闭集）────────────────────────────────────────
 
 
-def test_recognize_closed_set_high_confidence_and_stay():
+def test_recognize_closed_set_high_confidence_ambiguous_and_stay():
     assert an.recognize_audience_command("退朝") == an.CMD_CLOSE_NIGHT
     assert an.recognize_audience_command("今日且到此") == an.CMD_CLOSE_NIGHT
+    assert an.recognize_audience_command("今日就到这里吧？") == an.CMD_AMBIGUOUS_CLOSE
     assert an.recognize_audience_command("留下听着") == an.CMD_STAY_ATTEND
     assert an.recognize_audience_command("卿且坐。") == an.CMD_NONE
 
 
-def test_recognize_scripted_verdict_overrides_text():
-    assert an.recognize_audience_command(
-        "卿且坐。", scripted_verdict=an.CMD_AMBIGUOUS_CLOSE,
-    ) == an.CMD_AMBIGUOUS_CLOSE
-    assert an.recognize_audience_command(
-        "退朝", scripted_verdict=an.CMD_NONE,
-    ) == an.CMD_NONE
+def test_normalize_bad_shape_is_none_not_machine_effect():
+    """坏 shape 由单一窄归一边界 → none；不宽吞代码异常。"""
+    assert an.normalize_audience_command_verdict({"not": "a_verdict"}) == an.CMD_NONE
+    assert an.normalize_audience_command_verdict("close_night") == an.CMD_CLOSE_NIGHT
 
 
-# ── P5：#515 表驱动并行 barrier + 毒化 ─────────────────────────────────
+# ── 表驱动：真实话语 → 机械面（无 Future / 无 scripted 注入）──────────────
 
 
-_P5_COMMAND_BARRIER_CASES = (
-    # utterance, scripted_verdict, expect_close, expect_stay, expect_ask
-    ("退朝", "close_night", True, False, False),
-    ("今日且到此", "close_night", True, False, False),
-    ("留下听着", "stay_attend", False, True, False),
-    ("今日就到这里吧？", "ambiguous_close", False, False, True),
-    ("卿且坐。", "none", False, False, False),
+_COMMAND_TABLE_CASES = (
+    # utterance, expect_close, expect_stay, expect_ask
+    ("退朝", True, False, False),
+    ("今日且到此", True, False, False),
+    ("留下听着", False, True, False),
+    ("今日就到这里吧？", False, False, True),
+    ("卿且坐。", False, False, False),
 )
-_P5_COMMAND_BARRIER_IDS = (
+_COMMAND_TABLE_IDS = (
     "close_tuichao",
     "close_jinyi",
     "stay_attend",
@@ -256,60 +285,22 @@ _P5_COMMAND_BARRIER_IDS = (
 
 
 @pytest.mark.parametrize(
-    ("utterance", "scripted", "expect_close", "expect_stay", "expect_ask"),
-    _P5_COMMAND_BARRIER_CASES,
-    ids=_P5_COMMAND_BARRIER_IDS,
+    ("utterance", "expect_close", "expect_stay", "expect_ask"),
+    _COMMAND_TABLE_CASES,
+    ids=_COMMAND_TABLE_IDS,
 )
-def test_p5_audience_command_parallel_with_reply(
-    game, monkeypatch, utterance, scripted, expect_close, expect_stay, expect_ask,
+def test_audience_command_table_via_chat(
+    game, monkeypatch, utterance, expect_close, expect_stay, expect_ask,
 ):
-    """识别与回话并行：classifier/command 进入后等 reply 进入；串行实现必须红。"""
+    """真实识别接缝：同步封闭集 → chat 机械面；无并行 Future 要求。"""
     db, state, content = game
     _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
     before_present = an.present_names_at(db, nid)
+    sess = _session(db, state, content, reply="臣在。")
 
-    command_entered = threading.Event()
-    reply_entered = threading.Event()
-    allow_command = threading.Event()
-
-    real_recognize = an.recognize_audience_command
-
-    def parallel_recognize(message, **kwargs):
-        command_entered.set()
-        assert reply_entered.wait(2), "serial command-before-reply would fail this barrier"
-        allow_command.set()
-        # 判词缝注入（P5 脚本化）；不解析 message 散文
-        return scripted
-
-    class FakeAgent:
-        def run(self, _msg):
-            reply_entered.set()
-            assert command_entered.wait(2), "reply started without in-flight command recognize"
-            assert allow_command.wait(2)
-            return SimpleNamespace(content="臣在。", tools=[])
-
-    sess = GameSession.__new__(GameSession)
-    sess.db = db
-    sess.state = state
-    sess.content = content
-    sess.registry = SimpleNamespace(get=lambda _c: FakeAgent(), build_draft_line=lambda: "无")
-    sess.llm_config = SimpleNamespace(channel="cli", cli_runner="codex")
-    sess.temporary_characters = set()
-    sess._retrieve_memories_for_message = lambda message: message
-    sess._audience_prompt_for_message = lambda message, character, chat_turn_id=0: message
-    # 强制走并行 command future 路径：与 action intent 同 executor 族
-    monkeypatch.setattr(an, "recognize_audience_command", parallel_recognize)
-    monkeypatch.setattr(session_mod, "_dump_llm_messages", lambda *a, **k: None)
-    # action intent 空跑，避免抢 executor 语义
-    sess._start_cli_action_intent = lambda *a, **k: None
-    sess._finish_cli_action_intent = lambda *a, **k: []
-    sess.start_exit_scene_from_dismiss_tools = lambda *a, **k: None
-
-    # 启动并行识别（session 内应 submit recognize）
     result = sess.chat(minister.name, utterance)
 
-    assert allow_command.is_set()
     if expect_close:
         assert result.court_action == "court_break"
         assert an.get_night(db, nid)["status"] == "closed"
@@ -325,27 +316,18 @@ def test_p5_audience_command_parallel_with_reply(
             assert result.court_action != "court_break"
             assert "陛下是要退朝么" not in (result.answer or "")
 
-    _ = real_recognize  # silence lint
 
-
-@pytest.mark.parametrize("utterance", ["退朝", "留下听着", "卿且坐。"])
-@pytest.mark.parametrize("poison", ["raises", "bad_shape"])
-def test_p5_poisoned_command_recognize_zero_machine_effect(game, monkeypatch, utterance, poison):
-    """毒化识别：保留回话、不收夜、不落留侍、不追问。"""
+def test_bad_shape_command_recognize_zero_machine_effect(game, monkeypatch):
+    """坏 shape 归一 none：保留回话、不收夜、不落留侍、不追问。"""
     db, state, content = game
     _silence_action_extractors(monkeypatch)
     minister, nid = _open_with_minister(db, state, content)
     before_present = an.present_names_at(db, nid)
     seq_before = int(an.list_ledger(db, nid)[-1]["seq"])
 
-    def boom(message, **kwargs):
-        if poison == "raises":
-            raise RuntimeError("command recognize boom")
-        return {"not": "a_verdict"}
-
-    monkeypatch.setattr(an, "recognize_audience_command", boom)
+    monkeypatch.setattr(an, "recognize_audience_command", lambda message: {"not": "a_verdict"})
     sess = _session(db, state, content, reply="臣惶恐。")
-    result = sess.chat(minister.name, utterance)
+    result = sess.chat(minister.name, "退朝")
 
     assert "臣惶恐" in (result.answer or "")
     assert an.get_night(db, nid)["status"] == "open"
