@@ -372,6 +372,100 @@ def test_target_candidate_hanhu_is_zero_change(game):
     assert _payload(db, pending_id) == before
 
 
+def test_multi_pending_name_only_is_zero_change_with_in_play_confirm(game):
+    """多候选 + 姓名-only 不得旁路命中；零改并进入戏内确认。"""
+    db, state, _content = game
+    actor = _minister(db)
+    a = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "洪承畴",
+            "office": "陕西巡抚",
+        },
+        actor=actor,
+    )
+    b = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "陕西三边总督",
+        },
+        actor=actor,
+    )
+    id_a, id_b = a.out["pending_action_id"], b.out["pending_action_id"]
+    before_a, before_b = _payload(db, id_a), _payload(db, id_b)
+
+    ctx = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "无",
+            "mode": "midzhi",
+            "name": "洪承畴",
+        },
+        actor=actor,
+        message="特旨钦命洪承畴。",
+        pend=_office_pendings(db, state.turn),
+    )
+    amb = ctx.out.get("directive_confirmation_ambiguous")
+    assert amb and isinstance(amb.get("candidates"), list) and len(amb["candidates"]) == 2
+    assert _payload(db, id_a) == before_a
+    assert _payload(db, id_b) == before_b
+    assert len(_office_pendings(db, state.turn)) == 2
+    assert not ctx.out.get("pending_action_id")
+
+
+def test_multi_pending_numeric_target_id_is_zero_change_with_in_play_confirm(game):
+    """多候选 + 纯数字 target_candidate 不得旁路命中；零改并进入戏内确认。"""
+    db, state, _content = game
+    actor = _minister(db)
+    a = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "洪承畴",
+            "office": "陕西巡抚",
+        },
+        actor=actor,
+    )
+    b = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "孙传庭",
+            "office": "陕西三边总督",
+        },
+        actor=actor,
+    )
+    id_a, id_b = a.out["pending_action_id"], b.out["pending_action_id"]
+    before_a, before_b = _payload(db, id_a), _payload(db, id_b)
+
+    ctx = _stage_appt(
+        db, state.turn,
+        {
+            "kind": "appointment",
+            "appoint_action": "无",
+            "mode": "midzhi",
+            "target_candidate": str(id_a),
+        },
+        actor=actor,
+        message=f"特旨钦命第{id_a}道。",
+        pend=_office_pendings(db, state.turn),
+    )
+    amb = ctx.out.get("directive_confirmation_ambiguous")
+    assert amb and isinstance(amb.get("candidates"), list) and len(amb["candidates"]) == 2
+    assert _payload(db, id_a) == before_a
+    assert _payload(db, id_b) == before_b
+    assert len(_office_pendings(db, state.turn)) == 2
+    assert not ctx.out.get("pending_action_id")
+
+
 # ── no-op 去重与 fallback ─────────────────────────────────────────────
 
 

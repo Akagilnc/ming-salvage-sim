@@ -2043,11 +2043,12 @@ def _match_office_row_by_name_office(
     content: Any = None,
     db: Any = None,
 ) -> List[Dict[str, Any]]:
+    """人+职联合匹配；姓名或官职缺一则零命中（禁姓名-only 旁路）。"""
     from ming_sim.session import _canonical_minister_key
 
     want_name = str(name or "").strip()
     want_office = str(office or "").strip()
-    if not want_name:
+    if not want_name or not want_office:
         return []
     key = _canonical_minister_key(content, want_name, db) if want_name else ""
     hits: List[Dict[str, Any]] = []
@@ -2061,10 +2062,9 @@ def _match_office_row_by_name_office(
         )
         if staged_key != key and staged_name != want_name:
             continue
-        if want_office:
-            staged_office = str(payload.get("office") or "").strip()
-            if staged_office != want_office:
-                continue
+        staged_office = str(payload.get("office") or "").strip()
+        if staged_office != want_office:
+            continue
         hits.append(row)
     return hits
 
@@ -2082,7 +2082,7 @@ def _select_pending_office_for_path(
     """在本夜 pending 人事候选上选对应条。
 
     返回 (row|None, status)：hit / ambiguous / miss / 含糊。
-    单条直取；多条仅人+职唯一命中；含糊/歧义零改。
+    单条直取；多条仅人+职联合唯一命中；禁姓名-only/纯数字 id 旁路；含糊/歧义零改。
     """
     pointed = str(target_candidate or "").strip()
     if pointed == "含糊":
@@ -2091,29 +2091,46 @@ def _select_pending_office_for_path(
     rows = _list_pending_office_rows(
         db, turn, pend_for_minister=pend_for_minister,
     )
-    if pointed.isdigit():
-        want_id = int(pointed)
-        for row in rows:
-            if int(row["id"]) == want_id:
-                return row, "hit"
-        return None, "miss"
+    # 纯数字 target_candidate 不是人+职联合键：多候选时不得旁路直改。
+    # 单条仍走下方直取；多条且无完整人+职 → 歧义零改。
 
     if not rows:
         return None, "miss"
     if len(rows) == 1:
         return rows[0], "hit"
 
+    want_name = str(name or "").strip()
+    want_office = str(office or "").strip()
+    # 多条必须人+职同时在场；缺一（含仅数字 id / 姓名-only）→ 歧义，戏内确认
+    if not want_name or not want_office:
+        return None, "ambiguous"
+
     hits = _match_office_row_by_name_office(
-        rows, name=name, office=office, content=content, db=db,
+        rows, name=want_name, office=want_office, content=content, db=db,
     )
     if len(hits) == 1:
         return hits[0], "hit"
     if len(hits) >= 2:
         return None, "ambiguous"
-    # 多条且无人+职命中：无消歧 → 歧义零改（不得默改最新/第一条）
-    if not str(name or "").strip():
-        return None, "ambiguous"
+    # 人+职齐全但 0 命中 → fallback（无对应暂存）
     return None, "miss"
+
+
+def _office_path_ambiguous_payload(
+    db: Any,
+    turn: int,
+    *,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """路径应答歧义：统一构造 directive_confirmation_ambiguous 载荷。"""
+    return {
+        "candidates": [
+            {"id": int(r["id"]), "summary": _pending_office_brief(r)}
+            for r in _list_pending_office_rows(
+                db, int(turn), pend_for_minister=pend_for_minister,
+            )
+        ],
+    }
 
 
 def _path_marks_from_appt(appt: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -2281,15 +2298,11 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
     # #529 路径应答：特旨/署理在既有 pending 人事候选上原地改；歧义零改。
     if mode_mark or tenure_mark:
         if str(target_candidate or "").strip() == "含糊":
-            ctx.out["directive_confirmation_ambiguous"] = {
-                "candidates": [
-                    {"id": int(r["id"]), "summary": _pending_office_brief(r)}
-                    for r in _list_pending_office_rows(
-                        session.db, int(session.state.turn),
-                        pend_for_minister=ctx.pend_for_minister,
-                    )
-                ],
-            }
+            ctx.out["directive_confirmation_ambiguous"] = _office_path_ambiguous_payload(
+                session.db,
+                int(session.state.turn),
+                pend_for_minister=ctx.pend_for_minister,
+            )
             return
         row, status = _select_pending_office_for_path(
             session.db,
@@ -2301,15 +2314,11 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             content=content_ref,
         )
         if status in {"ambiguous", "含糊"}:
-            ctx.out["directive_confirmation_ambiguous"] = {
-                "candidates": [
-                    {"id": int(r["id"]), "summary": _pending_office_brief(r)}
-                    for r in _list_pending_office_rows(
-                        session.db, int(session.state.turn),
-                        pend_for_minister=ctx.pend_for_minister,
-                    )
-                ],
-            }
+            ctx.out["directive_confirmation_ambiguous"] = _office_path_ambiguous_payload(
+                session.db,
+                int(session.state.turn),
+                pend_for_minister=ctx.pend_for_minister,
+            )
             return
         if status == "hit" and row is not None:
             # 同人同职再发任命+路径：no-op 去重，中旨/任别并入既有条
