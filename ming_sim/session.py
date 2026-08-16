@@ -1042,7 +1042,7 @@ class GameSession:
         summaries = [_pending_action_brief(p) for p in confirm_targets]
         confirm = extract_confirmation_intent(
             player_message, reply, summaries, llm_config=getattr(self, "llm_config", None))
-        if confirm in ("应允", "拒绝"):
+        if confirm in ("应允", "拒绝", "留中"):
             cand = normalize_one_candidate(
                 {"kind": "confirmation", "confirmation": confirm},
                 soft=False,
@@ -1478,16 +1478,17 @@ class GameSession:
                     if cluster_effect(intent_kind) == EFFECT_ANSWER_EXISTING
                     else "无"
                 )
-                if confirm not in ("应允", "拒绝", "无"):
+                if confirm not in ("应允", "拒绝", "留中", "无"):
                     confirm = "无"
             else:
                 confirm = extract_confirmation_intent(
                     player_message, reply, summaries, llm_config=llm_config)
-            # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳须指向具体某道。
+            # 多道并存（#502 AC4/AC5）：≥2 道 directive 候选时，口头准驳/留中须指向具体某道。
             # 点名指认 → 只作用那几道 + 清全组待澄清标（含糊 episode 了结）；否则（含糊/无/
             # 空指向）一律按含糊处置——结构化含糊态 + 追问 + 标待澄清 + **本轮不再 stage 新拟旨**，
             # 直接 return（L1：删 else free-fall，杜绝纯准驳口令误建第三道）。
-            if confirm in ("应允", "拒绝") and len(directive_confirm_targets) >= 2:
+            # #525：留中复用同一 target_ids/含糊规则，未点名兄弟仍走默认准。
+            if confirm in ("应允", "拒绝", "留中") and len(directive_confirm_targets) >= 2:
                 dir_cands = [
                     {"id": int(p["id"]), "summary": _pending_action_brief(p)}
                     for p in directive_confirm_targets
@@ -1496,7 +1497,7 @@ class GameSession:
                     player_message, reply, dir_cands, llm_config=llm_config)
                 decision = res.get("decision")
                 tids = {int(i) for i in (res.get("target_ids") or [])}
-                named = decision in ("应允", "拒绝") and bool(tids)
+                named = decision in ("应允", "拒绝", "留中") and bool(tids)
                 if named:
                     # 指明了哪道：清全组待澄清标（未点名兄弟复位普通 pending、重回「不回→默认同意」；
                     # L4 兑现 docstring「下一句指明后清标」），confirm 收窄为点名那几道。
@@ -1588,7 +1589,13 @@ class GameSession:
                 self.db.drop_pending_actions_for_minister(
                     self.state.turn, minister_name,
                     action_ids=confirm_action_ids)
-            if confirm in ("应允", "拒绝"):
+            elif confirm == "留中":
+                # #525：显式留中 → durable held_over 档，移出 pending 活跃集；
+                # commit_pending_actions 只读 pending，默认提交跳过、不成案。
+                self.db.hold_over_pending_actions(
+                    self.state.turn, minister_name,
+                    action_ids=confirm_action_ids)
+            if confirm in ("应允", "拒绝", "留中"):
                 # 本轮是对暂存的确认：大臣回话已【复述】该动作(领命 prompt 所致),若继续走下面的
                 # 抽取,会把刚 commit 的动作从复述里重抽成新暂存→颁诏二次落库,或重建刚拒的动作。
                 # 故确认轮直接返回,不再抽新动作(线上 codex P2)。确认句无前缀,前缀路无损失。
