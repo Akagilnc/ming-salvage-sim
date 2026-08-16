@@ -19,7 +19,6 @@ import pytest
 
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.cli_backend as cb
-import ming_sim.issues as I
 import ming_sim.session as session_mod
 from ming_sim.action_clusters import (
     ACTION_CLUSTERS,
@@ -484,39 +483,57 @@ def test_ordinary_assignment_without_commitment_lands(game):
     assert row["origin_ref"] == f"dossier:{dossier['id']}"
 
 
-def test_stop_condition_only_without_marker_still_rejected(game, monkeypatch):
-    """防回归毒样本：stop_condition 形态缺 commitment_kind marker 被既有校验拒。"""
+def test_stop_condition_only_without_marker_still_rejected(game):
+    """防回归毒样本：stop_condition-only 缺 marker 经真实 assignment 全管线被拒。
+
+    不得在 stage 丢掉毒字段后当普通交办落地；既有 initiative 校验负责拒收。
+    禁止以直接调用 apply_score_extraction 代替本管线验收。
+    """
     db, state, content = game
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    dossier_id = db.create_decree_dossier(
-        state, action_type="assignment", decree_text="毒样本",
-        target_kind="issue", target_id="poison",
-        executor_kind="character",
-        executor_id=_active_ming(db, content).name,
-        payload={"text": "毒样本"},
+    actor = _active_ming(db, content)
+    before = len(_active_initiatives(db))
+    stop = {"army.guanning.arrears": "<=0"}
+    ctx = _stage_assignment(
+        db, state.turn,
+        title="缺 marker 毒样本",
+        target_id="poison-stop-only",
+        assignee=actor.name,
+        commitment_kind="无",  # 缺 until_stop marker
+        stop_condition=json.dumps(stop, ensure_ascii=False),
+        message="边饷不得再欠，卿去办。",
+        reply="臣遵旨。请陛下定夺准驳。",
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    out = I.apply_score_extraction(
-        db, state,
-        {
-            "new_issues": [{
-                "origin_kind": "decree",
-                "origin_ref": f"dossier:{dossier_id}",
-                "kind": "initiative",
-                "title": "缺 marker 毒样本",
-                "stop_condition": {"army.guanning.arrears": "<=0"},
-                "ongoing_effects": {
-                    "economy": [{
-                        "account": "国库", "delta": -1, "category": "x", "reason": "x",
-                    }]
-                },
-            }],
-        },
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id, "毒样本须能进入交办暂存，不得在入口被平行校验挡掉"
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    # 形状保留：毒字段不得在 stage 被洗掉
+    assert pending.get("stop_condition") == stop
+    assert pending.get("commitment_kind") not in ("until_stop",)
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    d_payload = json.loads(str(dossier.get("payload_json") or "{}"))
+    assert d_payload.get("stop_condition") == stop
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
         content=content,
     )
-    created = out["issue_summary"]["new_issues"][0]
-    assert created["rejected"] is True
-    assert "commitment_kind" in created["reason"]
+    # 不得当普通交办落地 initiative
+    assert len(_active_initiatives(db)) == before
+    assert not any(
+        r["origin_ref"] == f"dossier:{dossier['id']}"
+        for r in _active_initiatives(db)
+    )
+    row = db.conn.execute(
+        "SELECT execution_outcome, execution_note, status FROM decree_dossiers WHERE id=?",
+        (dossier["id"],),
+    ).fetchone()
+    blob = " ".join(str(row[k] or "") for k in row.keys())
+    assert row["execution_outcome"] == "failed"
+    assert "commitment_kind" in blob
 
 
 # ── 附录 A beat 6/8/10（真实分类/上下文入口，禁预造 payload 旁路）──
