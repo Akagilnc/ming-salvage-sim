@@ -10408,6 +10408,17 @@ class GameDB:
                     f"惩处旨意 punish_action 非法或缺失：{punish_action or '(空)'}"
                 )
             normalized["punish_action"] = punish_action
+            # #517 r2：罚俸须正数 amount，成案前响亮拒绝（不得归零暂存后判后才炸）。
+            if punish_action == "罚俸":
+                try:
+                    amount = strict_int(
+                        normalized.get("amount"), accept_numeric_strings=False,
+                    )
+                except ValueError:
+                    amount = 0
+                if amount <= 0:
+                    raise ValueError("罚俸旨意缺少正数 amount")
+                normalized["amount"] = amount
         if action == "military_order":
             try:
                 raw_due_turn = normalized.get("due_turn")
@@ -12125,7 +12136,9 @@ class GameDB:
             amount = int(payload.get("amount") or 0)
             if amount <= 0:
                 raise ValueError("罚俸案卷缺少正数 amount")
-            self.record_issue_economy_move(
+            # #517 r2：消费 actual；不足额/零落账响亮失败，事务回滚，不得 fulfilled。
+            # 方向保持减项（票面钱粮减项），不得改成国库正收入。
+            actual = self.record_issue_economy_move(
                 state,
                 "国库",
                 -amount,
@@ -12137,6 +12150,10 @@ class GameDB:
                 origin_ref=origin_ref,
                 commit=False,
             )
+            if actual != -amount:
+                raise ValueError(
+                    f"罚俸不足额：应减{amount}两，实减{abs(int(actual))}两"
+                )
             self.record_person_log(
                 state, target, "罚俸", payload_summary="罚俸示惩",
                 source="punishment", origin_ref=origin_ref, commit=False,
