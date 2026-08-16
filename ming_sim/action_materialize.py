@@ -44,6 +44,8 @@ class MaterializeCtx:
     intent_candidates: Optional[List[Dict[str, Any]]] = None
     candidate_kind_index: int = 0
     candidate_kind_count: int = 1
+    # #519：一句多旨整表消费（N>1 已注册候选）时为 True；handler 不得 upsert 压扁兄弟项
+    multi_intent_batch: bool = False
     batch_state: Dict[str, Any] = field(default_factory=dict)
     conversation_intent_handled: bool = False
     draft_staged: bool = False
@@ -60,6 +62,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
         # classifier 的列表契约逐项消费；confirmation 仍在 session 上游按 primary
         # 裁决并提前返回。每项复用登记行自带的同一 handler，不复制 kind 分支。
         baseline_out = dict(ctx.out)
+        multi_batch = len(ctx.intent_candidates) > 1
         kind_counts: Dict[str, int] = {}
         for candidate in ctx.intent_candidates:
             kind = str(candidate.get("kind") or "")
@@ -84,6 +87,7 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 intent_candidates=None,
                 candidate_kind_index=kind_index,
                 candidate_kind_count=kind_counts[kind],
+                multi_intent_batch=multi_batch,
                 conversation_intent_handled=False,
                 draft_staged=False,
             )
@@ -367,9 +371,14 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         # 单候选且抽取器未回目标时，下面的真实落点仍是 upsert 该候选，不是新建。
         if pending_target is None and len(dir_candidates) == 1 and _target != "新":
             pending_target = dir_candidates[0]
+        # 多旨批无 pending_target 时不得把 committed draft 当成改写目标（P1）。
         is_existing_update = (
             pending_target is not None
-            or (committed_draft is not None and not has_pending_directive)
+            or (
+                committed_draft is not None
+                and not has_pending_directive
+                and not ctx.multi_intent_batch
+            )
         )
         existing_mode = None
         if is_existing_update:
@@ -414,9 +423,16 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 session.state.turn, minister_name,
                 payload=semantic_payload,
             )
-        elif _target_id is not None and any(c["id"] == _target_id for c in dir_candidates):
+        elif pending_target is not None:
+            # 显式 id 或 #502 单 pending 推断：仍更新该条（P2）；sibling 由各自 handler 独立落。
             ctx.out["pending_action_id"] = session.db.update_directive_candidate(
-                _target_id,
+                int(pending_target["id"]),
+                payload=semantic_payload,
+            )
+        elif ctx.multi_intent_batch:
+            # #519：一句多旨——无 pending_target 时独立 stage，不得改写 committed（P1）。
+            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
+                session.state.turn, minister_name,
                 payload=semantic_payload,
             )
         elif committed_draft is not None and not has_pending_directive:
