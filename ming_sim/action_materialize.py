@@ -1647,10 +1647,6 @@ def parse_responsible_bodies(raw: object) -> List[str]:
     return out
 
 
-# 旧名别名：避免外部/测试仍 import _parse_responsible_bodies 时分叉
-_parse_responsible_bodies = parse_responsible_bodies
-
-
 def character_person_names(db: Any) -> set[str]:
     """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
     if db is None or not hasattr(db, "conn"):
