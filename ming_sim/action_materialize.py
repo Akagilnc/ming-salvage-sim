@@ -1071,6 +1071,148 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+def stage_military_order_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    target_id: str,
+    assignee: str = "",
+    station: object = "",
+    deadline_months: object = 0,
+    due_turn: object = 0,
+    office: object = "",
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared military_order candidate write (#521 / #502).
+
+    收夜只成案卷；station/office 按 ADR 0055 判后物化。既有军调驻不写 new_armies。
+    期限只落 due_turn；admission 仅对限期出战（无 station）强制未来 due。
+    同军多道独立军令各自成候选；仅 structured target_candidate id 才改草点名更新。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    target = str(target_id or "").strip()
+    if not target:
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    owner = str(assignee or minister_name or "").strip()
+    if not owner:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+
+    # #521 r2 / #502：不得仅凭同一 target_id 把独立军令当改草覆盖。
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "military_order":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "military_order",
+        "target_kind": "army",
+        "target_id": target,
+        "assignee": owner,
+        "mode": mode,
+    }
+    dest = str(station or "").strip()
+    if dest:
+        staged["station"] = dest
+    # 相对月数 / 绝对 due_turn → 未来 due（与 admission 同形）
+    try:
+        absolute_due = int(due_turn or 0)
+    except (TypeError, ValueError):
+        absolute_due = 0
+    try:
+        months = int(deadline_months or 0)
+    except (TypeError, ValueError):
+        months = 0
+    cur = int(turn)
+    if absolute_due <= cur and months > 0:
+        absolute_due = cur + months
+    if absolute_due > cur:
+        staged["due_turn"] = absolute_due
+    elif months > 0:
+        staged["deadline_months"] = months
+    office_title = str(office or "").strip()
+    if office_title:
+        staged["office"] = office_title
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_military_order(ctx: MaterializeCtx) -> None:
+    """暂存军令·调遣案卷；station/office 按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "military_order"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    target_id = str(intent.get("target_id") or "").strip()
+    if not target_id:
+        return
+    assignee = str(
+        intent.get("name") or intent.get("assignee") or ctx.character.name or ""
+    ).strip()
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not body:
+        return
+    pending_id = stage_military_order_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=body,
+        target_id=target_id,
+        assignee=assignee,
+        station=intent.get("station"),
+        deadline_months=intent.get("deadline_months"),
+        due_turn=intent.get("due_turn"),
+        office=intent.get("office"),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -1247,6 +1389,29 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
             ),
             materialize_fn=_materialize_punishment,
+        ),
+        ActionCluster(
+            "军令·调遣", "military_order", EFFECT_MATERIALIZE, priority=59,
+            fields=(
+                # 与 grant/pacification 共享 target_id：既有军队稳定 id
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                # 承办人 / 责任军将（admission 映 assignee_id）
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec("station", "驻地", None, "", max_len=80),
+                # 与 secret 共享期限月数；限期出战 stage/admission 换算绝对 due_turn
+                FieldSpec(
+                    "deadline_months", "期限月数", None, 0, as_int=True, int_hi=36,
+                ),
+                # 可选：军将职守真变才填；判后走人物变更/任免唯一核
+                FieldSpec("office", "官职", None, "", max_len=40),
+                # #521 r2 / #502：明确改草指向；同军独立军令不得仅凭 target_id 覆盖
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_military_order,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,

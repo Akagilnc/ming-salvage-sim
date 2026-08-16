@@ -10424,6 +10424,8 @@ class GameDB:
                     raise ValueError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
+            # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
+            # 调驻/移镇可无期限成案。显式期限字段若出现仍须落成未来 due。
             try:
                 raw_due_turn = normalized.get("due_turn")
                 raw_deadline = normalized.get("deadline_months")
@@ -10437,10 +10439,17 @@ class GameDB:
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
-            if due_turn <= int(current_turn or 0):
+            station = str(normalized.get("station") or "").strip()
+            has_deadline_intent = due_turn > 0 or deadline > 0
+            requires_due = not station  # 限期出战：无调驻面，due 为限期载体
+            if due_turn > int(current_turn or 0):
+                normalized["due_turn"] = due_turn
+                normalized.pop("deadline_months", None)
+            elif requires_due or has_deadline_intent:
                 raise ValueError("军令缺少有效未来 due_turn/deadline_months")
             else:
-                normalized["due_turn"] = due_turn
+                # 无期限调驻/移镇：不写虚假 due
+                normalized.pop("due_turn", None)
                 normalized.pop("deadline_months", None)
         target_kind = str(normalized.get("target_kind") or "").strip()
         target_id = str(normalized.get("target_id") or "").strip()
@@ -10457,6 +10466,19 @@ class GameDB:
         else:
             normalized.pop("target_id", None)
             raise ValueError("旨意缺少 canonical target")
+        if action == "military_order":
+            # #521 r2：成案前验 target_kind=army 且军队存在（含无 station 催战）。
+            # 不得静默改写错误 target_kind；不得等到判后才发现虚假 id。
+            if target_kind != "army":
+                raise ValueError("军令 target_kind 须为 army")
+            existing_army = self.conn.execute(
+                "SELECT id FROM armies WHERE id = ?", (target_id,),
+            ).fetchone()
+            if existing_army is None:
+                raise ValueError(
+                    f"军令引用未入库军队 '{target_id}'（成案前须存在）"
+                )
+            normalized["target_kind"] = "army"
         return normalized
 
     def _find_pacification_target(self, content, name: str) -> Optional[str]:
@@ -11881,6 +11903,12 @@ class GameDB:
                     state, row, payload, dossier_id,
                 ):
                     return
+            elif row["action_type"] == "military_order":
+                # #521 / ADR 0055：军令 station/office 自案卷物化；due_turn 已在案卷。
+                self._apply_military_order_verdict_effect(
+                    state, row, payload, dossier_id,
+                    content=content, registry=registry,
+                )
             if policy["execution_surface"] in {"terminal", "immediate"}:
                 self.record_dossier_execution(
                     dossier_id, "fulfilled", "颁布即终局", state.turn,
@@ -12163,6 +12191,143 @@ class GameDB:
                 ) from exc
             result.append(value)
         return result
+
+    def _apply_military_order_station_effect(
+        self, state, *, army_id: str, station: str, actor: str, reason: str,
+        origin_ref: str,
+    ) -> None:
+        """军令调驻面：既有军 station → army 写核；不得 new_armies。"""
+        if not station:
+            return
+        if not army_id:
+            raise ValueError("军令调驻缺少军队 target")
+        existing = self.conn.execute(
+            "SELECT id FROM armies WHERE id = ?", (army_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(
+                f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
+            )
+        from ming_sim.models import Event
+        pseudo = Event(
+            id="military_order", title="军令调遣", kind="圣旨", summary="",
+            urgency=0, severity=0, credibility=100, interests=[], audiences=[],
+        )
+        changes = self.apply_army_deltas(
+            state, pseudo, None, actor or "军令",
+            {army_id: {"station": station, "reason": reason[:80]}},
+            commit=False,
+            origin_ref=origin_ref,
+            require_origin=True,
+        )
+        # #521 r1：目标 station=当前站时 army 写核空接受=幂等 noop 成功，
+        # 不得当硬失败以致同批职守变更回滚。
+        rejected = [
+            c for c in changes
+            if isinstance(c, dict) and c.get("rejected")
+        ]
+        if rejected:
+            fail_reason = str(rejected[0].get("reason") or "")
+            raise ValueError(fail_reason or "军令调驻物化失败")
+
+    def _apply_military_order_office_effect(
+        self, state, payload, *, actor: str, reason: str, origin_ref: str,
+        content=None, registry=None,
+    ) -> None:
+        """军令职守面：payload.office / office_changes → 人物变更唯一核。"""
+        office_items: List[Dict[str, object]] = []
+        raw_changes = payload.get("office_changes")
+        if isinstance(raw_changes, list):
+            for raw in raw_changes:
+                if isinstance(raw, dict):
+                    office_items.append(dict(raw))
+        office_title = str(payload.get("office") or "").strip()
+        if office_title and actor:
+            if not any(
+                str(i.get("name") or "").strip() == actor
+                and str(i.get("new_office") or i.get("office") or "").strip()
+                for i in office_items
+            ):
+                office_items.append({
+                    "name": actor,
+                    "动作": "调任",
+                    "new_office": office_title,
+                    "office": office_title,
+                    "reason": reason,
+                })
+        if not office_items:
+            return
+        from ming_sim.issues import _apply_person_changes
+        prepared: List[Dict[str, object]] = []
+        for item in office_items:
+            entry = dict(item)
+            entry.setdefault("origin_ref", origin_ref)
+            entry.setdefault("动作", "调任")
+            if not entry.get("new_office") and entry.get("office"):
+                entry["new_office"] = entry["office"]
+            prepared.append(entry)
+        results = _apply_person_changes(
+            self,
+            state,
+            prepared,
+            content=content,
+            registry=registry,
+            origin_ref=origin_ref,
+            require_origin=True,
+            external_transaction=True,
+        )
+        accepted_p = [
+            r for r in results
+            if isinstance(r, dict) and not r.get("rejected")
+        ]
+        if not accepted_p:
+            fail_reason = ""
+            if results and isinstance(results[0], dict):
+                fail_reason = str(results[0].get("reason") or "")
+            raise ValueError(fail_reason or "军令职守变更物化失败")
+
+    def _apply_military_order_verdict_effect(
+        self, state, row, payload, dossier_id, *, content=None, registry=None,
+    ) -> None:
+        """#521：军令案卷顺颁后的结构化效果（受判类，打回不进此函数）。
+
+        - 既有军 station → army 写核（apply_army_deltas）；不得 new_armies
+        - 真实职守变化 → 人物变更/任免唯一核（ADR 0009）
+        - 期限只落案卷 due_turn（限期出战 admission 写入）；无胜负引擎
+        """
+        origin_ref = f"dossier:{int(dossier_id)}"
+        army_id = str(
+            payload.get("target_id") or row.get("target_id") or ""
+        ).strip()
+        station = str(payload.get("station") or "").strip()
+        reason = str(
+            payload.get("text") or row.get("decree_text") or "军令调遣"
+        )
+        actor = str(
+            row.get("executor_id")
+            or payload.get("assignee_id")
+            or payload.get("assignee")
+            or ""
+        ).strip()
+
+        self._apply_military_order_station_effect(
+            state,
+            army_id=army_id,
+            station=station,
+            actor=actor,
+            reason=reason,
+            origin_ref=origin_ref,
+        )
+        self._apply_military_order_office_effect(
+            state,
+            payload,
+            actor=actor,
+            reason=reason,
+            origin_ref=origin_ref,
+            content=content,
+            registry=registry,
+        )
+        # due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
 
     def _apply_assignment_verdict_effect(
         self, state, row, payload, dossier_id,

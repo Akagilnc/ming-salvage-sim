@@ -223,8 +223,8 @@ def test_pacification_verdict_controls_existing_190_effect_path(game, decision):
             "punish_action": "拿问下狱",
         }, "punishment"),
         ({"kind": "draft"}, {
-            "dossier_action_type": "military_order", "target_kind": "region",
-            "target_id": "shaanxi", "deadline_months": 3,
+            "dossier_action_type": "military_order", "target_kind": "army",
+            "target_id": "guanning", "deadline_months": 3,
         }, "military_order"),
     ],
     ids=["pacification", "punishment", "military_order"],
