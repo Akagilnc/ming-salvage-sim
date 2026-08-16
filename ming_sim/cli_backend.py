@@ -1093,7 +1093,7 @@ def extract_draft_intent(
             '{"成品旨稿": ['
             '{"正文":"第一道完整旨稿","动作类型":"policy","目标类型":"issue","目标ID":"...",'
             '"颁布方式":"普通|中旨直发"},'
-            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"region",'
+            f'{{"正文":"……共 {draft_count} 道","动作类型":"military_order","目标类型":"army",'
             '"目标ID":"...","金额":null,"账户":"","执行面":"immediate|in_transit",'
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'

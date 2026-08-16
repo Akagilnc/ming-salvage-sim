@@ -857,6 +857,10 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
         )
         assignee = character.name
         assignee_input = alias
+    if action_type == "military_order":
+        target_kind, target_id = "army", "guanning"
+    else:
+        target_kind, target_id = "issue", f"executor-{entry}-{action_type}"
     candidate_id = db.stage_directive_candidate(
         state.turn,
         assignee,
@@ -864,8 +868,8 @@ def test_directive_assignee_projects_to_executor_only_for_executable_types(
             "text": "命兵部整饬边备",
             "actor": assignee,
             "dossier_action_type": action_type,
-            "target_kind": "issue",
-            "target_id": f"executor-{entry}-{action_type}",
+            "target_kind": target_kind,
+            "target_id": target_id,
             "assignee": assignee_input,
             "deadline_months": 3,
         },
@@ -2639,7 +2643,7 @@ def test_military_directive_projects_normalized_due_turn_to_dossier(game):
         state, None, "命洪承畴四月内出师", "手动新增",
         dossier_payload={
             "dossier_action_type": "military_order",
-            "target_kind": "region", "target_id": "shaanxi",
+            "target_kind": "army", "target_id": "guanning",
             "assignee": _active_minister(db),
             "deadline_months": 4,
         },
@@ -2706,8 +2710,8 @@ def test_batch_draft_extraction_preserves_each_mechanical_payload(monkeypatch):
             {
                 "正文": "命洪承畴三月出师",
                 "动作类型": "military_order",
-                "目标类型": "region",
-                "目标ID": "shaanxi",
+                "目标类型": "army",
+                "目标ID": "guanning",
                 "承办人": "洪承畴",
                 "期限月数": 3,
                 "颁布方式": "中旨直发",
