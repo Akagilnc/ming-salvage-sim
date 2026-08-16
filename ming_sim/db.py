@@ -10342,11 +10342,14 @@ class GameDB:
     def _directive_executor(
         action_type: str, payload: Dict[str, object],
     ) -> Tuple[str, object]:
-        if action_type not in {"assignment", "military_order"}:
+        if action_type not in {"assignment", "military_order", "authorization"}:
             return "", ""
         return (
             "character",
-            payload.get("assignee_id") or payload.get("assignee") or "",
+            payload.get("assignee_id")
+            or payload.get("assignee")
+            or payload.get("holder_id")
+            or "",
         )
 
     def _normalize_directive_dossier_payload(
@@ -10389,7 +10392,10 @@ class GameDB:
             "assignment", "authorization", "secret_authorization", "military_order",
         }:
             assignee = str(
-                normalized.get("assignee_id") or normalized.get("assignee") or ""
+                normalized.get("assignee_id")
+                or normalized.get("assignee")
+                or normalized.get("holder_id")
+                or ""
             ).strip()
             if assignee and content is not None:
                 from ming_sim.session import _find_existing_minister
@@ -10402,6 +10408,41 @@ class GameDB:
             # authority_records; legacy dossier payload ids are not retained.
             normalized.pop("authorization_id", None)
             normalized.pop("authorization_ids", None)
+        if action == "authorization":
+            # #528 / #611：公开委任生产项必带 privilege + 典范 scope；授予判后走 authority_changes。
+            from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SET
+
+            priv = str(normalized.get("privilege") or "").strip()
+            if priv in {"", "无"}:
+                priv = "便宜行事"
+            if priv not in AUTHORITY_PRIVILEGE_SET:
+                raise ValueError("委任授权 privilege 非法")
+            normalized["privilege"] = priv
+            scope = str(normalized.get("scope") or "").strip()
+            if not scope or ":" not in scope:
+                t_kind = str(normalized.get("target_kind") or "").strip()
+                t_id = str(normalized.get("target_id") or "").strip()
+                if t_id and ":" in t_id and not t_kind:
+                    scope = t_id
+                elif t_kind and t_id:
+                    scope = f"{t_kind}:{t_id}"
+            kind, separator, target = scope.partition(":")
+            if not separator or not kind.strip() or not target.strip():
+                raise ValueError("委任授权缺少典范 scope")
+            normalized["scope"] = f"{kind.strip()}:{target.strip()}"
+            normalized["target_kind"] = kind.strip()
+            normalized["target_id"] = target.strip()
+            holder = str(
+                normalized.get("holder_id")
+                or normalized.get("assignee_id")
+                or normalized.get("name")
+                or ""
+            ).strip()
+            if not holder:
+                raise ValueError("委任授权缺少 holder_id")
+            normalized["holder_id"] = holder
+            normalized["name"] = holder
+            normalized["assignee_id"] = holder
         if action == "revoke_authority":
             # #523 / #611：收权生产项必带现存 authority_records.id；不得从 payload 拼 id。
             try:
@@ -12012,10 +12053,15 @@ class GameDB:
                     if results and isinstance(results[0], dict):
                         reason = str(results[0].get("reason") or "")
                     raise ValueError(reason or "招抚案卷易主物化失败")
-            elif row["action_type"] in {"authorization", "secret_authorization"}:
-                # The dossier records the decree; #611 privileges are produced
-                # only by settlement's authority_changes slot. Skill grants are
-                # a distinct character-skill mechanic, not an authority map.
+            elif row["action_type"] == "authorization":
+                # #528 / #611：公开委任只接 authority_changes 授予槽；判后物化。
+                # Skill grants are a distinct character-skill mechanic, not an authority map.
+                self._apply_authorization_verdict_effect(
+                    state, row, payload, dossier_id,
+                )
+            elif row["action_type"] == "secret_authorization":
+                # 密授不归本片（#528）；#611 privileges 仍只经 authority_changes 生产。
+                # Skill grants are a distinct character-skill mechanic, not an authority map.
                 pass
             elif row["action_type"] == "revoke_authority":
                 # #523 / #611：收权只接 authority_changes 收回槽；判后物化。
@@ -12423,6 +12469,55 @@ class GameDB:
             if results and isinstance(results[0], dict):
                 fail_reason = str(results[0].get("reason") or "")
             raise ValueError(fail_reason or "军令职守变更物化失败")
+
+    def _apply_authorization_verdict_effect(
+        self, state, row, payload, dossier_id,
+    ) -> None:
+        """#528：公开委任案卷顺颁后走 #611 authority_changes 授予槽。
+
+        完整授予条目：动作=授予 + dossier_id + holder_id + privilege + scope。
+        不直写 authority_records，不写 skill_grants / grant_skill。
+        """
+        from ming_sim.issues import apply_score_extraction
+
+        holder = str(
+            payload.get("holder_id")
+            or payload.get("assignee_id")
+            or payload.get("name")
+            or row.get("executor_id")
+            or ""
+        ).strip()
+        privilege = str(payload.get("privilege") or "").strip()
+        scope = str(payload.get("scope") or "").strip()
+        if not scope:
+            t_kind = str(
+                payload.get("target_kind") or row.get("target_kind") or ""
+            ).strip()
+            t_id = str(
+                payload.get("target_id") or row.get("target_id") or ""
+            ).strip()
+            if t_kind and t_id:
+                scope = f"{t_kind}:{t_id}"
+        if not holder or not privilege or not scope:
+            raise ValueError("委任授权案卷缺少 holder_id/privilege/scope")
+        out = apply_score_extraction(
+            self, state,
+            {
+                "authority_changes": [{
+                    "动作": "授予",
+                    "holder_id": holder,
+                    "privilege": privilege,
+                    "scope": scope,
+                    "dossier_id": int(dossier_id),
+                }],
+            },
+            content=None,
+        )
+        rows = out.get("authority_changes") or []
+        item = rows[0] if rows else {"rejected": True, "reason": "授予未落"}
+        if item.get("rejected"):
+            reason = str(item.get("reason") or "授予被拒")
+            raise ValueError(reason)
 
     def _apply_revoke_authority_verdict_effect(
         self, state, row, payload, dossier_id,
