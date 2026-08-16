@@ -371,9 +371,14 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         # 单候选且抽取器未回目标时，下面的真实落点仍是 upsert 该候选，不是新建。
         if pending_target is None and len(dir_candidates) == 1 and _target != "新":
             pending_target = dir_candidates[0]
+        # 多旨批无 pending_target 时不得把 committed draft 当成改写目标（P1）。
         is_existing_update = (
             pending_target is not None
-            or (committed_draft is not None and not has_pending_directive)
+            or (
+                committed_draft is not None
+                and not has_pending_directive
+                and not ctx.multi_intent_batch
+            )
         )
         existing_mode = None
         if is_existing_update:
@@ -418,9 +423,16 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 session.state.turn, minister_name,
                 payload=semantic_payload,
             )
-        elif _target_id is not None and any(c["id"] == _target_id for c in dir_candidates):
+        elif pending_target is not None:
+            # 显式 id 或 #502 单 pending 推断：仍更新该条（P2）；sibling 由各自 handler 独立落。
             ctx.out["pending_action_id"] = session.db.update_directive_candidate(
-                _target_id,
+                int(pending_target["id"]),
+                payload=semantic_payload,
+            )
+        elif ctx.multi_intent_batch:
+            # #519：一句多旨——无 pending_target 时独立 stage，不得改写 committed（P1）。
+            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
+                session.state.turn, minister_name,
                 payload=semantic_payload,
             )
         elif committed_draft is not None and not has_pending_directive:
@@ -434,13 +446,6 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 "status": "draft",
                 "notes": f"由{minister_name}拟旨入档",
             }
-        elif ctx.multi_intent_batch:
-            # #519：一句多旨 N 候选整表消费——无显式点名不得 upsert 压扁同批兄弟
-            # directive（如 grant_allocation）。#518 纪律：显式 id 才 update，否则新 stage。
-            ctx.out["pending_action_id"] = session.db.stage_directive_candidate(
-                session.state.turn, minister_name,
-                payload=semantic_payload,
-            )
         else:
             pid = session.db.upsert_pending_directive(
                 session.state.turn, minister_name,

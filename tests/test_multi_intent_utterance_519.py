@@ -520,3 +520,141 @@ def test_three_candidates_confirm_reject_leave_unpolluted(game, monkeypatch):
     assert office_id in {
         int(r["id"]) for r in db.list_night_approved_pending(nid, kind="office")
     }
+
+
+# ── 线上 r1 两控：committed 独立 stage / 推断 pending 仍更新 ──────────
+
+
+def _draft_plus_appointment_candidates():
+    """跨 kind 多旨：draft + appointment（draft 的 candidate_kind_count=1）。"""
+    return candidates_from_classifier_payload([
+        {"kind": "draft"},
+        {
+            "kind": "appointment",
+            "appoint_action": "任命",
+            "name": "洪承畴",
+            "office": "陕西巡抚",
+        },
+    ], soft=False)
+
+
+def test_mixed_intent_with_committed_draft_stages_independently(game, monkeypatch):
+    """P1：无 pending 但已有 committed draft 时，跨 kind 多旨 draft 必须独立 stage，
+    不得改写 committed 案卷（旧对象同一性正确）。"""
+    db, state, content = game
+    minister = _active_ch(db, content)
+    sess = _bind_apply(db, state, content)
+
+    committed_text = "初稿：着户部清查三边粮饷，三月内完报。"
+    committed_id = db.add_directive(
+        state, None, committed_text, "大臣拟旨", actor=minister.name, status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "three-borders-grain",
+            "text": committed_text,
+            "actor": minister.name,
+            "mode": "ordinary",
+        },
+    )
+
+    new_draft_text = "新拟：着兵部核饷九边军械，限两月呈览。"
+    _silence_serial(monkeypatch)
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": new_draft_text,
+        "target_candidate": "",
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": "nine-borders-arms",
+    })
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": "",
+    })
+
+    before_pending_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
+    sess.apply_cli_conversation_actions(
+        minister,
+        "再拟一道核饷九边，并任命洪承畴为陕西巡抚。",
+        f"臣另拟{new_draft_text}，并请任洪承畴巡抚陕西，请陛下定夺准驳。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=_draft_plus_appointment_candidates(),
+    )
+
+    # committed 旧案卷同一性：id/正文均不得被本批 draft 改写
+    committed = next(
+        d for d in db.list_directives(state, statuses=("draft",))
+        if int(d["id"]) == committed_id
+    )
+    assert str(committed["text"] or "") == committed_text
+    assert str(committed["actor"] or "") == minister.name
+
+    new_rows = [
+        r for r in _pending_rows(db, state.turn, minister_name=minister.name)
+        if int(r["id"]) not in before_pending_ids
+    ]
+    office = [r for r in new_rows if r["kind"] == "office"]
+    drafts = [r for r in new_rows if r["kind"] == "directive"]
+    assert len(office) == 1, f"sibling 任免应独立成条，实际 {[r['kind'] for r in new_rows]}"
+    assert len(drafts) == 1, f"draft 应独立 stage 一条 pending，实际 {new_rows}"
+    assert new_draft_text in str(_payload(drafts[0]).get("text") or "")
+    # pending 与 turn_directives 分表，不得靠跨表 id 判同一性；以 committed 正文未改为准
+    assert str(committed["text"] or "") != new_draft_text
+    assert _payload(office[0]).get("name") == "洪承畴"
+
+
+def test_mixed_intent_inferred_pending_target_still_updates(game, monkeypatch):
+    """P2：恰一条 pending 时，跨 kind 多旨隐式改草仍更新那条；sibling 独立落条。"""
+    db, state, content = game
+    minister = _active_ch(db, content)
+    sess = _bind_apply(db, state, content)
+
+    old_text = "旧草：着户部清查三边粮饷。"
+    pending_id = db.stage_directive_candidate(
+        state.turn, minister.name,
+        payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "three-borders-grain",
+            "text": old_text,
+            "actor": minister.name,
+            "mode": "ordinary",
+        },
+    )
+
+    revised_text = "修订：着户部及兵部联合清查三边粮饷军械，限两月完报。"
+    _silence_serial(monkeypatch)
+    monkeypatch.setattr(cb, "extract_draft_intent", lambda *a, **k: {
+        "draft_action": "拟旨",
+        "draft_text": revised_text,
+        "target_candidate": "",  # 无显式 id；单 pending 应推断 pending_target
+        "dossier_action_type": "policy",
+        "target_kind": "issue",
+        "target_id": "three-borders-grain",
+    })
+    monkeypatch.setattr(cb, "extract_appointment_action", lambda *a, **k: {
+        "appoint_action": "无", "name": "", "office": "",
+    })
+
+    before_ids = {int(r["id"]) for r in _pending_rows(db, state.turn)}
+    sess.apply_cli_conversation_actions(
+        minister,
+        "那道粮饷旨再改一下，并任命洪承畴为陕西巡抚。",
+        f"臣已将粮饷旨改作：{revised_text}；并请任洪承畴巡抚陕西，请陛下定夺准驳。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=_draft_plus_appointment_candidates(),
+    )
+
+    rows = _pending_rows(db, state.turn, minister_name=minister.name)
+    # 旧 pending 同一性：仍是同一行，正文已更新
+    updated = next(r for r in rows if int(r["id"]) == pending_id)
+    assert revised_text in str(_payload(updated).get("text") or "")
+    assert old_text not in str(_payload(updated).get("text") or "")
+
+    # 不得另插一条 draft；sibling 任免独立
+    new_rows = [r for r in rows if int(r["id"]) not in before_ids]
+    new_drafts = [r for r in new_rows if r["kind"] == "directive"]
+    new_office = [r for r in new_rows if r["kind"] == "office"]
+    assert not new_drafts, f"推断 pending 应原地更新，不得再插 draft：{new_drafts}"
+    assert len(new_office) == 1
+    assert _payload(new_office[0]).get("name") == "洪承畴"
