@@ -5087,7 +5087,7 @@ def test_shadow_spine_uses_batch_bridge_without_per_region_reload(fresh_game, mo
 
     assert calls["batch"] == 1
     assert any(
-        isinstance(msg, str) and msg.startswith("[fiscal-substrate] shaanxi")
+        isinstance(msg, str) and msg.startswith("[fiscal-substrate] shaanxi 推进：")
         for msg in msgs
     )
 
