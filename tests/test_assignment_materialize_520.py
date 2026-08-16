@@ -33,7 +33,7 @@ from tests.dossier_test_helpers import rejected_verdict as _rejected_verdict
 from web_app import WebGame
 
 
-def _ctx(db, character, candidates, turn, *, message, reply):
+def _ctx(db, character, candidates, turn, *, message, reply, recent_context=""):
     return MaterializeCtx(
         session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
         character=SimpleNamespace(name=character, office_type="文官"),
@@ -42,6 +42,45 @@ def _ctx(db, character, candidates, turn, *, message, reply):
         message_text=message,
         explicit_prefixed=False, has_directive=False, pend_for_minister=[], out={},
         intent=None, intent_kind="none", llm_config=None, intent_candidates=candidates,
+        recent_context=recent_context,
+    )
+
+
+def _seed_prior_three_matters(db, minister_name, turn):
+    """前轮对话埋三事，供 ADR 0028 最近相关上下文取链。"""
+    db.append_chat_message(
+        minister_name, turn, "user",
+        "核钱粮、整宗藩、护内帑，卿有何策？",
+    )
+    db.append_chat_message(
+        minister_name, turn, "minister",
+        "臣请分三事：一核钱粮，二整宗藩，三护内帑。",
+    )
+
+
+def _classify_assignment_via_real_entry(
+    monkeypatch, *,
+    message,
+    recent_context="",
+    pending_summaries=None,
+    scripted_payload,
+):
+    """走真实 classify_cli_action_intent 入口；仅 mock LLM backend，禁预造 payload 旁路。"""
+
+    def _scripted(prompt, llm_config=None, tag=""):
+        assert tag == "action_intent"
+        assert message in prompt
+        assert "【最近相关召对】" in prompt
+        if (recent_context or "").strip():
+            # 跨轮指代须能看见前轮事项正文
+            assert "核钱粮" in prompt and "整宗藩" in prompt and "护内帑" in prompt
+        return (json.dumps(scripted_payload, ensure_ascii=False), 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
+    return cb.classify_cli_action_intent(
+        message,
+        pending_summaries=pending_summaries or [],
+        recent_context=recent_context,
     )
 
 
@@ -307,32 +346,48 @@ def test_stop_condition_only_without_marker_still_rejected(game, monkeypatch):
     assert "commitment_kind" in created["reason"]
 
 
-# ── 附录 A beat 6/8/10 ───────────────────────────────────────────────
+# ── 附录 A beat 6/8/10（真实分类/上下文入口，禁预造 payload 旁路）──
 
 
-def test_beat6_three_matters_fan_out_three_independent_candidates(game):
-    """beat 6：三件事逐事扇出三独立交办候选。"""
+def test_beat6_three_matters_fan_out_three_independent_candidates(game, monkeypatch):
+    """beat 6：前轮三事经真实分类入口 → 逐事扇出三独立交办候选；案卷 text 取上下文链。"""
     db, state, content = game
     actor = _active_ming(db, content)
+    _seed_prior_three_matters(db, actor.name, state.turn)
+
+    message = "三件事都说得好。朕欲让你负责这三件事。"
+    reply = "臣请分办核钱粮、整宗藩、护内帑三事，请陛下定夺准驳。"
+    recent = session_mod._recent_audience_context_for_secret_order(
+        db, actor.name, state.turn, message,
+    )
+    assert "核钱粮" in recent and "整宗藩" in recent and "护内帑" in recent
+
     matters = [
         ("核钱粮", "he-qianliang"),
         ("整宗藩", "zheng-zongfan"),
         ("护内帑", "hu-neitang"),
     ]
-    candidates = candidates_from_classifier_payload([
-        {
-            "kind": "assignment",
-            "title": title,
-            "target_id": tid,
-            "assignee": actor.name,
-            "commitment_kind": "无",
-        }
-        for title, tid in matters
-    ], soft=False)
+    candidates = _classify_assignment_via_real_entry(
+        monkeypatch,
+        message=message,
+        recent_context=recent,
+        scripted_payload=[
+            {
+                "kind": "assignment",
+                "title": title,
+                "target_id": tid,
+                "assignee": actor.name,
+                "commitment_kind": "无",
+            }
+            for title, tid in matters
+        ],
+    )
+    assert len(candidates) == 3
+    assert {c.get("kind") for c in candidates} == {"assignment"}
+
     ctx = _ctx(
         db, actor.name, candidates, state.turn,
-        message="三件事都说得好。朕欲让你负责这三件事。",
-        reply="臣请分办核钱粮、整宗藩、护内帑三事，请陛下定夺准驳。",
+        message=message, reply=reply, recent_context=recent,
     )
     run_materialize_pipeline(ctx)
 
@@ -343,63 +398,111 @@ def test_beat6_three_matters_fan_out_three_independent_candidates(game):
         "he-qianliang", "zheng-zongfan", "hu-neitang",
     } <= {p.get("target_id") for _, p in staged}
     assert len({pid for pid, _ in staged}) == 3
+    # 案卷 text 须含最近相关上下文，不得仅本轮一句
+    for _, payload in staged:
+        body = str(payload.get("text") or "")
+        assert "核钱粮" in body
+        assert recent.splitlines()[0] in body or "核钱粮、整宗藩、护内帑" in body
 
 
-def test_beat8_reinforce_updates_existing_and_adds_fourth(game):
-    """beat 8：重申三事更新既有 + 追加欠饷=第4候选，不重复建。"""
+def test_beat8_reinforce_updates_existing_and_adds_fourth(game, monkeypatch):
+    """beat 8：真实分类入口重申三事更新既有 + 追加欠饷=第4候选，不重复建。"""
     db, state, content = game
     actor = _active_ming(db, content)
-    first_ids = []
-    for title, tid in (
-        ("核钱粮", "he-qianliang"),
-        ("整宗藩", "zheng-zongfan"),
-        ("护内帑", "hu-neitang"),
-    ):
-        ctx = _stage_assignment(
-            db, state.turn, title=title, target_id=tid, assignee=actor.name,
-        )
-        first_ids.append(int(ctx.out["pending_action_id"]))
+    _seed_prior_three_matters(db, actor.name, state.turn)
 
-    # 跨轮强化：结构化指向三既有 id，并新增欠饷
-    reinforced = candidates_from_classifier_payload([
-        {
-            "kind": "assignment",
-            "title": "核钱粮（加紧）",
-            "target_id": "he-qianliang",
-            "assignee": actor.name,
-            "target_candidate": str(first_ids[0]),
-            "commitment_kind": "无",
-        },
-        {
-            "kind": "assignment",
-            "title": "整宗藩（加紧）",
-            "target_id": "zheng-zongfan",
-            "assignee": actor.name,
-            "target_candidate": str(first_ids[1]),
-            "commitment_kind": "无",
-        },
-        {
-            "kind": "assignment",
-            "title": "护内帑（加紧）",
-            "target_id": "hu-neitang",
-            "assignee": actor.name,
-            "target_candidate": str(first_ids[2]),
-            "commitment_kind": "无",
-        },
-        {
-            "kind": "assignment",
-            "title": "补九边欠饷",
-            "target_id": "jiubian-arrears",
-            "assignee": actor.name,
-            "commitment_kind": "无",
-        },
-    ], soft=False)
-    ctx = _ctx(
-        db, actor.name, reinforced, state.turn,
-        message="徐徐图之……这三件事你都办。另加一件欠饷。",
-        reply="臣遵旨：三事加紧，并补九边欠饷。",
+    # 先经真实分类入口落三独立候选
+    first_message = "三件事都说得好。朕欲让你负责这三件事。"
+    first_recent = session_mod._recent_audience_context_for_secret_order(
+        db, actor.name, state.turn, first_message,
     )
-    run_materialize_pipeline(ctx)
+    first_candidates = _classify_assignment_via_real_entry(
+        monkeypatch,
+        message=first_message,
+        recent_context=first_recent,
+        scripted_payload=[
+            {
+                "kind": "assignment",
+                "title": title,
+                "target_id": tid,
+                "assignee": actor.name,
+                "commitment_kind": "无",
+            }
+            for title, tid in (
+                ("核钱粮", "he-qianliang"),
+                ("整宗藩", "zheng-zongfan"),
+                ("护内帑", "hu-neitang"),
+            )
+        ],
+    )
+    run_materialize_pipeline(_ctx(
+        db, actor.name, first_candidates, state.turn,
+        message=first_message,
+        reply="臣请分办三事，请陛下定夺准驳。",
+        recent_context=first_recent,
+    ))
+    first_rows = _assignment_pendings(db, state.turn, minister_name=actor.name)
+    assert len(first_rows) == 3
+    first_ids = [pid for pid, _ in first_rows]
+    # 记入对话，供下一轮最近相关上下文
+    db.append_chat_message(actor.name, state.turn, "user", first_message)
+    db.append_chat_message(
+        actor.name, state.turn, "minister", "臣请分办三事，请陛下定夺准驳。",
+    )
+
+    reinforce_message = "徐徐图之……这三件事你都办。另加一件欠饷。"
+    reinforce_reply = "臣遵旨：三事加紧，并补九边欠饷。"
+    recent = session_mod._recent_audience_context_for_secret_order(
+        db, actor.name, state.turn, reinforce_message,
+    )
+    pending_summaries = [
+        f"#{pid} 交办「{(p.get('title') or p.get('target_id') or '')}」"
+        for pid, p in first_rows
+    ]
+    reinforced = _classify_assignment_via_real_entry(
+        monkeypatch,
+        message=reinforce_message,
+        recent_context=recent,
+        pending_summaries=pending_summaries,
+        scripted_payload=[
+            {
+                "kind": "assignment",
+                "title": "核钱粮（加紧）",
+                "target_id": "he-qianliang",
+                "assignee": actor.name,
+                "target_candidate": str(first_ids[0]),
+                "commitment_kind": "无",
+            },
+            {
+                "kind": "assignment",
+                "title": "整宗藩（加紧）",
+                "target_id": "zheng-zongfan",
+                "assignee": actor.name,
+                "target_candidate": str(first_ids[1]),
+                "commitment_kind": "无",
+            },
+            {
+                "kind": "assignment",
+                "title": "护内帑（加紧）",
+                "target_id": "hu-neitang",
+                "assignee": actor.name,
+                "target_candidate": str(first_ids[2]),
+                "commitment_kind": "无",
+            },
+            {
+                "kind": "assignment",
+                "title": "补九边欠饷",
+                "target_id": "jiubian-arrears",
+                "assignee": actor.name,
+                "commitment_kind": "无",
+            },
+        ],
+    )
+    assert len(reinforced) == 4
+    run_materialize_pipeline(_ctx(
+        db, actor.name, reinforced, state.turn,
+        message=reinforce_message, reply=reinforce_reply, recent_context=recent,
+    ))
 
     staged = dict(_assignment_pendings(db, state.turn, minister_name=actor.name))
     assert set(first_ids).issubset(set(staged))
@@ -408,6 +511,8 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game):
     fourth = [pid for pid in staged if pid not in first_ids]
     assert len(fourth) == 1
     assert staged[fourth[0]].get("target_id") == "jiubian-arrears"
+    # 强化后正文仍走最近相关上下文链
+    assert "核钱粮" in str(staged[first_ids[0]].get("text") or "")
 
     dossiers = [
         _close_night_dossier(db, state, content, pid) for pid in staged
@@ -415,51 +520,59 @@ def test_beat8_reinforce_updates_existing_and_adds_fourth(game):
     db.apply_dossier_verdicts(state, [
         {"dossier_id": d["id"], "decision": "promulgated"} for d in dossiers
     ], content=content)
-    owned = [
-        r for r in _active_initiatives(db)
-        if actor.name in json.loads(r["participants"] or "[]")
-        or any(
-            p.get("character_id") == actor.name
-            for p in json.loads(r["participant_roster"] or "[]")
-        )
-    ]
-    # 本批 4 条（可能另有种子 initiative，只数本批 origin）
     batch_origins = {f"dossier:{d['id']}" for d in dossiers}
     landed = [r for r in _active_initiatives(db) if r["origin_ref"] in batch_origins]
     assert len(landed) == 4
 
 
 def test_beat10_accept_three_lands_three_independent_initiatives(game, monkeypatch):
-    """beat 10：三事全允 → 扇 3 独立 initiative，owner/origin_ref 落全。"""
+    """beat 10：真实分类入口「三事全允」→ 扇 3 独立 initiative，owner/origin_ref 落全。"""
     db, state, content = game
     actor = _active_ming(db, content)
     sess = _bind_apply(db, state, content)
-    _silence_serial(monkeypatch)
+    _seed_prior_three_matters(db, actor.name, state.turn)
 
-    matters = [
-        ("核钱粮", "he-qianliang"),
-        ("整宗藩", "zheng-zongfan"),
-        ("护内帑", "hu-neitang"),
-    ]
-    scripted = candidates_from_classifier_payload([
-        {
-            "kind": "assignment",
-            "title": title,
-            "target_id": tid,
-            "assignee": actor.name,
-            "commitment_kind": "无",
-        }
-        for title, tid in matters
-    ], soft=False)
+    message = "三事全允。"
+    reply = "臣请分办三事，请陛下定夺准驳。"
+    recent = session_mod._recent_audience_context_for_secret_order(
+        db, actor.name, state.turn, message,
+    )
+    # 先走真实分类入口，再 silence 串行抽取（apply 只消费已分类候选）
+    scripted = _classify_assignment_via_real_entry(
+        monkeypatch,
+        message=message,
+        recent_context=recent,
+        scripted_payload=[
+            {
+                "kind": "assignment",
+                "title": title,
+                "target_id": tid,
+                "assignee": actor.name,
+                "commitment_kind": "无",
+            }
+            for title, tid in (
+                ("核钱粮", "he-qianliang"),
+                ("整宗藩", "zheng-zongfan"),
+                ("护内帑", "hu-neitang"),
+            )
+        ],
+    )
+    _silence_serial(monkeypatch)
+    # apply 入口消费真实分类结果；materialize 仍取同一 recent_context 链
+    monkeypatch.setattr(
+        session_mod, "_recent_audience_context_for_secret_order",
+        lambda *a, **k: recent,
+    )
     out = sess.apply_cli_conversation_actions(
-        actor, "三事全允。",
-        "臣请分办三事，请陛下定夺准驳。",
+        actor, message, reply,
         has_directive=False, secret_order_id=None,
         preclassified_intent=scripted,
     )
     staged = _assignment_pendings(db, state.turn, minister_name=actor.name)
     assert len(staged) == 3
     ids = [pid for pid, _ in staged]
+    for _, payload in staged:
+        assert "核钱粮" in str(payload.get("text") or "")
 
     # 应允三道
     sess.apply_cli_conversation_actions(

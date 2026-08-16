@@ -49,6 +49,8 @@ class MaterializeCtx:
     batch_state: Dict[str, Any] = field(default_factory=dict)
     conversation_intent_handled: bool = False
     draft_staged: bool = False
+    # ADR 0028 / #520：最近相关召对上下文（与分类器同源喂料，案卷 text 取链）
+    recent_context: str = ""
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -953,6 +955,24 @@ def stage_assignment_candidate(
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
 
 
+def _assignment_dossier_text(ctx: MaterializeCtx) -> str:
+    """案卷 text：ADR 0028 最近相关对话上下文链 + 本轮皇帝/大臣句。
+
+    不得仅取 ctx.reply or ctx.player_message；recent_context 与分类器同源。
+    """
+    recent = str(ctx.recent_context or "").strip()
+    reply = str(ctx.reply or "").strip()
+    player = str(ctx.player_message or "").strip()
+    if not recent:
+        return reply or player
+    chunks = [recent]
+    if player and player not in recent:
+        chunks.append(f"皇帝：{player}")
+    if reply and reply not in recent:
+        chunks.append(f"大臣：{reply}")
+    return "\n".join(chunks).strip()
+
+
 def _materialize_assignment(ctx: MaterializeCtx) -> None:
     """暂存交办·责成案卷；initiative 按 ADR 0055 判决后落。"""
     if (
@@ -969,13 +989,14 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
     assignee = str(
         intent.get("assignee") or intent.get("name") or ctx.character.name or ""
     ).strip()
-    if not title and not target_id and not str(ctx.reply or "").strip():
+    body = _assignment_dossier_text(ctx)
+    if not title and not target_id and not body:
         return
     pending_id = stage_assignment_candidate(
         ctx.session.db,
         ctx.session.state.turn,
         ctx.character.name,
-        text=ctx.reply or ctx.player_message,
+        text=body,
         title=title,
         target_id=target_id,
         assignee=assignee,

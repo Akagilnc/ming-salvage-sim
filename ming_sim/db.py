@@ -12175,8 +12175,6 @@ class GameDB:
         shared executing/terminal transition.
         """
         from ming_sim.issues import (
-            INITIATIVE_ACTIVE_CAP,
-            INITIATIVE_ACTIVE_CAP_LABEL,
             _normalize_commitment_kind,
             apply_score_extraction,
         )
@@ -12201,15 +12199,8 @@ class GameDB:
         if commitment_kind == "无":
             commitment_kind = ""
 
-        if self.count_active_initiatives() >= INITIATIVE_ACTIVE_CAP:
-            note = f"已有{INITIATIVE_ACTIVE_CAP_LABEL}事在办，朝廷分身乏术，难再添新工。"
-            # in_transit 执行面须先入 executing 才能写失败执行格（同 grant 不足额）。
-            self.transition_decree_dossier(dossier_id, "executing", commit=False)
-            self.record_dossier_execution(
-                dossier_id, "failed", note, state.turn, close=True, commit=False,
-            )
-            return False
-
+        # cap / 「分身乏术」单一真源 = apply_score_extraction（issues.py）；
+        # 本接缝只组装 item 并消费逐项 rejected → 案卷执行失败。
         ni: Dict[str, object] = {
             "origin_kind": "decree",
             "origin_ref": origin_ref,
