@@ -1123,7 +1123,7 @@ class GameDB:
                 target_id INTEGER,                        -- 操作既有实体时其 id；新建为 NULL
                 minister_name TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
-                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed
+                status TEXT NOT NULL DEFAULT 'pending',    -- pending | committed | failed | held_over
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -13593,7 +13593,8 @@ class GameDB:
     ) -> List[Dict[str, object]]:
         """颁诏:把本回合 pending 暂存的结构化写动作批量落到真实表(不拒绝即允许),
         按 id 序(=操作发生序)apply。落得了标 committed、落不了标 failed(都不留 pending,
-        故幂等:已 committed/失败 不在 pending 清单、不重跑)。
+        故幂等:已 committed/失败/held_over 不在 pending 清单、不重跑)。
+        #525：held_over 留中档由同表 durable 保留、本终端只读 pending，故默认提交跳过留中。
         在 resolve_turn 最前、跑 LLM 结算管线之前调,使盘面时序与旧"召对期直写"一致。
         content/registry 仅 office(任免)落库需要(注册新臣 Agent);密令/后宫不需,故可选——
         探针 driver 路径无聊天暂存,传 None 即 no-op。
@@ -14157,6 +14158,36 @@ class GameDB:
         if owns_transaction:
             self.conn.commit()
         return cur.rowcount > 0
+
+    def hold_over_pending_actions(
+        self, turn: int, minister_name: str,
+        action_ids: Optional[Iterable[int]] = None,
+    ) -> int:
+        """#525 留中：点名候选移出 status=pending 活跃集，同表 durable 留中档 (held_over)。
+        不删行；commit_pending_actions 只读 pending，故默认提交自然跳过、不成案。
+        返回更新条数。action_ids 非空=只留中指定 id（#502 点名粒度）。"""
+        owns_transaction = not (
+            bool(getattr(self.conn, "_commit_suspended", False))
+            or int(getattr(self.conn, "_atomic_depth", 0) or 0) > 0
+            or self.conn.in_transaction
+        )
+        params: List[object] = [int(turn), str(minister_name)]
+        where = "turn=? AND minister_name=? AND status='pending'"
+        if action_ids is not None:
+            allowed_ids = [int(action_id) for action_id in action_ids]
+            if not allowed_ids:
+                return 0
+            placeholders = ",".join("?" for _ in allowed_ids)
+            where += f" AND id IN ({placeholders})"
+            params.extend(allowed_ids)
+        cur = self.conn.execute(
+            f"UPDATE pending_actions SET status='held_over', night_approved=0 "
+            f"WHERE {where}",
+            tuple(params),
+        )
+        if owns_transaction:
+            self.conn.commit()
+        return int(cur.rowcount or 0)
 
     def drop_pending_actions_for_minister(
         self, turn: int, minister_name: str, kind_filter_exclude: Optional[str] = None,
