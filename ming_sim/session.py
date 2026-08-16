@@ -989,6 +989,118 @@ class GameSession:
         normalized = normalize_intent_candidates(result)
         return [] if normalized is None else normalized
 
+    def _start_audience_command_recognize(self, message: str) -> Optional[Future]:
+        """#526：收夜/留侍口令识别与回话并行（P5）。确定性封闭集；判词缝可脚本化注入。"""
+        from ming_sim.audience_night import recognize_audience_command
+
+        text = str(message or "")
+        return _CLI_ACTION_INTENT_EXECUTOR.submit(recognize_audience_command, text)
+
+    def _finish_audience_command_recognize(
+        self, future: Optional[Future], message: str,
+    ) -> str:
+        """Join command recognize. 抛错/坏 shape → none（零机械面）。"""
+        from ming_sim.audience_night import (
+            CMD_NONE,
+            normalize_audience_command_verdict,
+            recognize_audience_command,
+        )
+
+        if future is None:
+            # 未并行时同步兜底（仍走同一 recognize 缝）。
+            try:
+                return normalize_audience_command_verdict(
+                    recognize_audience_command(message))
+            except Exception:
+                return CMD_NONE
+        try:
+            return normalize_audience_command_verdict(future.result())
+        except Exception:
+            return CMD_NONE
+
+    def _apply_audience_command_verdict(
+        self,
+        result: "ChatTurnResult",
+        character: Character,
+        message: str,
+        *,
+        verdict: str,
+        chat_turn_id: int = 0,
+    ) -> None:
+        """#526：按结构化判词落收夜/留侍/含糊确认。引擎不重解析 message 散文。"""
+        from ming_sim.audience_night import (
+            CMD_AMBIGUOUS_CLOSE,
+            CMD_CLOSE_NIGHT,
+            CMD_STAY_ATTEND,
+            close_night,
+            stay_attend_in_audience,
+        )
+
+        if verdict == CMD_STAY_ATTEND:
+            stay_attend_in_audience(
+                self.db, character.name,
+                origin_chat_turn_id=int(chat_turn_id or 0),
+            )
+            result.court_action = "stay_attend"
+            return
+        if verdict == CMD_AMBIGUOUS_CLOSE:
+            result.answer = GameSession._ensure_close_night_confirm_cue(result.answer or "")
+            return
+        if verdict != CMD_CLOSE_NIGHT:
+            return
+        result.court_action = "court_break"
+        # 本轮仍 generating 时由调用方（Web epilogue）在回话落库后收夜，避免自锁 in-flight。
+        # chat_turn_id==0（无生命周期/单测）路径当场收夜=封窗=提交。
+        if int(chat_turn_id or 0) != 0:
+            return
+        try:
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                wait_timeout_s=0.0,
+                llm_config=getattr(self, "llm_config", None),
+                scene_registry=getattr(self, "_scene_registry", None),
+            )
+        except Exception:
+            # 收夜失败不吞 court_action——调用方仍可见 court_break；夜保持可续。
+            pass
+
+    @staticmethod
+    def _ensure_close_night_confirm_cue(answer: str) -> str:
+        """含糊收夜：大臣戏内确认（不出戏），不直接收夜。"""
+        text = (answer or "").strip()
+        ask = "陛下是要退朝么？"
+        if ask in text:
+            return text or ask
+        if not text:
+            return ask
+        return text + "\n" + ask
+
+    def close_night_after_chat_if_needed(self, court_action: str) -> None:
+        """#526：回话落库后由 Web/CLI epilogue 触发高置信收夜（收夜=封窗=提交）。
+
+        待补抽取/无 LLM 等可恢复失败不抛——court_break 信号已达；上层 advance/颁诏
+        的 auto_close 会再收。确定性高置信路径的成功断言见 chat_turn_id=0 单测。
+        """
+        if str(court_action or "") != "court_break":
+            return
+        from ming_sim.audience_night import AudienceNightError, close_night, get_open_night
+
+        if get_open_night(self.db) is None:
+            return
+        try:
+            close_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                wait_timeout_s=0.0,
+                llm_config=getattr(self, "llm_config", None),
+                scene_registry=getattr(self, "_scene_registry", None),
+            )
+        except AudienceNightError:
+            return
+
     def _confirmation_intent_for_preexisting_pending(
         self,
         minister_name: str,
@@ -1156,6 +1268,8 @@ class GameSession:
             else:
                 augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
         action_intent_future = self._start_cli_action_intent(character, message)
+        # #526：收夜/留侍口令识别只读皇帝消息，与回话并行（P5；非 ACTION_CLUSTERS）。
+        audience_command_future = self._start_audience_command_recognize(message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
         answer = extract_agent_text(run_output)
@@ -1169,6 +1283,12 @@ class GameSession:
         preexisting_pending_action_ids = {
             int(p["id"]) for p in self.db.list_pending_actions(self.state.turn, minister_name=character.name)
         }
+        # #526：先收口令判词并落机械面（收夜/留侍/含糊确认），再 finish 动作分类。
+        self._apply_audience_command_verdict(
+            result, character, message,
+            verdict=self._finish_audience_command_recognize(audience_command_future, message),
+            chat_turn_id=int(chat_turn_id or 0),
+        )
         preclassified_intent = self._finish_cli_action_intent(action_intent_future)
         preclassified_intent = self._confirmation_intent_for_preexisting_pending(
             character.name, message, answer, preclassified_intent, preexisting_pending_action_ids)

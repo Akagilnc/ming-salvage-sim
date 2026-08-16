@@ -10,7 +10,12 @@ import re
 from typing import List, Optional
 
 from ming_sim.applier import atomic
-from ming_sim.constants import COURT_BREAK_COMMANDS, EXIT_COMMANDS, TURN_UNIT
+from ming_sim.constants import (
+    COURT_BREAK_COMMANDS,
+    EXIT_COMMANDS,
+    STAY_ATTEND_COMMANDS,
+    TURN_UNIT,
+)
 from ming_sim.assets import wrap
 from ming_sim.context import match_minister_from_text
 from ming_sim.exceptions import ExitGame, SettlementAbort
@@ -333,8 +338,15 @@ def _handle_court_command(
     lowered = raw.lower()
     if lowered in EXIT_COMMANDS:
         raise ExitGame
-    if lowered in COURT_BREAK_COMMANDS or raw in {"退朝", "下朝"}:
+    if lowered in COURT_BREAK_COMMANDS or raw in COURT_BREAK_COMMANDS:
         return "court_break"
+
+    # #526：留侍口令（确定性封闭集；落叙事账、在场不变）
+    if raw in STAY_ATTEND_COMMANDS or lowered in STAY_ATTEND_COMMANDS:
+        from ming_sim.audience_night import stay_attend_in_audience
+        stay_attend_in_audience(session.db, current.name)
+        print(f"{current.name}留下听着，殿侧侍立。\n")
+        return "handled"
 
     retry_m = re.fullmatch(r"(?:retry|重试|重试密令)\s*#?(\d+)", raw, re.I)
     if retry_m:
@@ -605,6 +617,20 @@ def minister_chat(session: GameSession, character: Character) -> str:
             print(f"{character.name}退下。\n")
             return "dismiss"
         if cmd == "court_break":
+            # #526：高置信收夜口令 → 尽量收夜提交；待补/无 LLM 时软失败，上层 advance 再收。
+            close_fn = getattr(session, "close_night_after_chat_if_needed", None)
+            if close_fn is not None:
+                close_fn("court_break")
+            else:
+                from ming_sim.audience_night import AudienceNightError, auto_close_open_night
+                try:
+                    auto_close_open_night(
+                        session.db, session.state,
+                        content=getattr(session, "content", None),
+                        wait_timeout_s=0.0,
+                    )
+                except AudienceNightError:
+                    pass
             print(f"{character.name}退下。\n")
             return "court_break"
         if cmd and cmd.startswith("summon:"):
