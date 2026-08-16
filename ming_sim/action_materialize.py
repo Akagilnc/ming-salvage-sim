@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ming_sim.action_clusters import (
     ActionCluster,
@@ -1609,8 +1610,20 @@ def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
-def _parse_responsible_bodies(raw: object) -> List[str]:
-    """下议 responsible_bodies：机关/职司名列表；空/非列表 → []。"""
+_RESPONSIBLE_BODY_SPLIT = re.compile(r"[,，、/;／|]")
+
+
+def re_split_bodies(text: str) -> List[str]:
+    """下议机关名分隔：逗号/顿号/斜线/分号/竖线（三缝共用）。"""
+    return _RESPONSIBLE_BODY_SPLIT.split(str(text or ""))
+
+
+def parse_responsible_bodies(raw: object) -> List[str]:
+    """下议 responsible_bodies 唯一解析（暂存/admission/判后共用）。
+
+    承 list/tuple，或 JSON 数组串，或「吏部、户部」类分隔串；空/不可用 → []。
+    不在此做人物档语义；机关/职司个人名策略见 assert_responsible_bodies_org_only。
+    """
     value = _parse_json_field(raw)
     if value is None:
         return []
@@ -1618,12 +1631,15 @@ def _parse_responsible_bodies(raw: object) -> List[str]:
         text = value.strip()
         if not text:
             return []
-        # 允许「吏部、户部」或「吏部/户部」简写
         parts = [p.strip() for p in re_split_bodies(text) if p.strip()]
-        return parts
+        out: List[str] = []
+        for name in parts:
+            if name not in out:
+                out.append(name)
+        return out
     if not isinstance(value, (list, tuple)):
         return []
-    out: List[str] = []
+    out = []
     for item in value:
         name = str(item or "").strip()
         if name and name not in out:
@@ -1631,9 +1647,38 @@ def _parse_responsible_bodies(raw: object) -> List[str]:
     return out
 
 
-def re_split_bodies(text: str) -> List[str]:
-    import re
-    return re.split(r"[,，、/;／|]", text)
+# 旧名别名：避免外部/测试仍 import _parse_responsible_bodies 时分叉
+_parse_responsible_bodies = parse_responsible_bodies
+
+
+def character_person_names(db: Any) -> set[str]:
+    """既有人物档名集合（禁新建机关词表；个人名比对复用此源）。"""
+    if db is None or not hasattr(db, "conn"):
+        return set()
+    return {
+        str(row["name"]).strip()
+        for row in db.conn.execute("SELECT name FROM characters").fetchall()
+        if str(row["name"] or "").strip()
+    }
+
+
+def assert_responsible_bodies_org_only(
+    bodies: Sequence[str],
+    *,
+    known_person_names: Iterable[str] = (),
+    current_minister: str = "",
+) -> None:
+    """机关/职司语义：个人名与当前召对大臣不得入 responsible_bodies。"""
+    persons = {str(n).strip() for n in known_person_names if str(n or "").strip()}
+    minister = str(current_minister or "").strip()
+    if minister:
+        persons.add(minister)
+    if not persons:
+        return
+    for body in bodies:
+        name = str(body or "").strip()
+        if name and name in persons:
+            raise ValueError(f"responsible_bodies 禁个人名：{name}")
 
 
 def stage_referral_candidate(
@@ -1676,8 +1721,16 @@ def stage_referral_candidate(
     # FieldSpec int_hi=36 已在 normalize 夹紧；此处仍守 <=0 不产项
     if months <= 0:
         return 0
-    bodies = _parse_responsible_bodies(responsible_bodies)
+    bodies = parse_responsible_bodies(responsible_bodies)
     if not bodies:
+        return 0
+    try:
+        assert_responsible_bodies_org_only(
+            bodies,
+            known_person_names=character_person_names(db),
+            current_minister=minister_name,
+        )
+    except ValueError:
         return 0
 
     pending_rows = list(pend_for_minister or [])
