@@ -600,6 +600,62 @@ def write_decree_with_agno(
     return text.strip()
 
 
+def project_dossiers_for_simulator(
+    simulation_visible_dossiers: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517)."""
+    dossier_payload: List[Dict[str, object]] = []
+    for row in simulation_visible_dossiers:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        policy = dossier_action_policy(row.get("action_type"), payload)
+        # Narrative-owned effects are simulator material.  Deterministically
+        # materialized payload-owned work remains visible only as inert execution
+        # context: decree text and mechanical payload must not be replayed.
+        admitted = (
+            str(row.get("status") or "") != "proposed"
+            or str(row.get("settlement_verdict") or "") == "promulgated"
+        )
+        if policy["effect_owner"] == "narrative" and admitted:
+            dossier_payload.append(row)
+            continue
+        # In-transit executing work, and just-promulgated payload-owned terminal
+        # effects (惩处/招抚等), need command/target context without re-materializing.
+        just_promulgated_terminal = (
+            policy["effect_owner"] == "payload"
+            and policy.get("execution_surface") == "terminal"
+            and str(row.get("settlement_verdict") or "") == "promulgated"
+        )
+        if admitted and (
+            str(row.get("status") or "") == "executing" or just_promulgated_terminal
+        ):
+            execution_summary = {
+                "command": str(row.get("decree_text") or "").strip(),
+            }
+            # target_id 已在行级字段；此处补 payload 侧必要动作上下文（金额/账户/惩处动作）。
+            for key in (
+                "amount", "account", "target_account", "purpose", "reason",
+                "punish_action",
+            ):
+                value = payload.get(key)
+                if value not in (None, ""):
+                    execution_summary[key] = value
+            dossier_payload.append({
+                **{
+                    key: row[key]
+                    for key in (
+                        "id", "action_type", "target_kind", "target_id",
+                        "executor_kind", "executor_id", "status", "due_turn",
+                        "created_turn", "promulgated_turn",
+                    )
+                    if key in row
+                },
+                "execution_summary": execution_summary,
+            })
+    return dossier_payload
+
+
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     """Whether advancing this month requires the normal simulator/extractor rail."""
     executing_work = False
@@ -904,43 +960,7 @@ def resolve_directives(
         }
         for row in db.list_decree_dossiers_for_simulation(state.turn)
     ]
-    dossier_payload = []
-    for row in simulation_visible_dossiers:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        policy = dossier_action_policy(row.get("action_type"), payload)
-        # Narrative-owned effects are simulator material.  Deterministically
-        # materialized in-transit dossiers remain visible only as execution
-        # context: their decree text and mechanical payload must not be replayed.
-        admitted = (
-            str(row.get("status") or "") != "proposed"
-            or str(row.get("settlement_verdict") or "") == "promulgated"
-        )
-        if policy["effect_owner"] == "narrative" and admitted:
-            dossier_payload.append(row)
-        elif admitted and str(row.get("status") or "") == "executing":
-            # Keep enough inert context to distinguish concurrent work while
-            # withholding the executable decree/payload surfaces.
-            execution_summary = {
-                "command": str(row.get("decree_text") or "").strip(),
-            }
-            for key in ("amount", "account", "target_account", "purpose", "reason"):
-                value = payload.get(key)
-                if value not in (None, ""):
-                    execution_summary[key] = value
-            dossier_payload.append({
-                **{
-                    key: row[key]
-                    for key in (
-                        "id", "action_type", "target_kind", "target_id",
-                        "executor_kind", "executor_id", "status", "due_turn",
-                        "created_turn", "promulgated_turn",
-                    )
-                    if key in row
-                },
-                "execution_summary": execution_summary,
-            })
+    dossier_payload = project_dossiers_for_simulator(simulation_visible_dossiers)
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)
