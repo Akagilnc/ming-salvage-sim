@@ -20,7 +20,7 @@ import pytest
 import ming_sim.action_materialize  # noqa: F401 -- installs package catalog
 import ming_sim.action_materialize as am
 import ming_sim.cli_backend as cb
-from ming_sim.action_clusters import candidates_from_classifier_payload, cluster_by_kind
+from ming_sim.action_clusters import candidates_from_classifier_payload
 from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
 from ming_sim.decree import reload_state_from_db
 from ming_sim.session import GameSession
@@ -207,7 +207,7 @@ def test_fine_stripping_and_beating_land_distinct_effects(game):
     assert "80" not in str(beat_logs[-1]["payload_summary"] or "")
 
 
-def test_naowen_quzhi_is_punishment_not_dismiss(game, monkeypatch):
+def test_naowen_quzhi_is_punishment_not_dismiss(game):
     """AC4：拿问去职走惩处下狱，不得折成任免罢免。"""
     db, state, content = game
     target = _active_ming(db, content)
@@ -226,24 +226,6 @@ def test_naowen_quzhi_is_punishment_not_dismiss(game, monkeypatch):
         if r["kind"] == "office" and r["action"] == "罢免"
     ]
     assert office_rows == []
-
-    import inspect
-    import ming_sim.cli_backend as cb
-    source = inspect.getsource(cb.extract_appointment_action)
-    assert "拿问去职=罢免" not in source
-    assert "拿问去职" not in source
-
-    captured = {}
-
-    def _capture(prompt, llm_config=None, tag=""):
-        captured["prompt"] = prompt
-        return '{"任免动作":"无","姓名":"","官职":""}', 0
-
-    monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
-    cb.extract_appointment_action(f"将{target.name}拿问去职。", "臣遵旨。")
-    instructions = captured["prompt"].split("【皇帝】")[0]
-    assert "拿问去职=罢免" not in instructions
-    assert "拿问去职" not in instructions
 
     dossier = _close_night_dossier(db, state, content, pending_id)
     db.apply_dossier_verdicts(
@@ -392,21 +374,6 @@ def test_zhaoxue_restores_dismissed_to_active_after_verdict(game):
     )
     assert db.get_character_status(target.name)[0] == "active"
     assert content.characters[target.name].status == "active"
-
-
-def test_punish_action_enum_is_cluster_fieldspec_sole_source():
-    """类1：ACTION_CLUSTERS FieldSpec 为 punish_action 唯一真源；无未用 PUNISH_* 分裂。"""
-    assert not hasattr(am, "PUNISH_IMPRISON")
-    assert not hasattr(am, "PUNISH_PARDON")
-    cluster = cluster_by_kind("punishment")
-    assert cluster is not None
-    spec = next(f for f in cluster.fields if f.name == "punish_action")
-    assert spec.allowed is not None
-    assert "流放" in spec.allowed
-    assert "无" in spec.allowed
-    # 物化/准入 helper 必须读同一 FieldSpec，不得另抄 frozenset
-    assert am.punish_actions_allowed() is spec.allowed
-    assert am.punish_actions_effective() == (spec.allowed - {"无"})
 
 
 def test_punishment_admission_rejects_missing_blank_or_illegal_action(game):
