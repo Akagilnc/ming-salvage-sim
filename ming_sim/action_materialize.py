@@ -583,10 +583,15 @@ def stage_punishment_candidate(
         "mode": mode,
     }
     try:
-        n = int(amount or 0)
+        n = int(amount) if amount is not None and amount != "" else 0
     except (TypeError, ValueError):
         n = 0
-    if n > 0:
+    # #517 r2：罚俸 admission 要求正数 amount；缺/零/非法不得成候选。
+    if action == "罚俸":
+        if n <= 0:
+            return 0
+        staged["amount"] = n
+    elif n > 0:
         staged["amount"] = n
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)

@@ -459,3 +459,248 @@ def test_pardon_refuses_dead_keeps_terminal_status(game):
         )
     assert db.get_character_status(target.name)[0] == "dead"
     assert content.characters[target.name].status == "dead"
+
+
+# ── #517 r2 四类 ──────────────────────────────────────────────
+
+
+def _directive_session(db, state, content):
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    return sess
+
+
+def _pending_directive_payloads(db, turn, minister):
+    rows = [
+        p for p in db.list_pending_actions(turn, minister_name=minister)
+        if p.get("kind") == "directive" and p.get("status") == "pending"
+    ]
+    out = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        out.append((int(row["id"]), payload if isinstance(payload, dict) else {}))
+    return out
+
+
+def test_fine_admission_requires_positive_amount(game):
+    """r2 类1：罚俸缺正数 amount 不得成案（normalize + stage 双缝）。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    base = {
+        "text": f"罚{target.name}俸银八十两。",
+        "actor": target.name,
+        "dossier_action_type": "punishment",
+        "target_kind": "character",
+        "target_id": target.name,
+        "punish_action": "罚俸",
+        "mode": "ordinary",
+    }
+    for bad in ({}, {"amount": 0}, {"amount": -8}, {"amount": "八十"}):
+        with pytest.raises(ValueError, match="amount|罚俸"):
+            db._normalize_directive_dossier_payload(
+                {**base, **bad}, content=content, current_turn=state.turn,
+            )
+
+    ok = db._normalize_directive_dossier_payload(
+        {**base, "amount": 80}, content=content, current_turn=state.turn,
+    )
+    assert ok["amount"] == 80
+
+    # stage 缝：非法/缺额不得写入 pending
+    actor = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    before = db.list_pending_actions(state.turn, minister_name=actor)
+    for amount in (None, 0, -3, "坏"):
+        pending_id = am.stage_punishment_candidate(
+            db, state.turn, actor,
+            text=f"罚{target.name}俸。",
+            target_id=target.name,
+            punish_action="罚俸",
+            amount=amount,
+        )
+        assert pending_id == 0
+    after = db.list_pending_actions(state.turn, minister_name=actor)
+    assert len(after) == len(before)
+
+    staged = am.stage_punishment_candidate(
+        db, state.turn, actor,
+        text=f"罚{target.name}俸银八十两。",
+        target_id=target.name,
+        punish_action="罚俸",
+        amount=80,
+    )
+    assert staged > 0
+    payload = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (staged,),
+    ).fetchone()["payload_json"])
+    assert payload["amount"] == 80
+
+
+def test_fine_underfunded_treasury_fails_loud_not_fulfilled(game):
+    """r2 类2：罚俸减项不足额/零落账响亮失败，事务回滚，不得 fulfilled。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    state.metrics["国库"] = 30
+    db.sync_economy_accounts(state)
+    treasury_before = int(state.metrics["国库"])
+
+    ctx = _stage_punishment(
+        db, state.turn, target.name, action="罚俸", amount=80,
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    assert db.list_economy_moves_for_dossier(dossier["id"]) == []
+
+    with pytest.raises(ValueError, match="不足|罚俸|amount"):
+        db.apply_dossier_verdicts(
+            state,
+            [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+            content=content,
+        )
+
+    # 回滚：国库与案卷均不得伪造成功结案
+    assert int(state.metrics["国库"]) == treasury_before
+    assert db.list_economy_moves_for_dossier(dossier["id"]) == []
+    row = db.get_decree_dossier(dossier["id"])
+    assert row["status"] == "proposed"
+    assert str(row.get("execution_outcome") or "") != "fulfilled"
+
+
+def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
+    """r2 类3：顺颁 terminal punishment 进当月推演惰性上下文；无叙事重放物化面。"""
+    from ming_sim.decree import project_dossiers_for_simulator
+
+    db, state, content = game
+    target = _active_ming(db, content)
+    ctx = _stage_punishment(db, state.turn, target.name, action="拿问下狱")
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    decree_text = str(dossier.get("decree_text") or "")
+
+    # 结算组装窗：list_for_simulation 含 proposed；settlement_verdict=promulgated 表示顺颁。
+    visible = []
+    for row in db.list_decree_dossiers_for_simulation(state.turn):
+        item = dict(row)
+        if int(item["id"]) == int(dossier["id"]):
+            item["settlement_verdict"] = "promulgated"
+        visible.append(item)
+
+    projected = project_dossiers_for_simulator(visible)
+    hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
+    assert hit["action_type"] == "punishment"
+    assert hit["target_id"] == target.name
+    assert "decree_text" not in hit
+    assert "payload" not in hit and "payload_json" not in hit
+    summary = hit["execution_summary"]
+    assert summary["command"] == decree_text
+    assert summary.get("punish_action") == "拿问下狱"
+    # 目标在行级 target_id，不重复塞进 summary，避免破坏既有 in-transit 组装契约
+    assert hit["target_id"] == target.name
+
+    # 打回不得进推演上下文
+    rejected_visible = []
+    for row in db.list_decree_dossiers_for_simulation(state.turn):
+        item = dict(row)
+        if int(item["id"]) == int(dossier["id"]):
+            item["settlement_verdict"] = "rejected"
+        rejected_visible.append(item)
+    rejected_ids = {
+        int(r["id"]) for r in project_dossiers_for_simulator(rejected_visible)
+    }
+    assert int(dossier["id"]) not in rejected_ids
+
+
+def test_api_tool_punishment_stages_structured_not_special_decree(game):
+    """r2 类4：API propose_directive 惩处走结构化暂存，不降级 special_decree。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    failures = []
+
+    pending_id = sess._stage_directive_tool_candidate(
+        f"着将{target.name}拿问下狱，严加看管。",
+        minister,
+        f"拟旨拿问{target.name}。",
+        failures_out=failures,
+    )
+    assert pending_id > 0
+    assert not failures
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+    assert payload["dossier_action_type"] == "punishment"
+    assert payload["punish_action"] == "拿问下狱"
+    assert payload["target_id"] == target.name
+    assert payload.get("dossier_action_type") != "special_decree"
+
+
+def test_api_tool_punishment_unknown_or_incomplete_fails_loud_not_special_decree(game):
+    """r2 类4：惩处目标未知/罚俸无金额 → fail-loud，不得 special_decree。"""
+    db, state, content = game
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' LIMIT 1"
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    before = _pending_directive_payloads(db, state.turn, minister)
+
+    failures = []
+    pending_id = sess._stage_directive_tool_candidate(
+        "着将并不存在的人拿问下狱。",
+        minister,
+        "拿问下狱。",
+        failures_out=failures,
+    )
+    assert pending_id == 0
+    assert failures
+    assert all("惩处" in str(f.get("message") or "") or "拿问" in str(f.get("message") or "")
+              for f in failures)
+
+    target = _active_ming(db, content)
+    failures2 = []
+    pending_id2 = sess._stage_directive_tool_candidate(
+        f"着罚{target.name}俸示惩。",
+        minister,
+        f"罚{target.name}俸。",
+        failures_out=failures2,
+    )
+    assert pending_id2 == 0
+    assert failures2
+
+    after = _pending_directive_payloads(db, state.turn, minister)
+    assert after == before
+    assert not any(
+        p.get("dossier_action_type") == "special_decree" for _, p in after
+    )
+
+
+def test_api_tool_fine_with_amount_stages(game):
+    """r2 类4：罚俸带正数金额经 API 缝结构化暂存。"""
+    db, state, content = game
+    target = _active_ming(db, content)
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND name!=? LIMIT 1",
+        (target.name,),
+    ).fetchone()["name"]
+    sess = _directive_session(db, state, content)
+    failures = []
+    pending_id = sess._stage_directive_tool_candidate(
+        f"着罚{target.name}俸银80两。",
+        minister,
+        f"罚俸{target.name}。",
+        failures_out=failures,
+    )
+    assert pending_id > 0
+    assert not failures
+    payload = dict(_pending_directive_payloads(db, state.turn, minister))[pending_id]
+    assert payload["dossier_action_type"] == "punishment"
+    assert payload["punish_action"] == "罚俸"
+    assert payload["target_id"] == target.name
+    assert int(payload["amount"]) == 80
