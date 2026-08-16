@@ -10466,6 +10466,19 @@ class GameDB:
         else:
             normalized.pop("target_id", None)
             raise ValueError("旨意缺少 canonical target")
+        if action == "military_order":
+            # #521 r2：成案前验 target_kind=army 且军队存在（含无 station 催战）。
+            # 不得静默改写错误 target_kind；不得等到判后才发现虚假 id。
+            if target_kind != "army":
+                raise ValueError("军令 target_kind 须为 army")
+            existing_army = self.conn.execute(
+                "SELECT id FROM armies WHERE id = ?", (target_id,),
+            ).fetchone()
+            if existing_army is None:
+                raise ValueError(
+                    f"军令引用未入库军队 '{target_id}'（成案前须存在）"
+                )
+            normalized["target_kind"] = "army"
         return normalized
 
     def _find_pacification_target(self, content, name: str) -> Optional[str]:
@@ -12179,6 +12192,100 @@ class GameDB:
             result.append(value)
         return result
 
+    def _apply_military_order_station_effect(
+        self, state, *, army_id: str, station: str, actor: str, reason: str,
+        origin_ref: str,
+    ) -> None:
+        """军令调驻面：既有军 station → army 写核；不得 new_armies。"""
+        if not station:
+            return
+        if not army_id:
+            raise ValueError("军令调驻缺少军队 target")
+        existing = self.conn.execute(
+            "SELECT id FROM armies WHERE id = ?", (army_id,),
+        ).fetchone()
+        if existing is None:
+            raise ValueError(
+                f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
+            )
+        from ming_sim.models import Event
+        pseudo = Event(
+            id="military_order", title="军令调遣", kind="圣旨", summary="",
+            urgency=0, severity=0, credibility=100, interests=[], audiences=[],
+        )
+        changes = self.apply_army_deltas(
+            state, pseudo, None, actor or "军令",
+            {army_id: {"station": station, "reason": reason[:80]}},
+            commit=False,
+            origin_ref=origin_ref,
+            require_origin=True,
+        )
+        # #521 r1：目标 station=当前站时 army 写核空接受=幂等 noop 成功，
+        # 不得当硬失败以致同批职守变更回滚。
+        rejected = [
+            c for c in changes
+            if isinstance(c, dict) and c.get("rejected")
+        ]
+        if rejected:
+            fail_reason = str(rejected[0].get("reason") or "")
+            raise ValueError(fail_reason or "军令调驻物化失败")
+
+    def _apply_military_order_office_effect(
+        self, state, payload, *, actor: str, reason: str, origin_ref: str,
+        content=None, registry=None,
+    ) -> None:
+        """军令职守面：payload.office / office_changes → 人物变更唯一核。"""
+        office_items: List[Dict[str, object]] = []
+        raw_changes = payload.get("office_changes")
+        if isinstance(raw_changes, list):
+            for raw in raw_changes:
+                if isinstance(raw, dict):
+                    office_items.append(dict(raw))
+        office_title = str(payload.get("office") or "").strip()
+        if office_title and actor:
+            if not any(
+                str(i.get("name") or "").strip() == actor
+                and str(i.get("new_office") or i.get("office") or "").strip()
+                for i in office_items
+            ):
+                office_items.append({
+                    "name": actor,
+                    "动作": "调任",
+                    "new_office": office_title,
+                    "office": office_title,
+                    "reason": reason,
+                })
+        if not office_items:
+            return
+        from ming_sim.issues import _apply_person_changes
+        prepared: List[Dict[str, object]] = []
+        for item in office_items:
+            entry = dict(item)
+            entry.setdefault("origin_ref", origin_ref)
+            entry.setdefault("动作", "调任")
+            if not entry.get("new_office") and entry.get("office"):
+                entry["new_office"] = entry["office"]
+            prepared.append(entry)
+        results = _apply_person_changes(
+            self,
+            state,
+            prepared,
+            content=content,
+            registry=registry,
+            origin_ref=origin_ref,
+            require_origin=True,
+            external_transaction=True,
+        )
+        accepted_p = [
+            r for r in results
+            if isinstance(r, dict) and not r.get("rejected")
+        ]
+        if not accepted_p:
+            fail_reason = ""
+            if results and isinstance(results[0], dict):
+                fail_reason = str(results[0].get("reason") or "")
+            raise ValueError(fail_reason or "军令职守变更物化失败")
+
     def _apply_military_order_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,
     ) -> None:
@@ -12203,88 +12310,23 @@ class GameDB:
             or ""
         ).strip()
 
-        if station:
-            if not army_id:
-                raise ValueError("军令调驻缺少军队 target")
-            existing = self.conn.execute(
-                "SELECT id FROM armies WHERE id = ?", (army_id,),
-            ).fetchone()
-            if existing is None:
-                raise ValueError(
-                    f"军令调驻引用未入库军队 '{army_id}'（既有军调驻不得 new_armies）"
-                )
-            from ming_sim.models import Event
-            pseudo = Event(
-                id="military_order", title="军令调遣", kind="圣旨", summary="",
-                urgency=0, severity=0, credibility=100, interests=[], audiences=[],
-            )
-            changes = self.apply_army_deltas(
-                state, pseudo, None, actor or "军令",
-                {army_id: {"station": station, "reason": reason[:80]}},
-                commit=False,
-                origin_ref=origin_ref,
-                require_origin=True,
-            )
-            # #521 r1：目标 station=当前站时 army 写核空接受=幂等 noop 成功，
-            # 不得当硬失败以致同批职守变更回滚。
-            rejected = [
-                c for c in changes
-                if isinstance(c, dict) and c.get("rejected")
-            ]
-            if rejected:
-                fail_reason = str(rejected[0].get("reason") or "")
-                raise ValueError(fail_reason or "军令调驻物化失败")
-
-        # 职守真变：payload.office 或 office_changes → 人物变更唯一核
-        office_items: List[Dict[str, object]] = []
-        raw_changes = payload.get("office_changes")
-        if isinstance(raw_changes, list):
-            for raw in raw_changes:
-                if isinstance(raw, dict):
-                    office_items.append(dict(raw))
-        office_title = str(payload.get("office") or "").strip()
-        if office_title and actor:
-            if not any(
-                str(i.get("name") or "").strip() == actor
-                and str(i.get("new_office") or i.get("office") or "").strip()
-                for i in office_items
-            ):
-                office_items.append({
-                    "name": actor,
-                    "动作": "调任",
-                    "new_office": office_title,
-                    "office": office_title,
-                    "reason": reason,
-                })
-        if office_items:
-            from ming_sim.issues import _apply_person_changes
-            prepared: List[Dict[str, object]] = []
-            for item in office_items:
-                entry = dict(item)
-                entry.setdefault("origin_ref", origin_ref)
-                entry.setdefault("动作", "调任")
-                if not entry.get("new_office") and entry.get("office"):
-                    entry["new_office"] = entry["office"]
-                prepared.append(entry)
-            results = _apply_person_changes(
-                self,
-                state,
-                prepared,
-                content=content,
-                registry=registry,
-                origin_ref=origin_ref,
-                require_origin=True,
-                external_transaction=True,
-            )
-            accepted_p = [
-                r for r in results
-                if isinstance(r, dict) and not r.get("rejected")
-            ]
-            if not accepted_p:
-                fail_reason = ""
-                if results and isinstance(results[0], dict):
-                    fail_reason = str(results[0].get("reason") or "")
-                raise ValueError(fail_reason or "军令职守变更物化失败")
+        self._apply_military_order_station_effect(
+            state,
+            army_id=army_id,
+            station=station,
+            actor=actor,
+            reason=reason,
+            origin_ref=origin_ref,
+        )
+        self._apply_military_order_office_effect(
+            state,
+            payload,
+            actor=actor,
+            reason=reason,
+            origin_ref=origin_ref,
+            content=content,
+            registry=registry,
+        )
         # due_turn：admission/create_decree_dossier 已落案卷列；限期出战无另表。
 
     def _apply_assignment_verdict_effect(
