@@ -1420,8 +1420,9 @@ def extract_confirmation_intent(
     pending_summaries: List[str],
     llm_config: Any = None,
 ) -> str:
-    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/未表态。
-    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，无 → 留。失败/无 → 「无」。"""
+    """皇帝本轮对【上一轮经大臣领命确认、尚未落库的暂存动作】是应允/拒绝/留中/未表态。
+    对话确认(ADR 0006 重设计)：应允 → 当场 commit，拒绝 → 丢，留中 → held_over 档，无 → 留。
+    失败/无 → 「无」。#525：留中为第三态，豁免默认准，不成案。"""
     compact = re.sub(r"[\s，,。.!！?？；;：:、]+", "", player_message or "")
     if compact:
         reject_hit = any(
@@ -1468,8 +1469,9 @@ def extract_confirmation_intent(
         "待皇帝定夺。读皇帝这句话，判断他对这些暂存动作的态度：\n"
         "  应允=准/可/照办/就这么办/依卿所奏/便如此；\n"
         "  拒绝=不必/罢了/再议/不准/作罢/算了；\n"
+        "  留中=留中/留中不发/先搁置不颁（挂起，非拒绝）；\n"
         "  无=没提这些、继续说别的、含糊未表态。\n"
-        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|无\"}。语义判断，别拘字面。\n\n"
+        "只输出一个 JSON（无代码围栏、无多余字）：{\"确认\":\"应允|拒绝|留中|无\"}。语义判断，别拘字面。\n\n"
         "【待皇帝定夺的暂存动作】" + summ + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -1481,7 +1483,7 @@ def extract_confirmation_intent(
         _log(f"确认意图抽取失败：{exc}")
     obj = _loads_lenient(raw) or {}
     v = str(obj.get("确认") or "无").strip()
-    return v if v in {"应允", "拒绝", "无"} else "无"
+    return v if v in {"应允", "拒绝", "留中", "无"} else "无"
 
 
 def extract_directive_confirmation(
@@ -1490,24 +1492,25 @@ def extract_directive_confirmation(
     candidates: List[Dict[str, Any]],
     llm_config: Any = None,
 ) -> Dict[str, Any]:
-    """多道圣旨并存时（#502），判皇帝口头准驳**指向哪几道**（提案粒度，AC4）。
-    返回 {"decision": "应允|拒绝|无|含糊", "target_ids": [id...]}。
-    - 准驳意图明确、指名了哪道 → decision=应允/拒绝，target_ids=点名的候选 id。
-    - 准驳意图明确、但**没指明是哪道**（多道并存说「准了」）→ decision=含糊、target_ids=[]，
+    """多道圣旨并存时（#502），判皇帝口头准驳/留中**指向哪几道**（提案粒度，AC4）。
+    返回 {"decision": "应允|拒绝|留中|无|含糊", "target_ids": [id...]}。
+    - 意图明确、指名了哪道 → decision=应允/拒绝/留中，target_ids=点名的候选 id。
+    - 意图明确、但**没指明是哪道**（多道并存说「准了/留中」）→ decision=含糊、target_ids=[]，
       驱动大臣当场追问澄清（AC5：不静默当「不回→默认同意」）。
     - 没在准驳这些 → decision=无。
-    抽取失败按含糊兜底（多道下宁可追问，不误提交）。"""
+    抽取失败按含糊兜底（多道下宁可追问，不误提交）。#525 留中复用同一 target_ids/含糊规则。"""
     by_id = {int(c["id"]): c for c in candidates}
     listing = "\n".join(
         f"  [{int(c['id'])}] {str(c.get('summary') or '')[:40]}" for c in candidates
     )
     prompt = (
         "你是信息抽取器，不扮演。本夜大臣名下有下列**多道各自独立**的圣旨候选待皇帝定夺。"
-        "读皇帝这句话，判断他的口头准驳**指向哪几道**：\n"
-        "  应允=准/照办这几道；拒绝=不必/作罢这几道；含糊=有准驳意思但没指明是哪道；无=没提这些。\n"
+        "读皇帝这句话，判断他的口头准驳/留中**指向哪几道**：\n"
+        "  应允=准/照办这几道；拒绝=不必/作罢这几道；留中=留中/留中不发这几道；"
+        "含糊=有准驳或留中意思但没指明是哪道；无=没提这些。\n"
         "只输出一个 JSON（无代码围栏、无多余字）：\n"
-        '{"决定":"应允|拒绝|无|含糊","目标编号":[方括号里的候选编号...]}。\n'
-        "指向具体某道就填其编号；说「准了/都准」但多道并存又没指明哪道=含糊、目标编号留空。语义判断，别拘字面。\n\n"
+        '{"决定":"应允|拒绝|留中|无|含糊","目标编号":[方括号里的候选编号...]}。\n'
+        "指向具体某道就填其编号；说「准了/都准/留中」但多道并存又没指明哪道=含糊、目标编号留空。语义判断，别拘字面。\n\n"
         "【候选】\n" + listing + "\n"
         "【皇帝】" + (player_message or "（无）") + "\n"
         "【大臣回话】" + (minister_reply or "（无）") + "\n"
@@ -1522,7 +1525,7 @@ def extract_directive_confirmation(
     if not isinstance(obj, dict):
         obj = {}
     decision = str(obj.get("决定") or "无").strip()
-    if decision not in {"应允", "拒绝", "无", "含糊"}:
+    if decision not in {"应允", "拒绝", "留中", "无", "含糊"}:
         decision = "无"
     raw_targets = obj.get("目标编号") or []
     target_ids: List[int] = []
@@ -1531,8 +1534,8 @@ def extract_directive_confirmation(
             digits = "".join(ch for ch in str(t) if ch.isdigit())
             if digits and int(digits) in by_id and int(digits) not in target_ids:
                 target_ids.append(int(digits))
-    # 准驳意图明确却没指到任何一道 → 含糊（AC5：不落到静默默认）。
-    if decision in {"应允", "拒绝"} and not target_ids:
+    # 准驳/留中意图明确却没指到任何一道 → 含糊（AC5：不落到静默默认）。
+    if decision in {"应允", "拒绝", "留中"} and not target_ids:
         decision = "含糊"
     return {"decision": decision, "target_ids": target_ids}
 
