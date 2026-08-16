@@ -5030,13 +5030,13 @@ def test_all_ming_settle_substrates_advance_with_observable_shadow_tlog(fresh_ga
             assert "实征0.0" in msg, f"{region_id} 实征值绑定失败: {msg}"
             assert "起运0.0" in msg, f"{region_id} 起运值绑定失败: {msg}"
             assert "火耗入截留0.0" in msg, f"{region_id} 火耗值绑定失败: {msg}"
-        # 末态欠账四子标签：日志值按生产格式（flows.py `.0f`）与落库 st 绑定；
-        # 生产标签「民欠」对应 st 键「民欠旧赋」。错值必须让测试红。
+        # 末态欠账四子标签：日志值按生产格式（flows.py `.0f` + `/`/`（` 分隔）与落库 st 绑定；
+        # 生产标签「民欠」对应 st 键「民欠旧赋」。右边界堵住前缀碰撞（期望 1、错写 10 必红）。
         st = _read_settle(db, region_id)["st"]
-        assert f"军饷欠{st['军饷欠']:.0f}" in msg, f"{region_id} 军饷欠值绑定失败: {msg} vs st={st.get('军饷欠')}"
-        assert f"官俸欠{st['官俸欠']:.0f}" in msg, f"{region_id} 官俸欠值绑定失败: {msg} vs st={st.get('官俸欠')}"
-        assert f"宗禄欠{st['宗禄欠']:.0f}" in msg, f"{region_id} 宗禄欠值绑定失败: {msg} vs st={st.get('宗禄欠')}"
-        assert f"民欠{st['民欠旧赋']:.0f}" in msg, f"{region_id} 民欠值绑定失败: {msg} vs st={st.get('民欠旧赋')}"
+        assert f"军饷欠{st['军饷欠']:.0f}/" in msg, f"{region_id} 军饷欠值绑定失败: {msg} vs st={st.get('军饷欠')}"
+        assert f"官俸欠{st['官俸欠']:.0f}/" in msg, f"{region_id} 官俸欠值绑定失败: {msg} vs st={st.get('官俸欠')}"
+        assert f"宗禄欠{st['宗禄欠']:.0f}/" in msg, f"{region_id} 宗禄欠值绑定失败: {msg} vs st={st.get('宗禄欠')}"
+        assert f"民欠{st['民欠旧赋']:.0f}（" in msg, f"{region_id} 民欠值绑定失败: {msg} vs st={st.get('民欠旧赋')}"
 
     # 吸收原 jiangnan advances_and_logs：flows 路径落库 first_tick 省库库银硬锚（非仅 >0）
     for region_id, expected in JIANGNAN_CORE_EXPECTED.items():
