@@ -359,6 +359,136 @@ def test_deadline_sortie_without_future_due_fails_at_admission(game):
     assert str(_army_row(db, army_id)["station"]) == old_station
 
 
+# ── #521 r1：无期限调驻/移镇成案 + 同站 noop ───────────────────────────
+
+
+def test_redeploy_without_deadline_admits_and_lands_station(game):
+    """无期限调驻：admission 不得强索 due_turn；顺颁后只改 station。"""
+    db, state, content = game
+    army_id = "guanning"
+    old_station = str(_army_row(db, army_id)["station"])
+    new_station = "北直隶 / 京师"
+    assert old_station != new_station
+    armies_before = _army_count(db)
+    actor = _active_ming(db, content)
+
+    ctx = _stage_military_order(
+        db, state.turn,
+        target_id=army_id,
+        assignee=actor.name,
+        station=new_station,
+        deadline_months=0,
+        message=f"调关宁军入卫京师，着{actor.name}承办。",
+        reply="臣请调关宁军入卫。请陛下定夺准驳。",
+    )
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    assert pending["dossier_action_type"] == "military_order"
+    assert int(pending.get("due_turn") or 0) == 0
+    assert int(pending.get("deadline_months") or 0) == 0
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    assert dossier["action_type"] == "military_order"
+    assert dossier["status"] == "proposed"
+    assert int(dossier["due_turn"] or 0) == 0
+    assert str(_army_row(db, army_id)["station"]) == old_station
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert str(_army_row(db, army_id)["station"]) == new_station
+    assert _army_count(db) == armies_before
+    got = db.get_decree_dossier(dossier["id"])
+    assert got["status"] == "executing"
+    assert int(got["due_turn"] or 0) == 0
+
+
+def test_yizhen_without_deadline_admits_and_lands_station_office(game):
+    """无期限移镇：无 due 亦成案；顺颁后 station + 职守变更。"""
+    db, state, content = game
+    army_id = "xuan_da"
+    old_station = str(_army_row(db, army_id)["station"])
+    new_station = "山西 / 大同"
+    assert old_station != new_station
+    actor = _active_ming(db, content)
+    old_office = str(getattr(actor, "office", "") or "")
+    new_office = "大同总兵" if old_office != "大同总兵" else "宣府总兵"
+    armies_before = _army_count(db)
+
+    ctx = _stage_military_order(
+        db, state.turn,
+        target_id=army_id,
+        assignee=actor.name,
+        station=new_station,
+        office=new_office,
+        deadline_months=0,
+        message=f"着{actor.name}移镇大同，改任{new_office}。",
+        reply="臣请移镇。请陛下定夺准驳。",
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    assert int(dossier["due_turn"] or 0) == 0
+    assert str(_army_row(db, army_id)["station"]) == old_station
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    assert str(_army_row(db, army_id)["station"]) == new_station
+    assert _army_count(db) == armies_before
+    office_after = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (actor.name,),
+    ).fetchone()["office"]
+    assert str(office_after) == new_office
+    assert db.get_decree_dossier(dossier["id"])["status"] == "executing"
+
+
+def test_same_station_noop_still_lands_office_change(game):
+    """同站调驻=成功 noop；伴随职守变更不得整批判后失败/回滚。"""
+    db, state, content = game
+    army_id = "guanning"
+    current_station = str(_army_row(db, army_id)["station"])
+    actor = _active_ming(db, content)
+    old_office = str(db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (actor.name,),
+    ).fetchone()["office"] or "")
+    new_office = "宁远总兵" if old_office != "宁远总兵" else "辽东总兵"
+    armies_before = _army_count(db)
+
+    ctx = _stage_military_order(
+        db, state.turn,
+        target_id=army_id,
+        assignee=actor.name,
+        station=current_station,  # 目标站=当前站
+        office=new_office,
+        deadline_months=0,
+        message=f"着{actor.name}仍镇{current_station}，改任{new_office}。",
+        reply="臣请仍驻原镇、改任新职。请陛下定夺准驳。",
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    assert str(_army_row(db, army_id)["station"]) == current_station
+
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    # station 保持；职守变更必须落成；案卷 executing（不得因 noop 整批回滚）
+    assert str(_army_row(db, army_id)["station"]) == current_station
+    assert _army_count(db) == armies_before
+    office_after = db.conn.execute(
+        "SELECT office FROM characters WHERE name=?", (actor.name,),
+    ).fetchone()["office"]
+    assert str(office_after) == new_office
+    got = db.get_decree_dossier(dossier["id"])
+    assert got["status"] == "executing"
+
+
 # ── 打回零效果 ────────────────────────────────────────────────────────
 
 

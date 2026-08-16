@@ -10424,6 +10424,8 @@ class GameDB:
                     raise ValueError("罚俸旨意缺少正数 amount")
                 normalized["amount"] = amount
         if action == "military_order":
+            # #521 r1：仅限期出战（无 station 调驻面）强制未来 due_turn；
+            # 调驻/移镇可无期限成案。显式期限字段若出现仍须落成未来 due。
             try:
                 raw_due_turn = normalized.get("due_turn")
                 raw_deadline = normalized.get("deadline_months")
@@ -10437,10 +10439,17 @@ class GameDB:
                 due_turn = deadline = 0
             if due_turn <= 0 and deadline > 0 and current_turn > 0:
                 due_turn = int(current_turn) + deadline
-            if due_turn <= int(current_turn or 0):
+            station = str(normalized.get("station") or "").strip()
+            has_deadline_intent = due_turn > 0 or deadline > 0
+            requires_due = not station  # 限期出战：无调驻面，due 为限期载体
+            if due_turn > int(current_turn or 0):
+                normalized["due_turn"] = due_turn
+                normalized.pop("deadline_months", None)
+            elif requires_due or has_deadline_intent:
                 raise ValueError("军令缺少有效未来 due_turn/deadline_months")
             else:
-                normalized["due_turn"] = due_turn
+                # 无期限调驻/移镇：不写虚假 due
+                normalized.pop("due_turn", None)
                 normalized.pop("deadline_months", None)
         target_kind = str(normalized.get("target_kind") or "").strip()
         target_id = str(normalized.get("target_id") or "").strip()
@@ -12177,7 +12186,7 @@ class GameDB:
 
         - 既有军 station → army 写核（apply_army_deltas）；不得 new_armies
         - 真实职守变化 → 人物变更/任免唯一核（ADR 0009）
-        - 期限只落案卷 due_turn（admission 已写入）；无胜负引擎
+        - 期限只落案卷 due_turn（限期出战 admission 写入）；无胜负引擎
         """
         origin_ref = f"dossier:{int(dossier_id)}"
         army_id = str(
@@ -12216,14 +12225,14 @@ class GameDB:
                 origin_ref=origin_ref,
                 require_origin=True,
             )
-            accepted = [
+            # #521 r1：目标 station=当前站时 army 写核空接受=幂等 noop 成功，
+            # 不得当硬失败以致同批职守变更回滚。
+            rejected = [
                 c for c in changes
-                if isinstance(c, dict) and not c.get("rejected")
+                if isinstance(c, dict) and c.get("rejected")
             ]
-            if not accepted:
-                fail_reason = ""
-                if changes and isinstance(changes[0], dict):
-                    fail_reason = str(changes[0].get("reason") or "")
+            if rejected:
+                fail_reason = str(rejected[0].get("reason") or "")
                 raise ValueError(fail_reason or "军令调驻物化失败")
 
         # 职守真变：payload.office 或 office_changes → 人物变更唯一核
