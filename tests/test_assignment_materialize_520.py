@@ -197,7 +197,180 @@ def test_assignment_cluster_registered_with_materialize_fn():
     assert "commitment_kind" in names
     assert "stop_condition" in names
     assert "target_candidate" in names
-    assert "assignee" in names
+    # #520 r2：owner=当前召对大臣；assignee 分类字段无改派用途，已删
+    assert "assignee" not in names
+
+
+# ── #520 r2：owner 单一来源 / 无民心夹带 / 相对期限 / 当轮锚 ──────────
+
+
+def test_assignment_owner_is_audience_minister_not_classifier_assignee(game):
+    """软分类器 assignee/name 不得覆盖 owner；owner=当前召对大臣。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    other = _active_ming(db, content, exclude=actor.name)
+    assert other.name != actor.name
+
+    payload = {
+        "kind": "assignment",
+        "title": "核钱粮",
+        "target_id": "he-qianliang",
+        "assignee": other.name,  # 分类器误填他人
+        "name": other.name,
+        "commitment_kind": "无",
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message=f"这核钱粮的事你办。",
+        reply="臣请奉行。请陛下定夺准驳。",
+    )
+    run_materialize_pipeline(ctx)
+    pending_id = ctx.out["pending_action_id"]
+    assert pending_id
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?", (pending_id,),
+    ).fetchone()["payload_json"])
+    owner = pending.get("assignee_id") or pending.get("assignee")
+    assert owner == actor.name
+    assert owner != other.name
+
+    dossier = _close_night_dossier(db, state, content, pending_id)
+    assert dossier["executor_id"] == actor.name
+
+
+def test_assignment_verdict_does_not_inject_public_support_plus_one(game):
+    """#520 只授权捕获落库；判后不得夹带统一民心+1（兑现归 #476）。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    ctx = _stage_assignment(
+        db, state.turn, title="核钱粮", target_id="he-qianliang",
+        assignee=actor.name,
+    )
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    row = next(
+        r for r in _active_initiatives(db)
+        if r["origin_ref"] == f"dossier:{dossier['id']}"
+    )
+    effect = json.loads(row["effect_on_resolve"] or "{}") if row["effect_on_resolve"] else {}
+    metrics = effect.get("metrics") or {}
+    assert metrics.get("民心") in (None, 0), f"不得夹带民心默认：{effect!r}"
+
+
+def test_relative_deadline_months_becomes_absolute_end_turn(game):
+    """交办接缝：相对期限月数 → 绝对 end_turn=turn+N；stop_condition 可校验 dict 原样落。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    stop = {"army.guanning.arrears": "<=0"}
+    ongoing = {
+        "economy": [{
+            "account": "国库", "delta": -10, "category": "补饷",
+            "reason": "每月补边饷", "purpose": "补饷",
+        }],
+    }
+    # 分类器给相对月数（或把 end_turn 填成相对 N）；接缝换算绝对回合
+    payload = {
+        "kind": "assignment",
+        "title": "解决九边欠饷",
+        "target_id": "jiubian-arrears",
+        "commitment_kind": "until_stop",
+        "deadline_months": 3,
+        "end_turn": 3,  # 相对三月；不得被当成绝对第 3 回合
+        "stop_condition": json.dumps(stop, ensure_ascii=False),
+        "ongoing_effects": json.dumps(ongoing, ensure_ascii=False),
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message="连续三个月补齐边饷，并保证不会再欠。",
+        reply="臣请立军令状。请陛下定夺准驳。",
+    )
+    run_materialize_pipeline(ctx)
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    assert pending["end_turn"] == state.turn + 3
+    assert pending["end_turn"] > state.turn
+    assert pending["stop_condition"] == stop
+
+    dossier = _close_night_dossier(db, state, content, ctx.out["pending_action_id"])
+    db.apply_dossier_verdicts(
+        state,
+        [{"dossier_id": dossier["id"], "decision": "promulgated"}],
+        content=content,
+    )
+    row = next(
+        r for r in _active_initiatives(db)
+        if r["origin_ref"] == f"dossier:{dossier['id']}"
+    )
+    assert int(row["end_turn"]) == state.turn + 3
+    assert json.loads(row["stop_condition"]) == stop
+
+
+def test_classify_prompt_carries_turn_and_stop_condition_contract(monkeypatch, game):
+    """分类入口须获当前 turn 与 GATE_TABLES 可寻址契约，使承诺能落到合法 shape。"""
+    db, state, content = game
+    captured = {}
+
+    def _scripted(prompt, llm_config=None, tag=""):
+        captured["prompt"] = prompt
+        assert tag == "action_intent"
+        return (json.dumps({"kind": "none"}, ensure_ascii=False), 0)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _scripted)
+    cb.classify_cli_action_intent(
+        "连续三个月补齐边饷。",
+        recent_context="",
+        current_turn=int(state.turn),
+    )
+    prompt = captured["prompt"]
+    assert f"当前回合={int(state.turn)}" in prompt or f"当前回合：{int(state.turn)}" in prompt
+    assert "region" in prompt and "army" in prompt and "character" in prompt
+    assert "stop_condition" in prompt or "停止条件" in prompt
+
+
+def test_assignment_title_and_body_keep_current_turn_anchor(game):
+    """缺 title 不得吃前轮 body 头；当轮短句不得被前文子串吞掉。"""
+    db, state, content = game
+    actor = _active_ming(db, content)
+    # 前轮长文含当轮短句子串「三事」
+    recent = (
+        "皇帝：核钱粮、整宗藩、护内帑，卿有何策？\n"
+        "大臣：臣请分三事：一核钱粮，二整宗藩，三护内帑。"
+    )
+    player = "三事"  # 短句，是前文「分三事」的子串
+    reply = "臣遵旨分办。请陛下定夺准驳。"
+    payload = {
+        "kind": "assignment",
+        "title": "",  # 分类器未给 title
+        "target_id": "",
+        "commitment_kind": "无",
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _ctx(
+        db, actor.name, candidates, state.turn,
+        message=player, reply=reply, recent_context=recent,
+    )
+    run_materialize_pipeline(ctx)
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    title = str(pending.get("title") or "")
+    body = str(pending.get("text") or "")
+    # 标题来源=当轮，不得取前轮「核钱粮、整宗藩…」头 40
+    assert not title.startswith("皇帝：核钱粮")
+    assert "核钱粮、整宗藩" not in title
+    assert player in title or title == player
+    # 正文须显式含当轮短句，不得因 substring 被吞
+    assert f"皇帝：{player}" in body or body.strip().endswith(player)
+    assert "核钱粮" in body  # 上下文链仍在
 
 
 # ── AC：军令状 → 案卷 → 判后 initiative ──────────────────────────────

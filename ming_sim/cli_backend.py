@@ -950,6 +950,7 @@ def classify_cli_action_intent(
     pending_summaries: Optional[List[str]] = None,
     llm_config: Any = None,
     recent_context: str = "",
+    current_turn: int = 0,
 ) -> List[Dict[str, Any]]:
     """召对动作 typed 判断：读皇帝本条消息 + ADR 0028 最近相关召对上下文，不读本轮大臣回话。
 
@@ -957,11 +958,13 @@ def classify_cli_action_intent(
     枚举与 kind map 唯一真源 = ming_sim.action_clusters 登记表。
     这条调用可与大臣回话并发；跨轮指代（「这三件事你都办」）靠 recent_context /
     待确认动作解析前轮事项并逐事产候选。LLM 软判坏 shape → []。
+    current_turn / GATE_TABLES 契约供交办承诺落到合法 end_turn 与 stop_condition。
     """
     from ming_sim.action_clusters import (
         candidates_from_classifier_payload,
         classifier_json_fields_prompt,
     )
+    from ming_sim.constants import GATE_TABLES
 
     orders_brief = "；".join(
         f"#{o.get('id')}「{o.get('title', '')}」：{str(o.get('content', ''))[:50]}"
@@ -971,6 +974,8 @@ def classify_cli_action_intent(
     context_block = (recent_context or "").strip() or "（无）"
     # 字段/枚举唯一真源 = 登记表 FieldSpec（#515：禁手写字段副本）
     schema_obj = classifier_json_fields_prompt()
+    turn_n = int(current_turn or 0)
+    gate_tables = "/".join(GATE_TABLES)
     prompt = (
         "你是召对动作意图分类器，读皇帝本条消息与【最近相关召对】上下文，"
         "不读也不等待大臣本轮回话。"
@@ -992,7 +997,13 @@ def classify_cli_action_intent(
         "- 不得因出现密查/查访字样就判密令；整体为问则无；"
         "整体为令时按是否指向现有密令选更新或新建。\n"
         "- 更新/催办/提交核议/记进展仅针对【现有密令】；无现有密令时不要硬判这四者"
-        "（新建不受此限）。非妃嫔不要硬判调教。\n\n"
+        "（新建不受此限）。非妃嫔不要硬判调教。\n"
+        "交办·责成承诺契约：\n"
+        f"- 当前回合={turn_n}。相对期限填期限月数=N（连续N月/三月内）；"
+        f"或截止回合填绝对回合号（须 > 当前回合，公式=当前回合+N）。\n"
+        f"- 停止条件须为可寻址 dict JSON，key 带表前缀（{gate_tables}），"
+        "value 含比较算符，如 {{\"army.guanning.arrears\":\"<=0\"}}；"
+        "自然语言军令状须落成该 shape，不得只写散文。\n\n"
         f"【最近相关召对】\n{context_block}\n"
         f"【待确认动作】{pending_brief}\n"
         f"【现有密令】{orders_brief}\n"
