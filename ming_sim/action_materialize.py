@@ -591,9 +591,15 @@ def stage_grant_allocation_candidate(
     amount: object = 0,
     account: str = "",
     cadence: str = "",
+    target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
-    """Shared grant candidate write: mode + same-target update."""
+    """Shared grant candidate write: mode + explicit-target update only.
+
+    Same grant_action+target_id alone must not overwrite. Independent 另拨/再赏
+    each stage a new candidate (#502 / #518); only a structured target_candidate
+    id updates the named pending grant.
+    """
     from ming_sim.cli_backend import resolve_directive_mode
 
     action = str(grant_action or "").strip()
@@ -612,26 +618,28 @@ def stage_grant_allocation_candidate(
             if p.get("kind") == "directive" and p.get("status") == "pending"
         ]
 
+    # #502 semantics: update only when structured pointing names a candidate id.
     existing_id = 0
     existing_mode = None
-    for row in pending_rows:
-        if row.get("kind") != "directive":
-            continue
-        try:
-            payload = json.loads(str(row.get("payload_json") or "{}"))
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
-            continue
-        if str(payload.get("target_id") or "").strip() != target:
-            continue
-        if str(payload.get("grant_action") or "").strip() != action:
-            continue
-        existing_id = int(row["id"])
-        existing_mode = payload.get("mode")
-        break
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if row.get("kind") != "directive":
+                continue
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "grant_allocation":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
 
     mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
     staged = {
@@ -688,6 +696,7 @@ def _materialize_grant_allocation(ctx: MaterializeCtx) -> None:
         amount=intent.get("amount"),
         account=_grant_account(intent),
         cadence=_grant_cadence(intent),
+        target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
     )
     if pending_id:
