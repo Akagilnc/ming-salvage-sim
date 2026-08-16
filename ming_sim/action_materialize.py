@@ -1213,6 +1213,402 @@ def _materialize_military_order(ctx: MaterializeCtx) -> None:
         ctx.out["pending_action_id"] = pending_id
 
 
+def _resolve_unique_active_authority(
+    db: Any,
+    turn: int,
+    *,
+    authority_id: object = 0,
+    holder_id: object = "",
+    privilege: object = "",
+) -> Optional[Dict[str, Any]]:
+    """候选层：自然语言/结构字段唯一解析到现存在持 authority_records 行。
+
+    0/多条 → None（不得发生产项）。显式 authority_id 优先。
+    """
+    holder = str(holder_id or "").strip()
+    priv = str(privilege or "").strip()
+    if priv in {"", "无"}:
+        priv = ""
+    try:
+        aid = int(authority_id or 0)
+    except (TypeError, ValueError):
+        aid = 0
+    if aid > 0:
+        rec = db.get_authority(aid)
+        if rec is None or bool(rec.get("revoked")):
+            return None
+        try:
+            effective = int(rec.get("effective_turn") or 0)
+        except (TypeError, ValueError):
+            effective = 0
+        if effective > int(turn):
+            return None
+        exp = rec.get("expires_turn")
+        if exp not in (None, ""):
+            try:
+                if int(exp) < int(turn):
+                    return None
+            except (TypeError, ValueError):
+                return None
+        if holder and str(rec.get("holder_id") or "") != holder:
+            return None
+        if priv and str(rec.get("privilege") or "") != priv:
+            return None
+        return rec
+    if not holder:
+        return None
+    matches = list(db.list_active_authorities(int(turn), holder_id=holder))
+    if priv:
+        matches = [
+            m for m in matches if str(m.get("privilege") or "") == priv
+        ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def stage_revoke_authority_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    authority_id: object = 0,
+    holder_id: object = "",
+    privilege: object = "",
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared revoke_authority candidate write (#523 / #611).
+
+    唯一解析到现存 authority_records.id；0/多匹配不暂存。
+    收夜只成案卷；收回走 authority_changes，判后物化。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    if str(target_candidate or "").strip() == "含糊":
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    rec = _resolve_unique_active_authority(
+        db, int(turn),
+        authority_id=authority_id,
+        holder_id=holder_id,
+        privilege=privilege,
+    )
+    if rec is None:
+        return 0
+    aid = int(rec["id"])
+    holder = str(rec.get("holder_id") or "").strip()
+    grant_dossier_id = int(rec.get("dossier_id") or 0)
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "revoke_authority":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "revoke_authority",
+        "target_kind": "character",
+        "target_id": holder,
+        "name": holder,
+        "holder_id": holder,
+        "authority_id": aid,
+        "privilege": str(rec.get("privilege") or ""),
+        "grant_dossier_id": grant_dossier_id,
+        "mode": mode,
+    }
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_revoke_authority(ctx: MaterializeCtx) -> None:
+    """暂存收权·罢差案卷；authority_changes 收回按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "revoke_authority"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    if str(intent.get("target_candidate") or "").strip() == "含糊":
+        ctx.out["directive_confirmation_ambiguous"] = {"candidates": []}
+        return
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not body:
+        return
+    holder = str(intent.get("name") or intent.get("holder_id") or "").strip()
+    pending_id = stage_revoke_authority_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=body,
+        authority_id=intent.get("authority_id"),
+        holder_id=holder,
+        privilege=intent.get("privilege"),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
+# 纯授权案卷归收权·罢差（ADR 0041/0071）；不得入撤回成命目标域。
+_PURE_AUTHORITY_DOSSIER_ACTIONS = frozenset({
+    "authorization", "secret_authorization",
+})
+
+
+def _dossier_is_revocable_decree(db: Any, dossier: Dict[str, Any]) -> bool:
+    """可撤成命：已颁/执行中的承诺·旨意；纯授权归收权·罢差。
+
+    直接 dossier、initiative 回指、含糊候选三入口共用本资格。
+    """
+    status = str(dossier.get("status") or "").strip()
+    if status not in {"promulgated", "executing"}:
+        return False
+    action = str(dossier.get("action_type") or "").strip()
+    if action in _PURE_AUTHORITY_DOSSIER_ACTIONS:
+        return False
+    return True
+
+
+def _list_revocable_decree_candidates(db: Any) -> List[Dict[str, Any]]:
+    """含糊问清候选：与 admission 同一语义资格的可撤成命。"""
+    rows = db.conn.execute(
+        "SELECT id, decree_text, status, action_type FROM decree_dossiers "
+        "WHERE status IN ('promulgated', 'executing') ORDER BY id",
+    ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        dossier = {
+            "id": int(row["id"]),
+            "decree_text": row["decree_text"],
+            "status": row["status"],
+            "action_type": row["action_type"],
+        }
+        if not _dossier_is_revocable_decree(db, dossier):
+            continue
+        text = str(row["decree_text"] or "").strip() or f"案卷{int(row['id'])}"
+        out.append({"id": int(row["id"]), "summary": text})
+    return out
+
+
+def _parse_revoke_decree_target(
+    db: Any, *,
+    target_id: object = "",
+    target_kind: object = "",
+    target_candidate: object = "",
+) -> Optional[Dict[str, Any]]:
+    """解析撤回成命目标：仅承诺/旨意（dossier/initiative）；须可走 0056。
+
+    - 纯授权拒（归收权·罢差）
+    - issue 仅 active initiative，且 origin_ref 回指可撤案卷（禁 standalone 免代价）
+    - dossier 须已颁/执行中
+    """
+    if str(target_candidate or "").strip() == "含糊":
+        return None
+    raw = str(target_id or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("authority:"):
+        return None  # 纯授权归收权·罢差
+    kind = str(target_kind or "").strip()
+    if raw.startswith("dossier:"):
+        kind = "dossier"
+        raw = raw.split(":", 1)[1].strip()
+    elif raw.startswith("issue:"):
+        kind = "issue"
+        raw = raw.split(":", 1)[1].strip()
+    if not kind:
+        kind = "dossier"
+    try:
+        tid = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if tid <= 0:
+        return None
+    if kind == "issue":
+        row = db.conn.execute("SELECT * FROM issues WHERE id=?", (tid,)).fetchone()
+        if row is None:
+            return None
+        if str(row["kind"] or "").strip() != "initiative":
+            return None
+        if str(row["status"] or "").strip() != "active":
+            return None
+        linked = 0
+        origin = str(row["origin_ref"] or "").strip()
+        if origin.startswith("dossier:"):
+            try:
+                linked = int(origin.split(":", 1)[1])
+            except (TypeError, ValueError):
+                linked = 0
+        # standalone / 无合法案卷来源：拒入闸，堵住 cancel_issue 免 0056 旁路
+        if linked <= 0:
+            return None
+        dossier = db.get_decree_dossier(linked)
+        if dossier is None or not _dossier_is_revocable_decree(db, dossier):
+            return None
+        return {
+            "target_kind": "issue",
+            "target_id": str(tid),
+            "issue_id": tid,
+            "dossier_id": linked,
+        }
+    dossier = db.get_decree_dossier(tid)
+    if dossier is None or not _dossier_is_revocable_decree(db, dossier):
+        return None
+    return {
+        "target_kind": "dossier",
+        "target_id": str(tid),
+        "dossier_id": tid,
+        "issue_id": 0,
+    }
+
+
+def stage_revoke_decree_candidate(
+    db: Any,
+    turn: int,
+    minister_name: str,
+    *,
+    text: str,
+    target_id: object = "",
+    target_kind: object = "",
+    emperor_text: object = None,
+    extracted_mode: object = None,
+    target_candidate: object = None,
+    pend_for_minister: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    """Shared revoke_decree candidate write (#523 / ADR 0041).
+
+    有代价的新命令入闸；目标仅承诺/旨意。非 undo、不删旧账。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+
+    if str(target_candidate or "").strip() == "含糊":
+        return 0
+    body = str(text or "").strip()
+    if not body:
+        return 0
+    resolved = _parse_revoke_decree_target(
+        db,
+        target_id=target_id,
+        target_kind=target_kind,
+        target_candidate=target_candidate,
+    )
+    if resolved is None:
+        return 0
+
+    pending_rows = list(pend_for_minister or [])
+    if not pending_rows:
+        pending_rows = [
+            p for p in db.list_pending_actions(int(turn), minister_name=minister_name)
+            if p.get("kind") == "directive" and p.get("status") == "pending"
+        ]
+    existing_id = 0
+    existing_mode = None
+    pointed = str(target_candidate or "").strip()
+    if pointed.isdigit():
+        want_id = int(pointed)
+        for row in pending_rows:
+            if int(row["id"]) != want_id:
+                continue
+            try:
+                payload = json.loads(str(row.get("payload_json") or "{}"))
+            except (TypeError, ValueError):
+                break
+            if not isinstance(payload, dict):
+                break
+            if str(payload.get("dossier_action_type") or "").strip() != "revoke_decree":
+                break
+            existing_id = want_id
+            existing_mode = payload.get("mode")
+            break
+
+    mode = resolve_directive_mode(emperor_text, extracted_mode, existing_mode)
+    staged: Dict[str, Any] = {
+        "text": body,
+        "actor": minister_name,
+        "dossier_action_type": "revoke_decree",
+        "target_kind": resolved["target_kind"],
+        "target_id": resolved["target_id"],
+        "revoke_target_dossier_id": int(resolved.get("dossier_id") or 0),
+        "revoke_target_issue_id": int(resolved.get("issue_id") or 0),
+        "mode": mode,
+    }
+    if existing_id:
+        return db.update_directive_candidate(existing_id, staged)
+    return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
+
+
+def _materialize_revoke_decree(ctx: MaterializeCtx) -> None:
+    """暂存撤回成命案卷；breach/initiative 终结按 ADR 0055 判决后落。"""
+    if (
+        ctx.intent_kind != "revoke_decree"
+        or ctx.explicit_prefixed
+        or ctx.draft_staged
+        or ctx.out.get("pending_action_id")
+        or ctx.conversation_intent_handled
+    ):
+        return
+    intent = ctx.intent or {}
+    if str(intent.get("target_candidate") or "").strip() == "含糊":
+        # #502 含糊三态：给出真实可撤成命候选，供皇帝点名；不静默暂存
+        ctx.out["directive_confirmation_ambiguous"] = {
+            "candidates": _list_revocable_decree_candidates(ctx.session.db),
+        }
+        return
+    body = str(ctx.reply or ctx.player_message or "").strip()
+    if not body:
+        return
+    pending_id = stage_revoke_decree_candidate(
+        ctx.session.db,
+        ctx.session.state.turn,
+        ctx.character.name,
+        text=body,
+        target_id=intent.get("target_id"),
+        target_kind=intent.get("target_kind"),
+        emperor_text=ctx.player_message,
+        extracted_mode=intent.get("mode"),
+        target_candidate=intent.get("target_candidate"),
+        pend_for_minister=ctx.pend_for_minister,
+    )
+    if pending_id:
+        ctx.out["pending_action_id"] = pending_id
+
+
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
     from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
     from ming_sim.session import (
@@ -1412,6 +1808,42 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 ),
             ),
             materialize_fn=_materialize_military_order,
+        ),
+        ActionCluster(
+            "收权·罢差", "revoke_authority", EFFECT_MATERIALIZE, priority=61,
+            fields=(
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                FieldSpec(
+                    "authority_id", "授权编号", None, 0, as_int=True,
+                ),
+                FieldSpec(
+                    "privilege", "权项",
+                    frozenset({
+                        "无", "尚方剑密授", "便宜行事", "专差督办", "新机构专办",
+                    }), "无",
+                ),
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_revoke_authority,
+        ),
+        ActionCluster(
+            "撤回成命", "revoke_decree", EFFECT_MATERIALIZE, priority=62,
+            fields=(
+                # 目标成命：承诺/旨意 id（dossier:<id> / issue:<id> / 裸数字）
+                FieldSpec("target_id", "目标", None, "", max_len=80),
+                FieldSpec("name", "姓名", None, "", max_len=20),
+                # #502：指称含糊三态
+                FieldSpec("target_candidate", "目标候选", None, "", max_len=40),
+                FieldSpec(
+                    "mode", "颁布方式",
+                    frozenset({"ordinary", "midzhi"}), "",
+                ),
+            ),
+            materialize_fn=_materialize_revoke_decree,
         ),
         ActionCluster(
             "任免", "appointment", EFFECT_MATERIALIZE, priority=60,
