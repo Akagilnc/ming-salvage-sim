@@ -73,6 +73,12 @@ export type StreamChatOptions = {
     mindreading: MindreadingRecord | null;
     chat_turn_id: number;
   }) => void;
+  /** #544：流完补挂高亮清单（done 之后、end 之前） */
+  onHighlights?: (payload: {
+    highlights: string[];
+    chat_turn_id: number;
+    message_id: number;
+  }) => void;
   /** 玩家问话已持久化并开夜；先于模型生成/失败返回。 */
   onAccepted?: (payload: { campaign_id: string; night_id: number; chat_turn_id: number }) => void;
   /** 回话 done 时立刻回调，便于清 busy / 展示回话，不等读心 */
@@ -136,6 +142,13 @@ export const streamChat = async (
         options.onMindreading?.({
           mindreading: (payload?.mindreading ?? null) as MindreadingRecord | null,
           chat_turn_id: Number(payload?.chat_turn_id || 0),
+        });
+      } else if (parsed.event === "highlights") {
+        const raw = Array.isArray(payload?.highlights) ? payload.highlights : [];
+        options.onHighlights?.({
+          highlights: raw.map((item: unknown) => String(item || "")).filter(Boolean),
+          chat_turn_id: Number(payload?.chat_turn_id || 0),
+          message_id: Number(payload?.message_id || 0),
         });
       } else if (parsed.event === "end") {
         if (!donePayload) {

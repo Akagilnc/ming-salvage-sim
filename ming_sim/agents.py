@@ -375,6 +375,23 @@ def create_mindreading_agent(llm_config: LLMConfig) -> Agent:
     )
 
 
+def create_highlight_judge_agent(llm_config: LLMConfig) -> Agent:
+    """#544 / ADR 0045：大臣奏对高亮判官——生成完成后的独立机器面短调用。"""
+    return Agent(
+        name="高亮判官",
+        id="highlight-judge",
+        model=create_chat_model(llm_config, temperature=0.2, max_tokens=240),
+        instructions=[
+            "你是奏对高亮判官。读大臣已经说完的全文，挑出承重短语清单。",
+            "organic markdown（如 **粗体**）只作信号，不要把标记本身当答案。",
+            "只输出一个 JSON object：{\"highlights\":[\"短语\",...]}；"
+            "短语尽量取原文片段；可为空数组；不要解释、不要其它键。",
+        ],
+        add_history_to_context=False,
+        markdown=False,
+    )
+
+
 def create_audience_extractor_agent(llm_config: LLMConfig) -> Agent:
     """召对叙事抽取员（#501 / ADR 0035）：大臣回话演完后抽取显著故事事实落账。
 

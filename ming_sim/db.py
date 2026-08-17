@@ -1153,6 +1153,8 @@ class GameDB:
                 content TEXT NOT NULL,
                 -- #976: held|released|withheld|private (audience knowledge dual-track)
                 knowledge_status TEXT NOT NULL DEFAULT 'held',
+                -- #544 / ADR 0045：高亮判官短语清单（JSON 数组）；空=无高亮/降级
+                highlights_json TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_minister
@@ -1905,6 +1907,9 @@ class GameDB:
         # held | released | withheld | private
         self.ensure_column(
             "chat_messages", "knowledge_status", "TEXT NOT NULL DEFAULT 'held'")
+        # #544 / ADR 0045：高亮判官短语清单随消息落库
+        self.ensure_column(
+            "chat_messages", "highlights_json", "TEXT NOT NULL DEFAULT '[]'")
         # #976 message-level origin provenance on assignee briefs (durable bloodline).
         self.ensure_column(
             "secret_order_briefs", "origin_chat_message_ids", "TEXT NOT NULL DEFAULT '[]'")
@@ -7700,6 +7705,47 @@ class GameDB:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def set_message_highlights(
+        self, message_id: int, phrases: Sequence[Any],
+    ) -> None:
+        """#544：把判官短语清单落在 chat_messages 上（原样/已过滤皆可）。"""
+        clean: List[str] = []
+        for item in list(phrases or []):
+            if not isinstance(item, str):
+                continue
+            phrase = item.strip()
+            if phrase:
+                clean.append(phrase)
+        payload = json.dumps(clean, ensure_ascii=False)
+        self.conn.execute(
+            "UPDATE chat_messages SET highlights_json = ? WHERE id = ?",
+            (payload, int(message_id)),
+        )
+        self.conn.commit()
+
+    def get_message_highlights(self, message_id: int) -> List[str]:
+        row = self.conn.execute(
+            "SELECT highlights_json FROM chat_messages WHERE id = ?",
+            (int(message_id),),
+        ).fetchone()
+        if row is None:
+            return []
+        return self._parse_highlights_json(row["highlights_json"])
+
+    @staticmethod
+    def _parse_highlights_json(raw: Any) -> List[str]:
+        try:
+            data = json.loads(raw or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        out: List[str] = []
+        for item in data:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+        return out
+
     def delete_chat_messages(self, message_ids: Iterable[int]) -> None:
         ids = [int(mid) for mid in message_ids if mid is not None]
         if not ids:
@@ -7757,7 +7803,8 @@ class GameDB:
         if message_ids:
             placeholders = ",".join("?" for _ in message_ids)
             msgs = self.conn.execute(
-                f"SELECT id, role, content FROM chat_messages WHERE id IN ({placeholders}) ORDER BY id",
+                f"SELECT id, role, content, highlights_json FROM chat_messages "
+                f"WHERE id IN ({placeholders}) ORDER BY id",
                 message_ids,
             ).fetchall()
         else:
@@ -7776,9 +7823,19 @@ class GameDB:
         for m in msgs:
             mid = int(m["id"])
             turn_id = msg_turn.get(mid, 0)
-            projection.append(
-                {"role": m["role"], "content": m["content"], "chat_turn_id": turn_id}
+            role = m["role"]
+            # #544：只大臣气泡携带判官清单；帝/递话恒 []（SELECT 已点名 highlights_json）
+            highlights = (
+                self._parse_highlights_json(m["highlights_json"])
+                if role == "minister"
+                else []
             )
+            projection.append({
+                "role": role,
+                "content": m["content"],
+                "chat_turn_id": turn_id,
+                "highlights": highlights,
+            })
             # 读心紧随该轮大臣回话归位（一个轮次可有多条读心，按 id 顺序）
             if mid in minister_msg_turn:
                 t = minister_msg_turn[mid]
