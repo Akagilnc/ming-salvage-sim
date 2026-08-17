@@ -2,6 +2,7 @@ import React from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { api, normalizeApiError } from "../api";
 import { resolveReasoningSupported } from "../reasoningSupport";
+import { consumeSettleStream } from "../settleStream";
 import type { CliModelChoices, MenuCampaign, MenuStatus, ReasoningStrengthChoice } from "../types";
 import { visibleReasoningStrengthChoices } from "../reasoningStrength";
 import { CliModelField } from "./cliModelField";
@@ -45,7 +46,18 @@ export function MenuPage({
 
   const onContinue = () =>
     guard("载入上次进度...", async () => {
-      await api("/api/menu/continue", { method: "POST" });
+      // #1195：继续走 SSE stage 流（settleStream 先例），busy 标签随阶段更新。
+      const response = await fetch("/api/menu/continue", { method: "POST" });
+      const outcome = await consumeSettleStream(
+        response,
+        { onStage: (text) => setBusy(text || "载入上次进度..."), onThinking: () => {}, onNarrative: () => {} },
+        { httpErrorLabel: "继续失败" },
+      );
+      if (outcome.kind === "error") {
+        const data = outcome.data;
+        const message = typeof data === "string" ? data : (data?.message || "继续失败。");
+        throw new Error(message);
+      }
       await onEnterGame();
     });
 
