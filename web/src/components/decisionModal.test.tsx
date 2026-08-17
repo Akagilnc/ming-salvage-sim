@@ -1,11 +1,152 @@
 import React, { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
 import { pendingDecisionsFrom } from "../decisionRouting";
 import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const DECISION_CSS = readFileSync(`${process.cwd()}/src/styles/decision.css`, "utf8");
+
+function injectDecisionCss() {
+  const style = document.createElement("style");
+  style.setAttribute("data-decision-fixture", "true");
+  style.textContent = DECISION_CSS;
+  document.head.appendChild(style);
+  return style;
+}
+
+function cssRulesMatching(substr: string): CSSStyleRule[] {
+  const matched: CSSStyleRule[] = [];
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule && rule.selectorText.includes(substr)) matched.push(rule);
+    }
+  }
+  return matched;
+}
+
+function ruleExact(selector: string): CSSStyleRule | undefined {
+  return cssRulesMatching(selector).find((rule) => rule.selectorText === selector);
+}
+
+/** Resolve clamp(minpx, Nvw, maxpx) against a viewport width. */
+function resolveClamp(minPx: number, vw: number, maxPx: number, viewportWidth: number) {
+  return Math.min(maxPx, Math.max(minPx, (vw / 100) * viewportWidth));
+}
+
+function parseClamp(text: string): { minPx: number; vw: number; maxPx: number } | null {
+  const m = text.match(/clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vw\s*,\s*([\d.]+)px\s*\)/i);
+  if (!m) return null;
+  return { minPx: Number(m[1]), vw: Number(m[2]), maxPx: Number(m[3]) };
+}
+
+function firstMatch(css: string, re: RegExp): string {
+  const m = css.match(re);
+  if (!m) throw new Error(`decision.css missing token /${re.source}/`);
+  return m[1];
+}
+
+function pxToken(css: string, re: RegExp, fallback = 0): number {
+  const m = css.match(re);
+  return m ? Number(m[1]) : fallback;
+}
+
+/**
+ * Block-flow estimator for the decision page at a fixed viewport.
+ * jsdom has no layout engine; chrome tokens are read from decision.css so a
+ * too-tall page layout fails this budget check for the standard fixture.
+ */
+function estimateConfirmBottom(css: string, viewportWidth: number) {
+  const pagePad = parseClamp(firstMatch(css, /\.decision-page\s*\{[^}]*padding:\s*([^;]+);/s));
+  const docPad = parseClamp(firstMatch(css, /\.decision-document\s*\{[^}]*padding:\s*([^;]+);/s));
+  const shellPad = parseClamp(firstMatch(css, /\.decision-document section\s*\{[^}]*padding:\s*([^;]+);/s));
+  if (!pagePad || !docPad || !shellPad) throw new Error("decision.css vertical clamp tokens unreadable");
+
+  const pagePadY = resolveClamp(pagePad.minPx, pagePad.vw, pagePad.maxPx, viewportWidth);
+  const docPadY = resolveClamp(docPad.minPx, docPad.vw, docPad.maxPx, viewportWidth);
+  const sectionPad = resolveClamp(shellPad.minPx, shellPad.vw, shellPad.maxPx, viewportWidth);
+
+  const sectionPadBottom = pxToken(css, /\.decision-document-section\s*\{[^}]*padding:\s*[\d.]+px\s+[\d.]+px\s+([\d.]+)px/s, 22);
+  const sectionGap = pxToken(css, /\.decision-document-section \+ \.decision-document-section\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 15);
+  const headMargin = pxToken(css, /\.decision-head\s*\{[^}]*margin-bottom:\s*([\d.]+)px/s, 14);
+  const optionsGap = pxToken(css, /\.decision-options\s*\{[^}]*gap:\s*([\d.]+)px/s, 10);
+  const optionPadY = pxToken(css, /\.decision-option\s*\{[^}]*padding:\s*([\d.]+)px/s, 13);
+  const noteMinH = pxToken(css, /\.decision-note\s*\{[^}]*min-height:\s*([\d.]+)px/s, 64);
+  const noteMarginTop = pxToken(css, /\.decision-document \.decision-note\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 10);
+  const sealMarginTop = pxToken(css, /\.decision-seal\s*\{[^}]*margin:\s*([\d.]+)px/s, 18);
+  const sealPadY = pxToken(css, /\.decision-seal\s*\{[^}]*padding:\s*([\d.]+)px/s, 9);
+  const actionsMarginTop = pxToken(css, /\.decision-actions\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 16);
+  const confirmPadY = pxToken(css, /\.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 11);
+  const pagePadX = parseClamp(firstMatch(css, /\.decision-page\s*\{[^}]*padding:\s*[^\s]+\s+([^;]+);/s));
+  const docPadXClamp = (() => {
+    // padding: Y X — capture X clamp
+    const m = css.match(/\.decision-document\s*\{[^}]*padding:\s*clamp\([^)]+\)\s+(clamp\([^)]+\))/s);
+    return m ? parseClamp(m[1]) : null;
+  })();
+
+  const doc = document.querySelector<HTMLElement>(".decision-document");
+  const confirm = document.querySelector<HTMLElement>(".decision-confirm");
+  if (!doc || !confirm) throw new Error("decision fixture missing");
+
+  const padX = pagePadX ? resolveClamp(pagePadX.minPx, pagePadX.vw, pagePadX.maxPx, viewportWidth) : 12;
+  const docPadX = docPadXClamp
+    ? resolveClamp(docPadXClamp.minPx, docPadXClamp.vw, docPadXClamp.maxPx, viewportWidth)
+    : 24;
+  const innerWidth = Math.min(880, viewportWidth - 2 * padX) - 2 * docPadX;
+  const contentWidth = Math.max(120, innerWidth - 2 * sectionPad);
+
+  const measureTextBlock = (el: Element | null, fontPx: number, lineHeight: number, widthPx: number) => {
+    if (!el) return 0;
+    const text = (el.textContent || "").trim();
+    if (!text) return 0;
+    const charsPerLine = Math.max(1, Math.floor(widthPx / fontPx));
+    return Math.ceil(text.length / charsPerLine) * fontPx * lineHeight;
+  };
+
+  let y = pagePadY + docPadY;
+
+  const head = doc.querySelector(".decision-head");
+  if (head) {
+    y += headMargin;
+    y += 13 + 8; // kicker font + margin-bottom
+    y += 22; // title line
+  }
+
+  const shell = doc.querySelector(".decision-document > section");
+  if (shell) y += sectionPad;
+
+  const sections = Array.from(doc.querySelectorAll(".decision-document-section"));
+  sections.forEach((section, index) => {
+    if (index > 0) y += sectionGap;
+    y += 4 + sectionPadBottom;
+    const label = section.querySelector(".decision-section-label");
+    y += measureTextBlock(label, 14, 1.4, contentWidth) || 18;
+    if (section.querySelector("h3")) y += 2 + 6 + 20;
+    section.querySelectorAll("p").forEach((p) => { y += measureTextBlock(p, 14, 1.8, contentWidth); });
+    const options = Array.from(section.querySelectorAll(".decision-option"));
+    options.forEach((opt, optIndex) => {
+      if (optIndex > 0) y += optionsGap;
+      y += optionPadY * 2;
+      y += measureTextBlock(opt.querySelector(".decision-option-label"), 16, 1.3, contentWidth - 28);
+      y += measureTextBlock(opt.querySelector(".decision-option-hint"), 13, 1.5, contentWidth - 28);
+    });
+    if (section.querySelector(".decision-note")) {
+      y += noteMarginTop + noteMinH;
+    }
+  });
+
+  if (doc.querySelector(".decision-seal")) y += sealMarginTop + sealPadY * 2 + 18;
+  if (shell) y += sectionPad;
+
+  y += actionsMarginTop + confirmPadY * 2 + 15;
+  y += docPadY + pagePadY;
+  return y;
+}
 
 const decisions: PendingDecision[] = [
   {
@@ -33,7 +174,15 @@ function render(element: React.ReactNode) {
   return () => act(() => { root.unmount(); host.remove(); });
 }
 
-afterEach(() => { document.body.innerHTML = ""; });
+beforeEach(() => {
+  document.querySelectorAll("[data-decision-fixture]").forEach((node) => node.remove());
+});
+
+afterEach(() => {
+  document.querySelectorAll("[data-decision-fixture]").forEach((node) => node.remove());
+  document.body.innerHTML = "";
+  document.head.querySelectorAll("[data-decision-fixture]").forEach((node) => node.remove());
+});
 
 describe("DecisionModal", () => {
   it("uses a non-main full-screen container inside the app landmark", () => {
@@ -159,7 +308,9 @@ describe("DecisionModal", () => {
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
-    expect(documentPage!.querySelector(".decision-seal")?.getAttribute("aria-label")).toBe("批红落印");
+    const seal = documentPage!.querySelector(".decision-seal");
+    expect(seal?.getAttribute("aria-hidden")).toBe("true");
+    expect(seal?.hasAttribute("aria-label")).toBe(false);
     act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
     act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
     expect(document.body.textContent).toContain("河工修治");
@@ -241,6 +392,133 @@ describe("DecisionModal", () => {
     expect(result).toEqual([]);
     const cleanup = render(<DecisionModal decisions={result} onResolve={vi.fn()} />);
     expect(document.body.textContent).not.toContain("着户部核拨军饷");
+    cleanup();
+  });
+});
+
+describe("DecisionModal #1202 red-seal first screen + pick affordance", () => {
+  it("keeps confirm button bounding-box bottom within the 1440×900 first screen", () => {
+    injectDecisionCss();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const confirmBottom = estimateConfirmBottom(DECISION_CSS, 1440);
+    expect(confirmBottom).toBeLessThanOrEqual(900);
+    cleanup();
+  });
+
+  it("mechanically distinguishes hover, focus ring, and is-picked styles", () => {
+    injectDecisionCss();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+
+    // Root fix: hover and is-picked must not share one selector list.
+    const shared = cssRulesMatching("decision-option").filter((rule) =>
+      rule.selectorText.includes(":hover") && rule.selectorText.includes("is-picked"),
+    );
+    expect(shared).toEqual([]);
+
+    const hoverRule = ruleExact(".decision-document .decision-option:hover")
+      || ruleExact(".decision-option:hover");
+    const pickedRule = ruleExact(".decision-document .decision-option.is-picked")
+      || ruleExact(".decision-option.is-picked");
+    const focusRule = ruleExact(".decision-document .decision-option:focus-visible")
+      || ruleExact(".decision-option:focus-visible")
+      || ruleExact(".decision-document .decision-option:focus")
+      || ruleExact(".decision-option:focus");
+
+    expect(hoverRule).toBeTruthy();
+    expect(pickedRule).toBeTruthy();
+    expect(focusRule).toBeTruthy();
+
+    const hoverKey = `${hoverRule!.style.borderColor}|${hoverRule!.style.background}|${hoverRule!.style.boxShadow}`;
+    const pickedKey = `${pickedRule!.style.borderColor}|${pickedRule!.style.background}|${pickedRule!.style.boxShadow}`;
+    expect(hoverKey).not.toBe(pickedKey);
+
+    const focusKey = `${focusRule!.style.outline}|${focusRule!.style.outlineColor}|${focusRule!.style.boxShadow}`;
+    const pickedFocusComparable = `${pickedRule!.style.outline}|${pickedRule!.style.outlineColor}|${pickedRule!.style.boxShadow}`;
+    expect(focusKey).not.toBe(pickedFocusComparable);
+    // Focus ring must carry a visible outline the picked fill does not use as its sole cue.
+    expect((focusRule!.style.outline || focusRule!.style.outlineColor || "").length).toBeGreaterThan(0);
+
+    const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    expect(options[0].classList.contains("is-picked")).toBe(false);
+    act(() => options[0].click());
+    expect(options[0].classList.contains("is-picked")).toBe(true);
+    // Picked uses fill/border cue; focus rule uses outline — different channels.
+    expect(pickedRule!.style.background || pickedRule!.style.borderColor).toBeTruthy();
+    expect(focusRule!.style.outline.includes("none") || focusRule!.style.outline === "").toBe(false);
+
+    cleanup();
+  });
+
+  it("keeps the three-state invariant for listed picks without sealing the handwritten-only path", () => {
+    const cleanupListed = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
+    const options = () => document.querySelectorAll<HTMLButtonElement>(".decision-option");
+
+    // 无择票拟 ⇔ 无选中样 ⇔ 确认不可用（须择票拟语义下）
+    expect(options()[0].classList.contains("is-picked")).toBe(false);
+    expect(options()[1].classList.contains("is-picked")).toBe(false);
+    expect(confirm().disabled).toBe(true);
+
+    act(() => options()[0].click());
+    expect(options()[0].classList.contains("is-picked")).toBe(true);
+    expect(confirm().disabled).toBe(false);
+
+    cleanupListed();
+
+    // 亲笔批示-only 路径（ADR 0043 留门）不得改死
+    const onResolve = vi.fn();
+    const cleanupNote = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
+    const note = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理。");
+      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
+      note.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+    expect(confirm().disabled).toBe(false);
+    act(() => confirm().click());
+    expect(onResolve).toHaveBeenCalledWith([{ note: "着即办理。" }]);
+    cleanupNote();
+
+    // dossier 路径仍须择票拟：仅亲笔不可确认
+    const dossierDecision: PendingDecision = {
+      ...decisions[0],
+      event_id: "dossier:7",
+      options: [{
+        label: "强颁", hint: "以中旨颁行。",
+        dossier_id: 7, dossier_decision: "force_promulgated",
+      }],
+    };
+    const cleanupDossier = render(<DecisionModal decisions={[dossierDecision]} onResolve={vi.fn()} />);
+    const dossierNote = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(dossierNote, "朕意已决。");
+      (dossierNote as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
+      dossierNote.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(confirm().disabled).toBe(true);
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+    cleanupDossier();
+  });
+
+  it("treats the decorative seal as non-interactive and unfocusable", () => {
+    injectDecisionCss();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const seal = document.querySelector<HTMLElement>(".decision-seal")!;
+
+    expect(seal.tagName).not.toBe("BUTTON");
+    expect(seal.getAttribute("aria-hidden")).toBe("true");
+    expect(seal.hasAttribute("aria-label")).toBe(false);
+    expect(seal.getAttribute("tabindex")).not.toBe("0");
+    expect(seal.tabIndex).toBeLessThan(0);
+
+    const sealRule = ruleExact(".decision-seal");
+    expect(sealRule).toBeTruthy();
+    expect(sealRule!.style.pointerEvents).toBe("none");
+    expect(sealRule!.style.cursor === "" || sealRule!.style.cursor === "default").toBe(true);
+
+    act(() => { seal.focus(); });
+    expect(document.activeElement === seal).toBe(false);
     cleanup();
   });
 });

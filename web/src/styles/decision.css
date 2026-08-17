@@ -6,15 +6,16 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   background: #261a0d;
-  padding: clamp(18px, 4vw, 58px) clamp(12px, 5vw, 86px);
+  /* 1440×900 首屏须见确认键：收紧竖向 chrome，不改文书顺序/一疏一页隐喻 */
+  padding: clamp(12px, 2.2vw, 24px) clamp(12px, 5vw, 86px);
   box-sizing: border-box;
 }
 
 .decision-document {
   width: min(880px, 100%);
-  min-height: calc(100vh - clamp(36px, 8vw, 116px));
+  min-height: calc(100vh - clamp(24px, 5vw, 56px));
   margin: 0 auto;
-  padding: clamp(30px, 6vw, 78px) clamp(24px, 7vw, 108px);
+  padding: clamp(16px, 2.8vw, 32px) clamp(24px, 5vw, 72px);
   box-sizing: border-box;
   background: #e6d5ae;
   color: #342418;
@@ -24,23 +25,48 @@
 }
 .decision-document .decision-kicker { color: #76521d; }
 .decision-document .decision-title { color: #3b1f16; text-align: center; font-family: serif; }
-.decision-document section { border: 1px solid rgba(87, 51, 18, 0.42); padding: clamp(18px, 4vw, 34px); background: rgba(255, 246, 218, 0.5); }
-.decision-document-section { padding: 4px 0 22px; border-bottom: 1px solid rgba(87, 51, 18, 0.25); }
-.decision-document-section + .decision-document-section { margin-top: 15px; }
-.decision-document-section h3 { margin: 4px 0 8px; font-family: serif; font-size: 22px; color: #3b1f16; }
-.decision-document-section p { margin: 0; line-height: 1.8; color: #4d3523; }
+.decision-document section { border: 1px solid rgba(87, 51, 18, 0.42); padding: clamp(10px, 1.6vw, 16px); background: rgba(255, 246, 218, 0.5); }
+.decision-document-section { padding: 4px 0 12px; border-bottom: 1px solid rgba(87, 51, 18, 0.25); }
+.decision-document-section + .decision-document-section { margin-top: 8px; }
+.decision-document-section h3 { margin: 2px 0 6px; font-family: serif; font-size: 20px; color: #3b1f16; }
+.decision-document-section p { margin: 0; line-height: 1.7; color: #4d3523; }
 .decision-section-label { display: block; color: #8f1d16; font-family: serif; font-weight: 700; letter-spacing: 2px; }
-.decision-document .decision-options { margin: 10px 0 0; }
+.decision-document .decision-options { margin: 8px 0 0; }
 .decision-document .decision-option { border-color: rgba(113, 63, 24, 0.45); background: rgba(255, 250, 232, 0.5); color: #3d2a1d; }
-.decision-document .decision-option:hover, .decision-document .decision-option.is-picked { border-color: #9f211b; background: rgba(159, 33, 27, 0.1); }
+/* 根修假选中：hover 与 is-picked 分规则，焦点环另通道 */
+.decision-document .decision-option:hover {
+  border-color: rgba(159, 33, 27, 0.55);
+  background: rgba(159, 33, 27, 0.05);
+}
+.decision-document .decision-option.is-picked {
+  border-color: #9f211b;
+  background: rgba(159, 33, 27, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(159, 33, 27, 0.45);
+}
+.decision-document .decision-option:focus {
+  outline: 2px solid #1f4e79;
+  outline-offset: 2px;
+}
 .decision-document .decision-option-label { color: #5a241d; }
 .decision-document .decision-option-hint { color: #70563c; }
-.decision-document .decision-note { margin-top: 10px; border-color: rgba(113, 63, 24, 0.45); background: rgba(255, 250, 232, 0.65); color: #3d2a1d; }
-.decision-seal { margin: 18px auto 2px; width: max-content; padding: 9px 13px; border: 3px double #9f211b; color: #9f211b; font-family: serif; font-weight: 700; transform: rotate(-5deg); }
+.decision-document .decision-note { margin-top: 8px; border-color: rgba(113, 63, 24, 0.45); background: rgba(255, 250, 232, 0.65); color: #3d2a1d; }
+.decision-seal {
+  margin: 10px auto 2px;
+  width: max-content;
+  padding: 6px 12px;
+  border: 3px double #9f211b;
+  color: #9f211b;
+  font-family: serif;
+  font-weight: 700;
+  transform: rotate(-5deg);
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
+}
 .decision-document .decision-confirm { border-color: #8f1d16; background: #a52b20; color: #fff0d2; }
 .decision-document .decision-hint-line { color: #765b3e; }
 
-.decision-head { margin-bottom: 14px; }
+.decision-head { margin-bottom: 8px; }
 
 .decision-kicker {
   display: inline-block;
@@ -78,8 +104,8 @@
 .decision-options {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .decision-option {
@@ -88,7 +114,7 @@
   align-items: flex-start;
   gap: 4px;
   text-align: left;
-  padding: 13px 16px;
+  padding: 10px 14px;
   border: 1px solid rgba(214, 175, 89, 0.32);
   border-radius: 7px;
   background: rgba(0, 0, 0, 0.28);
@@ -105,14 +131,19 @@
   box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.5);
 }
 
+.decision-option:focus {
+  outline: 2px solid #7eb6e8;
+  outline-offset: 2px;
+}
+
 .decision-option-label { font-size: 16px; font-weight: 600; color: #ffd98a; }
 .decision-option-hint { font-size: 13px; color: #b6a575; line-height: 1.5; }
 
 .decision-note {
   width: 100%;
-  min-height: 64px;
+  min-height: 48px;
   resize: vertical;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid rgba(214, 175, 89, 0.28);
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.34);
@@ -129,7 +160,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .decision-hint-line { font-size: 13px; color: #9a8d6a; }

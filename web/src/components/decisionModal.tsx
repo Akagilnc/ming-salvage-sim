@@ -149,7 +149,7 @@ export function DecisionModal({
             <label className="decision-section-label" htmlFor="decision-note">朱笔亲批</label>
             <textarea id="decision-note" className="decision-note" placeholder="亲笔补批（可选）" value={pick.note || ""} onChange={(event) => setPick({ note: event.target.value })} />
           </div>
-          <div className="decision-seal" aria-label="批红落印">批红落印</div>
+          <div className="decision-seal" aria-hidden="true">批红落印</div>
         </section>
         <div className="decision-actions">
           <span className="decision-hint-line">{decided ? "" : requiresListedChoice ? "此疏须择一票拟。" : "请择一票拟，或亲笔批示。"}</span>
