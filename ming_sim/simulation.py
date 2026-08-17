@@ -908,9 +908,6 @@ def build_extractor_shared_context(
     if module == "issues":
         # #567：在途拨帑对账读缝——赈济/拨付 issue 软判打折吃此账，非纯文字。
         slim["grant_reconciliations"] = db.list_open_grant_reconciliations()
-        slim["monthly_grant_reconciliation_targets"] = (
-            db.list_monthly_grant_reconciliation_targets()
-        )
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
