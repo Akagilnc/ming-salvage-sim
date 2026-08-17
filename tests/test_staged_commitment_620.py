@@ -225,6 +225,61 @@ def test_audience_entry_tolerates_classifier_bad_stages_falls_back_to_narrative(
         )
 
 
+def test_audience_entry_structured_stages_without_year_promise_lands(game):
+    """真入口结构化正向：分类器 nested stages 经 FieldSpec 运输后落段。
+
+    正文无「三年X五年Y」字样——不得靠叙事年诺回落；证明 str(list)→repr
+    运输洞已用 json.dumps 堵住（#620 r6 classifier-stages-string-transport）。
+    """
+    db, state, content = game
+    actor = _active_ming(db, content)
+    reply = "臣请立军令状，分阶段推进火器与历法，请陛下定夺准驳。"
+    assert "三年" not in reply and "五年" not in reply
+    structured = [
+        {
+            "due_turn": int(state.turn) + 36,
+            "criterion_text": "火器见眉目",
+            "origin_context": "火器阶段",
+        },
+        {
+            "due_turn": int(state.turn) + 60,
+            "criterion_text": "新历成",
+            "origin_context": "历法阶段",
+        },
+    ]
+    payload = {
+        "kind": "assignment",
+        "title": "徐光启结构化分段之诺",
+        "target_id": "xuguangqi-structured-clf",
+        "commitment_kind": "until_stop",
+        "stages": structured,
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    # 运输层：合法 JSON 数组串（非 Python repr 单引号）
+    transported = candidates[0]["stages"]
+    assert isinstance(transported, str)
+    assert json.loads(transported) == structured
+    ctx = _materialize_ctx(
+        db, actor.name, candidates, state.turn,
+        message="准徐光启分段之诺。",
+        reply=reply,
+    )
+    run_materialize_pipeline(ctx)
+    assert ctx.out.get("pending_action_id"), "结构化 stages 须落交办候选"
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    stages = normalize_commitment_stages(pending.get("stages"))
+    assert len(stages) == 2
+    assert stages[0]["due_turn"] == int(state.turn) + 36
+    assert stages[0]["criterion_text"] == "火器见眉目"
+    assert stages[0]["origin_context"] == "火器阶段"
+    assert stages[1]["due_turn"] == int(state.turn) + 60
+    assert stages[1]["criterion_text"] == "新历成"
+    assert stages[1]["origin_context"] == "历法阶段"
+
+
 def test_gazette_score_path_captures_三年x_五年y_from_stage_text(game):
     """邸报/score 生产路径：stage_text「三年X五年Y」经 capture 落 stages_json。"""
     db, state, content = game

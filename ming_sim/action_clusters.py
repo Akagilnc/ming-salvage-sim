@@ -9,6 +9,7 @@ dispatcher 均只读本表。
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
@@ -241,7 +242,12 @@ def normalize_one_candidate(obj: Mapping[str, Any], *, soft: bool) -> Dict[str, 
         elif spec.allowed is not None:
             out[name] = _enum(raw, spec.allowed, str(spec.default))
         else:
-            s = str(raw or "").strip()
+            # 容器值须 JSON 运输（stages/stop_condition/ongoing_effects 等）；
+            # str(list/dict) 是 Python repr（单引号），下游 json.loads 会当坏形丢掉。
+            if isinstance(raw, (dict, list, tuple)):
+                s = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+            else:
+                s = str(raw or "").strip()
             if spec.max_len is not None:
                 s = s[: spec.max_len]
             out[name] = s
