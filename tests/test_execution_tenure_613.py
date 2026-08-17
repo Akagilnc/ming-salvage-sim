@@ -2,16 +2,21 @@
 
 import pytest
 
-from ming_sim import issues as issue_engine
 from ming_sim.appointment_tenure import (
-    BASE_DISTORTION_WEIGHT,
+    AUTHORITY_COMMAND_RELIEF,
     COMMAND_POWER_RANK,
     command_power_rank,
     execution_distortion_weight,
 )
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES, AUTHORITY_PRIVILEGE_SET
 from ming_sim.db import GameDB
 import ming_sim.decree as decree_mod
 from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
+from tests.test_authority_ledger_611 import (
+    _eligible_dossier,
+    _grant,
+    _revoke,
+)
 
 
 VALID_TENURES = ("真除", "兼署", "署理", "加衔")
@@ -75,71 +80,56 @@ def _executing_policy(db, state, holder, *, target_id="清丈田亩-613", roster
     return row
 
 
-def _eligible_auth_dossier(db, state, holder, *, target_id):
-    dossier_id = db.create_decree_dossier(
-        state,
-        action_type="authorization",
-        decree_text="授以便宜行事之权",
-        target_kind="issue",
-        target_id=target_id,
-        executor_kind="character",
-        executor_id=holder,
-        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
-        payload={"mode": "ordinary"},
+def _live_exec_side(db, state, dossier):
+    """执行侧读端真链：assembly 投影 + execution_side_read_fields 对齐。"""
+    projected = decree_mod.project_dossiers_for_simulator(
+        [dossier], db=db, state=state,
     )
-    db.record_dossier_decision(dossier_id, "promulgated")
-    assert db.dossier_authorizes_effects(dossier_id)
-    return db.get_decree_dossier(dossier_id)
-
-
-def _grant(db, state, content, holder, privilege, scope, dossier):
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "授予",
-            "holder_id": holder,
-            "privilege": privilege,
-            "scope": scope,
-            "dossier_id": dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert result.get("rejected") is not True
-    return int(result["authority_id"])
-
-
-def _revoke(db, state, content, authority_id, dossier):
-    result = issue_engine.apply_score_extraction(db, state, {
-        "authority_changes": [{
-            "动作": "收回",
-            "authority_id": authority_id,
-            "dossier_id": dossier["id"],
-        }],
-    }, content=content)["authority_changes"][0]
-    assert result.get("rejected") is not True
-    return result
+    hit = next(row for row in projected if int(row["id"]) == int(dossier["id"]))
+    side = decree_mod.execution_side_read_fields(db, state, dossier)
+    for key in (
+        "appointment_tenure",
+        "held_authorities",
+        "authorization_ids",
+        "command_power_rank",
+        "distortion_weight",
+    ):
+        assert hit[key] == side[key]
+    return hit
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────
 
 
 def test_command_power_four_tier_strict_order_and_jianshu_not_collapsed():
-    """TD-8：真除＞兼署＞署理＞加衔；兼署不得与相邻档混同。"""
+    """TD-8 纯函数：真除＞兼署＞署理＞加衔；兼署不得与相邻档混同；无双逆表。"""
     ranks = {tenure: command_power_rank(tenure) for tenure in VALID_TENURES}
     assert ranks["真除"] > ranks["兼署"] > ranks["署理"] > ranks["加衔"]
     # 专门防止兼署遗漏/混同
     assert ranks["兼署"] != ranks["真除"]
     assert ranks["兼署"] != ranks["署理"]
     assert set(COMMAND_POWER_RANK) == set(VALID_TENURES)
-    assert set(BASE_DISTORTION_WEIGHT) == set(VALID_TENURES)
 
     weights = {tenure: execution_distortion_weight(tenure) for tenure in VALID_TENURES}
     assert weights["真除"] < weights["兼署"] < weights["署理"] < weights["加衔"]
     assert weights["兼署"] != weights["真除"]
     assert weights["兼署"] != weights["署理"]
+    # 走样权重由号令力逆序公式导出，不是第二份枚举表
+    max_rank = max(COMMAND_POWER_RANK.values())
+    for tenure in VALID_TENURES:
+        assert weights[tenure] == max_rank - ranks[tenure]
+
+
+def test_authority_command_relief_single_source_from_privileges():
+    """特权名唯一来自 authority_privileges，不在任别模块第二份拼写。"""
+    assert tuple(AUTHORITY_COMMAND_RELIEF.keys()) == AUTHORITY_PRIVILEGES
+    assert set(AUTHORITY_COMMAND_RELIEF) == AUTHORITY_PRIVILEGE_SET
+    assert AUTHORITY_COMMAND_RELIEF["尚方剑密授"] > AUTHORITY_COMMAND_RELIEF["便宜行事"]
 
 
 def test_held_authority_privileges_reduce_distortion_weight():
     base = execution_distortion_weight("署理", [])
-    for privilege in ("尚方剑密授", "便宜行事", "专差督办", "新机构专办"):
+    for privilege in AUTHORITY_PRIVILEGES:
         eased = execution_distortion_weight(
             "署理", [{"privilege": privilege}],
         )
@@ -151,45 +141,64 @@ def test_held_authority_privileges_reduce_distortion_weight():
     )
 
 
-# ── execution judge input surface ──────────────────────────────────────────
+def test_project_dossiers_requires_db_and_state():
+    """投影必查 DB 真态；缺 db/state 不得静默 skip。"""
+    with pytest.raises(TypeError, match="missing 2 required positional arguments"):
+        decree_mod.project_dossiers_for_simulator([])  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="requires db and state"):
+        decree_mod.project_dossiers_for_simulator([], db=None, state=None)  # type: ignore[arg-type]
 
 
-def test_execution_judge_context_covers_four_tenures_same_office(game):
-    """同一职差覆盖四档任别；执行格输入面带号令力与走样权重。"""
+# ── live assembly chain ───────────────────────────────────────────────────
+
+
+def test_td8_same_office_four_tenures_live_assembly_chain(game):
+    """TD-8：同一职差覆盖四档任别；断言落 project_dossiers_for_simulator 真链。"""
     db, state, _content = game
-    names = _ministers(db, 4)
-    dossiers = []
-    for name, tenure in zip(names, VALID_TENURES):
-        _set_tenure(db, name, tenure)
-        dossiers.append(
-            _executing_policy(db, state, name, target_id=f"tenure-{tenure}"),
-        )
+    holder = _ministers(db, 1)[0]
+    office = str(
+        db.conn.execute(
+            "SELECT office FROM characters WHERE name=?", (holder,),
+        ).fetchone()["office"]
+    )
 
-    context = decree_mod.build_execution_judge_context(db, state, dossiers)
-    assert context["command_power_order"] == ["真除", "兼署", "署理", "加衔"]
-    by_tenure = {
-        row["appointment_tenure"]: row for row in context["dossiers"]
-    }
-    assert set(by_tenure) == set(VALID_TENURES)
-    # 承办人现职任别，不是案卷 payload 任别（payload 固定写了加衔毒丸）
+    observed = []
     for tenure in VALID_TENURES:
-        row = by_tenure[tenure]
-        assert row["appointment_tenure"] == tenure
-        assert row["command_power_rank"] == command_power_rank(tenure)
-        assert row["distortion_weight"] == execution_distortion_weight(tenure)
-        assert "payload-auth" not in row["authorization_ids"]
-        assert "payload-list" not in row["authorization_ids"]
+        _set_tenure(db, holder, tenure, office=office)
+        # 职差未变
+        current_office = str(
+            db.conn.execute(
+                "SELECT office FROM characters WHERE name=?", (holder,),
+            ).fetchone()["office"]
+        )
+        assert current_office == office
+        consumer = _executing_policy(
+            db, state, holder, target_id=f"td8-same-office-{tenure}",
+        )
+        hit = _live_exec_side(db, state, consumer)
+        assert hit["appointment_tenure"] == tenure
+        assert hit["command_power_rank"] == command_power_rank(tenure)
+        assert hit["distortion_weight"] == execution_distortion_weight(tenure)
+        # 承办人现职任别，不是案卷 payload 任别（payload 固定写了加衔毒丸）
+        assert "payload-auth" not in hit["authorization_ids"]
+        assert "payload-list" not in hit["authorization_ids"]
+        observed.append(hit)
 
-    ranks = [by_tenure[t]["command_power_rank"] for t in VALID_TENURES]
+    ranks = [row["command_power_rank"] for row in observed]
     assert ranks == sorted(ranks, reverse=True)
-    weights = [by_tenure[t]["distortion_weight"] for t in VALID_TENURES]
+    weights = [row["distortion_weight"] for row in observed]
     assert weights == sorted(weights)
     # 兼署夹在真除与署理之间，不得塌缩
+    by_tenure = {
+        row["appointment_tenure"]: row for row in observed
+    }
     assert (
         by_tenure["真除"]["distortion_weight"]
         < by_tenure["兼署"]["distortion_weight"]
         < by_tenure["署理"]["distortion_weight"]
     )
+    assert by_tenure["兼署"]["command_power_rank"] != by_tenure["真除"]["command_power_rank"]
+    assert by_tenure["兼署"]["command_power_rank"] != by_tenure["署理"]["command_power_rank"]
 
 
 def test_execution_and_sim_assembly_reuse_611_projection_not_payload(game):
@@ -197,7 +206,7 @@ def test_execution_and_sim_assembly_reuse_611_projection_not_payload(game):
     holder = _ministers(db, 1)[0]
     _set_tenure(db, holder, "署理")
     domain_target = "边饷专差"
-    grant_dossier = _eligible_auth_dossier(
+    grant_dossier = _eligible_dossier(
         db, state, holder, target_id=domain_target,
     )
     authority_id = _grant(
@@ -208,8 +217,7 @@ def test_execution_and_sim_assembly_reuse_611_projection_not_payload(game):
         db, state, holder, target_id=domain_target,
     )
 
-    exec_ctx = decree_mod.build_execution_judge_context(db, state, [consumer])
-    exec_row = exec_ctx["dossiers"][0]
+    exec_row = _live_exec_side(db, state, consumer)
     assert [item["id"] for item in exec_row["held_authorities"]] == [authority_id]
     assert exec_row["authorization_ids"] == [str(authority_id)]
     assert exec_row["appointment_tenure"] == "署理"
@@ -242,28 +250,28 @@ def test_execution_and_sim_assembly_reuse_611_projection_not_payload(game):
 
 
 def test_authority_lifecycle_grant_revoke_restore_on_real_assembly(game):
-    """无授权→授予→收回；执行格与推演同向；GameDB 重开一致。与 #611 共用样本形态。"""
+    """无授权→授予→收回；执行格与推演同向；GameDB 重开一致。与 #611 共用 fixture。"""
     db, state, content = game
     holder = _ministers(db, 1)[0]
     _set_tenure(db, holder, "兼署")
     target = "清丈田亩"
     consumer = _executing_policy(db, state, holder, target_id=target)
 
-    bare_exec = decree_mod.build_execution_judge_context(db, state, [consumer])
+    bare_exec = _live_exec_side(db, state, consumer)
     bare_sim = decree_mod.project_dossiers_for_simulator(
         [consumer], db=db, state=state,
     )[0]
-    assert bare_exec["dossiers"][0]["held_authorities"] == []
+    assert bare_exec["held_authorities"] == []
     assert bare_sim["held_authorities"] == []
-    bare_weight = bare_exec["dossiers"][0]["distortion_weight"]
+    bare_weight = bare_exec["distortion_weight"]
 
-    grant_dossier = _eligible_auth_dossier(db, state, holder, target_id=target)
+    grant_dossier = _eligible_dossier(db, state, holder, target_id=target)
     authority_id = _grant(
         db, state, content, holder, "尚方剑密授",
         f"issue:{target}", grant_dossier,
     )
 
-    granted_exec = decree_mod.build_execution_judge_context(db, state, [consumer])
+    granted_exec = _live_exec_side(db, state, consumer)
     granted_sim = decree_mod.project_dossiers_for_simulator(
         [consumer], db=db, state=state,
     )[0]
@@ -274,26 +282,24 @@ def test_authority_lifecycle_grant_revoke_restore_on_real_assembly(game):
         "scope": f"issue:{target}",
         "effective_turn": state.turn,
     }]
-    assert granted_exec["dossiers"][0]["held_authorities"] == expected_held
+    assert granted_exec["held_authorities"] == expected_held
     assert granted_sim["held_authorities"] == expected_held
-    assert granted_exec["dossiers"][0]["distortion_weight"] < bare_weight
+    assert granted_exec["distortion_weight"] < bare_weight
 
     db_path = db.path
     db.close()
     restored = GameDB(db_path, content)
     restored_state = restored.load_state()
     restored_consumer = restored.get_decree_dossier(consumer["id"])
-    after_restore = decree_mod.build_execution_judge_context(
-        restored, restored_state, [restored_consumer],
-    )
+    after_restore = _live_exec_side(restored, restored_state, restored_consumer)
     after_sim = decree_mod.project_dossiers_for_simulator(
         [restored_consumer], db=restored, state=restored_state,
     )[0]
-    assert after_restore["dossiers"][0]["held_authorities"] == expected_held
+    assert after_restore["held_authorities"] == expected_held
     assert after_sim["held_authorities"] == expected_held
-    assert after_restore["dossiers"][0]["appointment_tenure"] == "兼署"
+    assert after_restore["appointment_tenure"] == "兼署"
 
-    revoke_dossier = _eligible_auth_dossier(
+    revoke_dossier = _eligible_dossier(
         restored, restored_state, holder, target_id="收权清丈",
     )
     _revoke(restored, restored_state, content, authority_id, revoke_dossier)
@@ -302,16 +308,14 @@ def test_authority_lifecycle_grant_revoke_restore_on_real_assembly(game):
     final = GameDB(db_path, content)
     final_state = final.load_state()
     final_consumer = final.get_decree_dossier(consumer["id"])
-    gone_exec = decree_mod.build_execution_judge_context(
-        final, final_state, [final_consumer],
-    )
+    gone_exec = _live_exec_side(final, final_state, final_consumer)
     gone_sim = decree_mod.project_dossiers_for_simulator(
         [final_consumer], db=final, state=final_state,
     )[0]
-    assert gone_exec["dossiers"][0]["held_authorities"] == []
+    assert gone_exec["held_authorities"] == []
     assert gone_sim["held_authorities"] == []
-    assert gone_exec["dossiers"][0]["authorization_ids"] == []
-    assert gone_exec["dossiers"][0]["distortion_weight"] == bare_weight
+    assert gone_exec["authorization_ids"] == []
+    assert gone_exec["distortion_weight"] == bare_weight
 
 
 def test_court_roster_carries_appointment_tenure_four_tiers(game):

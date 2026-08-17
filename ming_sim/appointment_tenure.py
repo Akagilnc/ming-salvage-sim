@@ -4,33 +4,28 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 
+from ming_sim.authority_privileges import AUTHORITY_PRIVILEGES
+
 APPOINTMENT_TENURES = frozenset({"真除", "署理", "兼署", "加衔"})
 DEFAULT_APPOINTMENT_TENURE = "真除"
 
 # 号令力次序（PRD ID-1）：真除＞兼署＞署理＞加衔。数值越大号令越实。
 # 四档必须两两可分，兼署不得与真除/署理塌缩混同。
+# 走样权重 = max(rank) − rank，不另立逆表拼写。
 COMMAND_POWER_RANK: Mapping[str, int] = {
     "真除": 3,
     "兼署": 2,
     "署理": 1,
     "加衔": 0,
 }
-
-# 执行格打折走样权重：越大越易走样（号令力的逆序）。
-BASE_DISTORTION_WEIGHT: Mapping[str, int] = {
-    "真除": 0,
-    "兼署": 1,
-    "署理": 2,
-    "加衔": 3,
-}
+_MAX_COMMAND_POWER_RANK = max(COMMAND_POWER_RANK.values())
 
 # 在持授权按权项抬升号令力（降低走样权重）；收回后不再计。
-AUTHORITY_COMMAND_RELIEF: Mapping[str, int] = {
-    "尚方剑密授": 2,
-    "便宜行事": 1,
-    "专差督办": 1,
-    "新机构专办": 1,
-}
+# 权项名唯一来自 authority_privileges.AUTHORITY_PRIVILEGES，不第二份拼写。
+_AUTHORITY_RELIEF_AMOUNTS = (2, 1, 1, 1)
+AUTHORITY_COMMAND_RELIEF: Mapping[str, int] = dict(
+    zip(AUTHORITY_PRIVILEGES, _AUTHORITY_RELIEF_AMOUNTS, strict=True)
+)
 
 
 def appointment_tenure_from(payload: dict[str, object]) -> str:
@@ -63,8 +58,8 @@ def execution_distortion_weight(
     tenure: object,
     held_authorities: Sequence[Mapping[str, object]] | None = None,
 ) -> int:
-    """执行格打折走样权重：任别定基线，在持授权按 privilege 减免，下限 0。"""
-    base = int(BASE_DISTORTION_WEIGHT[normalize_appointment_tenure(tenure)])
+    """执行格打折走样权重：任别定基线（号令力逆序），在持授权按 privilege 减免，下限 0。"""
+    base = _MAX_COMMAND_POWER_RANK - command_power_rank(tenure)
     relief = 0
     for item in held_authorities or ():
         if not isinstance(item, dict):

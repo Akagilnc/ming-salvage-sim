@@ -197,40 +197,6 @@ def execution_side_read_fields(
     }
 
 
-def build_execution_judge_context(
-    db: GameDB,
-    state: GameState,
-    dossiers: Sequence[Dict[str, object]],
-) -> Dict[str, object]:
-    """#613 执行格判官输入面：任别四档号令力 + #611 在持授权适用性投影。"""
-    dossier_rows: List[Dict[str, object]] = []
-    for row in sorted(dossiers, key=lambda item: int(item["id"])):
-        side = execution_side_read_fields(db, state, row)
-        dossier_rows.append({
-            "id": int(row["id"]),
-            "action_type": str(row.get("action_type") or ""),
-            "decree_text": str(row.get("decree_text") or ""),
-            "target_kind": str(row.get("target_kind") or ""),
-            "target_id": row.get("target_id"),
-            "executor_kind": str(row.get("executor_kind") or ""),
-            "executor_id": str(row.get("executor_id") or ""),
-            "status": str(row.get("status") or ""),
-            "participant_roster": _dossier_roster(row),
-            **side,
-        })
-    return {
-        "turn": {"turn": state.turn, "year": state.year, "period": state.period},
-        "dossiers": dossier_rows,
-        "command_power_order": ["真除", "兼署", "署理", "加衔"],
-        "instruction": (
-            "号令力次序真除＞兼署＞署理＞加衔；四档均进入打折走样判定，"
-            "兼署不得遗漏或与真除/署理混同。held_authorities 按 privilege 抬升号令力"
-            "（尚方剑密授/便宜行事/专差督办/新机构专办）；收回或投影为空后不再计。"
-            "distortion_weight 越大越易走样；只依据本快照，不得从 payload 另拼授权。"
-        ),
-    }
-
-
 def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
@@ -710,10 +676,19 @@ def write_decree_with_agno(
 
 def project_dossiers_for_simulator(
     simulation_visible_dossiers: List[Dict[str, object]],
-    db: Optional[GameDB] = None,
-    state: Optional[GameState] = None,
+    db: GameDB,
+    state: GameState,
 ) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #613)."""
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #613).
+
+    db/state are required: #613 tenure + #611 authority projection must read DB
+    truth; silent skip of side fields is not allowed.
+    """
+    if db is None or state is None:
+        raise TypeError(
+            "project_dossiers_for_simulator requires db and state "
+            "(no silent skip of execution-side projection)"
+        )
     dossier_payload: List[Dict[str, object]] = []
     for row in simulation_visible_dossiers:
         payload = _dossier_payload_dict(row)
@@ -725,15 +700,12 @@ def project_dossiers_for_simulator(
             str(row.get("status") or "") != "proposed"
             or str(row.get("settlement_verdict") or "") == "promulgated"
         )
-        side_fields: Dict[str, object] = {}
-        if db is not None and state is not None and admitted:
-            # #613: same #611 projection + executor tenure on the sim assembly chain.
-            side_fields = execution_side_read_fields(db, state, row)
+        # #613: same #611 projection + executor tenure on the sim assembly chain.
+        side_fields: Dict[str, object] = (
+            execution_side_read_fields(db, state, row) if admitted else {}
+        )
         if policy["effect_owner"] == "narrative" and admitted:
-            if side_fields:
-                dossier_payload.append({**row, **side_fields})
-            else:
-                dossier_payload.append(row)
+            dossier_payload.append({**row, **side_fields})
             continue
         # In-transit executing work, and just-promulgated payload-owned terminal
         # effects (惩处/招抚等), need command/target context without re-materializing.
