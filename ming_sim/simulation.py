@@ -61,6 +61,7 @@ TOP_LEVEL_ALIASES = {
     "结案局势": "close_issues",
     "案卷执行": "dossier_executions",
     "案卷参与人": "dossier_participants",
+    "拨帑对账": "dossier_reconciliations",
     "授权变更": "authority_changes",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
@@ -145,6 +146,8 @@ ITEM_FIELD_ALIASES = {
     "dossier_id": "dossier_id", "案卷编号": "dossier_id",
     "outcome": "outcome", "执行结果": "outcome",
     "note": "note", "执行说明": "note",
+    "arrived_amount": "arrived_amount", "实抵": "arrived_amount", "到银": "arrived_amount",
+    "loss_amount": "loss_amount", "折损": "loss_amount",
     "holder_id": "holder_id", "授予对象": "holder_id", "持有人": "holder_id",
     "privilege": "privilege", "权项": "privilege",
     "scope": "scope", "事域": "scope",
@@ -654,6 +657,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_closes": [],
     "dossier_executions": [],
     "dossier_participants": [],
+    "dossier_reconciliations": [],
     "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
@@ -664,7 +668,8 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "military_external": {"army_delta", "new_armies", "power_updates", "world_advance"},
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
-        "dossier_executions", "dossier_participants", "authority_changes",
+        "dossier_executions", "dossier_participants", "dossier_reconciliations",
+        "authority_changes",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
@@ -900,6 +905,12 @@ def build_extractor_shared_context(
         # #566/#883: monthly briefs travel only on the authorized secret rail.
         # This is also the canonical history read seam used after restore.
         slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
+    if module == "issues":
+        # #567：在途拨帑对账读缝——赈济/拨付 issue 软判打折吃此账，非纯文字。
+        slim["grant_reconciliations"] = db.list_open_grant_reconciliations()
+        slim["monthly_grant_reconciliation_targets"] = (
+            db.list_monthly_grant_reconciliation_targets()
+        )
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"
