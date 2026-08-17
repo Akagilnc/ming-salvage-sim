@@ -1,6 +1,6 @@
 """发行包资产：portrait 扫 dist 回退 + spec 不重复打 public。
 
-#1185：spec 侧用 tree_datas 调用参数集合断言。
+#1185：spec 侧用 tree_datas (source, destination) 参数对断言。
 """
 
 from pathlib import Path
@@ -35,9 +35,9 @@ def test_pool_portrait_scan_falls_back_to_built_dist_when_public_absent(tmp_path
 
 def test_pyinstaller_spec_does_not_duplicate_vite_public_assets():
     spec = (Path(__file__).resolve().parents[1] / "Ming_LLM.spec").read_text(encoding="utf-8")
-    tree_srcs = {
-        src for src, _ in re.findall(r'tree_datas\(\s*"([^"]+)"\s*,\s*"([^"]+)"', spec)
-    }
-    assert "web/dist" in tree_srcs
-    assert "web/public" not in tree_srcs
+    # 不变式由 (source, destination) 参数对共同拥有，不得只查 source 集合。
+    tree_pairs = re.findall(r'tree_datas\(\s*"([^"]+)"\s*,\s*"([^"]+)"', spec)
+    assert ("web/dist", "web/dist") in tree_pairs
+    assert all(src != "web/public" for src, _dst in tree_pairs)
+    assert ("web/public", "web/public") not in tree_pairs
     assert not re.search(r'[\("]web/public[\)"]', spec)

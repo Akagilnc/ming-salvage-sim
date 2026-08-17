@@ -1,6 +1,7 @@
 """#494 featured minister/faction dossiers 经公共接缝装配。
 
 #1185：不锁长散文。结构键 + identity 分桶差分 + 北辰可分 + 派系块只注入一次。
+北辰可分性只比 minister_dossier 的动机/包袱/事例——姓名/身份/官职/技能/轴/派系不得自证。
 """
 
 from dataclasses import replace
@@ -24,6 +25,16 @@ def _court_ministers(content):
         and c.faction in SEVEN_FACTIONS
         and c.status == "active"
     ]
+
+
+def _dossier_voice(dossier_text: str) -> tuple[str, str, str]:
+    """仅提取动机/包袱/事例。身份/脾性不得充当 distinctness 自证。"""
+    parts: list[str] = []
+    for key in ("动机：", "包袱：", "事例："):
+        m = re.search(rf"{re.escape(key)}([^；]*)", dossier_text)
+        assert m is not None, f"missing {key} in {dossier_text!r}"
+        parts.append(m.group(1).strip())
+    return parts[0], parts[1], parts[2]
 
 
 def test_every_active_seven_faction_minister_has_featured_dossier(game):
@@ -55,17 +66,17 @@ def test_seven_faction_dossiers_are_objective_and_identity_scoped(game):
 def test_north_star_ministers_have_distinct_featured_voices(game):
     db, _state, content = game
     names = ("毕自严", "杨嗣昌", "王绍徽")
-    rendered = {n: character_context_with_db(content.characters[n], db) for n in names}
-    for name, text in rendered.items():
-        assert name in text and "【人物档料】" in text
-        assert all(k in text for k in _DOSSIER_KEYS)
-    # 差分不得仅由姓名/身份字段自证：去掉二者贡献后三份人物档料仍须可分。
-    stripped = []
-    for name, text in rendered.items():
-        body = text.replace(name, "")
-        body = re.sub(r"身份：[^；]*", "身份：", body)
-        stripped.append(body)
-    assert len(set(stripped)) == 3
+    voices = []
+    for name in names:
+        character = content.characters[name]
+        full = character_context_with_db(character, db)
+        assert name in full and "【人物档料】" in full
+        dossier = minister_dossier(character)
+        assert all(k in dossier for k in _DOSSIER_KEYS)
+        assert dossier in full
+        # 可分性只比 dossier 动机/包袱/事例，不让姓名/身份/官职/技能/轴/派系块自证。
+        voices.append(_dossier_voice(dossier))
+    assert len(set(voices)) == 3
 
 
 def test_minister_agent_injects_faction_dossier_once(game):
