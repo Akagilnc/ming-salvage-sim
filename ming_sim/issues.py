@@ -5373,8 +5373,7 @@ def apply_issue_tracker_output(
             if is_commitment
             else []
         )
-        # 派生 end_turn（max stage due）不落 DB——展示时再 derive_display_end_turn；
-        # 落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
+        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5454,6 +5453,7 @@ def apply_issue_tracker_output(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
         if reason == "acknowledged":
+            from ming_sim.staged_commitment import is_stage_derived_end_turn
             if chk is None:
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
@@ -5464,20 +5464,12 @@ def apply_issue_tracker_output(
                 category, why = "invalid_enum", f"close_issues acknowledged 不允许收尾持续承诺 issue {issue_id}"
             elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
                 category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
+            elif is_stage_derived_end_turn(chk["stages_json"], int(chk["end_turn"] or 0)):
+                category, why = (
+                    "invalid_enum",
+                    f"close_issues acknowledged 不得收尾段派生 end_turn 承诺 issue {issue_id}",
+                )
             else:
-                from ming_sim.staged_commitment import is_stage_derived_end_turn
-                if is_stage_derived_end_turn(chk["stages_json"], int(chk["end_turn"] or 0)):
-                    category, why = (
-                        "invalid_enum",
-                        f"close_issues acknowledged 不得收尾段派生 end_turn 承诺 issue {issue_id}",
-                    )
-                    applied_closes.append({
-                        "rejected": True,
-                        "category": category,
-                        "reason": why,
-                        "item": cl,
-                    })
-                    continue
                 new_row = _ack_due_commitment_issue(
                     db,
                     state,

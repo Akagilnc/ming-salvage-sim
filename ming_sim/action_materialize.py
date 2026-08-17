@@ -1018,7 +1018,7 @@ def stage_assignment_candidate(
         if stages_norm:
             staged["stages"] = stages_norm
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
-            # 派生 end_turn（max due）不写入候选/DB；展示时再 derive（#620 勿驱动 expire）
+            # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
