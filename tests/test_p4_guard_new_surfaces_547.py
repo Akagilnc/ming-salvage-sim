@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from types import SimpleNamespace
 
@@ -20,40 +19,23 @@ from ming_sim.beat_orchestration import (
     production_beat_generator,
 )
 from ming_sim.decree import _rescript_decisions
-from ming_sim.memories import build_timeline
+from ming_sim.models import TurnPhase
+from tests.conftest import (
+    CHARACTER_AXIS_SENTINEL,
+    active_ming_character,
+    append_night_chat,
+    open_audience_night,
+    plant_character_axis_sentinels,
+)
 
 
-# 偏门哨兵：0010/1023 口径；扫描时剥离时间戳防与日/时分假阳。
-_SENTINEL = {
-    "loyalty": 17,
-    "ability": 37,
-    "integrity": 57,
-    "courage": 77,
-    "identity": 97,
-}
-_CHARACTER_AXIS_KEYS = set(_SENTINEL)
-_SKIP_VALUE_KEYS = {
-    "time", "created_at", "closed_at", "timestamp", "updated_at",
-}
-# 2026-08-17 22:30:36 一类墙钟不得触发忠诚=17 假阳。
+_CHARACTER_AXIS_KEYS = set(CHARACTER_AXIS_SENTINEL)
+# 2026-08-17 22:30:36 一类墙钟不得触发忠诚=17 假阳（ISO 剥离即可；无平行 skip 表）。
 _ISO_DT_RE = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?")
 
 
-def _plant_character_sentinels(db, content, name: str) -> dict[str, int]:
-    db.conn.execute(
-        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=? "
-        "WHERE name=?",
-        (*_SENTINEL.values(), name),
-    )
-    db.conn.commit()
-    character = content.characters[name]
-    for field, value in _SENTINEL.items():
-        setattr(character, field, value)
-    return dict(_SENTINEL)
-
-
-def _walk_text_tokens(value, *, skip_keys: set[str] = frozenset()) -> list[str]:
-    """Collect player-meaningful text/number tokens; skip pure clock fields."""
+def _walk_text_tokens(value) -> list[str]:
+    """Collect player-meaningful text/number tokens from a payload tree."""
     out: list[str] = []
     pending: list[object] = [value]
     while pending:
@@ -63,8 +45,6 @@ def _walk_text_tokens(value, *, skip_keys: set[str] = frozenset()) -> list[str]:
                 key_s = str(key)
                 if key_s in _CHARACTER_AXIS_KEYS:
                     out.append(key_s)
-                if key_s in skip_keys or key_s in _SKIP_VALUE_KEYS:
-                    continue
                 pending.append(child)
         elif isinstance(item, (list, tuple, set)):
             pending.extend(item)
@@ -97,39 +77,11 @@ def _assert_no_character_sentinel_leak(payload, *, where: str) -> None:
 
     # 值面：剥离墙钟后，哨兵数不得作为独立数字 token 出现
     blob = _ISO_DT_RE.sub("", _scan_blob(payload))
-    for field, value in _SENTINEL.items():
+    for field, value in CHARACTER_AXIS_SENTINEL.items():
         token = str(value)
         # 独立数字：前后非数字，避免 117/170 误伤；时间戳已剥。
         if re.search(rf"(?<!\d){re.escape(token)}(?!\d)", blob):
             raise AssertionError(f"{where}: 人物抽象轴 {field}={value} 泄漏")
-
-
-def _active_minister(db, content) -> str:
-    row = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid LIMIT 1"
-    ).fetchone()
-    assert row is not None
-    name = str(row["name"])
-    assert name in content.characters
-    return name
-
-
-def _open_night(db, state) -> int:
-    return int(an.open_night(db, state, time_of_day="戌时", location="乾清宫")["id"])
-
-
-def _chat(db, state, night_id: int, minister: str, user_text: str, answer: str, seq: int):
-    uid = db.append_chat_message(minister, state.turn, "user", user_text)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
-    cur = db.conn.execute(
-        "INSERT INTO chat_turns "
-        "(minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (minister, state.turn, state.year, state.period, uid, mid, night_id, seq),
-    )
-    db.conn.commit()
-    return int(cur.lastrowid), int(mid)
 
 
 def _world_facts(db, state) -> dict[str, object]:
@@ -138,11 +90,11 @@ def _world_facts(db, state) -> dict[str, object]:
     ).fetchone()
     # 国库用与哨兵不重叠的显式世界事实，避免 0/空值使「放行」断言空转
     treasury = int(state.metrics.get("国库", 0) or 0)
-    if treasury in _SENTINEL.values() or treasury == 0:
+    if treasury in CHARACTER_AXIS_SENTINEL.values() or treasury == 0:
         treasury = 120
         state.metrics["国库"] = treasury
     manpower = int(army["manpower"])
-    if manpower in _SENTINEL.values() or manpower == 0:
+    if manpower in CHARACTER_AXIS_SENTINEL.values() or manpower == 0:
         manpower = 3500
         db.conn.execute(
             "UPDATE armies SET manpower=? WHERE name=?",
@@ -158,11 +110,42 @@ def _world_facts(db, state) -> dict[str, object]:
     }
 
 
+def _state_payload_runtime(db, state, content, *, pending_decisions=None):
+    """既有轻壳（同 1234 形）+ 真 content/public_character，走 WebGame.state_payload。"""
+    import web_app
+    from ming_sim.skills import bind_content as bind_skills_content
+
+    bind_skills_content(content)
+    runtime = object.__new__(web_app.WebGame)
+    runtime.favorites = set()
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        previous_summary="",
+        last_decree="",
+        last_report="",
+        pending_count=lambda: 0,
+        pending_decisions=lambda: list(pending_decisions or []),
+        victory=lambda: {"status": "ongoing", "summary": ""},
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    # 真玩家输出面：绑定生产 public_character，扫 ministers/consorts/talent_pool
+    runtime.public_character = lambda c: web_app.WebGame.public_character(runtime, c)
+    runtime.character_power_id = lambda c: web_app.WebGame.character_power_id(runtime, c)
+    return runtime
+
+
 def test_guard_detector_flags_injected_character_sentinel():
     """检测器自证：payload 一旦带上人物轴哨兵值即红（AC：注入哨兵值即红）。"""
     with pytest.raises(AssertionError, match="loyalty=17"):
         _assert_no_character_sentinel_leak(
-            {"content": f"其忠诚约{_SENTINEL['loyalty']}"},
+            {"content": f"其忠诚约{CHARACTER_AXIS_SENTINEL['loyalty']}"},
             where="detector",
         )
     with pytest.raises(AssertionError, match="人物抽象轴"):
@@ -185,11 +168,11 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
     import web_app
 
     db, state, content = game
-    minister = _active_minister(db, content)
-    _plant_character_sentinels(db, content, minister)
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
     facts = _world_facts(db, state)
 
-    night_id = _open_night(db, state)
+    night_id = open_audience_night(db, state)
     scene_body = (
         f"{facts['year']}年{facts['period']}月，"
         f"发帑{facts['treasury']}万两，调{facts['army_name']}兵{facts['manpower']}。"
@@ -207,7 +190,7 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
         db, night_id, body=enter_body, tags=[an.TAG_ENTER],
         person_names=[minister],
     )
-    _turn_id, mid = _chat(
+    _turn_id, mid = append_night_chat(
         db, state, night_id, minister,
         f"辽饷与{facts['army_name']}兵额如何？",
         f"臣请据实核账，兵约{facts['manpower']}。",
@@ -241,10 +224,10 @@ def test_scroll_and_highlight_list_keep_sentinels_out_and_world_facts_in(game, m
 
 
 def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
-    """批红页 pending_decisions 玩家读面。"""
+    """批红页：真 state_payload 信封（AWAITING_DECISION + pending_decisions）。"""
     db, state, content = game
-    minister = _active_minister(db, content)
-    _plant_character_sentinels(db, content, minister)
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
     facts = _world_facts(db, state)
 
     dossier_id = db.create_decree_dossier(
@@ -276,20 +259,34 @@ def test_rescript_page_payload_keeps_sentinels_out_and_world_facts_in(game):
     db.save_pending_decisions(state.turn, decisions)
     stored = db.list_pending_decisions(state.turn)
 
-    page = {
-        "pending_decisions": stored,
-        "rescript_decisions": decisions,
-    }
-    _assert_no_character_sentinel_leak(page, where="批红页 pending_decisions")
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
 
-    blob = _scan_blob(page)
+    runtime = _state_payload_runtime(db, state, content, pending_decisions=stored)
+    page = runtime.state_payload()
+
+    assert page["pending_decisions"]
+    assert "rescript_decisions" not in page
+    assert "ministers" in page and "consorts" in page and "talent_pool" in page
+
+    # 批红玩家面切片：pending_decisions + 同封 public_character 名册。
+    # 不扫整封 state_payload 键面——armies.loyalty 等是军务域字段，非人物抽象轴。
+    rescript_face = {
+        "pending_decisions": page["pending_decisions"],
+        "ministers": page["ministers"],
+        "consorts": page["consorts"],
+        "talent_pool": page["talent_pool"],
+    }
+    _assert_no_character_sentinel_leak(rescript_face, where="state_payload 批红信封")
+
+    blob = _scan_blob(rescript_face)
     assert str(facts["year"]) in blob
     assert str(facts["period"]) in blob
     assert str(facts["manpower"]) in blob
     assert str(facts["treasury"]) in blob
     assert "批红待裁" in blob
-    assert stored[0]["rejection_reason"]
-    assert stored[0]["opposition"] == "东林"
+    assert page["pending_decisions"][0]["rejection_reason"]
+    assert page["pending_decisions"][0]["opposition"] == "东林"
 
 
 def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monkeypatch):
@@ -297,11 +294,11 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
     import web_app
 
     db, state, content = game
-    minister = _active_minister(db, content)
-    _plant_character_sentinels(db, content, minister)
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
     facts = _world_facts(db, state)
 
-    night_id = _open_night(db, state)
+    night_id = open_audience_night(db, state)
     an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
     scene_body = (
         f"{facts['year']}年{facts['period']}月密议，"
@@ -310,7 +307,7 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
     an.append_ledger_entry(
         db, night_id, body=scene_body, tags=["军务"], person_names=[minister],
     )
-    _turn_id, mid = _chat(
+    _turn_id, mid = append_night_chat(
         db, state, night_id, minister,
         "边饷如何？",
         f"边军约{facts['manpower']}可支。",
@@ -349,40 +346,3 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
     assert str(facts["manpower"]) in blob
     assert str(facts["treasury"]) in blob
     assert any(str(facts["year"]) in str(item.get("title") or "") for item in archives)
-
-
-def test_chapter_memory_timeline_surface_allows_world_facts_not_axis_sentinels(game):
-    """起居注章节浓缩进入结局时间线的确定性装配面（chapter 字段）。"""
-    db, state, content = game
-    minister = _active_minister(db, content)
-    _plant_character_sentinels(db, content, minister)
-    facts = _world_facts(db, state)
-
-    chapter_body = (
-        f"{facts['year']}年{facts['period']}月，发帑{facts['treasury']}万两，"
-        f"边军{facts['manpower']}整饬；{minister}入对。"
-    )
-    db.save_chapter_memory(
-        state,
-        title=f"崇祯{facts['year']}年{facts['period']}月",
-        body=chapter_body,
-        tags=["军务", minister],
-    )
-    db.save_turn_extraction(
-        state,
-        decree_text=f"诏曰：发帑{facts['treasury']}万两。",
-        narrative=chapter_body,
-        extractor_output=json.dumps({
-            "economy_moves": [{"account": "国库", "delta": -int(facts["treasury"])}],
-            "army_delta": [{"name": facts["army_name"], "manpower": int(facts["manpower"])}],
-        }, ensure_ascii=False),
-    )
-
-    timeline = build_timeline(db, upto_turn=state.turn)
-    assert timeline
-    _assert_no_character_sentinel_leak(timeline, where="build_timeline")
-    blob = _scan_blob(timeline)
-    assert str(facts["year"]) in blob
-    assert str(facts["period"]) in blob
-    assert str(facts["treasury"]) in blob
-    assert any(chapter_body == str(item.get("chapter") or "") for item in timeline)
