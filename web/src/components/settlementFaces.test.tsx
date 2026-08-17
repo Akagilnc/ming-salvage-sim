@@ -41,15 +41,19 @@ const acct = () => ({
   balance: 100, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0,
 });
 
-function makeState(settlementDisplay: boolean): GameState {
+function makeState(settlementDisplay: boolean, extra: Partial<GameState> = {}): GameState {
   return {
     turn: { year: 1627, period: 10, turn: 5, phase: "awaiting_decision", settlement_display: settlementDisplay },
     metrics: { 民心: 50, 皇威: 40 },
     previous_summary: "上月邸报",
     treasury: "",
-    issues: [{ id: 1, kind: "situation", title: "边饷", status: "open", progress: 10, fail_condition: "" } as never],
+    issues: [{ id: 1, kind: "situation", title: "半程军饷议题", status: "open", progress: 10, fail_condition: "" } as never],
     legacies: [],
-    closed_this_turn: [],
+    closed_this_turn: [{
+      id: 2, kind: "situation", title: "月初已结漕运", status: "resolved",
+      bar_value: 0, bar_good_meaning: "妥", bar_bad_meaning: "",
+      closed_turn: 4, stage_text: "", effect: {},
+    } as never],
     budget: { 国库: acct(), 内库: acct() },
     region_warning: "", army_warning: "", power_warning: "",
     powers: [],
@@ -65,6 +69,7 @@ function makeState(settlementDisplay: boolean): GameState {
     pending_count: 0,
     last_decree: "",
     last_report: "",
+    ...extra,
   } as GameState;
 }
 
@@ -76,7 +81,7 @@ function minister(name = "周延儒"): Minister {
 }
 
 describe("#1236 GameHud face gates eat settlement_display", () => {
-  it("核账期：王承恩递话条出现；关闭组导航 aria-disabled；密令角标清零；局势不渲染", () => {
+  it("核账期：王承恩递话条出现；关闭组导航 aria-disabled；密令角标清零；半程局势藏、上月已结只读可达", () => {
     const host = mount(
       <GameHud
         stageRef={() => {}}
@@ -107,9 +112,14 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const courtBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
     expect(courtBtn?.getAttribute("aria-disabled")).toBe("false");
     expect(courtBtn?.getAttribute("data-settlement-face")).toBe("readonly");
-    // 密令角标清零 + 局势不渲染
+    // 密令角标清零
     expect(host.querySelector(".hud2-cmd-badge")).toBeNull();
-    expect(host.querySelector(".situation-panel")).toBeNull();
+    // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
+    expect(host.textContent).not.toContain("半程军饷议题");
+    expect(host.querySelector(".situation-list")).toBeNull();
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain("月初已结漕运");
+    expect(host.querySelector(".hud2-issue-quad")?.getAttribute("data-settlement-face")).toBe("readonly");
   });
 
   it("非核账：递话条隐藏；关闭组恢复可达；角标恢复", () => {
