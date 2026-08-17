@@ -12117,6 +12117,13 @@ class GameDB:
     _REACTION_INTENSITY = {"weak": 4, "strong": 8}
     _REACTION_SIGN = {"positive": 1, "negative": -1}
     _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
+    # #565 委派连坐：终值→程度档固定映射；cost_identity 钉死「连坐」。
+    _JOINT_LIABILITY_COST_IDENTITY = "连坐"
+    _JOINT_LIABILITY_TRIGGERS = frozenset({"degraded", "failed", "transformed"})
+    _EXECUTION_OUTCOME_INTENSITY = {
+        "failed": "strong", "transformed": "strong", "degraded": "weak",
+    }
+    _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
 
     @staticmethod
     def _migrate_reaction_value(value: object) -> tuple[object, bool]:
@@ -12346,6 +12353,196 @@ class GameDB:
                 self.conn.execute(
                     "UPDATE decree_dossiers SET status='closed',closed_turn=?,interruption_reason=?,closed_at=CURRENT_TIMESTAMP WHERE id=?",
                     (state.turn, reason, int(dossier_id)),
+                )
+        return True
+
+    def list_execution_liability_parties(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """连坐归属读端：主办主责 + 其 delegator_id 一级次责；永不返回知情档。"""
+        dossier = self.get_decree_dossier(dossier_id)
+        if dossier is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        parties: List[Dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in dossier.get("participant_roster") or []:
+            if not isinstance(item, dict) or item.get("tier") != "主办":
+                continue
+            lead = str(item.get("character_id") or "").strip()
+            if lead and ("primary", lead) not in seen:
+                seen.add(("primary", lead))
+                parties.append({
+                    "character_id": lead,
+                    "responsibility": "primary",
+                    "tier": "主办",
+                })
+            delegator = str(item.get("delegator_id") or "").strip()
+            if delegator and ("secondary", delegator) not in seen:
+                seen.add(("secondary", delegator))
+                parties.append({
+                    "character_id": delegator,
+                    "responsibility": "secondary",
+                    "tier": "delegator",
+                })
+        return parties
+
+    def merge_execution_note(
+        self, dossier_id: int, fragment: str, *, commit: bool = True,
+    ) -> str:
+        """执行格说明合并唯一写口（#565；S12/#567 消费方）。"""
+        text = str(fragment or "").strip()
+        if not text:
+            raise ValueError("说明片段不能为空")
+        row = self.get_decree_dossier(dossier_id)
+        if row is None:
+            raise KeyError(f"案卷不存在：{dossier_id}")
+        existing = str(row.get("execution_note") or "").strip()
+        if text in existing.split("；"):
+            merged = existing
+        elif existing:
+            merged = f"{existing}；{text}"
+        else:
+            merged = text
+        if merged != existing:
+            self.conn.execute(
+                """
+                UPDATE decree_dossiers
+                SET execution_note=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (merged, int(dossier_id)),
+            )
+            self._commit_dossier_write(commit)
+        return merged
+
+    def _validate_joint_liability_affected_parties(
+        self, affected_parties: object, outcome: str,
+    ) -> None:
+        """显式 affected_parties 必须过 validate_affected_parties 全键且档位贴合终值映射。"""
+        primary = self._EXECUTION_OUTCOME_INTENSITY.get(str(outcome or "").strip())
+        if primary is None:
+            raise ValueError("连坐 affected_parties 仅接受 degraded/failed/transformed 终值")
+        allowed = {primary}
+        downgraded = self._INTENSITY_DOWNGRADE.get(primary)
+        if downgraded:
+            allowed.add(downgraded)
+        faction_names = {
+            str(row["name"]) for row in self.conn.execute("SELECT name FROM factions")
+        }
+        class_names = {
+            str(row["name"])
+            for row in self.conn.execute("SELECT DISTINCT name FROM classes")
+        }
+        validate_affected_parties(
+            affected_parties,
+            faction_names=faction_names,
+            class_names=class_names,
+        )
+        if not isinstance(affected_parties, list):
+            raise ValueError("affected_parties 须为在册 typed signed 反应清单")
+        for party in affected_parties:
+            if str(party.get("intensity") or "") not in allowed:
+                raise ValueError("affected_parties intensity 须与执行终值固定映射一致")
+
+    def apply_execution_joint_liability(
+        self,
+        state: GameState,
+        dossier_id: int,
+        outcome: str,
+        *,
+        reason: str = "",
+        affected_parties: object = None,
+        commit: bool = True,
+    ) -> bool:
+        """#565 委派连坐：仅由 dossier_executions 适配器在落终值时调用。
+
+        写轨全经 _record_decree_cost + record_relation_edge_event；幂等键不含 turn。
+        """
+        outcome = str(outcome or "").strip()
+        if outcome not in self._JOINT_LIABILITY_TRIGGERS:
+            return False
+        if affected_parties is not None:
+            self._validate_joint_liability_affected_parties(affected_parties, outcome)
+        primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
+        secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
+        reason_text = str(reason or "执行连坐").strip() or "执行连坐"
+        identity = self._JOINT_LIABILITY_COST_IDENTITY
+        origin = f"dossier:{int(dossier_id)}:{identity}"
+
+        if commit:
+            from ming_sim.decree import atomic_and_reload
+            transaction = atomic_and_reload(self, state)
+        else:
+            transaction = contextlib.nullcontext()
+
+        with transaction:
+            dossier = self.get_decree_dossier(dossier_id)
+            if dossier is None:
+                raise KeyError(f"案卷不存在：{dossier_id}")
+            # 整笔幂等门闩（含全员已故仅记说明的情形）；UNIQUE 不含 turn。
+            if not self._record_decree_cost(
+                dossier_id, state.turn, "liability", "dossier", str(dossier_id),
+                0, reason_text, cost_identity=identity,
+            ):
+                return False
+
+            registered_factions = {
+                str(row["name"])
+                for row in self.conn.execute("SELECT name FROM factions")
+            }
+            note_names: List[str] = []
+            # 先主责（高档）后次责（降档），同派系 UNIQUE 保留主责额度。
+            work: List[tuple[str, Optional[str], str]] = []
+            for item in dossier.get("participant_roster") or []:
+                if not isinstance(item, dict) or item.get("tier") != "主办":
+                    continue
+                lead = str(item.get("character_id") or "").strip()
+                if lead:
+                    work.append((lead, primary_intensity, "主办"))
+                delegator = str(item.get("delegator_id") or "").strip()
+                if delegator:
+                    work.append((delegator, secondary_intensity, "委派"))
+
+            seen_person: set[str] = set()
+            for person, intensity, role_label in work:
+                if person in seen_person:
+                    continue
+                seen_person.add(person)
+                row = self.conn.execute(
+                    "SELECT faction,status FROM characters WHERE name=?", (person,),
+                ).fetchone()
+                if row is None:
+                    continue
+                note_names.append(f"{person}（{role_label}）")
+                if str(row["status"] or "") == "dead":
+                    logging.getLogger(__name__).warning("跳过已故连坐责任人%s", person)
+                    continue
+                if intensity is None:
+                    # 执行人已是 weak 时次责无更低档→零机械扣、仍进走样说明。
+                    continue
+                magnitude = self._REACTION_INTENSITY[intensity]
+                delta = self._REACTION_SIGN["negative"] * magnitude
+                self.record_relation_edge_event(
+                    source="皇帝", target=person, event_kind="连坐",
+                    context=reason_text, origin=origin, turn=state.turn,
+                    year=state.year, period=state.period,
+                )
+                faction = str(row["faction"] or "").strip()
+                if faction and faction in registered_factions:
+                    if self._record_decree_cost(
+                        dossier_id, state.turn, "satisfaction", "faction", faction,
+                        delta, reason_text, cost_identity=identity,
+                    ):
+                        self.adjust_factions(
+                            {faction: {"satisfaction": delta}}, commit=False,
+                        )
+
+            if note_names:
+                # P4：只写定性人名归属，不落 weak/strong/枚举裸词。
+                self.merge_execution_note(
+                    dossier_id,
+                    "连坐归属：" + "、".join(note_names),
+                    commit=False,
                 )
         return True
 
