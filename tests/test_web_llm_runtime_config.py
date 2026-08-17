@@ -801,112 +801,85 @@ def test_game_llm_config_uses_advanced_model_for_api_reasoning_capability(monkey
     assert result["reasoning_supported"] is True
 
 
-def test_fresh_start_without_llm_keeps_existing_main_db(tmp_path, monkeypatch):
+def _count_llm_calls(monkeypatch):
+    """#1228 行为验收：统计连通 smoke / CLI 后端真实调用次数（不断言墙钟）。"""
+    import ming_sim.cli_backend as _cb
+
+    calls: list[str] = []
+
+    def _track_verify(cfg):
+        calls.append("verify_llm_available")
+        raise AssertionError("入口路径不得调用 verify_llm_available")
+
+    def _track_backend(prompt, llm_config=None, tag=""):
+        calls.append(f"backend:{tag or ''}")
+        raise AssertionError(f"入口路径不得调用 CLI 后端 tag={tag!r}")
+
+    monkeypatch.setattr(web_app, "verify_llm_available", _track_verify)
+    monkeypatch.setattr(_cb, "_run_backend_for_config", _track_backend)
+    return calls
+
+
+def _assert_hud(payload: dict) -> None:
+    assert isinstance(payload, dict)
+    assert "turn" in payload and "phase" in payload["turn"]
+    assert "ministers" in payload
+
+
+def test_fresh_start_zero_llm_calls_disposes_old_main_db(tmp_path, monkeypatch):
+    """#1228：fresh 构造零 LLM 调用，旧主库按既有 fresh 语义删除。"""
     db_path = tmp_path / "ming.db"
     db_path.write_bytes(b"existing-progress")
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame(fresh=True)
-
-    assert db_path.read_bytes() == b"existing-progress"
-
-
-def test_fresh_start_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "ming.db"
-    db_path.write_bytes(b"existing-progress")
-    monkeypatch.setenv("MING_SIM_DB", str(db_path))
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    calls = _count_llm_calls(monkeypatch)
 
-    def fail_verify(config):
-        raise web_app.LLMUnavailable("LLM unavailable")
+    game = web_app.WebGame(fresh=True)
+    try:
+        _assert_hud(game.state_payload())
+        assert not db_path.exists() or db_path.read_bytes() != b"existing-progress"
+        assert calls == [], f"fresh 构造不应触发 LLM 调用，实得 {calls}"
+    finally:
+        try:
+            game.session.close()
+        except Exception:
+            pass
 
-    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
 
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame(fresh=True)
-
-    assert db_path.read_bytes() == b"existing-progress"
-
-
-def test_fresh_start_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
-    import ming_sim.cli_backend as _cb
-
+def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch):
+    """#1228 行为：continue / load_save / 重置进 HUD，全程零 LLM 调用直至真实动作。"""
     db_path = tmp_path / "ming.db"
-    db_path.write_bytes(b"existing-progress")
+    ud = tmp_path / "ud"
     monkeypatch.setenv("MING_SIM_DB", str(db_path))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(ud))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
-        "channel": "cli",
-        "api": {"base_url": "", "model": "", "api_key": ""},
-        "cli": {"runner": "codex", "model": "gpt-5.5", "timeout_seconds": "240"},
-    })
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+    calls = _count_llm_calls(monkeypatch)
 
-    def fail_cli_verify(prompt, llm_config=None, tag=""):
-        raise RuntimeError("codex missing")
+    # continue：已有主库 fresh=False
+    cont = web_app.WebGame(fresh=False)
+    try:
+        _assert_hud(cont.state_payload())
+        cont.save_to("slot_a")
 
-    monkeypatch.setattr(_cb, "_run_backend_for_config", fail_cli_verify)
+        # load_save：热替换主 DB
+        cont.load_save("slot_a")
+        _assert_hud(cont.state_payload())
 
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame(fresh=True)
+        # 重置：清主库重建
+        cont.reset_game()
+        _assert_hud(cont.state_payload())
 
-    assert db_path.read_bytes() == b"existing-progress"
-
-
-def test_fresh_start_invalid_cli_runner_keeps_existing_main_db(tmp_path, monkeypatch):
-    import ming_sim.cli_backend as _cb
-
-    db_path = tmp_path / "ming.db"
-    db_path.write_bytes(b"existing-progress")
-    monkeypatch.setenv("MING_SIM_DB", str(db_path))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
-    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
-        "channel": "cli",
-        "api": {"base_url": "", "model": "", "api_key": ""},
-        "cli": {"runner": "bogus", "model": "gpt-5.5", "timeout_seconds": "240"},
-    })
-    monkeypatch.setattr(_cb, "_run_agy", lambda prompt, timeout=None: ("ok", 1))
-
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame(fresh=True)
-
-    assert db_path.read_bytes() == b"existing-progress"
-
-
-def test_reset_cli_verify_failure_keeps_existing_main_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "ming.db"
-    db_path.write_bytes(b"existing-progress")
-    cfg = LLMConfig(
-        api_key="cli-backend",
-        base_url="",
-        model="api-fallback",
-        channel="cli",
-        cli_runner="codex",
-        cli_model="gpt-5.5",
-        cli_timeout_seconds=240,
-    )
-    fake = SimpleNamespace(
-        db_path=str(db_path),
-        session=SimpleNamespace(llm_config=cfg, close=lambda: None),
-        _rebuild_session=lambda llm_config, **kwargs: None,
-    )
-
-    def fail_verify(llm_config):
-        raise web_app.LLMUnavailable("codex missing")
-
-    monkeypatch.setattr(web_app, "verify_llm_available", fail_verify)
-
-    with pytest.raises(web_app.LLMUnavailable):
-        web_app.WebGame.reset_game(fake)
-
-    assert db_path.read_bytes() == b"existing-progress"
+        assert calls == [], f"continue/load_save/重置不应触发 LLM 调用，实得 {calls}"
+    finally:
+        try:
+            cont.session.close()
+        except Exception:
+            pass
 
 
 def test_menu_save_llm_api_channel_rejects_placeholder_existing_key(monkeypatch):

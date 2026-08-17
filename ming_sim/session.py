@@ -48,7 +48,7 @@ from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.knowledge import render_character_knowledge
 from ming_sim.mindreading import is_inner_court_attendant
-from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
+from ming_sim.llm_model import create_agno_db, extract_agent_text
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
 from ming_sim.registry import MinisterRegistry, bind_content as _bind_registry
@@ -678,7 +678,6 @@ class GameSession:
         db_path: str,
         llm_config: LLMConfig,
         content: Optional[GameContent] = None,
-        verify_llm: bool = True,
         start_ym: str = "",
     ) -> None:
         self.content = content if content is not None else GameContent.load()
@@ -693,8 +692,6 @@ class GameSession:
             _CLI_ACTION_INTENT_EXECUTOR,
             parallel_safe=cli_backend_parallel_safe(llm_config),
         )
-        if verify_llm:
-            verify_llm_available(llm_config)
         self.db = GameDB(db_path, content=self.content, llm_config=llm_config)
         # 接档载入阶段计时（#84）：原为零日志盲区，群友以为死机；逐阶段 tlog 用时，
         # 自部署者在 server 控制台看得见进度、定位慢阶段。

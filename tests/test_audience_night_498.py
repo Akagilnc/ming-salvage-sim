@@ -61,13 +61,13 @@ def _find_entries(entries, *required_tags):
 
 
 def _real_session(tmp_path, content, name="s"):
-    """真实 GameSession（verify_llm=False，不建 _partial fake）。返回 sess，用 sess.db/state。"""
+    """真实 GameSession（构造即不连 LLM，不建 _partial fake）。返回 sess，用 sess.db/state。"""
     from ming_sim.models import LLMConfig
     from ming_sim.session import GameSession
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
     return GameSession(
         db_path=str(tmp_path / f"{name}.db"), llm_config=cfg,
-        content=content, verify_llm=False,
+        content=content,
     )
 
 

@@ -207,8 +207,8 @@ def extract_agent_text(run_output: object) -> str:
 
 
 def verify_llm_available(llm_config: LLMConfig) -> None:
-    """检查 LLM 是否可用：调用成功（HTTP 200，不抛异常）即算通过，不校验返回内容。"""
-    # fresh start 会在验证后删除旧主 DB；CLI 通道也必须真实 smoke，避免 runner 缺失/未登录时先删库。
+    """用户主动校验 LLM 配置是否可用（设置页提交等）：调用成功即过，不校验返回内容。"""
+    # 仅服务配置校验入口；启动/新开/继续/重置路径不再调用本函数。
     from ming_sim.cli_backend import _run_backend_for_config, cli_backend_from_env
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     if channel == "cli" or (channel != "api" and cli_backend_from_env() is not None):

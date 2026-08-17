@@ -44,7 +44,7 @@ from ming_sim.session import ChatTurnResult
 
 class _CannedExtractor:
     """#501 叙事抽取员离线边界：回话尾随 / 收夜前 drain 会调它——默认抽出空 facts
-    （不改本文件既有账本/收夜断言，仅把新 LLM 边界中和成离线，与 verify_llm 同理）。"""
+    （不改本文件既有账本/收夜断言，仅把新 LLM 边界中和成离线）。"""
 
     def run(self, _material):
         class _R:
@@ -132,7 +132,7 @@ def _fake_settlement_llm(monkeypatch, *, narrative="本月邸报：边饷已清�
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
-    """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。
+    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 与动作级 LLM 边界中和。
 
     显式 opt-in `_offline_scene_beat_generator`：在 GameSession.__init__ 前注入确定性
     beat factory，避免 sk-test 401；实例仍走生产 ChatTurnSceneRegistry。
@@ -142,7 +142,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     - agents.create_endorsement_extractor_agent → 收夜 endorsement-only 批
     - mindreading.create_mindreading_agent → 回话 done 后读心尾随（#499）
     - _fake_settlement_llm：decree 判官/推演/抽取/拟诏 + memories.run_agent_text
-    - session.verify_llm_available / load_runtime_llm 连通性中和
+    - load_runtime_llm 配置中和
     - registry.get → 大臣回话流（_FakeAgent，按测例挂起）
     不 patch production_beat_generator / auto-close / 结算核。
     """
@@ -150,7 +150,6 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
     # #501：叙事抽取是每条召对夜回话的新 LLM 边界（回话尾随 + 收夜前 drain）——离线中和，
     # 默认抽空 facts，避免本 #498 用例走真实网络。
     monkeypatch.setattr(
