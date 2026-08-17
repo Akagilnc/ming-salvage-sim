@@ -1,5 +1,10 @@
 import React, { act } from "react";
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DecisionModal } from "./decisionModal";
@@ -8,6 +13,8 @@ import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 const DECISION_CSS = readFileSync(`${process.cwd()}/src/styles/decision.css`, "utf8");
 
 function injectDecisionCss() {
@@ -34,124 +41,79 @@ function ruleExact(selector: string): CSSStyleRule | undefined {
   return cssRulesMatching(selector).find((rule) => rule.selectorText === selector);
 }
 
-/** Resolve clamp(minpx, Nvw, maxpx) against a viewport width. */
-function resolveClamp(minPx: number, vw: number, maxPx: number, viewportWidth: number) {
-  return Math.min(maxPx, Math.max(minPx, (vw / 100) * viewportWidth));
-}
-
-function parseClamp(text: string): { minPx: number; vw: number; maxPx: number } | null {
-  const m = text.match(/clamp\(\s*([\d.]+)px\s*,\s*([\d.]+)vw\s*,\s*([\d.]+)px\s*\)/i);
-  if (!m) return null;
-  return { minPx: Number(m[1]), vw: Number(m[2]), maxPx: Number(m[3]) };
-}
-
-function firstMatch(css: string, re: RegExp): string {
-  const m = css.match(re);
-  if (!m) throw new Error(`decision.css missing token /${re.source}/`);
-  return m[1];
-}
-
-function pxToken(css: string, re: RegExp, fallback = 0): number {
-  const m = css.match(re);
-  return m ? Number(m[1]) : fallback;
-}
-
-/**
- * Block-flow estimator for the decision page at a fixed viewport.
- * jsdom has no layout engine; chrome tokens are read from decision.css so a
- * too-tall page layout fails this budget check for the standard fixture.
- */
-function estimateConfirmBottom(css: string, viewportWidth: number) {
-  const pagePad = parseClamp(firstMatch(css, /\.decision-page\s*\{[^}]*padding:\s*([^;]+);/s));
-  const docPad = parseClamp(firstMatch(css, /\.decision-document\s*\{[^}]*padding:\s*([^;]+);/s));
-  const shellPad = parseClamp(firstMatch(css, /\.decision-document section\s*\{[^}]*padding:\s*([^;]+);/s));
-  if (!pagePad || !docPad || !shellPad) throw new Error("decision.css vertical clamp tokens unreadable");
-
-  const pagePadY = resolveClamp(pagePad.minPx, pagePad.vw, pagePad.maxPx, viewportWidth);
-  const docPadY = resolveClamp(docPad.minPx, docPad.vw, docPad.maxPx, viewportWidth);
-  const sectionPad = resolveClamp(shellPad.minPx, shellPad.vw, shellPad.maxPx, viewportWidth);
-
-  const sectionPadBottom = pxToken(css, /\.decision-document-section\s*\{[^}]*padding:\s*[\d.]+px\s+[\d.]+px\s+([\d.]+)px/s, 22);
-  const sectionGap = pxToken(css, /\.decision-document-section \+ \.decision-document-section\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 15);
-  const headMargin = pxToken(css, /\.decision-head\s*\{[^}]*margin-bottom:\s*([\d.]+)px/s, 14);
-  const optionsGap = pxToken(css, /\.decision-options\s*\{[^}]*gap:\s*([\d.]+)px/s, 10);
-  const optionPadY = pxToken(css, /\.decision-option\s*\{[^}]*padding:\s*([\d.]+)px/s, 13);
-  const noteMinH = pxToken(css, /\.decision-note\s*\{[^}]*min-height:\s*([\d.]+)px/s, 64);
-  const noteMarginTop = pxToken(css, /\.decision-document \.decision-note\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 10);
-  // 印即确认键：.decision-confirm 自身呈印章，无独立装饰 seal
-  const confirmMarginTop = pxToken(css, /\.decision-document \.decision-confirm\s*\{[^}]*margin:\s*([\d.]+)px/s, 10)
-    || pxToken(css, /\.decision-confirm\s*\{[^}]*margin:\s*([\d.]+)px/s, 10);
-  const confirmPadY = pxToken(css, /\.decision-document \.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 8)
-    || pxToken(css, /\.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 8);
-  const actionsMarginTop = pxToken(css, /\.decision-actions\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 8);
-  const actionsMinH = pxToken(css, /\.decision-actions\s*\{[^}]*min-height:\s*([\d.]+)px/s, 18);
-  const pagePadX = parseClamp(firstMatch(css, /\.decision-page\s*\{[^}]*padding:\s*[^\s]+\s+([^;]+);/s));
-  const docPadXClamp = (() => {
-    // padding: Y X — capture X clamp
-    const m = css.match(/\.decision-document\s*\{[^}]*padding:\s*clamp\([^)]+\)\s+(clamp\([^)]+\))/s);
-    return m ? parseClamp(m[1]) : null;
-  })();
-
-  const doc = document.querySelector<HTMLElement>(".decision-document");
-  const confirm = document.querySelector<HTMLElement>(".decision-confirm");
-  if (!doc || !confirm) throw new Error("decision fixture missing");
-
-  const padX = pagePadX ? resolveClamp(pagePadX.minPx, pagePadX.vw, pagePadX.maxPx, viewportWidth) : 12;
-  const docPadX = docPadXClamp
-    ? resolveClamp(docPadXClamp.minPx, docPadXClamp.vw, docPadXClamp.maxPx, viewportWidth)
-    : 24;
-  const innerWidth = Math.min(880, viewportWidth - 2 * padX) - 2 * docPadX;
-  const contentWidth = Math.max(120, innerWidth - 2 * sectionPad);
-
-  const measureTextBlock = (el: Element | null, fontPx: number, lineHeight: number, widthPx: number) => {
-    if (!el) return 0;
-    const text = (el.textContent || "").trim();
-    if (!text) return 0;
-    const charsPerLine = Math.max(1, Math.floor(widthPx / fontPx));
-    return Math.ceil(text.length / charsPerLine) * fontPx * lineHeight;
+/** True Chromium layout measure via already-declared electron binary (jsdom has no layout). */
+async function measureConfirmBottomAtViewport(
+  pageHtml: string,
+  css: string,
+  viewportWidth = 1440,
+  viewportHeight = 900,
+): Promise<{ bottom: number; viewportHeight: number; viewportWidth: number }> {
+  const dir = mkdtempSync(join(tmpdir(), "decision-bbox-"));
+  try {
+    const htmlPath = join(dir, "fixture.html");
+    const mainPath = join(dir, "main.cjs");
+    const safeCss = css.replace(/</g, "\\u003c");
+    writeFileSync(
+      htmlPath,
+      `<!doctype html><html><head><meta charset="utf-8" /><style>${safeCss}</style></head><body>${pageHtml}</body></html>`,
+    );
+    const measureSource = `(() => {
+  const el = document.querySelector(".decision-confirm");
+  if (!el) return { error: "missing .decision-confirm" };
+  const r = el.getBoundingClientRect();
+  return {
+    top: r.top,
+    bottom: r.bottom,
+    height: r.height,
+    width: r.width,
+    viewportHeight: window.innerHeight,
+    viewportWidth: window.innerWidth,
   };
-
-  let y = pagePadY + docPadY;
-
-  const head = doc.querySelector(".decision-head");
-  if (head) {
-    y += headMargin;
-    y += 13 + 8; // kicker font + margin-bottom
-    y += 22; // title line
-  }
-
-  const shell = doc.querySelector(".decision-document > section");
-  if (shell) y += sectionPad;
-
-  const sections = Array.from(doc.querySelectorAll(".decision-document-section"));
-  sections.forEach((section, index) => {
-    if (index > 0) y += sectionGap;
-    y += 4 + sectionPadBottom;
-    const label = section.querySelector(".decision-section-label");
-    y += measureTextBlock(label, 14, 1.4, contentWidth) || 18;
-    if (section.querySelector("h3")) y += 2 + 6 + 20;
-    section.querySelectorAll("p").forEach((p) => { y += measureTextBlock(p, 14, 1.8, contentWidth); });
-    const options = Array.from(section.querySelectorAll(".decision-option"));
-    options.forEach((opt, optIndex) => {
-      if (optIndex > 0) y += optionsGap;
-      y += optionPadY * 2;
-      y += measureTextBlock(opt.querySelector(".decision-option-label"), 16, 1.3, contentWidth - 28);
-      y += measureTextBlock(opt.querySelector(".decision-option-hint"), 13, 1.5, contentWidth - 28);
+})()`;
+    writeFileSync(
+      mainPath,
+      [
+        'const { app, BrowserWindow } = require("electron");',
+        'const path = require("path");',
+        'app.commandLine.appendSwitch("headless");',
+        'app.commandLine.appendSwitch("no-sandbox");',
+        "app.whenReady().then(async () => {",
+        "  const win = new BrowserWindow({",
+        `    width: ${viewportWidth},`,
+        `    height: ${viewportHeight},`,
+        "    show: false,",
+        "    webPreferences: { offscreen: true },",
+        "  });",
+        '  await win.loadFile(path.join(__dirname, "fixture.html"));',
+        `  const result = await win.webContents.executeJavaScript(${JSON.stringify(measureSource)});`,
+        "  process.stdout.write(JSON.stringify(result));",
+        "  app.exit(result && result.error ? 1 : 0);",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    const electronPath = require("electron") as string;
+    const { stdout } = await execFileAsync(electronPath, [mainPath], {
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_NO_ATTACH_CONSOLE: "1" },
     });
-    if (section.querySelector(".decision-note")) {
-      y += noteMarginTop + noteMinH;
+    const measured = JSON.parse(stdout) as {
+      bottom?: number;
+      viewportHeight?: number;
+      viewportWidth?: number;
+      error?: string;
+    };
+    if (measured.error || measured.bottom == null) {
+      throw new Error(measured.error || "electron layout measure returned no bottom");
     }
-  });
-
-  // 印章确认键在文书 section 内（朱笔亲批之后）
-  if (doc.querySelector(".decision-confirm")) {
-    y += confirmMarginTop + confirmPadY * 2 + 18; // line box for seal text
+    return {
+      bottom: measured.bottom,
+      viewportHeight: measured.viewportHeight ?? viewportHeight,
+      viewportWidth: measured.viewportWidth ?? viewportWidth,
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  if (shell) y += sectionPad;
-
-  y += actionsMarginTop + actionsMinH; // hint line only
-  y += docPadY + pagePadY;
-  return y;
 }
 
 const decisions: PendingDecision[] = [
@@ -406,11 +368,15 @@ describe("DecisionModal", () => {
 });
 
 describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", () => {
-  it("keeps seal-confirm bounding-box bottom within the 1440×900 first screen", () => {
-    injectDecisionCss();
+  it("keeps seal-confirm bounding-box bottom within the 1440×900 first screen", async () => {
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const confirmBottom = estimateConfirmBottom(DECISION_CSS, 1440);
-    expect(confirmBottom).toBeLessThanOrEqual(900);
+    const page = document.querySelector(".decision-page");
+    expect(page).not.toBeNull();
+    // Component fixture outerHTML + real Chromium layout (not a hand-built estimator).
+    const measured = await measureConfirmBottomAtViewport(page!.outerHTML, DECISION_CSS, 1440, 900);
+    expect(measured.viewportWidth).toBe(1440);
+    expect(measured.viewportHeight).toBe(900);
+    expect(measured.bottom).toBeLessThanOrEqual(900);
     cleanup();
   });
 
@@ -426,8 +392,9 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(seal.getAttribute("aria-hidden")).not.toBe("true");
     expect(seal.disabled).toBe(true);
 
-    // 印章视觉：双线朱红边 + 可点 cursor（非装饰去按钮化）
-    const sealRule = ruleExact(".decision-document .decision-confirm") || ruleExact(".decision-confirm");
+    // 印章样式只在文书作用域一份；不得保留全局 .decision-confirm 平行兜底
+    expect(ruleExact(".decision-confirm")).toBeUndefined();
+    const sealRule = ruleExact(".decision-document .decision-confirm");
     expect(sealRule).toBeTruthy();
     expect(sealRule!.style.pointerEvents === "" || sealRule!.style.pointerEvents === "auto").toBe(true);
     expect(sealRule!.style.cursor).toBe("pointer");
