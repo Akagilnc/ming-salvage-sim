@@ -180,31 +180,6 @@
 
 .decision-hint-line { font-size: 13px; color: #9a8d6a; }
 
-/* 兜底：印章确认键（文书页外若复用亦呈印形） */
-.decision-confirm {
-  display: block;
-  margin: 10px auto 2px;
-  width: max-content;
-  padding: 8px 16px;
-  border: 3px double #9f211b;
-  border-radius: 2px;
-  background: rgba(255, 246, 218, 0.55);
-  color: #9f211b;
-  font-family: serif;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  transform: rotate(-5deg);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.decision-confirm:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  filter: grayscale(0.35);
-}
-
 /* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算 */
 .recovery-banner {
   position: fixed;
