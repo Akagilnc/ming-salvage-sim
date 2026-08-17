@@ -1754,6 +1754,16 @@ class GameDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            -- #1234 / ADR 0148 路③：月初快照呈现投影（点击前四键 + 所属回合）。
+            -- 当前回合未过期行存在 ⇔ 核账展示态；非结算/恢复权威，引擎控制流不读。
+            CREATE TABLE IF NOT EXISTS month_open_snapshot (
+                turn INTEGER PRIMARY KEY,
+                treasury INTEGER NOT NULL,
+                inner_treasury INTEGER NOT NULL,
+                public_support INTEGER NOT NULL,
+                imperial_prestige INTEGER NOT NULL
+            );
+
             -- #632 关系账 S1：append-only 有向边事件流水。0079 信用事件只在读侧适配，
             -- 不迁移、不双写；evidence 仅允许结构化产出方置真。
             CREATE TABLE IF NOT EXISTS relation_edge_events (
@@ -14463,6 +14473,54 @@ class GameDB:
     def clear_resolve_context(self, turn: int) -> None:
         self.conn.execute("DELETE FROM pending_resolve_context WHERE turn = ?", (int(turn),))
         self.conn.execute("DELETE FROM pending_promulgation_verdicts WHERE turn = ?", (int(turn),))
+        self.conn.commit()
+
+    # ── #1234 月初快照（路③呈现投影）────────────────────────────────
+
+    def capture_month_open_snapshot(self, state: GameState) -> None:
+        """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。
+
+        必须在任何盘面突变之前调用，且不进 pre_settle 事务——否则回滚会毁掉刷新同脸。
+        """
+        turn = int(state.turn)
+        if self.get_month_open_snapshot(turn) is not None:
+            return
+        m = state.metrics
+        self.conn.execute(
+            """INSERT INTO month_open_snapshot
+               (turn, treasury, inner_treasury, public_support, imperial_prestige)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                turn,
+                int(m.get("国库", 0)),
+                int(m.get("内库", 0)),
+                int(m.get("民心", 0)),
+                int(m.get("皇威", 0)),
+            ),
+        )
+        self.conn.commit()
+
+    def get_month_open_snapshot(self, turn: int) -> Optional[Dict[str, int]]:
+        """读本回合月初快照四键；无则 None。仅呈现层消费。"""
+        row = self.conn.execute(
+            """SELECT treasury, inner_treasury, public_support, imperial_prestige
+               FROM month_open_snapshot WHERE turn = ?""",
+            (int(turn),),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "国库": int(row["treasury"]),
+            "内库": int(row["inner_treasury"]),
+            "民心": int(row["public_support"]),
+            "皇威": int(row["imperial_prestige"]),
+        }
+
+    def clear_month_open_snapshot(self, turn: int) -> None:
+        """过期/清除本回合快照。atomic 内 commit 为 no-op，与 clear_resolve_context 同窗。"""
+        self.conn.execute(
+            "DELETE FROM month_open_snapshot WHERE turn = ?", (int(turn),)
+        )
         self.conn.commit()
 
     def get_turn_extraction(self, turn: int) -> Optional[Dict[str, object]]:

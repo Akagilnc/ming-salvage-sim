@@ -699,6 +699,8 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
         raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
+    # #1234：退朝入口点击受理即独立提交月初快照（任何突变之前，含 auto_close）。
+    db.capture_month_open_snapshot(state)
     # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
     # 放在 atomic 外：收夜自有写与错误包，不与推进事务半嵌。
     # #503：收夜 beat 生产路径接通编排缝。
@@ -742,6 +744,8 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
             # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
             # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
             db.clear_resolve_context(state.turn)
+            # #1234：月推进完成，快照按回合绑定在同一 atomic 内过期（禁 commit 后再清）。
+            db.clear_month_open_snapshot(state.turn)
             state.next_period()
             # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
             state.turn_phase = TurnPhase.SUMMONING.value
@@ -2137,6 +2141,8 @@ def _settle_after_extract_body(
     # 「已提交但 context 残留」的崩溃窗口已闭合（cmr S2+S3 codex R2 defer→S7，崩溃点回归见
     # test_settle_crash_after_savestate_before_clear_rolls_back）。
     db.clear_resolve_context(before_turn)
+    # #1234：月初快照同窗过期（路③呈现投影，非结算权威；与 resolve_context 清法同构）。
+    db.clear_month_open_snapshot(before_turn)
 
     ending = ""
     if ended:

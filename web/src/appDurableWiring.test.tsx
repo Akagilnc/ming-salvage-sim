@@ -12,6 +12,8 @@ class _RO { observe() {} unobserve() {} disconnect() {} }
 vi.mock("./settlementPresentation", () => ({
   shouldAutoOpenSecretOrdersAfterSettlement: () => true,
   shouldAutoOpenClosedIssuesAfterSettlement: () => false,
+  yearMonthLabel: (turn: { year: number; period: number; settlement_display?: boolean }) =>
+    `${turn.year} 年 ${turn.period} 月${turn.settlement_display ? " · 核账" : ""}`,
 }));
 
 const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);

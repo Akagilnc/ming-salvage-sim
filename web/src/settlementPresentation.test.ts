@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
+  yearMonthLabel,
 } from "./settlementPresentation";
 
 describe("settlement presentation routing", () => {
@@ -14,5 +15,11 @@ describe("settlement presentation routing", () => {
 
   it("does not auto-open closed issue progress after settlement", () => {
     expect(shouldAutoOpenClosedIssuesAfterSettlement()).toBe(false);
+  });
+
+  it("#1234 year-month label is driven only by server settlement_display", () => {
+    expect(yearMonthLabel({ year: 1627, period: 10 })).toBe("1627 年 10 月");
+    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: false })).toBe("1627 年 10 月");
+    expect(yearMonthLabel({ year: 1627, period: 10, settlement_display: true })).toBe("1627 年 10 月 · 核账");
   });
 });
