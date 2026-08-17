@@ -57,3 +57,29 @@ describe("consumeSettleStream residual flush", () => {
     expect(outcome).toEqual({ kind: "done", data: { ok: true } });
   });
 });
+
+describe("consumeSettleStream continue-style stages (#1195)", () => {
+  it("invokes onStage for each stage then returns done state", async () => {
+    const onStage = vi.fn();
+    const outcome = await consumeSettleStream(
+      streamResponse([
+        'event: stage\ndata: {"content":"检查模型后端..."}\n\n',
+        'event: stage\ndata: {"content":"载入上次进度..."}\n\n',
+        'event: done\ndata: {"state":{"turn":{"turn":2}}}\n\n',
+      ]),
+      { onStage, onThinking: vi.fn(), onNarrative: vi.fn() },
+      { httpErrorLabel: "继续失败" },
+    );
+    expect(onStage.mock.calls.map((c) => c[0])).toEqual([
+      "检查模型后端...",
+      "载入上次进度...",
+    ]);
+    expect(outcome).toEqual({ kind: "done", data: { state: { turn: { turn: 2 } } } });
+  });
+
+  it("uses custom httpErrorLabel on non-OK responses", async () => {
+    await expect(
+      consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
+    ).rejects.toThrow("继续失败：HTTP 500");
+  });
+});
