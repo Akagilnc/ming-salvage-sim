@@ -2709,6 +2709,30 @@ def _retryable_audience_close_http(exc: BaseException) -> HTTPException:
     raise TypeError(f"not a retryable audience/close error: {type(exc)!r}")
 
 
+def _accept_settlement_period(game) -> None:
+    """#1235 / ADR 0149 点即入：颁布/退朝受理即 capture 月初快照（先于 await/close）。
+
+    无真实 db 的测试替身直接跳过。幂等；FRONT_HALF_DONE 不重写。"""
+    db = getattr(game, "db", None)
+    state = getattr(game, "state", None)
+    if db is None or state is None or not hasattr(db, "capture_month_open_snapshot"):
+        return
+    from ming_sim.month_open_snapshot import accept_settlement_period
+    accept_settlement_period(db, state)
+
+
+def _exit_settlement_display_on_failure(game) -> None:
+    """#1235 / ADR 0149 真失败另形：前半段未提交时清快照，出核账展示态。
+
+    settling/awaiting 保留交恢复（AC3）。无真实 db 替身跳过。"""
+    db = getattr(game, "db", None)
+    state = getattr(game, "state", None)
+    if db is None or state is None or not hasattr(db, "clear_month_open_snapshot"):
+        return
+    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
+    exit_settlement_display_on_failure(db, state)
+
+
 def _await_audience_inflight_clear(game) -> None:
     """#498 AC10：颁诏/退朝入口在抢 write_gate **之前**先 gate-free 等本夜在飞回话落档，
     让回话 epilogue 抢得 gate 落库；清空后再持 gate 收夜（resolve_turn/advance 传
@@ -2717,7 +2741,8 @@ def _await_audience_inflight_clear(game) -> None:
 
     走 game.db seam（与 _start_chat_turn 同 idiom：无 conn 的测试替身直接跳过）。
 
-    抽取由引擎 close_night 单独拥有：Web 这里只等待在飞回话，不在案卷创建前预清待补。"""
+    抽取由引擎 close_night 单独拥有：Web 这里只等待在飞回话，不在案卷创建前预清待补。
+    #1235：调用方须先 _accept_settlement_period，使未了/失败前已入核账展示态。"""
     db = getattr(game, "db", None)
     if db is None or not hasattr(db, "conn"):
         return
@@ -3995,6 +4020,8 @@ def api_advance_without_edict() -> Dict[str, Any]:
     from ming_sim.audience_night import AudienceNightError
     settlement_result = None
     try:
+        # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
+        _accept_settlement_period(game)
         # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
         # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
@@ -4019,15 +4046,19 @@ def api_advance_without_edict() -> Dict[str, Any]:
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
     except ValueError as e:
+        _exit_settlement_display_on_failure(game)
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
+        _exit_settlement_display_on_failure(game)
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
-        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
+        # #1235：真失败另形——展示态退出（settling/awaiting 保留）。
+        _exit_settlement_display_on_failure(game)
         raise _retryable_audience_close_http(e) from None
     return {
         "state": game.state_payload(),
@@ -4078,6 +4109,8 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
     try:
+        # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
+        _accept_settlement_period(game)
         # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
         # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
         _await_audience_inflight_clear(game)
@@ -4111,17 +4144,22 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
                 pending_action_failures=failures,
             ), events)
     except ValueError as e:
+        _exit_settlement_display_on_failure(game)
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=400, detail=detail) from None
     except SettlementAbort as e:
         # 结算中止（ADR 0008 决定 6/7）：进度已保存可重试，detail 即玩家指引
         # （含错误包路径+「请发给作者」）。非 500——这是已处理的可重试态，不是服务器 bug。
+        # #1235：前半段未提交时出展示态；settling 已落则保留交恢复。
+        _exit_settlement_display_on_failure(game)
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
         raise HTTPException(status_code=409, detail=detail) from None
     except (AudienceNightError, ExceptionGroup) as e:
-        # #498 AC10 / #612：在飞超时或 close 双支 ExceptionGroup → 夜保持开、409 可原地重试。
+        # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
+        # #1235：真失败另形——展示态退出。
+        _exit_settlement_display_on_failure(game)
         raise _retryable_audience_close_http(e) from None
 
 
@@ -4144,6 +4182,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
+            _accept_settlement_period(game)
             # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
             # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
             _await_audience_inflight_clear(game)
@@ -4177,6 +4217,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     pending_action_failures=failures,
                 )))
         except ValueError as e:
+            if "game" in locals():
+                _exit_settlement_display_on_failure(game)
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
@@ -4184,6 +4226,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             )
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
+            # #1235：真失败另形——展示态退出（含 AudienceNightError / SettlementAbort）。
+            if "game" in locals():
+                _exit_settlement_display_on_failure(game)
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
