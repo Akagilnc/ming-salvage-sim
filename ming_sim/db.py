@@ -665,6 +665,41 @@ def resolve_office_type_preserving_title(
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
 
+# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
+# 代码只 clamp；软判提案落在界内原样收。比例相对 30 锚定，保证有护下界 > 无护上界。
+_GRANT_ARRIVAL_SCALE = 30
+_GRANT_ARRIVAL_BARE = (15, 18)
+_GRANT_ARRIVAL_ESCORT = (22, 25)
+_GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
+
+
+def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
+    """返回 (arrived_lo, arrived_hi)，含端点；ordered<=0 时 (0, 0)。"""
+    ordered = int(ordered_amount)
+    if ordered <= 0:
+        return (0, 0)
+    lo_n, hi_n = _GRANT_ARRIVAL_ESCORT if escorted else _GRANT_ARRIVAL_BARE
+    lo = (ordered * lo_n) // _GRANT_ARRIVAL_SCALE
+    hi = (ordered * hi_n) // _GRANT_ARRIVAL_SCALE
+    if hi < lo:
+        hi = lo
+    if hi > ordered:
+        hi = ordered
+    return (lo, hi)
+
+
+def clamp_grant_arrival_amount(
+    ordered_amount: int, proposed_arrived: object, *, escorted: bool,
+) -> int:
+    """P2：软判提案 → 代码只 clamp 到护行口径界内。"""
+    lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
+    try:
+        proposed = int(proposed_arrived)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        proposed = (lo + hi) // 2
+    return max(lo, min(hi, proposed))
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1360,6 +1395,24 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
                 ON decree_dossier_links(target_dossier_id, id);
+            -- #567 / ADR 0054+0058：被护案卷侧机械对账（逐路×回合）；非 0058 进展容器。
+            CREATE TABLE IF NOT EXISTS decree_dossier_reconciliations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                ordered_amount INTEGER NOT NULL,
+                arrived_amount INTEGER NOT NULL,
+                loss_amount INTEGER NOT NULL,
+                escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
+                escort_source_dossier_id INTEGER,
+                relation_type TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, turn),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
+                ON decree_dossier_reconciliations(dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
             CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10924,6 +10977,221 @@ class GameDB:
             )
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
+
+    def _grant_escort_presence(
+        self, dossier_id: int,
+    ) -> Tuple[bool, Optional[int], str]:
+        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
+        for link in self.list_dossier_links(int(dossier_id), direction="incoming"):
+            relation = str(link.get("relation_type") or "").strip()
+            if relation in _GRANT_ESCORT_RELATIONS:
+                return True, int(link["source_dossier_id"]), relation
+        return False, None, ""
+
+    def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
+        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE status='executing' AND action_type='grant_allocation'
+            ORDER BY id
+            """
+        ).fetchall()
+        targets: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            policy = dossier_action_policy("grant_allocation", payload)
+            if policy.get("execution_surface") != "in_transit":
+                continue
+            if self._grant_allocation_is_monthly(payload):
+                continue
+            if self._grant_allocation_is_honorific(payload):
+                continue
+            try:
+                ordered = int(payload.get("amount") or 0)
+            except (TypeError, ValueError):
+                ordered = 0
+            if ordered <= 0:
+                continue
+            dossier_id = int(row["id"])
+            escorted, source_id, relation = self._grant_escort_presence(dossier_id)
+            targets.append({
+                "dossier_id": dossier_id,
+                "ordered_amount": ordered,
+                "escorted": escorted,
+                "escort_source_dossier_id": source_id,
+                "relation_type": relation,
+                "decree_text": str(row["decree_text"] or ""),
+                "target_id": str(row["target_id"] or ""),
+            })
+        return targets
+
+    def list_dossier_reconciliations(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """被护案卷侧对账真源读缝（逐路×回合，restore 同源）。"""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM decree_dossier_reconciliations
+            WHERE dossier_id=? ORDER BY turn, id
+            """,
+            (int(dossier_id),),
+        ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "dossier_id": int(row["dossier_id"]),
+                "turn": int(row["turn"]),
+                "ordered_amount": int(row["ordered_amount"]),
+                "arrived_amount": int(row["arrived_amount"]),
+                "loss_amount": int(row["loss_amount"]),
+                "escorted": bool(row["escorted"]),
+                "escort_source_dossier_id": (
+                    int(row["escort_source_dossier_id"])
+                    if row["escort_source_dossier_id"] is not None else None
+                ),
+                "relation_type": str(row["relation_type"] or ""),
+                "note": str(row["note"] or ""),
+            }
+            for row in rows
+        ]
+
+    def list_open_grant_reconciliations(self) -> List[Dict[str, object]]:
+        """在途拨帑的最新对账快照，供 issues 软判读账打折。"""
+        snapshots: List[Dict[str, object]] = []
+        for target in self.list_monthly_grant_reconciliation_targets():
+            history = self.list_dossier_reconciliations(int(target["dossier_id"]))
+            if history:
+                latest = dict(history[-1])
+            else:
+                latest = {
+                    "dossier_id": int(target["dossier_id"]),
+                    "turn": 0,
+                    "ordered_amount": int(target["ordered_amount"]),
+                    "arrived_amount": None,
+                    "loss_amount": None,
+                    "escorted": bool(target["escorted"]),
+                    "escort_source_dossier_id": target["escort_source_dossier_id"],
+                    "relation_type": str(target["relation_type"] or ""),
+                }
+            latest["decree_text"] = target["decree_text"]
+            latest["target_id"] = target["target_id"]
+            snapshots.append(latest)
+        return snapshots
+
+    def record_monthly_grant_reconciliations(
+        self, turn: int, generated: object = None, *, commit: bool = False,
+    ) -> List[Dict[str, object]]:
+        """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
+
+        无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
+        不写 0058 进展、不二次扣库、不改原 economy_move。
+        """
+        targets = {
+            int(item["dossier_id"]): item
+            for item in self.list_monthly_grant_reconciliation_targets()
+        }
+        if not targets:
+            if generated in (None, []):
+                return []
+            # 无扫描目标却收到提案：忽略空外的噪音，保持节拍可空跑
+            if not isinstance(generated, list) or generated:
+                raise ValueError("无在途拨帑却收到对账提案")
+            return []
+
+        supplied: Dict[int, Tuple[object, str]] = {}
+        if generated is None:
+            generated = []
+        if not isinstance(generated, list):
+            raise ValueError("对账提案须为列表")
+        for item in generated:
+            if not isinstance(item, dict):
+                raise ValueError("对账提案格式无效")
+            try:
+                dossier_id = strict_int(item.get("dossier_id", 0))
+                if dossier_id <= 0:
+                    raise ValueError("not positive")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("对账提案案卷编号无效") from exc
+            if dossier_id not in targets:
+                raise ValueError(f"对账提案指向非在途拨帑案卷：{dossier_id}")
+            if dossier_id in supplied:
+                raise ValueError("对账提案存在重复案卷")
+            if "arrived_amount" in item:
+                proposed = item.get("arrived_amount")
+            elif "loss_amount" in item:
+                try:
+                    loss = int(item.get("loss_amount"))  # type: ignore[arg-type]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("对账折损值无效") from exc
+                proposed = int(targets[dossier_id]["ordered_amount"]) - loss
+            else:
+                raise ValueError("对账提案须含 arrived_amount 或 loss_amount")
+            note = str(item.get("note") or "").strip()
+            supplied[dossier_id] = (proposed, note)
+
+        reports: List[Dict[str, object]] = []
+        for dossier_id, target in targets.items():
+            ordered = int(target["ordered_amount"])
+            escorted = bool(target["escorted"])
+            if dossier_id in supplied:
+                proposed, note = supplied[dossier_id]
+                arrived = clamp_grant_arrival_amount(
+                    ordered, proposed, escorted=escorted,
+                )
+            else:
+                lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
+                arrived = (lo + hi) // 2
+                note = ""
+            loss = ordered - arrived
+            source_id = target["escort_source_dossier_id"]
+            relation = str(target["relation_type"] or "")
+            self.conn.execute(
+                """
+                INSERT INTO decree_dossier_reconciliations
+                    (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
+                     escorted, escort_source_dossier_id, relation_type, note)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    ordered_amount=excluded.ordered_amount,
+                    arrived_amount=excluded.arrived_amount,
+                    loss_amount=excluded.loss_amount,
+                    escorted=excluded.escorted,
+                    escort_source_dossier_id=excluded.escort_source_dossier_id,
+                    relation_type=excluded.relation_type,
+                    note=excluded.note
+                """,
+                (
+                    int(dossier_id), int(turn), ordered, arrived, loss,
+                    1 if escorted else 0,
+                    int(source_id) if source_id is not None else None,
+                    relation, note,
+                ),
+            )
+            history = self.list_dossier_reconciliations(int(dossier_id))
+            reports.append(history[-1])
+        if commit:
+            self._commit_dossier_write(True)
+        return reports
+
+    def merge_grant_reconciliation_into_execution_note(
+        self, dossier_id: int, *, commit: bool = True,
+    ) -> Optional[str]:
+        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
+        history = self.list_dossier_reconciliations(int(dossier_id))
+        if not history:
+            return None
+        latest = history[-1]
+        fragment = (
+            f"押解对账：应解{int(latest['ordered_amount'])}两，"
+            f"实抵{int(latest['arrived_amount'])}两"
+        )
+        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
 
     def _backfill_proposed_appointment_break_ranks(self) -> None:
         """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
