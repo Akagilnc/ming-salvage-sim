@@ -201,6 +201,16 @@ export function useAudienceChat(
                 });
               }
             },
+            onHighlights: (hl) => {
+              // #544：流完补挂——legacy 串挂清单；卷轴权威由 onEnd 重读带回
+              if (panelMatches() && hl.highlights?.length) {
+                dispatchChat({
+                  type: "highlights",
+                  chatTurnId: Number(hl.chat_turn_id || 0),
+                  highlights: hl.highlights,
+                });
+              }
+            },
             onEnd: onScrollSettled,
           },
         );

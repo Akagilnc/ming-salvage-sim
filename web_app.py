@@ -75,6 +75,10 @@ from ming_sim.session import (
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
+from ming_sim.highlight_judge import (
+    DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
+    run_highlight_judge,
+)
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
     trail_extraction_after_reply,
@@ -1570,6 +1574,7 @@ class WebGame:
         # reply while can_undo_last_chat_turn is still false (#976 hold path
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
+        minister_message_id = 0
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             if chat_turn_id:
@@ -1577,10 +1582,14 @@ class WebGame:
                 # 杜绝「回话已 commit 却未链接」孤儿（否则可见回话 chat_turn_id 0、空任务态、
                 # 无对账、无 pending、in-flight 守卫永挡召见）。worker 崩溃遗留的 running 由启动
                 # 对账终态化，不永挂 pending。
-                self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
+                minister_message_id = int(
+                    self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
+                )
             else:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
+                minister_message_id = int(
+                    self.db.append_chat_message(minister_name, turn, "minister", answer)
+                )
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -1597,6 +1606,8 @@ class WebGame:
             # 前端 setChat 不再抹掉先前浮现的读心递话。
             "history": self.chat_projection(minister_name),
             "chat_turn_id": int(chat_turn_id or 0),
+            # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
+            "minister_message_id": int(minister_message_id or 0),
             "court_action": court_action,
             "next_minister": next_minister,
             "proposed_directive": proposed_directive,
@@ -1690,9 +1701,18 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+            # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
+            answer_text = str(getattr(result, "answer", "") or "")
+            message_id = int(payload.get("minister_message_id") or 0)
+            if message_id and answer_text:
+                self._trail_highlight_judge_after_reply(
+                    answer_text,
+                    message_id=message_id,
+                    chat_turn_id=chat_turn_id,
+                )
+                payload["history"] = self.chat_projection(minister_name)
             # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
             # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
-            answer_text = str(getattr(result, "answer", "") or "")
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -1789,6 +1809,15 @@ class WebGame:
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
+            message_id = int(payload.get("minister_message_id") or 0)
+            if message_id and answer_text:
+                # #544：重试非流式同折窗封顶
+                self._trail_highlight_judge_after_reply(
+                    answer_text,
+                    message_id=message_id,
+                    chat_turn_id=chat_turn_id,
+                )
+                payload["history"] = self.chat_projection(minister_name)
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -2292,6 +2321,51 @@ class WebGame:
             if owns_pending:
                 self._complete_pending_write()
 
+    def _trail_highlight_judge_after_reply(
+        self,
+        minister_reply: str,
+        *,
+        message_id: int,
+        chat_turn_id: int = 0,
+        timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
+    ) -> List[str]:
+        """#544 / ADR 0045：回话完成后同通道高亮判官。超时/失败 → []，落库空清单。
+
+        永不抛向调用方；写库走 runtime write_gate。匹配/剥离在前端，此处只存短语。
+        """
+        mid = int(message_id or 0)
+        reply = str(minister_reply or "")
+        if mid <= 0 or not reply.strip():
+            return []
+        phrases: List[str] = []
+        try:
+            phrases = list(run_highlight_judge(
+                minister_reply=reply,
+                llm_config=getattr(self.session, "llm_config", None),
+                timeout_s=timeout_s,
+            ) or [])
+        except Exception:
+            phrases = []
+        try:
+            with self._runtime_write_gate():
+                if hasattr(self.db, "set_message_highlights"):
+                    # 撤回安全：轮已 failed/undone 时不写孤儿高亮
+                    if chat_turn_id and hasattr(self.db, "conn"):
+                        row = self.db.conn.execute(
+                            "SELECT status FROM chat_turns WHERE id=?",
+                            (int(chat_turn_id),),
+                        ).fetchone()
+                        if row is not None:
+                            status = str(
+                                row["status"] if hasattr(row, "keys") else row[0] or ""
+                            )
+                            if status in {"failed", "undone"}:
+                                return []
+                    self.db.set_message_highlights(mid, phrases)
+        except Exception:
+            return []
+        return phrases
+
     def _trail_extraction_after_reply(
         self,
         minister_name: str,
@@ -2584,9 +2658,10 @@ class WebGame:
                             return
                         raise
 
-                # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
+                # P5：先 done（回话可见），再读心/高亮补挂，最后 end——玩家无「为后处理黑屏」。
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
+                message_id = int((payload or {}).get("minister_message_id") or 0)
                 # #501：叙事抽取落账与读心并行（二者皆只依赖已完成回话，P5）——无玩家可见 SSE
                 # 事件（静默落账）。在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮
                 # pending ownership 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
@@ -2609,6 +2684,24 @@ class WebGame:
                         "type": "mindreading",
                         "payload": mind_payload,
                         "chat_turn_id": chat_turn_id,
+                    })
+                # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
+                highlights: List[str] = []
+                if message_id and answer:
+                    try:
+                        highlights = self._trail_highlight_judge_after_reply(
+                            answer,
+                            message_id=message_id,
+                            chat_turn_id=chat_turn_id,
+                        )
+                    except Exception:
+                        highlights = []
+                if highlights:
+                    ev_queue.put({
+                        "type": "highlights",
+                        "highlights": highlights,
+                        "chat_turn_id": chat_turn_id,
+                        "message_id": message_id,
                     })
                 extraction_thread.join()
                 ev_queue.put({"type": "end"})
@@ -3970,6 +4063,13 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("mindreading", {
                     "mindreading": item.get("payload"),
                     "chat_turn_id": item.get("chat_turn_id") or 0,
+                })
+            elif item_type == "highlights":
+                # #544：流完补挂高亮清单
+                yield sse_event("highlights", {
+                    "highlights": item.get("highlights") or [],
+                    "chat_turn_id": item.get("chat_turn_id") or 0,
+                    "message_id": item.get("message_id") or 0,
                 })
             elif item_type == "end":
                 yield sse_event("end", {})
