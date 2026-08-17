@@ -552,9 +552,6 @@
   position: fixed;
   right: 18px;
   bottom: 18px;
-  left: auto;
-  top: auto;
-  inset: auto;
   z-index: 40;
   display: flex;
   align-items: flex-end;
@@ -670,15 +667,6 @@
 .hud2-nav[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.settlement-spin {
-  animation: settlement-spin 1.2s linear infinite;
-  color: #ffd98a;
-}
-
-@keyframes settlement-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* 月末奏疏左上角按钮 */

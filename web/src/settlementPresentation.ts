@@ -87,8 +87,6 @@ export const FACE_GROUP: Record<SettlementFaceKey, Exclude<FaceAccess, "open">> 
   ending: "excluded",
 };
 
-export const ALL_SETTLEMENT_FACE_KEYS = Object.keys(FACE_GROUP) as SettlementFaceKey[];
-
 /** 唯一谓词：状态口 settlement_display（T1；客户端不自判 phase/busy）。 */
 export function isSettlementDisplay(turn: { settlement_display?: boolean } | null | undefined): boolean {
   return Boolean(turn?.settlement_display);
@@ -112,11 +110,6 @@ export function settlementFaceAccess(
 /** 可达 = 非 closed（must/readonly/open/present/excluded 均视为门控不挡）。 */
 export function isFaceReachable(key: SettlementFaceKey, settlementDisplay: boolean): boolean {
   return settlementFaceAccess(key, settlementDisplay) !== "closed";
-}
-
-/** 只读（核账期内保留浏览、拔写）。 */
-export function isFaceReadonly(key: SettlementFaceKey, settlementDisplay: boolean): boolean {
-  return settlementFaceAccess(key, settlementDisplay) === "readonly";
 }
 
 /** 关闭组入口的戏内理由（王承恩口吻一句）。 */

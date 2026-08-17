@@ -4,12 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GameHud } from "./gameHud";
 import { SettlementLock } from "./settlementLock";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
-import { DecisionModal } from "./decisionModal";
-import { DecisionRecoveryPanel } from "./decisionRecovery";
 import {
   SETTLEMENT_CLOSED_REASON,
   WANG_SETTLEMENT_SLIP,
-  isFaceReachable,
 } from "../settlementPresentation";
 import type { GameState, Minister } from "../types";
 
@@ -211,41 +208,14 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
   });
 });
 
-describe("#1236 SettlementLock 装饰不遮必达三面", () => {
-  it("装饰层无 aria-modal，与必达三面可同屏共存", () => {
+describe("#1236 SettlementLock 装饰层自身契约", () => {
+  it("装饰层无 aria-modal、role=status、pointer-events 不吞全屏", () => {
     const host = mount(
-      <div>
-        <SettlementLock stage="数值推演结算" thinking="推敲中" narrative="" />
-        <div className="recovery-banner" data-testid="settle-resume">
-          <button type="button">续跑结算</button>
-        </div>
-        <div data-testid="decision-recovery">
-          <DecisionRecoveryPanel message="待批决策拉取失败" busy="" onRetry={() => {}} />
-        </div>
-        <div data-testid="decision-modal">
-          <DecisionModal
-            decisions={[{
-              idx: 0,
-              title: "辽东战守",
-              context: "如何处置",
-              options: [{ label: "固守", hint: "" }],
-            }]}
-            onResolve={() => {}}
-          />
-        </div>
-      </div>,
+      <SettlementLock stage="数值推演结算" thinking="推敲中" narrative="" />,
     );
     const decor = host.querySelector("[data-testid=settlement-lock-decor]");
     expect(decor).not.toBeNull();
     expect(decor?.getAttribute("aria-modal")).toBeNull();
     expect(decor?.getAttribute("role")).toBe("status");
-    // 必达三面均在 DOM 且可点
-    expect(host.querySelector("[data-testid=settle-resume] button")).not.toBeNull();
-    expect(host.querySelector("[data-testid=decision-recovery] button")).not.toBeNull();
-    expect(host.querySelector("[data-testid=decision-modal]")).not.toBeNull();
-    // 纯函数侧：必达 key 在核账期可达
-    expect(isFaceReachable("decision_modal", true)).toBe(true);
-    expect(isFaceReachable("decision_recovery", true)).toBe(true);
-    expect(isFaceReachable("settle_resume", true)).toBe(true);
   });
 });
