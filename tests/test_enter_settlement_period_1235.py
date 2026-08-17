@@ -434,6 +434,29 @@ def test_awaiting_decision_still_emits_pending(game):
     assert db.get_month_open_snapshot(int(state.turn)) == before
 
 
+def test_accept_creator_atomic_only_one_true(game, monkeypatch):
+    """#1235 r6：双 accept 仅一 True——原子 INSERT 裁定创建者，禁后置见行假 True。
+
+    monkeypatch get 恒 None 模拟双侧预检同空（交错窗）；连调两次须 (True, False)。
+    旧后置见行路径会 (True, True) 或 IntegrityError；本测有牙。
+    """
+    from ming_sim.month_open_snapshot import accept_settlement_period
+
+    db, state, _ = game
+    turn = int(state.turn)
+    real_get = db.get_month_open_snapshot
+    monkeypatch.setattr(db, "get_month_open_snapshot", lambda _t: None)
+
+    first = accept_settlement_period(db, state)
+    second = accept_settlement_period(db, state)
+    assert (first, second) == (True, False)
+
+    # 行确实只建一次（绕过恒 None 补丁读真库）
+    assert real_get(turn) is not None
+    third = accept_settlement_period(db, state)
+    assert third is False
+
+
 # ── 5. accept 后 gate/HTTPException 拒收 → 不得留孤儿核账展示态 ──────────
 
 
