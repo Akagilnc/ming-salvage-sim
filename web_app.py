@@ -674,8 +674,8 @@ class WebGame:
         self._draining = False
         _stage("重整朝堂名册...")
         self.session.begin_turn()
-        # #1234：服务进程启动位——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
-        # settling/awaiting 不清，交既有恢复）。与 oracle / lifespan 同调具名函数。
+        # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
+        # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
         from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
         clear_orphan_month_open_snapshot(self.db, self.state)
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
@@ -2955,17 +2955,7 @@ web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继�
 _menu_generation: int = 0
 
 
-@contextlib.asynccontextmanager
-async def _app_lifespan(_app: FastAPI):
-    """#1234 启动位：与 WebGame.__init__ / oracle 同调 clear_orphan_month_open_snapshot。"""
-    g = web_game
-    if g is not None:
-        from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
-        clear_orphan_month_open_snapshot(g.db, g.state)
-    yield
-
-
-app = FastAPI(title="Ming Salvage MVP Web", lifespan=_app_lifespan)
+app = FastAPI(title="Ming Salvage MVP Web")
 
 
 def get_game() -> WebGame:

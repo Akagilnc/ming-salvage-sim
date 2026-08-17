@@ -21,10 +21,10 @@ MONTH_OPEN_KEYS = tuple(ECONOMY_ACCOUNTS) + tuple(SCORE_METRICS)
 
 
 def clear_orphan_month_open_snapshot(db: "GameDB", state: "GameState") -> bool:
-    """服务进程启动位：快照在 ∧ 相位仍常态 → 清快照并记一行日志。
+    """服务进程唯一启动缝（WebGame.__init__）：快照在 ∧ 相位仍常态 → 清快照并记一行日志。
 
     settling / awaiting_decision → 不清，交既有恢复通道。
-    幂等；lifespan 与故障注入 oracle 同调此函数（禁旁路造绿灯）。
+    幂等；故障注入 oracle 同调此函数（禁旁路造绿灯）。
     """
     turn = int(state.turn)
     snap = db.get_month_open_snapshot(turn)
