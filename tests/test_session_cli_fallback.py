@@ -143,9 +143,8 @@ def _cli_stage_secret_from_prefix(
 
 def _assert_confirmation_cue_appended(seed: str, answer: str) -> None:
     """准驳提示：只钉『回话被追加』结构（exact cue 文案由 keep 案 tracer）。"""
-    assert answer != seed
-    assert seed in answer
-    assert len(answer) > len(seed)
+    assert answer.startswith(seed)
+    assert answer[len(seed):]
 
 
 def test_draft_prefix_with_active_secret_order_runs_zero_llm(game, monkeypatch):
