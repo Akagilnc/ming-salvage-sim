@@ -1,15 +1,8 @@
 import React from "react";
 import { MinisterPortrait, cacheBust } from "./hud";
-import { stripOrganicMarkdown } from "../format";
+import { parseLeadingStageDirection, stripOrganicMarkdown } from "../format";
 import { matchHighlightPhrases, segmentHighlightedContent } from "../highlights";
 import type { AudienceScrollMessage, ChatDisplayMessage, Minister } from "../types";
-
-export function parseLeadingStageDirection(source: string): { action: string | null; content: string } {
-  const match = source.match(/^（[^（）\r\n]+）/);
-  return match
-    ? { action: match[0], content: source.slice(match[0].length) }
-    : { action: null, content: source };
-}
 
 export function portraitSources(minister: Minister, portraitPrefix = "minister_") {
   const isCustom = minister.portrait_id?.startsWith("custom:");

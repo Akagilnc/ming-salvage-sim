@@ -188,10 +188,8 @@ def test_chat_stream_done_before_highlights_and_degrade(game, monkeypatch):
     web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣", "陈辽饷。"]))
     _patch_mindreading_skip(monkeypatch)
 
-    def boom(**_k):
-        raise RuntimeError("judge down")
-
-    monkeypatch.setattr(web_app_mod, "run_highlight_judge", boom)
+    # run_highlight_judge 契约：失败/超时/坏输出只回 []、不抛（一层边界在其内部）。
+    monkeypatch.setattr(web_app_mod, "run_highlight_judge", lambda **_k: [])
 
     events = list(web_game.chat_stream(minister, "军务如何？"))
     types = [e.get("type") for e in events]

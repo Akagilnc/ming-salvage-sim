@@ -1,31 +1,36 @@
 """大臣奏对高亮判官（#544 / ADR 0045）。
 
 生成完成后的独立机器面短调用：读成品全文，输出硬格式 JSON 承重短语清单。
-超时/失败/坏输出一律静默降级为空清单——永不挡回话。不在 Python 侧重写
-markdown 剥离（剥离与匹配真源在 web/src/format.ts + 前端匹配链）。
+超时/坏输出/判官失败 → 空清单（产品面永不挡回话）；异常边界带日志，不宽吞代码 bug。
+不在 Python 侧重写 markdown 剥离（剥离与匹配真源在 web/src/format.ts + 前端匹配链）。
 """
 
 from __future__ import annotations
 
+import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from typing import Any, List, Optional
+from typing import Any, List
 
+from ming_sim.exceptions import LLMContractError, LLMUnavailable
 from ming_sim.llm_model import extract_agent_text
+
+logger = logging.getLogger(__name__)
 
 # 几秒级上限（ADR 0045：非流式折窗的封顶；超时即回话先行无高亮）
 DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S = 8.0
 
 
 def parse_highlight_judge_output(raw: str) -> List[str]:
-    """硬格式 JSON → 短语清单；任何不合规 → 空清单（静默降级，不抛）。"""
+    """硬格式 JSON → 短语清单；不合规/契约失败 → 空清单（票面授权的坏输出降级）。"""
     text = str(raw or "").strip()
     if not text:
         return []
-    try:
-        from ming_sim.agents import parse_agent_json
+    from ming_sim.agents import parse_agent_json
 
+    try:
         data = parse_agent_json(text, "高亮判官")
-    except Exception:
+    except (LLMContractError, json.JSONDecodeError, TypeError, ValueError):
         return []
     if not isinstance(data, dict):
         return []
@@ -49,7 +54,7 @@ def run_highlight_judge(
     agent: Any = None,
     timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
 ) -> List[str]:
-    """同通道短调用；超时/异常/坏输出 → []。零副作用。"""
+    """同通道短调用；超时/坏输出/判官失败 → []（一层带日志边界，零副作用）。"""
     reply = str(minister_reply or "").strip()
     if not reply:
         return []
@@ -87,7 +92,12 @@ def run_highlight_judge(
             # 不 wait 卡住调用方——超时即降级；worker 随进程回收
             future.cancel()
             return []
-        except Exception:
+        except (LLMContractError, LLMUnavailable) as exc:
+            logger.warning("highlight judge degraded (contract/unavailable): %s", exc)
+            return []
+        except Exception as exc:
+            # 判官调用失败（模型/provider）→ 产品面空清单；必须留痕，不得与合法空清单不可区分
+            logger.warning("highlight judge degraded: %s", exc, exc_info=True)
             return []
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

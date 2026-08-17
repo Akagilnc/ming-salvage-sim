@@ -492,19 +492,12 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                 continue
             content = str(row["content"] or "")
             texts.add(content.strip())
-            hl: List[str] = []
-            if role == "minister":
-                parse_hl = getattr(db, "_parse_highlights_json", None)
-                raw_hl = row["highlights_json"] if "highlights_json" in row.keys() else "[]"
-                if callable(parse_hl):
-                    hl = list(parse_hl(raw_hl))
-                else:
-                    try:
-                        parsed = json.loads(raw_hl or "[]")
-                        if isinstance(parsed, list):
-                            hl = [str(x).strip() for x in parsed if isinstance(x, str) and str(x).strip()]
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        hl = []
+            # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
+            hl: List[str] = (
+                list(db._parse_highlights_json(row["highlights_json"]))
+                if role == "minister"
+                else []
+            )
             events.append((
                 float(int(turn.get("night_seq") or 0)), 20 + rank,
                 message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,

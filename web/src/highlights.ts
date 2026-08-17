@@ -1,5 +1,4 @@
-import { stripOrganicMarkdown } from "./format";
-import { parseLeadingStageDirection } from "./components/scrollMessages";
+import { parseLeadingStageDirection, stripOrganicMarkdown } from "./format";
 
 /**
  * #544 / ADR 0045：判官短语 → 大臣气泡显示文本精确匹配。

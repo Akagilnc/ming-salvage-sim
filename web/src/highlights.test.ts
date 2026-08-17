@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseLeadingStageDirection } from "./components/scrollMessages";
-import { stripOrganicMarkdown } from "./format";
+import { parseLeadingStageDirection, stripOrganicMarkdown } from "./format";
 import {
   matchHighlightPhrases,
   ministerDisplayContent,
