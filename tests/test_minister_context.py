@@ -13,13 +13,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ming_sim.models import CourtContext, LLMConfig
+from ming_sim.models import Character, CourtContext, LLMConfig
 from ming_sim.knowledge import knowledge_row_visible_to
 from ming_sim.context import (
     character_context,
     character_context_with_db,
     minister_dossier,
-    _faction_band,
+    _FACTION_DOSSIERS,
+    _MINISTER_DOSSIERS,
     _identity_bucket,
 )
 from ming_sim.registry import (
@@ -215,8 +216,20 @@ def test_minister_memorial_tools_qualify_stop_resolve_and_fail_conditions(game):
     listing = tools["list_memorials"]()
     detail = tools["inspect_memorial"](1)
 
+    known_stop_keys = (
+        "character.杨嗣昌.ability",
+        "faction.东林.leverage",
+        "faction.东林.satisfaction",
+        "region.陕西.public_support",
+        "army.关宁军.morale",
+    )
     assert ">=" not in listing and "<=" not in listing.replace("treasury<=1000", "")
     assert "treasury<=1000" in listing
+    # known abstract fields: no raw machine path, and must not fall through unknown archive form
+    for key in known_stop_keys:
+        assert key not in listing
+        assert f"{key}条件已存档" not in listing
+    # only unlisted abstract fields use the unknown archive fallback
     assert "power.houjin.military_strength条件已存档" in listing
     assert ">= 70" not in detail and ">= 80" not in detail
     assert "结案条件：" in detail and "失败条件：" in detail
@@ -311,8 +324,11 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert secret_agenda not in high
     assert "SENTINEL_OWN_AGENDA" in high
     assert "对政局态度" in high
-    assert _faction_band("satisfaction", 0) in high
-    assert _faction_band("leverage", 0) in high
+    # independent lowest-band oracle (ordered categories; do not call production _faction_band)
+    lowest_satisfaction = ("怨气深重", "颇多不满", "态度平常", "颇为顺应", "乐于奉行")[0]
+    lowest_leverage = ("人马凋零", "朝中孤弱", "根基平常", "颇有根基", "势重可动员")[0]
+    assert lowest_satisfaction in high
+    assert lowest_leverage in high
     for label, band in axes.items():
         if label == "阴谋":
             assert band == INTRIGUE_QUALITATIVE_PLACEHOLDER
@@ -329,6 +345,10 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
     assert "SENTINEL_OWN_AGENDA" not in low
     assert identity_band(0) in low
     assert _identity_bucket(0) == "low"
+    faction_dossier = _FACTION_DOSSIERS.get(minister.faction)
+    assert faction_dossier is not None
+    assert faction_dossier["core"] not in low
+    assert faction_dossier["internal"] not in low
 
     plain = character_context(minister)
     assert plain.count(INTRIGUE_QUALITATIVE_PLACEHOLDER) == 1
@@ -337,16 +357,28 @@ def test_character_context_scopes_faction_hides_raw_scores_and_zero_buckets(game
 
 def test_minister_context_falls_back_for_character_without_dossier(game):
     db, _state, content = game
-    minister = _active_ministers(content, db, n=1)[0]
+    minister = next(
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(c.name)[0] == "active"
+        and c.name not in _MINISTER_DOSSIERS
+    )
     minister.summary = ""
     minister.style = ""
     minister.personal_skills = []
 
     rendered = character_context_with_db(minister, db)
+    dossier = minister_dossier(minister)
 
+    assert minister.name not in _MINISTER_DOSSIERS
     assert "【通用特征】" in rendered
     assert minister.office in rendered
     assert minister.office_type in rendered
+    # fallback-only identity/temperament/burden markers (absent from curated dossiers)
+    assert "未有专门 dossier" in dossier
+    assert "以官职与任事处推知其处世分寸" in dossier
+    assert "暂无可核的特别包袱" in dossier
+    assert dossier in rendered
 
 
 def test_court_brief_keeps_money_scopes_identity_and_hides_abstract_scores(game):
@@ -701,11 +733,29 @@ def test_near_minister_army_report_keeps_one_complete_qualitative_fact(game):
 
 
 def test_final_minister_context_rejects_raw_abstract_axes(game):
-    """最终 agent instructions 不泄地区/建筑/派系/势力抽象轴裸值。"""
+    """最终 agent instructions 不泄地区/建筑/派系/势力抽象轴裸值；拒全局 region/building builder。"""
     db, _state, content = game
+    region_poison = "SENTINEL_GLOBAL_REGION_BUILDER"
+    building_poison = "SENTINEL_GLOBAL_BUILDING_BUILDER"
+    # plant into rows the global builders actually surface (top danger region + buildings brief)
+    region_row = db.conn.execute(
+        "SELECT id FROM regions WHERE id='shaanxi'"
+    ).fetchone()
+    building_row = db.conn.execute(
+        "SELECT name FROM buildings WHERE name='京营火器局'"
+    ).fetchone()
+    assert region_row is not None and building_row is not None
     db.conn.execute("UPDATE regions SET public_support=29, unrest=64")
+    # keep poisoned region at top of danger_order so region_brief must carry the sentinel
+    db.conn.execute(
+        "UPDATE regions SET public_support=1, unrest=99, name=? WHERE id=?",
+        (region_poison, region_row["id"]),
+    )
     db.conn.execute("UPDATE armies SET firearm_equipment=91 WHERE owner_power='ming'")
-    db.conn.execute("UPDATE buildings SET level=4, condition=22")
+    db.conn.execute(
+        "UPDATE buildings SET level=4, condition=22, name=? WHERE name=?",
+        (building_poison, building_row["name"]),
+    )
     db.conn.execute("UPDATE factions SET satisfaction=17, leverage=83")
     db.conn.execute(
         "UPDATE powers SET leverage=19, military_strength=82, supply=67 "
@@ -715,14 +765,21 @@ def test_final_minister_context_rejects_raw_abstract_axes(game):
     db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
     db.conn.commit()
 
-    # engine rails still hold raw axes; final minister boundary must not.
+    # engine rails / global builders still surface the planted material; final boundary must not.
     assert "满意17" in db.faction_report()
     assert "威望19" in db.power_report(exclude_self=True)
+    assert region_poison in build_region_brief(_ctx(game))
+    assert building_poison in build_building_brief(_ctx(game))
+    knowledge_text = str(db.get_character_knowledge(_ctx(game).state, minister.name))
+    assert region_poison not in knowledge_text
+    assert building_poison not in knowledge_text
 
     captured = _capture_agent(game, minister)
     rendered = "\n".join(captured[minister.name]["instructions"])
     assert "court：" in rendered
     assert not _RAW_ABSTRACT_AXIS.search(rendered)
+    assert region_poison not in rendered
+    assert building_poison not in rendered
     assert power_band(19) in rendered or power_band(82) in rendered or power_band(67) in rendered
 
 
@@ -822,19 +879,48 @@ def test_scale_fallback_court_roster_uses_complete_structured_query(game):
 
 
 def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorization(game):
-    """无 personnel 域角色不得经 roster 工具吐出他署 poison 行。"""
+    """全局 roster>100 不能给无 personnel 域角色触发 scale gate；强制工具仍拒他署 poison。"""
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "工部")
+    # seed global court membership past the scale threshold; keep 工部 authorized slice small
+    base_roster = db.current_court_roster_rows(state)
+    assert len(base_roster) <= 100
+    need = 101 - len(base_roster)
+    for i in range(need):
+        db.add_character(
+            state,
+            Character(
+                name=f"SENTINEL_SCALE_ROSTER_{i:03d}",
+                office="听用",
+                office_type="待铨",
+                faction="中立",
+                aliases=[],
+                personal_skills=[],
+                loyalty=50,
+                ability=50,
+                integrity=50,
+                courage=50,
+                style="scale-seed",
+                power_id="ming",
+                status="active",
+            ),
+            source="test-scale-roster",
+            commit=False,
+        )
+    db.conn.commit()
+    complete_roster = db.current_court_roster_rows(state)
+    assert len(complete_roster) > 100
+
     poison = next(
-        row for row in db.current_court_roster_rows(state)
+        row for row in complete_roster
         if row["office_type"] != minister.office_type
     )
     same_role = next(
-        row for row in db.current_court_roster_rows(state)
+        row for row in complete_roster
         if row["office_type"] == minister.office_type
     )
     event_visible = next(
-        row for row in db.current_court_roster_rows(state)
+        row for row in complete_roster
         if row["office_type"] != minister.office_type and row["name"] != poison["name"]
     )
     db.register_character_knowledge_source(
@@ -847,7 +933,10 @@ def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorizat
     )
 
     captured = _capture_agent(game, minister)
+    # gate reads authorized slice, not global backing set — still no roster tool
     assert "query_court_roster" not in {tool.__name__ for tool in captured[minister.name]["tools"]}
+    instructions = "\n".join(captured[minister.name]["instructions"])
+    assert poison["name"] not in instructions
 
     forced_tools = {
         tool.__name__: tool
