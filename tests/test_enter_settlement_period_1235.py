@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from types import SimpleNamespace
 
@@ -182,6 +183,16 @@ def test_advance_with_unextracted_reply_accepts_and_continues(web_game, monkeypa
     nid, _ctid = _open_night_with_unextracted_reply(game, minister)
     assert game.db.get_month_open_snapshot(turn_before) is None
 
+    # 观测：close 前点即入已 capture 点击前四键（可证时序，非恒真 sanity）
+    saw_capture = {}
+    real_close = web_app._auto_close_open_night_gate_free
+
+    def _close_observing(g, **kw):
+        saw_capture["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
+        return real_close(g, **kw)
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_observing)
+
     async def go():
         async with _client() as client:
             return await client.post("/api/decree/advance_without_edict")
@@ -194,8 +205,7 @@ def test_advance_with_unextracted_reply_accepts_and_continues(web_game, monkeypa
     assert an.get_night(game.db, nid)["status"] == an.NIGHT_STATUS_CLOSED
     assert game.db.get_month_open_snapshot(turn_before) is None
     assert body["state"]["turn"]["settlement_display"] is False
-    # 点击前四键曾被 capture（推进后活值可能变，但不得因 409 打回）
-    assert before  # sanity
+    assert saw_capture.get("snap") == before
 
 
 def test_issue_with_unextracted_reply_accepts_and_continues(web_game, monkeypatch):
@@ -422,3 +432,53 @@ def test_awaiting_decision_still_emits_pending(game):
     from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     assert exit_settlement_display_on_failure(db, state) is False
     assert db.get_month_open_snapshot(int(state.turn)) == before
+
+
+# ── 5. accept 后 gate/HTTPException 拒收 → 不得留孤儿核账展示态 ──────────
+
+
+def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
+    """#1235 r1 D：退朝 accept 后 _serialized_web_write 抢锁 409 → 出展示态。
+
+    HTTPException 非 ValueError 子类；须经 settled_ok 失败臂收口，禁孤儿快照。
+    """
+    from fastapi import HTTPException
+
+    game = web_game
+    before = _click_before(game.state)
+    turn = int(game.state.turn)
+    saw = {}
+
+    @contextlib.contextmanager
+    def _gate_busy(g):
+        # accept 已落：此处快照必在且 = 点击前四键
+        saw["snap"] = g.db.get_month_open_snapshot(int(g.state.turn))
+        raise HTTPException(
+            status_code=409,
+            detail="月末结算或上一步写入进行中，请稍候再操作。",
+        )
+        yield  # pragma: no cover — raise 后不可达；保 CM 形
+
+    monkeypatch.setattr(web_app, "_serialized_web_write", _gate_busy)
+    # 跳过 await/close 噪声，直达 gate 缝
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
+
+    async def go():
+        async with _client() as client:
+            return await client.post("/api/decree/advance_without_edict")
+
+    resp = asyncio.run(go())
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+    assert "请稍候" in text or "进行中" in text
+    # 点即入曾发生
+    assert saw.get("snap") == before
+    # 拒收后不得留孤儿核账展示态
+    assert game.db.get_month_open_snapshot(turn) is None
+    assert game.state_payload()["turn"]["settlement_display"] is False
+    # 相位仍常态（非 settling/awaiting）——AC3 路径未误触
+    assert game.state.turn_phase not in (
+        TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
+    )
