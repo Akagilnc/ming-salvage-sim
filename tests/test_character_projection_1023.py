@@ -3,23 +3,19 @@
 from ming_sim.agents import build_simulator_context
 from ming_sim.context import character_context
 from ming_sim.simulation import build_simulator_payload
+from tests.conftest import (
+    CHARACTER_AXIS_SENTINEL,
+    active_ming_character,
+    plant_character_axis_sentinels,
+)
 
 
 def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game):
     db, state, content = game
-    character_name = db.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND power_id='ming' "
-        "AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid LIMIT 1"
-    ).fetchone()["name"]
+    character_name = active_ming_character(db, content)
     character = content.characters[character_name]
     army = db.conn.execute("SELECT name, manpower FROM armies ORDER BY id LIMIT 1").fetchone()
-    sentinel = {"loyalty": 17, "ability": 37, "integrity": 57, "courage": 77, "identity": 97}
-    db.conn.execute(
-        "UPDATE characters SET loyalty=?,ability=?,integrity=?,courage=?,identity=? WHERE name=?",
-        (*sentinel.values(), character.name),
-    )
-    for field, value in sentinel.items():
-        setattr(character, field, value)
+    plant_character_axis_sentinels(db, content, character.name)
 
     payload = build_simulator_payload(state, db, "", "")
     rendered = build_simulator_context(payload)
@@ -52,7 +48,10 @@ def test_simulator_context_projects_character_axes_but_keeps_world_numbers(game)
     assert not {"loyalty", "ability", "integrity", "courage", "identity"} & set(
         columns
     )
-    assert not any(str(value) in "\t".join(str(item) for item in row.values()) for value in sentinel.values())
+    assert not any(
+        str(value) in "\t".join(str(item) for item in row.values())
+        for value in CHARACTER_AXIS_SENTINEL.values()
+    )
     assert f'"year": {state.year}' in rendered
     assert f'"period": {state.period}' in rendered
     assert str(army["manpower"]) in rendered
