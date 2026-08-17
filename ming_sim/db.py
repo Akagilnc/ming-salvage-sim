@@ -12898,9 +12898,13 @@ class GameDB:
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
         # #620 扩展面：分段里程碑（#520 本体字段语义不动）
-        from ming_sim.staged_commitment import normalize_commitment_stages
-        stages_norm = normalize_commitment_stages(
-            payload.get("stages") or payload.get("stages_json")
+        from ming_sim.staged_commitment import capture_commitment_stages
+        stages_norm = capture_commitment_stages(
+            payload.get("stages") or payload.get("stages_json"),
+            narrative_text=str(
+                payload.get("text") or row.get("decree_text") or title or ""
+            ),
+            origin_turn=int(getattr(state, "turn", 0) or 0),
         )
         if stages_norm:
             ni["stages"] = stages_norm
@@ -15391,12 +15395,8 @@ class GameDB:
         participant_roster = self._normalize_participant_roster(participants)
         participant_names = [item["character_id"] for item in participant_roster]
         from ming_sim.staged_commitment import stages_to_json
-        if isinstance(stages_json, str):
-            stages_blob = stages_to_json(stages_json)
-        elif stages_json is None:
-            stages_blob = "[]"
-        else:
-            stages_blob = stages_to_json(stages_json)
+        # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
+        stages_blob = stages_to_json([] if stages_json is None else stages_json)
         cur = self.conn.execute(
             """
             INSERT INTO issues (
