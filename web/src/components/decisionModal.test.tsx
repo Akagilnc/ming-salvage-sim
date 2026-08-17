@@ -15,6 +15,7 @@ import type { PendingDecision } from "../types";
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
+const BASE_CSS = readFileSync(`${process.cwd()}/src/styles/base.css`, "utf8");
 const DECISION_CSS = readFileSync(`${process.cwd()}/src/styles/decision.css`, "utf8");
 
 function injectDecisionCss() {
@@ -373,7 +374,13 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     const page = document.querySelector(".decision-page");
     expect(page).not.toBeNull();
     // Component fixture outerHTML + real Chromium layout (not a hand-built estimator).
-    const measured = await measureConfirmBottomAtViewport(page!.outerHTML, DECISION_CSS, 1440, 900);
+    // App cascade order (styles.css): base.css first, then decision.css — minimal faithful bundle.
+    const measured = await measureConfirmBottomAtViewport(
+      page!.outerHTML,
+      BASE_CSS + "\n" + DECISION_CSS,
+      1440,
+      900,
+    );
     expect(measured.viewportWidth).toBe(1440);
     expect(measured.viewportHeight).toBe(900);
     expect(measured.bottom).toBeLessThanOrEqual(900);
