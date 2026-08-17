@@ -2404,7 +2404,6 @@ def test_session_manual_directive_keeps_structured_action_at_submission(
             api_key="", base_url="http://unused", model="unused", channel="api",
         ),
         content=content,
-        verify_llm=False,
     )
     try:
         directive = session.add_directive(

@@ -209,7 +209,6 @@ def test_fresh_gamesession_start_makes_no_backend_calls(tmp_path, monkeypatch):
         db_path=str(tmp_path / "start.db"),
         llm_config=_cli_cfg(),
         content=content,
-        verify_llm=False,
     )
     try:
         sess.begin_turn()
