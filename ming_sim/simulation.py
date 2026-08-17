@@ -515,9 +515,14 @@ def build_simulator_payload(
     for row in db.conn.execute(
         # roster scope：大明、非后宫、非宗藩（宗室就藩非朝堂命官，PR#121；web visible_in_court
         # 已挡、simulator 在朝盘面须同步否则裁判仍把宗藩当可任命官/幻觉任命，cmr R3 cross-section）。
-        "SELECT name,office,office_type,faction,status,power_id,location,transit_to,"
-        "loyalty,ability,integrity,courage,identity FROM characters WHERE status='active' "
-        "AND power_id='ming' AND office_type NOT IN ('后宫','宗藩') ORDER BY rowid"
+        # #613：任别进盘面简报（character_offices；缺档按真除）。
+        "SELECT c.name,c.office,c.office_type,c.faction,c.status,c.power_id,c.location,"
+        "c.transit_to,c.loyalty,c.ability,c.integrity,c.courage,c.identity,"
+        "COALESCE(co.appointment_tenure, '真除') AS appointment_tenure "
+        "FROM characters c "
+        "LEFT JOIN character_offices co ON co.character_name=c.name "
+        "WHERE c.status='active' AND c.power_id='ming' "
+        "AND c.office_type NOT IN ('后宫','宗藩') ORDER BY c.rowid"
     ).fetchall():
         raw = dict(row)
         raw.update(qualitative_character_axes(SimpleNamespace(**raw)))
@@ -882,8 +887,18 @@ def build_extractor_shared_context(
         if decree_dossiers is not None
         else db.list_decree_dossiers_for_simulation(state.turn)
     )
-    slim["decree_dossiers"] = [
-        {
+    # #613：执行格读端字段随案卷进 extractor；优先沿用推演装配已写字段，缺则现场补投影。
+    from ming_sim.decree import execution_side_read_fields
+
+    slim_dossiers: List[Dict[str, object]] = []
+    side_keys = (
+        "appointment_tenure", "held_authorities", "authorization_ids",
+        "command_power_rank", "distortion_weight",
+    )
+    for row in authorized_dossiers:
+        if row["action_type"] == "secret_order":
+            continue
+        entry: Dict[str, object] = {
             "id": int(row["id"]),
             "origin_ref": f"dossier:{int(row['id'])}",
             "action_type": str(row["action_type"]),
@@ -892,9 +907,15 @@ def build_extractor_shared_context(
             "due_turn": int(row.get("due_turn") or 0),
             "participant_roster": list(row.get("participant_roster") or []),
         }
-        for row in authorized_dossiers
-        if row["action_type"] != "secret_order"
-    ]
+        if all(key in row for key in side_keys):
+            for key in side_keys:
+                entry[key] = row[key]
+        else:
+            # Need full dossier shape for projection (executor/roster/target).
+            full = db.get_decree_dossier(int(row["id"])) or row
+            entry.update(execution_side_read_fields(db, state, full))
+        slim_dossiers.append(entry)
+    slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":
         slim["secret_orders"] = compat["secret_orders"]
         # #566/#883: monthly briefs travel only on the authorized secret rail.
