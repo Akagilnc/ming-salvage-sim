@@ -622,7 +622,6 @@ def test_auto_close_fallback_body_no_night_hardcode(game):
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
     """真实 WebGame（离线 LLM）——验证生产 _start_chat_turn 接线。"""
-    import ming_sim.session as session_mod
     import web_app
 
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
@@ -630,8 +629,6 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
-    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     game = web_app.WebGame(fresh=False)
     # e2e seam 注入确定性假 scene LLM；测试绝不访问真实模型。
     game.session._beat_generator = _echo_generator

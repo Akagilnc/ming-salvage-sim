@@ -45,7 +45,7 @@ def main() -> None:
         os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
     )
-    sess = GameSession(DB, llm, content=content, verify_llm=True)
+    sess = GameSession(DB, llm, content=content)
     sess.begin_turn()
     # 强制把 #1 推到瞒报态
     sess.db.update_secret_order_progress(1, WITHHELD)

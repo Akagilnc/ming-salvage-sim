@@ -22,7 +22,6 @@ from fastapi import HTTPException
 import ming_sim.issues as issues_mod
 import web_app
 from ming_sim import audience_night as an
-from ming_sim import session as session_mod
 from ming_sim.audience_night import attach_chat_turn_to_night
 from ming_sim.db import GameDB
 from ming_sim.session import ChatTurnResult
@@ -487,14 +486,12 @@ def test_reconcile_marks_questionless_orphan_failed(restore_env):
 
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB/saves、离线 LLM）——仅 verify_llm 与 runtime 配置中和。"""
+    """真实 WebGame（新档、temp DB/saves）；构造即不连 LLM，仅 runtime 配置中和。"""
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
-    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     game = web_app.WebGame(fresh=False)
     yield game
     try:
