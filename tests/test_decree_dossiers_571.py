@@ -2366,7 +2366,9 @@ def test_promoted_held_dossier_exposes_only_current_verdict_to_simulator(
         decree_mod.resolve_directives(
             state, db, None, None, [object()], "留中重判", content=content,
         )
-    assert seen["settlement_verdict"] == "promulgated"
+    # #569 B: settlement_verdict is admission-only; projection exposes 颁布格定性.
+    assert seen["decision"] == "顺颁"
+    assert "settlement_verdict" not in seen
     assert "promulgation_decision" not in seen
 
 

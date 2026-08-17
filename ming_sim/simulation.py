@@ -442,6 +442,27 @@ def _build_transit_nudge(db: "GameDB", state: "GameState") -> List[Dict[str, obj
     return result
 
 
+def project_monthly_progress_for_simulator(db: GameDB) -> List[Dict[str, object]]:
+    """#569 A1: public-safe monthly progress from the #566 true source.
+
+    Only dossier_id / turn / progress_band (and optional non-secret title_summary).
+    Never memorial_text, secret body/title, or undisclosed order prose.
+    """
+    out: List[Dict[str, object]] = []
+    for nudge in db.list_monthly_dossier_progress_nudges():
+        dossier_id = int(nudge["dossier_id"])
+        # title from secret payload is private — do not project as title_summary.
+        for item in nudge.get("progress") or []:
+            if not isinstance(item, dict):
+                continue
+            out.append({
+                "dossier_id": dossier_id,
+                "turn": int(item.get("turn") or 0),
+                "progress_band": str(item.get("progress_band") or "").strip(),
+            })
+    return out
+
+
 def build_simulator_payload(
     state: GameState,
     db: GameDB,
@@ -532,6 +553,11 @@ def build_simulator_payload(
         # ADR 0051/0055: structured dossier rows are the source; decree_text is
         # only a compatibility rendering derived by the settlement caller.
         "decree_dossiers": decree_dossiers or [],
+        # #569 A1: same-batch public-safe progress; private memorial stays on
+        # personnel_secret monthly_dossier_reports (#566).
+        "monthly_progress": project_monthly_progress_for_simulator(db),
+        # #569 D / #567 slot: empty until S12 wires reconciliation reads.
+        "reconciliation_inputs": [],
         "current_state": dict(state.metrics),
         "treasury_brief": db.treasury_report(state),
         "factions_brief": db.faction_report(),
