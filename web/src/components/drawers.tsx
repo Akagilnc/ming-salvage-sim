@@ -66,14 +66,17 @@ export function MinisterCardList({
       const next: Record<string, { px: number; py: number }> = {};
       const usedSlots = new Set<string>();
 
+      // 固定槽：同 role 仅首名占座，次名起留给下方自由槽分配（ADR 0064 同衔并存合法，呈现层去叠）
       list.forEach((m) => {
         const role = roleFromOffice(m.office || "");
         const fixed = fixedSlotFor(role);
-        if (fixed) {
-          next[m.name] = fixed;
-          const fs = FIXED_SLOTS.find((f) => f.role === role);
-          if (fs) usedSlots.add(`${fs.side}:${fs.slot}`);
-        }
+        if (!fixed) return;
+        const fs = FIXED_SLOTS.find((f) => f.role === role);
+        if (!fs) return;
+        const key = `${fs.side}:${fs.slot}`;
+        if (usedSlots.has(key)) return; // 次名起降级自由槽
+        next[m.name] = fixed;
+        usedSlots.add(key);
       });
 
       list.forEach((m) => {
@@ -146,9 +149,11 @@ export function MinisterCardList({
         setPositions((prev) => {
           const cur = prev[dragName];
           if (!cur) return prev;
-          // 固定官职（首辅/六部尚书等）不参与自由排位：拖完弹回固定席位
+          // 固定官职：固定槽空着才弹回；已被他人占用则降级自由吸附（避免拖完与同衔复叠）
           const dragMinister = list.find((m) => m.name === dragName);
-          const fixed = dragMinister ? fixedSlotFor(roleFromOffice(dragMinister.office || "")) : null;
+          const role = dragMinister ? roleFromOffice(dragMinister.office || "") : "";
+          const fs = role ? FIXED_SLOTS.find((f) => f.role === role) : undefined;
+          const fixedKey = fs ? `${fs.side}:${fs.slot}` : "";
           // 已占槽位（其他大臣按各自当前位置归入最近槽）
           const allSlots = courtSlots();
           const occupied = new Set<string>();
@@ -162,6 +167,7 @@ export function MinisterCardList({
             }
             if (bestKey) occupied.add(bestKey);
           });
+          const fixed = fixedKey && !occupied.has(fixedKey) ? fixedSlotFor(role) : null;
           // 找吸附目标
           const snapped = fixed ?? snapToSlot(cur.px, cur.py, occupied, "");
           const next = { ...prev, [dragName]: snapped };
