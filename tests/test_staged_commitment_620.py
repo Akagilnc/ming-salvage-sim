@@ -293,6 +293,33 @@ def test_stages_to_json_invalid_string_refuses_loudly():
         stages_to_json('[{"due_turn":0,"criterion_text":"x"}]')
 
 
+def test_capture_explicit_json_ish_garbage_stages_string_refuses_loudly():
+    """负向：显式 stages 字符串 JSON-ish 坏形 → ValueError，勿静默 []。"""
+    with pytest.raises(ValueError, match="JSON 数组|有效段"):
+        capture_commitment_stages('{"stage_idx":0}', origin_turn=1)
+    with pytest.raises(ValueError, match="有效段"):
+        capture_commitment_stages(
+            '[{"due_turn":0,"criterion_text":"x"}]',
+            origin_turn=1,
+        )
+    with pytest.raises(ValueError, match="JSON 数组字符串|解析失败"):
+        capture_commitment_stages("[{not-json", origin_turn=1)
+    # 合法 JSON 段仍可捕获
+    ok = capture_commitment_stages(
+        json.dumps([
+            {
+                "stage_idx": 0,
+                "due_turn": 40,
+                "criterion_text": "火器见眉目",
+                "origin_context": "三年火器见眉目",
+            }
+        ], ensure_ascii=False),
+        origin_turn=1,
+    )
+    assert len(ok) == 1
+    assert ok[0]["criterion_text"] == "火器见眉目"
+
+
 def test_insert_issue_invalid_stages_string_refuses(game):
     db, state, content = game
     origin = _promulgated_origin(db, state, "bad-stages")
@@ -471,7 +498,7 @@ def test_multi_stage_due_settlement_stays_out_of_awaiting_decision(game):
 
 
 def test_staged_commitment_skips_form3_one_shot_due_channel(game):
-    """闸类负向：段派生 end_turn 不进 form③ due_commitment（避免 DECISION 停轮通道）。"""
+    """闸类负向：分段不落派生 end_turn、不进 form③ due_commitment（避免 DECISION 停轮通道）。"""
     from ming_sim.simulation import build_simulator_payload
 
     db, state, content = game
@@ -487,9 +514,9 @@ def test_staged_commitment_skips_form3_one_shot_due_channel(game):
         },
     ]
     issue_id = _insert_staged_commitment(db, state, content, stages=stages)
-    # 段派生 end_turn == max due → 跳过 form③
+    # 派生 end_turn 不落 DB（仅 stages 承载段到期）
     row = _issue_row(db, issue_id)
-    assert int(row["end_turn"]) == state.turn
+    assert int(row["end_turn"] or 0) == 0
     payload = build_simulator_payload(state, db, "", "")
     due = [
         item
@@ -500,6 +527,131 @@ def test_staged_commitment_skips_form3_one_shot_due_channel(game):
     assert due == []
     write_due_staged_commitment_todos(db, state)
     assert db.list_next_audience_todos()
+
+
+def test_last_stage_due_with_ongoing_does_not_mechanical_expire(game):
+    """验收：多段+ongoing 末段到期 settle → issue 仍 active + 末段 todo 已写 + 无 expire。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    stage0_due = state.turn + 1
+    stage1_due = state.turn + 2
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": stage0_due,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": stage1_due,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    origin = _promulgated_origin(db, state, "staged-ongoing")
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": origin,
+                    "kind": "initiative",
+                    "title": "分段+ongoing",
+                    "stage_text": "三年火器见眉目，五年新历成。",
+                    "commitment_kind": "until_stop",
+                    "ongoing_effects": {
+                        "economy": [
+                            {
+                                "account": "国库",
+                                "delta": -5,
+                                "reason": "分段在办",
+                                "purpose": "补饷",
+                            }
+                        ]
+                    },
+                    "stages": stages,
+                }
+            ]
+        },
+        content=content,
+    )
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is False, created
+    issue_id = int(created["issue_id"])
+    assert int(_issue_row(db, issue_id)["end_turn"] or 0) == 0
+
+    _settle_empty_month(db, state, content)  # 未到期
+    _settle_empty_month(db, state, content)  # 段0
+    _settle_empty_month(db, state, content)  # 段1 末段到期
+
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    advances = db.conn.execute(
+        "SELECT trigger_kind FROM issue_advances WHERE issue_id=? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    assert "expire" not in {a["trigger_kind"] for a in advances}
+    todos = db.list_next_audience_todos(status="pending")
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in todos} == {
+        (issue_id, 0),
+        (issue_id, 1),
+    }
+
+
+def test_residual_stage_derived_end_turn_does_not_expire(game):
+    """残存段派生 end_turn（=max due）+ ongoing：expire 路径仍排除，独立 end_turn 不受影响。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    due = state.turn + 1
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": due,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": due,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    origin = _promulgated_origin(db, state, "residual-derived")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="残存派生 end_turn",
+        origin_kind="decree",
+        origin_ref=origin,
+        commitment_kind="until_stop",
+        end_turn=due,  # 故意写入段派生形状
+        ongoing_effects={
+            "economy": [
+                {"account": "国库", "delta": -5, "reason": "残存", "purpose": "补饷"}
+            ]
+        },
+        stages_json=stages,
+    )
+    _settle_empty_month(db, state, content)  # 到期回合
+    row = _issue_row(db, issue_id)
+    assert row["status"] == "active"
+    advances = db.conn.execute(
+        "SELECT trigger_kind FROM issue_advances WHERE issue_id=?",
+        (issue_id,),
+    ).fetchall()
+    assert "expire" not in {a["trigger_kind"] for a in advances}
 
 
 def test_independent_end_turn_not_swallowed_when_stages_present(game):
