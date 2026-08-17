@@ -1,6 +1,9 @@
 """#393 / cmr Gate2 F-B：召对流式 prologue 在「已建 chat_turn」之后写途中崩溃，必须失败该轮
-（fail_chat_turn）并释放写门——否则留下 active 且无大臣回复的孤儿轮，_audience_turn_in_flight
-会永久挡住该大臣。"""
+（fail_chat_turn）并释放写路径——否则留下 active 且无大臣回复的孤儿轮，后续召对/drain 永久卡住。
+
+#1185: observe public fail/error events + serial write-path availability (drain /
+_serialized_web_write), not private _write_gate.locked() / _pending_writes_count pins.
+"""
 from __future__ import annotations
 
 import threading
@@ -10,14 +13,32 @@ import pytest
 
 import web_app
 
-# #542 scene lifecycle seams — production chat_stream fail/cleanup call these.
-_SCENE_STUBS = dict(
-    start_chat_turn_scene=lambda *_a, **_k: None,
-    start_chat_turn_exit_scene=lambda *_a, **_k: None,
-    join_chat_turn_scene=lambda *_a, **_k: [],
-    persist_chat_turn_scene=lambda *_a, **_k: None,
-    abandon_chat_turn_scene=lambda *_a, **_k: None,
-)
+
+def _assert_write_path_free(runtime, *, timeout: float = 1.0) -> None:
+    """After failpath cleanup, a subsequent gated write and drain must not block."""
+    entered = threading.Event()
+
+    def _try_serialized_write() -> None:
+        with web_app._serialized_web_write(runtime):
+            entered.set()
+
+    t = threading.Thread(target=_try_serialized_write, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    assert entered.is_set() and not t.is_alive(), "serialized write path still blocked"
+
+    drained = threading.Event()
+    # drain closes session; stub close so the probe only checks gate/counter release
+    runtime.session.close = lambda: None
+
+    def _try_drain() -> None:
+        web_app._drain_and_close_session(runtime)
+        drained.set()
+
+    td = threading.Thread(target=_try_drain, daemon=True)
+    td.start()
+    td.join(timeout=timeout)
+    assert drained.is_set() and not td.is_alive(), "drain still blocked (pending write leak)"
 
 
 class _FailingPrologueDB:
@@ -52,85 +73,99 @@ class _FailingPrologueDB:
         return 0
 
 
-def _runtime_with_failing_prologue():
-    db = _FailingPrologueDB()
+def _base_runtime(db):
     character = SimpleNamespace(name="测试大臣")
     state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
-        **_SCENE_STUBS,
+        close=lambda: None,
+        abandon_chat_turn_scene=lambda *_a, **_k: None,
     )
     runtime.chat_history = {character.name: []}
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
     runtime._start_chat_turn = lambda name: (7, {})
-    return runtime, db, character.name
+    return runtime, character.name
 
 
 def test_prologue_failure_fails_orphan_turn_and_releases_gate():
-    runtime, db, minister = _runtime_with_failing_prologue()
+    db = _FailingPrologueDB()
+    runtime, minister = _base_runtime(db)
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)  # prologue 在 append_chat_message 崩 → 重新抛出
     # 孤儿轮被失败掉（不留 active 无回复轮挡住该大臣）
     assert db.failed_turns == [7]
-    # 写门已释放（未泄漏 → 后续结算/召对不会被永久挡）
-    assert not runtime._write_gate.locked()
+    # 写路径已释放：后续串行写与 drain 不阻塞
+    _assert_write_path_free(runtime)
 
 
 def test_prologue_finally_does_not_release_foreign_gate_holder():
-    """#542 r6g: cleanup 的 with write_gate 退出后、finally 前另一写者取得 gate，
-    本线程不得因 locked() 误放他人锁（threading.Lock.locked() 不记 owner）。"""
-    runtime, db, minister = _runtime_with_failing_prologue()
-    gate = runtime._write_gate
-    other_acquired = threading.Event()
-    allow_other_release = threading.Event()
-    other_release_ok: list[bool] = []
+    """#542 r6g: cleanup 的 with write_gate 退出后、finally 前另一写者经
+    `_serialized_web_write` 取得写路径；本线程不得误放致外来写者互斥被破坏，
+    且外来写者须能自行完成写并退出临界区。"""
+    db = _FailingPrologueDB()
+    runtime, minister = _base_runtime(db)
+    other_entered = threading.Event()
+    allow_other_exit = threading.Event()
+    other_completed_ok: list[bool] = []
+    other_thread_holder: list[threading.Thread] = []
 
-    def other_writer():
-        gate.acquire()
-        other_acquired.set()
-        # Hold across the buggy finally; only then attempt our own release.
-        assert allow_other_release.wait(timeout=2.0)
+    def other_writer() -> None:
         try:
-            gate.release()
-            other_release_ok.append(True)
-        except RuntimeError:
-            other_release_ok.append(False)
+            with web_app._serialized_web_write(runtime):
+                other_entered.set()
+                assert allow_other_exit.wait(timeout=2.0)
+            other_completed_ok.append(True)
+        except Exception:
+            other_completed_ok.append(False)
 
-    other = threading.Thread(target=other_writer, name="foreign-gate-holder")
     original_complete = runtime._complete_pending_write
 
-    def complete_then_hand_gate_to_other():
+    def complete_then_hand_path_to_other() -> None:
         # Runs after cleanup `with write_gate` exited and released, before finally.
         original_complete()
+        other = threading.Thread(target=other_writer, name="foreign-serialized-holder")
+        other_thread_holder.append(other)
         other.start()
-        assert other_acquired.wait(timeout=2.0), "foreign writer did not acquire gate"
+        assert other_entered.wait(timeout=2.0), (
+            "foreign writer did not enter _serialized_web_write"
+        )
 
-    runtime._complete_pending_write = complete_then_hand_gate_to_other
+    runtime._complete_pending_write = complete_then_hand_path_to_other
 
     gen = runtime.chat_stream(minister, "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
     assert db.failed_turns == [7]
-    # Foreign holder must still own the gate after prologue finally.
-    assert gate.locked(), "foreign holder's gate was released by prologue finally"
-    allow_other_release.set()
-    other.join(timeout=2.0)
-    assert not other.is_alive()
-    assert other_release_ok == [True], "foreign holder could not release its own gate"
-    assert not gate.locked()
+    # Foreign holder must still own the serialized write path after prologue finally.
+    assert other_entered.is_set()
+    assert other_completed_ok == [], (
+        "foreign holder's critical section was broken by prologue finally"
+    )
+    allow_other_exit.set()
+    assert other_thread_holder, "foreign writer thread was not started"
+    other_thread_holder[0].join(timeout=2.0)
+    assert not other_thread_holder[0].is_alive()
+    assert other_completed_ok == [True], (
+        "foreign holder could not complete its own serialized write"
+    )
+    # After foreign holder exits, write path must be free for subsequent writers/drain.
+    _assert_write_path_free(runtime)
 
 
 class _DoubleFailDB:
     """prologue fails AND cleanup (fail_chat_turn) also fails — tests that
-    write_gate + _pending_writes_count are still released (R3 self-check)."""
+    write path + pending ownership are still released (R3 self-check)."""
 
     def create_chat_turn(self, *a, **k):
         return 7
@@ -162,32 +197,15 @@ class _DoubleFailDB:
 
 def test_prologue_cleanup_failure_still_releases_gate_and_counter():
     """R3 self-check: prologue 崩 → _fail_chat_turn_and_reload 自身也崩（DB 已坏）→
-    write_gate 和 _pending_writes_count 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
+    写路径与 pending ownership 仍须释放，否则 drain 永久挂起、所有写入被永久挡。"""
     db = _DoubleFailDB()
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime.session = SimpleNamespace(
-        temporary_characters=set(),
-        content=SimpleNamespace(characters={character.name: character}),
-        state=state,
-        db=db,
-        **_SCENE_STUBS,
-    )
-    runtime.chat_history = {character.name: []}
-    runtime._persistent_chat_minister = lambda name: True
-    runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name: (7, {})
+    runtime, minister = _base_runtime(db)
 
-    gen = runtime.chat_stream(character.name, "辽东军情如何？")
+    gen = runtime.chat_stream(minister, "辽东军情如何？")
     with pytest.raises(RuntimeError):
         next(gen)
 
-    assert not runtime._write_gate.locked()
-    assert runtime._pending_writes_count == 0
+    _assert_write_path_free(runtime)
 
 
 class _StreamCrashAgent:
@@ -232,38 +250,20 @@ class _WorkerPathDB:
 
 def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
     """R3 self-check: worker 内 _chat_stream_payload 崩 → _fail_chat_turn_and_reload 自身也崩 →
-    仍须推 error 事件给消费者（否则 generator 永久挂死）、释放 write_gate + _pending_writes_count。"""
+    仍须推 error 事件给消费者（否则 generator 永久挂死）、释放写路径 + pending ownership。"""
     db = _WorkerPathDB()
-    character = SimpleNamespace(name="测试大臣")
-    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    runtime, minister = _base_runtime(db)
     agent = _StreamCrashAgent()
-    runtime = object.__new__(web_app.WebGame)
-    runtime._write_gate = threading.Lock()
-    runtime._drain_cond = threading.Condition()
-    runtime._pending_writes_count = 0
-    runtime.session = SimpleNamespace(
-        temporary_characters=set(),
-        content=SimpleNamespace(characters={character.name: character}),
-        state=state,
-        db=db,
-        registry=SimpleNamespace(get=lambda _c: agent),
-        _character=lambda name: character,
-        _start_cli_action_intent=lambda *_a, **_k: None,
-        **_SCENE_STUBS,
-    )
-    runtime.chat_history = {character.name: []}
-    runtime._persistent_chat_minister = lambda name: True
-    runtime._audience_turn_in_flight = lambda name: False
-    runtime._start_chat_turn = lambda name: (7, {})
+    runtime.session.registry = SimpleNamespace(get=lambda _c: agent)
+    runtime.session._character = lambda name: SimpleNamespace(name=minister)
+    runtime.session._start_cli_action_intent = lambda *_a, **_k: None
 
-    gen = runtime.chat_stream(character.name, "辽东军情如何？")
+    gen = runtime.chat_stream(minister, "辽东军情如何？")
     events = list(gen)  # consumer drives generator to completion
 
     # error 事件被投递（消费者没挂死）
     assert events[-1]["type"] == "error"
-    # gate + counter 已释放
-    assert not runtime._write_gate.locked()
-    assert runtime._pending_writes_count == 0
+    _assert_write_path_free(runtime)
 
 
 # ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
@@ -323,47 +323,53 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None):
 
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
     runtime.session = SimpleNamespace(
         temporary_characters=set(),
         content=SimpleNamespace(characters={character.name: character}),
         state=state,
         db=db,
+        close=lambda: None,
         start_chat_turn_scene=_start_scene,
         start_chat_turn_exit_scene=lambda *_a, **_k: None,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
         abandon_chat_turn_scene=lambda ctid: abandoned.append(int(ctid or 0)),
-        chat=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("session.chat should not run")),
+        chat=lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("session.chat should not run")
+        ),
     )
     runtime.chat_history = {character.name: []}
-    runtime._runtime_write_gate = lambda: runtime._write_gate
-    runtime._reject_if_settlement_phase = lambda: None
     runtime._persistent_chat_minister = lambda name: True
     runtime._audience_turn_in_flight = lambda name: False
     runtime._start_chat_turn = lambda name: (7, {})
     runtime._record_chat_rollback_items = lambda *a, **k: None
-    return runtime, db, character.name, abandoned, failed, restored
+    return runtime, character.name, abandoned, failed, restored
 
 
 def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
-    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail。"""
+    """#542 r6e: 非流 chat 在 _start_chat_turn 之后 prologue 写失败，须 abandon + fail，
+    且写路径释放（经 _assert_write_path_free 公开探针）。"""
     boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
-    runtime, _db, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
+    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
         append_error=boom,
     )
     with pytest.raises(RuntimeError, match="非流 prologue"):
         runtime.chat(minister, "辽东军情如何？")
     assert abandoned == [7]
     assert failed == [7]
-    assert not runtime._write_gate.locked()
+    _assert_write_path_free(runtime)
 
 
 def test_retry_start_scene_failure_restores_interrupted_and_abandons():
-    """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore interrupted。"""
+    """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore
+    interrupted、不 fail，且写路径释放。"""
     def _boom_start(_minister, _ctid):
         raise RuntimeError("start_chat_turn_scene boom")
 
-    runtime, _db, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
+    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
         start_scene=_boom_start,
     )
     with pytest.raises(RuntimeError, match="start_chat_turn_scene boom"):
@@ -371,4 +377,4 @@ def test_retry_start_scene_failure_restores_interrupted_and_abandons():
     assert abandoned == [7]
     assert restored == [7]
     assert failed == []  # retry 失败翻回 interrupted，不 fail
-    assert not runtime._write_gate.locked()
+    _assert_write_path_free(runtime)
