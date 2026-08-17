@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import pytest
 
 import ming_sim.agents as agents_mod
-import ming_sim.session as session_mod
 import web_app
 from ming_sim import audience_night as an
 from ming_sim.audience_extraction import (
@@ -446,13 +445,11 @@ def test_drain_before_close_fail_closed(game, tmp_path, monkeypatch):
 # ── web 真实入口 tracer：回话尾随 → 落账；收夜前 drain 门（AC1/AC5/AC10）─────
 @pytest.fixture
 def web_game(tmp_path, monkeypatch):
-    """真实 WebGame（新档、temp DB、离线 LLM）。仅 verify_llm 与 runtime 配置被中和。"""
+    """真实 WebGame（新档、temp DB）；构造即不连 LLM，仅 runtime 配置中和。"""
     monkeypatch.setenv("MING_SIM_DB", str(tmp_path / "ming.db"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
-    monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
-    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     return web_app.WebGame(fresh=False)
 
 

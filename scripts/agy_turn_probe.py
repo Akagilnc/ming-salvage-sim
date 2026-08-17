@@ -33,7 +33,7 @@ def main() -> int:
         model="agy-local", api_key="none", base_url="http://localhost/v1",
         timeout_seconds=300, max_tokens=2048,
     )
-    session = GameSession(ns.db, cfg, verify_llm=False)
+    session = GameSession(ns.db, cfg)
 
     def on_event(kind, data):
         s = str(data)

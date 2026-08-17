@@ -47,7 +47,7 @@ def main() -> None:
         os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
     )
-    sess = GameSession(DB, llm, content=content, verify_llm=True,
+    sess = GameSession(DB, llm, content=content,
                        start_ym=os.environ.get("MING_SIM_START_YM", "1627.10"))
     sess.begin_turn()
     oid = sess.db.create_secret_order(sess.state, ASSIGNEE, TITLE, CONTENT, ["阉党", "密查"], importance=4)

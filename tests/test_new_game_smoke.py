@@ -38,13 +38,31 @@ def _shaanxi_source_arrears(db):
 
 
 @pytest.fixture
-def fresh_game_dir(tmp_path):
+def fresh_game_dir(tmp_path, monkeypatch):
+    """#1228：fresh GameSession 构造即不连 LLM；夹具期间拦截连通/后端调用。"""
+    import ming_sim.cli_backend as _cb
+    import ming_sim.llm_model as llm_mod
+
+    calls: list[str] = []
+
+    def _track_verify(cfg):
+        calls.append("verify_llm_available")
+        raise AssertionError("fresh 构造不得调用 verify_llm_available")
+
+    def _track_backend(prompt, llm_config=None, tag=""):
+        calls.append(f"backend:{tag or ''}")
+        raise AssertionError(f"fresh 构造不得调用 CLI 后端 tag={tag!r}")
+
+    monkeypatch.setattr(llm_mod, "verify_llm_available", _track_verify)
+    monkeypatch.setattr(_cb, "_run_backend_for_config", _track_backend)
+
     content = GameContent.load()
     bind_content(content)
     issues_mod.bind_content(content)
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
     dbp = str(tmp_path / "newgame.db")
-    sess = GameSession(db_path=dbp, llm_config=cfg, content=content, verify_llm=False)
+    sess = GameSession(db_path=dbp, llm_config=cfg, content=content)
+    assert calls == [], f"fresh 构造零 LLM 调用，实得 {calls}"
     try:
         yield sess, dbp, content
     finally:

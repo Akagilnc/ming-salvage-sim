@@ -30,7 +30,7 @@
 - **P5 LLM 流程并行优先（设计铁律，2026-06-23 用户拍；我反复犯的设计盲点）**：设计任何涉 LLM 调用的流程，**第一考虑「能不能并行 LLM 调用以缩短用户等待」**。单次 LLM 调用就很慢（召对回话 ~15-30s、simulator ~47s+、extractor ~30s、codex 每调用 ~15s 固定开销）= UX 真瓶颈；而**写 DB 多写几次根本无所谓**（毫秒级、免费）。判依赖：某调用的输入=另一调用的输出→必串（如 extractor 读 simulator 邸报，必串）；否则**并行**（召对判断 gate 看玩家消息、不依赖回话→与回话并行、回话后 0 黑；密令抽取从对话上下文取→与回话并行；结算 extractor 多模块无依赖→并行）。**严禁为「省 DB 写次数 / 少建几条记录 / 少加一列」而把本可并行的 LLM 调用串起来 = 拿免费的换最贵的。** streaming 也是缩短**感知**等待的手段（simulator 边算边出填等待）。
 
 ## 关键技术事实（已挖过，省得重来）
-- **启动脱 key**：`GameSession(..., verify_llm=False)` 跳过 LLM 连通校验（`session.py:374`），CLI 无 api key 能起。
+- **启动脱 key**：`GameSession` 构造即不连 LLM（连通校验只在设置页主动提交配置时跑），CLI 无 api key 能起。
 - **delta 落库单一入口**：`db.apply_score_extraction(db, state, extracted, content, registry)`，内部分发到 region/army/building/economy/issue 各 apply。我产符合 schema 的 delta 即可，driver 不用自己写落库。
 - **schema 契约**：全在 `simulation.py`（`TOP_LEVEL_ALIASES`/`ITEM_FIELD_ALIASES`/`EMPTY_EXTRACTION`/`MODULE_FIELDS`/`_clean_*`/`_sanitize_module_output`/`_merge_module_outputs`）。这是我产 delta 的**格式契约 + 落库守门**，零 agno 依赖，必须保留。
 - **接口层（确定性↔LLM，别让 LLM 自己数数）**：`memories.effect_brief`（delta→「国库+30、了结局势X」）、`memories.build_timeline`、`agents.build_simulator_context`（盘面→TSV）。喂给我的盘面快照 / 效果摘要由它们生成。

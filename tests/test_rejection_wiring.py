@@ -756,7 +756,7 @@ def test_settling_recovery_fallthrough_preserves_system_source(content, tmp_path
     monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
     cfg = LLMConfig(api_key="", base_url="http://unused", model="unused")
     dbp = str(tmp_path / "recovery.db")
-    sess = GameSession(db_path=dbp, llm_config=cfg, content=content, verify_llm=False)
+    sess = GameSession(db_path=dbp, llm_config=cfg, content=content)
     try:
         db, state = sess.db, sess.state
         turn = state.turn

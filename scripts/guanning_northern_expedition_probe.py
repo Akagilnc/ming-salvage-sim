@@ -166,7 +166,7 @@ def main() -> int:
         os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
     )
-    sess = GameSession(str(db_path), llm, content=content, verify_llm=True, start_ym=args.start_ym)
+    sess = GameSession(str(db_path), llm, content=content, start_ym=args.start_ym)
     results: list[dict[str, object]] = []
     try:
         for sequence, (label, decree) in enumerate(DECREES, start=1):

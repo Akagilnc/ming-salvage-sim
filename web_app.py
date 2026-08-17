@@ -658,15 +658,12 @@ class WebGame:
         )
         if llm_config.channel != "cli" and not llm_config.api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
-        # #1195：阶段标签紧贴既有分段（verify / GameSession / begin_turn / 召对恢复）；
-        # verify 语义不变——仍是进局前 smoke 一次；仅把 continue 路的 verify
-        # 提到与 fresh 同层，便于首条 stage 覆盖 dominant smoke 段。
-        _stage("检查模型后端...")
-        verify_llm_available(llm_config)
+        # #1195：阶段标签紧贴既有分段（GameSession / begin_turn / 召对恢复）；
+        # #1228：载入路径零 verify 调用——连通性 smoke 已拆除，报错落到玩家真实 LLM 动作。
         if fresh:
             _delete_sqlite_db_files_or_raise(db_path)
         _stage("载入上次进度...")
-        self.session = GameSession(db_path, llm_config, verify_llm=False)
+        self.session = GameSession(db_path, llm_config)
         # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
         self._write_gate = threading.Lock()
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
@@ -744,13 +741,12 @@ class WebGame:
         """全清主 DB：关连接 → 删 sqlite 主/wal/shm → 重建空 session。
         存档目录不动。"""
         llm_config = self.session.llm_config
-        verify_llm_available(llm_config)
         try:
             self.session.close()
         except Exception:
             pass
         _delete_sqlite_db_files_or_raise(self.db_path)
-        self._rebuild_session(llm_config, verify_llm=False)
+        self._rebuild_session(llm_config)
 
     def load_save(self, name: str) -> None:
         """从存档热替换主 DB：备份当前 → 拷源到主 DB → 重建 session。"""
@@ -774,11 +770,9 @@ class WebGame:
             dst_conn.close()
         self._rebuild_session(self.session.llm_config)
 
-    def _rebuild_session(self, llm_config: LLMConfig, verify_llm: bool = True) -> None:
+    def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
-        if verify_llm:
-            verify_llm_available(llm_config)
-        self.session = GameSession(self.db_path, llm_config, verify_llm=False)
+        self.session = GameSession(self.db_path, llm_config)
         self.session.begin_turn()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
@@ -3209,8 +3203,9 @@ async def api_menu_continue() -> StreamingResponse:
     def worker() -> None:
         global web_game
         try:
-            # 首条阶段立即入队：生成器可在 WebGame 构造（verify smoke）前就 yield
-            on_stage("检查模型后端...")
+            # 首条阶段立即入队：生成器可在 WebGame 构造重活前就 yield（#1195 ≤5s 首见）
+            # #1228：构造不再做连通 smoke，文案须诚实反映载入准备（非「检查模型后端」）。
+            on_stage("准备载入上次进度...")
             game = WebGame(fresh=False, on_stage=on_stage)
             # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
             if token != _menu_generation:
