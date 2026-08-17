@@ -488,7 +488,7 @@ def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, m
     """#1235 r2 p2：并发代清洞——A 已 capture 持 _write_gate；B accept 幂等 no-op 后抢锁 409，
     其 finally 以 non-blocking exit 撞锁 skip，不得代清 A 的快照（须立即返回不堵）。
 
-    主案：advance 非阻塞 _serialized_web_write 洞口。
+    主案：advance 非阻塞 _serialized_web_write 洞口（持锁支）。gate-free 在办支见 r4。
     """
     game = web_game
     before = _click_before(game.state)
@@ -749,3 +749,94 @@ def test_stream_session_reaccept_orphan_exits_after_owner_release(web_game, monk
     assert saw["session_reaccept"] is True
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+
+
+def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):
+    """#1235 r4：noncreator-exit-clears-owner-during-gatefree。
+
+    A web-accept 真新建后停在 gate-free await（不持 write_gate）仍在办；
+    B 非创建同窗失败 → non-blocking exit 不得因锁闲代清 A 快照。
+    放行 A 后创建者失败臂自行清（r1 D 不松；C 面孤儿回归另案保留）。
+    """
+    import threading
+
+    from ming_sim.audience_night import AudienceNightError
+
+    game = web_game
+    before = _click_before(game.state)
+    turn = int(game.state.turn)
+
+    a_in_await = threading.Event()
+    a_release = threading.Event()
+    a_done = threading.Event()
+    a_result: dict = {}
+
+    def _await_hold_for_a(_g):
+        # 仅 A 线程：停在 accept 后 gate-free 窗（锁闲、展示态应保留）
+        a_in_await.set()
+        assert a_release.wait(5.0), "测试须放行 A 的 await"
+
+    def _await_boom_for_b(_g):
+        raise AudienceNightError(
+            "在飞回话等待超时·gatefree窗注入", code="in_flight_timeout",
+        )
+
+    # 先挂 A 的 await hold；B 启动前再切到 boom（见下方）
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", _await_hold_for_a)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
+
+    def _run_a():
+        try:
+            async def go():
+                async with _client() as client:
+                    return await client.post("/api/decree/advance_without_edict")
+
+            resp = asyncio.run(go())
+            a_result["status"] = resp.status_code
+            a_result["body"] = resp.text
+        except Exception as exc:  # noqa: BLE001
+            a_result["err"] = exc
+        finally:
+            a_done.set()
+
+    t_a = threading.Thread(target=_run_a, daemon=True)
+    t_a.start()
+    assert a_in_await.wait(2.0), "A 须进入 gate-free await"
+    assert game.db.get_month_open_snapshot(turn) == before
+    assert game.state_payload()["turn"]["settlement_display"] is True
+    gate = web_app._game_write_gate(game)
+    assert not gate.locked(), "gate-free 窗 write_gate 须闲（本洞前提）"
+    assert web_app._settlement_entry_inflight(game) >= 1
+
+    # B：同窗非创建失败（await 超时）；锁闲但 A 仍在办 → 不得代清
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", _await_boom_for_b)
+
+    async def go_b():
+        async with _client() as client:
+            return await client.post("/api/decree/advance_without_edict")
+
+    resp_b = asyncio.run(go_b())
+    assert resp_b.status_code == 409, resp_b.text
+    # 核心：B 失败臂不得清 A 在办快照（in-flight>1，禁锁闲代理）
+    assert game.db.get_month_open_snapshot(turn) == before
+    assert game.state_payload()["turn"]["settlement_display"] is True
+    assert web_app._settlement_entry_inflight(game) >= 1, "A 仍须计在办"
+
+    # 放行 A：close 注入失败 → 创建者 blocking 必清（r1 D）
+    def _close_boom_a(_g, **kw):
+        raise AudienceNightError(
+            "收夜失败·A创建者收口", code="close_failed",
+        )
+
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", _close_boom_a)
+    a_release.set()
+    assert a_done.wait(5.0), "A 放行后须完成"
+    t_a.join(2.0)
+    assert "err" not in a_result, a_result.get("err")
+    assert a_result.get("status") == 409, a_result
+    assert game.db.get_month_open_snapshot(turn) is None
+    assert game.state_payload()["turn"]["settlement_display"] is False
+    assert web_app._settlement_entry_inflight(game) == 0
+    assert game.state.turn_phase not in (
+        TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
+    )
