@@ -32,6 +32,17 @@ def content() -> GameContent:
     return c
 
 
+def _seed_opening_db(path: str, content) -> None:
+    """生产开局同核：seed_static_data + load_state + sync_opening_legacies，写入 path。"""
+    db = GameDB(path, content)
+    try:
+        db.seed_static_data()
+        state = db.load_state()
+        issues_mod.sync_opening_legacies(db, state)
+    finally:
+        db.close()
+
+
 @contextmanager
 def _opening_game(content):
     """创建并清理一个与生产开局序列同核的临时盘面。"""
@@ -39,14 +50,31 @@ def _opening_game(content):
     os.close(fd)
     db = None
     try:
+        _seed_opening_db(path, content)
         db = GameDB(path, content)
-        db.seed_static_data()
         state = db.load_state()
-        issues_mod.sync_opening_legacies(db, state)
         yield db, state, content
     finally:
         if db is not None:
             db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
+
+
+@pytest.fixture(scope="session")
+def _game_template_path(content):
+    """Session 级开局模板 DB（只 seed 一次）。供 ``game`` 每案文件拷贝，避免逐案建库。
+
+    方案 (c)：模板 DB 一次建 + 每案文件拷贝。不用 (d) 事务回滚——全 suite 大量用例自带
+    commit/rollback、跨连接可见性、崩溃恢复与 applier 事务边界（ADR 0008 族），禁区命中。
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _seed_opening_db(path, content)
+        yield path
+    finally:
         for p in (path, f"{path}_agno.db"):
             if os.path.exists(p):
                 os.remove(p)
@@ -82,17 +110,29 @@ def _restore_content_characters(content):
 
 
 @pytest.fixture
-def game(content):
-    """返回 (db, state, content)：全新临时库经 seed_static_data 初始化静态盘面（offices/characters/
-    character_offices/classes/factions/armies/regions/powers 齐全）+ load_state（开局危机/账本/邸报），
-    用例间隔离。
+def game(content, _game_template_path):
+    """返回 (db, state, content)：开局同核临时库，用例间隔离。
 
-    不依赖 gitignored data/probe.db（#5）：原 fixture copy probe.db 副本，缺则 skip——而 probe.db
-    被 .gitignore 忽略，干净 checkout / CI 上依赖它的用例大面积 skip 当过=假绿。改走真实新档路径
-    （seed_static_data，与生产开局同核）后，CI 无需任何外部 DB 即可跑；且 characters 直接来自
-    content（101 全），不被 probe.db 旧档（缺 characters.json 独有的宗藩王等、缩成 58）掩盖。"""
-    with _opening_game(content) as opening:
-        yield opening
+    Setup 形态（#1233 刀1 方案 c）：session 模板 DB 一次 seed，每案 ``shutil.copyfile``
+    后 ``GameDB``+``load_state``。断言语义与逐案 ``seed_static_data`` 相同（同核开局态），
+    只把 setup 从 O(seed) 降到 O(copy)。
+
+    不依赖 gitignored data/probe.db（#5）：characters 直接来自 content（101 全）。
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = None
+    try:
+        shutil.copyfile(_game_template_path, path)
+        db = GameDB(path, content)
+        state = db.load_state()
+        yield db, state, content
+    finally:
+        if db is not None:
+            db.close()
+        for p in (path, f"{path}_agno.db"):
+            if os.path.exists(p):
+                os.remove(p)
 
 
 @pytest.fixture
@@ -144,11 +184,25 @@ def _isolated_user_data_dir(tmp_path):
     （实证 18 包 75MB + 假行混真 jsonl + attempt 序号灌高）。各用例自己 setenv 指
     自己的 tmp_path 仍可覆盖本兜底（后设者胜）。
 
+    同步把 import 时钉死的 user_data 常量（``UPLOAD_PORTRAIT_DIR`` /
+    ``RUNTIME_LLM_PATH`` / ``RUNTIME_GAME_PATH``）拨到本用例 tmp——否则 env 改了
+    常量仍指仓内 ``data/``，xdist 多 worker 会抢同一固定路径（#1233 刀2 gate）。
+
     用独立 MonkeyPatch 实例而非共享的 monkeypatch fixture：后者与测试同一实例，
     测试里 monkeypatch.undo() 会把本兜底一并撤掉（实证 test_noready_recovery
     undo 后 settle 把空目录建回真实 data/）。"""
+    import ming_sim.llm_config as _llm_config
+    import web_app as _web_app
+
+    user_root = tmp_path / "user_data"
+    portrait_dir = user_root / "uploads" / "portraits"
+    portrait_dir.mkdir(parents=True, exist_ok=True)
+
     mp = pytest.MonkeyPatch()
-    mp.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "user_data"))
+    mp.setenv("MING_SIM_USER_DATA_DIR", str(user_root))
+    mp.setattr(_web_app, "UPLOAD_PORTRAIT_DIR", str(portrait_dir))
+    mp.setattr(_llm_config, "RUNTIME_LLM_PATH", str(user_root / "runtime_llm.json"))
+    mp.setattr(_llm_config, "RUNTIME_GAME_PATH", str(user_root / "runtime_game.json"))
     yield
     mp.undo()
 
