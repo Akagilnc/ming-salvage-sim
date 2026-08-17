@@ -206,6 +206,44 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 「三月后复试 / 期满复核」这类未来一次性 form③ 承诺带 `commitment_kind="until_stop"`、`end_turn`，`ongoing_effects` 可为空。到期后程序会把它顶到待核议；皇帝/邸报明确裁决或确认已处理后，`close_issues` 可写 `reason="acknowledged"` 作 ACK 收尾，状态标 `dropped`、`issue_advances.trigger_kind="commitment_ack"`，不运行 `effect_on_resolve` / `effect_on_fail`。普通承诺不得用 `close_issues resolved/failed` 绕过专门闭环。
 
+#### #620 / ADR 0074 分段承诺（本片扩展面，不改 #520 本体字段语义）
+
+**存储选型（本片定）**：
+- **段表**：`issues.stages_json`（JSON 数组，挂在**单一**承诺 issue 上；禁止假多 issue 接力冒充分段）
+- **次回合召对待办**：表 `next_audience_todos`
+
+**`new_issues[].stages`**（可选，仅承诺扩展面）：
+```jsonc
+"stages": [
+  {
+    "stage_idx": 0,
+    "due_turn": 37,                 // 绝对回合；捕获侧亦可以 scripted「三年X五年Y」换算 origin_turn+N*12
+    "criterion_text": "火器见眉目",
+    "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
+  }
+]
+```
+- 一条多段 = **一个** `commitment_kind="until_stop"` initiative；`stages` 非空时可不写单值 `end_turn`（引擎可派生 max(due_turn) 仅作兼容展示，**不得**用单值 `end_turn` 冒充多段）
+- **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
+- 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
+- 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
+- 捕获：召对/邸报「三年X五年Y」经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
+
+**`next_audience_todos` 最小字段（P2）**：
+| 字段 | 约束 |
+|---|---|
+| `commitment_ref` | 单一承诺对象 issue id |
+| `stage_idx` | int 段序号 |
+| `due_turn` | int |
+| `criterion_text` | 段判据 |
+| `origin_context` | 原话摘句/origin 派生，持久可查 |
+| `status` | `pending`（本片写端；消费态归后续片） |
+| `entry_kind` | 默认 `staged_commitment`（预留 form③/挽留区分位） |
+| `created_turn` | 写入时回合 |
+
+生命周期：段到期当回合结算内确定性写入；下一召对回合 `list_next_audience_todos` 可读；未消费可滚存；restore 只读 DB 接续。
+
+
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `dossier_participants` — S2 案卷参与人追加
