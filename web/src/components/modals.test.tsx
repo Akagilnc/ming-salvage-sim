@@ -6,7 +6,7 @@ import { ChatModal } from "./chatModal";
 import { EdictModal } from "./edictModal";
 import { HistoryDetailView, HistoryModal } from "./historyModal";
 import { ReportModal } from "./reportModal";
-import { parseLeadingStageDirection } from "./scrollMessages";
+import { parseLeadingStageDirection } from "../format";
 import type { BudgetAccount, ChatMessage, GameState, Minister, PendingActionFailure, Suggestion } from "../types";
 import { chatReducer, type ChatAction } from "../mindreading";
 

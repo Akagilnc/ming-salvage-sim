@@ -1,14 +1,8 @@
 import React from "react";
 import { MinisterPortrait, cacheBust } from "./hud";
-import { stripOrganicMarkdown } from "../format";
+import { parseLeadingStageDirection, stripOrganicMarkdown } from "../format";
+import { matchHighlightPhrases, segmentHighlightedContent } from "../highlights";
 import type { AudienceScrollMessage, ChatDisplayMessage, Minister } from "../types";
-
-export function parseLeadingStageDirection(source: string): { action: string | null; content: string } {
-  const match = source.match(/^（[^（）\r\n]+）/);
-  return match
-    ? { action: match[0], content: source.slice(match[0].length) }
-    : { action: null, content: source };
-}
 
 export function portraitSources(minister: Minister, portraitPrefix = "minister_") {
   const isCustom = minister.portrait_id?.startsWith("custom:");
@@ -41,11 +35,24 @@ export function ScrollMessages({
     const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
     const text = message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content;
     const { action, content } = parseLeadingStageDirection(text);
+    // #544 / ADR 0045：只标大臣气泡；短语先过同一剥离链再精确匹配，未命中静默丢弃。
+    const rawHighlights = message.role === "minister" && "highlights" in message
+      ? (message as { highlights?: string[] }).highlights
+      : undefined;
+    const matched = message.role === "minister"
+      ? matchHighlightPhrases(message.content, rawHighlights)
+      : [];
+    const body = matched.length
+      ? segmentHighlightedContent(content, matched).map((seg, segIndex) =>
+          seg.highlight
+            ? <mark className="hl" key={`h-${segIndex}`}>{seg.text}</mark>
+            : <React.Fragment key={`t-${segIndex}`}>{seg.text}</React.Fragment>)
+      : content;
     return <div className={`chat-message ${message.role} ${isAside ? "aside" : ""} ${pending ? "pending" : ""}`} key={`${message.role}-${index}-${message.content}`}>
       {isAside ? <MinisterPortrait className="aside-avatar" primary={attendantPortrait?.primary ?? ""} fallback={attendantPortrait?.fallback} name={speaker} /> : null}
       <span>{speaker}</span>
       {action ? <em className="action">{action}</em> : null}
-      <p>{content}</p>
+      <p>{body}</p>
     </div>;
   })}</>;
 }

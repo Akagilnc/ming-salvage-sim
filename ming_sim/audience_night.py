@@ -458,11 +458,14 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     def message(*, role: str, speaker: str, audibility: str, time: Any,
                 content: str, beat: str, soft_boundary: bool = False,
-                chat_turn_id: int = 0, record_id: int = 0) -> Dict[str, Any]:
+                chat_turn_id: int = 0, record_id: int = 0,
+                highlights: Optional[List[str]] = None) -> Dict[str, Any]:
+        # #544：只大臣气泡带判官清单；其余角色恒 []
+        hl: List[str] = list(highlights or []) if role == "minister" else []
         result = {
             "role": role, "speaker": speaker, "audibility": audibility,
             "time": time, "content": content, "soft_boundary": soft_boundary,
-            "beat": beat, "highlights": [], "container": dict(container),
+            "beat": beat, "highlights": hl, "container": dict(container),
         }
         if chat_turn_id:
             result["chat_turn_id"] = int(chat_turn_id)
@@ -482,17 +485,24 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             if not message_id:
                 continue
             row = db.conn.execute(
-                "SELECT content,created_at FROM chat_messages WHERE id=?", (message_id,),
+                "SELECT content,created_at,highlights_json FROM chat_messages WHERE id=?",
+                (message_id,),
             ).fetchone()
             if row is None:
                 continue
             content = str(row["content"] or "")
             texts.add(content.strip())
+            # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
+            hl: List[str] = (
+                list(db._parse_highlights_json(row["highlights_json"]))
+                if role == "minister"
+                else []
+            )
             events.append((
                 float(int(turn.get("night_seq") or 0)), 20 + rank,
                 message(role=role, speaker=speaker, audibility=AUDIBILITY_PUBLIC,
                         time=row["created_at"], content=content, beat="dialogue",
-                        chat_turn_id=int(turn["id"])),
+                        chat_turn_id=int(turn["id"]), highlights=hl),
             ))
         # 递话/读心是对话轮的第三种持久消息，紧随该轮奏对归位；不并入故事账。
         if hasattr(db, "list_mindreading_records"):

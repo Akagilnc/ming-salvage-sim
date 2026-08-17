@@ -11,11 +11,13 @@ import asyncio
 import contextlib
 import inspect
 import json
+import logging
 import os
 import queue
 import random
 import re
 import shutil
+import sqlite3
 import sys
 import time
 import threading
@@ -75,6 +77,10 @@ from ming_sim.session import (
     coalesce_pending_action_id,
 )
 from ming_sim.audience_pipeline import run_mindreading_for_turn
+from ming_sim.highlight_judge import (
+    DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
+    run_highlight_judge,
+)
 from ming_sim.audience_extraction import (
     catch_up_pending_extractions,
     trail_extraction_after_reply,
@@ -95,6 +101,8 @@ from ming_sim.models import (
     loads_effect_dict,
 )
 from ming_sim import steam_events
+
+logger = logging.getLogger(__name__)
 
 WEB_DIST = bundled_path("web", "dist")
 # 用户上传的自定义立绘存档级目录（不随 build 清空，git 可忽略）。
@@ -1570,6 +1578,7 @@ class WebGame:
         # reply while can_undo_last_chat_turn is still false (#976 hold path
         # lengthens append_chat_message; background stream + early assert flaked
         # and tore down the shared DB under the worker → SIGSEGV).
+        minister_message_id = 0
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
             if chat_turn_id:
@@ -1577,10 +1586,14 @@ class WebGame:
                 # 杜绝「回话已 commit 却未链接」孤儿（否则可见回话 chat_turn_id 0、空任务态、
                 # 无对账、无 pending、in-flight 守卫永挡召见）。worker 崩溃遗留的 running 由启动
                 # 对账终态化，不永挂 pending。
-                self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
+                minister_message_id = int(
+                    self.db.persist_minister_reply(minister_name, turn, answer, chat_turn_id)
+                )
             else:
                 # 无持久 chat_turn（如临时召见路径异常）：仅落消息，无可链接的任务。
-                self.db.append_chat_message(minister_name, turn, "minister", answer)
+                minister_message_id = int(
+                    self.db.append_chat_message(minister_name, turn, "minister", answer)
+                )
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         open_night = None
         if hasattr(self.db, "conn"):
@@ -1597,6 +1610,8 @@ class WebGame:
             # 前端 setChat 不再抹掉先前浮现的读心递话。
             "history": self.chat_projection(minister_name),
             "chat_turn_id": int(chat_turn_id or 0),
+            # #544：供高亮判官落库锚定（非流式折窗 / 流式补挂）
+            "minister_message_id": int(minister_message_id or 0),
             "court_action": court_action,
             "next_minister": next_minister,
             "proposed_directive": proposed_directive,
@@ -1690,9 +1705,10 @@ class WebGame:
                         result, "directive_confirmation_ambiguous", None),
                 )
                 self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-            # P5：非流式路径同样在回话落库后尾随读心（不阻塞返回包）。
-            # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             answer_text = str(getattr(result, "answer", "") or "")
+            message_id = int(payload.get("minister_message_id") or 0)
+            # P5：先 spawn 读心/抽取，再折进判官等待窗——折窗期内后处理已在跑。
+            # 原子交接 pending ownership：任何 DB 访问前先登记，关闭须等其完成。
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -1701,6 +1717,14 @@ class WebGame:
                 )
                 # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
+            # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
+            if message_id and answer_text:
+                self._trail_highlight_judge_after_reply(
+                    answer_text,
+                    message_id=message_id,
+                    chat_turn_id=chat_turn_id,
+                )
+                payload["history"] = self.chat_projection(minister_name)
         except Exception:
             # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
             self.session.abandon_chat_turn_scene(chat_turn_id)
@@ -1789,6 +1813,8 @@ class WebGame:
                 # #505 finding1：与 chat 成功尾声同缝，记本次重试落下的副作用 diff，供日后撤回还原。
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
             answer_text = str(getattr(result, "answer", "") or "")
+            message_id = int(payload.get("minister_message_id") or 0)
+            # P5：重试同形——先 spawn 读心/抽取，再折判官窗。
             if chat_turn_id and answer_text:
                 self._spawn_pending_write_thread(
                     self._trail_mindreading_after_reply,
@@ -1796,6 +1822,14 @@ class WebGame:
                     "audience-p5-mindreading",
                 )
                 self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
+            if message_id and answer_text:
+                # #544：重试非流式同折窗封顶
+                self._trail_highlight_judge_after_reply(
+                    answer_text,
+                    message_id=message_id,
+                    chat_turn_id=chat_turn_id,
+                )
+                payload["history"] = self.chat_projection(minister_name)
         except Exception:
             # #505 finding1：重试再失败——先记本次 session.chat 落下的副作用 diff，再回滚它们
             # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
@@ -2292,6 +2326,40 @@ class WebGame:
             if owns_pending:
                 self._complete_pending_write()
 
+    def _trail_highlight_judge_after_reply(
+        self,
+        minister_reply: str,
+        *,
+        message_id: int,
+        chat_turn_id: int = 0,
+        timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
+    ) -> List[str]:
+        """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
+
+        判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
+        写库走 runtime write_gate。匹配/剥离在前端，此处只存短语。
+        """
+        del chat_turn_id  # 撤回先 DELETE chat_messages，UPDATE 0 行即安全；无需 status 跳写 gate
+        mid = int(message_id or 0)
+        reply = str(minister_reply or "")
+        if mid <= 0 or not reply.strip():
+            return []
+        phrases = list(run_highlight_judge(
+            minister_reply=reply,
+            llm_config=getattr(self.session, "llm_config", None),
+            timeout_s=timeout_s,
+        ) or [])
+        try:
+            with self._runtime_write_gate():
+                self.db.set_message_highlights(mid, phrases)
+        except sqlite3.Error as exc:
+            logger.warning(
+                "highlight judge persist failed message_id=%s: %s",
+                mid, exc, exc_info=True,
+            )
+            return []
+        return phrases
+
     def _trail_extraction_after_reply(
         self,
         minister_name: str,
@@ -2584,12 +2652,13 @@ class WebGame:
                             return
                         raise
 
-                # P5：先 done（回话可见），再读心，最后 end——玩家无「为读心黑屏」。
+                # P5：先 done（回话可见），再读心∥高亮∥抽取补挂，最后 end——玩家无「为后处理黑屏」。
                 ev_queue.put({"type": "done", "payload": payload or {}})
                 answer = str((payload or {}).get("answer") or "")
-                # #501：叙事抽取落账与读心并行（二者皆只依赖已完成回话，P5）——无玩家可见 SSE
-                # 事件（静默落账）。在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮
-                # pending ownership 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
+                message_id = int((payload or {}).get("minister_message_id") or 0)
+                # #501/#544：叙事抽取与高亮判官皆只依赖已完成回话，与读心并行（P5）。
+                # 在 worker 内起线程并在 end 前 join：不留悬挂 daemon，本轮 pending ownership
+                # 覆盖其全生命周期（stream 消费完即无残留写者、可安全关连接）。
                 extraction_thread = threading.Thread(
                     target=self._trail_extraction_after_reply,
                     args=(minister_name, answer, chat_turn_id),
@@ -2597,6 +2666,24 @@ class WebGame:
                     name="audience-p5-extraction",
                 )
                 extraction_thread.start()
+                highlight_box: List[str] = []
+
+                def _highlight_worker() -> None:
+                    if message_id and answer:
+                        highlight_box.extend(
+                            self._trail_highlight_judge_after_reply(
+                                answer,
+                                message_id=message_id,
+                                chat_turn_id=chat_turn_id,
+                            ) or []
+                        )
+
+                highlight_thread = threading.Thread(
+                    target=_highlight_worker,
+                    daemon=True,
+                    name="audience-p5-highlight",
+                )
+                highlight_thread.start()
                 mind_payload: Optional[Dict[str, Any]] = None
                 try:
                     mind_payload = self._trail_mindreading_after_reply(
@@ -2609,6 +2696,15 @@ class WebGame:
                         "type": "mindreading",
                         "payload": mind_payload,
                         "chat_turn_id": chat_turn_id,
+                    })
+                # #544：流式不挡流——done 后补挂高亮（超时封顶）；有清单才发事件。
+                highlight_thread.join()
+                if highlight_box:
+                    ev_queue.put({
+                        "type": "highlights",
+                        "highlights": list(highlight_box),
+                        "chat_turn_id": chat_turn_id,
+                        "message_id": message_id,
                     })
                 extraction_thread.join()
                 ev_queue.put({"type": "end"})
@@ -3970,6 +4066,13 @@ async def api_chat_stream(minister_name: str, request: ChatRequest) -> Streaming
                 yield sse_event("mindreading", {
                     "mindreading": item.get("payload"),
                     "chat_turn_id": item.get("chat_turn_id") or 0,
+                })
+            elif item_type == "highlights":
+                # #544：流完补挂高亮清单
+                yield sse_event("highlights", {
+                    "highlights": item.get("highlights") or [],
+                    "chat_turn_id": item.get("chat_turn_id") or 0,
+                    "message_id": item.get("message_id") or 0,
                 })
             elif item_type == "end":
                 yield sse_event("end", {})

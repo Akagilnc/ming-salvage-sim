@@ -180,6 +180,14 @@
   white-space: pre-wrap;
 }
 
+/* #544 / ADR 0045：大臣承重短语高亮（只标大臣气泡正文） */
+.chat-message.minister mark.hl {
+  background: rgba(196, 148, 58, 0.28);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
 .chat-composer {
   display: grid;
   gap: 8px;

@@ -341,6 +341,14 @@ const appendBlockSeparator = (result: string, previousEndLine: number | undefine
   return result + "\n".repeat(Math.max(1, startLine - previousEndLine + 1));
 };
 
+/** 切出领头舞台指示（全角括号段）；其余为正文 content。显示链真源侧。 */
+export function parseLeadingStageDirection(source: string): { action: string | null; content: string } {
+  const match = source.match(/^（[^（）\r\n]+）/);
+  return match
+    ? { action: match[0], content: source.slice(match[0].length) }
+    : { action: null, content: source };
+}
+
 // Streaming may briefly display unfinished markdown; that transient state is acceptable as
 // long as the completed message is clean (ADR 0045's display-text contract).
 export const stripOrganicMarkdown = (text: string): string => {
