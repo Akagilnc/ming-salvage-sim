@@ -2934,6 +2934,8 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
+# #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
+_menu_generation: int = 0
 app = FastAPI(title="Ming Salvage MVP Web")
 
 
@@ -3149,7 +3151,8 @@ async def api_menu_new_game() -> Dict[str, Any]:
     先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
     排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
     #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     old_game = web_game
     # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
     # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
@@ -3192,9 +3195,12 @@ async def api_menu_continue() -> StreamingResponse:
     #1195：与颁诏 settle 同构 SSE——stage 逐段推文案，done 带 state，
     error 带 message。首条 stage 在重活前即发（目标 ≤5s 首见）。
     """
+    global _menu_generation
     if not _has_main_db():
         raise HTTPException(status_code=404, detail="无上次进度可继续，请先新游戏或加载存档。")
 
+    _menu_generation += 1
+    token = _menu_generation
     ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
 
     def on_stage(label: str) -> None:
@@ -3206,6 +3212,11 @@ async def api_menu_continue() -> StreamingResponse:
             # 首条阶段立即入队：生成器可在 WebGame 构造（verify smoke）前就 yield
             on_stage("检查模型后端...")
             game = WebGame(fresh=False, on_stage=on_stage)
+            # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
+            if token != _menu_generation:
+                _drain_and_close_session(game)
+                ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
+                return
             web_game = game
             ev_queue.put(("__done__", {"state": game.state_payload()}))
         except LLMUnavailable as exc:
@@ -3233,7 +3244,8 @@ async def api_menu_continue() -> StreamingResponse:
 @app.post("/api/menu/load_save/{name}")
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
     """从存档启动：先启动空 WebGame（fresh）→ 调 load_save 热替换主 DB。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     try:
         web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
     except LLMUnavailable as exc:
@@ -3262,7 +3274,8 @@ async def api_menu_exit() -> Dict[str, Any]:
 
     #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
     session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     if web_game is not None:
         old_game = web_game
         web_game = None  # 界面立刻退

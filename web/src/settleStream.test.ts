@@ -82,4 +82,18 @@ describe("consumeSettleStream continue-style stages (#1195)", () => {
       consumeSettleStream(streamResponse([], false), silent, { httpErrorLabel: "继续失败" }),
     ).rejects.toThrow("继续失败：HTTP 500");
   });
+
+  it("includes server JSON detail on non-OK responses", async () => {
+    const response = {
+      ok: false,
+      status: 404,
+      body: null,
+      async json() {
+        return { detail: "无上次进度可继续，请先新游戏或加载存档。" };
+      },
+    } as unknown as Response;
+    await expect(
+      consumeSettleStream(response, silent, { httpErrorLabel: "继续失败" }),
+    ).rejects.toThrow("无上次进度可继续，请先新游戏或加载存档。");
+  });
 });

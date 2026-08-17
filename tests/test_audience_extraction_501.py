@@ -452,6 +452,7 @@ def web_game(tmp_path, monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     return web_app.WebGame(fresh=False)
 
 
