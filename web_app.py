@@ -3204,7 +3204,8 @@ async def api_menu_continue() -> StreamingResponse:
         global web_game
         try:
             # 首条阶段立即入队：生成器可在 WebGame 构造重活前就 yield（#1195 ≤5s 首见）
-            on_stage("检查模型后端...")
+            # #1228：构造不再做连通 smoke，文案须诚实反映载入准备（非「检查模型后端」）。
+            on_stage("准备载入上次进度...")
             game = WebGame(fresh=False, on_stage=on_stage)
             # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
             if token != _menu_generation:

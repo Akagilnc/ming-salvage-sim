@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -860,15 +861,32 @@ def test_continue_load_save_reset_reach_hud_zero_llm_calls(tmp_path, monkeypatch
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     calls = _count_llm_calls(monkeypatch)
 
+    # 前置：同一临时主库先 seed 再建 continue——证明读的是既存库，非空库初始化。
+    seed_marker = "__seed_continue_1228__"
+    seed = web_app.WebGame(fresh=True)
+    try:
+        seed.favorites = {seed_marker}
+        seed.db.kv_set("favorites", json.dumps(sorted(seed.favorites), ensure_ascii=False))
+        assert db_path.exists()
+    finally:
+        try:
+            seed.session.close()
+        except Exception:
+            pass
+
     # continue：已有主库 fresh=False
     cont = web_app.WebGame(fresh=False)
     try:
         _assert_hud(cont.state_payload())
+        assert seed_marker in cont.favorites, (
+            "continue 须加载 seed 写入的可辨识持久状态，证明读的是既存主库"
+        )
         cont.save_to("slot_a")
 
         # load_save：热替换主 DB
         cont.load_save("slot_a")
         _assert_hud(cont.state_payload())
+        assert seed_marker in cont.favorites
 
         # 重置：清主库重建
         cont.reset_game()
