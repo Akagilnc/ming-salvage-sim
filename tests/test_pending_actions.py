@@ -762,14 +762,18 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
     assert failures[0]["retryable"] is True
 
 
-def test_web_advance_without_edict_settlement_abort_returns_409(read_game, monkeypatch):
-    """退朝无诏若结算中止，也要按颁诏同口径返回已处理的 409。"""
+def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatch):
+    """退朝无诏若结算中止，也要按颁诏同口径返回已处理的 409。
+
+    #1235 T2 点即入使 advance 入口必写 capture；须用可写 game 夹具（read_game
+    query_only 会在 accept INSERT 响亮失败，属夹具错配非产品只读容错）。
+    """
     import asyncio
     import pytest
     import web_app
     from ming_sim.exceptions import SettlementAbort
 
-    db, state, content = read_game
+    db, state, content = game
     stub = types.SimpleNamespace(
         db=db,
         state=state,

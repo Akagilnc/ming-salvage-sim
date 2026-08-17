@@ -26,18 +26,15 @@ def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:
     FRONT_HALF_DONE（settling / awaiting_decision）不重写——恢复态已有快照或
     半程活值不可作点击前真源。须在 await 在飞 / auto_close / 任何盘面突变之前调用。
 
-    返回 True 仅当本调用真新建了快照。Web 失败 exit 以此位控 gate 是否阻塞
-    （True=blocking 必清；False=non-blocking + 入口 in-flight 无他者才可清孤儿）；
-    不得再用此位门控「是否调用 exit」；锁闲本身不构成孤儿证据。
+    返回 True 仅当本调用原子 INSERT 新建了快照（rowcount==1）。Web 失败 exit
+    以此位控 gate 是否阻塞（True=blocking 必清；False=non-blocking + 入口
+    in-flight 无他者才可清孤儿）；不得再用此位门控「是否调用 exit」；
+    锁闲本身不构成孤儿证据。禁双重 SELECT/后置见行假 True。
     """
     phase = str(state.turn_phase or "")
     if phase in FRONT_HALF_DONE_PHASES:
         return False
-    turn = int(state.turn)
-    if db.get_month_open_snapshot(turn) is not None:
-        return False
-    db.capture_month_open_snapshot(state)
-    return db.get_month_open_snapshot(turn) is not None
+    return bool(db.capture_month_open_snapshot(state))
 
 
 def _clear_settlement_display_if_orphan(
