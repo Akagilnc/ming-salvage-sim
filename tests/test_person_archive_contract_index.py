@@ -69,9 +69,9 @@ def test_reason_code_aliases_and_missing_via_person_delta(game):
 
 def test_active_title_kind_normalizes_appointment_via_person_delta(game):
     """职名分 active 任命 → 调任；身名分 active 任命 stays 任命；
-    身名分/无名分 active 调任 → 任命."""
+    身名分 active 调任 → 任命（含候铨入仕邻态）。"""
     db, state, content = game
-    name_job, name_body, name_body_xfer, name_none = _active_names(db, content)[:4]
+    name_job, name_body, name_body_xfer, name_awaiting = _active_names(db, content)[:4]
     row = db.conn.execute(
         "SELECT office, office_type FROM characters WHERE name=?", (name_job,)
     ).fetchone()
@@ -123,26 +123,23 @@ def test_active_title_kind_normalizes_appointment_via_person_delta(game):
         "SELECT office FROM characters WHERE name=?", (name_body_xfer,)
     ).fetchone()["office"] == "工部尚书"
 
-    # active 无名分 调任 → 任命
-    db.conn.execute(
-        "UPDATE characters SET office='', office_type='无名分' WHERE name=?",
-        (name_none,),
-    )
-    db.conn.commit()
-    content.characters[name_none].office = ""
-    content.characters[name_none].office_type = "无名分"
+    # active 身名分（听用候铨，职名分空）调任 → 任命
+    # ADR 0009 决定1：身名分→职名分 = 任命（候铨入仕）；不变式1② 禁 active+无名分
+    db.set_character_office(name_awaiting, "听用候铨", "身名分")
+    content.characters[name_awaiting].office = "听用候铨"
+    content.characters[name_awaiting].office_type = "身名分"
     applied4 = issues.apply_score_extraction(
         db, state,
         {"人物变更": [{
-            "name": name_none, "origin_ref": "盘面自发", "动作": "调任",
-            "office": "礼部尚书", "reason": "无名分起授",
+            "name": name_awaiting, "origin_ref": "盘面自发", "动作": "调任",
+            "office": "礼部尚书", "reason": "候铨起授",
         }]},
         content=content,
     )
     assert applied4["applied_person_changes"][0]["动作"] == "任命"
     assert applied4["applied_person_changes"][0].get("normalized") == "调任->任命"
     assert db.conn.execute(
-        "SELECT office FROM characters WHERE name=?", (name_none,)
+        "SELECT office FROM characters WHERE name=?", (name_awaiting,)
     ).fetchone()["office"] == "礼部尚书"
 
 
