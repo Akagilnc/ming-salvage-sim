@@ -699,13 +699,14 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
             raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
         raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
-    # #1234：退朝入口点击受理即独立提交月初快照（任何突变之前，含 auto_close）。
+    # #1234/#1235：退朝入口点击受理即独立提交月初快照（任何突变之前，含 auto_close）。
     db.capture_month_open_snapshot(state)
     # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
     # 放在 atomic 外：收夜自有写与错误包，不与推进事务半嵌。
     # #503：收夜 beat 生产路径接通编排缝。
-    from ming_sim.audience_night import auto_close_open_night
+    from ming_sim.audience_night import AudienceNightError, auto_close_open_night
     from ming_sim.beat_orchestration import create_llm_beat_generator
+    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
     # Forward llm_config/write_gate so close-night can catch up ordinary story
     # facts and run the gate-free endorsement-only batch. Callers must not hold
     # an outer non-reentrant runtime write gate while passing nullcontext.
@@ -716,11 +717,16 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
         create_llm_beat_generator(effective_llm) if effective_llm is not None else None
     )
     # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
-    auto_close_open_night(db, state, content=content, registry=registry,
-                          wait_timeout_s=inflight_wait_s,
-                          beat_generator=beat_generator,
-                          llm_config=effective_llm, write_gate=write_gate,
-                          scene_registry=scene_registry)
+    try:
+        auto_close_open_night(db, state, content=content, registry=registry,
+                              wait_timeout_s=inflight_wait_s,
+                              beat_generator=beat_generator,
+                              llm_config=effective_llm, write_gate=write_gate,
+                              scene_registry=scene_registry)
+    except AudienceNightError:
+        # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
+        exit_settlement_display_on_failure(db, state)
+        raise
     # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
     # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
     try:
