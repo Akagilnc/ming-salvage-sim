@@ -53,7 +53,11 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
-from ming_sim.decree_vocabulary import dossier_action_policy
+from ming_sim.decree_vocabulary import (
+    dossier_action_policy,
+    qualitative_dossier_outcome,
+    qualitative_promulgation_slot,
+)
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
     EXTRACTION_MODULES,
@@ -600,10 +604,107 @@ def write_decree_with_agno(
     return text.strip()
 
 
+def _simulator_promulgated_turn(
+    row: Dict[str, object], db: Optional[GameDB],
+) -> int:
+    if row.get("promulgated_turn") not in (None, ""):
+        try:
+            return int(row["promulgated_turn"])  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            pass
+    if db is None:
+        return 0
+    try:
+        hist = db.list_decree_dossier_decisions(int(row["id"]))
+    except Exception:
+        return 0
+    for item in hist:
+        if str(item.get("decision") or "") == "promulgated":
+            return int(item.get("turn") or 0)
+        if str(item.get("rescript_action") or "") == "force_promulgated":
+            return int(item.get("turn") or 0)
+    if str(row.get("settlement_verdict") or "") == "promulgated":
+        # Settlement window: verdict known before durable decision row is visible.
+        return 0
+    return 0
+
+
+def _simulator_dossier_links(
+    row: Dict[str, object], db: Optional[GameDB],
+) -> List[Dict[str, object]]:
+    if isinstance(row.get("links"), list):
+        return [
+            {
+                "target_dossier_id": int(item["target_dossier_id"]),
+                "relation_type": str(item.get("relation_type") or ""),
+                "note": str(item.get("note") or ""),
+            }
+            for item in row["links"]  # type: ignore[index]
+            if isinstance(item, dict) and item.get("target_dossier_id") is not None
+        ]
+    if db is None:
+        return []
+    try:
+        raw = db.list_dossier_links(int(row["id"]))
+    except Exception:
+        return []
+    return [
+        {
+            "target_dossier_id": int(item["target_dossier_id"]),
+            "relation_type": str(item.get("relation_type") or ""),
+            "note": str(item.get("note") or ""),
+        }
+        for item in raw
+    ]
+
+
+def _project_one_dossier_for_simulator(
+    row: Dict[str, object],
+    *,
+    track: str,
+    execution_summary: Optional[Dict[str, object]] = None,
+    db: Optional[GameDB] = None,
+) -> Dict[str, object]:
+    """#569 B: fixed-key projection; never pass through raw JSON string columns."""
+    stigma = row.get("stigma")
+    if not isinstance(stigma, list):
+        stigma = []
+    roster = row.get("participant_roster")
+    if not isinstance(roster, list):
+        roster = []
+    projected: Dict[str, object] = {
+        "id": int(row["id"]),
+        "action_type": str(row.get("action_type") or ""),
+        "status": str(row.get("status") or ""),
+        "decision": qualitative_promulgation_slot(row),
+        "outcome": qualitative_dossier_outcome(
+            row.get("execution_outcome"), status=row.get("status"),
+        ),
+        "note": str(row.get("execution_note") or ""),
+        "mode": str(row.get("mode") or "ordinary"),
+        "stigma": list(stigma),
+        "participant_roster": list(roster),
+        "links": _simulator_dossier_links(row, db),
+        "due_turn": int(row.get("due_turn") or 0),
+        "created_turn": int(row.get("created_turn") or 0),
+        "promulgated_turn": _simulator_promulgated_turn(row, db),
+        "target_kind": str(row.get("target_kind") or ""),
+        "target_id": str(row.get("target_id") or ""),
+        "executor_kind": str(row.get("executor_kind") or ""),
+        "executor_id": str(row.get("executor_id") or ""),
+    }
+    if track == "narrative":
+        projected["decree_text"] = str(row.get("decree_text") or "")
+    else:
+        projected["execution_summary"] = dict(execution_summary or {})
+    return projected
+
+
 def project_dossiers_for_simulator(
     simulation_visible_dossiers: List[Dict[str, object]],
+    db: Optional[GameDB] = None,
 ) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517)."""
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569)."""
     dossier_payload: List[Dict[str, object]] = []
     for row in simulation_visible_dossiers:
         payload = row.get("payload")
@@ -618,7 +719,9 @@ def project_dossiers_for_simulator(
             or str(row.get("settlement_verdict") or "") == "promulgated"
         )
         if policy["effect_owner"] == "narrative" and admitted:
-            dossier_payload.append(row)
+            dossier_payload.append(
+                _project_one_dossier_for_simulator(row, track="narrative", db=db)
+            )
             continue
         # In-transit executing work, and just-promulgated payload-owned terminal
         # effects (惩处/招抚等), need command/target context without re-materializing.
@@ -630,7 +733,7 @@ def project_dossiers_for_simulator(
         if admitted and (
             str(row.get("status") or "") == "executing" or just_promulgated_terminal
         ):
-            execution_summary = {
+            execution_summary: Dict[str, object] = {
                 "command": str(row.get("decree_text") or "").strip(),
             }
             # target_id 已在行级字段；此处补 payload 侧必要动作上下文（金额/账户/惩处动作）。
@@ -641,18 +744,12 @@ def project_dossiers_for_simulator(
                 value = payload.get(key)
                 if value not in (None, ""):
                     execution_summary[key] = value
-            dossier_payload.append({
-                **{
-                    key: row[key]
-                    for key in (
-                        "id", "action_type", "target_kind", "target_id",
-                        "executor_kind", "executor_id", "status", "due_turn",
-                        "created_turn", "promulgated_turn",
-                    )
-                    if key in row
-                },
-                "execution_summary": execution_summary,
-            })
+            dossier_payload.append(
+                _project_one_dossier_for_simulator(
+                    row, track="execution",
+                    execution_summary=execution_summary, db=db,
+                )
+            )
     return dossier_payload
 
 
@@ -970,7 +1067,7 @@ def resolve_directives(
         }
         for row in db.list_decree_dossiers_for_simulation(state.turn)
     ]
-    dossier_payload = project_dossiers_for_simulator(simulation_visible_dossiers)
+    dossier_payload = project_dossiers_for_simulator(simulation_visible_dossiers, db=db)
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)
@@ -1023,8 +1120,11 @@ def resolve_directives(
     )
     simulator_payload["dossier_verdicts"] = verdict_rows
     simulator_payload["promulgation_instruction"] = (
-        "颁布判决是硬约束：decision=rejected 的案卷本月未颁、不得写成已办成或已生效；"
-        "只能叙述其被打回并等待批红。decision=promulgated 的案卷才可进入本月办理。"
+        "颁布判决是硬约束：以 decree_dossiers（+dossier_verdicts）为权威。"
+        "颁布格为打回／decision=rejected 的案卷本月未颁，严禁写成已办成、已生效、"
+        "已到任或银已出库；只能叙述其被打回并等待批红。"
+        "颁布格为顺颁／decision=promulgated 的案卷才可进入本月办理。"
+        "decree_text 仅为兼容摘要，不得覆盖案卷列表与判决。"
     )
     simulator = create_season_simulator_agent(
         llm_config, agno_db, state=state, db=db, simulator_payload=simulator_payload
