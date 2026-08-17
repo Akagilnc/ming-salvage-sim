@@ -20,19 +20,55 @@ if TYPE_CHECKING:
 MONTH_OPEN_KEYS = tuple(ECONOMY_ACCOUNTS) + tuple(SCORE_METRICS)
 
 
+def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:
+    """#1235 / ADR 0149 点即入：点击受理即独立提交月初快照（幂等）。
+
+    FRONT_HALF_DONE（settling / awaiting_decision）不重写——恢复态已有快照或
+    半程活值不可作点击前真源。须在 await 在飞 / auto_close / 任何盘面突变之前调用。
+
+    返回 True 仅当本调用原子 INSERT 新建了快照（rowcount==1）。Web 失败 exit
+    以此位控 gate 是否阻塞（True=blocking 必清；False=non-blocking + 入口
+    in-flight 无他者才可清孤儿）；不得再用此位门控「是否调用 exit」；
+    锁闲本身不构成孤儿证据。禁双重 SELECT/后置见行假 True。
+    """
+    phase = str(state.turn_phase or "")
+    if phase in FRONT_HALF_DONE_PHASES:
+        return False
+    return bool(db.capture_month_open_snapshot(state))
+
+
+def _clear_settlement_display_if_orphan(
+    db: "GameDB", state: "GameState", *, reason: str,
+) -> bool:
+    """同谓词 clearer：快照在 ∧ 相位非常态前半段 → 清快照。settling/awaiting 不清。"""
+    turn = int(state.turn)
+    phase = str(state.turn_phase or "")
+    if phase in FRONT_HALF_DONE_PHASES:
+        return False
+    if db.get_month_open_snapshot(turn) is None:
+        return False
+    db.clear_month_open_snapshot(turn)
+    tlog(f"[month_open_snapshot] {reason} turn={turn} phase={phase}")
+    return True
+
+
+def exit_settlement_display_on_failure(db: "GameDB", state: "GameState") -> bool:
+    """#1235 / ADR 0149 真失败另形：前半段未提交时清快照，核账展示态退出。
+
+    settling / awaiting_decision → 不清，交既有恢复通道（AC3 不回归）。
+    终态与「未了在办」（展示态仍在）可区分。返回是否清除。
+    """
+    return _clear_settlement_display_if_orphan(
+        db, state, reason="真失败退出核账展示态",
+    )
+
+
 def clear_orphan_month_open_snapshot(db: "GameDB", state: "GameState") -> bool:
     """服务进程唯一启动缝（WebGame.__init__）：快照在 ∧ 相位仍常态 → 清快照并记一行日志。
 
     settling / awaiting_decision → 不清，交既有恢复通道。
     幂等；故障注入 oracle 同调此函数（禁旁路造绿灯）。
     """
-    turn = int(state.turn)
-    snap = db.get_month_open_snapshot(turn)
-    if snap is None:
-        return False
-    phase = str(state.turn_phase or "")
-    if phase in FRONT_HALF_DONE_PHASES:
-        return False
-    db.clear_month_open_snapshot(turn)
-    tlog(f"[month_open_snapshot] 启动清除孤儿月初快照 turn={turn} phase={phase}")
-    return True
+    return _clear_settlement_display_if_orphan(
+        db, state, reason="启动清除孤儿月初快照",
+    )

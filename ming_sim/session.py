@@ -2549,30 +2549,35 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
-        # #1234：点击受理即独立提交月初快照（不进 pre_settle 事务）。恢复态
-        # （FRONT_HALF_DONE）已有快照或不该用半程活值重写——跳过。
-        if self.state.turn_phase not in FRONT_HALF_DONE_PHASES:
-            self.db.capture_month_open_snapshot(self.state)
-        # #498 AC8：颁诏入口顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
-        # inflight_wait_s：web 入口已在 gate 外先等在飞落档（web_app._await_audience_inflight_clear），
-        # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外
-        # （AC10 gate 自锁）。CLI/单线程调用方留默认（None→DEFAULT）自等。
-        from ming_sim.audience_night import auto_close_open_night
+        # #1234/#1235：点击受理即独立提交月初快照（不进 pre_settle 事务）。
+        # accept_settlement_period：FRONT_HALF_DONE 跳过（恢复态已有快照/半程活值不可重写）。
+        # Web 入口另在 await/close 前先 capture（点即入时序）；此处幂等兜底 CLI/直调。
+        from ming_sim.audience_night import AudienceNightError, auto_close_open_night
+        from ming_sim.month_open_snapshot import (
+            accept_settlement_period,
+            exit_settlement_display_on_failure,
+        )
+        accept_settlement_period(self.db, self.state)
         # #503/#542：收夜与开夜、入殿、退侍共用真实 scene LLM adapter。
         # Close-night owns short write sections + gate-free endorsement LLM.
         # Web callers must invoke auto_close outside any outer runtime write gate
         # (see web_app issue/stream/no-edict) so this is typically already-closed.
         # CLI is single-writer: None write_gate = no lock around LLM.
-        auto_close_open_night(
-            self.db, self.state,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-            wait_timeout_s=inflight_wait_s,
-            beat_generator=self._beat_generator,
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=None,
-            scene_registry=self._scene_registry,
-        )
+        try:
+            auto_close_open_night(
+                self.db, self.state,
+                content=getattr(self, "content", None),
+                registry=getattr(self, "registry", None),
+                wait_timeout_s=inflight_wait_s,
+                beat_generator=self._beat_generator,
+                llm_config=getattr(self, "llm_config", None),
+                write_gate=None,
+                scene_registry=self._scene_registry,
+            )
+        except AudienceNightError:
+            # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
+            exit_settlement_display_on_failure(self.db, self.state)
+            raise
         # 结束回合才执行“不回=默认同意”；旧式 turn_directives 沿用既有确认口。
         # pending_actions directive 则保持 durable pending，直到 resolve_directives 的
         # pre_settle owning transaction 与财政等副作用一起物化。

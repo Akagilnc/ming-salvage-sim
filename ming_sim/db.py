@@ -14477,19 +14477,20 @@ class GameDB:
 
     # ── #1234 月初快照（路③呈现投影）────────────────────────────────
 
-    def capture_month_open_snapshot(self, state: GameState) -> None:
+    def capture_month_open_snapshot(self, state: GameState) -> bool:
         """点击受理：独立提交点击前四键 + 所属回合。已有本回合行则不覆盖（幂等）。
 
         必须在任何盘面突变之前调用，且不进 pre_settle 事务——否则回滚会毁掉刷新同脸。
+        原子 INSERT ON CONFLICT DO NOTHING：返回 True 仅当本调用新建行（rowcount==1），
+        供 accept 裁定创建者；禁 SELECT 预检/后置见行假 True。
         """
         turn = int(state.turn)
-        if self.get_month_open_snapshot(turn) is not None:
-            return
         m = state.metrics
-        self.conn.execute(
+        cur = self.conn.execute(
             """INSERT INTO month_open_snapshot
                (turn, treasury, inner_treasury, public_support, imperial_prestige)
-               VALUES (?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(turn) DO NOTHING""",
             (
                 turn,
                 int(m.get("国库", 0)),
@@ -14499,6 +14500,7 @@ class GameDB:
             ),
         )
         self.conn.commit()
+        return int(cur.rowcount or 0) == 1
 
     def get_month_open_snapshot(self, turn: int) -> Optional[Dict[str, int]]:
         """读本回合月初快照四键；无则 None。仅呈现层消费。"""
