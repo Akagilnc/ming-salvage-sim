@@ -229,12 +229,11 @@ def capture_commitment_stages(
                     )
         else:
             # 非 str 正式面（list/dict）：与 str 支同响亮口径，勿静默 []
+            # 空 list/tuple 已由入口 raw not in (…, [], ()) 排除，此处无空支
             if not isinstance(raw, (list, tuple)):
                 raise ValueError(
                     f"stages 须为 JSON 数组，得 {type(raw).__name__}"
                 )
-            if len(raw) == 0:
-                return []
             structured = normalize_commitment_stages(raw)
             if not structured:
                 raise ValueError(

@@ -186,6 +186,45 @@ def test_audience_materializer_captures_三年x_五年y_into_stages(game):
     assert stages[1]["origin_context"] == "五年新历成"
 
 
+def test_audience_entry_tolerates_classifier_bad_stages_falls_back_to_narrative(game):
+    """召对入口分层：分类器坏形 stages 不抛未捕获异常；正文年诺仍文本捕获落段。
+
+    库层 capture/stages_to_json 显式喂入仍 ValueError（见 list_bad_shape 测）。
+    """
+    db, state, content = game
+    actor = _active_ming(db, content)
+    promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
+    payload = {
+        "kind": "assignment",
+        "title": "徐光启火器历法之诺",
+        "target_id": "xuguangqi-staged-bad-clf",
+        "commitment_kind": "until_stop",
+        # 分类器产出坏形 list（due_turn=0）——入口须容错，不得掀翻召对
+        "stages": [{"due_turn": 0, "criterion_text": "x"}],
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _materialize_ctx(
+        db, actor.name, candidates, state.turn,
+        message="准徐光启分段之诺。",
+        reply=promise,
+    )
+    run_materialize_pipeline(ctx)  # 不得 raise
+    assert ctx.out.get("pending_action_id"), "坏形 stages 不得阻断交办暂存"
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    stages = normalize_commitment_stages(pending.get("stages"))
+    assert len(stages) == 2
+    assert stages[0]["origin_context"] == "三年火器见眉目"
+    assert stages[1]["origin_context"] == "五年新历成"
+    # 库层仍响亮（分层：入口容错 ≠ 库层静默）
+    with pytest.raises(ValueError, match="有效段"):
+        capture_commitment_stages(
+            [{"due_turn": 0, "criterion_text": "x"}], origin_turn=1,
+        )
+
+
 def test_gazette_score_path_captures_三年x_五年y_from_stage_text(game):
     """邸报/score 生产路径：stage_text「三年X五年Y」经 capture 落 stages_json。"""
     db, state, content = game
