@@ -5,8 +5,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./main";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-class _RO { observe() {} unobserve() {} disconnect() {} }
+// jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
+class _RO {
+  private cb: ResizeObserverCallback;
+  constructor(cb: ResizeObserverCallback) { this.cb = cb; }
+  observe(el: Element) {
+    this.cb([{ target: el } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve() {}
+  disconnect() {}
+}
 (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver = _RO;
+Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1600 });
+Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 900 });
 
 // 开启密令换回合自动弹窗（生产 gate 默认关；测试打开以验协调器所属的延迟呈现定时器 wiring）。
 // #1236：其余 face-gate 助手走真实实现，避免 wiring 测试与门控分叉。
@@ -18,6 +29,12 @@ vi.mock("./settlementPresentation", async (importOriginal) => {
     shouldAutoOpenClosedIssuesAfterSettlement: () => false,
   };
 });
+
+// GrandMap 依赖 SVG getBBox；本文件只验 face 门控/持久投影，不测地图几何。
+vi.mock("./components/map", () => ({
+  GrandMap: () => <div data-testid="grand-map-stub" />,
+  NodeIntel: () => null,
+}));
 
 const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);
 const sseResp = (event: string, payload: unknown): Response => {
@@ -703,9 +720,11 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.textContent).toContain(String(SNAP_HUANGWEI));
     expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
 
-    // 关闭组：局势不渲染（半程议题/上月已结不经局势面泄漏）
-    expect(host.querySelector(".situation-panel")).toBeNull();
-    expect(host.querySelector(".situation-closed-list")).toBeNull();
+    // 关闭组：半程局势不渲染；只读 closed_issues 仍可达（上月已结入口不关死）
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-list")).toBeNull();
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
     expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
     expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
     // 点关闭组导航：抽屉不得进入 .open（子树可常挂，以 open 态为准）
@@ -819,13 +838,14 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     });
     await closeOpenOverlay(host);
 
-    // closed_issues：局势关闭 ⇒ 上月已结/半程议题不经局势面泄漏
-    expect(host.querySelector(".situation-panel")).toBeNull();
-    expect(host.querySelector(".situation-closed-list")).toBeNull();
+    // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
   });
 
-  it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary", async () => {
+  it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: SNAP_GAZETTE,
       pending_decisions: [],
@@ -835,7 +855,40 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')!.textContent).toContain(SNAP_GAZETTE);
-    expect(host.querySelector(".situation-panel")).toBeNull();
+    // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+  });
+
+  it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    expect(host.textContent).not.toContain("· 核账");
+    expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("false");
+    expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
+    // 局势（半程）与上月已结一并恢复
+    expect(host.querySelector(".situation-panel")).not.toBeNull();
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    // 关闭组命令可再开
+    await click(cmdByCaption(host, "密令"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
+    });
+    await closeOpenOverlay(host);
+    await click(cmdByCaption(host, "拟诏/结束回合"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
   });
 });

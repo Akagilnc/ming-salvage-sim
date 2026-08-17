@@ -277,7 +277,13 @@ export function App() {
     if (!state) return;
     const closed = state.closed_this_turn || [];
     const currentTurn = state.turn.turn;
-    if (closed.length && currentTurn !== closedShown && shouldAutoOpenClosedIssuesAfterSettlement()) {
+    // #1236：上月已结属只读组——自动弹窗亦吃 isFaceReachable（与 FACE_GROUP 同口径）。
+    if (
+      closed.length
+      && currentTurn !== closedShown
+      && shouldAutoOpenClosedIssuesAfterSettlement()
+      && isFaceReachable("closed_issues", isSettlementDisplay(state.turn))
+    ) {
       setClosedModal(closed);
       setClosedShown(currentTurn);
       sessionStorage.setItem("closedShownTurn", String(currentTurn));
@@ -318,6 +324,7 @@ export function App() {
 
   // 每次进入页面/换回合都弹上回合邸报。不持久化记录——刷新即重新弹。
   // 同一加载周期内同一回合不重复弹（gazetteShown 用 React state，刷新后回到 -1）。
+  // #1236：邸报(gazette) 属只读组——自动弹出与渲染同吃 isFaceReachable（无第二真源）。
   React.useEffect(() => {
     if (!state) return;
     // 结局页未关掉时让位给它；玩家关掉后（endingDismissed）邸报照常。
@@ -327,6 +334,7 @@ export function App() {
     if (!summary) return;
     if (summary.startsWith("登基伊始")) return;
     if (currentTurn === gazetteShown) return;
+    if (!isFaceReachable("gazette", isSettlementDisplay(state.turn))) return;
     if (suppressNextReportRef.current) {
       suppressNextReportRef.current = false;
       return;
@@ -457,10 +465,12 @@ export function App() {
   const sz = hudStageSize;
   const ready = sz.w > 0 && sz.h > 0;
 
-  // 关闭组模态：若 activeModal 被外路径设到关闭面，不渲染。
+  // 关闭/只读模态：若 activeModal 被外路径设到不可达面，不渲染（逐 key 吃 isFaceReachable）。
   const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementDisplay);
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
+  const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
+  const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
   const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementDisplay);
@@ -636,7 +646,7 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {activeModal === "report" && (gazetteReport || report) ? (
+      {gazetteOpen && (gazetteReport || report) ? (
         <ReportModal
           report={gazetteReport || report}
           onClose={() => setActiveModal("none")}
@@ -669,7 +679,7 @@ export function App() {
         />
       ) : null}
 
-      {closedModal.length ? (
+      {closedIssuesOpen ? (
         <ClosedIssuesModal items={closedModal} onClose={() => setClosedModal([])} />
       ) : null}
 

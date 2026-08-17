@@ -61,7 +61,10 @@ export function GameHud({
   };
 
   const secretBadge = isFaceReachable("secret_orders", settlementDisplay) ? secretOrderActiveCount : 0;
+  // situation（关闭）与 closed_issues（只读）分 key：核账期藏半程议题，保留上月已结入口。
   const showSituation = isFaceReachable("situation", settlementDisplay);
+  const showClosedIssues = isFaceReachable("closed_issues", settlementDisplay);
+  const showIssueQuad = showSituation || showClosedIssues;
   const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
   const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
 
@@ -98,16 +101,20 @@ export function GameHud({
         </div>
       ) : null}
 
-      {/* 局势进度：关闭组——核账期不渲染（零半程议题泄漏） */}
-      {ready && showSituation ? (
+      {/* 局势框：situation 关闭 ≠ closed_issues 关死。核账期只呈上月已结（零半程议题泄漏）。 */}
+      {ready && showIssueQuad ? (
         <div className="hud2-issue-quad" style={{
           position: "absolute",
           left: `${HUD_SLOTS.局势框.left}%`, top: `${HUD_SLOTS.局势框.top}%`,
           width: `${HUD_SLOTS.局势框.width}%`, height: `${HUD_SLOTS.局势框.height}%`,
-        }}>
+        }}
+          data-settlement-face={showSituation
+            ? settlementFaceAccess("situation", settlementDisplay)
+            : settlementFaceAccess("closed_issues", settlementDisplay)}
+        >
           <SituationPanel
-            issues={state.issues}
-            closedIssues={state.closed_this_turn || []}
+            issues={showSituation ? state.issues : []}
+            closedIssues={showClosedIssues ? (state.closed_this_turn || []) : []}
             hasLegacies={(state.legacies || []).length > 0}
           />
         </div>
