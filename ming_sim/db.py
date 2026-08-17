@@ -11085,7 +11085,7 @@ class GameDB:
         return snapshots
 
     def record_monthly_grant_reconciliations(
-        self, turn: int, generated: object = None, *, commit: bool = False,
+        self, turn: int, generated: object = None,
     ) -> List[Dict[str, object]]:
         """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
 
@@ -11099,10 +11099,7 @@ class GameDB:
         if not targets:
             if generated in (None, []):
                 return []
-            # 无扫描目标却收到提案：忽略空外的噪音，保持节拍可空跑
-            if not isinstance(generated, list) or generated:
-                raise ValueError("无在途拨帑却收到对账提案")
-            return []
+            raise ValueError("无在途拨帑却收到对账提案")
 
         supplied: Dict[int, Tuple[object, str]] = {}
         if generated is None:
@@ -11175,8 +11172,6 @@ class GameDB:
             )
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
-        if commit:
-            self._commit_dossier_write(True)
         return reports
 
     def merge_grant_reconciliation_into_execution_note(
