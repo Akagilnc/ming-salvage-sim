@@ -5219,11 +5219,14 @@ def apply_issue_tracker_output(
                         "ongoing_effects 含非月度持续字段："
                         + ", ".join(unsupported_ongoing_fields)
                     )
-                if not ongoing_has_work and end_turn_for_commitment <= 0:
-                    raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
+                stages_for_commitment = ni.get("stages") if ni.get("stages") not in (None, "", [], {}) else ni.get("stages_json")
+                from ming_sim.staged_commitment import normalize_commitment_stages
+                has_stages = bool(normalize_commitment_stages(stages_for_commitment))
+                if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
+                    raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
-                    if end_turn_for_commitment <= 0 and not ongoing_has_work:
-                        raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn")
+                    if end_turn_for_commitment <= 0 and not ongoing_has_work and not has_stages:
+                        raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn 或 stages")
                     stop_condition = ""
                 else:
                     stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
@@ -5350,6 +5353,11 @@ def apply_issue_tracker_output(
                 ),
             })
             continue
+        from ming_sim.staged_commitment import normalize_commitment_stages
+        stages_raw = ni.get("stages") if ni.get("stages") not in (None, "", [], {}) else ni.get("stages_json")
+        stages_norm = normalize_commitment_stages(stages_raw) if is_commitment else []
+        if stages_norm and end_turn <= 0:
+            end_turn = max(int(s["due_turn"]) for s in stages_norm)
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5379,6 +5387,7 @@ def apply_issue_tracker_output(
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
+            stages_json=stages_norm,
             commit=commit_now,
         )
         if kind == "initiative":
@@ -5386,6 +5395,8 @@ def apply_issue_tracker_output(
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
+        if stages_norm:
+            applied_item["stages"] = stages_norm
         applied_new.append(applied_item)
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）

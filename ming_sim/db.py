@@ -1589,12 +1589,31 @@ class GameDB:
                 end_turn INTEGER NOT NULL DEFAULT 0,
                 stop_condition TEXT NOT NULL DEFAULT '',
                 commitment_kind TEXT NOT NULL DEFAULT '',
+                stages_json TEXT NOT NULL DEFAULT '[]',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
+            CREATE TABLE IF NOT EXISTS next_audience_todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                commitment_ref INTEGER NOT NULL,
+                stage_idx INTEGER NOT NULL,
+                due_turn INTEGER NOT NULL,
+                criterion_text TEXT NOT NULL DEFAULT '',
+                origin_context TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
+                created_turn INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(commitment_ref, stage_idx, entry_kind),
+                FOREIGN KEY(commitment_ref) REFERENCES issues(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
+                ON next_audience_todos(status, due_turn);
 
             CREATE TABLE IF NOT EXISTS issue_advances (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1839,6 +1858,7 @@ class GameDB:
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -12877,6 +12897,15 @@ class GameDB:
         ongoing = payload.get("ongoing_effects")
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
+        # #620 扩展面：分段里程碑（#520 本体字段语义不动）
+        from ming_sim.staged_commitment import normalize_commitment_stages
+        stages_norm = normalize_commitment_stages(
+            payload.get("stages") or payload.get("stages_json")
+        )
+        if stages_norm:
+            ni["stages"] = stages_norm
+            if not commitment_kind:
+                ni["commitment_kind"] = "until_stop"
         # ongoing_effects / end_turn 选择规则与缺 marker 拒收交既有校验。
 
         out = apply_score_extraction(
@@ -15235,6 +15264,88 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    def insert_next_audience_todo(
+        self,
+        *,
+        commitment_ref: int,
+        stage_idx: int,
+        due_turn: int,
+        criterion_text: str = "",
+        origin_context: str = "",
+        status: str = "pending",
+        entry_kind: str = "staged_commitment",
+        created_turn: int = 0,
+        commit: bool = True,
+    ) -> int:
+        """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
+
+        返回新建行 id；已存在则返回 0（幂等，不覆盖）。
+        """
+        cur = self.conn.execute(
+            """
+            INSERT OR IGNORE INTO next_audience_todos (
+                commitment_ref, stage_idx, due_turn, criterion_text, origin_context,
+                status, entry_kind, created_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(commitment_ref),
+                int(stage_idx),
+                int(due_turn),
+                sanitize_sqlite_text(str(criterion_text or "")),
+                sanitize_sqlite_text(str(origin_context or "")),
+                sanitize_sqlite_text(str(status or "pending") or "pending"),
+                sanitize_sqlite_text(str(entry_kind or "staged_commitment") or "staged_commitment"),
+                int(created_turn or 0),
+            ),
+        )
+        if commit:
+            self.conn.commit()
+        if cur.rowcount <= 0:
+            return 0
+        return int(cur.lastrowid)
+
+    def list_next_audience_todos(
+        self,
+        *,
+        status: str | None = None,
+        commitment_ref: int | None = None,
+    ) -> List[Dict[str, object]]:
+        """下一召对回合可读的待办条目（restore 只读 DB 接续）。"""
+        clauses: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            clauses.append("status=?")
+            params.append(str(status))
+        if commitment_ref is not None:
+            clauses.append("commitment_ref=?")
+            params.append(int(commitment_ref))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
+                   origin_context, status, entry_kind, created_turn
+            FROM next_audience_todos
+            {where}
+            ORDER BY due_turn, commitment_ref, stage_idx, id
+            """,
+            tuple(params),
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "commitment_ref": int(r["commitment_ref"]),
+                "stage_idx": int(r["stage_idx"]),
+                "due_turn": int(r["due_turn"]),
+                "criterion_text": str(r["criterion_text"] or ""),
+                "origin_context": str(r["origin_context"] or ""),
+                "status": str(r["status"] or ""),
+                "entry_kind": str(r["entry_kind"] or ""),
+                "created_turn": int(r["created_turn"] or 0),
+            }
+            for r in rows
+        ]
+
     def insert_issue(
         self,
         state: GameState,
@@ -15263,6 +15374,7 @@ class GameDB:
         end_turn: int = 0,
         stop_condition: Dict[str, object] | str = "",
         commitment_kind: str = "",
+        stages_json: str | list | None = None,
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -15278,6 +15390,13 @@ class GameDB:
         phase = self._derive_issue_phase(bar_value)
         participant_roster = self._normalize_participant_roster(participants)
         participant_names = [item["character_id"] for item in participant_roster]
+        from ming_sim.staged_commitment import stages_to_json
+        if isinstance(stages_json, str):
+            stages_blob = stages_to_json(stages_json)
+        elif stages_json is None:
+            stages_blob = "[]"
+        else:
+            stages_blob = stages_to_json(stages_json)
         cur = self.conn.execute(
             """
             INSERT INTO issues (
@@ -15286,8 +15405,8 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, participants, participant_roster, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                end_turn, stop_condition, commitment_kind, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -15311,6 +15430,7 @@ class GameDB:
                     else sanitize_sqlite_text(str(stop_condition or ""))
                 ),
                 sanitize_sqlite_text(str(commitment_kind or "")),
+                sanitize_sqlite_text(stages_blob),
                 state.turn,
             ),
         )
