@@ -48,7 +48,10 @@ function cardPos(host: HTMLElement, name: string): { left: string; top: string }
   return { left: card.style.left, top: card.style.top };
 }
 
-async function renderCourtList(list: Minister[]) {
+async function renderCourtList(
+  list: Minister[],
+  onOpenChat: (minister: Minister) => void = () => {}
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -68,7 +71,7 @@ async function renderCourtList(list: Minister[]) {
         portraitPrefix="minister_"
         selectedMinister=""
         emptyNote="empty"
-        onOpenChat={() => {}}
+        onOpenChat={onOpenChat}
         courtMode={true}
       />
     );
@@ -193,5 +196,30 @@ describe("朝堂同衔分座（#1196 呈现层去冲突）", () => {
     expect(a).not.toBeNull();
     expect(b).not.toBeNull();
     expect(`${a!.left}|${a!.top}`).not.toBe(`${b!.left}|${b!.top}`);
+  });
+
+  it("同衔两张 minister-card 依次点击均委派 onOpenChat", async () => {
+    // 票面复现对：来宗道/温体仁同「礼部尚书」——每人一张卡，各自 click 须召对到本人
+    const lai = minister({ name: "来宗道", office: "礼部尚书,东阁大学士" });
+    const wen = minister({ name: "温体仁", office: "礼部尚书" });
+    const onOpenChat = vi.fn();
+    const host = await renderCourtList([lai, wen], onOpenChat);
+
+    const cards = Array.from(host.querySelectorAll<HTMLElement>("button.minister-card"));
+    const laiCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "来宗道");
+    const wenCard = cards.find((el) => el.querySelector(".minister-name")?.textContent === "温体仁");
+    expect(laiCard).toBeTruthy();
+    expect(wenCard).toBeTruthy();
+
+    await act(async () => {
+      laiCard!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      wenCard!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onOpenChat).toHaveBeenCalledTimes(2);
+    expect(onOpenChat.mock.calls[0][0]).toBe(lai);
+    expect(onOpenChat.mock.calls[1][0]).toBe(wen);
   });
 });
