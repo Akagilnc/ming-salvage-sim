@@ -52,6 +52,8 @@ class MaterializeCtx:
     draft_staged: bool = False
     # ADR 0028 / #520：最近相关召对上下文（与分类器同源喂料，案卷 text 取链）
     recent_context: str = ""
+    # #568：当前对话轮 id（session.chat/web/CLI 作用域透传）；点策 origin 结构化排除本轮
+    chat_turn_id: int = 0
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -324,12 +326,41 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
             # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
             # #571 的串行抽取只补案卷结构字段，失败不得吞掉已判定的动作。
-            draft_res = {
-                **draft_res,
-                "draft_action": "拟旨",
-                "draft_text": ctx.reply,
-                "target_candidate": "",
-            }
+            # #568 / ADR 0059：strategy_selection 正文沿 ADR 0028 从对话上下文展开，
+            # 不得用领命回话覆盖、不得仅存皇帝点策原句。
+            is_strategy_selection = (
+                str(draft_res.get("dossier_action_type") or "").strip()
+                == "strategy_selection"
+            )
+            if is_strategy_selection:
+                context_body = _assignment_dossier_text(ctx)
+                expanded = (
+                    context_body
+                    or str(draft_res.get("draft_text") or "").strip()
+                    or str(ctx.reply or "").strip()
+                    or str(ctx.player_message or "").strip()
+                )
+                draft_res = {
+                    **draft_res,
+                    "draft_action": "拟旨",
+                    "draft_text": expanded,
+                    "target_candidate": "",
+                }
+                origin_tid = _strategy_selection_origin_turn_id(
+                    session.db,
+                    minister_name,
+                    int(session.state.turn),
+                    exclude_turn_id=int(ctx.chat_turn_id or 0),
+                )
+                if origin_tid > 0:
+                    draft_res["source_chat_turn_id"] = origin_tid
+            else:
+                draft_res = {
+                    **draft_res,
+                    "draft_action": "拟旨",
+                    "draft_text": ctx.reply,
+                    "target_candidate": "",
+                }
 
     if draft_res["draft_action"] == "拟旨" and str(draft_res.get("target_candidate") or "") == "含糊":
         ctx.out["directive_confirmation_ambiguous"] = {
@@ -410,6 +441,13 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
         for field_name in mechanical_fields:
             if draft_res.get(field_name) not in (None, ""):
                 semantic_payload[field_name] = draft_res[field_name]
+        # #568：点策 origin 走既有 source_chat_turn_id 填值路径（directive 成案消费）
+        try:
+            origin_pin = int(draft_res.get("source_chat_turn_id") or 0)
+        except (TypeError, ValueError):
+            origin_pin = 0
+        if origin_pin > 0:
+            semantic_payload["source_chat_turn_id"] = origin_pin
         if isinstance(draft_res.get("participant_roster"), list):
             semantic_payload["participant_roster"] = draft_res["participant_roster"]
         if not is_existing_update:
@@ -904,6 +942,77 @@ def _context_line_present(haystack: str, needle: str) -> bool:
             if content == n:
                 return True
     return False
+
+
+def _strategy_selection_origin_turn_id(
+    db: Any,
+    minister_name: str,
+    turn: int,
+    *,
+    exclude_turn_id: int = 0,
+) -> int:
+    """#568：点策案卷 origin = 大臣陈策轮（单向新指旧），非皇帝点策轮。
+
+    复用 chat_turns 既有行；禁平行溯源表。优先本夜已落 minister 回话的轮，
+    以 turn id 结构化排除当前点策轮（禁 user 文本相等过滤）。
+    """
+    conn = getattr(db, "conn", None)
+    if conn is None:
+        return 0
+    night_id = 0
+    night_getter = getattr(db, "_current_open_night_id", None)
+    if callable(night_getter):
+        try:
+            night_id = int(night_getter() or 0)
+        except Exception:
+            night_id = 0
+    name = str(minister_name or "")
+    try:
+        exclude_tid = int(exclude_turn_id or 0)
+    except (TypeError, ValueError):
+        exclude_tid = 0
+    # exclude_tid<=0 时用 0 占位：chat_turns.id 自增正整数，t.id <> 0 恒真
+    try:
+        if night_id > 0:
+            row = conn.execute(
+                """
+                SELECT t.id AS id
+                FROM chat_turns t
+                WHERE t.night_id = ?
+                  AND t.minister_name = ?
+                  AND t.undone_at IS NULL
+                  AND t.status NOT IN ('failed', 'undone')
+                  AND t.minister_message_id IS NOT NULL
+                  AND t.minister_message_id > 0
+                  AND t.id <> ?
+                ORDER BY t.id DESC
+                LIMIT 1
+                """,
+                (int(night_id), name, exclude_tid),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT t.id AS id
+                FROM chat_turns t
+                WHERE t.turn = ?
+                  AND t.minister_name = ?
+                  AND t.undone_at IS NULL
+                  AND t.status NOT IN ('failed', 'undone')
+                  AND t.minister_message_id IS NOT NULL
+                  AND t.minister_message_id > 0
+                  AND t.id <> ?
+                ORDER BY t.id DESC
+                LIMIT 1
+                """,
+                (int(turn), name, exclude_tid),
+            ).fetchone()
+    except Exception:
+        return 0
+    if row is None:
+        return 0
+    tid = int(row["id"] or 0)
+    return tid if tid > 0 else 0
 
 
 def stage_assignment_candidate(
