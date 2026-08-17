@@ -231,7 +231,7 @@ def test_north_star_beat5_strategy_selection_lands_one_dossier(game, monkeypatch
 
 
 def test_strategy_selection_origin_not_emperor_pick_turn(game, monkeypatch):
-    """origin 单向新指旧：source_chat_turn_id 非皇帝点策轮。"""
+    """origin 单向新指旧：source_chat_turn_id 非皇帝点策轮（结构化 turn id 排除）。"""
     db, state, content = game
     minister = _minister(db, content)
     sess = _bind_apply(db, state, content)
@@ -245,6 +245,8 @@ def test_strategy_selection_origin_not_emperor_pick_turn(game, monkeypatch):
 
     _silence_serial(monkeypatch)
     _script_strategy_extract(monkeypatch, draft_text="")
+    # #568：chat_turn_id 经 session 作用域透传（apply 签名不动）
+    sess._active_chat_turn_id = pick_turn_id
     out = sess.apply_cli_conversation_actions(
         minister, _EMPEROR_PICK, _YANG_ACK,
         has_directive=False, secret_order_id=None,
@@ -256,6 +258,50 @@ def test_strategy_selection_origin_not_emperor_pick_turn(game, monkeypatch):
     ))
     origin = int(sp.get("source_chat_turn_id") or 0)
     assert origin == present_turn_id
+    assert origin != pick_turn_id
+
+
+@pytest.mark.parametrize(
+    "stored_pick_text",
+    [
+        _EMPEROR_PICK + "   ",  # 尾空白：strip 后曾可与入参重合，暴露文本闸假绿
+        _EMPEROR_PICK + " 准。",  # 追加确认语：strip 吃不掉，文本相等必失
+    ],
+    ids=["trailing-whitespace", "appended-confirm-cue"],
+)
+def test_strategy_selection_origin_excludes_pick_turn_despite_text_mask(
+    game, monkeypatch, stored_pick_text,
+):
+    """负向：存储点策轮 user 文本 ≠ apply 入参时，仍靠 turn id 排除，origin=陈策轮。"""
+    db, state, content = game
+    minister = _minister(db, content)
+    sess = _bind_apply(db, state, content)
+    night = an.open_night(db, state, location="乾清宫", time_of_day="夜")
+    nid = int(night["id"])
+    present_turn_id = _inject_yang_strategy_turns(db, state, nid, minister.name)
+    pick_turn_id = _chat_turn(
+        db, state, nid, minister.name, stored_pick_text, _YANG_ACK, 30,
+    )
+    # 入参用规范点策句——与库内变异文本不等，旧文本闸会误收 pick 为 origin
+    assert stored_pick_text.strip() != _EMPEROR_PICK or stored_pick_text != _EMPEROR_PICK
+
+    _silence_serial(monkeypatch)
+    _script_strategy_extract(monkeypatch, draft_text="")
+    sess._active_chat_turn_id = pick_turn_id
+    out = sess.apply_cli_conversation_actions(
+        minister, _EMPEROR_PICK, _YANG_ACK,
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[{"kind": "draft"}],
+    )
+    staged_id = int(out["pending_action_id"])
+    sp = _payload(next(
+        r for r in db.list_pending_actions(int(state.turn)) if int(r["id"]) == staged_id
+    ))
+    origin = int(sp.get("source_chat_turn_id") or 0)
+    assert origin == present_turn_id, (
+        f"变异文本下 origin 须仍为陈策轮 {present_turn_id}，实际={origin} "
+        f"(pick={pick_turn_id}, stored={stored_pick_text!r})"
+    )
     assert origin != pick_turn_id
 
 

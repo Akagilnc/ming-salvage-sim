@@ -2197,13 +2197,19 @@ class WebGame:
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
         # CLI 后端会话落地走共享真源 session.apply_cli_conversation_actions(同 session.chat 非流式路径)，
         # 杜绝 web/CLI 两边逻辑漂移（CMR F3 / codexC-1）。
-        res = self.session.apply_cli_conversation_actions(
-            character, text, answer,
-            has_directive=proposed is not None or bool(pending_action_id),
-            secret_order_id=secret_order_id,
-            preclassified_intent=preclassified_intent,
-            confirm_target_ids=preexisting_pending_action_ids,
-        )
+        # #568：chat_turn_id 经 session 作用域透传（apply 签名不动），供点策 origin 结构化排除本轮。
+        prev_turn = getattr(self.session, "_active_chat_turn_id", 0)
+        self.session._active_chat_turn_id = int(chat_turn_id or 0)
+        try:
+            res = self.session.apply_cli_conversation_actions(
+                character, text, answer,
+                has_directive=proposed is not None or bool(pending_action_id),
+                secret_order_id=secret_order_id,
+                preclassified_intent=preclassified_intent,
+                confirm_target_ids=preexisting_pending_action_ids,
+            )
+        finally:
+            self.session._active_chat_turn_id = prev_turn
         if proposed is None and res["directive"]:
             proposed = res["directive"]
         if res["secret_order_id"]:

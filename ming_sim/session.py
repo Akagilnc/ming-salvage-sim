@@ -1431,10 +1431,12 @@ class GameSession:
                                 order_id, character.name),
                         )
         # CLI 后端（agy/codex）：玩家用拟旨/密令按钮（消息带前缀）时，把大臣这句回话原文入档。
+        # #568：chat_turn_id 经 session 作用域透传至 materialize（apply 签名不动）。
         self._cli_backend_fallback_actions(
             result, character, message,
             preclassified_intent=preclassified_intent,
             confirm_target_ids=preexisting_pending_action_ids,
+            chat_turn_id=int(chat_turn_id or 0),
         )
         return result
 
@@ -1787,6 +1789,12 @@ class GameSession:
         recent_context = _recent_audience_context_for_secret_order(
             getattr(self, "db", None), minister_name, int(self.state.turn), message_text,
         )
+        # #568：点策 origin 排除当前轮——chat_turn_id 由 session.chat/web/CLI 写入
+        # _active_chat_turn_id 作用域，apply 签名不增参。
+        try:
+            active_chat_turn_id = int(getattr(self, "_active_chat_turn_id", 0) or 0)
+        except (TypeError, ValueError):
+            active_chat_turn_id = 0
         mat_ctx = MaterializeCtx(
             session=self,
             character=character,
@@ -1802,6 +1810,7 @@ class GameSession:
             llm_config=llm_config,
             intent_candidates=intent_candidates,
             recent_context=recent_context,
+            chat_turn_id=active_chat_turn_id,
         )
         run_materialize_pipeline(mat_ctx)
         return out
@@ -1929,16 +1938,23 @@ class GameSession:
         self, result: "ChatTurnResult", character: Character, player_message: str = "",
         preclassified_intent: Optional[Any] = None,
         confirm_target_ids: Optional[set[int]] = None,
+        chat_turn_id: int = 0,
     ) -> None:
         """session.chat 非流式路径：调共享会话落地，映射回 ChatTurnResult（agno 工具不触发时）。"""
         preexisting_pending_id = int(getattr(result, "pending_action_id", 0) or 0)
-        res = self.apply_cli_conversation_actions(
-            character, player_message, result.answer or "",
-            has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
-            secret_order_id=result.secret_order_id,
-            preclassified_intent=preclassified_intent,
-            confirm_target_ids=confirm_target_ids,
-        )
+        # #568：当前轮 id 写入作用域供 apply→materialize 结构化排除点策轮（apply 签名不动）。
+        prev_turn = getattr(self, "_active_chat_turn_id", 0)
+        self._active_chat_turn_id = int(chat_turn_id or 0)
+        try:
+            res = self.apply_cli_conversation_actions(
+                character, player_message, result.answer or "",
+                has_directive=result.proposed_directive is not None or bool(result.pending_action_id),
+                secret_order_id=result.secret_order_id,
+                preclassified_intent=preclassified_intent,
+                confirm_target_ids=confirm_target_ids,
+            )
+        finally:
+            self._active_chat_turn_id = prev_turn
         if result.proposed_directive is None and res["directive"]:
             d = res["directive"]
             result.proposed_directive = DirectiveView(
