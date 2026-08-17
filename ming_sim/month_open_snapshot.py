@@ -20,16 +20,23 @@ if TYPE_CHECKING:
 MONTH_OPEN_KEYS = tuple(ECONOMY_ACCOUNTS) + tuple(SCORE_METRICS)
 
 
-def accept_settlement_period(db: "GameDB", state: "GameState") -> None:
+def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:
     """#1235 / ADR 0149 点即入：点击受理即独立提交月初快照（幂等）。
 
     FRONT_HALF_DONE（settling / awaiting_decision）不重写——恢复态已有快照或
     半程活值不可作点击前真源。须在 await 在飞 / auto_close / 任何盘面突变之前调用。
+
+    返回 True 仅当本调用真新建了快照。调用方失败退出展示态须凭此位：
+    幂等 no-op / 恢复跳过 → False，禁代清他请求已 capture 的快照。
     """
     phase = str(state.turn_phase or "")
     if phase in FRONT_HALF_DONE_PHASES:
-        return
+        return False
+    turn = int(state.turn)
+    if db.get_month_open_snapshot(turn) is not None:
+        return False
     db.capture_month_open_snapshot(state)
+    return db.get_month_open_snapshot(turn) is not None
 
 
 def _clear_settlement_display_if_orphan(
