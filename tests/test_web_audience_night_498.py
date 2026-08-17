@@ -151,6 +151,7 @@ def web_game(tmp_path, monkeypatch, _offline_scene_beat_generator):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
     monkeypatch.setattr(session_mod, "verify_llm_available", lambda cfg: None)
+    monkeypatch.setattr(web_app, "verify_llm_available", lambda cfg: None)
     # #501：叙事抽取是每条召对夜回话的新 LLM 边界（回话尾随 + 收夜前 drain）——离线中和，
     # 默认抽空 facts，避免本 #498 用例走真实网络。
     monkeypatch.setattr(
