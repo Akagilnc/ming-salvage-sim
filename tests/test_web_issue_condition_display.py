@@ -1,14 +1,30 @@
+"""web 结案条件 humanize：藏机读 key/阈值，人物名保留。
+
+#1185：不锁精确中文展示串；机读 token 不泄漏、变体归一、高/低忠诚可分。
+"""
+
+from __future__ import annotations
+
+import re
+
 import pytest
 
 import web_app
 
 
-def test_humanize_character_loyalty_condition_hides_machine_threshold():
-    text = web_app._humanize_condition("character.毛文龙.loyalty >= 65")
+def _h(raw: str) -> str:
+    return web_app._humanize_condition(raw)
 
-    assert text == "毛文龙忠诚回稳"
-    assert "character" not in text
-    assert "65" not in text
+
+def _no_token(text: str, token: str) -> None:
+    assert not re.search(rf"(?<!\w){re.escape(token)}(?!\w)", text)
+
+
+def test_humanize_character_loyalty_condition_hides_machine_threshold():
+    text = _h("character.毛文龙.loyalty >= 65")
+    assert "毛文龙" in text
+    for tok in ("character", "loyalty", "65"):
+        _no_token(text, tok)
 
 
 @pytest.mark.parametrize(
@@ -21,38 +37,38 @@ def test_humanize_character_loyalty_condition_hides_machine_threshold():
     ],
 )
 def test_humanize_character_loyalty_condition_variants(raw):
-    text = web_app._humanize_condition(raw)
-
-    assert text == "毛文龙忠诚回稳"
-    assert "character" not in text
-    assert "65" not in text
+    base = _h("character.毛文龙.loyalty >= 65")
+    text = _h(raw)
+    assert text == base and "毛文龙" in text
+    for tok in ("character", "65"):
+        _no_token(text, tok)
 
 
 def test_humanize_non_character_condition_keeps_existing_region_translation():
     raw = "region.liaodong.controlled_by == ming"
-
-    assert web_app._humanize_condition(raw) == "地区：辽东·归属 == 大明"
+    text = _h(raw)
+    assert text != raw
+    for tok in ("region", "liaodong", "controlled_by", "ming"):
+        _no_token(text, tok)
 
 
 def test_humanize_character_status_condition_hides_machine_key():
-    text = web_app._humanize_condition("character.袁崇焕.status == active")
-
-    assert text == "袁崇焕状态为在朝"
-    assert "character" not in text
-    assert "active" not in text
+    text = _h("character.袁崇焕.status == active")
+    assert "袁崇焕" in text
+    for tok in ("character", "status", "active"):
+        _no_token(text, tok)
 
 
 def test_humanize_character_location_condition_uses_field_label_and_value_label():
-    text = web_app._humanize_condition("character.毛文龙.location == liaodong")
-
-    assert text == "毛文龙所在为辽东"
-    assert "character" not in text
-    assert "liaodong" not in text
+    text = _h("character.毛文龙.location == liaodong")
+    assert "毛文龙" in text
+    for tok in ("character", "location", "liaodong"):
+        _no_token(text, tok)
 
 
 def test_humanize_character_low_loyalty_condition_hides_machine_threshold():
-    text = web_app._humanize_condition("character.毛文龙.loyalty <65")
-
-    assert text == "毛文龙忠诚未稳"
-    assert "character" not in text
-    assert "65" not in text
+    high = _h("character.毛文龙.loyalty >= 65")
+    low = _h("character.毛文龙.loyalty <65")
+    assert "毛文龙" in low and low != high
+    for tok in ("character", "65"):
+        _no_token(low, tok)
