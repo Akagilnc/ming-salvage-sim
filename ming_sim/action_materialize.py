@@ -52,6 +52,8 @@ class MaterializeCtx:
     draft_staged: bool = False
     # ADR 0028 / #520：最近相关召对上下文（与分类器同源喂料，案卷 text 取链）
     recent_context: str = ""
+    # #568：当前对话轮 id（session.chat/web/CLI 作用域透传）；点策 origin 结构化排除本轮
+    chat_turn_id: int = 0
 
 
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
@@ -348,7 +350,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                     session.db,
                     minister_name,
                     int(session.state.turn),
-                    exclude_user_message=ctx.player_message,
+                    exclude_turn_id=int(ctx.chat_turn_id or 0),
                 )
                 if origin_tid > 0:
                     draft_res["source_chat_turn_id"] = origin_tid
@@ -947,12 +949,12 @@ def _strategy_selection_origin_turn_id(
     minister_name: str,
     turn: int,
     *,
-    exclude_user_message: str = "",
+    exclude_turn_id: int = 0,
 ) -> int:
     """#568：点策案卷 origin = 大臣陈策轮（单向新指旧），非皇帝点策轮。
 
     复用 chat_turns 既有行；禁平行溯源表。优先本夜已落 minister 回话的轮，
-    排除与当轮点策皇帝句相同的 user 消息轮。
+    以 turn id 结构化排除当前点策轮（禁 user 文本相等过滤）。
     """
     conn = getattr(db, "conn", None)
     if conn is None:
@@ -965,50 +967,52 @@ def _strategy_selection_origin_turn_id(
         except Exception:
             night_id = 0
     name = str(minister_name or "")
-    exclude = str(exclude_user_message or "").strip()
+    try:
+        exclude_tid = int(exclude_turn_id or 0)
+    except (TypeError, ValueError):
+        exclude_tid = 0
+    # exclude_tid<=0 时用 0 占位：chat_turns.id 自增正整数，t.id <> 0 恒真
     try:
         if night_id > 0:
-            rows = conn.execute(
+            row = conn.execute(
                 """
-                SELECT t.id AS id, um.content AS user_text
+                SELECT t.id AS id
                 FROM chat_turns t
-                LEFT JOIN chat_messages um ON um.id = t.user_message_id
                 WHERE t.night_id = ?
                   AND t.minister_name = ?
                   AND t.undone_at IS NULL
                   AND t.status NOT IN ('failed', 'undone')
                   AND t.minister_message_id IS NOT NULL
                   AND t.minister_message_id > 0
+                  AND t.id <> ?
                 ORDER BY t.id DESC
+                LIMIT 1
                 """,
-                (int(night_id), name),
-            ).fetchall()
+                (int(night_id), name, exclude_tid),
+            ).fetchone()
         else:
-            rows = conn.execute(
+            row = conn.execute(
                 """
-                SELECT t.id AS id, um.content AS user_text
+                SELECT t.id AS id
                 FROM chat_turns t
-                LEFT JOIN chat_messages um ON um.id = t.user_message_id
                 WHERE t.turn = ?
                   AND t.minister_name = ?
                   AND t.undone_at IS NULL
                   AND t.status NOT IN ('failed', 'undone')
                   AND t.minister_message_id IS NOT NULL
                   AND t.minister_message_id > 0
+                  AND t.id <> ?
                 ORDER BY t.id DESC
+                LIMIT 1
                 """,
-                (int(turn), name),
-            ).fetchall()
+                (int(turn), name, exclude_tid),
+            ).fetchone()
     except Exception:
         return 0
-    for row in rows:
-        user_text = str(row["user_text"] or "").strip()
-        if exclude and user_text == exclude:
-            continue
-        tid = int(row["id"] or 0)
-        if tid > 0:
-            return tid
-    return 0
+    if row is None:
+        return 0
+    tid = int(row["id"] or 0)
+    return tid if tid > 0 else 0
 
 
 def stage_assignment_candidate(
