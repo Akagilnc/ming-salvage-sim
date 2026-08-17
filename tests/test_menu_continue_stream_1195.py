@@ -34,9 +34,9 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
     class FakeWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
             assert fresh is False
-            # 模拟 WebGame 在既有初始化序上的阶段回调（不改 GameSession 序）
+            # 模拟 WebGame 在既有初始化序上的阶段回调（不改 GameSession 序）。
+            # 首条「准备载入上次进度...」由 worker 在构造前入队（#1195/#1228），此处不重复。
             labels = [
-                "检查模型后端...",
                 "载入上次进度...",
                 "重整朝堂名册...",
                 "恢复召对记录...",
@@ -67,9 +67,12 @@ def test_menu_continue_streams_stage_labels_then_done_state(monkeypatch):
     stage_texts = [payload.get("content", "") for name, payload in events if name == "stage"]
     assert stage_texts, "应推送至少一条 stage"
     assert stage_texts[0]  # ≤5s 首条：服务端在重活前即发，可断言非空首条
+    assert stage_texts[0] == "准备载入上次进度..."
     # 文案沿用「载入上次进度…」式标签（省略号/叙事），禁百分比/进度条/剩余秒数
+    # #1228：不再把「检查」列为合法阶段——构造路径已无后端检查。
     for text in stage_texts:
-        assert "载入" in text or "检查" in text or "重整" in text or "恢复" in text
+        assert "检查" not in text
+        assert "载入" in text or "重整" in text or "恢复" in text
         assert "%" not in text
         assert "进度条" not in text
         assert not any(ch.isdigit() and "秒" in text for ch in text) or "秒" not in text
@@ -85,8 +88,7 @@ def test_menu_continue_streams_error_when_llm_unavailable(monkeypatch):
 
     class BoomWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
-            if on_stage:
-                on_stage("检查模型后端...")
+            # 首条 stage 已由 worker 在构造前入队；ctor 内可直接失败。
             raise web_app.LLMUnavailable("未配 API key，请先到设置页填写。")
 
     monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
@@ -123,8 +125,7 @@ def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
     class SlowWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
             assert fresh is False
-            if on_stage:
-                on_stage("检查模型后端...")
+            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
             assert release.wait(timeout=5.0), "test release timed out"
             self._state = {"from": "stale-continue"}
@@ -182,8 +183,7 @@ def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_
     class SlowWebGame:
         def __init__(self, fresh: bool = False, on_stage=None) -> None:
             assert fresh is False
-            if on_stage:
-                on_stage("检查模型后端...")
+            # 首条 stage 已由 worker 在构造前入队；此处阻塞以模拟构造重活。
             started.set()
             assert release.wait(timeout=5.0), "test release timed out"
             self._state = {"from": "stale-continue"}
