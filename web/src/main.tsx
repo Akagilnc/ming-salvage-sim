@@ -358,17 +358,17 @@ export function App() {
   useCheatHotkey(setCheatOpen);
 
   // #1236：关闭组面若仍挂着（刷新前已开），核账期强制收起，避免半程内容残留。
-  // hooks 须在 early return 之前。
-  const settlementDisplayFlag = isSettlementDisplay(state?.turn);
+  // hooks 须在 early return 之前。关闭组成员固定，不经表查字面 true。
+  const settlementDisplay = isSettlementDisplay(state?.turn);
   React.useEffect(() => {
-    if (!settlementDisplayFlag) return;
-    if (!isFaceReachable("region", true)) setRegionDrawerOpen(false);
-    if (!isFaceReachable("army", true)) setArmyDrawerOpen(false);
-    if (!isFaceReachable("node_intel", true)) setMapIntelOpen(false);
-    if (!isFaceReachable("secret_orders", true) && activeModal === "secret_orders") setActiveModal("none");
-    if (!isFaceReachable("edict", true) && activeModal === "edict") setActiveModal("none");
-    if (!isFaceReachable("chat_entry", true) && activeModal === "chat") setActiveModal("none");
-  }, [settlementDisplayFlag, activeModal]);
+    if (!settlementDisplay) return;
+    setRegionDrawerOpen(false);
+    setArmyDrawerOpen(false);
+    setMapIntelOpen(false);
+    if (activeModal === "secret_orders" || activeModal === "edict" || activeModal === "chat") {
+      setActiveModal("none");
+    }
+  }, [settlementDisplay, activeModal]);
 
   if (appView === "menu") {
     return (
@@ -433,7 +433,6 @@ export function App() {
 
   // #1236：核账门控唯一谓词 = 状态口 settlement_display。
   // busy==="月末结算" 仅驱动同会话非权威装饰 SettlementLock，绝不充真源、不挡必达三面。
-  const settlementDisplay = settlementDisplayFlag;
   const sessionSettlingBusy = busy === "月末结算";
   // 召对写入口属关闭组；名册抽屉仍只读可达。
   const chatEntryEnabled = isFaceReachable("chat_entry", settlementDisplay);
@@ -702,7 +701,7 @@ export function App() {
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
           ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。 */}
       {state.turn.phase === "settling" ? (
-        <div className="recovery-banner" data-testid="settle-resume" data-settlement-face="must">
+        <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
           <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
             续跑结算
@@ -712,10 +711,10 @@ export function App() {
 
       {/* 必达：批红恢复——不得被 busy/SettlementLock 误关 */}
       {pausedDecisionError ? (
-        <div data-testid="decision-recovery" data-settlement-face="must">
+        <div data-testid="decision-recovery">
           <DecisionRecoveryPanel
             message={pausedDecisionError}
-            busy={busy === "月末结算" ? "" : busy}
+            busy={sessionSettlingBusy ? "" : busy}
             onRetry={retryPendingDecisions}
           />
         </div>
@@ -731,7 +730,7 @@ export function App() {
 
       {/* 必达：DecisionModal——核账展示态门控不得盖住本面 */}
       {pendingDecisions.length > 0 ? (
-        <div data-testid="decision-modal" data-settlement-face="must">
+        <div data-testid="decision-modal">
           <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
         </div>
       ) : null}

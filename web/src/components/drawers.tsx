@@ -203,7 +203,7 @@ export function MinisterCardList({
           return (
             <button key={minister.name}
               type="button"
-              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}${chatEntryEnabled ? "" : " roster-readonly"}`}
+              className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
               disabled={!chatEntryEnabled}
               aria-disabled={!chatEntryEnabled}
               title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
@@ -247,7 +247,7 @@ export function MinisterCardList({
           <button
             key={minister.name}
             type="button"
-            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}${chatEntryEnabled ? "" : " roster-readonly"}`}
+            className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
             style={pct ? {
               position: "absolute",
               left: `${pct.px * 100}%`,
@@ -585,7 +585,7 @@ export function AppointmentDrawer({
                 <button
                   key={m.name}
                   type="button"
-                  className={`right-drawer-row right-drawer-row-minister${chatEntryEnabled ? "" : " roster-readonly"}`}
+                  className="right-drawer-row right-drawer-row-minister"
                   disabled={!chatEntryEnabled}
                   aria-disabled={!chatEntryEnabled}
                   title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
