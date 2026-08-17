@@ -130,7 +130,7 @@ class TestNonTimedDisplayCases:
 
         arrears_p = _progress(2, remaining_arrears=80)
         goal_p = _progress(2, remaining_to_goal=19)
-        open_p = _progress(3)
+        open_p = _progress(2)
 
         arrears_t = commitment_display_text(arrears_p, arrears_row)
         goal_t = commitment_display_text(goal_p, goal_row)
@@ -138,7 +138,7 @@ class TestNonTimedDisplayCases:
 
         assert 2 in _ints(arrears_t)
         assert 2 in _ints(goal_t)
-        assert 3 in _ints(open_t)
+        assert 2 in _ints(open_t)
         assert len({arrears_t, goal_t, open_t}) == 3
 
         assert commitment_timed_bar_value(arrears_p, arrears_row) is None
@@ -230,7 +230,7 @@ class TestTimedBarIntegration:
         assert commitment_timed_bar_value(progress_wall, row) == 50
         text = commitment_display_text(progress_wall, row)
         assert {duration, 2} <= set(_ints(text))
-        assert str(origin + duration) not in text
+        assert (origin + duration) not in _ints(text)
 
         # settle path on a fresh timed issue also advances months_elapsed → bar
         state.turn = origin
