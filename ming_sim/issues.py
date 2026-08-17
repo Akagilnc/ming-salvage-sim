@@ -7007,23 +7007,23 @@ def apply_score_extraction(
             note = str(item.get("note") or "").strip()
             if not note:
                 raise ValueError("执行说明不能为空")
-            # #565：显式 affected_parties 先全键校验，再落执行格，避免半成品。
+            # #565：显式 affected_parties 仅校验门闩（契约§5），不驱动机械写路。
             raw_parties = (
                 item["affected_parties"] if "affected_parties" in item else None
             )
-            if raw_parties is not None and outcome in {
-                "degraded", "failed", "transformed",
-            }:
-                db._validate_joint_liability_affected_parties(raw_parties, outcome)
+            if (
+                raw_parties is not None
+                and outcome in GameDB._JOINT_LIABILITY_TRIGGERS
+            ):
+                db.validate_joint_liability_affected_parties(raw_parties, outcome)
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
-            if outcome in {"degraded", "failed", "transformed"}:
-                db.apply_execution_joint_liability(
-                    state, dossier_id, outcome, reason=note,
-                    affected_parties=raw_parties, commit=False,
-                )
+            # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
+            db.apply_execution_joint_liability(
+                state, dossier_id, outcome, reason=note, commit=False,
+            )
             dossier_execution_results.append({
                 "dossier_id": dossier_id, "outcome": outcome,
             })
