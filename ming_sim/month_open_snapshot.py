@@ -26,8 +26,9 @@ def accept_settlement_period(db: "GameDB", state: "GameState") -> bool:
     FRONT_HALF_DONE（settling / awaiting_decision）不重写——恢复态已有快照或
     半程活值不可作点击前真源。须在 await 在飞 / auto_close / 任何盘面突变之前调用。
 
-    返回 True 仅当本调用真新建了快照。调用方失败退出展示态须凭此位：
-    幂等 no-op / 恢复跳过 → False，禁代清他请求已 capture 的快照。
+    返回 True 仅当本调用真新建了快照。Web 失败 exit 以此位控 gate 是否阻塞
+    （True=blocking 必清；False=non-blocking，撞锁 skip 防代清，锁闲仍可清孤儿）；
+    不得再用此位门控「是否调用 exit」。
     """
     phase = str(state.turn_phase or "")
     if phase in FRONT_HALF_DONE_PHASES:
