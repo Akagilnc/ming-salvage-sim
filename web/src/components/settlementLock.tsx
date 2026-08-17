@@ -1,6 +1,11 @@
 import React from "react";
-import { Loader2 } from "lucide-react";
 
+/**
+ * #1236：同会话非权威装饰。
+ * - 真源是 turn.settlement_display（王承恩递话条 / 逐面门控），本组件不参与门控。
+ * - 不得遮挡 DecisionModal / DecisionRecoveryPanel / 续跑入口（无全屏锁、无键盘总截、pointer-events 不吞必达层）。
+ * - 刷新/新连接路径对其零依赖。
+ */
 export function SettlementLock({
   stage,
   thinking,
@@ -12,14 +17,6 @@ export function SettlementLock({
 }) {
   const thinkRef = React.useRef<HTMLDivElement>(null);
   const narrRef = React.useRef<HTMLDivElement>(null);
-  React.useEffect(() => {
-    const block = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    window.addEventListener("keydown", block, true);
-    return () => window.removeEventListener("keydown", block, true);
-  }, []);
   // 流式内容到达时自动滚到底
   React.useEffect(() => {
     if (thinkRef.current) thinkRef.current.scrollTop = thinkRef.current.scrollHeight;
@@ -27,12 +24,26 @@ export function SettlementLock({
   React.useEffect(() => {
     if (narrRef.current) narrRef.current.scrollTop = narrRef.current.scrollHeight;
   }, [narrative]);
+
+  const hasStream = Boolean(thinking || narrative);
+  if (!hasStream && !stage) return null;
+
   return (
-    <div className="settlement-lock" role="alertdialog" aria-modal="true" aria-label="月末结算">
+    <div
+      className="settlement-lock settlement-lock-decor"
+      role="status"
+      aria-live="polite"
+      aria-label="核账进程摘录"
+      data-testid="settlement-lock-decor"
+    >
       <div className="settlement-lock-card">
-        <Loader2 className="settlement-spin" size={28} />
-        <h2>月末结算中</h2>
-        <p>{stage === "数值推演结算" ? "档房核账中，钱粮、地方、军务落账，请稍候。" : stage ? `当前：${stage}` : "朝廷推演钱粮、地方、军务，请勿操作。"}</p>
+        <p className="settlement-lock-stage">
+          {stage === "数值推演结算"
+            ? "档房摘录：钱粮、地方、军务正在落账。"
+            : stage
+              ? `档房摘录：${stage}`
+              : "档房摘录正在呈递。"}
+        </p>
         {thinking && (
           <div className="settlement-stream-block">
             <div className="settlement-stream-label">邸报房推敲</div>

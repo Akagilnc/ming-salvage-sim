@@ -9,12 +9,15 @@ class _RO { observe() {} unobserve() {} disconnect() {} }
 (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver = _RO;
 
 // 开启密令换回合自动弹窗（生产 gate 默认关；测试打开以验协调器所属的延迟呈现定时器 wiring）。
-vi.mock("./settlementPresentation", () => ({
-  shouldAutoOpenSecretOrdersAfterSettlement: () => true,
-  shouldAutoOpenClosedIssuesAfterSettlement: () => false,
-  yearMonthLabel: (turn: { year: number; period: number; settlement_display?: boolean }) =>
-    `${turn.year} 年 ${turn.period} 月${turn.settlement_display ? " · 核账" : ""}`,
-}));
+// #1236：其余 face-gate 助手走真实实现，避免 wiring 测试与门控分叉。
+vi.mock("./settlementPresentation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./settlementPresentation")>();
+  return {
+    ...actual,
+    shouldAutoOpenSecretOrdersAfterSettlement: () => true,
+    shouldAutoOpenClosedIssuesAfterSettlement: () => false,
+  };
+});
 
 const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);
 const sseResp = (event: string, payload: unknown): Response => {

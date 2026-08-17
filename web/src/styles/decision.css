@@ -180,13 +180,14 @@
 
 .decision-hint-line { font-size: 13px; color: #9a8d6a; }
 
-/* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算 */
+/* 恢复入口横幅（ship-pre r4）：settling 重载后续跑结算
+   #1236：z-index 须高于 SettlementLock 装饰（40），保证必达三面不被遮。 */
 .recovery-banner {
   position: fixed;
   top: 64px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 60;
+  z-index: 9300;
   display: flex;
   align-items: center;
   gap: 12px;

@@ -1,4 +1,12 @@
-import { yearMonthLabel } from "../settlementPresentation";
+import {
+  isFaceReachable,
+  isSettlementDisplay,
+  settlementFaceAccess,
+  wangSettlementSlipVisible,
+  yearMonthLabel,
+  SETTLEMENT_CLOSED_REASON,
+  WANG_SETTLEMENT_SLIP,
+} from "../settlementPresentation";
 import { BudgetHover, CommandSlot, HUD_BG, HUD_SLOTS, LegacyBar } from "./hud";
 import { GrandMap } from "./map";
 import { SituationPanel } from "./situation";
@@ -17,6 +25,7 @@ export function GameHud({
   navHandlers,
   secretOrderActiveCount,
   onOpenModal,
+  onClosedFaceAttempt,
 }: {
   stageRef: (el: HTMLDivElement | null) => void;
   ready: boolean;
@@ -28,19 +37,53 @@ export function GameHud({
   navHandlers: Record<string, () => void>;
   secretOrderActiveCount: number;
   onOpenModal: (modal: ModalName) => void;
+  /** 关闭组入口被点时的戏内提示（可选）。 */
+  onClosedFaceAttempt?: (reason: string) => void;
 }) {
+  // #1236：全部门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
+  const settlementDisplay = isSettlementDisplay(state.turn);
+  const noticeClosed = () => onClosedFaceAttempt?.(SETTLEMENT_CLOSED_REASON);
+
+  const gatedNav = (faceKey: "court_roster" | "appointment_roster" | "harem_roster" | "region" | "army" | "economy" | "building", navKey: string) => {
+    if (!isFaceReachable(faceKey, settlementDisplay)) {
+      noticeClosed();
+      return;
+    }
+    navHandlers[navKey]?.();
+  };
+
+  const gatedModal = (faceKey: "memorials" | "audience_archive" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
+    if (!isFaceReachable(faceKey, settlementDisplay)) {
+      noticeClosed();
+      return;
+    }
+    onOpenModal(modal);
+  };
+
+  const secretBadge = isFaceReachable("secret_orders", settlementDisplay) ? secretOrderActiveCount : 0;
+  const showSituation = isFaceReachable("situation", settlementDisplay);
+  const mapSelectable = isFaceReachable("node_intel", settlementDisplay);
+  const showWangSlip = wangSettlementSlipVisible(settlementDisplay);
+
   return (
     <div className="hud2-stage" ref={stageRef}>
       <img className="hud2-bg" src={HUD_BG} alt="" />
 
-      {/* 地图：平面矩形，盖在底图中央素绢图框上 */}
+      {/* 地图：平面矩形，盖在底图中央素绢图框上。底图装饰可留；点选开详吃 node_intel 门。 */}
       {ready ? (
         <div className="hud2-map-quad" style={{
           position: "absolute",
           left: `${HUD_SLOTS.地图框.left}%`, top: `${HUD_SLOTS.地图框.top}%`,
           width: `${HUD_SLOTS.地图框.width}%`, height: `${HUD_SLOTS.地图框.height}%`,
         }}>
-          <GrandMap nodes={mapNodes} selectedId={mapSelectedId} onSelect={onSelectMapNode} />
+          <GrandMap
+            nodes={mapNodes}
+            selectedId={mapSelectedId}
+            onSelect={(id) => {
+              if (!mapSelectable) { noticeClosed(); return; }
+              onSelectMapNode(id);
+            }}
+          />
         </div>
       ) : null}
 
@@ -55,8 +98,8 @@ export function GameHud({
         </div>
       ) : null}
 
-      {/* 局势进度：左挂轴平面矩形 */}
-      {ready ? (
+      {/* 局势进度：关闭组——核账期不渲染（零半程议题泄漏） */}
+      {ready && showSituation ? (
         <div className="hud2-issue-quad" style={{
           position: "absolute",
           left: `${HUD_SLOTS.局势框.left}%`, top: `${HUD_SLOTS.局势框.top}%`,
@@ -72,7 +115,7 @@ export function GameHud({
 
       {/* 顶栏：年月 + 国库/内库 + 民心/皇威，各按坑位绝对定位 */}
       <button className="hud2-slot hud2-year" style={HUD_SLOTS.顶栏.年月}
-        onClick={() => onOpenModal("state")}>
+        onClick={() => gatedModal("memorials", "state")}>
         <span className="hud2-block">
           <span className="hud2-lab">大明</span>
           <span className="hud2-val">{yearMonthLabel(state.turn)}</span>
@@ -92,30 +135,38 @@ export function GameHud({
           <span className="hud2-lab">皇威</span><span className="hud2-val">{state.metrics["皇威"]}</span>
         </span>
       </div>
-      <div className="hud2-slot hud2-legacy-slot" style={HUD_SLOTS.顶栏.皇威}>
+      {/* 顶栏帝国修正：只读保留 */}
+      <div className="hud2-slot hud2-legacy-slot" style={HUD_SLOTS.顶栏.皇威}
+        data-settlement-face={settlementFaceAccess("legacies", settlementDisplay)}>
         <LegacyBar legacies={state.legacies} />
       </div>
       <button className="hud2-menu-btn"
-        title="游戏菜单" aria-label="游戏菜单" onClick={() => onOpenModal("menu")}>
+        title="游戏菜单" aria-label="游戏菜单" onClick={() => gatedModal("menu", "menu")}>
         <span className="hud2-val">菜单</span>
       </button>
 
       {/* 右侧竖排部院导航 */}
       {([
-        ["政", "court", "朝堂·召见大臣"],
-        ["吏", "appointment", "官员任免"],
-        ["省", "region", "省份列表"],
-        ["兵", "army", "军队列表"],
-        ["户", "economy", "经济面板"],
-        ["工", "building", "建筑列表"],
-        ["礼", "court", "礼部"],
-        ["后", "harem", "后宫"],
-      ] as const).map(([label, key, title], idx) => {
+        ["政", "court", "court_roster", "朝堂·召见大臣"],
+        ["吏", "appointment", "appointment_roster", "官员任免"],
+        ["省", "region", "region", "省份列表"],
+        ["兵", "army", "army", "军队列表"],
+        ["户", "economy", "economy", "经济面板"],
+        ["工", "building", "building", "建筑列表"],
+        ["礼", "court", "court_roster", "礼部"],
+        ["后", "harem", "harem_roster", "后宫"],
+      ] as const).map(([label, navKey, faceKey, title], idx) => {
         const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫"] as const)[idx];
+        const reachable = isFaceReachable(faceKey, settlementDisplay);
         return (
-          <button key={slotKey} className={`hud2-slot hud2-nav${activeDrawerKey === key ? " active" : ""}`}
-            style={HUD_SLOTS.导航[slotKey]} title={title} aria-label={title}
-            onClick={navHandlers[key]}>
+          <button key={slotKey}
+            className={`hud2-slot hud2-nav${activeDrawerKey === navKey ? " active" : ""}${reachable ? "" : " settlement-closed"}`}
+            style={HUD_SLOTS.导航[slotKey]}
+            title={reachable ? title : SETTLEMENT_CLOSED_REASON}
+            aria-label={title}
+            aria-disabled={!reachable}
+            data-settlement-face={settlementFaceAccess(faceKey, settlementDisplay)}
+            onClick={() => gatedNav(faceKey, navKey)}>
             {label}
           </button>
         );
@@ -123,17 +174,32 @@ export function GameHud({
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
       <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
-        caption="奏疏" sub={`${state.events.length} 件待览`} onClick={() => onOpenModal("state")} />
+        caption="奏疏" sub={`${state.events.length} 件待览`}
+        onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"
-        caption="起居注" sub="历次召对记录" onClick={() => onOpenModal("audience_archive")} />
+        caption="起居注" sub="历次召对记录"
+        onClick={() => gatedModal("audience_archive", "audience_archive")} />
       <CommandSlot slotKey="密令" img="密令"
-        badge={secretOrderActiveCount}
-        caption="密令" sub="进行中密令" onClick={() => onOpenModal("secret_orders")} />
+        badge={secretBadge}
+        caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : SETTLEMENT_CLOSED_REASON}
+        onClick={() => gatedModal("secret_orders", "secret_orders")} />
       <CommandSlot slotKey="史册" img="史册"
-        caption="史册" sub="历代奏报/诏书" onClick={() => onOpenModal("history")} />
-      <CommandSlot slotKey="拟诏" img="拟诏" badge={state.directives.length}
-        caption="拟诏/结束回合" sub={state.directives.length ? `${state.directives.length} 道` : "本回合"}
-        onClick={() => onOpenModal("edict")} />
+        caption="史册" sub="历代奏报/诏书"
+        onClick={() => gatedModal("history", "history")} />
+      <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
+        caption="拟诏/结束回合"
+        sub={isFaceReachable("edict", settlementDisplay)
+          ? (state.directives.length ? `${state.directives.length} 道` : "本回合")
+          : SETTLEMENT_CLOSED_REASON}
+        onClick={() => gatedModal("edict", "edict")} />
+
+      {/* #1236 P4：王承恩核账递话条——同谓词；一句正向奏疏口吻，无进度条/百分比/秒数 */}
+      {showWangSlip ? (
+        <div className="wang-settlement-slip" role="status" aria-live="polite" data-testid="wang-settlement-slip">
+          <span className="wang-settlement-slip-speaker">王承恩</span>
+          <span className="wang-settlement-slip-body">{WANG_SETTLEMENT_SLIP}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
