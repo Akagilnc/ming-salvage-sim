@@ -12,6 +12,7 @@ export function MinisterCardList({
   onOpenChat,
   onUploadPortrait,
   courtMode = false,
+  chatEntryEnabled = true,
 }: {
   list: Minister[];
   portraitPrefix: string;
@@ -20,6 +21,8 @@ export function MinisterCardList({
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait?: (ministerName: string, file: File) => Promise<void>;
   courtMode?: boolean;
+  /** #1236：核账期拔召对写入口，名册仍只读保留。 */
+  chatEntryEnabled?: boolean;
 }) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
@@ -199,11 +202,15 @@ export function MinisterCardList({
           const ousted = minister.status !== "active";
           return (
             <button key={minister.name}
+              type="button"
               className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
-              onClick={() => onOpenChat(minister)}>
+              disabled={!chatEntryEnabled}
+              aria-disabled={!chatEntryEnabled}
+              title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+              onClick={() => { if (chatEntryEnabled) onOpenChat(minister); }}>
               <div className="minister-card-portrait-wrap">
                 <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
-                {onUploadPortrait && <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />}
+                {onUploadPortrait && chatEntryEnabled && <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />}
               </div>
               <div className="minister-card-info">
                 <div className="minister-card-top">
@@ -239,22 +246,30 @@ export function MinisterCardList({
         return (
           <button
             key={minister.name}
+            type="button"
             className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
             style={pct ? {
               position: "absolute",
               left: `${pct.px * 100}%`,
               top: `${pct.py * 100}%`,
-              cursor: "grab",
+              cursor: chatEntryEnabled ? "grab" : "default",
               transform: `scale(${perspScale.toFixed(3)})`,
               transformOrigin: "bottom center",
               zIndex: Math.round(pct.py * 1000),
             } : { visibility: "hidden" }}
-            onMouseDown={(e) => onMouseDown(e, minister.name)}
-            onClick={(e) => { if (didDrag.current) { e.preventDefault(); return; } onOpenChat(minister); }}
+            onMouseDown={(e) => { if (chatEntryEnabled) onMouseDown(e, minister.name); }}
+            disabled={!chatEntryEnabled}
+            aria-disabled={!chatEntryEnabled}
+            title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+            onClick={(e) => {
+              if (!chatEntryEnabled) return;
+              if (didDrag.current) { e.preventDefault(); return; }
+              onOpenChat(minister);
+            }}
           >
             <div className="minister-card-portrait-wrap">
               <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
-              {onUploadPortrait && (
+              {onUploadPortrait && chatEntryEnabled && (
                 <PortraitUploadButton ministerName={minister.name} onUpload={onUploadPortrait} />
               )}
             </div>
@@ -532,11 +547,14 @@ export function AppointmentDrawer({
   open,
   onOpenChat,
   onClose,
+  chatEntryEnabled = true,
 }: {
   ministers: Minister[];
   open: boolean;
   onOpenChat: (minister: Minister) => void;
   onClose: () => void;
+  /** #1236：核账期拔任免行召对写入口。 */
+  chatEntryEnabled?: boolean;
 }) {
   const [q, setQ] = React.useState("");
   const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
@@ -566,8 +584,12 @@ export function AppointmentDrawer({
               {group.map((m) => (
                 <button
                   key={m.name}
+                  type="button"
                   className="right-drawer-row right-drawer-row-minister"
-                  onClick={() => onOpenChat(m)}
+                  disabled={!chatEntryEnabled}
+                  aria-disabled={!chatEntryEnabled}
+                  title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+                  onClick={() => { if (chatEntryEnabled) onOpenChat(m); }}
                 >
                   <div className="right-drawer-minister-row">
                     <span className="right-drawer-row-name">{m.name}</span>
@@ -596,6 +618,7 @@ export function CourtDrawer({
   onClose,
   onOpenChat,
   onUploadPortrait,
+  chatEntryEnabled = true,
 }: {
   state: GameState;
   ministers: Minister[];
@@ -606,6 +629,8 @@ export function CourtDrawer({
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
+  /** #1236：核账期拔召对写入口，名册只读。 */
+  chatEntryEnabled?: boolean;
 }) {
   const [q, setQ] = React.useState("");
   const filtered = q ? ministers.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : ministers;
@@ -642,6 +667,7 @@ export function CourtDrawer({
           onOpenChat={onOpenChat}
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}
+          chatEntryEnabled={chatEntryEnabled}
         />
       </aside>
     </>
@@ -657,6 +683,7 @@ export function HaremDrawer({
   onClose,
   onOpenChat,
   onUploadPortrait,
+  chatEntryEnabled = true,
 }: {
   consorts: Minister[];
   haremGroup: string;
@@ -666,6 +693,8 @@ export function HaremDrawer({
   onClose: () => void;
   onOpenChat: (minister: Minister) => void;
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
+  /** #1236：核账期拔召对写入口，名册只读。 */
+  chatEntryEnabled?: boolean;
 }) {
   const [q, setQ] = React.useState("");
   const filtered = q ? consorts.filter((c) => c.name.includes(q)) : consorts;
@@ -701,6 +730,7 @@ export function HaremDrawer({
           emptyNote={q ? "无匹配结果。" : "后宫暂无可召见之人。"}
           onOpenChat={onOpenChat}
           onUploadPortrait={onUploadPortrait}
+          chatEntryEnabled={chatEntryEnabled}
         />
       </aside>
     </>

@@ -5,15 +5,35 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./main";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-class _RO { observe() {} unobserve() {} disconnect() {} }
+// jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
+class _RO {
+  private cb: ResizeObserverCallback;
+  constructor(cb: ResizeObserverCallback) { this.cb = cb; }
+  observe(el: Element) {
+    this.cb([{ target: el } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve() {}
+  disconnect() {}
+}
 (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver = _RO;
+Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 1600 });
+Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 900 });
 
 // 开启密令换回合自动弹窗（生产 gate 默认关；测试打开以验协调器所属的延迟呈现定时器 wiring）。
-vi.mock("./settlementPresentation", () => ({
-  shouldAutoOpenSecretOrdersAfterSettlement: () => true,
-  shouldAutoOpenClosedIssuesAfterSettlement: () => false,
-  yearMonthLabel: (turn: { year: number; period: number; settlement_display?: boolean }) =>
-    `${turn.year} 年 ${turn.period} 月${turn.settlement_display ? " · 核账" : ""}`,
+// #1236：其余 face-gate 助手走真实实现，避免 wiring 测试与门控分叉。
+vi.mock("./settlementPresentation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./settlementPresentation")>();
+  return {
+    ...actual,
+    shouldAutoOpenSecretOrdersAfterSettlement: () => true,
+    shouldAutoOpenClosedIssuesAfterSettlement: () => false,
+  };
+});
+
+// GrandMap 依赖 SVG getBBox；本文件只验 face 门控/持久投影，不测地图几何。
+vi.mock("./components/map", () => ({
+  GrandMap: () => <div data-testid="grand-map-stub" />,
+  NodeIntel: () => null,
 }));
 
 const jsonResp = (payload: unknown): Response => ({ ok: true, json: async () => payload } as unknown as Response);
@@ -492,5 +512,383 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await tick();
     expect(host.querySelector(".hud2-stage")).toBeNull();  // 已退出游戏视图
+  });
+});
+
+// ─── #1236 T3：必达三面 / 只读组零半程泄漏 —— App 真挂载 ───────────────────
+
+const SNAP_TREASURY = 1781;
+const SNAP_INNER = 320;
+const SNAP_MINXIN = 55;
+const SNAP_HUANGWEI = 40;
+const SNAP_LEGACY = "月初赈恤令";
+const SNAP_MINISTER = "月初辅臣";
+const SNAP_CONSORT = "月初妃嫔";
+const SNAP_BUILDING = "月初城防";
+const SNAP_MEMORIAL = "月初奏报正文";
+const SNAP_GAZETTE = "上月邸报月初口径";
+const SNAP_CLOSED = "月初已结边饷";
+const MIDCOURSE_ISSUE = "半程军饷议题";
+const MIDCOURSE_ARMY = "半程边军";
+const MIDCOURSE_REGION = "半程辽东";
+
+const validDecision = {
+  idx: 0,
+  title: "辽东战守",
+  context: "如何处置",
+  options: [{ label: "固守", hint: "稳" }],
+};
+
+const snapBudget = (balance: number) => ({
+  balance,
+  income: [{ name: "田赋", amount: 100, note: "" }],
+  expense: [{ name: "军饷", amount: 80, note: "" }],
+  income_total: 100,
+  expense_total: 80,
+  net: 20,
+  movements: [],
+  movements_total: 0,
+});
+
+const settlementBaseState = (phase: string, extra: Record<string, unknown> = {}) => ({
+  turn: { year: 1627, period: 10, turn: 5, phase, settlement_display: true },
+  metrics: { 民心: SNAP_MINXIN, 皇威: SNAP_HUANGWEI, 国库: SNAP_TREASURY, 内库: SNAP_INNER },
+  previous_summary: "",
+  treasury: "",
+  issues: [{ id: 9, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 77, fail_condition: "" }],
+  legacies: [{
+    id: 1, name: SNAP_LEGACY, narrative_hint: "",
+    modifiers: {}, effect_text: "民心+1", remaining_months: 3, clear_condition: "",
+  }],
+  closed_this_turn: [{
+    id: 2, kind: "situation", title: SNAP_CLOSED, status: "resolved",
+    bar_value: 0, bar_good_meaning: "妥", bar_bad_meaning: "",
+    closed_turn: 4, stage_text: "", effect: {},
+  }],
+  budget: { 国库: snapBudget(SNAP_TREASURY), 内库: snapBudget(SNAP_INNER) },
+  region_warning: "", army_warning: "", power_warning: "", powers: [],
+  victory_status: { status: "", summary: "" }, ending: null,
+  events: [{ id: 1, title: "月初题本" }],
+  regions: [{ id: "r1", name: MIDCOURSE_REGION }],
+  armies: [{ id: "a1", name: MIDCOURSE_ARMY }],
+  map_nodes: [{
+    id: "liaodong", name: "辽东", kind: "region", label: "辽东",
+    buildings: [{
+      id: "b1", name: SNAP_BUILDING, category: "城防", level: 2,
+      condition: 90, maintenance: 1, output_metric: "", output_amount: 0,
+    }],
+    region: { name: "辽东", controlled_by: "" },
+  }],
+  ministers: [{
+    name: SNAP_MINISTER, office: "首辅", office_type: "内阁", faction: "",
+    style: "", status: "active", status_label: "在朝", summary: "辅臣", favorite: false, skills: [],
+  }],
+  consorts: [{
+    name: SNAP_CONSORT, title: "贵妃", status: "active", status_label: "在宫",
+    summary: "", favorite: false, skills: [],
+  }],
+  directives: [{ id: 1, text: "半程拟诏草稿", status: "draft" }],
+  pending_count: 0, last_decree: "", last_report: SNAP_MEMORIAL,
+  pending_decisions: [],
+  ...extra,
+});
+
+const stubSettlementFetch = (state: unknown) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    const u = new URL(String(url), "http://t.local");
+    if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
+    if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
+    if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
+    if (u.pathname.endsWith("/api/game/state")) return jsonResp(state);
+    if (u.pathname.endsWith("/api/history/turns")) return jsonResp({
+      turns: [{ kind: "month", turn: 4, year: 1627, period: 9, has_report: true, has_directive: true }],
+    });
+    if (u.pathname.includes("/api/history/turn/")) return jsonResp({
+      turn: 4, year: 1627, period: 9, report: SNAP_GAZETTE, decree: "",
+    });
+    if (u.pathname.endsWith("/api/court_layout")) return jsonResp({ layout: "{}" });
+    return jsonResp({});
+  }));
+};
+
+const mountApp = async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  await act(async () => { createRoot(host).render(<App />); });
+  await act(async () => {
+    await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+  });
+  return host;
+};
+
+const byAria = (host: HTMLElement, label: string) =>
+  host.querySelector(`[aria-label="${label}"]`) as HTMLElement | null;
+
+describe("#1236 App must-face wiring（settlement_display 真链）", () => {
+  it("phase===settling：续跑入口可点；刷新重挂后仍在", async () => {
+    stubSettlementFetch(settlementBaseState("settling"));
+    const host = await mountApp();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    expect(resume!.disabled).toBe(false);
+    expect(resume!.textContent).toContain("续跑结算");
+    // 核账递话条同屏（展示态真源），不挡续跑
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).not.toBeNull();
+
+    // 刷新口径：busy 空 + phase 仍 settling → 重挂仍可达
+    document.body.innerHTML = "";
+    const host2 = await mountApp();
+    const resume2 = host2.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement | null;
+    expect(resume2).not.toBeNull();
+    expect(resume2!.disabled).toBe(false);
+  });
+
+  it("awaiting_decision + 合法 pending：DecisionModal 可点；刷新重挂后仍在", async () => {
+    stubSettlementFetch(settlementBaseState("awaiting_decision", {
+      pending_decisions: [validDecision],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    const modal = host.querySelector('[data-testid="decision-modal"]')!;
+    expect(modal.textContent).toContain("辽东战守");
+    const action = Array.from(modal.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("批") || (b.textContent || "").includes("固守"),
+    ) as HTMLButtonElement | undefined;
+    expect(action).toBeTruthy();
+    expect(action!.disabled).toBe(false);
+
+    document.body.innerHTML = "";
+    const host2 = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-modal"]')).not.toBeNull());
+    });
+    expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
+  });
+
+  it("awaiting_decision + 损坏 pending：DecisionRecoveryPanel 可点；刷新重挂后仍在", async () => {
+    stubSettlementFetch(settlementBaseState("awaiting_decision", {
+      pending_decisions: [{ broken: true }],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+    });
+    const panel = host.querySelector('[data-testid="decision-recovery"]')!;
+    expect(panel.textContent).toMatch(/批红|待批/);
+    const retry = panel.querySelector("button") as HTMLButtonElement | null;
+    expect(retry).not.toBeNull();
+    expect(retry!.disabled).toBe(false);
+    expect(retry!.textContent).toContain("重新拉取");
+
+    document.body.innerHTML = "";
+    const host2 = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-recovery"]')).not.toBeNull());
+    });
+    expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+const closeOpenOverlay = async (host: HTMLElement) => {
+  const closer =
+    host.querySelector('[aria-label="关闭弹窗"]')
+    || host.querySelector('.right-drawer.open [aria-label="收起"]')
+    || host.querySelector('.court-drawer.open [aria-label="收起"]')
+    || host.querySelector('.harem-drawer.open [aria-label="收起"]')
+    || host.querySelector("button.drawer-scrim")
+    || document.querySelector('[aria-label="关闭"]');
+  if (closer) await click(closer);
+  await tick();
+};
+
+const cmdByCaption = (host: HTMLElement, caption: string) =>
+  Array.from(host.querySelectorAll("button")).find((b) => (b.getAttribute("aria-label") || "").startsWith(`${caption}：`)) || null;
+
+describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
+  it("只读组逐面可达且吃月初叠影；关闭组不可达且半程面不泄漏", async () => {
+    // phase=settling：续跑小条不挡 HUD；settlement_display 叠影照常
+    stubSettlementFetch(settlementBaseState("settling"));
+    const host = await mountApp();
+
+    // 顶栏快照四键 + 核账标（legacies / economy 同源叠影）
+    expect(host.textContent).toContain("· 核账");
+    expect(host.textContent).toContain(`${SNAP_TREASURY}万两`);
+    expect(host.textContent).toContain(`${SNAP_INNER}万两`);
+    expect(host.textContent).toContain(String(SNAP_MINXIN));
+    expect(host.textContent).toContain(String(SNAP_HUANGWEI));
+    expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull();
+
+    // 关闭组：半程局势不渲染；只读 closed_issues 仍可达（上月已结入口不关死）
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-list")).toBeNull();
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("true");
+    expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("true");
+    // 点关闭组导航：抽屉不得进入 .open（子树可常挂，以 open 态为准）
+    await click(byAria(host, "省份列表"));
+    await tick();
+    expect(host.querySelector(".right-drawer-region.open")).toBeNull();
+    await click(byAria(host, "军队列表"));
+    await tick();
+    expect(host.querySelector(".right-drawer-army.open")).toBeNull();
+
+    // 密令/拟诏关闭
+    await click(cmdByCaption(host, "密令"));
+    await tick();
+    expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
+    await click(cmdByCaption(host, "拟诏/结束回合"));
+    await tick();
+    expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
+
+    // legacies：顶栏帝国修正可开，内容=月初标记
+    const legacyBtn = byAria(host, "现行帝国修正");
+    expect(legacyBtn).not.toBeNull();
+    await click(legacyBtn);
+    await tick();
+    expect(document.body.textContent).toContain(SNAP_LEGACY);
+    await closeOpenOverlay(host);
+
+    // economy：户部抽屉可开，余额=月初
+    await click(byAria(host, "经济面板"));
+    await tick();
+    const economyOpen = host.querySelector(".right-drawer-economy.open");
+    expect(economyOpen).not.toBeNull();
+    expect(economyOpen!.textContent).toContain(`${SNAP_TREASURY}万两`);
+    await closeOpenOverlay(host);
+    expect(host.querySelector(".right-drawer-economy.open")).toBeNull();
+
+    // building：工部建筑可开，吃月初名
+    await click(byAria(host, "建筑列表"));
+    await tick();
+    const buildingOpen = host.querySelector(".right-drawer-building.open");
+    expect(buildingOpen).not.toBeNull();
+    expect(buildingOpen!.textContent).toContain(SNAP_BUILDING);
+    // 半程省/兵抽屉仍不得被连带打开
+    expect(host.querySelector(".right-drawer-region.open")).toBeNull();
+    expect(host.querySelector(".right-drawer-army.open")).toBeNull();
+    await closeOpenOverlay(host);
+
+    // court roster：名册可读、召对写入口拔除
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    expect(host.querySelector(".court-drawer.open")).not.toBeNull();
+    expect(host.querySelector(".court-drawer.open")!.textContent).toContain(SNAP_MINISTER);
+    const courtCard = Array.from(host.querySelectorAll(".court-drawer.open button.minister-card")).find((b) =>
+      (b.textContent || "").includes(SNAP_MINISTER),
+    ) as HTMLButtonElement | undefined;
+    expect(courtCard?.disabled).toBe(true);
+    await closeOpenOverlay(host);
+
+    // appointment roster
+    await click(byAria(host, "官员任免"));
+    await tick();
+    const apptOpen = host.querySelector(".right-drawer-appointment.open");
+    expect(apptOpen).not.toBeNull();
+    expect(apptOpen!.textContent).toContain(SNAP_MINISTER);
+    const apptRow = apptOpen!.querySelector("button.right-drawer-row-minister") as HTMLButtonElement | null;
+    expect(apptRow?.disabled).toBe(true);
+    await closeOpenOverlay(host);
+
+    // harem roster
+    await click(byAria(host, "后宫"));
+    await tick();
+    const haremOpen = host.querySelector(".harem-drawer.open");
+    expect(haremOpen).not.toBeNull();
+    expect(haremOpen!.textContent).toContain(SNAP_CONSORT);
+    const haremCard = Array.from(haremOpen!.querySelectorAll("button.minister-card")).find((b) =>
+      (b.textContent || "").includes(SNAP_CONSORT),
+    ) as HTMLButtonElement | undefined;
+    expect(haremCard?.disabled).toBe(true);
+    await closeOpenOverlay(host);
+
+    // memorials：奏疏/国势吃月初奏报
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="国势与奏报"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[role="dialog"][aria-label="国势与奏报"]')!.textContent).toContain(SNAP_MEMORIAL);
+    await closeOpenOverlay(host);
+
+    // history：史册可开，月档列表来自状态口同源只读 API
+    await click(cmdByCaption(host, "史册"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
+    await closeOpenOverlay(host);
+
+    // audience_archive：起居注可开
+    await click(cmdByCaption(host, "起居注"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull());
+    });
+    await closeOpenOverlay(host);
+
+    // menu：可开；存档允许
+    await click(byAria(host, "游戏菜单"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "保存")).toBeTruthy());
+    });
+    await closeOpenOverlay(host);
+
+    // closed_issues：只读可达；半程议题零泄漏；不误弹局势了结全屏
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector('[role="dialog"][aria-label="局势了结"]')).toBeNull();
+  });
+
+  it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
+    stubSettlementFetch(settlementBaseState("player", {
+      previous_summary: SNAP_GAZETTE,
+      pending_decisions: [],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[role="dialog"][aria-label="邸报"]')!.textContent).toContain(SNAP_GAZETTE);
+    // 半程议题仍不泄漏；上月已结只读面可同屏
+    expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+  });
+
+  it("月完后 settlement_display=false：关闭组入口恢复；递话条收；局势半程面重现", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
+    expect(host.textContent).not.toContain("· 核账");
+    expect(byAria(host, "省份列表")?.getAttribute("aria-disabled")).toBe("false");
+    expect(byAria(host, "军队列表")?.getAttribute("aria-disabled")).toBe("false");
+    // 局势（半程）与上月已结一并恢复
+    expect(host.querySelector(".situation-panel")).not.toBeNull();
+    expect(host.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(host.querySelector(".situation-closed-list")).not.toBeNull();
+    expect(host.textContent).toContain(SNAP_CLOSED);
+    // 关闭组命令可再开
+    await click(cmdByCaption(host, "密令"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
+    });
+    await closeOpenOverlay(host);
+    await click(cmdByCaption(host, "拟诏/结束回合"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
   });
 });
