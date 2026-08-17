@@ -78,10 +78,13 @@ function estimateConfirmBottom(css: string, viewportWidth: number) {
   const optionPadY = pxToken(css, /\.decision-option\s*\{[^}]*padding:\s*([\d.]+)px/s, 13);
   const noteMinH = pxToken(css, /\.decision-note\s*\{[^}]*min-height:\s*([\d.]+)px/s, 64);
   const noteMarginTop = pxToken(css, /\.decision-document \.decision-note\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 10);
-  const sealMarginTop = pxToken(css, /\.decision-seal\s*\{[^}]*margin:\s*([\d.]+)px/s, 18);
-  const sealPadY = pxToken(css, /\.decision-seal\s*\{[^}]*padding:\s*([\d.]+)px/s, 9);
-  const actionsMarginTop = pxToken(css, /\.decision-actions\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 16);
-  const confirmPadY = pxToken(css, /\.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 11);
+  // 印即确认键：.decision-confirm 自身呈印章，无独立装饰 seal
+  const confirmMarginTop = pxToken(css, /\.decision-document \.decision-confirm\s*\{[^}]*margin:\s*([\d.]+)px/s, 10)
+    || pxToken(css, /\.decision-confirm\s*\{[^}]*margin:\s*([\d.]+)px/s, 10);
+  const confirmPadY = pxToken(css, /\.decision-document \.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 8)
+    || pxToken(css, /\.decision-confirm\s*\{[^}]*padding:\s*([\d.]+)px/s, 8);
+  const actionsMarginTop = pxToken(css, /\.decision-actions\s*\{[^}]*margin-top:\s*([\d.]+)px/s, 8);
+  const actionsMinH = pxToken(css, /\.decision-actions\s*\{[^}]*min-height:\s*([\d.]+)px/s, 18);
   const pagePadX = parseClamp(firstMatch(css, /\.decision-page\s*\{[^}]*padding:\s*[^\s]+\s+([^;]+);/s));
   const docPadXClamp = (() => {
     // padding: Y X — capture X clamp
@@ -140,10 +143,13 @@ function estimateConfirmBottom(css: string, viewportWidth: number) {
     }
   });
 
-  if (doc.querySelector(".decision-seal")) y += sealMarginTop + sealPadY * 2 + 18;
+  // 印章确认键在文书 section 内（朱笔亲批之后）
+  if (doc.querySelector(".decision-confirm")) {
+    y += confirmMarginTop + confirmPadY * 2 + 18; // line box for seal text
+  }
   if (shell) y += sectionPad;
 
-  y += actionsMarginTop + confirmPadY * 2 + 15;
+  y += actionsMarginTop + actionsMinH; // hint line only
   y += docPadY + pagePadY;
   return y;
 }
@@ -308,11 +314,14 @@ describe("DecisionModal", () => {
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-section-label")?.textContent).toBe("内阁票拟");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(2) .decision-option-label")?.textContent).toBe("拟批：拨帑速发");
     expect(documentPage!.querySelector(".decision-document-section:nth-of-type(3) label")?.textContent).toBe("朱笔亲批");
-    const seal = documentPage!.querySelector(".decision-seal");
-    expect(seal?.getAttribute("aria-hidden")).toBe("true");
-    expect(seal?.hasAttribute("aria-label")).toBe(false);
+    // 印即确认键：文书序末位为 .decision-confirm 真按钮，无独立装饰 seal
+    const sealConfirm = documentPage!.querySelector<HTMLButtonElement>(".decision-confirm");
+    expect(sealConfirm).not.toBeNull();
+    expect(sealConfirm!.tagName).toBe("BUTTON");
+    expect(documentPage!.querySelector(".decision-seal")).toBeNull();
+    expect(document.querySelectorAll(".decision-confirm")).toHaveLength(1);
     act(() => document.querySelector<HTMLButtonElement>(".decision-option")!.click());
-    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    act(() => sealConfirm!.click());
     expect(document.body.textContent).toContain("河工修治");
     cleanup();
   });
@@ -396,13 +405,86 @@ describe("DecisionModal", () => {
   });
 });
 
-describe("DecisionModal #1202 red-seal first screen + pick affordance", () => {
-  it("keeps confirm button bounding-box bottom within the 1440×900 first screen", () => {
+describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", () => {
+  it("keeps seal-confirm bounding-box bottom within the 1440×900 first screen", () => {
     injectDecisionCss();
     const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
     const confirmBottom = estimateConfirmBottom(DECISION_CSS, 1440);
     expect(confirmBottom).toBeLessThanOrEqual(900);
     cleanup();
+  });
+
+  it("makes the unique decision-confirm the seal button with no parallel decorative seal", () => {
+    injectDecisionCss();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const confirms = document.querySelectorAll(".decision-confirm");
+    expect(confirms).toHaveLength(1);
+    expect(document.querySelector(".decision-seal")).toBeNull();
+
+    const seal = confirms[0] as HTMLButtonElement;
+    expect(seal.tagName).toBe("BUTTON");
+    expect(seal.getAttribute("aria-hidden")).not.toBe("true");
+    expect(seal.disabled).toBe(true);
+
+    // 印章视觉：双线朱红边 + 可点 cursor（非装饰去按钮化）
+    const sealRule = ruleExact(".decision-document .decision-confirm") || ruleExact(".decision-confirm");
+    expect(sealRule).toBeTruthy();
+    expect(sealRule!.style.pointerEvents === "" || sealRule!.style.pointerEvents === "auto").toBe(true);
+    expect(sealRule!.style.cursor).toBe("pointer");
+    expect(sealRule!.style.border.includes("double") || sealRule!.style.borderStyle === "double").toBe(true);
+    cleanup();
+  });
+
+  it("disables the seal only when no pick and handwritten note is empty; either path enables", () => {
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const confirm = () => document.querySelector<HTMLButtonElement>(".decision-confirm")!;
+    const options = () => document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    const hint = () => document.querySelector(".decision-hint-line")?.textContent || "";
+
+    // 路一：未择且批示空 → 禁用 + 提示
+    expect(confirm().disabled).toBe(true);
+    expect(hint()).toContain("请择一票拟，或亲笔批示。");
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+
+    // 路二 a：择一票拟 → 可点
+    act(() => options()[0].click());
+    expect(confirm().disabled).toBe(false);
+    expect(options()[0].classList.contains("is-picked")).toBe(true);
+    cleanup();
+
+    // 路二 b：仅亲笔批示有内容 → 可点（ADR 0043 留门）
+    const cleanupNote = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
+    const note = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理。");
+      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
+      note.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+    expect(confirm().disabled).toBe(false);
+    cleanupNote();
+  });
+
+  it("submits via the existing decision-confirm handler path with zero payload drift", () => {
+    const onResolve = vi.fn();
+    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolve} />);
+    act(() => document.querySelectorAll<HTMLButtonElement>(".decision-option")[0].click());
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolve).toHaveBeenCalledOnce();
+    expect(onResolve).toHaveBeenCalledWith([{ label: "拨帑速发", hint: "先解燃眉之急。" }]);
+    cleanup();
+
+    const onResolveNote = vi.fn();
+    const cleanupNote = render(<DecisionModal decisions={[decisions[0]]} onResolve={onResolveNote} />);
+    const note = document.querySelector<HTMLTextAreaElement>(".decision-note")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(note, "着即办理，不得有误。");
+      (note as HTMLTextAreaElement & { _valueTracker?: { setValue: (value: string) => void } })._valueTracker?.setValue("");
+      note.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => document.querySelector<HTMLButtonElement>(".decision-confirm")!.click());
+    expect(onResolveNote).toHaveBeenCalledWith([{ note: "着即办理，不得有误。" }]);
+    cleanupNote();
   });
 
   it("mechanically distinguishes hover, focus ring, and is-picked styles", () => {
@@ -498,27 +580,7 @@ describe("DecisionModal #1202 red-seal first screen + pick affordance", () => {
     });
     expect(confirm().disabled).toBe(true);
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+    expect(document.querySelector(".decision-hint-line")?.textContent).toContain("此疏须择一票拟。");
     cleanupDossier();
-  });
-
-  it("treats the decorative seal as non-interactive and unfocusable", () => {
-    injectDecisionCss();
-    const cleanup = render(<DecisionModal decisions={[decisions[0]]} onResolve={vi.fn()} />);
-    const seal = document.querySelector<HTMLElement>(".decision-seal")!;
-
-    expect(seal.tagName).not.toBe("BUTTON");
-    expect(seal.getAttribute("aria-hidden")).toBe("true");
-    expect(seal.hasAttribute("aria-label")).toBe(false);
-    expect(seal.getAttribute("tabindex")).not.toBe("0");
-    expect(seal.tabIndex).toBeLessThan(0);
-
-    const sealRule = ruleExact(".decision-seal");
-    expect(sealRule).toBeTruthy();
-    expect(sealRule!.style.pointerEvents).toBe("none");
-    expect(sealRule!.style.cursor === "" || sealRule!.style.cursor === "default").toBe(true);
-
-    act(() => { seal.focus(); });
-    expect(document.activeElement === seal).toBe(false);
-    cleanup();
   });
 });
