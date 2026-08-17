@@ -20,7 +20,7 @@ import sys
 import time
 import threading
 from concurrent.futures import Future
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
 # 源码模式 `uvicorn web_app:app` 在 nohup/重定向（>> web_server.log）下 Python stdout 块缓冲，
 # 日志滞后数分钟、结算中段 tail 看不见进度（#84）。强制行缓冲让 tlog + 各 print 近实时落盘；
@@ -605,9 +605,14 @@ def _audience_prompt_for_web_chat(session: Any, text: str, character: Character,
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
-    def __init__(self, fresh: bool = False) -> None:
+    def __init__(self, fresh: bool = False, on_stage: Optional[Callable[[str], None]] = None) -> None:
         """实例化 = 真正进入游戏。无 API key 直接抛 LLMUnavailable。
-        fresh=True：先清空主 DB（新游戏）再建 session。"""
+        fresh=True：先清空主 DB（新游戏）再建 session。
+        on_stage：#1195 可选阶段回调（仅推叙事文案，不改 GameSession 初始化序）。"""
+        def _stage(label: str) -> None:
+            if on_stage is not None:
+                on_stage(label)
+
         db_path = _get_main_db_path()
         if not os.path.isabs(db_path):
             db_path = str(user_data_dir() / db_path)
@@ -653,10 +658,15 @@ class WebGame:
         )
         if llm_config.channel != "cli" and not llm_config.api_key:
             raise LLMUnavailable("未配 API key，请先到设置页填写。")
+        # #1195：阶段标签紧贴既有分段（verify / GameSession / begin_turn / 召对恢复）；
+        # verify 语义不变——仍是进局前 smoke 一次；仅把 continue 路的 verify
+        # 提到与 fresh 同层，便于首条 stage 覆盖 dominant smoke 段。
+        _stage("检查模型后端...")
+        verify_llm_available(llm_config)
         if fresh:
-            verify_llm_available(llm_config)
             _delete_sqlite_db_files_or_raise(db_path)
-        self.session = GameSession(db_path, llm_config, verify_llm=not fresh)
+        _stage("载入上次进度...")
+        self.session = GameSession(db_path, llm_config, verify_llm=False)
         # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
         self._write_gate = threading.Lock()
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
@@ -665,8 +675,10 @@ class WebGame:
         self._drain_cond = threading.Condition()
         self._pending_writes_count = 0
         self._draining = False
+        _stage("重整朝堂名册...")
         self.session.begin_turn()
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
+        _stage("恢复召对记录...")
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
             name: [] for name in self.session.content.characters
         }
@@ -2922,6 +2934,8 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
 
 
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
+# #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
+_menu_generation: int = 0
 app = FastAPI(title="Ming Salvage MVP Web")
 
 
@@ -3137,7 +3151,8 @@ async def api_menu_new_game() -> Dict[str, Any]:
     先把旧库 park 旁路再 fresh=True 建新库——不在旧 worker 仍写旧连接时 os.remove 底层文件；
     排空后关旧连接并把旁路库归档为存档，玩家可再次进入看到迟到的后台回奏；
     #382 通用并发模型（Windows file-lock 等）不在本轮 scope。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     old_game = web_game
     # #396 Step5 R4: 无论 web_game 是否为 None（退菜单后 / 服务端首次 new_game），
     # fresh=True 前都必须切换主库路径到新文件——否则 WebGame 会解析到旧配置库（env /
@@ -3174,22 +3189,63 @@ async def api_menu_new_game() -> Dict[str, Any]:
 
 
 @app.post("/api/menu/continue")
-async def api_menu_continue() -> Dict[str, Any]:
-    """继续：用上次主 DB 启动 WebGame。"""
-    global web_game
+async def api_menu_continue() -> StreamingResponse:
+    """继续：用上次主 DB 启动 WebGame。
+
+    #1195：与颁诏 settle 同构 SSE——stage 逐段推文案，done 带 state，
+    error 带 message。首条 stage 在重活前即发（目标 ≤5s 首见）。
+    """
+    global _menu_generation
     if not _has_main_db():
         raise HTTPException(status_code=404, detail="无上次进度可继续，请先新游戏或加载存档。")
-    try:
-        web_game = WebGame(fresh=False)
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=412, detail=_llm_error_detail(exc))
-    return {"state": web_game.state_payload()}
+
+    _menu_generation += 1
+    token = _menu_generation
+    ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+
+    def on_stage(label: str) -> None:
+        ev_queue.put(("stage", label))
+
+    def worker() -> None:
+        global web_game
+        try:
+            # 首条阶段立即入队：生成器可在 WebGame 构造（verify smoke）前就 yield
+            on_stage("检查模型后端...")
+            game = WebGame(fresh=False, on_stage=on_stage)
+            # #1195：发布前对世代号——exit/new_game/load_save/新 continue 已 bump 则丢弃白建局
+            if token != _menu_generation:
+                _drain_and_close_session(game)
+                ev_queue.put(("__error__", {"message": "继续已取消（菜单状态已变更）。"}))
+                return
+            web_game = game
+            ev_queue.put(("__done__", {"state": game.state_payload()}))
+        except LLMUnavailable as exc:
+            ev_queue.put(("__error__", _llm_error_detail(exc)))
+        except Exception as exc:  # noqa: BLE001 — SSE 终态收束，不让线程死掉
+            ev_queue.put(("__error__", {"message": str(exc)}))
+
+    async def generate() -> AsyncIterator[str]:
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        loop = asyncio.get_running_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "__done__":
+                yield sse_event("done", data)
+                break
+            if kind == "__error__":
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                break
+            yield sse_event(kind, {"content": data})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/api/menu/load_save/{name}")
 async def api_menu_load_save(name: str) -> Dict[str, Any]:
     """从存档启动：先启动空 WebGame（fresh）→ 调 load_save 热替换主 DB。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     try:
         web_game = WebGame(fresh=False)  # 先有 session 才能 load_save
     except LLMUnavailable as exc:
@@ -3218,7 +3274,8 @@ async def api_menu_exit() -> Dict[str, Any]:
 
     #396：界面立刻退（web_game=None + 响应返回），后台召对 worker 继续跑完、写进档；
     session.close() 推迟到 write_gate 排空后再执行（detach），不在 worker 写时关。"""
-    global web_game
+    global web_game, _menu_generation
+    _menu_generation += 1
     if web_game is not None:
         old_game = web_game
         web_game = None  # 界面立刻退
