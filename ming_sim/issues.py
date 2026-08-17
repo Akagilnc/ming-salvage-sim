@@ -7019,6 +7019,14 @@ def apply_score_extraction(
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
+            # #619：表报终值旁路——仅 degraded/transformed 挂奏报行；不改执行格/连坐语义。
+            if outcome in {"degraded", "transformed"}:
+                db.record_dossier_progress(
+                    dossier_id, state.turn, outcome, note,
+                    is_terminal=True,
+                    origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+                    commit=False,
+                )
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
             # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(
