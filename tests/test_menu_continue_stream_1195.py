@@ -107,3 +107,134 @@ def test_menu_continue_404_when_no_main_db(monkeypatch):
     monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
     response = TestClient(web_app.app).post("/api/menu/continue")
     assert response.status_code == 404
+
+
+def test_stale_continue_worker_does_not_publish_after_exit(monkeypatch):
+    """#1195：continue 在飞时 exit_to_menu 先落定 → stale worker 不得覆盖 web_game，白建局 drain-close。"""
+    import asyncio
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+    closed: list[str] = []
+    results: dict = {}
+
+    class SlowWebGame:
+        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+            assert fresh is False
+            if on_stage:
+                on_stage("检查模型后端...")
+            started.set()
+            assert release.wait(timeout=5.0), "test release timed out"
+            self._state = {"from": "stale-continue"}
+            self._write_gate = threading.Lock()
+            self.session = SimpleNamespace(close=lambda: closed.append("stale"))
+
+        def state_payload(self) -> dict:
+            return self._state
+
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
+    monkeypatch.setattr(web_app, "web_game", None)
+
+    def run_continue() -> None:
+        response = TestClient(web_app.app).post("/api/menu/continue")
+        results["status"] = response.status_code
+        results["events"] = _parse_sse(response.text)
+
+    thread = threading.Thread(target=run_continue, daemon=True)
+    thread.start()
+    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+
+    # exit 先落定：bump 世代 + web_game=None
+    exit_result = asyncio.run(web_app.api_menu_exit())
+    assert exit_result == {"ok": True}
+    assert web_app.web_game is None
+
+    release.set()
+    thread.join(timeout=5.0)
+    assert not thread.is_alive(), "continue stream thread hung"
+
+    assert results.get("status") == 200
+    events = results["events"]
+    assert events, "应有 SSE 事件"
+    assert events[-1][0] == "error"
+    assert web_app.web_game is None, "stale continue must not publish over exit"
+    # 白建 game 被 _drain_and_close_session 收掉
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and closed != ["stale"]:
+        time.sleep(0.01)
+    assert closed == ["stale"]
+
+
+def test_stale_continue_worker_does_not_publish_after_new_game(monkeypatch, tmp_path):
+    """#1195：continue 在飞时 new_game 先落定 → stale worker 不得覆盖新局 web_game。"""
+    import asyncio
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+    closed: list[str] = []
+    results: dict = {}
+
+    class SlowWebGame:
+        def __init__(self, fresh: bool = False, on_stage=None) -> None:
+            assert fresh is False
+            if on_stage:
+                on_stage("检查模型后端...")
+            started.set()
+            assert release.wait(timeout=5.0), "test release timed out"
+            self._state = {"from": "stale-continue"}
+            self._write_gate = threading.Lock()
+            self.session = SimpleNamespace(close=lambda: closed.append("stale"))
+
+        def state_payload(self) -> dict:
+            return self._state
+
+    class FreshWebGame:
+        def __init__(self, fresh: bool = True, on_stage=None) -> None:
+            assert fresh is True
+            self._state = {"from": "new-game"}
+
+        def state_payload(self) -> dict:
+            return self._state
+
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: True)
+    monkeypatch.setattr(web_app, "WebGame", SlowWebGame)
+    monkeypatch.setattr(web_app, "web_game", None)
+    monkeypatch.delenv("MING_SIM_DB", raising=False)
+    monkeypatch.setattr(web_app, "user_data_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(web_app.steam_events, "with_events", lambda payload, events: payload)
+
+    def run_continue() -> None:
+        response = TestClient(web_app.app).post("/api/menu/continue")
+        results["status"] = response.status_code
+        results["events"] = _parse_sse(response.text)
+
+    thread = threading.Thread(target=run_continue, daemon=True)
+    thread.start()
+    assert started.wait(timeout=5.0), "continue worker did not enter WebGame ctor"
+
+    # new_game 在 continue 构造中途落定——换掉 WebGame 工厂供 fresh 构造
+    monkeypatch.setattr(web_app, "WebGame", FreshWebGame)
+    new_result = asyncio.run(web_app.api_menu_new_game())
+    assert new_result["state"]["from"] == "new-game"
+    settled = web_app.web_game
+    assert settled is not None
+    assert settled.state_payload()["from"] == "new-game"
+
+    release.set()
+    thread.join(timeout=5.0)
+    assert not thread.is_alive(), "continue stream thread hung"
+
+    assert results.get("status") == 200
+    events = results["events"]
+    assert events[-1][0] == "error"
+    assert web_app.web_game is settled, "stale continue must not overwrite new_game"
+    assert web_app.web_game.state_payload()["from"] == "new-game"
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and closed != ["stale"]:
+        time.sleep(0.01)
+    assert closed == ["stale"]
