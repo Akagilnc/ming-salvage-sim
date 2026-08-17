@@ -1757,6 +1757,8 @@ def test_secret_context_path_preserves_multiple_related_emperor_task_lines(game,
     db, state, _ = game
     minister = "魏忠贤"
     mark_primary, mark_follow, mark_noise = "MARK_PRIMARY_陕赈", "MARK_FOLLOW_护银", "MARK_NOISE_京营"
+    db.append_chat_message(minister, state.turn, "user", f"近日京营操练如何？{mark_noise}")
+    db.append_chat_message(minister, state.turn, "minister", "回陛下，操练如常。")
     db.append_chat_message(minister, state.turn, "user", f"命洪承畴督办陕西赈灾 {mark_primary}。")
     db.append_chat_message(minister, state.turn, "minister", "臣领命。")
     db.append_chat_message(minister, state.turn, "user", f"再令东厂护赈银、查截留 {mark_follow}。")
