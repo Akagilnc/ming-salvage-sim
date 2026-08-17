@@ -56,9 +56,16 @@ def test_north_star_ministers_have_distinct_featured_voices(game):
     db, _state, content = game
     names = ("毕自严", "杨嗣昌", "王绍徽")
     rendered = {n: character_context_with_db(content.characters[n], db) for n in names}
-    assert len(set(rendered.values())) == 3
     for name, text in rendered.items():
         assert name in text and "【人物档料】" in text
+        assert all(k in text for k in _DOSSIER_KEYS)
+    # 差分不得仅由姓名/身份字段自证：去掉二者贡献后三份人物档料仍须可分。
+    stripped = []
+    for name, text in rendered.items():
+        body = text.replace(name, "")
+        body = re.sub(r"身份：[^；]*", "身份：", body)
+        stripped.append(body)
+    assert len(set(stripped)) == 3
 
 
 def test_minister_agent_injects_faction_dossier_once(game):
