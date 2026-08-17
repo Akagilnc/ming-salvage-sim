@@ -245,8 +245,15 @@ def augment_secret_orders_with_due_commitments(
         (int(state.turn),),
     ).fetchall()
     due_commitments: List[Dict[str, object]] = []
+    from ming_sim.staged_commitment import normalize_commitment_stages
     for row in rows:
         if effect_dict_has_work(row["ongoing_effects"]):
+            continue
+        # #620：分段承诺走 next_audience_todos，不进 form③ 单值 end_turn 待核议通道
+        # （避免 DECISION/AWAITING_DECISION 停轮）。
+        keys = row.keys()
+        stages_raw = row["stages_json"] if "stages_json" in keys else "[]"
+        if normalize_commitment_stages(stages_raw):
             continue
         due_commitments.append({
             "entry_kind": "due_commitment",
