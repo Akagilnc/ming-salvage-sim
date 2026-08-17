@@ -48,12 +48,10 @@ def _ctx(game):
     return CourtContext(state=state, db=db, previous_summary="")
 
 
-def _active_ministers(content, db, *, n=2, office_type=None):
+def _active_ministers(content, db, *, n=2):
     out = []
     for character in content.characters.values():
         if character.office_type in ("后宫", "宗藩"):
-            continue
-        if office_type is not None and character.office_type != office_type:
             continue
         if db.get_character_status(character.name)[0] != "active":
             continue
@@ -929,4 +927,4 @@ def test_minister_tools_characterize_building_and_metric_outputs(game):
         assert level in rendered
         assert condition in rendered
         assert risk in rendered
-        assert effect in rendered or "民心" in rendered
+        assert effect in rendered
