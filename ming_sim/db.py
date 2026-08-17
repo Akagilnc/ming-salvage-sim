@@ -7730,7 +7730,7 @@ class GameDB:
         ).fetchone()
         if row is None:
             return []
-        return self._parse_highlights_json(row["highlights_json"] if "highlights_json" in row.keys() else "[]")
+        return self._parse_highlights_json(row["highlights_json"])
 
     @staticmethod
     def _parse_highlights_json(raw: Any) -> List[str]:
@@ -7824,10 +7824,10 @@ class GameDB:
             mid = int(m["id"])
             turn_id = msg_turn.get(mid, 0)
             role = m["role"]
-            # #544：只大臣气泡携带判官清单；帝/递话恒 []
+            # #544：只大臣气泡携带判官清单；帝/递话恒 []（SELECT 已点名 highlights_json）
             highlights = (
                 self._parse_highlights_json(m["highlights_json"])
-                if role == "minister" and "highlights_json" in m.keys()
+                if role == "minister"
                 else []
             )
             projection.append({
