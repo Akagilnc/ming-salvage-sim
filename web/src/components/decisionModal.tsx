@@ -149,11 +149,19 @@ export function DecisionModal({
             <label className="decision-section-label" htmlFor="decision-note">朱笔亲批</label>
             <textarea id="decision-note" className="decision-note" placeholder="亲笔补批（可选）" value={pick.note || ""} onChange={(event) => setPick({ note: event.target.value })} />
           </div>
-          <div className="decision-seal" aria-label="批红落印">批红落印</div>
+          {/* 印即确认键：复用既有 decision-confirm handler，不另挂第二控件 */}
+          <button
+            type="button"
+            className="decision-confirm"
+            disabled={!decided}
+            onClick={next}
+            aria-label={last ? "批红落印，续推时局" : "批下一疏"}
+          >
+            {last ? "批红落印" : "批下一疏"}
+          </button>
         </section>
         <div className="decision-actions">
           <span className="decision-hint-line">{decided ? "" : requiresListedChoice ? "此疏须择一票拟。" : "请择一票拟，或亲笔批示。"}</span>
-          <button className="decision-confirm" disabled={!decided} onClick={next}>{last ? "批红落印，续推时局" : "批下一疏"}</button>
         </div>
       </article>
     </section>
