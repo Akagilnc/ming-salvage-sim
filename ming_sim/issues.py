@@ -5219,11 +5219,21 @@ def apply_issue_tracker_output(
                         "ongoing_effects 含非月度持续字段："
                         + ", ".join(unsupported_ongoing_fields)
                     )
-                if not ongoing_has_work and end_turn_for_commitment <= 0:
-                    raise ValueError("ongoing_effects 或 end_turn 至少一项必填")
+                from ming_sim.staged_commitment import (
+                    capture_commitment_stages,
+                    stages_source_from_issue_item,
+                )
+                stages_for_commitment = capture_commitment_stages(
+                    stages_source_from_issue_item(ni),
+                    narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
+                    origin_turn=int(state.turn),
+                )
+                has_stages = bool(stages_for_commitment)
+                if not ongoing_has_work and end_turn_for_commitment <= 0 and not has_stages:
+                    raise ValueError("ongoing_effects、end_turn 或 stages 至少一项必填")
                 if stop_condition_raw in (None, "", {}):
-                    if end_turn_for_commitment <= 0 and not ongoing_has_work:
-                        raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn")
+                    if end_turn_for_commitment <= 0 and not ongoing_has_work and not has_stages:
+                        raise ValueError("stop_condition 须为非空 dict，除非承诺带 end_turn 或 stages")
                     stop_condition = ""
                 else:
                     stop_condition = _validate_commitment_stop_condition(stop_condition_raw, state, db)
@@ -5350,6 +5360,20 @@ def apply_issue_tracker_output(
                 ),
             })
             continue
+        from ming_sim.staged_commitment import (
+            capture_commitment_stages,
+            stages_source_from_issue_item,
+        )
+        stages_norm = (
+            capture_commitment_stages(
+                stages_source_from_issue_item(ni),
+                narrative_text=str(ni.get("stage_text") or ni.get("title") or ""),
+                origin_turn=int(state.turn),
+            )
+            if is_commitment
+            else []
+        )
+        # 段派生 end_turn（max stage due）不落 DB；落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5379,6 +5403,7 @@ def apply_issue_tracker_output(
             end_turn=end_turn,
             stop_condition=stop_condition,
             commitment_kind=commitment_kind,
+            stages_json=stages_norm,
             commit=commit_now,
         )
         if kind == "initiative":
@@ -5386,6 +5411,8 @@ def apply_issue_tracker_output(
         applied_item = {"issue_id": issue_id, "kind": kind, "title": title, "rejected": False}
         if commitment_kind:
             applied_item["commitment_kind"] = commitment_kind
+        if stages_norm:
+            applied_item["stages"] = stages_norm
         applied_new.append(applied_item)
 
     # 3) closes（LLM 主动结案/失败，不看 bar 门槛）
@@ -5426,6 +5453,7 @@ def apply_issue_tracker_output(
             "SELECT * FROM issues WHERE id=?", (issue_id,)
         ).fetchone()
         if reason == "acknowledged":
+            from ming_sim.staged_commitment import is_stage_derived_end_turn
             if chk is None:
                 category, why = "missing_ref", f"close_issues 引用未找到的 issue {issue_id}"
             elif chk["status"] != "active":
@@ -5436,6 +5464,11 @@ def apply_issue_tracker_output(
                 category, why = "invalid_enum", f"close_issues acknowledged 不允许收尾持续承诺 issue {issue_id}"
             elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
                 category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
+            elif is_stage_derived_end_turn(chk["stages_json"], int(chk["end_turn"] or 0)):
+                category, why = (
+                    "invalid_enum",
+                    f"close_issues acknowledged 不得收尾段派生 end_turn 承诺 issue {issue_id}",
+                )
             else:
                 new_row = _ack_due_commitment_issue(
                     db,
@@ -8253,8 +8286,11 @@ def apply_issue_inertia_and_ongoing(
                 continue
             end_turn = int(row["end_turn"] or 0)
             if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
-                _expire_commitment_issue(db, state, row, commit=commit_local)
-                continue
+                # 段派生展示 end_turn 不得驱动机械停账；独立 end_turn 仍 expire。
+                from ming_sim.staged_commitment import is_stage_derived_end_turn
+                if not is_stage_derived_end_turn(row["stages_json"], end_turn):
+                    _expire_commitment_issue(db, state, row, commit=commit_local)
+                    continue
 
         # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
         if is_commitment and ongoing_has_work:
