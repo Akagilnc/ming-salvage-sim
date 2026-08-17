@@ -79,11 +79,14 @@ export function useSettlementFlow({
       }
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
+        // #1234：同会话停窗经既有状态口刷新 React 态——yearMonthLabel / 顶栏四键读到 settlement_display 与快照叠影。
+        // 不 reload（整页刷新只在月完成）；不自判核账态；不平行第二展示通道。
         const failures = outcome.data?.pending_action_failures || [];
         setDecisionFailures(failures);
         const route = routeIssueDecisions(outcome.data.decisions || []);
         if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
         if (route.error !== null) setPausedDecisionError(route.error);
+        await loadState();
         setBusy("");
         return;
       }
