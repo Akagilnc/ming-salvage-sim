@@ -674,6 +674,10 @@ class WebGame:
         self._draining = False
         _stage("重整朝堂名册...")
         self.session.begin_turn()
+        # #1234：唯一服务进程启动缝——孤儿月初快照清除（相位常态∧快照在→清+一行日志；
+        # settling/awaiting 不清，交既有恢复）。与故障注入 oracle 同调具名函数。
+        from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+        clear_orphan_month_open_snapshot(self.db, self.state)
         # 召对记录持久化在 chat_messages 表，启动时恢复进内存缓存。
         _stage("恢复召对记录...")
         self.chat_history: Dict[str, List[Dict[str, str]]] = {
@@ -1236,11 +1240,25 @@ class WebGame:
             })
         return out
 
+    def _month_open_snapshot(self) -> Optional[Dict[str, int]]:
+        """#1234 路③：当前回合未过期月初快照；无则 None（⇔ 非核账展示态）。"""
+        return self.db.get_month_open_snapshot(int(self.state.turn))
+
+    def _display_metrics(self) -> Dict[str, int]:
+        """顶栏四键呈现缝：核账期读快照，否则读活值。"""
+        metrics = dict(self.state.metrics)
+        snap = self._month_open_snapshot()
+        if snap is not None:
+            metrics.update(snap)
+        return metrics
+
     def budget_payload(self) -> Dict[str, Any]:
         # 唯一定额源：flows.compute_budget_lines（与实际落账 / 大臣 treasury_budget_summary 三处统一）。
         budget = compute_budget_lines(self.db, self.state)
-        budget["国库"]["balance"] = int(self.state.metrics["国库"])
-        budget["内库"]["balance"] = int(self.state.metrics["内库"])
+        # #1234：户部余额与顶栏同缝——核账期读月初快照四键。
+        display = self._display_metrics()
+        budget["国库"]["balance"] = int(display["国库"])
+        budget["内库"]["balance"] = int(display["内库"])
         for account in (budget["国库"], budget["内库"]):
             income_total = sum(int(item["amount"]) for item in account["income"])
             expense_total = sum(int(item["amount"]) for item in account["expense"])
@@ -1307,10 +1325,15 @@ class WebGame:
             a for a in pending_actions
             if a["kind"] != "directive" and not (a["kind"] == "secret_order" and a["action"] == "新建")
         ]
+        # #1234：快照在且回合匹配 ⇔ 核账展示态；四键经同一投影缝下发。
+        snap = self._month_open_snapshot()
+        settlement_display = snap is not None
+        display_metrics = self._display_metrics()
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
-                     "turn": self.state.turn, "phase": self.state.turn_phase},
-            "metrics": self.state.metrics,
+                     "turn": self.state.turn, "phase": self.state.turn_phase,
+                     "settlement_display": settlement_display},
+            "metrics": display_metrics,
             "previous_summary": self.previous_summary,
             "treasury": self.db.treasury_report(self.state),
             "issues": self.issue_payloads(),
@@ -2930,6 +2953,8 @@ def _drain_and_close_session(game, archive_db: bool = False) -> None:
 web_game: Optional[WebGame] = None  # 懒加载：菜单页点「新游戏/继续/加载存档」才实例化
 # #1195：菜单生命周期世代。continue worker 发布 web_game 前对号；失配则丢弃白建局。
 _menu_generation: int = 0
+
+
 app = FastAPI(title="Ming Salvage MVP Web")
 
 

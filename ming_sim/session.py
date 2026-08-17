@@ -2549,6 +2549,10 @@ class GameSession:
                     stored = str(ctx.get("decree_text") or "").strip()
                     if stored:
                         self.last_decree = stored
+        # #1234：点击受理即独立提交月初快照（不进 pre_settle 事务）。恢复态
+        # （FRONT_HALF_DONE）已有快照或不该用半程活值重写——跳过。
+        if self.state.turn_phase not in FRONT_HALF_DONE_PHASES:
+            self.db.capture_month_open_snapshot(self.state)
         # #498 AC8：颁诏入口顺势收夜（等在飞入档 / 超时 fail-closed），再提交候选与拟诏。
         # inflight_wait_s：web 入口已在 gate 外先等在飞落档（web_app._await_audience_inflight_clear），
         # 再持 gate 传 0.0 让此处只做即时复查——避免持 gate 轮询把回话 epilogue 挡在门外

@@ -1,3 +1,4 @@
+import { yearMonthLabel } from "../settlementPresentation";
 import { BudgetHover, CommandSlot, HUD_BG, HUD_SLOTS, LegacyBar } from "./hud";
 import { GrandMap } from "./map";
 import { SituationPanel } from "./situation";
@@ -74,7 +75,7 @@ export function GameHud({
         onClick={() => onOpenModal("state")}>
         <span className="hud2-block">
           <span className="hud2-lab">大明</span>
-          <span className="hud2-val">{state.turn.year} 年 {state.turn.period} 月</span>
+          <span className="hud2-val">{yearMonthLabel(state.turn)}</span>
         </span>
       </button>
       <div className="hud2-slot" style={HUD_SLOTS.顶栏.国库}>
