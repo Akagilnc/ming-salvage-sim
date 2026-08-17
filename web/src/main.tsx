@@ -30,7 +30,13 @@ import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
-import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
+import {
+  isFaceReachable,
+  isSettlementDisplay,
+  SETTLEMENT_CLOSED_REASON,
+  shouldAutoOpenClosedIssuesAfterSettlement,
+  shouldAutoOpenSecretOrdersAfterSettlement,
+} from "./settlementPresentation";
 import type { AppView, ChatIdentity, ClosedIssue, GameState, MenuStatus, Minister, ModalName, SecretOrder } from "./types";
 import "./styles.css";
 
@@ -282,21 +288,25 @@ export function App() {
   // #499：密令重取经唯一 latest-wins 协调器 refresh，与 done/撤回共享代次——旧回合的密令
   // 响应迟到不覆盖新结果。shown 标记只在**接受成功后**（onSecretOrders 内）落，取失败可重试；
   // 延迟弹窗在触发时按 isLatest 门控，撤回等推进代次后陈旧定时器 no-op（不会弹已作废的窗）。
+  // #1236：密令属关闭组——核账展示态下不自动弹出（角标亦在 HUD 清零）。
   React.useEffect(() => {
     if (!state) return;
     const currentTurn = state.turn.turn;
     if (currentTurn === secretOrderShown) return;
+    const settlementDisplay = isSettlementDisplay(state.turn);
     void refreshDurableProjection({
       secretOrders: true,
       onSecretOrders: () => setSecretOrderShown(currentTurn),  // 仅接受成功（最新代次）才标记已呈现
       // 延迟呈现归协调器：400ms 后仍最新代次才弹窗；撤回等推进代次后陈旧定时器 no-op。
       autoOpen: {
         afterMs: 400,
-        when: (orders) => shouldAutoOpenSecretOrdersAfterSettlement(orders, currentTurn),
+        when: (orders) =>
+          isFaceReachable("secret_orders", settlementDisplay)
+          && shouldAutoOpenSecretOrdersAfterSettlement(orders, currentTurn),
         open: () => setActiveModal("secret_orders"),
       },
     });
-  }, [state?.turn.turn]);
+  }, [state?.turn.turn, state?.turn.settlement_display]);
 
   // 结局已触发：每次进页面/刷新都自动弹结局结算页。玩家点关闭后（endingDismissed）
   // 本次加载让位给盘面/邸报，可继续看局；刷新即复位重弹。
@@ -347,6 +357,19 @@ export function App() {
   // 作弊控制台：Ctrl+~（或 Ctrl+`）切换显隐。强制结算唯一入口。
   useCheatHotkey(setCheatOpen);
 
+  // #1236：关闭组面若仍挂着（刷新前已开），核账期强制收起，避免半程内容残留。
+  // hooks 须在 early return 之前。
+  const settlementDisplayFlag = isSettlementDisplay(state?.turn);
+  React.useEffect(() => {
+    if (!settlementDisplayFlag) return;
+    if (!isFaceReachable("region", true)) setRegionDrawerOpen(false);
+    if (!isFaceReachable("army", true)) setArmyDrawerOpen(false);
+    if (!isFaceReachable("node_intel", true)) setMapIntelOpen(false);
+    if (!isFaceReachable("secret_orders", true) && activeModal === "secret_orders") setActiveModal("none");
+    if (!isFaceReachable("edict", true) && activeModal === "edict") setActiveModal("none");
+    if (!isFaceReachable("chat_entry", true) && activeModal === "chat") setActiveModal("none");
+  }, [settlementDisplayFlag, activeModal]);
+
   if (appView === "menu") {
     return (
       <MenuPage
@@ -384,6 +407,11 @@ export function App() {
   const mapIntelStyle = selectedNode ? getMapIntelStyle(selectedNode) : undefined;
 
   const selectMapNode = (nodeId: string) => {
+    // #1236：地图节点详情属关闭组——核账期不点选开详（底图装饰可留）。
+    if (state && !isFaceReachable("node_intel", isSettlementDisplay(state.turn))) {
+      setError(SETTLEMENT_CLOSED_REASON);
+      return;
+    }
     setSelectedNodeId(nodeId);
     setMapIntelOpen(true);
   };
@@ -403,11 +431,12 @@ export function App() {
     }
   };
 
-  const settling = busy === "月末结算";
-  const guardClose = (fn: () => void) => () => {
-    if (settling) return;
-    fn();
-  };
+  // #1236：核账门控唯一谓词 = 状态口 settlement_display。
+  // busy==="月末结算" 仅驱动同会话非权威装饰 SettlementLock，绝不充真源、不挡必达三面。
+  const settlementDisplay = settlementDisplayFlag;
+  const sessionSettlingBusy = busy === "月末结算";
+  // 召对写入口属关闭组；名册抽屉仍只读可达。
+  const chatEntryEnabled = isFaceReachable("chat_entry", settlementDisplay);
 
   const activeDrawerKey =
     drawerOpen ? "court" :
@@ -429,19 +458,28 @@ export function App() {
   const sz = hudStageSize;
   const ready = sz.w > 0 && sz.h > 0;
 
+  // 关闭组模态：若 activeModal 被外路径设到关闭面，不渲染。
+  const secretOrdersOpen = activeModal === "secret_orders" && isFaceReachable("secret_orders", settlementDisplay);
+  const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
+  const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
+  const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
+  const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
+  const armyOpen = armyDrawerOpen && isFaceReachable("army", settlementDisplay);
+
   return (
-    <main className="game-shell">
+    <main className="game-shell" data-settlement-display={settlementDisplay ? "1" : "0"}>
       <GameHud
         stageRef={hudStageCbRef}
         ready={ready}
         state={state}
         mapNodes={mapNodes}
-        mapSelectedId={mapIntelOpen ? selectedNode?.id || "" : ""}
+        mapSelectedId={mapIntelVisible ? selectedNode?.id || "" : ""}
         onSelectMapNode={selectMapNode}
         activeDrawerKey={activeDrawerKey}
         navHandlers={navHandlers}
         secretOrderActiveCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
         onOpenModal={setActiveModal}
+        onClosedFaceAttempt={(reason) => setError(reason)}
       />
 
       <CourtDrawer
@@ -451,9 +489,10 @@ export function App() {
         selectedMinister={selectedMinister}
         open={drawerOpen}
         onGroupChange={setMinisterGroup}
-        onClose={guardClose(() => setDrawerOpen(false))}
+        onClose={() => setDrawerOpen(false)}
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
+        chatEntryEnabled={chatEntryEnabled}
       />
 
       <HaremDrawer
@@ -462,48 +501,50 @@ export function App() {
         selectedMinister={selectedMinister}
         open={haremDrawerOpen}
         onGroupChange={setHaremGroup}
-        onClose={guardClose(() => setHaremDrawerOpen(false))}
+        onClose={() => setHaremDrawerOpen(false)}
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
+        chatEntryEnabled={chatEntryEnabled}
       />
 
       <ArmyDrawer
         armies={state.armies}
-        open={armyDrawerOpen}
+        open={armyOpen}
         selectedArmyId={selectedArmyId}
         onSelectArmy={setSelectedArmyId}
-        onClose={guardClose(() => setArmyDrawerOpen(false))}
+        onClose={() => setArmyDrawerOpen(false)}
       />
 
       <RegionDrawer
         regions={state.regions}
-        open={regionDrawerOpen}
+        open={regionOpen}
         selectedRegionId={selectedRegionId}
         onSelectRegion={setSelectedRegionId}
-        onClose={guardClose(() => setRegionDrawerOpen(false))}
+        onClose={() => setRegionDrawerOpen(false)}
       />
 
       <BuildingDrawer
         regions={state.regions}
         mapNodes={mapNodes}
         open={buildingDrawerOpen}
-        onClose={guardClose(() => setBuildingDrawerOpen(false))}
+        onClose={() => setBuildingDrawerOpen(false)}
       />
 
       <EconomyDrawer
         state={state}
         open={economyDrawerOpen}
-        onClose={guardClose(() => setEconomyDrawerOpen(false))}
+        onClose={() => setEconomyDrawerOpen(false)}
       />
 
       <AppointmentDrawer
         ministers={state.ministers}
         open={appointmentDrawerOpen}
         onOpenChat={openChat}
-        onClose={guardClose(() => setAppointmentDrawerOpen(false))}
+        onClose={() => setAppointmentDrawerOpen(false)}
+        chatEntryEnabled={chatEntryEnabled}
       />
 
-      {mapIntelOpen && selectedNode ? (
+      {mapIntelVisible ? (
         <section className="map-intel-panel overlay-panel" style={mapIntelStyle}>
           <button className="icon-button panel-close" aria-label="关闭地区详情" onClick={() => setMapIntelOpen(false)}>
             <X size={16} />
@@ -513,13 +554,13 @@ export function App() {
       ) : null}
 
       {activeModal === "state" ? (
-        <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={guardClose(() => setActiveModal("none"))}>
+        <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={() => setActiveModal("none")}>
           <StateModal state={state} />
         </FullscreenModal>
       ) : null}
 
-      {activeModal === "chat" && activeMinister ? (
-        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
+      {chatOpen && activeMinister ? (
+        <FullscreenModal title={`召对：${activeMinister.name}`} subtitle={activeMinister.office} bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
           <ChatModal
             minister={activeMinister}
             ministers={audienceRoster}
@@ -555,14 +596,14 @@ export function App() {
             onFavorite={toggleFavorite}
             scrollPosition={audienceScrollPositionsRef.current.get(`${currentCampaignId}:${currentNightId}`)}
             onScrollPositionChange={(position) => audienceScrollPositionsRef.current.set(`${currentCampaignId}:${currentNightId}`, position)}
-            onClose={guardClose(() => setActiveModal("none"))}
+            onClose={() => setActiveModal("none")}
             onCancel={cancelChat}
           />
         </FullscreenModal>
       ) : null}
 
-      {activeModal === "chat" && !activeMinister && failureRecoveryMode && chatFailures.length ? (
-        <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={guardClose(() => setActiveModal("none"))}>
+      {chatOpen && !activeMinister && failureRecoveryMode && chatFailures.length ? (
+        <FullscreenModal title="政务失败恢复" subtitle="承办人暂不可召见" bgClass="modal-bg-chat" onClose={() => setActiveModal("none")}>
           <PendingFailureRecoveryPanel
             failures={chatFailures}
             busy={busy}
@@ -572,8 +613,8 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {activeModal === "edict" ? (
-        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={guardClose(() => setActiveModal("none"))}>
+      {edictOpen ? (
+        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
           <EdictModal
             state={state}
             directiveText={directiveText}
@@ -599,7 +640,7 @@ export function App() {
       {activeModal === "report" && (gazetteReport || report) ? (
         <ReportModal
           report={gazetteReport || report}
-          onClose={guardClose(() => setActiveModal("none"))}
+          onClose={() => setActiveModal("none")}
         />
       ) : null}
 
@@ -608,16 +649,16 @@ export function App() {
       ) : null}
 
       {activeModal === "history" ? (
-        <HistoryModal onClose={guardClose(() => setActiveModal("none"))} />
+        <HistoryModal onClose={() => setActiveModal("none")} />
       ) : null}
 
       {activeModal === "audience_archive" ? (
-        <AudienceArchiveModal ministers={audienceRoster} onClose={guardClose(() => setActiveModal("none"))} />
+        <AudienceArchiveModal ministers={audienceRoster} onClose={() => setActiveModal("none")} />
       ) : null}
 
       {activeModal === "menu" ? (
         <GameMenuModal
-          onClose={guardClose(() => setActiveModal("none"))}
+          onClose={() => setActiveModal("none")}
           onAfterLoad={() => {
             setActiveModal("none");
             window.location.reload();
@@ -633,18 +674,24 @@ export function App() {
         <ClosedIssuesModal items={closedModal} onClose={() => setClosedModal([])} />
       ) : null}
 
-      {activeModal === "secret_orders" ? (
+      {secretOrdersOpen ? (
         <SecretOrdersModal
           orders={secretOrders}
           onClose={() => setActiveModal("none")}
           onOpenMinister={(name) => {
+            // 密令内转召对亦属 chat_entry 关闭组
+            if (!chatEntryEnabled) {
+              setError(SETTLEMENT_CLOSED_REASON);
+              return;
+            }
             setActiveModal("chat");
             setSelectedMinister(name);
           }}
         />
       ) : null}
 
-      {settling ? (
+      {/* 同会话非权威装饰：不挡必达三面；刷新路径零依赖 */}
+      {sessionSettlingBusy ? (
         <SettlementLock
           stage={settleStage}
           thinking={settleThinking}
@@ -652,11 +699,10 @@ export function App() {
         />
       ) : null}
 
-      {/* 恢复入口（ship-pre r4）：崩溃/中止后重载时相位停在 settling——last_decree 已被
-          begin_turn 清空、盖玺按钮藏在非空诏文之后、write_decree 又拒恢复态，没有这个
-          按钮 web 玩家永远够不到 resolve_turn 的恢复分流（重放/重新推演由后端自行分辨）。 */}
-      {!settling && state.turn.phase === "settling" ? (
-        <div className="recovery-banner">
+      {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。 */}
+      {state.turn.phase === "settling" ? (
+        <div className="recovery-banner" data-testid="settle-resume" data-settlement-face="must">
           <span>上月结算未完成（进度已保存）。</span>
           <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
             续跑结算
@@ -664,12 +710,15 @@ export function App() {
         </div>
       ) : null}
 
-      {!settling && pausedDecisionError ? (
-        <DecisionRecoveryPanel
-          message={pausedDecisionError}
-          busy={busy}
-          onRetry={retryPendingDecisions}
-        />
+      {/* 必达：批红恢复——不得被 busy/SettlementLock 误关 */}
+      {pausedDecisionError ? (
+        <div data-testid="decision-recovery" data-settlement-face="must">
+          <DecisionRecoveryPanel
+            message={pausedDecisionError}
+            busy={busy === "月末结算" ? "" : busy}
+            onRetry={retryPendingDecisions}
+          />
+        </div>
       ) : null}
 
       {cheatOpen ? (
@@ -680,8 +729,11 @@ export function App() {
         />
       ) : null}
 
-      {pendingDecisions.length > 0 && !settling ? (
-        <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
+      {/* 必达：DecisionModal——核账展示态门控不得盖住本面 */}
+      {pendingDecisions.length > 0 ? (
+        <div data-testid="decision-modal" data-settlement-face="must">
+          <DecisionModal decisions={pendingDecisions} failures={decisionFailures} onResolve={submitDecisions} />
+        </div>
       ) : null}
     </main>
   );
