@@ -35,9 +35,30 @@ function consumeSettleBlocks(
 export async function consumeSettleStream(
   response: Response,
   callbacks: SettleStreamCallbacks,
+  options?: { httpErrorLabel?: string },
 ): Promise<SettleStreamOutcome> {
-  if (!response.ok || !response.body) {
-    throw new Error(`颁诏失败：HTTP ${response.status}`);
+  // #1195：菜单「继续」复用同一 SSE 消费器；httpErrorLabel 区分失败前缀。
+  const httpErrorLabel = options?.httpErrorLabel ?? "颁诏失败";
+  if (!response.ok) {
+    // 与旧 api() 对齐：同步非 2xx（如 continue 404 无档案）读 JSON detail 人话，丢不掉服务端文案。
+    let body: any = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const raw = body?.detail ?? body;
+    const serverMsg =
+      typeof raw === "string"
+        ? raw.trim()
+        : raw && typeof raw === "object"
+          ? String(raw.message || raw.detail || "").trim()
+          : "";
+    if (serverMsg) throw new Error(serverMsg);
+    throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error(`${httpErrorLabel}：HTTP ${response.status}`);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
