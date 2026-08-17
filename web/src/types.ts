@@ -312,6 +312,8 @@ export type ChatMessage = {
   /** attendant 递话的稳定记录身份（#499）：按 (chatTurnId, recordId) 去重/归位，不依赖 narration 文本 */
   chatTurnId?: number;
   recordId?: number;
+  /** #544：判官短语清单（仅大臣）；前端匹配后渲染，未命中静默丢弃 */
+  highlights?: string[];
 };
 
 export type ChatDisplayMessage = ChatMessage & { pending?: boolean };
@@ -338,6 +340,8 @@ export type ServerChatMessage = {
   content: string;
   chat_turn_id?: number;
   record_id?: number;
+  /** #544：高亮判官短语清单（仅大臣气泡有意义） */
+  highlights?: string[];
 };
 
 export type Suggestion = { label: string; text: string; prefix?: boolean };
