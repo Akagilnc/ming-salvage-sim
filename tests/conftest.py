@@ -176,6 +176,53 @@ def active_ming_character(db, content) -> str:
     raise AssertionError("找不到 active 的大明大臣")
 
 
+# ADR 0010 / #1023 / #547：人物抽象轴偏门哨兵（单一真源；世界事实数值不在此列）。
+CHARACTER_AXIS_SENTINEL = {
+    "loyalty": 17,
+    "ability": 37,
+    "integrity": 57,
+    "courage": 77,
+    "identity": 97,
+}
+
+
+def plant_character_axis_sentinels(db, content, name: str) -> dict[str, int]:
+    """把人物五轴写成 CHARACTER_AXIS_SENTINEL（DB + content 内存镜像同步）。"""
+    db.conn.execute(
+        "UPDATE characters SET loyalty=?, ability=?, integrity=?, courage=?, identity=? "
+        "WHERE name=?",
+        (*CHARACTER_AXIS_SENTINEL.values(), name),
+    )
+    db.conn.commit()
+    character = content.characters[name]
+    for field, value in CHARACTER_AXIS_SENTINEL.items():
+        setattr(character, field, value)
+    return dict(CHARACTER_AXIS_SENTINEL)
+
+
+def open_audience_night(db, state, *, time_of_day: str = "戌时", location: str = "乾清宫") -> int:
+    """开一场召对夜，返回 night_id（539/547 夜脚手架真源）。"""
+    from ming_sim import audience_night as an
+
+    return int(an.open_night(db, state, time_of_day=time_of_day, location=location)["id"])
+
+
+def append_night_chat(
+    db, state, night_id: int, minister: str, user_text: str, answer: str, seq: int,
+) -> tuple[int, int]:
+    """写入一对 user/minister 消息 + chat_turns 行；返回 (turn_id, minister_message_id)。"""
+    uid = db.append_chat_message(minister, state.turn, "user", user_text)
+    mid = db.append_chat_message(minister, state.turn, "minister", answer)
+    cur = db.conn.execute(
+        "INSERT INTO chat_turns "
+        "(minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (minister, state.turn, state.year, state.period, uid, mid, night_id, seq),
+    )
+    db.conn.commit()
+    return int(cur.lastrowid), int(mid)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_user_data_dir(tmp_path):
     """全套测试隔离 user-data（错误包/拒收镜像）——集中兜底（cmr S1 r2 P1）。
