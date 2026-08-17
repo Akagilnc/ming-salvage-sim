@@ -5362,7 +5362,6 @@ def apply_issue_tracker_output(
             continue
         from ming_sim.staged_commitment import (
             capture_commitment_stages,
-            derive_display_end_turn,
             stages_source_from_issue_item,
         )
         stages_norm = (
@@ -5374,8 +5373,8 @@ def apply_issue_tracker_output(
             if is_commitment
             else []
         )
-        if stages_norm:
-            end_turn = derive_display_end_turn(stages_norm, end_turn)
+        # 派生 end_turn（max stage due）不落 DB——展示时再 derive_display_end_turn；
+        # 落库会在末段到期 + ongoing 时误走 mechanical expire（#620）。
         issue_id = db.insert_issue(
             state,
             kind=kind,
@@ -5466,6 +5465,19 @@ def apply_issue_tracker_output(
             elif int(chk["end_turn"] or 0) <= 0 or int(chk["end_turn"] or 0) > int(state.turn):
                 category, why = "invalid_enum", f"close_issues acknowledged 只允许已到期承诺 issue {issue_id}"
             else:
+                from ming_sim.staged_commitment import is_stage_derived_end_turn
+                if is_stage_derived_end_turn(chk["stages_json"], int(chk["end_turn"] or 0)):
+                    category, why = (
+                        "invalid_enum",
+                        f"close_issues acknowledged 不得收尾段派生 end_turn 承诺 issue {issue_id}",
+                    )
+                    applied_closes.append({
+                        "rejected": True,
+                        "category": category,
+                        "reason": why,
+                        "item": cl,
+                    })
+                    continue
                 new_row = _ack_due_commitment_issue(
                     db,
                     state,
@@ -8268,8 +8280,11 @@ def apply_issue_inertia_and_ongoing(
                 continue
             end_turn = int(row["end_turn"] or 0)
             if ongoing_has_work and end_turn > 0 and end_turn <= state.turn:
-                _expire_commitment_issue(db, state, row, commit=commit_local)
-                continue
+                # 段派生展示 end_turn 不得驱动机械停账；独立 end_turn 仍 expire。
+                from ming_sim.staged_commitment import is_stage_derived_end_turn
+                if not is_stage_derived_end_turn(row["stages_json"], end_turn):
+                    _expire_commitment_issue(db, state, row, commit=commit_local)
+                    continue
 
         # 2) ongoing_effects：bar 高时折扣。经 loads_effect_dict 统一守（非 dict→{}，#117）。
         if is_commitment and ongoing_has_work:

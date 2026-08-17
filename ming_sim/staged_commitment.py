@@ -175,6 +175,10 @@ def stages_to_json(stages: object) -> str:
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
 
+# sentinel：显式 stages 字符串 json.loads 失败（与成功解析到的 None 区分）
+_CAPTURE_JSON_MISS = object()
+
+
 def capture_commitment_stages(
     raw: object = None,
     *,
@@ -185,18 +189,40 @@ def capture_commitment_stages(
 
     召对 materializer 与邸报/score new_issues 共用此入口，避免 CN year 解析只停在测试。
     - 显式 stages 字段：JSON 数组优先；否则对字段文本跑 scripted 年诺解析
+    - 显式 stages 字符串若 JSON-ish 坏形 → ValueError（与 stages_to_json 同响亮口径，禁静默 []）
     - 无显式 stages：对 narrative（召对正文 / stage_text）解析；≥2 段才自动落
       （对齐 AC2「三年X五年Y」，避免单次「三年后复试」误收成分段）
     """
     if raw not in (None, "", [], (), {}):
         if isinstance(raw, str):
             text = raw.strip()
-            structured = normalize_commitment_stages(text)
-            if structured:
-                return structured
-            parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
-            if parsed:
-                return parsed
+            if text and text not in ("[]", "{}"):
+                try:
+                    data = json.loads(text)
+                except (TypeError, ValueError):
+                    data = _CAPTURE_JSON_MISS
+                if data is not _CAPTURE_JSON_MISS:
+                    # JSON 已解析：坏形响亮拒绝（同 stages_to_json），勿静默 []
+                    if not isinstance(data, (list, tuple)):
+                        raise ValueError(
+                            f"stages 须为 JSON 数组，得 {type(data).__name__}"
+                        )
+                    if len(data) == 0:
+                        return []
+                    structured = normalize_commitment_stages(data)
+                    if not structured:
+                        raise ValueError(
+                            "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
+                        )
+                    return structured
+                # 非 JSON：scripted 年诺；JSON-ish 起首坏串响亮拒绝
+                parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
+                if parsed:
+                    return parsed
+                if text[:1] in "[{":
+                    raise ValueError(
+                        f"stages 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+                    )
         else:
             structured = normalize_commitment_stages(raw)
             if structured:
