@@ -9,7 +9,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterator, List, Optional, Protocol, Sequence
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
 
 from agno.db.sqlite import SqliteDb
 
@@ -53,6 +53,12 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
+from ming_sim.appointment_tenure import (
+    DEFAULT_APPOINTMENT_TENURE,
+    command_power_rank,
+    execution_distortion_weight,
+    normalize_appointment_tenure,
+)
 from ming_sim.decree_vocabulary import dossier_action_policy
 from ming_sim.memories import build_timeline, record_chapter_memory
 from ming_sim.simulation import (
@@ -121,6 +127,110 @@ def stub_promulgation_verdicts(
     ]
 
 
+def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
+    payload = row.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    try:
+        parsed = json.loads(str(row.get("payload_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _dossier_roster(row: Mapping[str, object] | Dict[str, object]) -> List[Dict[str, object]]:
+    roster = row.get("participant_roster") or []
+    if isinstance(roster, str):
+        try:
+            roster = json.loads(roster)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            roster = []
+    if not isinstance(roster, list):
+        return []
+    return [entry for entry in roster if isinstance(entry, dict)]
+
+
+def resolve_executor_appointment_tenure(
+    db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
+) -> str:
+    """#613：承办人现职任别——executor_id 优先，否则首名主办；缺档按真除。"""
+    names: List[str] = []
+    executor_id = str(dossier.get("executor_id") or "").strip()
+    executor_kind = str(dossier.get("executor_kind") or "").strip()
+    if executor_id and executor_kind in {"", "character"}:
+        names.append(executor_id)
+    for entry in _dossier_roster(dossier):
+        if str(entry.get("tier") or "").strip() != "主办":
+            continue
+        character_id = str(entry.get("character_id") or "").strip()
+        if character_id and character_id not in names:
+            names.append(character_id)
+    for name in names:
+        row = db.conn.execute(
+            "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+            (name,),
+        ).fetchone()
+        if row is None:
+            continue
+        return normalize_appointment_tenure(row["appointment_tenure"])
+    return DEFAULT_APPOINTMENT_TENURE
+
+
+def execution_side_read_fields(
+    db: GameDB,
+    state: GameState,
+    dossier: Mapping[str, object] | Dict[str, object],
+) -> Dict[str, object]:
+    """#613 执行格/推演共用读端字段：任别 + #611 唯一授权投影 + 号令力权重。
+
+    authorization_ids 只来自 project_applicable_authorities，禁止 payload 旁路。
+    """
+    tenure = resolve_executor_appointment_tenure(db, dossier)
+    held_authorities = db.project_applicable_authorities(state.turn, dossier)
+    authorization_ids = [str(item["id"]) for item in held_authorities]
+    return {
+        "appointment_tenure": tenure,
+        "held_authorities": held_authorities,
+        "authorization_ids": authorization_ids,
+        "command_power_rank": command_power_rank(tenure),
+        "distortion_weight": execution_distortion_weight(tenure, held_authorities),
+    }
+
+
+def build_execution_judge_context(
+    db: GameDB,
+    state: GameState,
+    dossiers: Sequence[Dict[str, object]],
+) -> Dict[str, object]:
+    """#613 执行格判官输入面：任别四档号令力 + #611 在持授权适用性投影。"""
+    dossier_rows: List[Dict[str, object]] = []
+    for row in sorted(dossiers, key=lambda item: int(item["id"])):
+        side = execution_side_read_fields(db, state, row)
+        dossier_rows.append({
+            "id": int(row["id"]),
+            "action_type": str(row.get("action_type") or ""),
+            "decree_text": str(row.get("decree_text") or ""),
+            "target_kind": str(row.get("target_kind") or ""),
+            "target_id": row.get("target_id"),
+            "executor_kind": str(row.get("executor_kind") or ""),
+            "executor_id": str(row.get("executor_id") or ""),
+            "status": str(row.get("status") or ""),
+            "participant_roster": _dossier_roster(row),
+            **side,
+        })
+    return {
+        "turn": {"turn": state.turn, "year": state.year, "period": state.period},
+        "dossiers": dossier_rows,
+        "command_power_order": ["真除", "兼署", "署理", "加衔"],
+        "instruction": (
+            "号令力次序真除＞兼署＞署理＞加衔；四档均进入打折走样判定，"
+            "兼署不得遗漏或与真除/署理混同。held_authorities 按 privilege 抬升号令力"
+            "（尚方剑密授/便宜行事/专差督办/新机构专办）；收回或投影为空后不再计。"
+            "distortion_weight 越大越易走样；只依据本快照，不得从 payload 另拼授权。"
+        ),
+    }
+
+
 def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
@@ -141,9 +251,7 @@ def build_promulgation_judge_context(
     assert authority_band in IMPERIAL_AUTHORITY_BANDS
     dossier_rows: List[Dict[str, object]] = []
     for row in sorted(dossiers, key=lambda item: int(item["id"])):
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = _dossier_payload_dict(row)
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
         # #612: endorsements are DB-backed spoken facts, not payload-only ids.
@@ -602,13 +710,13 @@ def write_decree_with_agno(
 
 def project_dossiers_for_simulator(
     simulation_visible_dossiers: List[Dict[str, object]],
+    db: Optional[GameDB] = None,
+    state: Optional[GameState] = None,
 ) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517)."""
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #613)."""
     dossier_payload: List[Dict[str, object]] = []
     for row in simulation_visible_dossiers:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = _dossier_payload_dict(row)
         policy = dossier_action_policy(row.get("action_type"), payload)
         # Narrative-owned effects are simulator material.  Deterministically
         # materialized payload-owned work remains visible only as inert execution
@@ -617,8 +725,15 @@ def project_dossiers_for_simulator(
             str(row.get("status") or "") != "proposed"
             or str(row.get("settlement_verdict") or "") == "promulgated"
         )
+        side_fields: Dict[str, object] = {}
+        if db is not None and state is not None and admitted:
+            # #613: same #611 projection + executor tenure on the sim assembly chain.
+            side_fields = execution_side_read_fields(db, state, row)
         if policy["effect_owner"] == "narrative" and admitted:
-            dossier_payload.append(row)
+            if side_fields:
+                dossier_payload.append({**row, **side_fields})
+            else:
+                dossier_payload.append(row)
             continue
         # In-transit executing work, and just-promulgated payload-owned terminal
         # effects (惩处/招抚等), need command/target context without re-materializing.
@@ -648,10 +763,12 @@ def project_dossiers_for_simulator(
                         "id", "action_type", "target_kind", "target_id",
                         "executor_kind", "executor_id", "status", "due_turn",
                         "created_turn", "promulgated_turn",
+                        "participant_roster",
                     )
                     if key in row
                 },
                 "execution_summary": execution_summary,
+                **side_fields,
             })
     return dossier_payload
 
@@ -970,7 +1087,9 @@ def resolve_directives(
         }
         for row in db.list_decree_dossiers_for_simulation(state.turn)
     ]
-    dossier_payload = project_dossiers_for_simulator(simulation_visible_dossiers)
+    dossier_payload = project_dossiers_for_simulator(
+        simulation_visible_dossiers, db=db, state=state,
+    )
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)

@@ -28,7 +28,7 @@
 
 ## 案卷执行
 
-`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格。
+`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格。
 
 ## 既有局势推进
 

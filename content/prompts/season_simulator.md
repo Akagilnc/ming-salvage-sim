@@ -13,7 +13,8 @@
 input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/court_roster/armies/regions）在 input 开头以 TSV 文本块给出**：每块 `## 表名` 起头，块内首行 tab 分隔列名，其后每行一条记录按列名对位（空字段为空串）；其余字段在末尾「## 其余字段（JSON）」里。
 
 - `decree_text`：本{{TURN_UNIT}}正式诏书（已合并所有准行草案，即本{{TURN_UNIT}}全部旨意）。写明执行者以正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
-- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。官职、派系、是否在朝一律以此为准，不凭史实印象。
+- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status/appointment_tenure`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。`appointment_tenure` 是名分成色四值（真除/兼署/署理/加衔）。官职、派系、是否在朝、任别一律以此为准，不凭史实印象。
+- `decree_dossiers`：本{{TURN_UNIT}}可见案卷。执行中/刚颁案卷带 `appointment_tenure`（承办人现职任别）、`held_authorities`（#611 在持授权适用性投影）与 `distortion_weight`（走样权重）。**号令力次序：真除＞兼署＞署理＞加衔**——四档均须显形，兼署不得与真除或署理混同；加衔不掌印、于所加衙门号令最虚。在持授权按 privilege 抬升号令力（尚方剑密授/便宜行事/专差督办/新机构专办）；收回或投影为空后不再计。`distortion_weight` 越大，办理越易打折走样、别衙越可不买账——写入执行叙事时按此口径，不得忽略任别或另造授权来源。
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。
