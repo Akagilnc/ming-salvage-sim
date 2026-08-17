@@ -320,6 +320,33 @@ def test_capture_explicit_json_ish_garbage_stages_string_refuses_loudly():
     assert ok[0]["criterion_text"] == "火器见眉目"
 
 
+def test_capture_and_stages_to_json_list_bad_shape_refuses_loudly():
+    """负向：list/非 str 坏形与 str 同口径 raise；正向：合法 list 不误伤。"""
+    bad_list = [{"due_turn": 0, "criterion_text": "x"}]
+    with pytest.raises(ValueError, match="有效段"):
+        capture_commitment_stages(bad_list, origin_turn=1)
+    with pytest.raises(ValueError, match="有效段"):
+        stages_to_json(bad_list)
+    with pytest.raises(ValueError, match="JSON 数组"):
+        capture_commitment_stages({"stage_idx": 0, "due_turn": 40}, origin_turn=1)
+    with pytest.raises(ValueError, match="类型非法|JSON 数组"):
+        stages_to_json({"stage_idx": 0, "due_turn": 40})
+    # 正向：合法 list 段仍落
+    good = [
+        {
+            "stage_idx": 0,
+            "due_turn": 40,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        }
+    ]
+    captured = capture_commitment_stages(good, origin_turn=1)
+    assert len(captured) == 1
+    assert captured[0]["criterion_text"] == "火器见眉目"
+    blob = stages_to_json(good)
+    assert normalize_commitment_stages(blob)[0]["due_turn"] == 40
+
+
 def test_insert_issue_invalid_stages_string_refuses(game):
     db, state, content = game
     origin = _promulgated_origin(db, state, "bad-stages")
@@ -652,6 +679,60 @@ def test_residual_stage_derived_end_turn_does_not_expire(game):
         (issue_id,),
     ).fetchall()
     assert "expire" not in {a["trigger_kind"] for a in advances}
+
+
+def test_ack_rejects_residual_stage_derived_end_turn(game):
+    """闸类负向：acknowledged 不得收尾残存段派生 end_turn（=max due）承诺。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    due = state.turn  # 已到期，使 end_turn 门槛通过，专测段派生闸
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": due,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": due,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    origin = _promulgated_origin(db, state, "ack-derived")
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="ack 残存派生 end_turn",
+        origin_kind="decree",
+        origin_ref=origin,
+        commitment_kind="until_stop",
+        end_turn=due,  # 故意写入段派生形状
+        ongoing_effects={},
+        stages_json=stages,
+    )
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "close_issues": [
+                {
+                    "issue_id": issue_id,
+                    "reason": "acknowledged",
+                    "narrative": "试图以 ack 收尾段派生承诺",
+                }
+            ]
+        },
+        content=content,
+    )
+    closed = out["issue_summary"]["closes"][0]
+    assert closed.get("rejected") is True, closed
+    assert closed.get("category") == "invalid_enum"
+    assert "段派生" in str(closed.get("reason") or "")
+    assert _issue_row(db, issue_id)["status"] == "active"
 
 
 def test_independent_end_turn_not_swallowed_when_stages_present(game):

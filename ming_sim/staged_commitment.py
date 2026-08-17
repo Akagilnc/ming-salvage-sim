@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 ENTRY_KIND_STAGED = "staged_commitment"
 TODO_STATUS_PENDING = "pending"
@@ -170,7 +170,11 @@ def stages_to_json(stages: object) -> str:
         if not stages:
             return "[]"
         normalized = normalize_commitment_stages(list(stages))
-        # list path used after capture/normalize; empty after filter is durable empty
+        # 非空 list 归一后无有效段：与 str 支同响亮拒绝，禁静默存 []
+        if not normalized:
+            raise ValueError(
+                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+            )
         return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
     raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
 
@@ -224,9 +228,19 @@ def capture_commitment_stages(
                         f"stages 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
                     )
         else:
+            # 非 str 正式面（list/dict）：与 str 支同响亮口径，勿静默 []
+            if not isinstance(raw, (list, tuple)):
+                raise ValueError(
+                    f"stages 须为 JSON 数组，得 {type(raw).__name__}"
+                )
+            if len(raw) == 0:
+                return []
             structured = normalize_commitment_stages(raw)
-            if structured:
-                return structured
+            if not structured:
+                raise ValueError(
+                    "stages 无有效段（每段须 due_turn>0 与 criterion_text）"
+                )
+            return structured
     narrative = str(narrative_text or "").strip()
     if narrative:
         parsed = parse_staged_year_promise(narrative, origin_turn=int(origin_turn))
@@ -242,27 +256,6 @@ def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
     if stages not in (None, "", [], (), {}):
         return stages
     return ni.get("stages_json")
-
-
-def max_stage_due_turn(stages: Sequence[Dict[str, object]] | object) -> int:
-    norm = normalize_commitment_stages(stages)
-    if not norm:
-        return 0
-    return max(int(s["due_turn"]) for s in norm)
-
-
-def derive_display_end_turn(
-    stages: object,
-    end_turn: int = 0,
-) -> int:
-    """兼容展示 end_turn：显式值优先，否则 max(stage.due_turn)。不得冒充多段。"""
-    try:
-        et = int(end_turn or 0)
-    except (TypeError, ValueError):
-        et = 0
-    if et > 0:
-        return et
-    return max_stage_due_turn(stages)
 
 
 def is_stage_derived_end_turn(
