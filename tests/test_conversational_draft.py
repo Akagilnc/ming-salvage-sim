@@ -882,13 +882,13 @@ def test_extract_draft_intent_supplement_schema_keeps_valid_json_comma(monkeypat
 
 
 def test_extract_draft_intent_coerces_non_string_existing_draft_text(monkeypatch):
-    """防御性兜底：existing_draft_text 若被传入非字符串，也不能在 .strip() 处崩。"""
-    prompts_seen = []
+    """防御性兜底：existing_draft_text 若被传入非字符串，也不能在 .strip() 处崩；
+    空合并草案时 draft_text 回落为 str(coerced)（#1185：不盯 prompt 中文标签）。"""
 
     def _capture(prompt, llm_config=None, tag=""):
-        prompts_seen.append(prompt)
+        # empty 合并草案 → extract falls back to coerced existing_draft_text
         return (json.dumps(
-            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并后的完整草案"},
+            {"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": ""},
             ensure_ascii=False,
         ), 1)
 
@@ -902,7 +902,7 @@ def test_extract_draft_intent_coerces_non_string_existing_draft_text(monkeypatch
     )
 
     assert result["draft_action"] == "拟旨"
-    assert "【现有草案】123" in prompts_seen[0]
+    assert result["draft_text"] == "123"
 
 
 def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
@@ -923,8 +923,8 @@ def test_extract_draft_intent_no_supplement_hint_when_no_pending(monkeypatch):
 
 def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
     """second-round 补充调用走 apply_cli_conversation_actions：
-    已有 pending directive 时应以 has_pending_draft=True 调 extract_draft_intent，
-    即 prompt 中含「补充」提示（覆盖 codex r5 F1 的"真实路径"）。"""
+    已有 pending directive 时应以 has_pending_draft=True 调 extract_draft_intent
+    （#1185：委派 spy 咬公共 kwargs，不盯 prompt 中文）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -933,16 +933,28 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
     db.upsert_pending_directive(state.turn, name,
                                 payload={**_POLICY_FIELDS, "text": "第一版草稿", "actor": name})
 
-    prompts_seen = []
-
     def _capture(prompt, llm_config=None, tag=""):
-        prompts_seen.append((tag, prompt))
-        # 确认意图=无；拟旨意图=拟旨
+        # 确认意图=无；拟旨意图=拟旨 + 合并草案（LWW 写回）
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
+        return (json.dumps({
+            "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+            "目标ID": "test-policy", "合并草案": "第一版草稿，加上监察御史随行",
+        }, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+
+    fed: list[dict] = []
+    real_extract = cb.extract_draft_intent
+
+    def _spy_extract(*args, **kwargs):
+        fed.append({
+            "has_pending_draft": kwargs.get("has_pending_draft"),
+            "existing_draft_text": kwargs.get("existing_draft_text"),
+        })
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(cb, "extract_draft_intent", _spy_extract)
     sess = _fake_session(db, state)
     GameSession.apply_cli_conversation_actions(
         sess, ch, player_message="再补一条，加上监察御史同行",
@@ -950,13 +962,12 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
         has_directive=False, secret_order_id=None,
     )
 
-    # 找 draft_intent 那次调用，确认 prompt 里有「补充」
-    draft_calls = [(tag, p) for tag, p in prompts_seen if tag == "draft_intent"]
-    assert draft_calls, "应调用 extract_draft_intent"
-    _, draft_prompt = draft_calls[0]
-    assert "补充" in draft_prompt, (
-        "has_pending_draft=True 时 prompt 应含补充提示（codex r5 F1）"
-    )
+    assert fed, "应调用 extract_draft_intent"
+    assert fed[0]["has_pending_draft"] is True
+    assert fed[0]["existing_draft_text"] == "第一版草稿"
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1
+    assert json.loads(pend[0]["payload_json"])["text"] == "第一版草稿，加上监察御史随行"
 
 
 def test_draft_request_with_appointment_content_stages_directive_not_office(game, monkeypatch):
@@ -1259,13 +1270,11 @@ def test_extract_draft_intent_no_intent_returns_empty_draft_text(monkeypatch):
 
 def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, monkeypatch):
     """补充轮提取 existing_draft_text 时，pending directive 的 payload_json 是坏 JSON：
-    json.loads 抛 ValueError → except 兜底（session.py:894-899），_existing_draft_text
-    保持空串，不阻断后续 extract_draft_intent 调用、仍能 last-write-wins 更新草案。"""
+    json.loads 抛 → except 兜底为空串；extract_draft_intent 仍被调用（#1185：spy kwargs）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
-    # stage 一条 directive，然后把 payload_json 损坏成非法 JSON
     pid = db.upsert_pending_directive(
         state.turn, name, payload={**_POLICY_FIELDS, "text": "原始草稿", "actor": name})
     db.conn.execute(
@@ -1273,15 +1282,23 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
         ("{这不是合法JSON", int(pid)))
     db.conn.commit()
 
-    captured = {}
-
     def _capture(prompt, llm_config=None, tag=""):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        captured["draft_prompt"] = prompt
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    fed: list[dict] = []
+    real_extract = cb.extract_draft_intent
+
+    def _spy_extract(*args, **kwargs):
+        fed.append({
+            "has_pending_draft": kwargs.get("has_pending_draft"),
+            "existing_draft_text": kwargs.get("existing_draft_text"),
+        })
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(cb, "extract_draft_intent", _spy_extract)
     sess = _fake_session(db, state)
     with pytest.raises(ValueError):
         GameSession.apply_cli_conversation_actions(
@@ -1289,11 +1306,9 @@ def test_supplement_existing_draft_text_swallows_malformed_payload_json(game, mo
             has_directive=False, secret_order_id=None,
         )
 
-    # draft_intent 仍被调用（兜底没有提前 return）
-    assert "draft_prompt" in captured
-    # 坏 JSON → existing_draft_text 为空 → prompt 不含【现有草案】注入段
-    assert "【现有草案】" not in captured["draft_prompt"]
-
+    assert fed, "坏 JSON 不得阻断 extract_draft_intent"
+    assert fed[0]["has_pending_draft"] is True
+    assert fed[0]["existing_draft_text"] == ""
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
@@ -1305,7 +1320,7 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
     game, monkeypatch, payload_json
 ):
     """补充轮 pending directive 的 payload_json 若是合法 JSON 但非 object：
-    json.loads 会返回 None/list，不能直接 .get("text")。应兜底为空草案文本，继续更新草案。"""
+    兜底为空草案文本；extract 仍收到 has_pending_draft + empty existing（#1185 spy）。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -1317,15 +1332,23 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
         (payload_json, int(pid)))
     db.conn.commit()
 
-    captured = {}
-
     def _capture(prompt, llm_config=None, tag=""):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        captured["draft_prompt"] = prompt
         return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    fed: list[dict] = []
+    real_extract = cb.extract_draft_intent
+
+    def _spy_extract(*args, **kwargs):
+        fed.append({
+            "has_pending_draft": kwargs.get("has_pending_draft"),
+            "existing_draft_text": kwargs.get("existing_draft_text"),
+        })
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(cb, "extract_draft_intent", _spy_extract)
     sess = _fake_session(db, state)
 
     with pytest.raises(ValueError):
@@ -1334,8 +1357,8 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
             has_directive=False, secret_order_id=None,
         )
 
-    assert "draft_prompt" in captured
-    assert "【现有草案】" not in captured["draft_prompt"]
+    assert fed and fed[0]["has_pending_draft"] is True
+    assert fed[0]["existing_draft_text"] == ""
     pend = db.list_pending_actions(state.turn)
     assert len(pend) == 1
     assert pend[0]["id"] == pid
@@ -1343,7 +1366,7 @@ def test_supplement_existing_draft_text_ignores_non_object_payload_json(
 
 
 def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, monkeypatch):
-    """测试/替身可能把 payload_json 预解析为 dict；补充模式应直接读取 text，不应丢上下文。"""
+    """测试/替身可能把 payload_json 预解析为 dict；补充模式应直接读取 text 喂给 extract。"""
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
@@ -1365,15 +1388,26 @@ def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, mon
 
     monkeypatch.setattr(db, "list_pending_actions", _list_with_preparsed_payload)
 
-    captured = {}
-
     def _capture(prompt, llm_config=None, tag=""):
         if "待皇帝定夺" in prompt or "应允" in prompt:
             return (json.dumps({"确认": "无"}, ensure_ascii=False), 1)
-        captured["draft_prompt"] = prompt
-        return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy", "合并草案": "合并草稿"}, ensure_ascii=False), 1)
+        return (json.dumps({
+            "拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue",
+            "目标ID": "test-policy", "合并草案": "合并草稿",
+        }, ensure_ascii=False), 1)
 
     monkeypatch.setattr(cb, "_run_backend_for_config", _capture)
+    fed: list[dict] = []
+    real_extract = cb.extract_draft_intent
+
+    def _spy_extract(*args, **kwargs):
+        fed.append({
+            "has_pending_draft": kwargs.get("has_pending_draft"),
+            "existing_draft_text": kwargs.get("existing_draft_text"),
+        })
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(cb, "extract_draft_intent", _spy_extract)
     sess = _fake_session(db, state)
 
     GameSession.apply_cli_conversation_actions(
@@ -1381,7 +1415,16 @@ def test_supplement_existing_draft_text_accepts_preparsed_payload_json(game, mon
         has_directive=False, secret_order_id=None,
     )
 
-    assert "【现有草案】原始草稿：清查粮饷。" in captured["draft_prompt"]
+    assert fed and fed[0]["has_pending_draft"] is True
+    assert fed[0]["existing_draft_text"] == "原始草稿：清查粮饷。"
+    # read through the real list (not the preparsed stub)
+    monkeypatch.setattr(db, "list_pending_actions", original_list_pending_actions)
+    pend = db.list_pending_actions(state.turn)
+    assert len(pend) == 1
+    payload = pend[0]["payload_json"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert payload["text"] == "合并草稿"
 
 
 # ── ⑭ db.py _apply_pending_action directive 落库降级分支（5824-5826）────────────
