@@ -11,8 +11,8 @@ from ming_sim.strict_types import validate_affected_parties
 def _roster():
     """主办倪元璐←委派徐光启（协办位，仅次责）；另有协办黄道周、知情王承恩。
 
-    委派人须同案主办/协办（db._validate_dossier_delegations）；徐光启不作主办，
-    以免 seen 去重后吞掉次责降档。
+    委派人须同案主办/协办（db._validate_dossier_delegations）。徐光启占协办位，
+    专测次责降档路径；双角色（委派人兼主办）见 test_dual_role_*。
     """
     return [
         {
@@ -236,18 +236,67 @@ def test_explicit_affected_parties_must_pass_full_key_validation(game):
     assert db.get_decree_dossier(dossier_id)["status"] == "executing"
     assert _cost_events(db, dossier_id) == []
 
-    # valid full keys + intensity consistent with failed→strong primary
+    # 全键合法但声明 roster 推不出的派系 → accept-and-ignore（不驱动机械额度）
+    outsider = "阉党"
+    assert outsider in faction_names
+    assert outsider not in {"东林", "西学", "皇党"}  # roster 推不出
     valid = [{
-        "kind": "faction", "key": "东林",
+        "kind": "faction", "key": outsider,
         "direction": "negative", "intensity": "strong",
     }]
     validate_affected_parties(valid, faction_names=faction_names, class_names=class_names)
+    before_outsider = _sat(db, outsider)
     result = _close_via_adapter(
         db, state, content, dossier_id, "failed", note="全键合法",
         affected_parties=valid,
     )
     assert result["dossier_executions"] == [{"dossier_id": dossier_id, "outcome": "failed"}]
+    assert _sat(db, outsider) == before_outsider
+    assert not any(row["target_id"] == outsider for row in _sat_events(db, dossier_id))
+    # roster 映射仍落主办派系
     assert any(row["target_id"] == "东林" for row in _sat_events(db, dossier_id))
+
+
+def test_dual_role_lead_and_delegator_primary_wins(game):
+    """合法「主办兼他人委派人」先定档后去重：primary 胜 secondary。"""
+    db, state, content = game
+    roster = [
+        {
+            "character_id": "倪元璐", "tier": "主办", "role": "清丈",
+            "delegator_id": "徐光启",
+        },
+        {"character_id": "徐光启", "tier": "主办", "role": "总理"},
+    ]
+    dossier_id = _executing_dossier(db, state, roster=roster)
+
+    # 读端：一人一档，徐光启只返回 primary
+    parties = db.list_execution_liability_parties(dossier_id)
+    by_id = {p["character_id"]: p["responsibility"] for p in parties}
+    assert by_id == {"倪元璐": "primary", "徐光启": "primary"}
+    assert sum(1 for p in parties if p["character_id"] == "徐光启") == 1
+
+    before_donglin = _sat(db, "东林")
+    before_xixue = _sat(db, "西学")
+    _close_via_adapter(db, state, content, dossier_id, "failed", note="双角色主责")
+
+    # 写路：两人均 primary/strong（-8），徐不得被锁成次责 weak/-4
+    assert _sat(db, "东林") == max(0, before_donglin - 8)
+    assert _sat(db, "西学") == max(0, before_xixue - 8)
+    sat = {
+        (row["target_kind"], row["target_id"], row["delta"])
+        for row in _sat_events(db, dossier_id)
+    }
+    assert sat == {("faction", "东林", -8), ("faction", "西学", -8)}
+
+    edges = {
+        e["target"] for e in db.get_relation_edge_events(event_kind="连坐")
+        if e["origin"].startswith(f"dossier:{dossier_id}:")
+    }
+    assert edges == {"倪元璐", "徐光启"}
+
+    note = db.get_decree_dossier(dossier_id)["execution_note"]
+    assert "徐光启（主办）" in note
+    assert "徐光启（委派）" not in note
 
 
 def test_liability_query_excludes_knowers_but_keeps_delegator_fk(game):

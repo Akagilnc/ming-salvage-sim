@@ -39,7 +39,10 @@ from ming_sim.models import (
 )
 from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
-from ming_sim.participant_roster import participant_roster_names
+from ming_sim.participant_roster import (
+    participant_roster_names,
+    project_execution_liability_parties,
+)
 from ming_sim.person_archive_contract import PERSON_TITLE_KINDS
 from ming_sim.qualitative import (
     building_output_effect,
@@ -12118,11 +12121,12 @@ class GameDB:
     _REACTION_SIGN = {"positive": 1, "negative": -1}
     _BREACH_FACTION_REACTION = {"direction": "negative", "intensity": "weak"}
     # #565 委派连坐：终值→程度档固定映射；cost_identity 钉死「连坐」。
+    # 触发集单一真源＝intensity map 的 key 集（issues 适配器只引用本 frozenset）。
     _JOINT_LIABILITY_COST_IDENTITY = "连坐"
-    _JOINT_LIABILITY_TRIGGERS = frozenset({"degraded", "failed", "transformed"})
     _EXECUTION_OUTCOME_INTENSITY = {
         "failed": "strong", "transformed": "strong", "degraded": "weak",
     }
+    _JOINT_LIABILITY_TRIGGERS = frozenset(_EXECUTION_OUTCOME_INTENSITY)
     _INTENSITY_DOWNGRADE = {"strong": "weak", "weak": None}
 
     @staticmethod
@@ -12359,37 +12363,19 @@ class GameDB:
     def list_execution_liability_parties(
         self, dossier_id: int,
     ) -> List[Dict[str, object]]:
-        """连坐归属读端：主办主责 + 其 delegator_id 一级次责；永不返回知情档。"""
+        """连坐归属读端：与写路共用 project_execution_liability_parties；永不返回知情档。"""
         dossier = self.get_decree_dossier(dossier_id)
         if dossier is None:
             raise KeyError(f"案卷不存在：{dossier_id}")
-        parties: List[Dict[str, object]] = []
-        seen: set[tuple[str, str]] = set()
-        for item in dossier.get("participant_roster") or []:
-            if not isinstance(item, dict) or item.get("tier") != "主办":
-                continue
-            lead = str(item.get("character_id") or "").strip()
-            if lead and ("primary", lead) not in seen:
-                seen.add(("primary", lead))
-                parties.append({
-                    "character_id": lead,
-                    "responsibility": "primary",
-                    "tier": "主办",
-                })
-            delegator = str(item.get("delegator_id") or "").strip()
-            if delegator and ("secondary", delegator) not in seen:
-                seen.add(("secondary", delegator))
-                parties.append({
-                    "character_id": delegator,
-                    "responsibility": "secondary",
-                    "tier": "delegator",
-                })
-        return parties
+        return project_execution_liability_parties(dossier.get("participant_roster"))
 
     def merge_execution_note(
         self, dossier_id: int, fragment: str, *, commit: bool = True,
     ) -> str:
-        """执行格说明合并唯一写口（#565；S12/#567 消费方）。"""
+        """下游说明片段合并写口（#565；S12/#567 消费方）。
+
+        初写仍由 record_dossier_execution 落 judge note；本接口只做增补合并。
+        """
         text = str(fragment or "").strip()
         if not text:
             raise ValueError("说明片段不能为空")
@@ -12415,10 +12401,13 @@ class GameDB:
             self._commit_dossier_write(commit)
         return merged
 
-    def _validate_joint_liability_affected_parties(
+    def validate_joint_liability_affected_parties(
         self, affected_parties: object, outcome: str,
     ) -> None:
-        """显式 affected_parties 必须过 validate_affected_parties 全键且档位贴合终值映射。"""
+        """显式 affected_parties：validate_affected_parties 全键 + 档位贴合终值映射。
+
+        仅作契约§5/AC⑥校验门闩，不驱动机械写路；适配器在落库前调用一次。
+        """
         primary = self._EXECUTION_OUTCOME_INTENSITY.get(str(outcome or "").strip())
         if primary is None:
             raise ValueError("连坐 affected_parties 仅接受 degraded/failed/transformed 终值")
@@ -12438,9 +12427,7 @@ class GameDB:
             faction_names=faction_names,
             class_names=class_names,
         )
-        if not isinstance(affected_parties, list):
-            raise ValueError("affected_parties 须为在册 typed signed 反应清单")
-        for party in affected_parties:
+        for party in affected_parties:  # type: ignore[union-attr]
             if str(party.get("intensity") or "") not in allowed:
                 raise ValueError("affected_parties intensity 须与执行终值固定映射一致")
 
@@ -12451,18 +12438,16 @@ class GameDB:
         outcome: str,
         *,
         reason: str = "",
-        affected_parties: object = None,
         commit: bool = True,
     ) -> bool:
         """#565 委派连坐：仅由 dossier_executions 适配器在落终值时调用。
 
-        写轨全经 _record_decree_cost + record_relation_edge_event；幂等键不含 turn。
+        责任面由 project_execution_liability_parties 投影；写轨全经
+        _record_decree_cost + record_relation_edge_event；幂等键不含 turn。
         """
         outcome = str(outcome or "").strip()
         if outcome not in self._JOINT_LIABILITY_TRIGGERS:
             return False
-        if affected_parties is not None:
-            self._validate_joint_liability_affected_parties(affected_parties, outcome)
         primary_intensity = self._EXECUTION_OUTCOME_INTENSITY[outcome]
         secondary_intensity = self._INTENSITY_DOWNGRADE[primary_intensity]
         reason_text = str(reason or "执行连坐").strip() or "执行连坐"
@@ -12491,23 +12476,17 @@ class GameDB:
                 for row in self.conn.execute("SELECT name FROM factions")
             }
             note_names: List[str] = []
-            # 先主责（高档）后次责（降档），同派系 UNIQUE 保留主责额度。
-            work: List[tuple[str, Optional[str], str]] = []
-            for item in dossier.get("participant_roster") or []:
-                if not isinstance(item, dict) or item.get("tier") != "主办":
-                    continue
-                lead = str(item.get("character_id") or "").strip()
-                if lead:
-                    work.append((lead, primary_intensity, "主办"))
-                delegator = str(item.get("delegator_id") or "").strip()
-                if delegator:
-                    work.append((delegator, secondary_intensity, "委派"))
-
-            seen_person: set[str] = set()
-            for person, intensity, role_label in work:
-                if person in seen_person:
-                    continue
-                seen_person.add(person)
+            # 投影已先定档后去重（primary 胜）；同派系 UNIQUE 保留主责额度。
+            for party in project_execution_liability_parties(
+                dossier.get("participant_roster"),
+            ):
+                person = str(party["character_id"])
+                if party["responsibility"] == "primary":
+                    intensity = primary_intensity
+                    role_label = "主办"
+                else:
+                    intensity = secondary_intensity
+                    role_label = "委派"
                 row = self.conn.execute(
                     "SELECT faction,status FROM characters WHERE name=?", (person,),
                 ).fetchone()

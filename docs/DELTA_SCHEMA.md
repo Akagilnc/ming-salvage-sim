@@ -231,8 +231,9 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 **唯一适用性投影**（颁布判官与 #613 共用）：承办对象＝案卷 `executor_id`（character）∪ `participant_roster` 中 `主办`/`协办`（不含 `知情`，不读 payload assignee）；事域**仅**典范键 `target_kind:target_id`（无裸 `target_id` 平行匹配）；再过滤在持谓词。投影结果为 `held_authorities`；`criteria_snapshot.authorization_ids` **只**含投影 id 的十进制字符串——禁止从 payload `authorization_id(s)` 拼第二真源。自然语言授予/收权捕获分别由 #528/#523 回接，本契约不作关键词推断。
 
 ### `dossier_executions` — S1 案卷执行结局
-- 每项必须带 `dossier_id`、`outcome`、`note`。
+- 每项必须带 `dossier_id`、`outcome`、`note`；可选第四键 `affected_parties`。
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
+- `affected_parties` 可选；若给出则须通过 `validate_affected_parties` 全键（kind/key/direction/intensity），且 intensity 贴合终值固定映射（failed/transformed→strong，degraded→weak，次责可降一档）；拒收不落库。该清单**不**驱动连坐额度——机械写账仍由 roster+终值映射生成。
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
 
 ### 颁布 verdict 契约（非 delta 字段）
