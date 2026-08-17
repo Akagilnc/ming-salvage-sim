@@ -1,7 +1,9 @@
 """#620 / ADR 0074 分段承诺载体。
 
-一条多段里程碑 = 单一 commitment issue（stages_json），段到期扫描写
-next_audience_todos（次回合召对待办），结算不停轮、不接 DECISION/AWAITING_DECISION。
+一条多段里程碑 = 单一 commitment issue（stages_json）。
+段到期扫描独立（与 form③ 共享谓词面、不共用其 SQL 结果集），
+待裁载体改道 next_audience_todos（次回合召对待办）；
+结算不停轮、不接 DECISION/AWAITING_DECISION（0074/0076）。
 
 存储选型（本片定）：
 - 段表：issues.stages_json（JSON 数组，挂在单一承诺对象上）
@@ -52,7 +54,7 @@ def _cn_years_to_int(token: str) -> int:
 
 
 def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, object]]:
-    """Scripted AC2 夹具：从「三年X五年Y」文案抽出分段（禁 live-LLM 作唯一验收）。"""
+    """从「三年X五年Y」文案抽出分段（scripted 捕获；禁 live-LLM 作唯一验收）。"""
     src = str(text or "").strip()
     if not src:
         return []
@@ -79,7 +81,13 @@ def parse_staged_year_promise(text: str, *, origin_turn: int) -> List[Dict[str, 
 
 
 def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
-    """Normalize stages payload → durable list[{stage_idx, due_turn, criterion_text, origin_context}]."""
+    """Normalize structured stages payload → durable list.
+
+    Accepts list/tuple of dicts, or a JSON array string. Non-JSON free text
+    returns [] here — production CN-year capture goes through
+    ``capture_commitment_stages`` (does not silently treat char-iterated strings
+    as stage rows; that hole is closed in ``stages_to_json``).
+    """
     if raw in (None, "", [], ()):
         return []
     data = raw
@@ -124,17 +132,151 @@ def normalize_commitment_stages(raw: object) -> List[Dict[str, object]]:
             "origin_context": (origin_context or criterion)[:240],
         })
     out.sort(key=lambda s: (int(s["stage_idx"]), int(s["due_turn"])))
-    # re-pack stage_idx dense only when missing/duplicate? keep caller idx.
     return out
 
 
-def stages_to_json(stages: Sequence[Dict[str, object]]) -> str:
-    normalized = normalize_commitment_stages(list(stages))
-    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+def stages_to_json(stages: object) -> str:
+    """Serialize stages for durable DB write.
+
+    Designed string surface: JSON array string is parsed, not char-iterated.
+    Invalid non-empty strings raise ValueError (never silently store ``[]``).
+    ``None`` / empty / ``[]`` → ``"[]"``.
+    """
+    if stages is None:
+        return "[]"
+    if isinstance(stages, str):
+        text = stages.strip()
+        if not text or text in ("[]", "{}"):
+            return "[]"
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"stages_json 须为 JSON 数组字符串，解析失败：{text[:80]!r}"
+            ) from exc
+        if not isinstance(data, (list, tuple)):
+            raise ValueError(
+                f"stages_json 须为 JSON 数组，得 {type(data).__name__}"
+            )
+        if len(data) == 0:
+            return "[]"
+        normalized = normalize_commitment_stages(data)
+        if not normalized:
+            raise ValueError(
+                "stages_json 无有效段（每段须 due_turn>0 与 criterion_text）"
+            )
+        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(stages, (list, tuple)):
+        if not stages:
+            return "[]"
+        normalized = normalize_commitment_stages(list(stages))
+        # list path used after capture/normalize; empty after filter is durable empty
+        return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+    raise ValueError(f"stages_json 类型非法：{type(stages).__name__}")
+
+
+def capture_commitment_stages(
+    raw: object = None,
+    *,
+    narrative_text: str = "",
+    origin_turn: int,
+) -> List[Dict[str, object]]:
+    """生产捕获：结构化 stages / JSON 字符串 / 「三年X五年Y」文案 → 绝对 due 段表。
+
+    召对 materializer 与邸报/score new_issues 共用此入口，避免 CN year 解析只停在测试。
+    - 显式 stages 字段：JSON 数组优先；否则对字段文本跑 scripted 年诺解析
+    - 无显式 stages：对 narrative（召对正文 / stage_text）解析；≥2 段才自动落
+      （对齐 AC2「三年X五年Y」，避免单次「三年后复试」误收成分段）
+    """
+    if raw not in (None, "", [], (), {}):
+        if isinstance(raw, str):
+            text = raw.strip()
+            structured = normalize_commitment_stages(text)
+            if structured:
+                return structured
+            parsed = parse_staged_year_promise(text, origin_turn=int(origin_turn))
+            if parsed:
+                return parsed
+        else:
+            structured = normalize_commitment_stages(raw)
+            if structured:
+                return structured
+    narrative = str(narrative_text or "").strip()
+    if narrative:
+        parsed = parse_staged_year_promise(narrative, origin_turn=int(origin_turn))
+        # 叙事回落仅收多段（三年X五年Y）；单段不抢 form③ 单值 end_turn 语义
+        if len(parsed) >= 2:
+            return parsed
+    return []
+
+
+def stages_source_from_issue_item(ni: Dict[str, object]) -> object:
+    """Single stages key fallback for new_issues items (stages | stages_json)."""
+    stages = ni.get("stages")
+    if stages not in (None, "", [], (), {}):
+        return stages
+    return ni.get("stages_json")
+
+
+def max_stage_due_turn(stages: Sequence[Dict[str, object]] | object) -> int:
+    norm = normalize_commitment_stages(stages)
+    if not norm:
+        return 0
+    return max(int(s["due_turn"]) for s in norm)
+
+
+def derive_display_end_turn(
+    stages: object,
+    end_turn: int = 0,
+) -> int:
+    """兼容展示 end_turn：显式值优先，否则 max(stage.due_turn)。不得冒充多段。"""
+    try:
+        et = int(end_turn or 0)
+    except (TypeError, ValueError):
+        et = 0
+    if et > 0:
+        return et
+    return max_stage_due_turn(stages)
+
+
+def is_stage_derived_end_turn(
+    stages: object,
+    end_turn: int,
+) -> bool:
+    """True when end_turn is purely max(stages.due_turn) display-compat (no independent due)."""
+    norm = normalize_commitment_stages(stages)
+    if not norm:
+        return False
+    try:
+        et = int(end_turn or 0)
+    except (TypeError, ValueError):
+        return False
+    if et <= 0:
+        return False
+    return et == max(int(s["due_turn"]) for s in norm)
+
+
+def should_skip_form3_due_for_staged(
+    stages_raw: object,
+    end_turn: int,
+) -> bool:
+    """form③ due_commitments 跳过面：仅段派生 end_turn 改道；独立 end_turn 待裁不吞。"""
+    norm = normalize_commitment_stages(stages_raw)
+    if not norm:
+        return False
+    try:
+        et = int(end_turn or 0)
+    except (TypeError, ValueError):
+        et = 0
+    # 无独立 end_turn：分段只走 next_audience_todos
+    if et <= 0:
+        return True
+    # 段派生展示 end_turn：改道；显式独立 end_turn（≠ max due）：保留 form③
+    return is_stage_derived_end_turn(norm, et)
 
 
 def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
-    """form③ 扫描扩段：active 分段承诺中 due_turn<=turn 的段。
+    """段到期扫描（独立 SQL；与 form③ 共享「active 承诺 + 到期」谓词语义，不共用结果集）。
 
     去重键在写端用 (commitment_id, stage_idx)；此处返回全部到期段候选。
     """
@@ -170,7 +312,8 @@ def list_due_stages_for_scan(db: Any, turn: int) -> List[Dict[str, object]]:
 def write_due_staged_commitment_todos(db: Any, state: Any, *, commit: bool = True) -> int:
     """结算内确定性写入次回合召对待办。返回新写入条数。
 
-    不置 TurnPhase.AWAITING_DECISION，不写 <<DECISION>>，不停轮。
+    待裁载体改道 next_audience_todos；不置 TurnPhase.AWAITING_DECISION，
+    不写 <<DECISION>>，不停轮（0074/0076）。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     due_stages = list_due_stages_for_scan(db, turn)

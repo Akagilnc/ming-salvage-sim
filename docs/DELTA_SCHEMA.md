@@ -224,9 +224,10 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 ]
 ```
 - 一条多段 = **一个** `commitment_kind="until_stop"` initiative；`stages` 非空时可不写单值 `end_turn`（引擎可派生 max(due_turn) 仅作兼容展示，**不得**用单值 `end_turn` 冒充多段）
-- 段到期扫描扩 form③ 扫描面，但**输出改道**：写入 `next_audience_todos`，**不**进 form③ `due_commitments` 待核议通道，**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮
+- **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
 - 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
 - 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
+- 捕获：召对/邸报「三年X五年Y」经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
 
 **`next_audience_todos` 最小字段（P2）**：
 | 字段 | 约束 |

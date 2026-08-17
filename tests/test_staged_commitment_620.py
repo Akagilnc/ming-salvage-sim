@@ -1,24 +1,31 @@
-"""#620 分段承诺载体（0074）：一条多段=单一承诺对象 + form③ 扩段到期写次回合召对待办。
+"""#620 分段承诺载体（0074）：一条多段=单一承诺对象 + 段到期写次回合召对待办。
 
 Seams:
-- apply_score_extraction / insert_issue（stages_json 落库）
-- scripted stages materializer（AC2「三年X五年Y」，禁 live-LLM 唯一验收）
+- apply_score_extraction / insert_issue（stages_json 落库；字符串面解析或响亮拒绝）
+- 生产 capture_commitment_stages（召对 materializer / 邸报 new_issues，「三年X五年Y」）
 - settle_with_delta 结算内确定性写 next_audience_todos
 - list_next_audience_todos 下一召对回合可读 + load_state restore 接续
-- 负向：不置 TurnPhase.AWAITING_DECISION；不因本片条目产生 ResolveResult.awaiting
+- 负向：不置 TurnPhase.AWAITING_DECISION；无 pending_decisions / <<DECISION>>
 """
 
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
-from ming_sim.decree import ResolveResult, settle_with_delta
+import pytest
+
+from ming_sim.action_clusters import candidates_from_classifier_payload
+from ming_sim.action_materialize import MaterializeCtx, run_materialize_pipeline
+from ming_sim.decree import settle_with_delta
 from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
+from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
+    capture_commitment_stages,
     normalize_commitment_stages,
-    parse_staged_year_promise,
+    stages_to_json,
     write_due_staged_commitment_todos,
 )
 
@@ -44,8 +51,9 @@ def _issue_row(db, issue_id: int):
 
 def _settle_empty_month(db, state, content):
     before = state.turn
-    settle_with_delta(state, db, {}, before_turn=before, content=content)
+    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
     assert state.turn == before + 1
+    return report
 
 
 def _insert_staged_commitment(db, state, content, *, stages, title="徐光启分段之诺"):
@@ -72,6 +80,35 @@ def _insert_staged_commitment(db, state, content, *, stages, title="徐光启分
     created = out["issue_summary"]["new_issues"][0]
     assert created.get("rejected") is False, created
     return int(created["issue_id"])
+
+
+def _active_ming(db, content):
+    return next(
+        ch for ch in content.characters.values()
+        if getattr(ch, "office_type", "") not in ("后宫", "宗藩")
+        and db.resolve_power_id(ch) == "ming"
+        and db.get_character_status(ch.name)[0] == "active"
+        and str(getattr(ch, "office", "") or "").strip()
+    )
+
+
+def _materialize_ctx(db, character, candidates, turn, *, message, reply):
+    return MaterializeCtx(
+        session=SimpleNamespace(db=db, state=SimpleNamespace(turn=turn)),
+        character=SimpleNamespace(name=character, office_type="文官"),
+        player_message=message,
+        reply=reply,
+        message_text=message,
+        explicit_prefixed=False,
+        has_directive=False,
+        pend_for_minister=[],
+        out={},
+        intent=None,
+        intent_kind="none",
+        llm_config=None,
+        intent_candidates=candidates,
+        recent_context="",
+    )
 
 
 # ── AC1：一条多段=单一承诺对象，各段独立可查 ─────────────────────────
@@ -112,16 +149,34 @@ def test_one_multi_stage_commitment_is_single_issue_object(game):
     assert stored[1]["criterion_text"] == "新历成"
 
 
-# ── AC2：scripted「三年X五年Y」夹具，禁 live-LLM 唯一验收 ─────────────
+# ── AC2：生产捕获路径（召对 materializer / 邸报 score）scripted 夹具 ─
 
 
-def test_scripted_三年x_五年y_captures_two_stages(game):
+def test_audience_materializer_captures_三年x_五年y_into_stages(game):
+    """召对生产路径：正文「三年X五年Y」经 stage_assignment_candidate 落段（非测专用 helper）。"""
     db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    text = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
-    stages = parse_staged_year_promise(text, origin_turn=state.turn)
+    actor = _active_ming(db, content)
+    promise = "臣请立军令状：三年火器见眉目，五年新历成。请陛下定夺准驳。"
+    # 分类器不给 stages——生产 capture 须从正文解析
+    payload = {
+        "kind": "assignment",
+        "title": "徐光启火器历法之诺",
+        "target_id": "xuguangqi-staged",
+        "commitment_kind": "until_stop",
+    }
+    candidates = candidates_from_classifier_payload(payload, soft=False)
+    ctx = _materialize_ctx(
+        db, actor.name, candidates, state.turn,
+        message="准徐光启分段之诺。",
+        reply=promise,
+    )
+    run_materialize_pipeline(ctx)
+    assert ctx.out.get("pending_action_id"), "须暂存交办候选"
+    pending = json.loads(db.conn.execute(
+        "SELECT payload_json FROM pending_actions WHERE id=?",
+        (ctx.out["pending_action_id"],),
+    ).fetchone()["payload_json"])
+    stages = normalize_commitment_stages(pending.get("stages"))
     assert len(stages) == 2
     assert stages[0]["due_turn"] == state.turn + 36
     assert stages[0]["criterion_text"] == "火器见眉目"
@@ -130,12 +185,128 @@ def test_scripted_三年x_五年y_captures_two_stages(game):
     assert stages[1]["criterion_text"] == "新历成"
     assert stages[1]["origin_context"] == "五年新历成"
 
-    issue_id = _insert_staged_commitment(db, state, content, stages=stages)
-    stored = normalize_commitment_stages(_issue_row(db, issue_id)["stages_json"])
+
+def test_gazette_score_path_captures_三年x_五年y_from_stage_text(game):
+    """邸报/score 生产路径：stage_text「三年X五年Y」经 capture 落 stages_json。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    origin = _promulgated_origin(db, state, "gazette-staged")
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": origin,
+                    "kind": "initiative",
+                    "title": "徐光启分段之诺",
+                    "stage_text": "三年火器见眉目，五年新历成。",
+                    "commitment_kind": "until_stop",
+                    "ongoing_effects": {},
+                    # 不显式给 stages——生产 capture 从 stage_text 解析
+                }
+            ]
+        },
+        content=content,
+    )
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is False, created
+    stored = normalize_commitment_stages(_issue_row(db, int(created["issue_id"]))["stages_json"])
     assert [s["origin_context"] for s in stored] == [
         "三年火器见眉目",
         "五年新历成",
     ]
+    assert stored[0]["due_turn"] == state.turn + 36
+    assert stored[1]["due_turn"] == state.turn + 60
+
+
+def test_capture_commitment_stages_is_production_entry(game):
+    """CN year 解析挂在生产 capture 入口，非测试专用死码。"""
+    db, state, _content = game
+    stages = capture_commitment_stages(
+        None,
+        narrative_text="三年火器见眉目，五年新历成",
+        origin_turn=state.turn,
+    )
+    assert len(stages) == 2
+    assert stages[0]["origin_context"] == "三年火器见眉目"
+
+
+# ── stages_json 字符串面：正确解析或响亮拒绝 ─────────────────────────
+
+
+def test_stages_to_json_parses_json_string_not_char_iterate():
+    raw = json.dumps([
+        {
+            "stage_idx": 0,
+            "due_turn": 40,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        }
+    ], ensure_ascii=False)
+    blob = stages_to_json(raw)
+    assert normalize_commitment_stages(blob) == [{
+        "stage_idx": 0,
+        "due_turn": 40,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+
+
+def test_insert_issue_string_stages_json_persists_not_empty(game):
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    origin = _promulgated_origin(db, state, "str-stages")
+    stages_str = json.dumps([
+        {
+            "stage_idx": 0,
+            "due_turn": state.turn + 12,
+            "criterion_text": "见眉目",
+            "origin_context": "一年见眉目",
+        }
+    ], ensure_ascii=False)
+    issue_id = db.insert_issue(
+        state,
+        kind="initiative",
+        title="字符串段面",
+        origin_kind="decree",
+        origin_ref=origin,
+        commitment_kind="until_stop",
+        end_turn=state.turn + 12,
+        stages_json=stages_str,
+    )
+    stored = normalize_commitment_stages(_issue_row(db, issue_id)["stages_json"])
+    assert len(stored) == 1
+    assert stored[0]["criterion_text"] == "见眉目"
+
+
+def test_stages_to_json_invalid_string_refuses_loudly():
+    with pytest.raises(ValueError, match="JSON"):
+        stages_to_json("不是数组{")
+    with pytest.raises(ValueError, match="JSON 数组|有效段"):
+        stages_to_json('{"stage_idx":0}')
+    with pytest.raises(ValueError, match="有效段"):
+        stages_to_json('[{"due_turn":0,"criterion_text":"x"}]')
+
+
+def test_insert_issue_invalid_stages_string_refuses(game):
+    db, state, content = game
+    origin = _promulgated_origin(db, state, "bad-stages")
+    with pytest.raises(ValueError):
+        db.insert_issue(
+            state,
+            kind="initiative",
+            title="坏段",
+            origin_kind="decree",
+            origin_ref=origin,
+            commitment_kind="until_stop",
+            end_turn=state.turn + 3,
+            stages_json="<<not-json>>",
+        )
 
 
 # ── AC3/P2：段到期写次回合召对待办；段间自动续 ───────────────────────
@@ -226,10 +397,11 @@ def test_stage_due_dedup_key_is_commitment_id_times_stage_idx(game):
     assert all(int(t["commitment_ref"]) == issue_id for t in todos)
 
 
-# ── AC 负向：不停轮 / 不 awaiting ────────────────────────────────────
+# ── AC 负向：不停轮（真入口 settle_with_delta + 闸类一条）────────────
 
 
-def test_stage_due_settlement_does_not_set_awaiting_decision(game):
+def test_stage_due_via_settle_does_not_pause_turn(game):
+    """经 settle_with_delta 真入口：段到期写 todo 后相位/pending_decisions/DECISION 均不停轮。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -246,20 +418,62 @@ def test_stage_due_settlement_does_not_set_awaiting_decision(game):
 
     _settle_empty_month(db, state, content)  # 未到期
     assert db.list_next_audience_todos() == []
-    _settle_empty_month(db, state, content)  # 段到期当回合结算内写入
+
+    before = state.turn
+    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
+    assert state.turn == before + 1
+    # 相位
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     assert state.turn_phase not in {TurnPhase.AWAITING_DECISION.value, "awaiting_decision"}
-
-    todos = db.list_next_audience_todos(status="pending")
-    assert len(todos) == 1
-    # 结算完成后相位不在 awaiting_decision
     assert state.turn_phase == TurnPhase.SUMMONING.value
+    # pending_decisions 空
     assert db.list_pending_decisions(state.turn - 1) == []
     assert db.list_pending_decisions(state.turn) == []
+    # 无 DECISION 标记；todo 已写
+    assert isinstance(report, str) and report
+    assert "<<DECISION>>" not in report
+    todos = db.list_next_audience_todos(status="pending")
+    assert len(todos) == 1
 
 
-def test_stage_due_does_not_produce_resolve_result_awaiting(game):
-    """本片条目不得把 ResolveResult.awaiting 置 True（不接 DECISION 停轮路径）。"""
+def test_multi_stage_due_settlement_stays_out_of_awaiting_decision(game):
+    """第二条不停轮负向：多段接连到期结算后仍不进 awaiting_decision。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": state.turn,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": state.turn + 1,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    _insert_staged_commitment(db, state, content, stages=stages)
+
+    _settle_empty_month(db, state, content)  # 段0
+    assert state.turn_phase == TurnPhase.SUMMONING.value
+    assert db.list_pending_decisions(state.turn) == []
+    assert len(db.list_next_audience_todos(status="pending")) == 1
+
+    _settle_empty_month(db, state, content)  # 段1
+    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
+    assert state.turn_phase == TurnPhase.SUMMONING.value
+    assert db.list_pending_decisions(state.turn) == []
+    assert len(db.list_next_audience_todos(status="pending")) == 2
+
+
+def test_staged_commitment_skips_form3_one_shot_due_channel(game):
+    """闸类负向：段派生 end_turn 不进 form③ due_commitment（避免 DECISION 停轮通道）。"""
+    from ming_sim.simulation import build_simulator_payload
+
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -272,19 +486,78 @@ def test_stage_due_does_not_produce_resolve_result_awaiting(game):
             "origin_context": "三年火器见眉目",
         },
     ]
-    _insert_staged_commitment(db, state, content, stages=stages)
+    issue_id = _insert_staged_commitment(db, state, content, stages=stages)
+    # 段派生 end_turn == max due → 跳过 form③
+    row = _issue_row(db, issue_id)
+    assert int(row["end_turn"]) == state.turn
+    payload = build_simulator_payload(state, db, "", "")
+    due = [
+        item
+        for item in payload.get("due_commitments") or []
+        if item.get("entry_kind") == "due_commitment"
+        and int(item.get("issue_id") or 0) == issue_id
+    ]
+    assert due == []
+    write_due_staged_commitment_todos(db, state)
+    assert db.list_next_audience_todos()
 
-    before = state.turn
-    # settle_with_delta 是不停轮结算体；本片只经此写 todo，不经 HITL DECISION
-    report = settle_with_delta(state, db, {}, before_turn=before, content=content)
-    assert isinstance(report, str) and report
-    assert state.turn == before + 1
-    assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
-    # 构造对照：本片写路径本身等价于 awaiting=False 的结算完成
-    result = ResolveResult(awaiting=False, report=report)
-    assert result.awaiting is False
-    assert db.list_next_audience_todos(status="pending")
-    assert "<<DECISION>>" not in report
+
+def test_independent_end_turn_not_swallowed_when_stages_present(game):
+    """C1：同行独立 end_turn（≠ max 段 due）仍走 form③ 待裁，不得被分段跳过面吞掉。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    independent_end = state.turn  # form③ 当回合到期
+    stages = [
+        {
+            "stage_idx": 0,
+            "due_turn": state.turn + 36,
+            "criterion_text": "火器见眉目",
+            "origin_context": "三年火器见眉目",
+        },
+        {
+            "stage_idx": 1,
+            "due_turn": state.turn + 60,
+            "criterion_text": "新历成",
+            "origin_context": "五年新历成",
+        },
+    ]
+    origin = _promulgated_origin(db, state, "independent-end")
+    out = apply_score_extraction(
+        db,
+        state,
+        {
+            "new_issues": [
+                {
+                    "origin_kind": "decree",
+                    "origin_ref": origin,
+                    "kind": "initiative",
+                    "title": "分段+独立期满",
+                    "stage_text": "另有三月期满复核",
+                    "commitment_kind": "until_stop",
+                    "ongoing_effects": {},
+                    "end_turn": independent_end,
+                    "stages": stages,
+                }
+            ]
+        },
+        content=content,
+    )
+    created = out["issue_summary"]["new_issues"][0]
+    assert created.get("rejected") is False, created
+    issue_id = int(created["issue_id"])
+    row = _issue_row(db, issue_id)
+    assert int(row["end_turn"]) == independent_end
+    assert int(row["end_turn"]) != max(s["due_turn"] for s in stages)
+
+    groups = augment_secret_orders_with_due_commitments({}, db, state)
+    due_ids = {
+        int(item["issue_id"])
+        for item in (groups.get("待核议") or [])
+        if item.get("entry_kind") == "due_commitment"
+    }
+    assert issue_id in due_ids
 
 
 # ── AC：跨段 restore 无损（P1/TD-3）──────────────────────────────────
@@ -343,8 +616,9 @@ def test_origin_context_persists_on_stages_and_todos(game):
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
 
-    stages = parse_staged_year_promise(
-        "三年火器见眉目，五年新历成",
+    stages = capture_commitment_stages(
+        None,
+        narrative_text="三年火器见眉目，五年新历成",
         origin_turn=state.turn,
     )
     # 压到当回合到期以便写 todo
@@ -395,33 +669,3 @@ def test_plain_until_stop_without_stages_still_lands(game):
     assert row["commitment_kind"] == "until_stop"
     assert int(row["end_turn"]) == state.turn + 3
     assert normalize_commitment_stages(row["stages_json"]) == []
-
-
-def test_staged_commitment_skips_form3_one_shot_due_channel(game):
-    """分段承诺不走 form③ 单值 end_turn 待核议通道（避免 DECISION 停轮）。"""
-    from ming_sim.simulation import build_simulator_payload
-
-    db, state, content = game
-    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
-    db.conn.commit()
-
-    stages = [
-        {
-            "stage_idx": 0,
-            "due_turn": state.turn,
-            "criterion_text": "火器见眉目",
-            "origin_context": "三年火器见眉目",
-        },
-    ]
-    issue_id = _insert_staged_commitment(db, state, content, stages=stages)
-    payload = build_simulator_payload(state, db, "", "")
-    due = [
-        item
-        for item in payload.get("due_commitments") or []
-        if item.get("entry_kind") == "due_commitment"
-        and int(item.get("issue_id") or 0) == issue_id
-    ]
-    assert due == []
-    # 而是写次回合召对待办
-    write_due_staged_commitment_todos(db, state)
-    assert db.list_next_audience_todos()

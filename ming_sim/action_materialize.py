@@ -1001,8 +1001,13 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    from ming_sim.staged_commitment import normalize_commitment_stages
-    stages_norm = normalize_commitment_stages(stages if stages not in (None, "") else None)
+    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
+    from ming_sim.staged_commitment import capture_commitment_stages
+    stages_norm = capture_commitment_stages(
+        stages if stages not in (None, "") else None,
+        narrative_text=body,
+        origin_turn=int(turn),
+    )
     if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
@@ -1013,6 +1018,9 @@ def stage_assignment_candidate(
         if stages_norm:
             staged["stages"] = stages_norm
             staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
+            # 无显式 end_turn 时用 max(due) 仅作兼容展示，不冒充分段
+            if absolute_end <= 0:
+                staged["end_turn"] = max(int(s["due_turn"]) for s in stages_norm)
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
