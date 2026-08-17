@@ -482,3 +482,92 @@ def test_advance_http_reject_after_accept_exits_display(web_game, monkeypatch):
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
     )
+
+
+def test_concurrent_advance_noncreator_must_not_clear_owner_snapshot(web_game, monkeypatch):
+    """#1235 r2 p2：并发代清洞——A 已 capture 持 _write_gate；B accept 幂等 no-op 后抢锁 409，
+    其 finally 不得清掉 A 的快照（仅本请求真新建才 exit）。
+
+    主案：advance 非阻塞 _serialized_web_write 洞口。
+    """
+    game = web_game
+    before = _click_before(game.state)
+    turn = int(game.state.turn)
+
+    # 跳过 await/close 噪声，直达 gate 缝
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
+
+    # 请求 A：点即入真新建 + 持 _write_gate（结算 worker 在办）
+    assert web_app._accept_settlement_period(game) is True
+    assert game.db.get_month_open_snapshot(turn) == before
+    gate = web_app._game_write_gate(game)
+    assert gate.acquire(blocking=False), "A 须能持 write_gate"
+    try:
+        async def go_b():
+            async with _client() as client:
+                return await client.post("/api/decree/advance_without_edict")
+
+        resp_b = asyncio.run(go_b())
+        assert resp_b.status_code == 409, resp_b.text
+        detail = resp_b.json()["detail"]
+        text = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False)
+        assert "请稍候" in text or "进行中" in text
+        # B 幂等 no-op 后 409：不得代清 A 的快照
+        assert game.db.get_month_open_snapshot(turn) == before
+        assert game.state_payload()["turn"]["settlement_display"] is True
+        # accept 幂等：B 再调仍 False（非创建）
+        assert web_app._accept_settlement_period(game) is False
+    finally:
+        gate.release()
+
+    # A 仍在办时快照保持；释放后创建者失败路径仍可自行 exit（单请求口径不回归）
+    assert game.db.get_month_open_snapshot(turn) == before
+
+
+def test_exit_settlement_display_acquires_write_gate(web_game):
+    """#1235 r2 p2：清快照写须经 _write_gate，禁无门直写共享连接。"""
+    import threading
+
+    game = web_game
+    turn = int(game.state.turn)
+    assert web_app._accept_settlement_period(game) is True
+    gate = web_app._game_write_gate(game)
+    assert gate.acquire(blocking=False)
+    held = {"cleared_under_gate": False}
+    done = threading.Event()
+    err: list = []
+
+    orig_clear = game.db.clear_month_open_snapshot
+
+    def _wrapped_clear(t):
+        held["cleared_under_gate"] = gate.locked()
+        return orig_clear(t)
+
+    game.db.clear_month_open_snapshot = _wrapped_clear  # type: ignore[method-assign]
+
+    def _peer_exit():
+        try:
+            web_app._exit_settlement_display_on_failure(game)
+        except Exception as exc:  # noqa: BLE001
+            err.append(exc)
+        finally:
+            done.set()
+
+    try:
+        t = threading.Thread(target=_peer_exit, daemon=True)
+        t.start()
+        # 他持 write_gate 时 exit 须堵在 acquire，不得无门完成清快照
+        assert not done.wait(0.05), "exit 不得在 write_gate 仍被他持时无门完成"
+        assert game.db.get_month_open_snapshot(turn) is not None
+        gate.release()
+        assert done.wait(2.0), "exit 在 gate 释放后须完成"
+        t.join(2.0)
+    finally:
+        game.db.clear_month_open_snapshot = orig_clear  # type: ignore[method-assign]
+        if gate.locked():
+            gate.release()
+
+    assert not err, err
+    assert held["cleared_under_gate"] is True
+    assert game.db.get_month_open_snapshot(turn) is None
