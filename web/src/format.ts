@@ -16,8 +16,6 @@ export const formatMoney = (value: number) => `${value}万两`;
 
 export const formatSignedMoney = (value: number) => `${value > 0 ? "+" : ""}${formatMoney(value)}`;
 
-export const monthlyAmount = (value: number) => Math.max(0, Math.round(value / 3));
-
 export const approximateWanliang = (value: number) => {
   const amount = Number.isFinite(value) ? value : 0;
   if (amount <= 0) return "无欠饷";
