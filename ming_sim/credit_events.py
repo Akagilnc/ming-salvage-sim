@@ -53,6 +53,9 @@ _ORIGIN_CREDIT = "credit"
 _PUNISH_STATUSES = frozenset({
     "dismissed", "imprisoned", "exiled", "dead", "retired", "offstage",
 })
+# 任命级联派生行：不是 extractor 本意处置，不得驱动弃卒/包庇。
+_CASCADE_RELEASE_MARKERS = frozenset({"放归", "赦还"})
+_DISPLACEMENT_MARKER = "被顶替"
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 _ISSUE_REF_RE = re.compile(r"^issue:([1-9][0-9]*)$")
 
@@ -363,7 +366,27 @@ def _item_narrative(item: Dict[str, object]) -> str:
     )
 
 
+def _cascade_derived_from(item: Dict[str, object]) -> str:
+    return str(item.get("derived_from") or "").strip()
+
+
+def _is_cascade_release(item: Dict[str, object]) -> bool:
+    """imprisoned/exiled → 任命 级联写出的 放归/赦还 处置行。"""
+    return _cascade_derived_from(item) in _CASCADE_RELEASE_MARKERS
+
+
+def _is_displacement_echo(item: Dict[str, object]) -> bool:
+    """独占实职被顶替后回写的 处置+active 回声，不是包庇。"""
+    if _cascade_derived_from(item) == _DISPLACEMENT_MARKER:
+        return True
+    if str(item.get("reason_code") or "").strip() == _DISPLACEMENT_MARKER:
+        return True
+    return str(item.get("reason") or "").strip() == _DISPLACEMENT_MARKER
+
+
 def _is_punitive_change(item: Dict[str, object]) -> bool:
+    if _is_cascade_release(item):
+        return False
     action = str(item.get("动作") or item.get("action") or "").strip()
     if action == "罢黜":
         return True
@@ -375,6 +398,8 @@ def _is_punitive_change(item: Dict[str, object]) -> bool:
 
 def _is_cover_change(item: Dict[str, object]) -> bool:
     """包庇：非惩处性、仍挂变形案卷 origin 的人事动作（留任/开释口径）。"""
+    if _is_displacement_echo(item):
+        return False
     if _is_punitive_change(item):
         return False
     action = str(item.get("动作") or item.get("action") or "").strip()
