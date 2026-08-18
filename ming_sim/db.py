@@ -1508,6 +1508,27 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
                 ON dossier_loophole_exposures(dossier_id, turn, id);
+            -- #627 / ADR 0077 ID-12: faction denunciation entries (independent carrier).
+            -- Truth bottom lives in origin marks (#619 compose_report_origin); payload holds
+            -- fork exposure. Never write dossier_loophole_exposures from this path.
+            CREATE TABLE IF NOT EXISTS faction_denunciations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                accuser_name TEXT NOT NULL,
+                accuser_faction TEXT NOT NULL,
+                subject_name TEXT NOT NULL,
+                subject_faction TEXT NOT NULL,
+                target_dossier_id INTEGER NOT NULL,
+                origin TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                memorial_text TEXT NOT NULL,
+                UNIQUE(turn, accuser_name, target_dossier_id, origin),
+                FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
+                ON faction_denunciations(turn, id);
+            CREATE INDEX IF NOT EXISTS idx_faction_denunciations_target
+                ON faction_denunciations(target_dossier_id, turn, id);
             -- ADR 0056: existence of this append-only rail is the idempotency key;
             -- stigma_json is deliberately not used as a cost guard.
             CREATE TABLE IF NOT EXISTS decree_cost_events (
@@ -11148,28 +11169,51 @@ class GameDB:
                 for item in reports
                 if str(item.get("progress_band") or "").strip()
             ]
-            execution_outcome = (
-                str(target.get("execution_outcome") or "").strip() if target else ""
-            )
-            moves = self.list_economy_moves_for_dossier(target_id)
-            actual_effect_count = len(moves) + len(
-                self.list_fiscal_effects_for_dossier(target_id)
-            )
-            # 分叉：奏报面有进展/兑现口径，而执行格非 fulfilled 或存在旨外实况。
-            beyond = any(bool(row.get("beyond_intent")) for row in moves)
-            fork = bool(reported_bands) and (
-                beyond or execution_outcome not in {"", "fulfilled", "executing"}
-            )
+            # #627：fork 判据单源（supervision.is_reported_actual_fork）；本读端只装配输入。
+            fork_state = self.read_dossier_fork_state(target_id)
             signals.append({
                 "target_dossier_id": target_id,
                 "relation_type": "稽核",
-                "reported_bands": reported_bands,
-                "execution_outcome": execution_outcome,
-                "actual_effect_count": actual_effect_count,
-                "beyond_intent": beyond,
-                "fork": bool(fork),
+                "reported_bands": list(fork_state.get("reported_bands") or []),
+                "execution_outcome": str(fork_state.get("execution_outcome") or ""),
+                "actual_effect_count": int(fork_state.get("actual_effect_count") or 0),
+                "beyond_intent": bool(fork_state.get("beyond_intent")),
+                "fork": bool(fork_state.get("fork")),
             })
         return signals
+
+    def read_dossier_fork_state(self, dossier_id: int) -> Dict[str, object]:
+        """#627 public 读端：装配奏报/执行格/旨外输入，fork 谓词单源共调。"""
+        from ming_sim.supervision import is_reported_actual_fork
+
+        target = self.get_decree_dossier(int(dossier_id))
+        reports = self.list_dossier_progress(int(dossier_id))
+        reported_bands = [
+            str(item.get("progress_band") or "").strip()
+            for item in reports
+            if str(item.get("progress_band") or "").strip()
+        ]
+        execution_outcome = (
+            str(target.get("execution_outcome") or "").strip() if target else ""
+        )
+        moves = self.list_economy_moves_for_dossier(int(dossier_id))
+        actual_effect_count = len(moves) + len(
+            self.list_fiscal_effects_for_dossier(int(dossier_id))
+        )
+        beyond = any(bool(row.get("beyond_intent")) for row in moves)
+        fork = is_reported_actual_fork(
+            reported_bands=reported_bands,
+            beyond_intent=beyond,
+            execution_outcome=execution_outcome,
+        )
+        return {
+            "dossier_id": int(dossier_id),
+            "reported_bands": reported_bands,
+            "execution_outcome": execution_outcome,
+            "actual_effect_count": int(actual_effect_count),
+            "beyond_intent": bool(beyond),
+            "fork": bool(fork),
+        }
 
     def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
         """Long protection/audit errands due a monthly report, with history."""
@@ -11870,6 +11914,250 @@ class GameDB:
                 "origin_ref": origin_ref,
                 "consecutive_months": months,
             })
+        if commit and triggered:
+            self.conn.commit()
+        return triggered
+
+    def list_faction_denunciations(
+        self,
+        *,
+        turn: Optional[int] = None,
+        target_dossier_id: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """#627 检举条目读端（含引擎侧 origin/payload；玩家面只取 memorial_text）。"""
+        clauses: List[str] = []
+        params: List[object] = []
+        if turn is not None:
+            clauses.append("turn=?")
+            params.append(int(turn))
+        if target_dossier_id is not None:
+            clauses.append("target_dossier_id=?")
+            params.append(int(target_dossier_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            SELECT id, turn, accuser_name, accuser_faction, subject_name,
+                   subject_faction, target_dossier_id, origin, payload_json,
+                   memorial_text
+            FROM faction_denunciations
+            {where}
+            ORDER BY turn, id
+            """,
+            tuple(params),
+        ).fetchall()
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            out.append({
+                "id": int(row["id"]),
+                "turn": int(row["turn"]),
+                "accuser_name": str(row["accuser_name"] or ""),
+                "accuser_faction": str(row["accuser_faction"] or ""),
+                "subject_name": str(row["subject_name"] or ""),
+                "subject_faction": str(row["subject_faction"] or ""),
+                "target_dossier_id": int(row["target_dossier_id"]),
+                "origin": str(row["origin"] or ""),
+                "payload": payload,
+                "memorial_text": str(row["memorial_text"] or ""),
+            })
+        return out
+
+    def trigger_faction_denunciations(
+        self, state: GameState, *, commit: bool = False,
+    ) -> List[Dict[str, object]]:
+        """#627 政敌检举：邸报前涌现缝产检举条目（独立载体，不写 loophole_exposures）。
+
+        烈度=enemy×leverage 纯函数硬门；真检举经 fork 单源读端；真伪底落 origin mark。
+        禁 0099 转案/首付、禁 0091 发难硬门、禁自动转查案差务、禁改世界状态。
+        """
+        from ming_sim.participant_roster import resolve_dossier_owner_name
+        from ming_sim.supervision import (
+            DENUNCIATION_KIND,
+            character_faction_integrity,
+            compose_denunciation_origin,
+            denunciation_origin_ref,
+            denunciation_quota,
+            faction_conflict_intensity,
+            faction_relation,
+            pick_denunciation_accusers,
+            render_denunciation_memorial,
+        )
+
+        turn = int(state.turn)
+        # 候选：变形承办人案卷（执行格 transformed）或已分叉案卷
+        rows = self.conn.execute(
+            """
+            SELECT id, decree_text, execution_outcome, payload_json,
+                   executor_id, executor_kind, participant_roster, status
+            FROM decree_dossiers
+            WHERE status IN ('promulgated', 'executing', 'closed')
+            ORDER BY id
+            """
+        ).fetchall()
+
+        names_by_faction: Dict[str, List[str]] = {}
+        for crow in self.conn.execute(
+            """
+            SELECT name, faction FROM characters
+            WHERE status='active' AND COALESCE(faction,'') <> ''
+            ORDER BY name
+            """
+        ).fetchall():
+            fac = str(crow["faction"] or "").strip()
+            if fac:
+                names_by_faction.setdefault(fac, []).append(str(crow["name"]))
+
+        faction_names = [
+            str(r["name"])
+            for r in self.conn.execute(
+                "SELECT name FROM factions ORDER BY name"
+            ).fetchall()
+        ]
+
+        triggered: List[Dict[str, object]] = []
+        for row in rows:
+            dossier_id = int(row["id"])
+            dossier = dict(row)
+            subject_name = resolve_dossier_owner_name(dossier)
+            if not subject_name:
+                continue
+            subject_faction, _ = character_faction_integrity(self, subject_name)
+            if not subject_faction:
+                continue
+
+            fork_state = self.read_dossier_fork_state(dossier_id)
+            is_forked = bool(fork_state.get("fork"))
+            outcome = str(row["execution_outcome"] or "").strip()
+            # 真检举靶=分叉；私货亦可对变形承办人（无分叉/夹带）
+            if not is_forked and outcome != "transformed":
+                continue
+
+            case_summary = str(row["decree_text"] or "").strip() or "差务"
+            if len(case_summary) > 24:
+                case_summary = case_summary[:24]
+
+            for enemy_faction in faction_names:
+                rel = faction_relation(enemy_faction, subject_faction)
+                if rel != "enemy":
+                    continue
+                intensity = faction_conflict_intensity(
+                    relation=rel,
+                    enemy_leverage=self.faction_leverage(enemy_faction),
+                    enemy_satisfaction=self.faction_satisfaction(enemy_faction),
+                )
+                quota = denunciation_quota(intensity)
+                if quota <= 0:
+                    continue
+                accusers = pick_denunciation_accusers(
+                    names_by_faction.get(enemy_faction, []),
+                    subject_name=subject_name,
+                    dossier_id=dossier_id,
+                    quota=quota,
+                )
+                if not accusers:
+                    continue
+
+                for idx, accuser in enumerate(accusers):
+                    # 首条且真分叉 → 真检举；其余/无分叉 → 私货
+                    is_true = bool(is_forked and idx == 0)
+                    origin = compose_denunciation_origin(is_true=is_true)
+                    existing = self.conn.execute(
+                        """
+                        SELECT id FROM faction_denunciations
+                        WHERE turn=? AND accuser_name=? AND target_dossier_id=?
+                          AND origin=?
+                        LIMIT 1
+                        """,
+                        (turn, accuser, dossier_id, origin),
+                    ).fetchone()
+                    if existing is not None:
+                        continue
+
+                    memorial = render_denunciation_memorial(
+                        accuser_name=accuser,
+                        subject_name=subject_name,
+                        case_summary=case_summary,
+                    )
+                    entry_payload: Dict[str, object] = {
+                        "accuser_name": accuser,
+                        "accuser_faction": enemy_faction,
+                        "subject_name": subject_name,
+                        "subject_faction": subject_faction,
+                        "target_dossier_id": dossier_id,
+                        "intensity": int(intensity),
+                        "fork": bool(is_true),
+                    }
+                    if is_true:
+                        # 分叉暴露落检举条目自身（明文不写 loophole_exposures）
+                        entry_payload["fork_exposure"] = {
+                            "reported_bands": list(
+                                fork_state.get("reported_bands") or []
+                            ),
+                            "execution_outcome": str(
+                                fork_state.get("execution_outcome") or ""
+                            ),
+                            "beyond_intent": bool(
+                                fork_state.get("beyond_intent")
+                            ),
+                            "actual_effect_count": int(
+                                fork_state.get("actual_effect_count") or 0
+                            ),
+                            "fork": True,
+                        }
+
+                    cur = self.conn.execute(
+                        """
+                        INSERT INTO faction_denunciations
+                            (turn, accuser_name, accuser_faction, subject_name,
+                             subject_faction, target_dossier_id, origin,
+                             payload_json, memorial_text)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            turn,
+                            accuser,
+                            enemy_faction,
+                            subject_name,
+                            subject_faction,
+                            dossier_id,
+                            origin,
+                            json.dumps(entry_payload, ensure_ascii=False),
+                            memorial,
+                        ),
+                    )
+                    entry_id = int(cur.lastrowid)
+                    origin_ref = denunciation_origin_ref(
+                        accuser, dossier_id, turn, is_true=is_true,
+                    )
+                    self.record_public_knowledge_event(
+                        state,
+                        title=f"{accuser}检举{subject_name}",
+                        body=memorial,
+                        source_id=origin_ref,
+                        kind=DENUNCIATION_KIND,
+                        commit=False,
+                    )
+                    triggered.append({
+                        "id": entry_id,
+                        "turn": turn,
+                        "accuser_name": accuser,
+                        "accuser_faction": enemy_faction,
+                        "subject_name": subject_name,
+                        "subject_faction": subject_faction,
+                        "target_dossier_id": dossier_id,
+                        "origin": origin,
+                        "origin_ref": origin_ref,
+                        "is_true": is_true,
+                        "intensity": int(intensity),
+                        "memorial_text": memorial,
+                        "payload": entry_payload,
+                    })
+
         if commit and triggered:
             self.conn.commit()
         return triggered
