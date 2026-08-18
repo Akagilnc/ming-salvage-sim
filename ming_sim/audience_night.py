@@ -811,7 +811,10 @@ def open_night(
     # body 是开夜气氛层（含 LLM open-beat）；复命是召对顶出层——二者叠加，
     # 不得因调用方已供 body 而跳过（生产 ensure_open_night_for_audience 常带 body）。
     from ming_sim.due_review import list_due_review_scenes
+    from ming_sim.urge_lever import list_urge_audience_scenes
     scenes = list_due_review_scenes(db, state)
+    # #624 / ADR 0078：谏/宽限同款次回合召对顶出（不进 due-review 白名单、不占接管窗）
+    scenes = list(scenes) + list(list_urge_audience_scenes(db, state))
     if scenes:
         scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
         scene_lines = [line for line in scene_lines if line]

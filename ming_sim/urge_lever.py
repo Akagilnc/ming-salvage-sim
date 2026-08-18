@@ -11,13 +11,28 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
+    TODO_STATUS_CONSUMED,
+    TODO_STATUS_PENDING,
     normalize_commitment_stages,
     stages_to_json,
+)
+from ming_sim.token_stats import tlog
+
+# 谏/宽限玩家面禁词（与 due_review._BANNED_PLAYER_TOKENS 对齐的引擎底）
+_URGE_SCENE_BANNED = (
+    "truth", "grace_fake", "pretextual", "genuine",
+    "payload_json", "distortion_band", "urge_tightness",
+    "distortion_tendency", "unreasonable",
+)
+_URGE_SCENE_BANNED_RE = re.compile(
+    "|".join(re.escape(t) for t in _URGE_SCENE_BANNED),
+    re.IGNORECASE,
 )
 
 # pending_actions 史源 kind（committed 行；DELETE 仅清 pending）
@@ -219,14 +234,11 @@ def derive_grace_truth(
 
 
 def _parse_payload(raw: object) -> Dict[str, object]:
-    if isinstance(raw, dict):
-        return dict(raw)
-    text = str(raw or "").strip() or "{}"
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError):
-        return {}
-    return dict(data) if isinstance(data, dict) else {}
+    """催办史 payload 读路：与 GameDB.parse_engine_payload_json 合一；腐坏响亮。"""
+    from ming_sim.db import GameDB
+    return GameDB.parse_engine_payload_json(
+        raw, surface="pending_actions.payload_json",
+    )
 
 
 def collect_urge_history(
@@ -474,17 +486,21 @@ def rush_staged_commitment_stage(
     deadline_months: int = 1,
     reason: str = "",
     commit: bool = True,
+    record_history: bool = True,
 ) -> Dict[str, object]:
     """分段承诺真加速唯一写口：缩 issues.stages_json[].due_turn。
 
     不用 decree_dossiers.due_turn。同对象不得双真源。
+    不写 issues.end_turn（#620 段派生 end_turn 不落 DB；催办不得侧写第二时间线）。
     无 issue 承载 → ValueError（fail-closed 不产谏条、不伪造 issue）。
+    record_history=False：生产入口经 pending_actions 确认闸门落库时，由该 pending 行作史源，
+    避免双插 committed 行。
     """
     if not _issue_exists(db, commitment_ref):
         raise ValueError(f"承诺 issue#{int(commitment_ref)} 不存在，不能催办")
 
     row = db.conn.execute(
-        "SELECT id, stages_json, end_turn, status, commitment_kind FROM issues WHERE id=?",
+        "SELECT id, stages_json, status, commitment_kind FROM issues WHERE id=?",
         (int(commitment_ref),),
     ).fetchone()
     if str(row["status"] or "") != "active":
@@ -511,7 +527,6 @@ def rush_staged_commitment_stage(
 
     turn = int(getattr(state, "turn", 0) or 0)
     old_due = int(target_stage["due_turn"])
-    old_max_due = max(int(s["due_turn"]) for s in stages)
     if months <= 0:
         new_due = turn
     else:
@@ -524,40 +539,27 @@ def rush_staged_commitment_stage(
     }
     stages_blob = stages_to_json(stages)
 
-    # end_turn 若为段派生展示，同步 max due（不另立期限列 / 不用 dossier.due_turn）
-    try:
-        end_turn = int(row["end_turn"] or 0)
-    except (TypeError, ValueError):
-        end_turn = 0
-    new_max = max(int(s["due_turn"]) for s in stages)
-    end_sql = ""
-    end_params: list[object] = []
-    if end_turn > 0 and end_turn == old_max_due:
-        end_sql = ", end_turn=?"
-        end_params.append(int(new_max))
-    elif end_turn <= 0:
-        end_sql = ", end_turn=?"
-        end_params.append(int(new_max))
-
+    # 唯一写口：stages_json[].due_turn。禁侧写 issues.end_turn（票面单口 + #620 不落 DB）。
     db.conn.execute(
-        f"""
+        """
         UPDATE issues
-        SET stages_json=?{end_sql}, updated_at=CURRENT_TIMESTAMP
+        SET stages_json=?, updated_at=CURRENT_TIMESTAMP
         WHERE id=?
         """,
-        (stages_blob, *end_params, int(commitment_ref)),
+        (stages_blob, int(commitment_ref)),
     )
 
     why = (reason or "").strip()[:120] or "奉旨加急"
-    _record_commitment_urge(
-        db, state,
-        commitment_ref=int(commitment_ref),
-        stage_idx=int(stage_idx),
-        old_due=old_due,
-        new_due=int(new_due),
-        deadline_months=months,
-        reason=why,
-    )
+    if record_history:
+        _record_commitment_urge(
+            db, state,
+            commitment_ref=int(commitment_ref),
+            stage_idx=int(stage_idx),
+            old_due=old_due,
+            new_due=int(new_due),
+            deadline_months=months,
+            reason=why,
+        )
 
     host = resolve_host_character(db, commitment_ref=int(commitment_ref), dossier_id=None)
     # try dossier host if issue linked
@@ -620,14 +622,14 @@ def rush_staged_commitment_stage(
         )
         remonstrance_written = bool(created)
 
-    # 求宽限：催即可能顶出（与谏可并存，entry_kind 不同）；真伪底仅 payload
+    # 求宽限：与谏可并存（entry_kind 不同）；真伪底仅 payload。
+    # 触发谓词 load-bearing：期限离谱（工期真不够）或附势借宽限拖磨——无 months<=N 恒真析取。
     grace_truth = derive_grace_truth(
         unreasonable=unreasonable,
         archetype=archetype,
         opportunity_band=opp,
     )
-    # 轻催也给附势/离谱场景写宽限；孤直离谱已走谏时仍可求宽限
-    should_grace = unreasonable or archetype == "附势" or months <= 6
+    should_grace = bool(unreasonable) or archetype == "附势"
     if should_grace:
         g_payload = {
             **grace_truth,
@@ -664,3 +666,91 @@ def rush_staged_commitment_stage(
         "host": host,
         "archetype": archetype,
     }
+
+
+def _strip_urge_banned(text: str) -> str:
+    cleaned = _URGE_SCENE_BANNED_RE.sub("", str(text or ""))
+    return re.sub(r"\s{2,}", " ", cleaned).strip(" ，。；、")
+
+
+_URGE_AUDIENCE_KINDS = frozenset({
+    ENTRY_KIND_RUSH_REMONSTRANCE,
+    ENTRY_KIND_GRACE_PLEA,
+})
+
+
+def is_urge_audience_entry_kind(entry_kind: object) -> bool:
+    return str(entry_kind or "").strip() in _URGE_AUDIENCE_KINDS
+
+
+def project_urge_audience_scene(todo: Dict[str, object]) -> Dict[str, object]:
+    """谏/宽限召对顶出投影：P4 定性措辞；永不读 payload_json（真伪底禁泄）。"""
+    kind = str(todo.get("entry_kind") or "").strip()
+    criterion = _strip_urge_banned(str(todo.get("criterion_text") or "").strip())
+    origin = _strip_urge_banned(str(todo.get("origin_context") or "").strip())
+    host_bit = f"缘「{origin}」" if origin else "承催"
+    if kind == ENTRY_KIND_RUSH_REMONSTRANCE:
+        body = criterion or "期限过急，恐难如期"
+        scene_text = _strip_urge_banned(
+            f"操之过急之谏：{host_bit}，臣工奏称{body}。请陛下宽之。"
+        )
+        label = "rush_remonstrance"
+    else:
+        body = criterion or "乞恩宽限"
+        scene_text = _strip_urge_banned(
+            f"求宽限：{host_bit}，承办人叩请{body}。同一话术，真伪待圣鉴。"
+        )
+        label = "grace_plea"
+    return {
+        "kind": label,
+        "entry_kind": kind,
+        "todo_id": int(todo.get("id") or 0),
+        "commitment_ref": int(todo.get("commitment_ref") or 0),
+        "stage_idx": int(todo.get("stage_idx") or 0),
+        "due_turn": int(todo.get("due_turn") or 0),
+        "origin_context": origin,
+        "criterion_text": criterion,
+        "scene_text": scene_text,
+        # 故意不暴露 payload_json / truth / grace_fake
+    }
+
+
+def list_urge_audience_scenes(
+    db: Any, state: Any = None, *, status: str = TODO_STATUS_PENDING,
+) -> List[Dict[str, object]]:
+    """次回合召对顶出：谏/宽限 pending（不进 due-review 白名单、不占接管窗）。"""
+    todos = db.list_next_audience_todos(status=status)
+    scenes: List[Dict[str, object]] = []
+    for todo in todos:
+        if not is_urge_audience_entry_kind(todo.get("entry_kind")):
+            continue
+        scenes.append(project_urge_audience_scene(todo))
+    return scenes
+
+
+def consume_pending_urge_audience_todos(
+    db: Any, state: Any, *, commit: bool = False,
+) -> List[Dict[str, object]]:
+    """消费路径：经召对窗后的 settle 将 created_turn < 当前 turn 的谏/宽限标 consumed。
+
+    与 due-review 三拍对称第 3 拍；不落执行格、不连坐、不进白名单 apply。
+    闭环：写（rush）→ 顶出（open_night/list_urge_audience_scenes）→ 本函数离 pending。
+    """
+    turn = int(getattr(state, "turn", 0) or 0)
+    results: List[Dict[str, object]] = []
+    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+        if not is_urge_audience_entry_kind(todo.get("entry_kind")):
+            continue
+        if int(todo.get("created_turn") or 0) >= turn:
+            continue
+        ok = db.mark_next_audience_todo_status(
+            int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+        )
+        results.append({
+            "todo_id": int(todo["id"]),
+            "entry_kind": str(todo.get("entry_kind") or ""),
+            "consumed": bool(ok),
+        })
+    if commit and results:
+        db.conn.commit()
+    return results
