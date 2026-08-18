@@ -11883,12 +11883,14 @@ class GameDB:
         find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
         分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
         一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
-        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics，不重放
-        breach_halfway_setback / 民心-3·皇威-2 直击。
+        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
+        breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
 
         事废读源：consumed midcourse_breach_plea（#623 坚持撤常经 0056 先关案卷，
         execution_outcome 可能空，故不以执行格为事废唯一源）。
-        烂尾/变形：读执行格终值 failed/transformed。
+        烂尾：读执行格终值 failed（#621）。
+        变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
+        list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
         """
         from ming_sim.commitment_backlash import (
             BACKLASH_BAR_BAD,
@@ -11896,7 +11898,7 @@ class GameDB:
             BACKLASH_NAMED_METRICS,
             BACKLASH_ORIGIN_KIND,
             SOURCE_BREACH_VERDICT,
-            apply_named_metrics,
+            SOURCE_DEFORMATION_EXPOSURE,
             backlash_origin_ref,
             build_backlash_copy,
             classify_backlash_source,
@@ -11906,6 +11908,7 @@ class GameDB:
             FOUNDATION_HALFWAY,
             assess_foundation_tier,
         )
+        from ming_sim.flows import _apply_metric_dict
 
         candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
 
@@ -11935,7 +11938,8 @@ class GameDB:
                     did = 0
             candidates.append((cid, SOURCE_BREACH_VERDICT, did))
 
-        # ② 烂尾终值 / 变形暴露：执行格终值（closed_turn 一拍差）
+        # ② 烂尾终值 / 变形暴露候选：执行格终值（closed_turn 一拍差）
+        # 变形不得仅凭 transformed 文本立案——须 #622 分叉读端确认 beyond_intent。
         rows = self.conn.execute(
             """
             SELECT id, execution_outcome, execution_note, closed_turn, status
@@ -11955,6 +11959,14 @@ class GameDB:
             )
             if source_kind is None:
                 continue
+            if source_kind == SOURCE_DEFORMATION_EXPOSURE:
+                moves = self.list_economy_moves_for_dossier(dossier_id)
+                has_beyond = any(
+                    bool(self.coerce_beyond_intent_flag(m.get("beyond_intent")))
+                    for m in moves
+                )
+                if not has_beyond:
+                    continue
             for commitment in self.list_commitments_for_dossier(dossier_id):
                 if not str(commitment.get("commitment_kind") or "").strip():
                     continue
@@ -11984,8 +11996,9 @@ class GameDB:
                 commitment_title=title_c,
                 source_kind=source_kind,
             )
-            applied_metrics = apply_named_metrics(
-                state, dict(BACKLASH_NAMED_METRICS),
+            # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
+            applied_metrics = _apply_metric_dict(
+                state, dict(BACKLASH_NAMED_METRICS), db=self,
             )
             issue_id = self.insert_issue(
                 state,
@@ -11994,13 +12007,13 @@ class GameDB:
                 origin_kind=BACKLASH_ORIGIN_KIND,
                 origin_ref=origin_ref,
                 stage_text=stage_text,
-                tags=["commitment_backlash", source_kind, f"commitment:{cid}"],
+                tags=[],  # 机读身份仅 origin_kind/origin_ref；tags 不进玩家面
                 bar_value=35,
                 bar_good_meaning=BACKLASH_BAR_GOOD,
                 bar_bad_meaning=BACKLASH_BAR_BAD,
                 inertia=-2,
                 severity=55,
-                ongoing_effects={"metrics": dict(BACKLASH_NAMED_METRICS)},
+                ongoing_effects={},  # 一锤子，不镜像 metrics 到月扣
                 commit=False,
             )
             self.advance_issue(

@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 # 涌现 origin 与 #625 反制隔离
 BACKLASH_ORIGIN_KIND = "commitment_backlash"
@@ -82,25 +82,6 @@ def assert_no_backlash_banned_tokens(text: object, *, surface: str) -> None:
     for token in BACKLASH_BANNED_PLAYER_TOKENS:
         if token in raw:
             raise AssertionError(f"{surface} 裸露禁词：{token!r}")
-
-
-def apply_named_metrics(state: Any, metrics: Dict[str, int]) -> Dict[str, int]:
-    """具名 metrics 直击一次（SCORE_METRICS 内，钳 0 下限）。"""
-    applied: Dict[str, int] = {}
-    bucket = getattr(state, "metrics", None)
-    if not isinstance(bucket, dict):
-        return applied
-    for key, delta in (metrics or {}).items():
-        try:
-            d = int(delta)
-        except (TypeError, ValueError):
-            continue
-        if d == 0:
-            continue
-        cur = int(bucket.get(key, 0) or 0)
-        bucket[key] = max(0, cur + d)
-        applied[str(key)] = d
-    return applied
 
 
 def build_backlash_copy(
