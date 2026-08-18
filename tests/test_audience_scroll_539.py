@@ -5,21 +5,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from ming_sim import audience_night as an
-
-
-def _night(db, state):
-    return int(an.open_night(db, state, time_of_day="戌时", location="乾清宫")["id"])
-
-
-def _chat(db, state, night_id, minister, user_text, answer, seq):
-    uid = db.append_chat_message(minister, state.turn, "user", user_text)
-    mid = db.append_chat_message(minister, state.turn, "minister", answer)
-    cur = db.conn.execute(
-        "INSERT INTO chat_turns (minister_name,turn,year,period,user_message_id,minister_message_id,night_id,night_seq) VALUES (?,?,?,?,?,?,?,?)",
-        (minister, state.turn, state.year, state.period, uid, mid, night_id, seq),
-    )
-    db.conn.commit()
-    return int(cur.lastrowid)
+from tests.conftest import append_night_chat, open_audience_night
 
 
 def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(game, monkeypatch):
@@ -33,7 +19,7 @@ def test_real_player_sse_replaces_closed_same_turn_night_before_failed_reply(gam
             yield  # pragma: no cover - make this the agent's streaming generator
 
     db, state, content = game
-    old_night_id = _night(db, state)
+    old_night_id = open_audience_night(db, state)
     db.conn.execute(
         "UPDATE audience_nights SET status='closed', closed_at=CURRENT_TIMESTAMP WHERE id=?",
         (old_night_id,),
@@ -65,8 +51,8 @@ def test_live_and_closed_night_share_the_real_http_contract(game, monkeypatch):
     import web_app
 
     db, state, _ = game
-    night_id = _night(db, state)
-    _chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
+    night_id = open_audience_night(db, state)
+    append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
     monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
     client = TestClient(web_app.app)
 
@@ -87,8 +73,8 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
     import web_app
 
     db, state, _ = game
-    night_id = _night(db, state)
-    first_turn = _chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
+    night_id = open_audience_night(db, state)
+    first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 10)
     db.record_mindreading(first_turn, {
         "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
         "precision": "约略", "narration": "万岁爷，他尚有保留。",
@@ -101,7 +87,7 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         db, night_id, body="帘外忽起雨声。", tags=["天气"],
         person_names=[], source_chat_turn_id=first_turn, order_key=10,
     )
-    _chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
+    append_night_chat(db, state, night_id, "洪承畴", "边情如何？", "边关尚稳。", 20)
     monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
 
     payload = TestClient(web_app.app).get("/api/audience/scroll").json()
@@ -141,9 +127,9 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
 
 def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
     db, state, _ = game
-    night_id = _night(db, state)
+    night_id = open_audience_night(db, state)
     an.append_ledger_entry(db, night_id, body="帘外风紧。", tags=[an.TAG_ENTER], person_names=["杨嗣昌"])
-    _chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
+    append_night_chat(db, state, night_id, "杨嗣昌", "辽饷如何？", "臣请据实核账。", 20)
 
     scroll = an.read_night_scroll(db, night_id)
 
@@ -159,7 +145,7 @@ def test_scroll_contract_merges_both_stores_with_container_and_coda(game):
 
 def test_presence_commands_project_to_diegetic_scene_beats(game):
     db, state, _ = game
-    night_id = _night(db, state)
+    night_id = open_audience_night(db, state)
     baseline = len([
         message for message in an.read_night_scroll(db, night_id)
         if message["beat"] in {"entrance", "exit"}
@@ -181,8 +167,8 @@ def test_presence_commands_project_to_diegetic_scene_beats(game):
 
 def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
     db, state, _ = game
-    night_id = _night(db, state)
-    first_turn = _chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
+    night_id = open_audience_night(db, state)
+    first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
     an.append_ledger_entry(db, night_id, body="臣告退。", tags=["人际动作"], person_names=["杨嗣昌"], source_chat_turn_id=first_turn, order_key=10)
     an.append_ledger_entry(db, night_id, body="杨嗣昌退下。", tags=[an.TAG_EXIT], person_names=["杨嗣昌"])
     an.append_ledger_entry(db, night_id, body="洪承畴入殿。", tags=[an.TAG_ENTER], person_names=["洪承畴"])
@@ -197,8 +183,8 @@ def test_scroll_derives_soft_boundary_and_omits_dialogue_carried_action(game):
 
 def test_scroll_merges_mindreading_and_uses_structured_dedup_boundaries(game):
     db, state, _ = game
-    night_id = _night(db, state)
-    turn_id = _chat(db, state, night_id, "杨嗣昌", "卿可担名？", "臣愿当面作保。", 10)
+    night_id = open_audience_night(db, state)
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "卿可担名？", "臣愿当面作保。", 10)
     db.record_mindreading(turn_id, {
         "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
         "precision": "约略", "narration": "万岁爷，他这话留了半分。",
@@ -223,8 +209,8 @@ def test_scroll_merges_mindreading_and_uses_structured_dedup_boundaries(game):
 
 def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
     db, state, _ = game
-    night_id = _night(db, state)
-    turn_id = _chat(db, state, night_id, "杨嗣昌", "说下去。", "臣遵旨。", 10)
+    night_id = open_audience_night(db, state)
+    turn_id, _ = append_night_chat(db, state, night_id, "杨嗣昌", "说下去。", "臣遵旨。", 10)
     an.append_ledger_entry(
         db, night_id, body="只是提到了入殿旧事。", tags=[an.TAG_ENTER],
         person_names=["洪承畴"], source_chat_turn_id=turn_id, order_key=10,
@@ -244,10 +230,10 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
 
 def test_scroll_container_presents_audience_type_from_persisted_summon_method(game):
     db, state, _ = game
-    yueci_night = _night(db, state)
+    yueci_night = open_audience_night(db, state)
     an.summon_enter(db, yueci_night, "杨嗣昌", method=an.METHOD_YUECI)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (yueci_night,))
-    ordinary_night = _night(db, state)
+    ordinary_night = open_audience_night(db, state)
     an.summon_enter(db, ordinary_night, "洪承畴", method=an.METHOD_XUANRU)
 
     yueci_scroll = an.read_night_scroll(db, yueci_night)
@@ -259,7 +245,7 @@ def test_scroll_container_presents_audience_type_from_persisted_summon_method(ga
 
 def test_scroll_without_next_entrance_has_unnamed_boundary(game):
     db, state, _ = game
-    night_id = _night(db, state)
+    night_id = open_audience_night(db, state)
     an.append_ledger_entry(db, night_id, body="众臣告退。", tags=[an.TAG_EXIT], person_names=["杨嗣昌"])
 
     scroll = an.read_night_scroll(db, night_id)
@@ -270,8 +256,8 @@ def test_scroll_without_next_entrance_has_unnamed_boundary(game):
 
 def test_same_departure_facts_emit_one_divider_but_later_departure_survives(game):
     db, state, _ = game
-    night_id = _night(db, state)
-    first_turn = _chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
+    night_id = open_audience_night(db, state)
+    first_turn, _ = append_night_chat(db, state, night_id, "杨嗣昌", "退下。", "臣告退。", 10)
     an.append_ledger_entry(
         db, night_id, body="杨嗣昌退下。", tags=[an.TAG_EXIT],
         person_names=["杨嗣昌"], order_key=10,
@@ -294,9 +280,9 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
     import web_app
 
     db, state, _ = game
-    first = _night(db, state)
+    first = open_audience_night(db, state)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first,))
-    second = _night(db, state)
+    second = open_audience_night(db, state)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
     db.conn.commit()
     monkeypatch.setattr(web_app, "get_game", lambda: SimpleNamespace(db=db))
@@ -316,13 +302,13 @@ def test_history_turns_lists_every_closed_night_including_night_only_turns(game,
 
 def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
     db, state, _ = game
-    first = _night(db, state)
+    first = open_audience_night(db, state)
     an.summon_enter(db, first, "杨嗣昌", method=an.METHOD_YUECI)
     an.append_ledger_entry(db, first, body="密议边饷。", tags=["军务"], person_names=["洪承畴", "杨嗣昌"])
-    _chat(db, state, first, "孙传庭", "边饷如何？", "尚可支应。", 10)
+    append_night_chat(db, state, first, "孙传庭", "边饷如何？", "尚可支应。", 10)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (first,))
-    second = _night(db, state)
-    _chat(db, state, second, "洪承畴", "再议。", "臣遵旨。", 10)
+    second = open_audience_night(db, state)
+    append_night_chat(db, state, second, "洪承畴", "再议。", "臣遵旨。", 10)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (second,))
     db.conn.commit()
 
@@ -342,9 +328,9 @@ def test_closed_night_archive_derives_stable_titles_people_and_no_content(game):
 def test_closed_night_archive_batches_each_metadata_store_once(game):
     db, state, _ = game
     for minister in ("杨嗣昌", "洪承畴", "孙传庭"):
-        night_id = _night(db, state)
+        night_id = open_audience_night(db, state)
         an.summon_enter(db, night_id, minister, method=an.METHOD_YUECI)
-        _chat(db, state, night_id, minister, "问话", "答复", 10)
+        append_night_chat(db, state, night_id, minister, "问话", "答复", 10)
         db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (night_id,))
     db.conn.commit()
     statements = []
@@ -362,9 +348,9 @@ def test_closed_night_archive_batches_each_metadata_store_once(game):
 
 def test_read_night_scroll_reads_each_metadata_store_once(game):
     db, state, _ = game
-    night_id = _night(db, state)
+    night_id = open_audience_night(db, state)
     an.summon_enter(db, night_id, "杨嗣昌", method=an.METHOD_YUECI)
-    _chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
+    append_night_chat(db, state, night_id, "杨嗣昌", "问话", "答复", 10)
     statements = []
     db.conn.set_trace_callback(statements.append)
 
@@ -379,11 +365,11 @@ def test_read_night_scroll_reads_each_metadata_store_once(game):
 
 def test_personal_projection_only_reads_the_current_open_night(game):
     db, state, _ = game
-    old_night = _night(db, state)
-    _chat(db, state, old_night, "杨嗣昌", "旧夜问话", "旧夜答复", 10)
+    old_night = open_audience_night(db, state)
+    append_night_chat(db, state, old_night, "杨嗣昌", "旧夜问话", "旧夜答复", 10)
     db.conn.execute("UPDATE audience_nights SET status='closed' WHERE id=?", (old_night,))
-    current_night = _night(db, state)
-    current_turn = _chat(db, state, current_night, "杨嗣昌", "本夜问话", "本夜答复", 10)
+    current_night = open_audience_night(db, state)
+    current_turn, _ = append_night_chat(db, state, current_night, "杨嗣昌", "本夜问话", "本夜答复", 10)
 
     projection = db.build_chat_projection("杨嗣昌")
 

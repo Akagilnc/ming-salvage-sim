@@ -3,9 +3,9 @@
 **真相源**：`ming_sim/simulation.py`（`EMPTY_EXTRACTION` / `MODULE_FIELDS` / `_clean_*`）+ `ming_sim/issues.py`（落库守门）+ `ming_sim/constants.py`（白名单）。
 
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
-v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 24 字段，别指望守门人帮忙兜。
+v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层 26 字段，别指望守门人帮忙兜。
 
-## 顶层 24 字段（容器类型固定）
+## 顶层 26 字段（容器类型固定）
 
 ```jsonc
 {
@@ -34,11 +34,13 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
+  "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
   "secret_order_updates":       [],  // 密令副作用
   "secret_order_closes":        [],  // 密令核议结案
+  "dossier_progress_reports":   [],  // 长差密令逐月密奏（#566 / ADR 0058）
   "emperor_fate":               null // "abdicate" | "suicide" | null
 }
 ```
@@ -206,6 +208,44 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 
 「三月后复试 / 期满复核」这类未来一次性 form③ 承诺带 `commitment_kind="until_stop"`、`end_turn`，`ongoing_effects` 可为空。到期后程序会把它顶到待核议；皇帝/邸报明确裁决或确认已处理后，`close_issues` 可写 `reason="acknowledged"` 作 ACK 收尾，状态标 `dropped`、`issue_advances.trigger_kind="commitment_ack"`，不运行 `effect_on_resolve` / `effect_on_fail`。普通承诺不得用 `close_issues resolved/failed` 绕过专门闭环。
 
+#### #620 / ADR 0074 分段承诺（本片扩展面，不改 #520 本体字段语义）
+
+**存储选型（本片定）**：
+- **段表**：`issues.stages_json`（JSON 数组，挂在**单一**承诺 issue 上；禁止假多 issue 接力冒充分段）
+- **次回合召对待办**：表 `next_audience_todos`
+
+**`new_issues[].stages`**（可选，仅承诺扩展面）：
+```jsonc
+"stages": [
+  {
+    "stage_idx": 0,
+    "due_turn": 37,                 // 绝对回合；捕获侧亦可以 scripted「三年X五年Y」换算 origin_turn+N*12
+    "criterion_text": "火器见眉目",
+    "origin_context": "三年火器见眉目"  // 原诺语境，持久可查（Story 5 回声底）
+  }
+]
+```
+- 一条多段 = **一个** `commitment_kind="until_stop"` initiative；`stages` 非空时可不写单值 `end_turn`（引擎可派生 max(due_turn) 仅作兼容展示，**不得**用单值 `end_turn` 冒充多段）
+- **段到期扫描独立**（与 form③ 共享「active 承诺 + 到期」谓词语义，不共用其 SQL 结果集）；**待裁载体改道** `next_audience_todos`——段派生的展示 `end_turn` **不**进 form③ `due_commitments` 待核议通道；**独立** `end_turn`（≠ max 段 due）仍可走 form③。结算**不**置 `TurnPhase.AWAITING_DECISION` / `<<DECISION>>` 停轮（0074/0076）
+- 去重键：`(commitment_ref, stage_idx, entry_kind)`，不得只按 issue_id 抹段
+- 段间自动续，无需玩家 ACK；消费/复命场面归 #621，本片只 own 写端
+- 捕获：召对/邸报「三年X五年Y」经生产 `capture_commitment_stages`（scripted 年诺解析）落段；禁 live-LLM 作唯一验收
+
+**`next_audience_todos` 最小字段（P2）**：
+| 字段 | 约束 |
+|---|---|
+| `commitment_ref` | 单一承诺对象 issue id |
+| `stage_idx` | int 段序号 |
+| `due_turn` | int |
+| `criterion_text` | 段判据 |
+| `origin_context` | 原话摘句/origin 派生，持久可查 |
+| `status` | `pending`（本片写端；消费态归后续片） |
+| `entry_kind` | 默认 `staged_commitment`（预留 form③/挽留区分位） |
+| `created_turn` | 写入时回合 |
+
+生命周期：段到期当回合结算内确定性写入；下一召对回合 `list_next_audience_todos` 可读；未消费可滚存；restore 只读 DB 接续。
+
+
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `dossier_participants` — S2 案卷参与人追加
@@ -235,6 +275,27 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - `dossier_id` 必须指向当前处于 `executing` 的案卷；`outcome` 只收 `fulfilled` / `degraded` / `failed` / `transformed`；`note` 不得为空。
 - `affected_parties` 可选；若给出则须通过 `validate_affected_parties` 全键（kind/key/direction/intensity），且 intensity 贴合终值固定映射（failed/transformed→strong，degraded→weak，次责可降一档）；拒收不落库。该清单**不**驱动连坐额度——机械写账仍由 roster+终值映射生成。
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
+
+### `dossier_reconciliations` — 在途拨帑月度对账（#567 / ADR 0054）
+别名 `拨帑对账`。issues 模块产出；settle 内经 `record_monthly_grant_reconciliations` 消费。
+
+| 字段 | 约束 |
+|---|---|
+| `dossier_id`（别名 `案卷编号`） | **必填**正整数；须落在本月在途拨帑扫描面（`list_monthly_grant_reconciliation_targets`）内 |
+| `arrived_amount`（别名 `实抵` / `到银`） | 与 `loss_amount` **二选一**；整数，单位两 |
+| `loss_amount`（别名 `折损`） | 与 `arrived_amount` **二选一**；整数，单位两；引擎换算 `arrived = ordered - loss` |
+| `note` | 可选文本 |
+
+引擎行为：只按护行/稽核在场口径 **clamp** 实抵上下界；**不二次扣库**、不改原 `economy_move`、**不写 0058 进展**（密奏仍走 personnel_secret / #566）。无提案时对扫描面内每路按口径中位机械落账（有/无护行同一存储、逐路键控）。
+
+> ⚠️ **与文档开头「section 内非法项逐项拒收留痕」通则相反**：本字段走 fail-loud。`record_monthly_grant_reconciliations` 对未知案卷、重复案卷、非在途拨帑、缺量字段、非列表提案一律 `raise`；落在 settle atomic 内 = **整月响亮中止**（同 #566 `dossier_progress_reports` 的 progress fail-loud 口径）。空提案（缺省/`[]`）合法——程序用中位默认。
+
+### `dossier_progress_reports` — 长差密令逐月密奏（#566 / ADR 0058）
+personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 消费。
+- 每项必须带 `dossier_id`、`progress_band`、`memorial_text`；三者皆非空。
+- 合资格集 = 精确 tag `护行`/`稽核` 且当前期限至少两月的密令案卷（读缝 `monthly_dossier_reports`）。
+- **必须完整覆盖**合资格集：不得漏项、不得重复、不得指向未知案卷；无合资格却收到提案亦拒。
+- 同 `dossier_reconciliations`：非法/不全 → fail-loud 整月中止，不走逐项拒收留痕。
 
 ### 颁布 verdict 契约（非 delta 字段）
 打回 verdict 的 `blocked_layer` 只收 `cabinet_drafting` / `palace_rescript` / `six_offices`；`primary_opponents` 是非空 typed 派系清单，每项须且仅含 `kind="faction"` 与在册派系 `key`；`gatekeeper_id` 只可为 null 或在册人物 id。`criteria_snapshot` 须且仅含 `imperial_authority_band`、`appointment_tenure`、`authorization_ids`、`endorsement_entry_ids`。前三类字符串值不得混入数字；阻力数值字段均非法。合法 typed 数值/布尔位仅包括正整数 `dossier_id`、正整数 `endorsement_entry_ids`（拒绝 bool/float/数字串），以及 bool `midzhi_unpromulgatable`。
@@ -296,8 +357,8 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` |
-| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `emperor_fate` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` |
+| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `emperor_fate` |
 
 ---
 
