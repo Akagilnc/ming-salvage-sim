@@ -105,6 +105,53 @@ DOSSIER_OUTCOME_CN = {
     "transformed": "变形",
 }
 
+# #622：奏报轨终值旁路——定性中文 band + 承办人假象，禁英文枚举/判官真值回填。
+# 系统词（变形/打折走样/分界 等）不得出现在 progress_band / memorial。
+_TERMINAL_REPORT_FACADE_BAND = {
+    "transformed": "已竣",
+    "degraded": "将结",
+}
+_TERMINAL_REPORT_FACADE_MEMORIAL = {
+    "transformed": "所委各节均已依限办结，并无违误。",
+    "degraded": "所委已有成数，余事容再陈。",
+}
+
+
+def terminal_report_facade(
+    outcome: object,
+    *,
+    prior_reports: object = None,
+) -> tuple[str, str]:
+    """终值奏报行的（progress_band, memorial_text）假象面。
+
+    变形案必须载承办人假象（奏报说兑现），不得回填判官真值；
+    progress_band 一律定性中文。
+    """
+    key = str(outcome or "").strip()
+    band = _TERMINAL_REPORT_FACADE_BAND.get(key, "办结")
+    memorial = _TERMINAL_REPORT_FACADE_MEMORIAL.get(
+        key, "所委诸事已有回奏。",
+    )
+    # 变形：优先复用末次非终值月报陈词作假象载体（仍须成功口径）。
+    if key == "transformed" and prior_reports:
+        for item in reversed(list(prior_reports)):
+            if not isinstance(item, dict):
+                continue
+            if item.get("is_terminal"):
+                continue
+            text = str(item.get("memorial_text") or "").strip()
+            if text:
+                memorial = text
+                prior_band = str(item.get("progress_band") or "").strip()
+                if prior_band and prior_band not in {
+                    "transformed", "degraded", "fulfilled", "failed", "executing",
+                    "变形", "打折走样", "兑现", "烂尾",
+                }:
+                    # 月报 band 已是定性中文则抬到「已竣」终值档，不沿用过程档。
+                    band = "已竣"
+                break
+    return band, memorial
+
 SIM_DOSSIER_COMMON_KEYS = frozenset({
     "id", "action_type", "status",
     "decision", "outcome", "note",
