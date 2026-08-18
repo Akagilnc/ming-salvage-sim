@@ -27,6 +27,7 @@ from ming_sim.breach_plea import (
     FOUNDATION_JUST_STARTED,
     FOUNDATION_ROOTED,
     assess_foundation_tier,
+    decode_plea_meta,
     expire_breach_pleas_on_due,
     finalize_persist,
     scan_and_write_breach_pleas,
@@ -39,7 +40,7 @@ from ming_sim.due_review import (
     dossiers_with_pending_due_review,
     list_due_review_scenes,
 )
-from ming_sim.issues import apply_score_extraction
+from ming_sim.issues import apply_issue_tracker_output, apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
@@ -856,3 +857,172 @@ def test_misappropriation_via_tags_producer_pipeline(game):
     written = scan_and_write_breach_pleas(db, state, commit=True)
     assert written
     assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
+
+
+# ── #623 r2：merged 条 persist 链只认 primary 的三面 ──────────────────
+
+
+def _merge_funding_then_reversal(db, state, *, token: str):
+    """同回合并入：断供 primary + 改弦 absorbed（生产写入口可达）。"""
+    did, holder = _executing_policy_dossier(db, state, token=token)
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title=f"合并入坚持·{token}", origin_ref=origin,
+        bar_value=15, end_turn=state.turn + 20,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+        tags=["专款:国库"],
+    )
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="改弦", target_dossier_id=did, commit=True,
+    )
+    assert t2 == t1
+    pleas = _pending_pleas(db)
+    assert len(pleas) == 1
+    meta = decode_plea_meta(pleas[0]["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
+    assert BREACH_KIND_POLICY_REVERSAL in (meta.get("absorbed_breach_kinds") or [])
+    return cid, did, holder, int(pleas[0]["id"])
+
+
+def test_merged_persist_via_tracker_cancel_settles(game):
+    """㈠ cancel 路：merged（断供 primary+改弦 absorbed）→ tracker cancel 坚持撤。
+
+    承诺结账 + todo consumed + applied_cancels 报实一致（禁虚报 persist）。
+    """
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    cid, did, holder, todo_id = _merge_funding_then_reversal(
+        db, state, token="trk-mrg",
+    )
+    out = apply_issue_tracker_output(
+        db, state,
+        {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
+        content=content,
+    )
+    cancels = out.get("cancels") or []
+    hit = [c for c in cancels if int(c.get("issue_id") or 0) == int(cid)]
+    assert hit, f"cancel 须命中承诺，got={cancels!r}"
+    assert hit[0].get("breach_plea_decision") == "persist"
+    assert hit[0].get("rejected") is False
+    # todo consumed
+    assert _pending_pleas(db) == []
+    todo_row = db.conn.execute(
+        "SELECT status FROM next_audience_todos WHERE id=?", (todo_id,),
+    ).fetchone()
+    assert todo_row is not None
+    assert str(todo_row["status"]) == TODO_STATUS_CONSUMED
+    # 承诺非 active
+    iss = db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()
+    assert iss is not None and str(iss["status"]) != "active"
+    # 0056 落（funding/改弦 均属触发集）
+    assert _cost_events(db, did, identity="breach")
+
+
+def test_merged_persist_via_extraction_settles(game):
+    """㈠ extraction 路：merged 改弦 absorbed → resolve 真入口坚持撤结账。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    cid, did, holder, todo_id = _merge_funding_then_reversal(
+        db, state, token="ext-mrg",
+    )
+    out = apply_score_extraction(
+        db, state,
+        {"cancels": [{"issue_id": cid, "narrative": "朕意已决，仍撤此诺"}]},
+        content=content,
+    )
+    resolutions = out.get("breach_plea_resolutions") or []
+    assert resolutions, "extraction 须 resolve merged 条"
+    assert resolutions[0]["decision"] == "persist"
+    assert int(resolutions[0].get("todo_id") or 0) == todo_id
+    assert _pending_pleas(db) == []
+    iss = db.conn.execute(
+        "SELECT status FROM issues WHERE id=?", (cid,),
+    ).fetchone()
+    assert iss is not None and str(iss["status"]) != "active"
+    assert _cost_events(db, did, identity="breach")
+
+
+def test_merged_funding_primary_remove_sponsor_absorbed_accounts(game):
+    """㈡ primary=funding + absorbed=[remove_sponsor]：0056 落一次、撤人辜负边在且不重复。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="f+rm")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="断供主+撤人并", origin_ref=origin,
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="撤人", target_dossier_id=did, commit=True,
+    )
+    assert t2 == t1
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
+    meta = decode_plea_meta(todo["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
+    assert BREACH_KIND_REMOVE_SPONSOR in (meta.get("absorbed_breach_kinds") or [])
+
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is True
+    assert _cost_events(db, did, identity="breach")
+    edges = list(db.conn.execute(
+        "SELECT event_kind, target, origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
+        (holder, int(state.turn)),
+    ).fetchall())
+    assert edges, "撤人/0056 须落辜负边"
+    # 同人同回合不重复（0056 已写则 0079 跳过）
+    assert len(edges) == 1
+
+
+def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
+    """㈢ primary=remove_sponsor + absorbed=[funding]：0056 落、撤人边不丢且不重复。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="rm+f")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="撤人主+断供并", origin_ref=origin,
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="撤人", target_dossier_id=did, commit=True,
+    )
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    assert t2 == t1
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == t1)
+    meta = decode_plea_meta(todo["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_REMOVE_SPONSOR
+    assert BREACH_KIND_FUNDING in (meta.get("absorbed_breach_kinds") or [])
+
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is True, "absorbed funding 须触发 0056"
+    assert _cost_events(db, did, identity="breach")
+    edges = list(db.conn.execute(
+        "SELECT event_kind, target, origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' AND turn=? ORDER BY id",
+        (holder, int(state.turn)),
+    ).fetchall())
+    assert edges, "撤人边/0056 辜负不得丢"
+    assert len(edges) == 1, "同人辜负不重复"

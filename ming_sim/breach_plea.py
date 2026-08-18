@@ -220,28 +220,49 @@ def _dedicated_accounts(row: Any) -> List[str]:
     return accounts
 
 
+def plea_kind_set(meta: Dict[str, object]) -> Set[str]:
+    """merged 条所载松手类 = primary ∪ absorbed（persist 链统一读口）。"""
+    kinds: Set[str] = set()
+    primary = str(meta.get("breach_kind") or "").strip()
+    if primary:
+        kinds.add(primary)
+    absorbed = meta.get("absorbed_breach_kinds") or []
+    if isinstance(absorbed, list):
+        for raw in absorbed:
+            kind = str(raw or "").strip()
+            if kind:
+                kinds.add(kind)
+    return kinds
+
+
+def find_pending_plea(
+    db: Any,
+    commitment_ref: int,
+    *,
+    breach_kind: str = "",
+) -> Optional[Dict[str, object]]:
+    """返回匹配的 pending 哭谏条；breach_kind 非空时按 primary∪absorbed 认。"""
+    want = str(breach_kind or "").strip()
+    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+        if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
+            continue
+        if int(todo.get("commitment_ref") or 0) != int(commitment_ref):
+            continue
+        if want:
+            meta = decode_plea_meta(todo.get("origin_context"))
+            if want not in plea_kind_set(meta):
+                continue
+        return todo
+    return None
+
+
 def has_pending_plea(
     db: Any,
     commitment_ref: int,
     *,
     breach_kind: str = "",
 ) -> bool:
-    for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
-        if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
-            continue
-        if int(todo.get("commitment_ref") or 0) != int(commitment_ref):
-            continue
-        if breach_kind:
-            meta = decode_plea_meta(todo.get("origin_context"))
-            primary = str(meta.get("breach_kind") or "")
-            absorbed = meta.get("absorbed_breach_kinds") or []
-            kinds = {primary}
-            if isinstance(absorbed, list):
-                kinds.update(str(x) for x in absorbed if x)
-            if breach_kind not in kinds:
-                continue
-        return True
-    return False
+    return find_pending_plea(db, commitment_ref, breach_kind=breach_kind) is not None
 
 
 def _find_pending_plea_same_turn(
@@ -714,6 +735,23 @@ def apply_persist_revoke_tail(
     }
 
 
+def _guofu_targets_this_turn(
+    db: Any, targets: Sequence[str], *, turn: int,
+) -> Set[str]:
+    """同回合皇帝→target 已有辜负边的人（0056/0079 去重用）。"""
+    names = [str(t).strip() for t in targets if str(t or "").strip()]
+    if not names:
+        return set()
+    placeholders = ",".join("?" for _ in names)
+    rows = db.conn.execute(
+        f"SELECT DISTINCT target FROM relation_edge_events "
+        f"WHERE source='皇帝' AND event_kind='辜负' AND turn=? "
+        f"AND target IN ({placeholders})",
+        (int(turn), *names),
+    ).fetchall()
+    return {str(r["target"]) for r in rows}
+
+
 def finalize_persist(
     db: Any,
     state: Any,
@@ -724,6 +762,12 @@ def finalize_persist(
     """坚持撤：根基分档落执行格 + 共享 revoke 收尾 + 条件触发 0056 + 消费 todo。"""
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
+    # merged meta 账目（#623 r2）：
+    # - 0056：所载类集合 primary∪absorbed 任一属 _BREACH_KINDS_TRIGGER_0056 即触发一次
+    # - 0079 撤人边：所载含 remove_sponsor 即落；与 0056 已写之同人辜负去重
+    #   （0056 origin=dossier:N:breach；撤人 origin=issue:N:breach_plea；
+    #    UNIQUE 键含 origin，故须显式跳过同回合已有皇帝→其人 辜负 的人）
+    kinds = plea_kind_set(meta)
     reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
     commitment_ref = int(todo["commitment_ref"])
     row = _issue_row(db, commitment_ref)
@@ -754,7 +798,7 @@ def finalize_persist(
         note = f"刚起头撤，所费付诸东流（{reason}）"[:200]
         close = True
 
-    apply_0056 = breach_kind in _BREACH_KINDS_TRIGGER_0056
+    apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
     tail = apply_persist_revoke_tail(
         db, state,
         target_dossier_id=target_dossier_id,
@@ -804,11 +848,14 @@ def finalize_persist(
                     )
 
     # 0079 信用事件：坚持=回绝哭谏
-    # 0056 触发类：breach_decree_dossier 已对主办写辜负，不重复
-    # 撤人（非 0056）：有/无案卷均补一笔
-    if breach_kind == BREACH_KIND_REMOVE_SPONSOR:
+    # 所载含撤人 → 按主办集合落辜负；0056 已写同人则跳过（不重复不遗漏）
+    # 无撤人且无案卷且未走 0056 → 兜底辜负
+    if BREACH_KIND_REMOVE_SPONSOR in kinds:
         sponsors = _sponsor_names_for_commitment(db, row) if row is not None else []
+        already = _guofu_targets_this_turn(db, sponsors, turn=int(state.turn))
         for person in sponsors:
+            if person in already:
+                continue
             db.record_relation_edge_event(
                 source="皇帝", target=person, event_kind="辜负", context=reason,
                 origin=f"issue:{commitment_ref}:breach_plea", turn=state.turn,
@@ -1389,7 +1436,7 @@ def resolve_breach_pleas_from_extraction(
 ) -> List[Dict[str, object]]:
     """召对/结算 extraction 真入口：既有键识别反悔或坚持后消费哭谏条。
 
-    坚持：cancels/close_issues 命中承诺（仅结改弦类 pending）/
+    坚持：cancels/close_issues 命中承诺（primary∪absorbed 含改弦即结该 merged 条）/
           revoke 类目标命中案卷 / dossier_executions failed
     反悔：economy 续拨 / issue_advances 推进 / fiscal_creates 加拨本承诺
     沉默：不在此函数出现 → pending 保留
@@ -1482,14 +1529,14 @@ def resolve_breach_pleas_from_extraction(
     for todo in pending:
         cid = int(todo["commitment_ref"])
         meta = decode_plea_meta(todo.get("origin_context"))
-        breach_kind = str(meta.get("breach_kind") or "")
         target_did = int(meta.get("target_dossier_id") or 0)
         row = _issue_row(db, cid)
         origin = str(row["origin_ref"] if row is not None else "")
 
         decision: Optional[str] = None
-        # 坚持：改弦类 cancel 只结改弦 pending；revoke 案卷命中
-        if cid in cancel_ids and breach_kind == BREACH_KIND_POLICY_REVERSAL:
+        kinds = plea_kind_set(meta)
+        # 坚持：cancel 命中且 primary∪absorbed 含改弦 → finalize 该 merged 条；revoke 案卷命中
+        if cid in cancel_ids and BREACH_KIND_POLICY_REVERSAL in kinds:
             decision = "persist"
         elif target_did > 0 and target_did in revoke_dossiers:
             decision = "persist"
