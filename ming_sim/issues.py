@@ -7021,6 +7021,12 @@ def apply_score_extraction(
             })
 
     dossier_execution_results: List[Dict[str, object]] = []
+    # #621 接管窗：正式复核所辖案卷禁 extractor 并行终值（防第二真源）。
+    try:
+        from ming_sim.due_review import dossiers_with_pending_due_review
+        _due_review_owned = dossiers_with_pending_due_review(db, state)
+    except Exception:
+        _due_review_owned = set()
     for item in extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
             dossier_execution_results.append({
@@ -7029,6 +7035,8 @@ def apply_score_extraction(
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            if int(dossier_id) in _due_review_owned:
+                raise ValueError("正式复核接管：extractor 不得并行写执行格终值")
             dossier = db.get_decree_dossier(dossier_id)
             if dossier is None or dossier["status"] != "executing":
                 raise ValueError("案卷不存在或不在 executing")

@@ -807,6 +807,18 @@ def open_night(
 
     roster = resolve_standing_roster(db)
     open_body = body or f"{location}·{time_of_day}，召对启。"
+    # #621：次回合召对顶出复命场面（pending todo 投影；P4 定性、不停轮）。
+    if not body:
+        try:
+            from ming_sim.due_review import list_due_review_scenes
+            scenes = list_due_review_scenes(db, state)
+        except Exception:
+            scenes = []
+        if scenes:
+            scene_lines = [str(s.get("scene_text") or "").strip() for s in scenes]
+            scene_lines = [line for line in scene_lines if line]
+            if scene_lines:
+                open_body = open_body + "\n" + "\n".join(scene_lines)
 
     # 原子：实体 + 开夜账 + 员额入殿账，SAVEPOINT 全有或全无。
     # 不 BEGIN 顶层事务（避免嵌套/泄漏；外层 atomic 可组合）。
