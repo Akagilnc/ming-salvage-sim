@@ -21,6 +21,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 BASE_REF = "5d7223ba"  # 票面 base
 
@@ -122,8 +124,23 @@ def test_diegetic_terms_in_simulator_and_minister_prompts():
                 assert token not in blob, (rel, title_key, token)
 
 
+def _base_commit_available() -> bool:
+    """票面 base 对象是否在本地 git 对象库（shallow clone 常缺）。"""
+    probe = subprocess.run(
+        ["git", "cat-file", "-e", f"{BASE_REF}^{{commit}}"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
 def test_whitelist_outside_sections_zero_diff_vs_base():
     """白名单外章节相对票面 base diff 零变化。"""
+    if not _base_commit_available():
+        pytest.skip(
+            "base 对象不在（shallow clone），AC5 白名单验证需全 clone 本地跑"
+        )
     for rel, anchors in S2_PROMPT_WHITELIST.items():
         base = _git_show(rel)
         head = _read(rel)
