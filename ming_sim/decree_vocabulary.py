@@ -114,6 +114,9 @@ SIM_DOSSIER_COMMON_KEYS = frozenset({
     # #613 执行侧任别读端（与 #569 固定键投影同面）
     "appointment_tenure", "held_authorities", "authorization_ids",
     "command_power_rank", "distortion_weight",
+    # #625 / ADR 0077 监督事实底只读注入（解 A）
+    "supervision_history", "loophole_exposures",
+    "transformation_tendency_facts",
 })
 SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
 SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}
