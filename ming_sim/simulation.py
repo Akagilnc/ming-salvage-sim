@@ -831,8 +831,6 @@ def _extractor_context_payload(
         "decree_text": decree_text,
         "active_issues": issues_brief,
         "issue_auto_economy": issue_auto_economy,
-        # #626：与 simulator 同包；issues 档房据此为反噬局势长出阶段/叙述
-        "commitment_backlash_facts": build_backlash_narrative_features(db),
         "candidate_events": [{"id": ev.id, "title": ev.title} for ev in gather_candidate_events(state, db)],
         "current_state": dict(state.metrics),
         "factions": db.faction_report(),
@@ -986,6 +984,9 @@ def build_extractor_shared_context(
     if module == "issues":
         # #567：在途拨帑对账读缝——赈济/拨付 issue 软判打折吃此账，非纯文字。
         slim["grant_reconciliations"] = db.list_open_grant_reconciliations()
+        # #626：反噬事实包仅 issues 档房（与 #625 监督三键同格门控）；
+        # 不在 _extractor_context_payload 无门副本，避免非 issues 模块误读。
+        slim["commitment_backlash_facts"] = build_backlash_narrative_features(db)
     slim["_dedup_note"] = (
         "盘面、诏书、在朝大臣、势力/派系/阶级态势已在 system 的 simulator_payload 中给出"
         "（盘面表 regions/armies/buildings 走 TSV；court_roster 即在朝大臣；"

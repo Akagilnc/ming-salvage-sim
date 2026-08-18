@@ -50,20 +50,6 @@ BACKLASH_BANNED_PLAYER_TOKENS = (
     "supervision_countermeasure",
 )
 
-# 代码侧曾用固定成句（P7 违宪样本）；AC6 断言真实玩家面不得再被硬门落这些成句
-BACKLASH_CODE_FIXED_PHRASES = (
-    "所系余波",
-    "所系之局反受其累",
-    "所系余波已平",
-    "所系局势恶化",
-    "变形暴露后",
-    "事废之后，",
-    "烂尾之后，",
-    "牵动的沉没投入化为负累",
-    "牵动的局势恶化",
-)
-
-
 def backlash_origin_ref(commitment_id: int, source_kind: str) -> str:
     """幂等键：一承诺一源一类至多一条。"""
     kind = str(source_kind or "").strip()
@@ -91,14 +77,6 @@ def assert_no_backlash_banned_tokens(text: object, *, surface: str) -> None:
     for token in BACKLASH_BANNED_PLAYER_TOKENS:
         if token in raw:
             raise AssertionError(f"{surface} 裸露禁词：{token!r}")
-
-
-def assert_no_backlash_code_fixed_phrases(text: object, *, surface: str) -> None:
-    """P7：真实玩家面不得残留代码侧固定成句。"""
-    raw = str(text or "")
-    for phrase in BACKLASH_CODE_FIXED_PHRASES:
-        if phrase and phrase in raw:
-            raise AssertionError(f"{surface} 残留代码固定成句：{phrase!r}")
 
 
 def parse_backlash_origin_ref(origin_ref: object) -> tuple[int, str]:

@@ -24,6 +24,16 @@ function commitmentProgressText(issue: Issue) {
   return issue.commitment_progress ? "未知进度" : "";
 }
 
+/** 空串不渲染括号端标（#626：硬门可留空 bar，web 不画『达成（）』/空进度端）。 */
+function barLabel(text: string | undefined | null): string {
+  return (text || "").trim();
+}
+
+function outcomeHead(kind: "达成" | "失败", meaning: string | undefined | null): string {
+  const label = barLabel(meaning);
+  return label ? `${kind}（${label}）` : kind;
+}
+
 export function SituationPanel({ issues, closedIssues, hasLegacies }: {
   issues: Issue[];
   closedIssues: ClosedIssue[];
@@ -164,12 +174,12 @@ export function SituationDetailModal({ issue, onClose }: { issue: Issue; onClose
         ) : null}
         <p className="situation-tip-stage">{issue.stage_text}</p>
         <div className="situation-tip-outcome good">
-          <div className="situation-tip-outcome-head">达成（{issue.bar_good_meaning}）</div>
+          <div className="situation-tip-outcome-head">{outcomeHead("达成", issue.bar_good_meaning)}</div>
           {issue.resolve_condition && <p>{issue.resolve_condition}</p>}
           <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_resolve)}</div>
         </div>
         <div className="situation-tip-outcome bad">
-          <div className="situation-tip-outcome-head">失败（{issue.bar_bad_meaning}）</div>
+          <div className="situation-tip-outcome-head">{outcomeHead("失败", issue.bar_bad_meaning)}</div>
           {issue.fail_condition && <p>{issue.fail_condition}</p>}
           <div className="situation-tip-effect">{formatIssueEffect(issue.effect_on_fail)}</div>
         </div>
@@ -200,11 +210,11 @@ export function IssueGroup({ title, issues }: { title: string; issues: Issue[] }
                 <span>{issue.phase} · {issue.bar_value}</span>
               </div>
               <div className="issue-progress" aria-label={`${issue.title}进度 ${issue.bar_value}`}>
-                <span>{issue.bar_bad_meaning}</span>
+                <span>{barLabel(issue.bar_bad_meaning)}</span>
                 <div>
                   <i style={{ width: `${Math.max(0, Math.min(100, issue.bar_value))}%` }} />
                 </div>
-                <span>{issue.bar_good_meaning}</span>
+                <span>{barLabel(issue.bar_good_meaning)}</span>
               </div>
               {progressText ? <p className="issue-commitment-progress">{progressText}</p> : null}
               <p>{issue.stage_text}</p>
