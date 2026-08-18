@@ -266,16 +266,7 @@ def effect_has_beyond_intent(effect: object) -> bool:
     raw = effect.get("beyond_intent")
     if raw is None:
         raw = effect.get("旨外")
-    if isinstance(raw, bool):
-        return raw
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-        return int(raw) != 0
-    text = str(raw or "").strip().lower()
-    if not text:
-        return False
-    if text in {"0", "false", "no", "off", "否", "无"}:
-        return False
-    return True
+    return bool(GameDB.coerce_beyond_intent_flag(raw))
 
 
 def durable_effects_beyond_intent(effects: object) -> bool:

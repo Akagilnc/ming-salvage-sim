@@ -117,6 +117,14 @@ _TERMINAL_REPORT_FACADE_MEMORIAL = {
 }
 
 
+def format_public_progress_disclosure(progress_rows: object) -> str:
+    """公开披露面：progress_band + memorial_text 的 join 渲染（#622 AC6 面2 单源）。"""
+    return "\n".join(
+        f"【{item['progress_band']}】{item['memorial_text']}"
+        for item in (progress_rows or [])
+    )
+
+
 def terminal_report_facade(
     outcome: object,
     *,
@@ -142,13 +150,6 @@ def terminal_report_facade(
             text = str(item.get("memorial_text") or "").strip()
             if text:
                 memorial = text
-                prior_band = str(item.get("progress_band") or "").strip()
-                if prior_band and prior_band not in {
-                    "transformed", "degraded", "fulfilled", "failed", "executing",
-                    "变形", "打折走样", "兑现", "烂尾",
-                }:
-                    # 月报 band 已是定性中文则抬到「已竣」终值档，不沿用过程档。
-                    band = "已竣"
                 break
     return band, memorial
 

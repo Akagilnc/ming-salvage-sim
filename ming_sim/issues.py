@@ -33,7 +33,11 @@ from ming_sim.db import (
     resolve_office_type_preserving_title,
 )
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.decree_vocabulary import dossier_action_policy, terminal_report_facade
+from ming_sim.decree_vocabulary import (
+    dossier_action_policy,
+    format_public_progress_disclosure,
+    terminal_report_facade,
+)
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -8082,10 +8086,7 @@ def apply_score_extraction(
                         db.list_dossier_progress(int(dossier["id"]))
                         if dossier is not None else []
                     )
-                    progress_text = "\n".join(
-                        f"【{item['progress_band']}】{item['memorial_text']}"
-                        for item in progress
-                    )
+                    progress_text = format_public_progress_disclosure(progress)
                     public_body = sim_note
                     if progress_text:
                         public_body = f"{sim_note}\n{progress_text}"

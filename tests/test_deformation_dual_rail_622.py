@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from ming_sim.db import GameDB
+from ming_sim.decree_vocabulary import format_public_progress_disclosure
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
@@ -97,14 +98,6 @@ def _cost_liability(db, dossier_id):
             (int(dossier_id),),
         ).fetchall()
     ]
-
-
-def _public_progress_render(progress_rows):
-    """Mirror issues.py:8081 public disclosure join surface."""
-    return "\n".join(
-        f"【{item['progress_band']}】{item['memorial_text']}"
-        for item in progress_rows
-    )
 
 
 _BANNED_SURFACE_TOKENS = (
@@ -368,11 +361,10 @@ def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
             assert token not in band
             assert token not in memorial
 
-    # 面 2：公开面渲染（issues.py:8081 同构）
-    public = _public_progress_render(rows)
-    for token in ("变形", "分界", "transformed", "degraded", "beyond_intent",
-                  "fulfilled", "failed", "executing"):
-        assert token not in public
+    # 面 2：公开面渲染（生产单源 format_public_progress_disclosure）
+    public = format_public_progress_disclosure(rows)
+    for token in _BANNED_SURFACE_TOKENS:
+        assert token not in public, (token, public)
 
     # 执行格真值仍在（哨兵不覆盖机面）
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
