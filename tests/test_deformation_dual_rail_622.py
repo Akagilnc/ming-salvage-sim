@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import json
+
 from ming_sim.db import GameDB
 from ming_sim.decree_vocabulary import format_public_progress_disclosure
 from ming_sim.due_review import (
@@ -17,7 +19,8 @@ from ming_sim.due_review import (
     decide_due_review_verdict,
     list_due_review_scenes,
 )
-from ming_sim.issues import apply_score_extraction
+from ming_sim.flows import _apply_economy_list
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
 from ming_sim.simulation import _sanitize_module_output
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
@@ -468,3 +471,155 @@ def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
         }],
     }
     assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
+
+
+# ── ⑥ 补饷路由 seam：beyond_intent 不得因 purpose 分叉丢键（#622 r3）──
+
+
+def _seed_army_arrears(db, army_id: str, arrears: int) -> None:
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET arrears = ?, province_pay_arrears = 0, central_pay_arrears = ?
+        WHERE id = ?
+        """,
+        (arrears, arrears, army_id),
+    )
+    db.conn.commit()
+
+
+def test_apply_economy_list_directed_pay_arrears_echoes_beyond_intent(game):
+    """定向补饷：beyond_intent 经 coerce 落 ledger 且 applied 回执回响；无标记仍为 0。"""
+    db, state, _content = game
+    army_id = "guanning"
+    _seed_army_arrears(db, army_id, 30)
+    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 100)
+
+    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
+
+    applied = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -10,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷旨外",
+            "beyond_intent": True,
+        }],
+        commit=True,
+    )
+    assert applied and applied[0].get("beyond_intent") is True, applied
+    assert applied[0]["delta"] == -10
+
+    row = db.conn.execute(
+        "SELECT beyond_intent, purpose, target_id FROM economy_ledger "
+        "WHERE id > ? ORDER BY id DESC LIMIT 1",
+        (ledger_before,),
+    ).fetchone()
+    assert row is not None
+    assert int(row["beyond_intent"]) == 1
+    assert row["purpose"] == "补饷"
+    assert row["target_id"] == army_id
+
+    # 反向锚：不带标记 → ledger=0，回执不回响 beyond_intent
+    applied_plain = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -5,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷无标记",
+        }],
+        commit=True,
+    )
+    assert applied_plain and "beyond_intent" not in applied_plain[0], applied_plain
+    plain_row = db.conn.execute(
+        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
+        ("定向补饷无标记",),
+    ).fetchone()
+    assert plain_row is not None
+    assert int(plain_row["beyond_intent"]) == 0
+
+    # 畸形值仍由 coerce 单点归 0，补饷分支不得自建判定
+    applied_bad = _apply_economy_list(
+        db,
+        state,
+        [{
+            "account": "国库",
+            "delta": -3,
+            "purpose": "补饷",
+            "target_kind": "army",
+            "target_id": army_id,
+            "category": "补饷",
+            "reason": "定向补饷畸形",
+            "beyond_intent": [],
+        }],
+        commit=True,
+    )
+    assert applied_bad and "beyond_intent" not in applied_bad[0], applied_bad
+    bad_row = db.conn.execute(
+        "SELECT beyond_intent FROM economy_ledger WHERE reason=? ORDER BY id DESC LIMIT 1",
+        ("定向补饷畸形",),
+    ).fetchone()
+    assert bad_row is not None
+    assert int(bad_row["beyond_intent"]) == 0
+
+
+def test_commitment_pooled_pay_arrears_inherits_beyond_intent(game):
+    """池化补饷：承诺月拨带 beyond_intent，拆分落库每行均继承（走 issues 结算 choke）。"""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    db.conn.execute("UPDATE armies SET arrears=0 WHERE owner_power='ming'")
+    _seed_army_arrears(db, "guanning", 40)
+    _seed_army_arrears(db, "xuan_da", 30)
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="边军月饷旨外",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:beyond-pool-622",
+        bar_value=0,
+        inertia=0,
+        stage_text="户部每月拨银补边军旧欠。",
+        ongoing_effects={
+            "economy": [{
+                "account": "国库",
+                "delta": -50,
+                "category": "补饷承诺",
+                "reason": "边军月饷旨外",
+                "beyond_intent": 1,
+            }]
+        },
+        stop_condition=json.dumps(
+            {"army.guanning|xuan_da.arrears.sum": "<=0"}, ensure_ascii=False,
+        ),
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    apply_issue_inertia_and_ongoing(db, state)
+
+    rows = db.conn.execute(
+        "SELECT beyond_intent, purpose, target_kind, target_id, delta "
+        "FROM economy_ledger WHERE id > ? AND purpose='补饷' ORDER BY id",
+        (ledger_before,),
+    ).fetchall()
+    assert rows, "池化补饷须落至少一笔 ledger"
+    assert len(rows) >= 2, [dict(r) for r in rows]  # 多军拆分
+    assert all(int(r["beyond_intent"]) == 1 for r in rows), [dict(r) for r in rows]
+    assert all(r["target_kind"] == "army" for r in rows)
+    assert {r["target_id"] for r in rows} <= {"guanning", "xuan_da"}
+    assert sum(int(r["delta"]) for r in rows) == -50
