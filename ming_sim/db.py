@@ -11874,6 +11874,159 @@ class GameDB:
             self.conn.commit()
         return triggered
 
+    def trigger_commitment_backlashes(
+        self, state: GameState, *, commit: bool = False,
+    ) -> List[Dict[str, object]]:
+        """#626：事废/烂尾/变形暴露 → 承诺所系反噬 issue（邸报前 auto_trigger 同缝）。
+
+        方案 a（#625 形制）：代码侧确定性硬门；直读执行格/哭谏消费/承诺；
+        find_any_issue_by_origin 幂等；不碰 trigger_gate 求值器、不扩门表白名单。
+        分档触发侧重算 assess_foundation_tier（零新列）；唯 halfway 触发。
+        一拍差：判决 closed_turn < 当前 turn 才扫（判决在 delta、扫描在次回合前括号）。
+        与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics，不重放
+        breach_halfway_setback / 民心-3·皇威-2 直击。
+
+        事废读源：consumed midcourse_breach_plea（#623 坚持撤常经 0056 先关案卷，
+        execution_outcome 可能空，故不以执行格为事废唯一源）。
+        烂尾/变形：读执行格终值 failed/transformed。
+        """
+        from ming_sim.commitment_backlash import (
+            BACKLASH_BAR_BAD,
+            BACKLASH_BAR_GOOD,
+            BACKLASH_NAMED_METRICS,
+            BACKLASH_ORIGIN_KIND,
+            SOURCE_BREACH_VERDICT,
+            apply_named_metrics,
+            backlash_origin_ref,
+            build_backlash_copy,
+            classify_backlash_source,
+        )
+        from ming_sim.breach_plea import (
+            ENTRY_KIND_BREACH_PLEA,
+            FOUNDATION_HALFWAY,
+            assess_foundation_tier,
+        )
+
+        candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
+
+        # ① 事废判决：已消费哭谏（坚持撤）→ 以承诺 closed_turn 为一拍差锚
+        for todo in self.list_next_audience_todos(status="consumed"):
+            if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
+                continue
+            cid = int(todo.get("commitment_ref") or 0)
+            if cid <= 0:
+                continue
+            crow = self.conn.execute(
+                "SELECT id, title, closed_turn, commitment_kind, origin_ref "
+                "FROM issues WHERE id=?",
+                (cid,),
+            ).fetchone()
+            if crow is None or not str(crow["commitment_kind"] or "").strip():
+                continue
+            judgment_turn = int(crow["closed_turn"] or 0)
+            if judgment_turn <= 0 or judgment_turn >= int(state.turn):
+                continue
+            did = 0
+            origin = str(crow["origin_ref"] or "")
+            if origin.startswith("dossier:"):
+                try:
+                    did = int(origin.split(":", 1)[1])
+                except (TypeError, ValueError):
+                    did = 0
+            candidates.append((cid, SOURCE_BREACH_VERDICT, did))
+
+        # ② 烂尾终值 / 变形暴露：执行格终值（closed_turn 一拍差）
+        rows = self.conn.execute(
+            """
+            SELECT id, execution_outcome, execution_note, closed_turn, status
+            FROM decree_dossiers
+            WHERE execution_outcome IN ('failed', 'transformed')
+              AND closed_turn > 0
+              AND closed_turn < ?
+            ORDER BY id
+            """,
+            (int(state.turn),),
+        ).fetchall()
+        for row in rows:
+            dossier_id = int(row["id"])
+            source_kind = classify_backlash_source(
+                execution_outcome=row["execution_outcome"],
+                execution_note=row["execution_note"],
+            )
+            if source_kind is None:
+                continue
+            for commitment in self.list_commitments_for_dossier(dossier_id):
+                if not str(commitment.get("commitment_kind") or "").strip():
+                    continue
+                candidates.append(
+                    (int(commitment["id"]), source_kind, dossier_id),
+                )
+
+        triggered: List[Dict[str, object]] = []
+        seen_origin: set[str] = set()
+        for cid, source_kind, dossier_id in candidates:
+            if assess_foundation_tier(self, cid) != FOUNDATION_HALFWAY:
+                continue
+            origin_ref = backlash_origin_ref(cid, source_kind)
+            if origin_ref in seen_origin:
+                continue
+            seen_origin.add(origin_ref)
+            existing = self.find_any_issue_by_origin(
+                BACKLASH_ORIGIN_KIND, origin_ref,
+            )
+            if existing is not None:
+                continue
+            crow = self.conn.execute(
+                "SELECT title FROM issues WHERE id=?", (cid,),
+            ).fetchone()
+            title_c = str(crow["title"] if crow is not None else "")
+            title, stage_text, narrative = build_backlash_copy(
+                commitment_title=title_c,
+                source_kind=source_kind,
+            )
+            applied_metrics = apply_named_metrics(
+                state, dict(BACKLASH_NAMED_METRICS),
+            )
+            issue_id = self.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind=BACKLASH_ORIGIN_KIND,
+                origin_ref=origin_ref,
+                stage_text=stage_text,
+                tags=["commitment_backlash", source_kind, f"commitment:{cid}"],
+                bar_value=35,
+                bar_good_meaning=BACKLASH_BAR_GOOD,
+                bar_bad_meaning=BACKLASH_BAR_BAD,
+                inertia=-2,
+                severity=55,
+                ongoing_effects={"metrics": dict(BACKLASH_NAMED_METRICS)},
+                commit=False,
+            )
+            self.advance_issue(
+                state,
+                int(issue_id),
+                trigger_kind="commitment_backlash",
+                trigger_ref=f"issue:{cid}",
+                delta_bar=0,
+                stage_text=stage_text,
+                narrative=narrative,
+                metric_delta=dict(applied_metrics),
+                commit=False,
+            )
+            triggered.append({
+                "issue_id": int(issue_id),
+                "commitment_ref": cid,
+                "dossier_id": int(dossier_id),
+                "source_kind": source_kind,
+                "origin_ref": origin_ref,
+                "trigger_ref": f"issue:{cid}",
+                "metrics_delta": dict(applied_metrics),
+            })
+        if commit and triggered:
+            self.conn.commit()
+        return triggered
+
     def merge_grant_reconciliation_into_execution_note(
         self, dossier_id: int, *, commit: bool = True,
     ) -> Optional[str]:
