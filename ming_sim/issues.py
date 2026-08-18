@@ -6314,6 +6314,8 @@ def _apply_person_changes(
                     "office": "听用候铨",
                     "office_type": "身名分",
                     "derived_from": "被顶替",
+                    # applier 合成级联回声：信用写端只消费 extractor 宣告本体行。
+                    "cascade_echo": True,
                 }
             )
         return results
@@ -6601,6 +6603,9 @@ def _apply_person_changes(
                     "status": release_status,
                     "reason": derive_label,
                     "derived_from": derive_label,
+                    # applier 合成级联回声（放归/赦还/起复/昭雪/夺情）：
+                    # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
+                    "cascade_echo": True,
                 }
             result = apply_office_appointment(
                 db,
@@ -8239,9 +8244,13 @@ def apply_score_extraction(
             extracted.get("dossier_executions"), dossier_execution_results,
         ),
         # 人物变更 rejected 单一保护点（credit_events 不再二次滤）。
+        # cascade_echo：applier 合成级联回声（放归/被顶替等）在生产点打标，
+        # 此处唯一滤除；禁在 credit_events 另设第二闸或盯 derived_from 文本。
         "人物变更": [
             r for r in applied_person_changes
-            if isinstance(r, dict) and not r.get("rejected")
+            if isinstance(r, dict)
+            and not r.get("rejected")
+            and not r.get("cascade_echo")
         ],
         "economy_moves": _credit_source_minus_rejections(
             extracted.get("economy_moves"), economy_rejections,
