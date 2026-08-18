@@ -10836,17 +10836,10 @@ class GameDB:
         cls, item: Mapping[str, object], *, dossier_id: int,
     ) -> Dict[str, object]:
         is_terminal = bool(item.get("is_terminal"))
-        origin_raw = str(item.get("origin") or "").strip()
-        if origin_raw:
-            origin = cls._normalize_dossier_report_origin(
-                origin_raw, is_terminal=is_terminal,
-            )
-        else:
-            origin = (
-                cls.DOSSIER_REPORT_ORIGIN_VERDICT
-                if is_terminal
-                else cls.DOSSIER_REPORT_ORIGIN_MONTHLY
-            )
+        # Empty origin defaults live only in _normalize_dossier_report_origin.
+        origin = cls._normalize_dossier_report_origin(
+            item.get("origin"), is_terminal=is_terminal,
+        )
         return {
             "id": int(item["id"]),
             "dossier_id": int(item.get("dossier_id") or dossier_id),
