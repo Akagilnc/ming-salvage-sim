@@ -1111,14 +1111,22 @@ def _apply_economy_list(
         if origin_error:
             applied.append({"account": account, **origin_error, "item": move})
             continue
+        # #622：旨外标记随效果写入（同 origin 载体）；缺省 0。
+        beyond_raw = move.get("beyond_intent")
+        if beyond_raw is None:
+            beyond_raw = move.get("旨外")
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,
             target_kind=None, target_id=None, origin_ref=effective_origin_ref,
+            beyond_intent=beyond_raw,
             commit=commit,
         )
         if actual:
-            applied.append({"account": account, "delta": actual, "reason": reason})
+            entry = {"account": account, "delta": actual, "reason": reason}
+            if db.coerce_beyond_intent_flag(beyond_raw):
+                entry["beyond_intent"] = True
+            applied.append(entry)
     return applied
 
 

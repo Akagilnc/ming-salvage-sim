@@ -15,6 +15,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.db import GameDB
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
@@ -258,8 +259,36 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     return owned
 
 
+def effect_has_beyond_intent(effect: object) -> bool:
+    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。"""
+    if not isinstance(effect, dict):
+        return False
+    raw = effect.get("beyond_intent")
+    if raw is None:
+        raw = effect.get("旨外")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return int(raw) != 0
+    text = str(raw or "").strip().lower()
+    if not text:
+        return False
+    if text in {"0", "false", "no", "off", "否", "无"}:
+        return False
+    return True
+
+
+def durable_effects_beyond_intent(effects: object) -> bool:
+    return any(effect_has_beyond_intent(item) for item in (effects or []))
+
+
 def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。"""
+    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
+
+    #622：消费效果行旨外标记——有旨外恶果/受益 → transformed；
+    有实况无旨外 → fulfilled；无实况有表报 → degraded；皆无 → failed。
+    禁另立第二裁决函数。
+    """
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
@@ -278,8 +307,11 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             "mid_stage": True,
         }
 
-    # 末段终裁
-    if effects:
+    # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
+    if durable_effects_beyond_intent(effects):
+        outcome = "transformed"
+        note = f"到期复核：{criterion}名实已乖"
+    elif effects:
         outcome = "fulfilled"
         note = f"到期复核：{criterion}已见实绩生根"
     elif reports:
@@ -339,9 +371,12 @@ def _apply_dossier_verdict(
         close=close, commit=False,
     )
     if is_terminal and outcome in {"degraded", "transformed"}:
+        # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
         # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
+        prior = list(db.list_dossier_progress(int(dossier_id)))
+        band, memorial = terminal_report_facade(outcome, prior_reports=prior)
         db.record_dossier_progress(
-            int(dossier_id), int(state.turn), outcome, note,
+            int(dossier_id), int(state.turn), band, memorial,
             is_terminal=True,
             origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
             commit=False,

@@ -94,6 +94,9 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
+    "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
+    "旨外标记": "beyond_intent", "旨外恶果": "beyond_intent",
     "id": "id", "编号": "id",
     "kind": "kind", "类型": "kind",
     "title": "title", "标题": "title",
