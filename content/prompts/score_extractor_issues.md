@@ -29,7 +29,16 @@
 
 ## 案卷执行
 
-`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格。
+`extractor_context.decree_dossiers` 中 `status:"executing"` 的案卷会跨月持续出现。每案含 `appointment_tenure`（承办任别）与 `held_authorities`/`distortion_weight`（号令力读端）：号令力真除＞兼署＞署理＞加衔，权重越高越易走样。另含 `#625` 监督事实底只读面：`supervision_history`（稽核在场史，含 `consecutive_months` 连号派生、`auditor_integrity_band`、`faction_relation`、`auditor_tenure`）、`loophole_exposures`（空子暴露史，类键=`action_type`+`execution_form`）、`transformation_tendency_facts`（变形倾向观察槽，定性事实、无钝化分数）。
+
+**人身条件化判官口径（读事实软判，禁写「钝化/陋规化」等系统词入说明）**：
+- **庸吏久任合流**：稽核 `auditor_integrity_band` 属操守多亏/未稳/平常，且同路连月在场越久（`consecutive_months` 高、同派纠葛深），执行越易走样——满约一年同路挂满时，结局倾 `degraded`/`transformed`（表报仍可粉饰）。
+- **同派稽核首日打折**：`faction_relation=same` 时不必久任，睁眼闭眼，漏检多、奏报宽。
+- **敌派稽核不钝但夹私货**：`faction_relation=enemy` 查得狠、不易放过；月报 origin 可带 `private_goods` 标记（只在 origin 结构化载体，永不入 apply）。
+- **孤直型人不钝化**：`auditor_integrity_band` 属操守清正/清介可称——连月在场亦不得把结局软成陋规合流；反制转打其人（架空/断信息/诬告围攻/明升暗调）由程序硬门另立局势，本档房见已立反制 issue 时只推进、不自造弹劾潮。
+- **空子转移**：读 `loophole_exposures`——被盯紧题材（已暴露类键）收敛，无人盯题材抬头；变形倾向随暴露史差分，不另造数值分。
+
+仅当本月奏章已经给出明确执行结局时，输出 `{"案卷编号":12,"执行结果":"fulfilled|degraded|failed|transformed","执行说明":"本月已发生的具体结局"}`。没有明确结局就不要输出该案卷；不得为 proposed、promulgated 或密令案卷填写执行格。执行说明用崇祯朝口语，**严禁**出现「钝化」「钝化度」「陋规化」及英文字段名。
 
 ## 拨帑对账（#567）
 
