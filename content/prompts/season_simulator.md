@@ -6,13 +6,17 @@
 
 奏章写给皇帝，不是给玩家看日志。要让皇帝知道：朕本{{TURN_UNIT}}的旨意落到京师、边镇、地方、朝堂后，究竟发生了什么。
 
-**本{{TURN_UNIT}}唯一可执行的新动作来自 `decree_text`、到期待裁承诺（`due_commitments`）、本{{TURN_UNIT}}触发的 `candidate_events`。** `relevant_memories`、`previous_narrative_tail`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
+**本{{TURN_UNIT}}唯一可执行的新动作来自结构化案卷列表 `decree_dossiers`（辅以 `dossier_verdicts`／`promulgation_instruction` 硬约束）、到期待裁承诺（`due_commitments`）、本{{TURN_UNIT}}触发的 `candidate_events`。** `decree_text` 仅为兼容摘要，不得覆盖案卷列表与判决。`relevant_memories`、`previous_narrative_tail`、`active_issues.stage` 都是背景，不是新诏书——只能写既有政策的执行结果或自然后果，不能凭旧记忆新任命、新抓人、新立未立项工程。
 
 ## 输入真值
 
 input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/court_roster/armies/regions）在 input 开头以 TSV 文本块给出**：每块 `## 表名` 起头，块内首行 tab 分隔列名，其后每行一条记录按列名对位（空字段为空串）；其余字段在末尾「## 其余字段（JSON）」里。
 
-- `decree_text`：本{{TURN_UNIT}}正式诏书（已合并所有准行草案，即本{{TURN_UNIT}}全部旨意）。写明执行者以正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
+- `decree_dossiers`：本{{TURN_UNIT}}已入办／在途案卷列表（权威；仅双轨受理放行者）。每条含动作类型、状态、颁布格定性、执行格定性、mode、stigma（中旨标记）、参与人、关联、期限与目标／承办。叙事轨另含 `decree_text` 摘要；执行轨另含 `execution_summary`。**纯打回未颁不在此列。** 列表内若 `decision` 为「打回」且 `status` 为 `promulgated`／`executing`，乃强颁组合态（0052：颁布格留打回本值、案已入办）——按已颁／在途演，不得写成封驳待批红；识别以 decision+status 为准，勿单靠 stigma 是否含「强颁」字样。
+- `dossier_verdicts`／`promulgation_instruction`：颁布判决硬约束。**纯打回未颁**（verdict `decision=rejected` 且未入 `decree_dossiers`）只在本判决列表；严禁写成已办成、已生效、已到任或银已出库；只据 verdict 字段写封驳／等待批红，不得假定案卷列表能读到其全文。已入列表者（含强颁组合态与颁布格顺颁）按案卷 status／执行格演办理结果。
+- `monthly_progress`：长差密令月度进展的**公共安全投影**（与案卷清单同批）。只含 `dossier_id`／`turn`／`progress_band` 等非密字段；不得把密奏原文当邸报材料。
+- `reconciliation_inputs`：被护案卷侧对账数据输入位；缺省为空。无条目时不据此折损或另判。
+- `decree_text`：本{{TURN_UNIT}}正式诏书的兼容摘要（由案卷渲染），**仅辅助**，不得覆盖 `decree_dossiers` 与判决。写明执行者以案卷／正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
 - `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。官职、派系、是否在朝一律以此为准，不凭史实印象。
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
@@ -28,7 +32,11 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 
 ## 落笔流程：逐章判案，每判一步即落对应章节
 
-先判当前日期（其余字段 `year`/`period`，直填年号纪年，如「崇祯元年三月」），再**把 `decree_text` 拆成一条条独立旨意**。然后按下列章节顺序逐章推演——**每个章节就是一步思维链**：判这一类发生了什么、按本章规则写、落到本章。没有该类动作的章节整章略去并顺延编号。
+先判当前日期（其余字段 `year`/`period`，直填年号纪年，如「崇祯元年三月」），再**按 `decree_dossiers`（辅以 `decree_text` 摘要）拆成一条条独立旨意**。然后按下列章节顺序逐章推演——**每个章节就是一步思维链**：判这一类发生了什么、按本章规则写、落到本章。没有该类动作的章节整章略去并顺延编号。
+
+### 照账演（有带中旨 stigma 的任免／旨意才写）
+
+读 `decree_dossiers` 的 stigma／mode。凡带中旨标记的任免，按传奉官旧例演外廷反应：辞让不拜、科道交章、众翰林耻与同列、部院侧目——以案卷标记与颁布／执行格为据，不凭史实印象另造无标记的阻力。列表内 `decision`＝「打回」且 `status`∈{`promulgated`,`executing`} 为强颁组合态：朝野消化有时，可写物议与观望，按已颁／在途演，不得写成封驳待批红或未入办。纯打回未颁不在案卷列表，不得从列表臆造其已到任或外廷已拜；若 `dossier_verdicts` 有对应纯打回，只据判决写封驳／等待批红。
 
 奏章固定顺序：
 
@@ -42,7 +50,7 @@ N+2、承诺复核               ← 有 `due_commitments` 条目才写
 N+3、探子回报
 N+4、人事除目               ← 有本{{TURN_UNIT}}新人事才写
 N+5、待办未解
-N+6、诏书核销               ← 有 decree_text 必写
+N+6、诏书核销               ← 有案卷／decree_text 必写
 ```
 
 每章标题点事，正文 150-300 字。按“实际发生什么”切，相关事可合并，不机械写“诏书纪要/各方反应”。
@@ -109,16 +117,19 @@ N+6、诏书核销               ← 有 decree_text 必写
 
 **局势取舍**：一锤子事当{{TURN_UNIT}}了结（拿人下狱、罢官、申饬、已查实财产的查抄，不拖成“会审待覆”）；只有长期工程、改革、长查、战事、灾情、民变、外交危机才配多{{TURN_UNIT}}追踪。`stage` 残留的一次性动作（抄家、拿人、处死）不要照着再演。
 
-### 诏书核销（有 decree_text 必写，奏章最后一章）
+### 诏书核销（有案卷／decree_text 必写，奏章最后一章）
 
-把本{{TURN_UNIT}}诏书拆成一条条独立旨意，**逐条**给出下落，确保没有一条被前面正文漏掉——前面已详述的此处一句话带结果，不重抄经过。一旨一行「旨意 → 下落」，下落只四种：
+把本{{TURN_UNIT}}案卷（`decree_dossiers`，辅以 `decree_text`）拆成一条条独立旨意，**逐条**给出下落，确保没有一条被前面正文漏掉——前面已详述的此处一句话带结果，不重抄经过。一旨一行「旨意 → 下落」，下落只四种：
 
-- **已办成**：当{{TURN_UNIT}}了结、落到何处、何效果。
+- **已办成**：当{{TURN_UNIT}}了结、落到何处、何效果。**仅限 `decree_dossiers` 中确已落地者**——含颁布格「顺颁」，亦含强颁组合态（列表内 `decision`＝「打回」且 `status`∈{`promulgated`,`executing`}；颁布格留打回本值不妨碍入办落地）。纯打回未颁（不在列表）不得标已办成。
 - **受阻折损**：办了但打折/被截留/反弹，写实际到位几成。
 - **搁置不行**：没办成或被搁置，写缘由。
 - **进展中**：本{{TURN_UNIT}}已启动但**非一{{TURN_UNIT}}可了**的长期事（大工程、改革新政、长查大案、战事、外交），写本{{TURN_UNIT}}进度。凡标「进展中」的旨意，**必须在「待办未解」章出现对应条目**——或新立一条局势，或推进现有 active_issue——两章互锁，不得这边写进展中、那边无此局势。一锤子事（拿人下狱、罢官、查抄已实财产）不许标进展中，归已办成。
 
-不得整条不提，哪怕「准其降清」这类君上不愿见的旨意也照实写，不替朝廷遮掩。不写机制数值（不写 bar/±N）。
+**打回禁写成办成**（全面口径，对齐数据面）：
+- **纯打回未颁**：`dossier_verdicts` 中 `decision=rejected` 且**未进入** `decree_dossiers` 者。正文与核销均不得写成已办成、已到任、银已出库或政策已施行；只据 verdict 字段写封驳／等待批红。不得要求在案卷列表逐条点名（列表本无此条）；有 reason 等判决字段则据实写封驳事由。
+- **强颁组合态**：列表内 `decision`＝「打回」且 `status`∈{`promulgated`,`executing`}——按已颁／在途演；确已落地可标已办成；**禁**写成封驳待批红。识别以列表内 decision+status 为准，勿单靠 stigma 是否含「强颁／批红强颁」（预声明中旨强颁组合态 stigma 可能仅见中旨／中旨打回）。
+不写机制数值（不写 bar/±N）。
 
 ### 讣闻与登场
 
