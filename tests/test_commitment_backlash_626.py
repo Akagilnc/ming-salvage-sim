@@ -25,7 +25,9 @@ from ming_sim.breach_plea import (
     FOUNDATION_ROOTED,
     HALFWAY_SETBACK_EVENT_ID,
     assess_foundation_tier,
+    expire_breach_pleas_on_due,
     finalize_persist,
+    finalize_regret,
     write_breach_plea_todo,
 )
 from ming_sim.commitment_backlash import (
@@ -322,6 +324,76 @@ def test_ac1_transformed_without_beyond_intent_does_not_trigger(game):
         BACKLASH_ORIGIN_KIND, backlash_origin_ref(cid, SOURCE_DEFORMATION_EXPOSURE),
     ) is None
     assert _backlash_issues(db) == []
+
+
+def test_regret_then_resolve_does_not_trigger_breach_verdict(game):
+    """反悔消费哭谏后承诺告成 ≠ 事废：不得立 breach_verdict 或扣民心/皇威。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="rg")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="反悔后告成之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="先松后悔", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    assert finalize_regret(db, state, todo, commit=True)["decision"] == "regret"
+    row = db.conn.execute("SELECT status, closed_turn FROM issues WHERE id=?", (cid,)).fetchone()
+    assert str(row["status"]) == "active"
+    assert int(row["closed_turn"] or 0) == 0
+
+    closed = db.close_issue(state, cid, reason="resolved", narrative="前诺告成", commit=True)
+    assert closed is not None
+    assert str(closed["status"]) == "resolved"
+    assert int(closed["closed_turn"] or 0) == int(state.turn)
+
+    before_minxin = int(state.metrics.get("民心", 0) or 0)
+    before_huangwei = int(state.metrics.get("皇威", 0) or 0)
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits == []
+    assert _backlash_issues(db) == []
+    assert int(state.metrics.get("民心", 0) or 0) == before_minxin
+    assert int(state.metrics.get("皇威", 0) or 0) == before_huangwei
+
+
+def test_expire_inactive_resolved_plea_does_not_trigger_breach_verdict(game):
+    """到期扫描把告成后残留 pending 哭谏标 consumed，也不得当成事废。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="ex")
+    bar = _seed_halfway(db, state, did=did)
+    cid = _insert_commitment(
+        db, state, title="告成残留哭谏之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="未决哭谏", target_dossier_id=did, commit=True,
+    )
+    closed = db.close_issue(state, cid, reason="resolved", narrative="前诺告成", commit=True)
+    assert closed is not None
+    expired = expire_breach_pleas_on_due(db, state, commit=True)
+    assert expired
+
+    before_minxin = int(state.metrics.get("民心", 0) or 0)
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits == []
+    assert _backlash_issues(db) == []
+    assert int(state.metrics.get("民心", 0) or 0) == before_minxin
 
 
 # ── AC2：办到一半撤 + 与 #623 无双扣 ──────────────────────────────
