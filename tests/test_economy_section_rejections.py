@@ -217,3 +217,33 @@ def test_clean_economy_moves_non_list_returns_empty():
     from ming_sim.simulation import _clean_economy_moves
     assert _clean_economy_moves("x") == []
     assert _clean_economy_moves(None) == []
+
+
+def test_clean_economy_moves_preserves_beyond_intent():
+    """#622：web extractor 必经 _clean_economy_moves；剥 beyond_intent 则到期复核误落 fulfilled。"""
+    from ming_sim.simulation import _clean_economy_moves, _sanitize_module_output
+
+    cleaned = _clean_economy_moves([{
+        "account": "国库",
+        "delta": 12,
+        "category": "浮收",
+        "reason": "借旨加派",
+        "origin_ref": "dossier:1",
+        "beyond_intent": True,
+    }])
+    assert cleaned and cleaned[0].get("beyond_intent") is True
+    assert cleaned[0]["origin_ref"] == "dossier:1"
+
+    sanitized = _sanitize_module_output("internal", {
+        "钱粮收支": [{
+            "账户": "国库",
+            "增量": 8,
+            "分类": "浮收",
+            "原因": "借旨加派",
+            "来源引用": "dossier:2",
+            "旨外": True,
+        }],
+    })
+    moves = sanitized["economy_moves"]
+    assert moves and moves[0].get("beyond_intent") is True
+    assert moves[0]["origin_ref"] == "dossier:2"

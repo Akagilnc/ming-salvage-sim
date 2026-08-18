@@ -1166,6 +1166,10 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #622：旨外标记与 origin_ref 同效果行；漏拷则 sanitizer 静默剥掉，
+        # 到期复核把旨外实况误裁 fulfilled（web extractor 必经此 cleaner）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
