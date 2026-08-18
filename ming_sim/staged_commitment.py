@@ -18,6 +18,8 @@ from typing import Any, Dict, List
 
 ENTRY_KIND_STAGED = "staged_commitment"
 TODO_STATUS_PENDING = "pending"
+TODO_STATUS_CONSUMED = "consumed"
+# rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
 
 _CN_YEAR_DIGITS = {
     "零": 0, "〇": 0,
