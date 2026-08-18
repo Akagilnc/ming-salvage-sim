@@ -3098,11 +3098,16 @@ def test_web_inner_treasury_allocation_closes_next_month_without_replay(
         [row["delta"] for row in db.list_economy_moves_for_dossier(dossier["id"])]
         for dossier in dossiers
     ] == [[-10], [-15]]
-    for dossier in dossiers:
+    # #567 S10 结案合并对账附注：无护行机械中位（ordered=10→5 / ordered=15→8）
+    expected_notes = (
+        "赈银押解到达；押解对账：应解10两，实抵5两",
+        "赈银押解到达；押解对账：应解15两，实抵8两",
+    )
+    for dossier, expected_note in zip(dossiers, expected_notes):
         closed = db.get_decree_dossier(dossier["id"])
         assert closed["status"] == "closed"
         assert closed["execution_outcome"] == "fulfilled"
-        assert closed["execution_note"] == "赈银押解到达"
+        assert closed["execution_note"] == expected_note
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
