@@ -1522,7 +1522,8 @@ class GameDB:
                 origin TEXT NOT NULL,
                 payload_json TEXT NOT NULL DEFAULT '{}',
                 memorial_text TEXT NOT NULL,
-                UNIQUE(turn, accuser_name, target_dossier_id, origin),
+                -- 去重键=检举人×案卷×真伪类（不含 turn）；由承接查询单源+LIMIT 1 执行。
+                -- 升级再落要求同键多行，故不加 UNIQUE（含 turn 会撞同回合升级；去 turn 会堵一切升级）。
                 FOREIGN KEY(target_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_faction_denunciations_turn
@@ -11167,11 +11168,11 @@ class GameDB:
             signals.append({
                 "target_dossier_id": target_id,
                 "relation_type": "稽核",
-                "reported_bands": list(fork_state.get("reported_bands") or []),
-                "execution_outcome": str(fork_state.get("execution_outcome") or ""),
-                "actual_effect_count": int(fork_state.get("actual_effect_count") or 0),
-                "beyond_intent": bool(fork_state.get("beyond_intent")),
-                "fork": bool(fork_state.get("fork")),
+                "reported_bands": fork_state["reported_bands"],
+                "execution_outcome": fork_state["execution_outcome"],
+                "actual_effect_count": fork_state["actual_effect_count"],
+                "beyond_intent": fork_state["beyond_intent"],
+                "fork": fork_state["fork"],
             })
         return signals
 
@@ -11960,9 +11961,7 @@ class GameDB:
             })
         return out
 
-    def build_faction_denunciation_facts(
-        self, state: Optional[GameState] = None,
-    ) -> Dict[str, object]:
+    def build_faction_denunciation_facts(self) -> Dict[str, object]:
         """#627 供事实：派系恩怨/分叉/处境/个性——注入既有叙事 LLM 步。
 
         输入不携真伪位、不设 quota、不报烈度。fork 物理事实经单源读端装配。
@@ -11978,7 +11977,6 @@ class GameDB:
             faction_relation,
         )
 
-        _ = state  # 预留 turn 过滤；当前全盘开放案卷
         leverage_words = ("极弱", "偏弱", "中等", "偏强", "强盛")
         satisfaction_words = ("怨愤", "不满", "平常", "顺应", "拥戴")
 
@@ -11998,7 +11996,7 @@ class GameDB:
         for row in rows:
             dossier_id = int(row["id"])
             fork_state = self.read_dossier_fork_state(dossier_id)
-            if not bool(fork_state.get("fork")):
+            if not fork_state["fork"]:
                 continue
             dossier = dict(row)
             subject_name = resolve_dossier_owner_name(dossier) or ""
@@ -12006,20 +12004,16 @@ class GameDB:
             case_summary = str(row["decree_text"] or "").strip()
             if len(case_summary) > 48:
                 case_summary = case_summary[:48]
-            # 物理事实：奏报面 / 执行格 / 旨外——不标 denunciation 真伪位
+            # 物理事实：奏报面 / 执行格 / 旨外——直接复用 fork 读端（类型已保证）
             forked_dossiers.append({
                 "dossier_id": dossier_id,
                 "subject_name": subject_name,
                 "subject_faction": subject_faction,
                 "case_summary": case_summary,
-                "reported_bands": list(fork_state.get("reported_bands") or []),
-                "execution_outcome": str(
-                    fork_state.get("execution_outcome") or ""
-                ),
-                "beyond_intent": bool(fork_state.get("beyond_intent")),
-                "actual_effect_count": int(
-                    fork_state.get("actual_effect_count") or 0
-                ),
+                "reported_bands": fork_state["reported_bands"],
+                "execution_outcome": fork_state["execution_outcome"],
+                "beyond_intent": fork_state["beyond_intent"],
+                "actual_effect_count": fork_state["actual_effect_count"],
             })
             if subject_name:
                 subject_names.add(subject_name)
@@ -12057,8 +12051,8 @@ class GameDB:
             if str(r["name"] or "").strip()
         } | set(names_by_faction))
 
-        # 敌对关系：涉及承办人派系的 enemy 对
-        focus_factions = set(subject_factions) or set(all_factions)
+        # 敌对关系：仅涉及承办人派系的 enemy 对（无分叉月保持空列表，不退化全派系矩阵）
+        focus_factions = set(subject_factions)
         enmities: List[Dict[str, object]] = []
         seen_pair: Set[Tuple[str, str]] = set()
         for fa in sorted(focus_factions):
@@ -12153,11 +12147,9 @@ class GameDB:
         """
         from ming_sim.participant_roster import resolve_dossier_owner_name
         from ming_sim.supervision import (
-            DENUNCIATION_KIND,
             character_faction_integrity,
             compose_denunciation_origin,
             denunciation_case_upgraded,
-            denunciation_origin_ref,
             derive_denunciation_is_true,
         )
 
@@ -12172,9 +12164,8 @@ class GameDB:
         for raw in entries:
             if not isinstance(raw, dict):
                 continue
-            accuser = str(
-                raw.get("accuser_name") or raw.get("accuser") or ""
-            ).strip()
+            # 仅 canonical / ITEM_FIELD_ALIASES 背书键（检举人/被检举人→*_name）
+            accuser = str(raw.get("accuser_name") or "").strip()
             memorial = str(
                 raw.get("memorial_text") or raw.get("body") or ""
             ).strip()
@@ -12207,31 +12198,29 @@ class GameDB:
             if str(dossier.get("status") or "").strip() == "closed":
                 continue
 
-            subject_name = str(
-                raw.get("subject_name") or raw.get("subject") or ""
-            ).strip()
+            subject_name = str(raw.get("subject_name") or "").strip()
             if not subject_name:
                 subject_name = resolve_dossier_owner_name(dossier) or ""
             subject_faction, _ = character_faction_integrity(self, subject_name)
 
             fork_state = self.read_dossier_fork_state(dossier_id)
-            is_true = derive_denunciation_is_true(
-                fork=bool(fork_state.get("fork")),
-            )
+            is_true = derive_denunciation_is_true(fork=fork_state["fork"])
             origin = compose_denunciation_origin(is_true=is_true)
 
             # 去重键=检举人×案卷×真伪类（origin 含真伪 mark；不含 turn）
-            prior_rows = self.conn.execute(
+            # 单源 LIMIT 1：升级再落允许多行，无 UNIQUE 约束
+            prior_row = self.conn.execute(
                 """
                 SELECT id, turn, payload_json FROM faction_denunciations
                 WHERE accuser_name=? AND target_dossier_id=? AND origin=?
                 ORDER BY id DESC
+                LIMIT 1
                 """,
                 (accuser, dossier_id, origin),
-            ).fetchall()
-            if prior_rows:
+            ).fetchone()
+            if prior_row is not None:
                 try:
-                    prev_payload = json.loads(prior_rows[0]["payload_json"] or "{}")
+                    prev_payload = json.loads(prior_row["payload_json"] or "{}")
                 except (TypeError, ValueError):
                     prev_payload = {}
                 if not isinstance(prev_payload, dict):
@@ -12245,25 +12234,17 @@ class GameDB:
                 "subject_name": subject_name,
                 "subject_faction": subject_faction,
                 "target_dossier_id": dossier_id,
-                "fork": bool(is_true),
-                "actual_effect_count": int(
-                    fork_state.get("actual_effect_count") or 0
-                ),
-                "beyond_intent": bool(fork_state.get("beyond_intent")),
+                "fork": is_true,
+                "actual_effect_count": fork_state["actual_effect_count"],
+                "beyond_intent": fork_state["beyond_intent"],
             }
             if is_true:
-                # 分叉暴露落检举条目自身（明文不写 loophole_exposures）
+                # 分叉暴露落检举条目自身（明文不写 loophole_exposures；不回注知识轨）
                 entry_payload["fork_exposure"] = {
-                    "reported_bands": list(
-                        fork_state.get("reported_bands") or []
-                    ),
-                    "execution_outcome": str(
-                        fork_state.get("execution_outcome") or ""
-                    ),
-                    "beyond_intent": bool(fork_state.get("beyond_intent")),
-                    "actual_effect_count": int(
-                        fork_state.get("actual_effect_count") or 0
-                    ),
+                    "reported_bands": fork_state["reported_bands"],
+                    "execution_outcome": fork_state["execution_outcome"],
+                    "beyond_intent": fork_state["beyond_intent"],
+                    "actual_effect_count": fork_state["actual_effect_count"],
                     "fork": True,
                 }
 
@@ -12288,17 +12269,6 @@ class GameDB:
                 ),
             )
             entry_id = int(cur.lastrowid)
-            origin_ref = denunciation_origin_ref(
-                accuser, dossier_id, turn, is_true=is_true,
-            )
-            self.record_public_knowledge_event(
-                state,
-                title=f"{accuser}检举{subject_name}",
-                body=memorial,
-                source_id=origin_ref,
-                kind=DENUNCIATION_KIND,
-                commit=False,
-            )
             accepted.append({
                 "id": entry_id,
                 "turn": turn,
@@ -12308,7 +12278,6 @@ class GameDB:
                 "subject_faction": subject_faction,
                 "target_dossier_id": dossier_id,
                 "origin": origin,
-                "origin_ref": origin_ref,
                 "is_true": is_true,
                 "memorial_text": memorial,
                 "payload": entry_payload,

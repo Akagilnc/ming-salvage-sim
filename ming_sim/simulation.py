@@ -604,7 +604,7 @@ def build_simulator_payload(
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
         # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
-        "faction_denunciation_facts": db.build_faction_denunciation_facts(state),
+        "faction_denunciation_facts": db.build_faction_denunciation_facts(),
         "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。",
     }
 

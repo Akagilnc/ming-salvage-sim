@@ -41,6 +41,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
   "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
+  "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
 
   // ── personnel_secret 模块 ──
   "人物变更":                    [],  // ADR 0009 单一人物入口：每项必带「动作」
@@ -283,6 +284,18 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - `affected_parties` 可选；若给出则须通过 `validate_affected_parties` 全键（kind/key/direction/intensity），且 intensity 贴合终值固定映射（failed/transformed→strong，degraded→weak，次责可降一档）；拒收不落库。该清单**不**驱动连坐额度——机械写账仍由 roster+终值映射生成。
 - 每项独立校验并拒收；通过后写入执行记录并关闭该案卷。此字段只描述 S1 当前的案卷执行回注，不是其它效果族的通用回指机制。
 
+### `faction_denunciations` — 政敌检举条目（#627 / ADR 0077 ID-12）
+别名 `政敌检举` / `检举条目`。issues 模块产出；settle 内经 `accept_faction_denunciations` 承接落库。
+
+| 字段 | 约束 |
+|---|---|
+| `accuser_name`（别名 `检举人`） | **必填**在朝 active 人物规范名 |
+| `subject_name`（别名 `被检举人`） | 可选；缺省由引擎从所指案卷承办人解析 |
+| `target_dossier_id`（别名 `所指案卷`） | **必填**正整数；须指向真实存在且非 `closed` 的案卷 |
+| `memorial_text`（别名 `弹章正文`） | **必填**非空；LLM/scripted 原文，引擎零模板 |
+
+引擎行为：真伪底由 fork 单源读端机械派生（分叉→真检举 origin mark；无分叉→私货 mark）；去重键=检举人×案卷×真伪类（**不含 turn**），案情升级可同键再落；暴露载体=检举条目自身的结构化 origin/payload，**不**写 `dossier_loophole_exposures`、**不**回注 `character_knowledge_events`、不改世界状态、不自动转案。弹章对玩家的呈现由 simulator 事件章/探子回报承担。
+
 ### `dossier_reconciliations` — 在途拨帑月度对账（#567 / ADR 0054）
 别名 `拨帑对账`。issues 模块产出；settle 内经 `record_monthly_grant_reconciliations` 消费。
 
@@ -364,7 +377,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 |---|---|
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
-| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` |
+| `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
 | `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `emperor_fate` |
 
 ---

@@ -249,7 +249,7 @@ def test_ac1_fact_supply_four_classes_no_veracity_no_quota(game):
     did = _subject_dossier(db, state, owner=subject_name, token="facts")
     _make_forked(db, state, did, token="facts")
 
-    facts = db.build_faction_denunciation_facts(state)
+    facts = db.build_faction_denunciation_facts()
     # 四类事实
     for key in (
         "forked_dossiers",
@@ -410,14 +410,31 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
     first = db.accept_faction_denunciations(state, [entry], commit=True)
     assert len(first) == 1
 
-    # 同人同案同真伪类二次拒（不含 turn——跨 turn 亦拒）
+    # 同 turn 同键二次拒（去重由承接查询单源，非 UNIQUE）
+    same_turn_dup = db.accept_faction_denunciations(state, [entry], commit=True)
+    assert same_turn_dup == []
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 1
+
+    # 同 turn 案情升级可再落（禁 UNIQUE(turn,...)：否则 IntegrityError）
+    _escalate_fork(db, state, did, token="same-turn")
+    same_turn_up = db.accept_faction_denunciations(
+        state,
+        [_scripted_entry(
+            accuser=accuser, subject=subject_name, dossier_id=did, body="同回合升级再弹",
+        )],
+        commit=True,
+    )
+    assert len(same_turn_up) == 1
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+
+    # 同人同案同真伪类跨 turn 亦拒（去重键不含 turn）
     state.turn = int(state.turn) + 1
     db.save_state(state)
     second = db.accept_faction_denunciations(state, [entry], commit=True)
     assert second == []
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 1
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
 
-    # 案情升级（新旨外恶果）可再落
+    # 跨 turn 案情再升级可再落
     _escalate_fork(db, state, did, token="up")
     upgraded = db.accept_faction_denunciations(
         state,
@@ -427,7 +444,7 @@ def test_ac4_dedup_upgrade_closed_and_restore(game, tmp_path, content):
         commit=True,
     )
     assert len(upgraded) == 1
-    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 2
+    assert len(db.list_faction_denunciations(target_dossier_id=did)) == 3
 
     # closed 案卷拒
     did_closed = _subject_dossier(db, state, owner=subject_name, token="cls")
@@ -485,6 +502,9 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
 
     fp_before = _world_fingerprint(db)
     loophole_before = db.list_loophole_exposures(did)
+    knowledge_n_before = db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events"
+    ).fetchone()["n"]
     inv_before = db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossiers "
         "WHERE action_type IN ('investigation','密查','查访')"
@@ -507,9 +527,12 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
         # 正文即 LLM/scripted 原文，非引擎模板壳
         assert h["memorial_text"] == body
 
-    # 暴露落条目自身，不写 loophole
+    # 暴露落条目自身，不写 loophole、不回注知识轨、不改世界状态
     assert hits[0]["payload"].get("fork_exposure", {}).get("fork") is True
     assert db.list_loophole_exposures(did) == loophole_before
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS n FROM character_knowledge_events"
+    ).fetchone()["n"] == knowledge_n_before
     assert db.conn.execute(
         "SELECT COUNT(*) AS n FROM decree_dossiers "
         "WHERE action_type IN ('investigation','密查','查访')"
@@ -519,16 +542,23 @@ def test_ac5_zero_template_banned_tokens_exposure_and_622(game):
     ).fetchone()["n"] == dossier_n_before
     assert _world_fingerprint(db) == fp_before
 
+    # 反向：知识轨无检举事件（呈现由 simulator 事件章/探子回报，非引擎回注）
     items = db.knowledge_items_for_turn(state.turn)
     bodies = [
         str(it.get("body") or "")
         for it in items
         if isinstance(it, dict)
     ]
-    assert body in bodies
+    assert body not in bodies
     for it in items:
         if not isinstance(it, dict):
             continue
+        blob = " ".join(
+            str(it.get(k) or "")
+            for k in ("title", "body", "text", "summary", "content", "kind", "source_id")
+        )
+        assert "检举" not in blob
+        assert "faction_denunciation" not in blob
         for key in ("title", "body", "text", "summary", "content"):
             if key in it:
                 assert_no_banned_tokens(it.get(key), surface="knowledge_items")
