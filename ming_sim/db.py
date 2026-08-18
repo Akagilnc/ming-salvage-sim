@@ -11162,14 +11162,7 @@ class GameDB:
             if str(link.get("relation_type") or "").strip() != "稽核":
                 continue
             target_id = int(link["target_dossier_id"])
-            target = self.get_decree_dossier(target_id)
-            reports = self.list_dossier_progress(target_id)
-            reported_bands = [
-                str(item.get("progress_band") or "").strip()
-                for item in reports
-                if str(item.get("progress_band") or "").strip()
-            ]
-            # #627：fork 判据单源（supervision.is_reported_actual_fork）；本读端只装配输入。
+            # #627：fork 判据单源（supervision.is_reported_actual_fork）；本读端只经 read_dossier_fork_state 装配。
             fork_state = self.read_dossier_fork_state(target_id)
             signals.append({
                 "target_dossier_id": target_id,
