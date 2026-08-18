@@ -62,6 +62,8 @@ TOP_LEVEL_ALIASES = {
     "案卷执行": "dossier_executions",
     "案卷参与人": "dossier_participants",
     "拨帑对账": "dossier_reconciliations",
+    "政敌检举": "faction_denunciations",
+    "检举条目": "faction_denunciations",
     "授权变更": "authority_changes",
     "人事变更": "office_changes",
     "人物状态变化": "character_status_changes",
@@ -147,6 +149,11 @@ ITEM_FIELD_ALIASES = {
     "disclosed": "disclosed", "泄漏结论": "disclosed",
     "result": "result", "结果": "result",
     "dossier_id": "dossier_id", "案卷编号": "dossier_id",
+    "target_dossier_id": "target_dossier_id", "所指案卷": "target_dossier_id",
+    "accuser_name": "accuser_name", "检举人": "accuser_name",
+    "subject_name": "subject_name", "被检举人": "subject_name",
+    "memorial_text": "memorial_text", "弹章正文": "memorial_text",
+    "body": "body", "正文": "body",
     "outcome": "outcome", "执行结果": "outcome",
     "note": "note", "执行说明": "note",
     "arrived_amount": "arrived_amount", "实抵": "arrived_amount", "到银": "arrived_amount",
@@ -596,7 +603,9 @@ def build_simulator_payload(
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
+        # #627：政敌检举供事实（零新增串行调用；不携真伪位/quota/烈度）
+        "faction_denunciation_facts": db.build_faction_denunciation_facts(state),
+        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。faction_denunciation_facts 为派系恩怨/分叉案卷/处境/个性事实包，供朝堂弹劾叙事取材，不含真伪位。",
     }
 
 
@@ -692,6 +701,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "dossier_executions": [],
     "dossier_participants": [],
     "dossier_reconciliations": [],
+    "faction_denunciations": [],
     "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
@@ -703,7 +713,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
-        "authority_changes",
+        "faction_denunciations", "authority_changes",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",

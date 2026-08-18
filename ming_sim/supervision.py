@@ -6,7 +6,8 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 派系同/敌判定
 - #619 origin 结构化私货/同派标记
 - 孤直反制硬门（涌现缝立 issue）
-- #627 政敌检举：fork 单源谓词、烈度纯函数、真伪 origin、同渲染函数
+- #627 政敌检举：fork 单源谓词、真伪 origin 派生、去重键（检举人×案卷×真伪类）
+  （判断权归 LLM；引擎只供事实/承接 clamp/真伪底——禁烈度门/quota/文字模板）
 - 玩家可见面禁词
 """
 
@@ -55,14 +56,6 @@ ORIGIN_MARK_SEP = "+"
 DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
 DENUNCIATION_KIND = "faction_denunciation"
 
-# #627 烈度→条数硬门（确定性选形，禁概率抽签/新烈度列/LLM 报烈度）
-# (intensity 下界, 检举条数)；按 intensity 升序，命中最高门。
-DENUNCIATION_INTENSITY_GATES: Tuple[Tuple[int, int], ...] = (
-    (1, 1),
-    (40, 2),
-    (70, 3),
-)
-
 # 人身条件化：操守定性档（读 characters.integrity，不落钝化分）
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
 INTEGRITY_MEDIOCRE_BANDS = frozenset({"操守多亏", "操守未稳", "操守平常"})  # 庸吏
@@ -89,10 +82,11 @@ SUPERVISION_BANNED_PLAYER_TOKENS = (
     "dulling",
     "dull_rate",
     "dullness",
-    # #627 真伪底 / 烈度 / fork 暴露系统词
+    # #627 真伪底 / fork 暴露 / 旧烈度门系统词
     "denunciation_true",
     "denunciation_false",
     "faction_conflict_intensity",
+    "denunciation_quota",
     "faction_denunciation",
     "fork_exposure",
     "veracity",
@@ -164,46 +158,10 @@ def is_reported_actual_fork(
     )
 
 
-def faction_conflict_intensity(
-    *,
-    relation: object,
-    enemy_leverage: object,
-    enemy_satisfaction: object = None,
-) -> int:
-    """派系冲突烈度纯函数：enemy × leverage(敌派)（可加 satisfaction 调制）。
+def derive_denunciation_is_true(*, fork: bool) -> bool:
+    """#627 真伪底机械对账：所指案卷真有分叉=真检举，无分叉=私货/诬告。"""
+    return bool(fork)
 
-    禁概率抽签 / 禁新烈度列 / 禁 LLM 报烈度。非 enemy → 0。
-    """
-    if str(relation or "").strip() != "enemy":
-        return 0
-    try:
-        lev = int(enemy_leverage)
-    except (TypeError, ValueError):
-        lev = 0
-    lev = max(0, min(100, lev))
-    if enemy_satisfaction is None:
-        return lev
-    try:
-        sat = int(enemy_satisfaction)
-    except (TypeError, ValueError):
-        sat = 50
-    sat = max(0, min(100, sat))
-    # 低满意（怨气）最多 +10；不反向扣到负
-    anger_boost = max(0, (50 - sat) // 5)
-    return max(0, min(100, lev + anger_boost))
-
-
-def denunciation_quota(intensity: object) -> int:
-    """烈度→检举条数硬门（#625 同款确定性选形，无 RNG）。"""
-    try:
-        value = int(intensity)
-    except (TypeError, ValueError):
-        value = 0
-    n = 0
-    for threshold, count in DENUNCIATION_INTENSITY_GATES:
-        if value >= int(threshold):
-            n = int(count)
-    return n
 
 def compose_denunciation_origin(*, is_true: bool) -> str:
     """检举 origin：base + 真/伪 mark（#619 compose_report_origin 单源）。"""
@@ -213,19 +171,6 @@ def compose_denunciation_origin(*, is_true: bool) -> str:
         else ORIGIN_MARK_DENUNCIATION_FALSE
     )
     return compose_report_origin(DENUNCIATION_ORIGIN_BASE, [mark])
-
-
-def render_denunciation_memorial(
-    *,
-    accuser_name: object,
-    subject_name: object,
-    case_summary: object,
-) -> str:
-    """真/伪同一渲染函数：剔除案由变量后串相等（AC2 可证伪判据）。"""
-    accuser = str(accuser_name or "").strip() or "臣工"
-    subject = str(subject_name or "").strip() or "某人"
-    case = str(case_summary or "").strip() or "差务"
-    return f"{accuser}奏称：{subject}办理{case}有异状，请皇上按问。"
 
 
 def denunciation_origin_ref(
@@ -239,26 +184,36 @@ def denunciation_origin_ref(
     )
 
 
-def pick_denunciation_accusers(
-    names: Sequence[object],
-    *,
-    subject_name: object,
-    dossier_id: object,
-    quota: int,
-) -> List[str]:
-    """从敌派候选人中确定性取至多 quota 名（restore 可复现，无真 RNG）。"""
-    subject = str(subject_name or "").strip()
-    cleaned = sorted({
-        str(n).strip()
-        for n in names
-        if str(n or "").strip() and str(n).strip() != subject
-    })
-    if not cleaned or int(quota) <= 0:
-        return []
-    seed = f"{subject}:{int(dossier_id)}:" + ",".join(cleaned)
-    start = sum(ord(ch) for ch in seed) % len(cleaned)
-    rotated = cleaned[start:] + cleaned[:start]
-    return rotated[: int(quota)]
+def denunciation_case_upgraded(
+    previous_payload: Mapping[str, object] | None,
+    fork_state: Mapping[str, object],
+) -> bool:
+    """案情升级：新分叉或新旨外恶果 → 同人同案可再落（去重键例外）。"""
+    prev = previous_payload if isinstance(previous_payload, Mapping) else {}
+    prev_exp = prev.get("fork_exposure")
+    if not isinstance(prev_exp, Mapping):
+        prev_exp = {}
+    cur_count = int(fork_state.get("actual_effect_count") or 0)
+    prev_count = int(
+        prev_exp.get("actual_effect_count")
+        if prev_exp.get("actual_effect_count") is not None
+        else prev.get("actual_effect_count") or 0
+    )
+    if cur_count > prev_count:
+        return True
+    cur_beyond = bool(fork_state.get("beyond_intent"))
+    prev_beyond = bool(
+        prev_exp.get("beyond_intent")
+        if "beyond_intent" in prev_exp
+        else prev.get("beyond_intent")
+    )
+    if cur_beyond and not prev_beyond:
+        return True
+    cur_fork = bool(fork_state.get("fork"))
+    prev_fork = bool(prev.get("fork"))
+    if cur_fork and not prev_fork:
+        return True
+    return False
 
 
 def compose_report_origin(base: str, marks: Iterable[str] = ()) -> str:

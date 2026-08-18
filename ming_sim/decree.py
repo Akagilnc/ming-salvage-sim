@@ -1922,21 +1922,6 @@ def pre_settle(
                     }
                     for item in counter_hits
                 ]
-            # #627：政敌检举——同涌现缝产检举条目（独立载体，零新 LLM 步）。
-            denunciation_hits = db.trigger_faction_denunciations(state, commit=False)
-            if denunciation_hits:
-                auto_triggered = list(auto_triggered) + [
-                    {
-                        "id": item.get("origin_ref"),
-                        "title": (
-                            f"faction_denunciation:"
-                            f"{'true' if item.get('is_true') else 'false'}:"
-                            f"{item.get('accuser_name')}"
-                        ),
-                        "source": "faction_denunciation",
-                    }
-                    for item in denunciation_hits
-                ]
             if auto_triggered:
                 tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
@@ -2216,6 +2201,10 @@ def _settle_after_extract_body(
     db.record_monthly_supervision_presence(before_turn, commit=False)
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
+    )
+    # #627：政敌检举——叙事/extractor 结构化条目承接落库（clamp+真伪底+去重）。
+    db.accept_faction_denunciations(
+        state, extracted.get("faction_denunciations"), commit=False,
     )
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
     db.record_monthly_grant_reconciliations(
