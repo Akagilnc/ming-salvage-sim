@@ -11117,25 +11117,15 @@ class GameDB:
             execution_outcome = (
                 str(target.get("execution_outcome") or "").strip() if target else ""
             )
-            actual_effect_count = len(self.list_economy_moves_for_dossier(target_id)) + len(
+            moves = self.list_economy_moves_for_dossier(target_id)
+            actual_effect_count = len(moves) + len(
                 self.list_fiscal_effects_for_dossier(target_id)
             )
             # 分叉：奏报面有进展/兑现口径，而执行格非 fulfilled 或存在旨外实况。
-            beyond = any(
-                bool(row.get("beyond_intent"))
-                for row in self.list_economy_moves_for_dossier(target_id)
-            )
+            beyond = any(bool(row.get("beyond_intent")) for row in moves)
             fork = bool(reported_bands) and (
-                execution_outcome in {"transformed", "degraded", "failed"}
-                or beyond
-                or (
-                    execution_outcome not in {"", "fulfilled", "executing"}
-                    and bool(reported_bands)
-                )
+                beyond or execution_outcome not in {"", "fulfilled", "executing"}
             )
-            # 即使尚未落终值，奏报与旨外实况并存也构成可读分叉信号。
-            if beyond and reported_bands:
-                fork = True
             signals.append({
                 "target_dossier_id": target_id,
                 "relation_type": "稽核",
