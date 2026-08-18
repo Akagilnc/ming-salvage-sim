@@ -33,7 +33,11 @@ from ming_sim.db import (
     resolve_office_type_preserving_title,
 )
 from ming_sim.relations import EMPEROR_NODE
-from ming_sim.decree_vocabulary import dossier_action_policy
+from ming_sim.decree_vocabulary import (
+    dossier_action_policy,
+    format_public_progress_disclosure,
+    terminal_report_facade,
+)
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import (
     ISSUE_METRIC_KEYS,
@@ -7110,10 +7114,15 @@ def apply_score_extraction(
             db.merge_grant_reconciliation_into_execution_note(
                 dossier_id, commit=False,
             )
-            # #619：表报终值旁路——仅 degraded/transformed 挂奏报行；不改执行格/连坐语义。
+            # #619/#622：表报终值旁路——仅 degraded/transformed 挂奏报行；
+            # 变形案载承办人假象（不得回填判官真值）；progress_band 定性中文。
             if outcome in {"degraded", "transformed"}:
+                prior = list(db.list_dossier_progress(int(dossier_id)))
+                band, memorial = terminal_report_facade(
+                    outcome, prior_reports=prior,
+                )
                 db.record_dossier_progress(
-                    dossier_id, state.turn, outcome, note,
+                    dossier_id, state.turn, band, memorial,
                     is_terminal=True,
                     origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
                     commit=False,
@@ -8125,10 +8134,7 @@ def apply_score_extraction(
                         db.list_dossier_progress(int(dossier["id"]))
                         if dossier is not None else []
                     )
-                    progress_text = "\n".join(
-                        f"【{item['progress_band']}】{item['memorial_text']}"
-                        for item in progress
-                    )
+                    progress_text = format_public_progress_disclosure(progress)
                     public_body = sim_note
                     if progress_text:
                         public_body = f"{sim_note}\n{progress_text}"

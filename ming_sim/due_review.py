@@ -19,6 +19,7 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
+from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
@@ -26,13 +27,14 @@ from ming_sim.staged_commitment import (
     list_due_stages_for_scan,
     normalize_commitment_stages,
 )
+from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
-# 玩家可见串禁词（P4 哨兵）
+# 玩家可见串禁词（P4 哨兵 + #625 钝化/陋规化系统词）
 _BANNED_PLAYER_TOKENS = (
     "fulfilled", "degraded", "failed", "transformed", "executing",
     "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
     "progress_band", "is_terminal", "close=True", "close=False",
-)
+) + tuple(SUPERVISION_BANNED_PLAYER_TOKENS)
 
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 
@@ -109,18 +111,33 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     branch = resolve_due_review_branch(db, meta["origin_ref"])
     progress_reports: List[Dict[str, object]] = []
     durable_effects: List[Dict[str, object]] = []
+    # #625：监督三键空形以 supervision 导出常量为唯一真源。
+    from ming_sim.supervision import (
+        EMPTY_TRANSFORMATION_TENDENCY_FACTS,
+        unpack_supervision_surface,
+    )
+    supervision_pack = unpack_supervision_surface(None)
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
-        # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级（#624/#625 OOS）。
+        # 不得吞成「空证据」误导裁决。催办缺源仍按空列表降级（#624 OOS）。
         progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
         durable_effects = list(
             db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
         ) + list(
             db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
         )
-    # 催办/监督史尚未建轨（#624/#625 OOS）——空列表降级可判
+        # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
+        supervision_pack = unpack_supervision_surface(
+            db.build_supervision_judge_surface(int(branch["dossier_id"]))
+        )
+    supervision_history = list(supervision_pack["supervision_history"])
+    loophole_exposures = list(supervision_pack["loophole_exposures"])
+    transformation_tendency_facts = dict(
+        supervision_pack["transformation_tendency_facts"]
+        or EMPTY_TRANSFORMATION_TENDENCY_FACTS
+    )
+    # 催办史尚未建轨（#624 OOS）——空列表降级可判
     urge_history: List[Dict[str, object]] = []
-    supervision_history: List[Dict[str, object]] = []
     return {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
@@ -139,6 +156,8 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "durable_effects": durable_effects,
         "urge_history": urge_history,
         "supervision_history": supervision_history,
+        "loophole_exposures": loophole_exposures,
+        "transformation_tendency_facts": transformation_tendency_facts,
     }
 
 
@@ -271,8 +290,27 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     return owned
 
 
+def effect_has_beyond_intent(effect: object) -> bool:
+    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。"""
+    if not isinstance(effect, dict):
+        return False
+    raw = effect.get("beyond_intent")
+    if raw is None:
+        raw = effect.get("旨外")
+    return bool(GameDB.coerce_beyond_intent_flag(raw))
+
+
+def durable_effects_beyond_intent(effects: object) -> bool:
+    return any(effect_has_beyond_intent(item) for item in (effects or []))
+
+
 def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。"""
+    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
+
+    #622：消费效果行旨外标记——有旨外恶果/受益 → transformed；
+    有实况无旨外 → fulfilled；无实况有表报 → degraded；皆无 → failed。
+    禁另立第二裁决函数。
+    """
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
@@ -291,8 +329,11 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             "mid_stage": True,
         }
 
-    # 末段终裁
-    if effects:
+    # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
+    if durable_effects_beyond_intent(effects):
+        outcome = "transformed"
+        note = f"到期复核：{criterion}名实已乖"
+    elif effects:
         outcome = "fulfilled"
         note = f"到期复核：{criterion}已见实绩生根"
     elif reports:
@@ -352,9 +393,12 @@ def _apply_dossier_verdict(
         close=close, commit=False,
     )
     if is_terminal and outcome in {"degraded", "transformed"}:
+        # #622：奏报轨载承办人假象；progress_band 定性中文；判官真值只在执行格。
         # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
+        prior = list(db.list_dossier_progress(int(dossier_id)))
+        band, memorial = terminal_report_facade(outcome, prior_reports=prior)
         db.record_dossier_progress(
-            int(dossier_id), int(state.turn), outcome, note,
+            int(dossier_id), int(state.turn), band, memorial,
             is_terminal=True,
             origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
             commit=False,
