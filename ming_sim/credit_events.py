@@ -95,8 +95,10 @@ FOUNDATION_BANNED_PLAYER_TOKENS = (
 def _family_p4_banned_tokens() -> tuple[str, ...]:
     """全族 P4 禁词并集——变形/真伪底/信用事件/钝化/根基档。"""
     from ming_sim.commitment_backlash import BACKLASH_BANNED_PLAYER_TOKENS
-    from ming_sim.decree_vocabulary import DEFORMATION_BANNED_PLAYER_TOKENS
-    from ming_sim.due_review import URGE_TRUTH_BANNED_PLAYER_TOKENS
+    from ming_sim.decree_vocabulary import (
+        DEFORMATION_BANNED_PLAYER_TOKENS,
+        URGE_TRUTH_BANNED_PLAYER_TOKENS,
+    )
     from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
     ordered: list[str] = []
