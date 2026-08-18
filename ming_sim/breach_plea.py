@@ -1407,7 +1407,8 @@ def _pending_breach_pleas(db: Any) -> List[Dict[str, object]]:
 def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:
     """统一 walker：从 list[dict] 抽 issue/dossier 引用 id。
 
-    认 key 集合 + target_id 前缀；禁纯数字 target_id 误吞为 dossier。
+    认 key 集合 + target_id 前缀 + origin_ref/来源引用；禁纯数字 target_id 误吞为 dossier。
+    信用写端（#628）与哭谏识别共此单源，禁平行复制。
     """
     out: Set[int] = set()
     if not isinstance(items, list):
@@ -1440,6 +1441,17 @@ def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:
                     out.add(int(tid.split(":", 1)[1]))
                 except (TypeError, ValueError):
                     pass
+        for key in ("origin_ref", "来源引用"):
+            ref = str(it.get(key) or "").strip()
+            for p in prefixes:
+                if p == "issue":
+                    m = _ISSUE_REF_RE.match(ref)
+                    if m:
+                        out.add(int(m.group(1)))
+                elif p == "dossier":
+                    m = _DOSSIER_REF_RE.match(ref)
+                    if m:
+                        out.add(int(m.group(1)))
     return out
 
 

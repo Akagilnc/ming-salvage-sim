@@ -8,6 +8,10 @@
 消费侧派生（见 scapegoat_actor_kind_from_origin）；写端零新列。
 
 挽留回绝→辜负由 #623 breach_plea.finalize_persist 既有写口承担，本模块不重复实现。
+
+语境=extraction 真叙事字段（note/reason/purpose/criterion_text），禁 CTX_* 模板（P7）。
+去重=origin+端点写前判重，不动表 UNIQUE 结构。
+识别只消费校验后未 rejected 的落格项（由 apply_score_extraction 后置传入）。
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from ming_sim.breach_plea import _extract_ref_ids
 from ming_sim.participant_roster import project_execution_liability_parties
 from ming_sim.relations import CREDIT_DIRECTION, CREDIT_EDGE_KINDS, EMPEROR_NODE
 from ming_sim.staged_commitment import (
@@ -33,16 +38,6 @@ KIND_SCAPEGOAT = "弃卒保车"
 
 _WRITE_KINDS = frozenset({KIND_FULFILL, KIND_BETRAY, KIND_BACK, KIND_SCAPEGOAT})
 assert _WRITE_KINDS <= CREDIT_EDGE_KINDS
-
-# ── 固定语境模板（UNIQUE 含 context；禁裸依赖 LLM 措辞）──────────────
-CTX_FULFILL = "案卷办结·{person}兑付所托"
-CTX_BACK_COMMITMENT = "帝面撑完·{person}承旨不坠"
-CTX_SCAPEGOAT_PAWN = "弃卒保车·弃{person}以保车"
-CTX_SCAPEGOAT_CAR = "弃卒保车·保{person}而弃卒"
-CTX_COVER = "帝面包庇·{person}得脱"
-CTX_REJECT_GRACE = "帝面却{person}乞恩宽限之请"
-CTX_REJECT_REMONSTRANCE = "帝面斥退{person}操之过急之谏"
-CTX_GRANT_GRACE = "帝面准{person}宽限之请"
 
 # ── 结构化 origin 后缀（方案 b：类型可判）────────────────────────────
 # dossier:{id}:credit:fulfill
@@ -123,6 +118,40 @@ def _credit_origin(scope: str, scope_id: int, *parts: str) -> str:
     return f"{scope}:{int(scope_id)}:{_ORIGIN_CREDIT}"
 
 
+def _narrative_context(*parts: object) -> str:
+    """承接 extraction 真叙事字段；首个非空即用。禁固定句式模板。"""
+    for part in parts:
+        text = str(part or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _existing_edge_id(
+    db: Any,
+    *,
+    source: str,
+    target: str,
+    event_kind: str,
+    origin: str,
+) -> Optional[int]:
+    """写前按 origin+端点判重（不动表 UNIQUE；语境可变时仍幂等）。"""
+    base = str(origin or "").strip()
+    if not base:
+        return None
+    bare = base.split("|", 1)[0]
+    row = db.conn.execute(
+        """
+        SELECT id FROM relation_edge_events
+        WHERE source=? AND target=? AND event_kind=?
+          AND (origin=? OR origin LIKE ?)
+        ORDER BY id LIMIT 1
+        """,
+        (source, target, event_kind, base, f"{bare}|%"),
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
+
+
 def write_credit_event(
     db: Any,
     state: Any,
@@ -150,6 +179,11 @@ def write_credit_event(
         source, target = EMPEROR_NODE, person
     else:
         source, target = person, EMPEROR_NODE
+    existing = _existing_edge_id(
+        db, source=source, target=target, event_kind=kind, origin=origin,
+    )
+    if existing is not None:
+        return existing
     return int(
         db.record_relation_edge_event(
             source=source,
@@ -181,18 +215,23 @@ def _sponsor_names(db: Any, dossier_id: int) -> List[str]:
     return names
 
 
-def _dossier_has_urge_pressure(db: Any, dossier_id: int) -> bool:
-    """撑完承诺：案卷所系承诺曾承催办压力。"""
-    from ming_sim.urge_lever import collect_urge_history
-
+def _commitment_ids_for_dossier(db: Any, dossier_id: int) -> List[int]:
     rows = db.conn.execute(
         "SELECT id FROM issues WHERE origin_ref=?",
         (f"dossier:{int(dossier_id)}",),
     ).fetchall()
-    if rows:
-        for row in rows:
+    return [int(row["id"]) for row in rows]
+
+
+def _dossier_has_urge_pressure(db: Any, dossier_id: int) -> bool:
+    """撑完承诺：案卷所系承诺曾承催办压力。"""
+    from ming_sim.urge_lever import collect_urge_history
+
+    cids = _commitment_ids_for_dossier(db, dossier_id)
+    if cids:
+        for cid in cids:
             hist = collect_urge_history(
-                db, commitment_ref=int(row["id"]), dossier_id=int(dossier_id),
+                db, commitment_ref=cid, dossier_id=int(dossier_id),
             )
             if hist:
                 return True
@@ -204,14 +243,35 @@ def _dossier_has_urge_pressure(db: Any, dossier_id: int) -> bool:
     return bool(hist)
 
 
+def _fulfillment_context(db: Any, dossier_id: int, *, hint: object = "") -> str:
+    text = _narrative_context(hint)
+    if text:
+        return text
+    dossier = db.get_decree_dossier(int(dossier_id))
+    if isinstance(dossier, dict):
+        return _narrative_context(dossier.get("execution_note"))
+    return ""
+
+
 def record_fulfillment_credit(
-    db: Any, state: Any, *, dossier_id: int,
+    db: Any, state: Any, *, dossier_id: int, context: str = "",
 ) -> List[Dict[str, object]]:
-    """兑付→兑现所托；若曾承催压则同落撑完承诺→撑腰。供 extraction / due_review 共调。"""
+    """兑付→兑现所托；若曾承催压则同落撑完承诺→撑腰。供 extraction / due_review 共调。
+
+    只认 DB 已落格 fulfilled（防校验前伪事件）。
+    """
     did = int(dossier_id)
     out: List[Dict[str, object]] = []
+    dossier = db.get_decree_dossier(did)
+    if not isinstance(dossier, dict):
+        return out
+    if str(dossier.get("execution_outcome") or "").strip() != "fulfilled":
+        return out
     sponsors = _sponsor_names(db, did)
     if not sponsors:
+        return out
+    ctx = _fulfillment_context(db, did, hint=context)
+    if not ctx:
         return out
     back = _dossier_has_urge_pressure(db, did)
     for person in sponsors:
@@ -219,7 +279,7 @@ def record_fulfillment_credit(
             db, state,
             person=person,
             event_kind=KIND_FULFILL,
-            context=CTX_FULFILL.format(person=person),
+            context=ctx,
             origin=_credit_origin("dossier", did, "fulfill"),
         )
         out.append({
@@ -231,7 +291,7 @@ def record_fulfillment_credit(
                 db, state,
                 person=person,
                 event_kind=KIND_BACK,
-                context=CTX_BACK_COMMITMENT.format(person=person),
+                context=ctx,
                 origin=_credit_origin("dossier", did, "back"),
             )
             out.append({
@@ -276,7 +336,7 @@ def _person_change_items(extracted: Dict[str, object]) -> List[Dict[str, object]
     raw = extracted.get("人物变更") or extracted.get("person_changes") or []
     if not isinstance(raw, list):
         return []
-    return [it for it in raw if isinstance(it, dict)]
+    return [it for it in raw if isinstance(it, dict) and not it.get("rejected")]
 
 
 def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:
@@ -291,6 +351,15 @@ def _item_dossier_id(item: Dict[str, object]) -> Optional[int]:
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _item_narrative(item: Dict[str, object]) -> str:
+    return _narrative_context(
+        item.get("reason"),
+        item.get("note"),
+        item.get("说明"),
+        item.get("status_reason"),
+    )
 
 
 def _is_punitive_change(item: Dict[str, object]) -> bool:
@@ -311,10 +380,99 @@ def _is_cover_change(item: Dict[str, object]) -> bool:
     if action in {"任命", "调任", "册封"}:
         return True
     if action == "处置":
-        # 显式回 active 等非惩处态——通常会被 applier 拒，但识别仍认
         status = str(item.get("status") or "").strip()
         return status in {"active", "candidate"} or not status
     return False
+
+
+def _group_person_sets(
+    group: Sequence[Dict[str, object]],
+) -> Tuple[Set[str], Set[str], Dict[str, str], str]:
+    """分 punitive / covered，并收叙事。"""
+    punitive: Set[str] = set()
+    covered: Set[str] = set()
+    by_person_ctx: Dict[str, str] = {}
+    group_ctx = ""
+    for it in group:
+        name = str(it.get("name") or it.get("character_id") or "").strip()
+        if not name:
+            continue
+        narr = _item_narrative(it)
+        if narr:
+            by_person_ctx[name] = narr
+            if not group_ctx:
+                group_ctx = narr
+        if _is_punitive_change(it):
+            punitive.add(name)
+        elif _is_cover_change(it):
+            covered.add(name)
+    return punitive, covered, by_person_ctx, group_ctx
+
+
+def _write_scapegoat_pair(
+    db: Any,
+    state: Any,
+    *,
+    did: int,
+    pawn: str,
+    car: str,
+    context: str,
+) -> List[Dict[str, object]]:
+    out: List[Dict[str, object]] = []
+    if not context:
+        return out
+    for person, role in ((pawn, "pawn"), (car, "car")):
+        origin = _credit_origin("dossier", did, "scapegoat", role, person)
+        eid = write_credit_event(
+            db, state,
+            person=person,
+            event_kind=KIND_SCAPEGOAT,
+            context=context,
+            origin=origin,
+        )
+        out.append({
+            "kind": KIND_SCAPEGOAT,
+            "person": person,
+            "role": role,
+            "dossier_id": did,
+            "edge_id": eid,
+            "actor_kind": scapegoat_actor_kind_from_origin(origin),
+        })
+    return out
+
+
+def _write_cover_backs(
+    db: Any,
+    state: Any,
+    *,
+    did: int,
+    targets: Set[str],
+    punitive: Set[str],
+    by_person_ctx: Dict[str, str],
+    group_ctx: str,
+) -> List[Dict[str, object]]:
+    out: List[Dict[str, object]] = []
+    for person in sorted(targets):
+        if person in punitive:
+            continue
+        ctx = by_person_ctx.get(person) or group_ctx
+        if not ctx:
+            continue
+        eid = write_credit_event(
+            db, state,
+            person=person,
+            event_kind=KIND_BACK,
+            context=ctx,
+            origin=_credit_origin("dossier", did, "cover", person),
+        )
+        out.append({
+            "kind": KIND_BACK,
+            "person": person,
+            "disposition": "包庇",
+            "dossier_id": did,
+            "edge_id": eid,
+        })
+    return out
 
 
 def resolve_disposition_credit_from_extraction(
@@ -353,44 +511,17 @@ def resolve_disposition_credit_from_extraction(
             if str(p.get("character_id") or "").strip()
         }
 
-        punitive: Set[str] = set()
-        covered: Set[str] = set()
-        for it in group:
-            name = str(it.get("name") or it.get("character_id") or "").strip()
-            if not name:
-                continue
-            if _is_punitive_change(it):
-                punitive.add(name)
-            elif _is_cover_change(it):
-                covered.add(name)
+        punitive, covered, by_person_ctx, group_ctx = _group_person_sets(group)
 
         # 1) 丢卒保车：卒受惩、委派人未惩 → 两笔弃卒保车
         scapegoat_hit = False
         for pawn, car in _pawn_car_pairs(roster):
             if pawn in punitive and car not in punitive:
                 scapegoat_hit = True
-                for person, ctx_tmpl, role in (
-                    (pawn, CTX_SCAPEGOAT_PAWN, "pawn"),
-                    (car, CTX_SCAPEGOAT_CAR, "car"),
-                ):
-                    eid = write_credit_event(
-                        db, state,
-                        person=person,
-                        event_kind=KIND_SCAPEGOAT,
-                        context=ctx_tmpl.format(person=person),
-                        origin=_credit_origin("dossier", did, "scapegoat", role, person),
-                    )
-                    out.append({
-                        "kind": KIND_SCAPEGOAT,
-                        "person": person,
-                        "role": role,
-                        "dossier_id": did,
-                        "edge_id": eid,
-                        "actor_kind": scapegoat_actor_kind_from_origin(
-                            _credit_origin("dossier", did, "scapegoat", role, person),
-                        ),
-                    })
-
+                ctx = by_person_ctx.get(pawn) or group_ctx
+                out.extend(_write_scapegoat_pair(
+                    db, state, did=did, pawn=pawn, car=car, context=ctx,
+                ))
         if scapegoat_hit:
             continue
 
@@ -405,71 +536,16 @@ def resolve_disposition_credit_from_extraction(
             })
             continue
 
-        # 3) 包庇：责任面人物得非惩处庇护 → 撑腰（被包庇者）
-        cover_targets = (covered & liability_ids) or (covered & primary_ids) or covered
-        # 若无显式 cover 动作但 punitive 全空且 covered 空，不发明
-        for person in sorted(cover_targets):
-            if person in punitive:
-                continue
-            eid = write_credit_event(
-                db, state,
-                person=person,
-                event_kind=KIND_BACK,
-                context=CTX_COVER.format(person=person),
-                origin=_credit_origin("dossier", did, "cover", person),
-            )
-            out.append({
-                "kind": KIND_BACK,
-                "person": person,
-                "disposition": "包庇",
-                "dossier_id": did,
-                "edge_id": eid,
-            })
-    return out
-
-
-def _extract_ref_ids(items: object, *, prefixes: Sequence[str]) -> Set[int]:
-    out: Set[int] = set()
-    if not isinstance(items, list):
-        return out
-    id_keys_by_prefix = {
-        "issue": ("issue_id", "id", "commitment_ref"),
-        "dossier": ("dossier_id", "revoke_target_dossier_id"),
-    }
-    keys: Set[str] = set()
-    for p in prefixes:
-        keys.update(id_keys_by_prefix.get(p, ()))
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        for key in keys:
-            raw = it.get(key)
-            if raw in (None, ""):
-                continue
-            if key == "id" and "issue" not in prefixes:
-                continue
-            try:
-                out.add(int(raw))
-            except (TypeError, ValueError):
-                continue
-        tid = str(it.get("target_id") or "").strip()
-        for p in prefixes:
-            if tid.startswith(f"{p}:"):
-                try:
-                    out.add(int(tid.split(":", 1)[1]))
-                except (TypeError, ValueError):
-                    pass
-        for key in ("origin_ref", "来源引用"):
-            ref = str(it.get(key) or "").strip()
-            for p in prefixes:
-                if p == "issue":
-                    iid = _parse_issue_ref(ref)
-                    if iid is not None:
-                        out.add(iid)
-                elif p == "dossier":
-                    did = _parse_dossier_ref(ref)
-                    if did is not None:
-                        out.add(did)
+        # 3) 包庇：责任面求交（删 or covered 兜底逸出）
+        cover_targets = (covered & liability_ids) or (covered & primary_ids)
+        out.extend(_write_cover_backs(
+            db, state,
+            did=did,
+            targets=cover_targets,
+            punitive=punitive,
+            by_person_ctx=by_person_ctx,
+            group_ctx=group_ctx,
+        ))
     return out
 
 
@@ -478,12 +554,168 @@ def _grace_purpose(text: object) -> bool:
     return any(tok in s for tok in ("宽限", "准宽限", "展限", "宽之"))
 
 
-def _pending_urge_todos(db: Any) -> List[Dict[str, object]]:
+def _issue_refs_strict(item: Dict[str, object]) -> Set[int]:
+    """资金项专用：只认 issue_id/commitment_ref/origin_ref/target_id，禁裸 id 误吞。"""
+    out: Set[int] = set()
+    for key in ("issue_id", "commitment_ref"):
+        raw = item.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            out.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    tid = str(item.get("target_id") or "").strip()
+    if tid.startswith("issue:"):
+        try:
+            out.add(int(tid.split(":", 1)[1]))
+        except (TypeError, ValueError):
+            pass
+    for key in ("origin_ref", "来源引用"):
+        iid = _parse_issue_ref(item.get(key))
+        if iid is not None:
+            out.add(iid)
+    return out
+
+
+def _collect_grant_issue_ids(extracted: Dict[str, object]) -> Set[int]:
+    """准宽限：显式宽限叙事 + 非负资金；issue_advances / 负 delta 不算准。"""
+    grant_ids: Set[int] = set()
+    for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
+        for it in extracted.get(key) or []:
+            if not isinstance(it, dict) or it.get("rejected"):
+                continue
+            purpose = str(
+                it.get("purpose") or it.get("reason") or it.get("category") or ""
+            )
+            if not _grace_purpose(purpose):
+                continue
+            try:
+                delta = int(it.get("delta") or 0)
+            except (TypeError, ValueError):
+                delta = 0
+            if delta < 0:
+                continue
+            grant_ids |= _issue_refs_strict(it)
+    return grant_ids
+
+
+def _collect_reject_issue_ids(extracted: Dict[str, object]) -> Set[int]:
+    """拒/斥退：只认 cancels 显式信号；close_issues / 办砸终值不算。"""
+    cancels = [
+        it for it in (extracted.get("cancels") or [])
+        if isinstance(it, dict) and not it.get("rejected")
+    ]
+    return _extract_ref_ids(cancels, prefixes=("issue",))
+
+
+def _pending_urge_todos(db: Any, state: Any) -> List[Dict[str, object]]:
+    """只取已过召对窗的谏/宽限（created_turn < 当前 turn），与 #624 消费护栏同形。"""
+    turn = int(getattr(state, "turn", 0) or 0)
     kinds = {ENTRY_KIND_GRACE_PLEA, ENTRY_KIND_RUSH_REMONSTRANCE}
     return [
         t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
         if str(t.get("entry_kind") or "") in kinds
+        and int(t.get("created_turn") or 0) < turn
     ]
+
+
+def _host_person_for_commitment(db: Any, cid: int) -> str:
+    host = resolve_host_character(db, commitment_ref=cid, dossier_id=None)
+    row = db.conn.execute(
+        "SELECT origin_ref FROM issues WHERE id=?", (cid,),
+    ).fetchone()
+    if row is not None:
+        did = _parse_dossier_ref(row["origin_ref"])
+        if did is not None:
+            host = resolve_host_character(
+                db, commitment_ref=cid, dossier_id=did,
+            )
+    return str(host.get("name") or "").strip()
+
+
+def _urge_todo_context(todo: Dict[str, object], *, grant_hint: str = "") -> str:
+    return _narrative_context(
+        grant_hint,
+        todo.get("criterion_text"),
+        todo.get("origin_context"),
+    )
+
+
+def _grant_narrative_for_issue(
+    extracted: Dict[str, object], cid: int,
+) -> str:
+    for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
+        for it in extracted.get(key) or []:
+            if not isinstance(it, dict) or it.get("rejected"):
+                continue
+            if cid not in _issue_refs_strict(it):
+                continue
+            purpose = str(
+                it.get("purpose") or it.get("reason") or it.get("category") or ""
+            )
+            if _grace_purpose(purpose):
+                return _narrative_context(purpose, it.get("reason"), it.get("note"))
+    return ""
+
+
+def _resolve_one_urge_todo(
+    db: Any,
+    state: Any,
+    todo: Dict[str, object],
+    *,
+    grant_ids: Set[int],
+    reject_ids: Set[int],
+    extracted: Dict[str, object],
+) -> Optional[Dict[str, object]]:
+    cid = int(todo["commitment_ref"])
+    kind = str(todo.get("entry_kind") or "")
+    person = _host_person_for_commitment(db, cid)
+    if not person:
+        return None
+
+    if cid in grant_ids and cid not in reject_ids:
+        decision = "准宽限"
+        event_kind = KIND_BACK
+        context = _urge_todo_context(
+            todo, grant_hint=_grant_narrative_for_issue(extracted, cid),
+        )
+        origin = _credit_origin("issue", cid, "grant_grace")
+    elif cid in reject_ids:
+        if kind == ENTRY_KIND_GRACE_PLEA:
+            decision = "拒宽限强催"
+            origin = _credit_origin("issue", cid, "reject_grace")
+        else:
+            decision = "斥退顶谏"
+            origin = _credit_origin("issue", cid, "reject_remonstrance")
+        event_kind = KIND_BETRAY
+        context = _urge_todo_context(todo)
+    else:
+        return None
+
+    if not context:
+        return None
+
+    eid = write_credit_event(
+        db, state,
+        person=person,
+        event_kind=event_kind,
+        context=context,
+        origin=origin,
+    )
+    consumed = db.mark_next_audience_todo_status(
+        int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+    )
+    return {
+        "kind": event_kind,
+        "person": person,
+        "decision": decision,
+        "todo_id": int(todo["id"]),
+        "commitment_ref": cid,
+        "entry_kind": kind,
+        "edge_id": eid,
+        "consumed": bool(consumed),
+    }
 
 
 def resolve_urge_credit_from_extraction(
@@ -492,110 +724,23 @@ def resolve_urge_credit_from_extraction(
     """谏处置三型：准宽限→撑腰；拒宽限强催/斥退顶谏→辜负。识别后消费 todo。"""
     if not isinstance(extracted, dict):
         return []
-    pending = _pending_urge_todos(db)
+    pending = _pending_urge_todos(db, state)
     if not pending:
         return []
 
-    # 准宽限：续拨/加拨/宽限用途资金或 issue_advances
-    grant_ids = _extract_ref_ids(extracted.get("issue_advances"), prefixes=("issue",))
-    for key in ("economy_moves", "fiscal_creates", "fiscal_changes"):
-        for it in extracted.get(key) or []:
-            if not isinstance(it, dict):
-                continue
-            purpose = str(it.get("purpose") or it.get("reason") or it.get("category") or "")
-            if not _grace_purpose(purpose):
-                # 正向资金且挂 issue 亦可作准宽限信号
-                try:
-                    delta = int(it.get("delta") or 0)
-                except (TypeError, ValueError):
-                    delta = 0
-                if delta == 0 and not str(it.get("origin_ref") or "").startswith("issue:"):
-                    continue
-            ids = _extract_ref_ids([it], prefixes=("issue",))
-            grant_ids |= ids
-
-    # 拒/斥退：cancels / close_issues / 失败执行
-    reject_ids = _extract_ref_ids(extracted.get("cancels"), prefixes=("issue",))
-    reject_ids |= _extract_ref_ids(extracted.get("close_issues"), prefixes=("issue",))
-    for it in extracted.get("dossier_executions") or []:
-        if not isinstance(it, dict):
-            continue
-        if str(it.get("outcome") or "") not in {"failed", "cancelled", "revoked"}:
-            continue
-        # 经案卷反查承诺
-        try:
-            did = int(it.get("dossier_id"))
-        except (TypeError, ValueError):
-            continue
-        rows = db.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=?",
-            (f"dossier:{did}",),
-        ).fetchall()
-        for row in rows:
-            reject_ids.add(int(row["id"]))
+    grant_ids = _collect_grant_issue_ids(extracted)
+    reject_ids = _collect_reject_issue_ids(extracted)
 
     out: List[Dict[str, object]] = []
     for todo in pending:
-        cid = int(todo["commitment_ref"])
-        kind = str(todo.get("entry_kind") or "")
-        host = resolve_host_character(db, commitment_ref=cid, dossier_id=None)
-        # 补 dossier host
-        row = db.conn.execute(
-            "SELECT origin_ref FROM issues WHERE id=?", (cid,),
-        ).fetchone()
+        row = _resolve_one_urge_todo(
+            db, state, todo,
+            grant_ids=grant_ids,
+            reject_ids=reject_ids,
+            extracted=extracted,
+        )
         if row is not None:
-            did = _parse_dossier_ref(row["origin_ref"])
-            if did is not None:
-                host = resolve_host_character(
-                    db, commitment_ref=cid, dossier_id=did,
-                )
-        person = str(host.get("name") or "").strip()
-        if not person:
-            continue
-
-        decision = ""
-        event_kind = ""
-        context = ""
-        origin = ""
-        if cid in grant_ids and cid not in reject_ids:
-            decision = "准宽限"
-            event_kind = KIND_BACK
-            context = CTX_GRANT_GRACE.format(person=person)
-            origin = _credit_origin("issue", cid, "grant_grace")
-        elif cid in reject_ids:
-            if kind == ENTRY_KIND_GRACE_PLEA:
-                decision = "拒宽限强催"
-                context = CTX_REJECT_GRACE.format(person=person)
-                origin = _credit_origin("issue", cid, "reject_grace")
-            else:
-                decision = "斥退顶谏"
-                context = CTX_REJECT_REMONSTRANCE.format(person=person)
-                origin = _credit_origin("issue", cid, "reject_remonstrance")
-            event_kind = KIND_BETRAY
-        else:
-            # 沉默：不消费、不写
-            continue
-
-        eid = write_credit_event(
-            db, state,
-            person=person,
-            event_kind=event_kind,
-            context=context,
-            origin=origin,
-        )
-        consumed = db.mark_next_audience_todo_status(
-            int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
-        )
-        out.append({
-            "kind": event_kind,
-            "person": person,
-            "decision": decision,
-            "todo_id": int(todo["id"]),
-            "commitment_ref": cid,
-            "entry_kind": kind,
-            "edge_id": eid,
-            "consumed": bool(consumed),
-        })
+            out.append(row)
     if commit and out:
         db.conn.commit()
     return out
@@ -604,13 +749,13 @@ def resolve_urge_credit_from_extraction(
 def resolve_fulfillment_credit_from_extraction(
     db: Any, state: Any, extracted: Dict[str, object],
 ) -> List[Dict[str, object]]:
-    """dossier_executions outcome=fulfilled → 兑付/撑完。"""
+    """已校验未 rejected 的 dossier_executions outcome=fulfilled → 兑付/撑完。"""
     if not isinstance(extracted, dict):
         return []
     out: List[Dict[str, object]] = []
     seen: Set[int] = set()
     for it in extracted.get("dossier_executions") or []:
-        if not isinstance(it, dict):
+        if not isinstance(it, dict) or it.get("rejected"):
             continue
         if str(it.get("outcome") or "").strip() != "fulfilled":
             continue
@@ -621,8 +766,13 @@ def resolve_fulfillment_credit_from_extraction(
         if did in seen:
             continue
         seen.add(did)
-        # 若本批尚未落格，仍按 id 写（fixture 可预置 executing+roster）
-        out.extend(record_fulfillment_credit(db, state, dossier_id=did))
+        out.extend(
+            record_fulfillment_credit(
+                db, state,
+                dossier_id=did,
+                context=_narrative_context(it.get("note"), it.get("reason")),
+            )
+        )
     return out
 
 
@@ -635,7 +785,7 @@ def resolve_credit_events_from_extraction(
 ) -> Dict[str, List[Dict[str, object]]]:
     """召对/结算 extraction 真入口同缝（resolve_breach_pleas_from_extraction 先例）。
 
-    本轴只写不读；不新增结算串行 LLM 步。
+    调用方须在 applier 校验之后传入未 rejected 落格项；本轴只写不读。
     不重复实现 #623 挽留回绝辜负。
     """
     if not isinstance(extracted, dict):
