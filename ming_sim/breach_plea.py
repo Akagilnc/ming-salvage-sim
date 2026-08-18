@@ -706,50 +706,65 @@ def apply_persist_revoke_tail(
 
     立即路径：0056 + 捆带授权收回 + 同源停 tick。
     推迟项（当回合已做/不做）：顺颁即 breach+close 的当回合无损——此处补齐结账。
+
+    返回 guofu_from_0056：本调用 0056 实际写出的辜负边人名
+    （供 0079 撤人边去重；跨承诺/跨案卷同人边不在此集合）。
     """
     breach_applied = False
-    if apply_0056 and int(target_dossier_id or 0) > 0:
+    guofu_from_0056: Set[str] = set()
+    did = int(target_dossier_id or 0)
+    if apply_0056 and did > 0:
         breach_applied = bool(
             db.breach_decree_dossier(
-                state, int(target_dossier_id), reason=reason, commit=False,
+                state, did, reason=reason, commit=False,
             )
         )
+        if breach_applied:
+            # 0056 写 origin=dossier:{id}:breach；bind_origin_round 附 |round:T
+            # 只收本调用刚落的边（breach_applied 门控 = 本调用实写）
+            guofu_from_0056 = _guofu_targets_of_0056(
+                db, dossier_id=did, turn=int(state.turn),
+            )
     auth_rows: List[Dict[str, object]] = []
-    if int(target_dossier_id or 0) > 0:
+    if did > 0:
         auth_rows = reclaim_bundled_authorities(
             db, state,
-            target_dossier_id=int(target_dossier_id),
-            source_dossier_id=int(authority_source_dossier_id or target_dossier_id),
+            target_dossier_id=did,
+            source_dossier_id=int(authority_source_dossier_id or did),
         )
     extra = [int(commitment_ref)] if int(commitment_ref or 0) > 0 else []
     stopped = stop_origin_commitment_ticks(
         db, state,
-        target_dossier_id=int(target_dossier_id or 0),
+        target_dossier_id=did,
         reason=reason,
         extra_issue_ids=extra,
     )
     return {
         "breach_0056": breach_applied,
+        "guofu_from_0056": guofu_from_0056,
         "authority_reclaims": auth_rows,
         "stopped_issue_ids": stopped,
     }
 
 
-def _guofu_targets_this_turn(
-    db: Any, targets: Sequence[str], *, turn: int,
+def _guofu_targets_of_0056(
+    db: Any, *, dossier_id: int, turn: int,
 ) -> Set[str]:
-    """同回合皇帝→target 已有辜负边的人（0056/0079 去重用）。"""
-    names = [str(t).strip() for t in targets if str(t or "").strip()]
-    if not names:
+    """本 dossier 本回合 0056 实写的皇帝→target 辜负边人名。
+
+    仅匹配 origin 前缀 dossier:{dossier_id}:breach（bind_origin_round 附 |round:T）。
+    不扫其它承诺/其它案卷的同人边——0079 去重不得据此吞跨案账。
+    """
+    did = int(dossier_id or 0)
+    if did <= 0:
         return set()
-    placeholders = ",".join("?" for _ in names)
     rows = db.conn.execute(
-        f"SELECT DISTINCT target FROM relation_edge_events "
-        f"WHERE source='皇帝' AND event_kind='辜负' AND turn=? "
-        f"AND target IN ({placeholders})",
-        (int(turn), *names),
+        "SELECT DISTINCT target FROM relation_edge_events "
+        "WHERE source='皇帝' AND event_kind='辜负' AND turn=? "
+        "AND origin LIKE ?",
+        (int(turn), f"dossier:{did}:breach%"),
     ).fetchall()
-    return {str(r["target"]) for r in rows}
+    return {str(r["target"]) for r in rows if str(r["target"] or "").strip()}
 
 
 def finalize_persist(
@@ -762,11 +777,11 @@ def finalize_persist(
     """坚持撤：根基分档落执行格 + 共享 revoke 收尾 + 条件触发 0056 + 消费 todo。"""
     meta = decode_plea_meta(todo.get("origin_context"))
     breach_kind = str(meta.get("breach_kind") or "")
-    # merged meta 账目（#623 r2）：
+    # merged meta 账目（#623 r2/r3）：
     # - 0056：所载类集合 primary∪absorbed 任一属 _BREACH_KINDS_TRIGGER_0056 即触发一次
-    # - 0079 撤人边：所载含 remove_sponsor 即落；与 0056 已写之同人辜负去重
-    #   （0056 origin=dossier:N:breach；撤人 origin=issue:N:breach_plea；
-    #    UNIQUE 键含 origin，故须显式跳过同回合已有皇帝→其人 辜负 的人）
+    # - 0079 撤人边：所载含 remove_sponsor 即落；仅与本 finalize 自己的 0056
+    #   实写同人去重（tail.guofu_from_0056；origin 前缀 dossier:{id}:breach）。
+    #   跨承诺/跨案卷同人边各落各账，UNIQUE 键含 origin 本就允许。
     kinds = plea_kind_set(meta)
     reason = str(meta.get("reason") or todo.get("criterion_text") or "坚持撤诺")[:400]
     commitment_ref = int(todo["commitment_ref"])
@@ -848,11 +863,12 @@ def finalize_persist(
                     )
 
     # 0079 信用事件：坚持=回绝哭谏
-    # 所载含撤人 → 按主办集合落辜负；0056 已写同人则跳过（不重复不遗漏）
+    # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人
+    # （不重复）；其它承诺/案卷同人边不在 already，不得吞（不遗漏）
     # 无撤人且无案卷且未走 0056 → 兜底辜负
     if BREACH_KIND_REMOVE_SPONSOR in kinds:
         sponsors = _sponsor_names_for_commitment(db, row) if row is not None else []
-        already = _guofu_targets_this_turn(db, sponsors, turn=int(state.turn))
+        already = set(tail.get("guofu_from_0056") or ())
         for person in sponsors:
             if person in already:
                 continue
