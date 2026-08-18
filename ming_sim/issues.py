@@ -7022,11 +7022,9 @@ def apply_score_extraction(
 
     dossier_execution_results: List[Dict[str, object]] = []
     # #621 接管窗：正式复核所辖案卷禁 extractor 并行终值（防第二真源）。
-    try:
-        from ming_sim.due_review import dossiers_with_pending_due_review
-        _due_review_owned = dossiers_with_pending_due_review(db, state)
-    except Exception:
-        _due_review_owned = set()
+    # 所有权查询失败须响亮上抛——不得 fail-open 成空集放行第二真源（ADR 0005 / 0076）。
+    from ming_sim.due_review import dossiers_with_pending_due_review
+    _due_review_owned = dossiers_with_pending_due_review(db, state)
     for item in extracted.get("dossier_executions") or []:
         if not isinstance(item, dict):
             dossier_execution_results.append({

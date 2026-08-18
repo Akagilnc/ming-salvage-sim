@@ -14,10 +14,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from ming_sim.db import GameDB
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
+    list_due_stages_for_scan,
     normalize_commitment_stages,
 )
 
@@ -39,16 +41,6 @@ def parse_dossier_id_from_origin(origin_ref: object) -> Optional[int]:
     if not match:
         return None
     return int(match.group(1))
-
-
-def _issue_stages(db: Any, commitment_ref: int) -> List[Dict[str, object]]:
-    row = db.conn.execute(
-        "SELECT stages_json, origin_ref, title FROM issues WHERE id=?",
-        (int(commitment_ref),),
-    ).fetchone()
-    if row is None:
-        return []
-    return normalize_commitment_stages(row["stages_json"])
 
 
 def _issue_meta(db: Any, commitment_ref: int) -> Dict[str, object]:
@@ -114,22 +106,14 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     progress_reports: List[Dict[str, object]] = []
     durable_effects: List[Dict[str, object]] = []
     if branch["dossier_id"] is not None:
-        try:
-            progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
-        except Exception:
-            progress_reports = []
-        try:
-            durable_effects = list(
-                db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
-            )
-        except Exception:
-            durable_effects = []
-        try:
-            durable_effects = durable_effects + list(
-                db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
-            )
-        except Exception:
-            pass
+        # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
+        # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级（#624/#625 OOS）。
+        progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
+        durable_effects = list(
+            db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
+        ) + list(
+            db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
+        )
     # 催办/监督史尚未建轨（#624/#625 OOS）——空列表降级可判
     urge_history: List[Dict[str, object]] = []
     supervision_history: List[Dict[str, object]] = []
@@ -227,28 +211,50 @@ def list_due_review_scenes(
     todos = db.list_next_audience_todos(status=status)
     # list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
     # 本片只消费分段到期；#623 挽留等 entry_kind 预留位，未知 kind 跳过。
-    allowed_kinds = {ENTRY_KIND_STAGED, "staged_commitment", "due_review", ""}
+    # #620 写端只产 ENTRY_KIND_STAGED；其它 entry_kind（#623 预留）本片不投影。
     scenes: List[Dict[str, object]] = []
     for todo in todos:
         kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-        if kind not in allowed_kinds:
+        if kind != ENTRY_KIND_STAGED:
             continue
         scenes.append(project_due_review_scene(db, todo))
     return scenes
 
 
+def _add_owned_dossier(
+    owned: set[int], db: Any, origin_ref: object,
+) -> None:
+    branch = resolve_due_review_branch(db, origin_ref)
+    if branch["branch"] == "dossier" and branch["dossier_id"] is not None:
+        owned.add(int(branch["dossier_id"]))
+
+
 def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
-    """接管窗：pending 且 created_turn < 当前 turn 的正式复核所辖案卷。"""
+    """接管窗：到期目标案卷仅正式复核可写终值（防 extractor 第二真源）。
+
+    覆盖两段窗：
+    1) 已有 pending todo（含本 settle 刚写、created_turn == turn）——召对前后至 apply；
+    2) 本拍将写 todo 的到期段——extract 早于 write_due，须预占，
+       已 consumed/rolled 的段不再占窗（中段复核后还权）。
+    """
     turn = int(getattr(state, "turn", 0) or 0)
     owned: set[int] = set()
+
     for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
-        if int(todo.get("created_turn") or 0) >= turn:
-            # 本 settle 刚写入的 todo：场面尚未经召对，接管窗未开
-            continue
         meta = _issue_meta(db, int(todo["commitment_ref"]))
-        branch = resolve_due_review_branch(db, meta["origin_ref"])
-        if branch["branch"] == "dossier" and branch["dossier_id"] is not None:
-            owned.add(int(branch["dossier_id"]))
+        _add_owned_dossier(owned, db, meta["origin_ref"])
+
+    # 非 pending（consumed/rolled）段键：到期扫描不再预占
+    finished_keys = {
+        (int(t["commitment_ref"]), int(t["stage_idx"]))
+        for t in db.list_next_audience_todos()
+        if str(t.get("status") or "") != TODO_STATUS_PENDING
+    }
+    for item in list_due_stages_for_scan(db, turn):
+        key = (int(item["commitment_ref"]), int(item["stage_idx"]))
+        if key in finished_keys:
+            continue
+        _add_owned_dossier(owned, db, item.get("origin_ref"))
     return owned
 
 
@@ -333,26 +339,20 @@ def _apply_dossier_verdict(
         close=close, commit=False,
     )
     if is_terminal and outcome in {"degraded", "transformed"}:
-        try:
-            db.record_dossier_progress(
-                int(dossier_id), int(state.turn), outcome, note,
-                is_terminal=True,
-                origin=getattr(db, "DOSSIER_REPORT_ORIGIN_VERDICT", ""),
-                commit=False,
-            )
-        except Exception:
-            pass
+        # 进度写失败不得静默：执行格可能已落，分叉态须响亮（P1 / ADR 0005）
+        db.record_dossier_progress(
+            int(dossier_id), int(state.turn), outcome, note,
+            is_terminal=True,
+            origin=GameDB.DOSSIER_REPORT_ORIGIN_VERDICT,
+            commit=False,
+        )
     elif not is_terminal:
         # 中段过程奏报：非终值
-        try:
-            band = "在办"
-            db.record_dossier_progress(
-                int(dossier_id), int(state.turn), band, note,
-                is_terminal=False, commit=False,
-            )
-        except Exception:
-            pass
-    if is_terminal and outcome in getattr(db, "_JOINT_LIABILITY_TRIGGERS", ()):
+        db.record_dossier_progress(
+            int(dossier_id), int(state.turn), "在办", note,
+            is_terminal=False, commit=False,
+        )
+    if is_terminal and outcome in GameDB._JOINT_LIABILITY_TRIGGERS:
         db.apply_execution_joint_liability(
             state, int(dossier_id), outcome, reason=note, commit=False,
         )

@@ -17,10 +17,12 @@ import json
 import pytest
 
 import ming_sim.issues as issue_engine
+from ming_sim.audience_night import list_ledger, open_night
 from ming_sim.decree import settle_with_delta
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     build_due_review_input,
+    dossiers_with_pending_due_review,
     list_due_review_scenes,
     project_due_review_scene,
 )
@@ -28,7 +30,6 @@ from ming_sim.issues import apply_score_extraction
 from ming_sim.models import TurnPhase
 from ming_sim.simulation import EXTRACTION_MODULES
 from ming_sim.staged_commitment import (
-    ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
@@ -229,6 +230,36 @@ def test_due_review_scene_tops_next_audience_with_origin_context(game):
     for token in banned:
         assert token not in blob
         assert token not in scene["scene_text"]
+
+
+def test_due_review_scene_tops_live_open_night_even_with_body(game):
+    """C1：生产 open-beat 供 body 时，复命仍须顶上真实召对开夜账。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(db, state, content, stages=stages)
+    write_due_staged_commitment_todos(db, state)
+
+    # 模拟生产 ensure_open_night_for_audience(..., body=open_beat_text)
+    open_beat = "戌时乾清宫，烛影摇红，召对启。"
+    night = open_night(
+        db, state, time_of_day="戌时", location="乾清宫", body=open_beat,
+    )
+    ledger = list_ledger(db, int(night["id"]))
+    open_entries = [e for e in ledger if "开夜" in (e.get("tags") or [])]
+    assert open_entries, ledger
+    open_text = str(open_entries[0].get("body") or "")
+    assert open_beat in open_text
+    assert "复命" in open_text
+    assert "三年火器见眉目" in open_text
+    for token in ("fulfilled", "AWAITING_DECISION", "<<DECISION>>"):
+        assert token not in open_text
 
 
 # ── P1 有案卷桥 / 无案卷分支 ──────────────────────────────────────────
@@ -641,6 +672,78 @@ def test_formal_review_blocks_extractor_second_terminal(game):
         # 拒收后不应变成 extractor 的 transformed（除非本来就是）
         if outcome_before != "transformed":
             assert dossier["execution_outcome"] != "transformed" or dossier["execution_note"] == note_before
+
+
+def test_due_month_extractor_blocked_before_todo_write(game):
+    """C2：到期当月 extract（todo 尚未写）亦不得抢写终值——正式复核唯一终值写口。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, token="due-month-takeover")
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn,
+        "criterion_text": "火器见眉目",
+        "origin_context": "三年火器见眉目",
+    }]
+    _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+    )
+    # 故意不写 todo：模拟 settle 内 extract 早于 write_due 的窗
+    assert db.list_next_audience_todos(status=TODO_STATUS_PENDING) == []
+    owned = dossiers_with_pending_due_review(db, state)
+    assert dossier_id in owned
+
+    before = db.get_decree_dossier(dossier_id)
+    assert before["status"] == "executing"
+    assert before["execution_outcome"] in ("", None)
+
+    result = issue_engine.apply_score_extraction(
+        db, state,
+        {
+            "dossier_executions": [{
+                "dossier_id": dossier_id,
+                "outcome": "fulfilled",
+                "note": "extractor 到期月抢写终值",
+            }]
+        },
+        content=content,
+    )
+    item = result["dossier_executions"][0]
+    assert item.get("rejected") is True
+    assert "正式复核" in str(item.get("reason") or "")
+
+    after = db.get_decree_dossier(dossier_id)
+    assert after["status"] == "executing"
+    assert after["execution_outcome"] in ("", None)
+
+
+def test_takeover_guard_fail_closed_on_ownership_error(game, monkeypatch):
+    """C3：所有权查询抛错不得 fail-open 放行 extractor 终值。"""
+    db, state, content = game
+    dossier_id = _executing_policy_dossier(db, state, token="fail-closed")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("ownership lookup boom")
+
+    monkeypatch.setattr(
+        "ming_sim.due_review.dossiers_with_pending_due_review", _boom,
+    )
+    with pytest.raises(RuntimeError, match="ownership lookup boom"):
+        issue_engine.apply_score_extraction(
+            db, state,
+            {
+                "dossier_executions": [{
+                    "dossier_id": dossier_id,
+                    "outcome": "failed",
+                    "note": "应被守卫响亮挡住",
+                }]
+            },
+            content=content,
+        )
+    dossier = db.get_decree_dossier(dossier_id)
+    assert dossier["status"] == "executing"
+    assert dossier["execution_outcome"] in ("", None)
 
 
 def test_fulfilled_with_prior_durable_effect_zero_double_post(game):
