@@ -1,4 +1,4 @@
-"""#625 / ADR 0077 钝化事实底＋人身条件化判官口径。
+"""#625 / ADR 0077 钝化事实底＋人身条件化判官口径；#627 政敌检举轨。
 
 DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointment_tenure），
 不建钝化数值列。判官读事实软判；本模块提供：
@@ -6,6 +6,8 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 派系同/敌判定
 - #619 origin 结构化私货/同派标记
 - 孤直反制硬门（涌现缝立 issue）
+- #627 政敌检举：fork 单源谓词、真伪 origin 派生、去重键（检举人×案卷×真伪类）
+  （判断权归 LLM；引擎只供事实/承接 clamp/真伪底——禁烈度门/quota/文字模板）
 - 玩家可见面禁词
 """
 
@@ -46,7 +48,12 @@ EXECUTION_FORMS = frozenset({
 # #619 origin 结构化标记（扩 origin 字符串，不加列）
 ORIGIN_MARK_PRIVATE_GOODS = "private_goods"
 ORIGIN_MARK_SAME_FACTION_BLIND = "same_faction_blind"
+# #627 检举真伪底（compose_report_origin 单源常量，不加 veracity 列）
+ORIGIN_MARK_DENUNCIATION_TRUE = "denunciation_true"
+ORIGIN_MARK_DENUNCIATION_FALSE = "denunciation_false"
 ORIGIN_MARK_SEP = "+"
+
+DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
 
 # 人身条件化：操守定性档（读 characters.integrity，不落钝化分）
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
@@ -74,7 +81,25 @@ SUPERVISION_BANNED_PLAYER_TOKENS = (
     "dulling",
     "dull_rate",
     "dullness",
+    # #627 真伪底 / fork 暴露 / 旧烈度门系统词
+    "denunciation_true",
+    "denunciation_false",
+    "faction_conflict_intensity",
+    "denunciation_quota",
+    "faction_denunciation",
+    "fork_exposure",
+    "veracity",
+    "true_denunciation",
+    "false_denunciation",
 )
+
+# #627 检举事实表列白名单（PRAGMA 验收）
+DENUNCIATION_TABLE = "faction_denunciations"
+DENUNCIATION_ALLOWED_COLS = frozenset({
+    "id", "turn", "accuser_name", "accuser_faction",
+    "subject_name", "subject_faction", "target_dossier_id",
+    "origin", "payload_json", "memorial_text",
+})
 
 # PRAGMA 白名单：事实表仅 id / FK / turn / 枚举 / 布尔
 PRESENCE_TABLE = "dossier_supervision_presence"
@@ -109,6 +134,74 @@ def faction_relation(auditor_faction: object, subject_faction: object) -> str:
     if a == b:
         return "same"
     return "enemy"
+
+
+def is_reported_actual_fork(
+    *,
+    reported_bands: Sequence[object],
+    beyond_intent: bool,
+    execution_outcome: object,
+) -> bool:
+    """#622/#627 fork 判据单源：奏报面有 band，且（旨外实况 或 执行格非 fulfilled/executing/空）。
+
+    全库仅此一处表达该谓词；读端（#622 稽核信号 / #627 检举）共调。
+    """
+    bands = [
+        str(b).strip()
+        for b in (reported_bands or ())
+        if str(b or "").strip()
+    ]
+    outcome = str(execution_outcome or "").strip()
+    return bool(bands) and (
+        bool(beyond_intent) or outcome not in {"", "fulfilled", "executing"}
+    )
+
+
+def derive_denunciation_is_true(*, fork: bool) -> bool:
+    """#627 真伪底机械对账：所指案卷真有分叉=真检举，无分叉=私货/诬告。"""
+    return bool(fork)
+
+
+def compose_denunciation_origin(*, is_true: bool) -> str:
+    """检举 origin：base + 真/伪 mark（#619 compose_report_origin 单源）。"""
+    mark = (
+        ORIGIN_MARK_DENUNCIATION_TRUE
+        if is_true
+        else ORIGIN_MARK_DENUNCIATION_FALSE
+    )
+    return compose_report_origin(DENUNCIATION_ORIGIN_BASE, [mark])
+
+
+def denunciation_case_upgraded(
+    previous_payload: Mapping[str, object] | None,
+    fork_state: Mapping[str, object],
+) -> bool:
+    """案情升级：新分叉或新旨外恶果 → 同人同案可再落（去重键例外）。"""
+    prev = previous_payload if isinstance(previous_payload, Mapping) else {}
+    prev_exp = prev.get("fork_exposure")
+    if not isinstance(prev_exp, Mapping):
+        prev_exp = {}
+    cur_count = int(fork_state.get("actual_effect_count") or 0)
+    prev_count = int(
+        prev_exp.get("actual_effect_count")
+        if prev_exp.get("actual_effect_count") is not None
+        else prev.get("actual_effect_count") or 0
+    )
+    if cur_count > prev_count:
+        return True
+    cur_beyond = bool(fork_state.get("beyond_intent"))
+    prev_beyond = bool(
+        prev_exp.get("beyond_intent")
+        if "beyond_intent" in prev_exp
+        else prev.get("beyond_intent")
+    )
+    if cur_beyond and not prev_beyond:
+        return True
+    cur_fork = bool(fork_state.get("fork"))
+    prev_fork = bool(prev.get("fork"))
+    if cur_fork and not prev_fork:
+        return True
+    return False
 
 
 def compose_report_origin(base: str, marks: Iterable[str] = ()) -> str:

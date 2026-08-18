@@ -2215,6 +2215,10 @@ def _settle_after_extract_body(
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
     )
+    # #627：政敌检举——叙事/extractor 结构化条目承接落库（clamp+真伪底+去重）。
+    db.accept_faction_denunciations(
+        state, extracted.get("faction_denunciations"), commit=False,
+    )
     # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
