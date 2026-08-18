@@ -12,12 +12,12 @@
 
 input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/court_roster/armies/regions）在 input 开头以 TSV 文本块给出**：每块 `## 表名` 起头，块内首行 tab 分隔列名，其后每行一条记录按列名对位（空字段为空串）；其余字段在末尾「## 其余字段（JSON）」里。
 
-- `decree_dossiers`：本{{TURN_UNIT}}已入办／在途案卷列表（权威；仅双轨受理放行者）。每条含动作类型、状态、颁布格定性、执行格定性、mode、stigma（中旨标记）、参与人、关联、期限与目标／承办。叙事轨另含 `decree_text` 摘要；执行轨另含 `execution_summary`。**纯打回未颁不在此列。** 列表内若 `decision` 为「打回」且 `status` 为 `promulgated`／`executing`，乃强颁组合态（0052：颁布格留打回本值、案已入办）——按已颁／在途演，不得写成封驳待批红；识别以 decision+status 为准，勿单靠 stigma 是否含「强颁」字样。
+- `decree_dossiers`：本{{TURN_UNIT}}已入办／在途案卷列表（权威；仅双轨受理放行者）。每条含动作类型、状态、颁布格定性、执行格定性、mode、stigma（中旨标记）、参与人、关联、期限与目标／承办。叙事轨另含 `decree_text` 摘要；执行轨另含 `execution_summary`。执行中／刚颁案卷另带 `appointment_tenure`（承办人现职任别）、`held_authorities`（#611 在持授权适用性投影）与 `distortion_weight`（走样权重）。**号令力次序：真除＞兼署＞署理＞加衔**——四档均须显形，兼署不得与真除或署理混同；加衔不掌印、于所加衙门号令最虚。在持授权按 privilege 抬升号令力（尚方剑密授/便宜行事/专差督办/新机构专办）；收回或投影为空后不再计。`distortion_weight` 越大，办理越易打折走样、别衙越可不买账——写入执行叙事时按此口径，不得忽略任别或另造授权来源。**纯打回未颁不在此列。** 列表内若 `decision` 为「打回」且 `status` 为 `promulgated`／`executing`，乃强颁组合态（0052：颁布格留打回本值、案已入办）——按已颁／在途演，不得写成封驳待批红；识别以 decision+status 为准，勿单靠 stigma 是否含「强颁」字样。
 - `dossier_verdicts`／`promulgation_instruction`：颁布判决硬约束。**纯打回未颁**（verdict `decision=rejected` 且未入 `decree_dossiers`）只在本判决列表；严禁写成已办成、已生效、已到任或银已出库；只据 verdict 字段写封驳／等待批红，不得假定案卷列表能读到其全文。已入列表者（含强颁组合态与颁布格顺颁）按案卷 status／执行格演办理结果。
 - `monthly_progress`：长差密令月度进展的**公共安全投影**（与案卷清单同批）。只含 `dossier_id`／`turn`／`progress_band` 等非密字段；不得把密奏原文当邸报材料。
 - `reconciliation_inputs`：被护案卷侧对账数据输入位；缺省为空。无条目时不据此折损或另判。
 - `decree_text`：本{{TURN_UNIT}}正式诏书的兼容摘要（由案卷渲染），**仅辅助**，不得覆盖 `decree_dossiers` 与判决。写明执行者以案卷／正文为准；未写明按职掌、名册、局势推定，但承办者必须在册且可办差。
-- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。官职、派系、是否在朝一律以此为准，不凭史实印象。
+- `court_roster`（TSV）：人物现职与状态**唯一真值**，列含 `name/office/office_type/faction/status/appointment_tenure`，并以档位词呈上忠诚、能力、清廉、胆略、党派认同与阴谋能力。`appointment_tenure` 是名分成色四值（真除/兼署/署理/加衔）。官职、派系、是否在朝、任别一律以此为准，不凭史实印象。
 - `regions` / `armies` / `buildings`（TSV）：地区、军队、建筑全表，按列名对齐真实状态。
 - `current_state`、`treasury_brief`、`factions_brief`、`classes_brief`、`powers_brief`：钱粮、国势、派系、阶级、外部势力。月度固定收支已由程序落账，叙事只写现象。
 - `active_issues`：在办事项。`stage` 是当前卡点背景，不是本{{TURN_UNIT}}待办命令。

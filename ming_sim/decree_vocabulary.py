@@ -111,6 +111,9 @@ SIM_DOSSIER_COMMON_KEYS = frozenset({
     "mode", "stigma", "participant_roster", "links",
     "due_turn", "created_turn", "promulgated_turn",
     "target_kind", "target_id", "executor_kind", "executor_id",
+    # #613 执行侧任别读端（与 #569 固定键投影同面）
+    "appointment_tenure", "held_authorities", "authorization_ids",
+    "command_power_rank", "distortion_weight",
 })
 SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
 SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}

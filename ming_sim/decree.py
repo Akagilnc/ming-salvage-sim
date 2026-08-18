@@ -9,7 +9,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterator, List, Optional, Protocol, Sequence
+from typing import Callable, Dict, Iterator, List, Mapping, Optional, Protocol, Sequence
 
 from agno.db.sqlite import SqliteDb
 
@@ -53,6 +53,12 @@ from ming_sim.issues import (
 from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
+from ming_sim.appointment_tenure import (
+    DEFAULT_APPOINTMENT_TENURE,
+    command_power_rank,
+    execution_distortion_weight,
+    normalize_appointment_tenure,
+)
 from ming_sim.decree_vocabulary import (
     SIM_DOSSIER_EXECUTION_KEYS,
     SIM_DOSSIER_NARRATIVE_KEYS,
@@ -127,6 +133,83 @@ def stub_promulgation_verdicts(
     ]
 
 
+def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict[str, object]:
+    payload = row.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    try:
+        parsed = json.loads(str(row.get("payload_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _dossier_roster(row: Mapping[str, object] | Dict[str, object]) -> List[Dict[str, object]]:
+    roster = row.get("participant_roster") or []
+    if isinstance(roster, str):
+        try:
+            roster = json.loads(roster)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            roster = []
+    if not isinstance(roster, list):
+        return []
+    return [entry for entry in roster if isinstance(entry, dict)]
+
+
+def resolve_executor_appointment_tenure(
+    db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
+) -> str:
+    """#613：承办人现职任别——executor_id 优先，否则首名主办；缺档按真除。
+
+    身份选定与档案取值分离：只定唯一承办人后查该人 character_offices；
+    缺行不得试下一候选换人（禁静默继承他人任别）。与 court_roster
+    COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
+    """
+    name = ""
+    executor_id = str(dossier.get("executor_id") or "").strip()
+    executor_kind = str(dossier.get("executor_kind") or "").strip()
+    if executor_id and executor_kind in {"", "character"}:
+        name = executor_id
+    else:
+        for entry in _dossier_roster(dossier):
+            if str(entry.get("tier") or "").strip() != "主办":
+                continue
+            character_id = str(entry.get("character_id") or "").strip()
+            if character_id:
+                name = character_id
+                break
+    if not name:
+        return DEFAULT_APPOINTMENT_TENURE
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return DEFAULT_APPOINTMENT_TENURE
+    return normalize_appointment_tenure(row["appointment_tenure"])
+
+
+def execution_side_read_fields(
+    db: GameDB,
+    state: GameState,
+    dossier: Mapping[str, object] | Dict[str, object],
+) -> Dict[str, object]:
+    """#613 执行格/推演共用读端字段：任别 + #611 唯一授权投影 + 号令力权重。
+
+    authorization_ids 只来自 project_applicable_authorities，禁止 payload 旁路。
+    """
+    tenure = resolve_executor_appointment_tenure(db, dossier)
+    held_authorities = db.project_applicable_authorities(state.turn, dossier)
+    authorization_ids = [str(item["id"]) for item in held_authorities]
+    return {
+        "appointment_tenure": tenure,
+        "held_authorities": held_authorities,
+        "authorization_ids": authorization_ids,
+        "command_power_rank": command_power_rank(tenure),
+        "distortion_weight": execution_distortion_weight(tenure, held_authorities),
+    }
+
+
 def build_promulgation_judge_context(
     db: GameDB,
     state: GameState,
@@ -147,9 +230,7 @@ def build_promulgation_judge_context(
     assert authority_band in IMPERIAL_AUTHORITY_BANDS
     dossier_rows: List[Dict[str, object]] = []
     for row in sorted(dossiers, key=lambda item: int(item["id"])):
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = _dossier_payload_dict(row)
         target_id = row.get("target_id")
         appointment_tenure = str(payload.get("任别") or "")
         # #612: endorsements are DB-backed spoken facts, not payload-only ids.
@@ -652,8 +733,9 @@ def _project_one_dossier_for_simulator(
     track: str,
     db: GameDB,
     execution_summary: Optional[Dict[str, object]] = None,
+    side_fields: Optional[Dict[str, object]] = None,
 ) -> Dict[str, object]:
-    """#569 B: fixed-key projection; never pass through raw JSON string columns."""
+    """#569 B + #613: fixed-key projection with execution-side tenure fields."""
     stigma = row.get("stigma")
     if not isinstance(stigma, list):
         stigma = []
@@ -681,6 +763,8 @@ def _project_one_dossier_for_simulator(
         "executor_kind": str(row.get("executor_kind") or ""),
         "executor_id": str(row.get("executor_id") or ""),
     }
+    # #613: tenure + #611 authority projection ride the fixed-key surface.
+    projected.update(dict(side_fields or {}))
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
         expected = SIM_DOSSIER_NARRATIVE_KEYS
@@ -699,17 +783,21 @@ def _project_one_dossier_for_simulator(
 def project_dossiers_for_simulator(
     simulation_visible_dossiers: List[Dict[str, object]],
     db: GameDB,
+    state: GameState,
 ) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569).
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569 / #613).
 
-    ``db`` is required: links / promulgated_turn read durable truth; optional-db
-    hollow defaults are not allowed on the player-visible 邸报 path (ADR 0005).
+    db/state are required: #569 links/promulgated_turn and #613 tenure + #611
+    authority projection must read DB truth; silent skip is not allowed.
     """
+    if db is None or state is None:
+        raise TypeError(
+            "project_dossiers_for_simulator requires db and state "
+            "(no silent skip of execution-side projection)"
+        )
     dossier_payload: List[Dict[str, object]] = []
     for row in simulation_visible_dossiers:
-        payload = row.get("payload")
-        if not isinstance(payload, dict):
-            payload = json.loads(str(row.get("payload_json") or "{}"))
+        payload = _dossier_payload_dict(row)
         policy = dossier_action_policy(row.get("action_type"), payload)
         # Narrative-owned effects are simulator material.  Deterministically
         # materialized payload-owned work remains visible only as inert execution
@@ -718,9 +806,15 @@ def project_dossiers_for_simulator(
             str(row.get("status") or "") != "proposed"
             or str(row.get("settlement_verdict") or "") == "promulgated"
         )
+        # #613: same #611 projection + executor tenure on the sim assembly chain.
+        side_fields: Dict[str, object] = (
+            execution_side_read_fields(db, state, row) if admitted else {}
+        )
         if policy["effect_owner"] == "narrative" and admitted:
             dossier_payload.append(
-                _project_one_dossier_for_simulator(row, track="narrative", db=db)
+                _project_one_dossier_for_simulator(
+                    row, track="narrative", db=db, side_fields=side_fields,
+                )
             )
             continue
         # In-transit executing work, and just-promulgated payload-owned terminal
@@ -748,6 +842,7 @@ def project_dossiers_for_simulator(
                 _project_one_dossier_for_simulator(
                     row, track="execution",
                     execution_summary=execution_summary, db=db,
+                    side_fields=side_fields,
                 )
             )
     return dossier_payload
@@ -1067,7 +1162,9 @@ def resolve_directives(
         }
         for row in db.list_decree_dossiers_for_simulation(state.turn)
     ]
-    dossier_payload = project_dossiers_for_simulator(simulation_visible_dossiers, db=db)
+    dossier_payload = project_dossiers_for_simulator(
+        simulation_visible_dossiers, db=db, state=state,
+    )
     current_decree_ids = set(verdict_by_id)
     current_decree_ids.update(
         db.executable_decree_dossier_ids(simulation_visible_dossiers)
