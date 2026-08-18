@@ -312,8 +312,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。",
             "颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、"
             "勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。",
-            "合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
-            "gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 "
+            "经票拟的合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由"
+            "gatekeepers 官员名单形成的把关关口三类触发才可打回。中旨本身属绕程序，"
+            "须结合输入快照 promulgation_history 差分判断。任免案卷的 "
             "break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，"
             "须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面"
             "越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、"
@@ -323,6 +324,9 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "每案 held_authorities 是在持授权适用性投影，按 privilege 计否决 "
             "modifier：尚方剑密授＝抗旨阻力降；便宜行事＝免程序阻力；"
             "专差督办＝绕常规节制。收回或投影为空后不再计。",
+            "输入快照 promulgation_history 是已落库的中旨与批红强颁前科流水，按各条 marker 读入；"
+            "批红强颁是朝堂阻力曾被强行压过的既成事实。有批红强颁前科时，把关人对再发中旨的"
+            "封驳更易成立，须比无前科优先打回；无此前科则按常例审中旨。",
             "一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。"
             "每项含 dossier_id、decision(promulgated|rejected)。打回还须含 "
             "blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、"
@@ -334,7 +338,8 @@ def create_promulgation_judge_agent(llm_config: LLMConfig, agno_db: SqliteDb) ->
             "endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 "
             "{kind:faction|class,key,direction:positive|negative,intensity:weak|strong}。mode=midzhi 无论顺颁打回"
             "均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，"
-            "普通中旨从严但不得机械地一概打回。",
+            "普通中旨无前科时从严但不得机械地一概打回；有 promulgation_history 批红强颁前科时"
+            "与无前科差分，优先打回。",
             "逐一独立判断各 faction/class 对这道判决的真实反应，不得把受害方机械当作"
             "默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；反应为零"
             "就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。",
