@@ -1673,6 +1673,7 @@ class GameDB:
             );
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
+            -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
             CREATE TABLE IF NOT EXISTS next_audience_todos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 commitment_ref INTEGER NOT NULL,
@@ -1683,6 +1684,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'pending',
                 entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
                 created_turn INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(commitment_ref, stage_idx, entry_kind),
                 FOREIGN KEY(commitment_ref) REFERENCES issues(id)
@@ -1934,6 +1936,9 @@ class GameDB:
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
+        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
+        self.ensure_column(
+            "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -15936,6 +15941,43 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    @staticmethod
+    def _coerce_todo_payload_json(payload_json: object) -> str:
+        """#624：引擎侧 payload_json 序列化；非法非空响亮拒绝，禁静默丢底。"""
+        if payload_json is None:
+            return "{}"
+        if isinstance(payload_json, str):
+            text = payload_json.strip()
+            if not text:
+                return "{}"
+            try:
+                data = json.loads(text)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"next_audience_todos.payload_json 须为 JSON 对象：{text[:80]!r}"
+                ) from exc
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"next_audience_todos.payload_json 须为对象，得 {type(data).__name__}"
+                )
+            return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(payload_json, dict):
+            return json.dumps(payload_json, ensure_ascii=False, separators=(",", ":"))
+        raise ValueError(
+            f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
+        )
+
+    @staticmethod
+    def _parse_todo_payload_json(raw: object) -> Dict[str, object]:
+        if isinstance(raw, dict):
+            return dict(raw)
+        text = str(raw or "").strip() or "{}"
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError):
+            return {}
+        return dict(data) if isinstance(data, dict) else {}
+
     def insert_next_audience_todo(
         self,
         *,
@@ -15947,18 +15989,21 @@ class GameDB:
         status: str = "pending",
         entry_kind: str = "staged_commitment",
         created_turn: int = 0,
+        payload_json: object = None,
         commit: bool = True,
     ) -> int:
         """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
 
+        #624：payload_json 引擎侧列（真伪底）；默认 '{}'。
         返回新建行 id；已存在则返回 0（幂等，不覆盖）。
         """
+        payload_blob = self._coerce_todo_payload_json(payload_json)
         cur = self.conn.execute(
             """
             INSERT OR IGNORE INTO next_audience_todos (
                 commitment_ref, stage_idx, due_turn, criterion_text, origin_context,
-                status, entry_kind, created_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                status, entry_kind, created_turn, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(commitment_ref),
@@ -15969,6 +16014,7 @@ class GameDB:
                 sanitize_sqlite_text(str(status or "pending") or "pending"),
                 sanitize_sqlite_text(str(entry_kind or "staged_commitment") or "staged_commitment"),
                 int(created_turn or 0),
+                sanitize_sqlite_text(payload_blob),
             ),
         )
         if commit:
@@ -15996,7 +16042,7 @@ class GameDB:
         rows = self.conn.execute(
             f"""
             SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
-                   origin_context, status, entry_kind, created_turn
+                   origin_context, status, entry_kind, created_turn, payload_json
             FROM next_audience_todos
             {where}
             ORDER BY due_turn, commitment_ref, stage_idx, id
@@ -16014,6 +16060,7 @@ class GameDB:
                 "status": str(r["status"] or ""),
                 "entry_kind": str(r["entry_kind"] or ""),
                 "created_turn": int(r["created_turn"] or 0),
+                "payload_json": self._parse_todo_payload_json(r["payload_json"]),
             }
             for r in rows
         ]
