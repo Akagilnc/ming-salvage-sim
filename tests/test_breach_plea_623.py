@@ -95,6 +95,7 @@ def _insert_commitment(
     stop_condition=None,
     bar_value: int = 20,
     participants=None,
+    tags=None,
 ):
     """经 insert_issue 直写 active 承诺（commitment_kind 非空）。"""
     if not origin_ref:
@@ -113,6 +114,7 @@ def _insert_commitment(
         end_turn=int(end_turn or 0),
         stages_json=stages,
         participants=participants,
+        tags=list(tags or []),
     )
     if stop_condition is not None:
         kwargs["stop_condition"] = stop_condition
@@ -190,12 +192,16 @@ def test_misappropriation_writes_plea(game):
     db.conn.commit()
     did, _ = _executing_policy_dossier(db, state, token="misapp")
     origin = f"dossier:{did}"
-    # 专款账户用既有「国库」（账户目录必有），stop_condition 钉专款约束
+    # 专款：真实 producer= tags「专款:账户」（new_issues.tags 写口），禁 stop_condition 夹具造假
     cid, _ = _insert_commitment(
         db, state, title="国库专款之诺", origin_ref=origin,
-        stop_condition={"专款": "国库"},
         bar_value=20, end_turn=state.turn + 12,
     )
+    db.conn.execute(
+        "UPDATE issues SET tags=? WHERE id=?",
+        (json.dumps(["专款:国库"], ensure_ascii=False), cid),
+    )
+    db.conn.commit()
     # 本回合挪用：从专款账户支用且 origin 非本承诺
     db.record_issue_economy_move(
         state, "国库", -8, "他用", "挪作赏功",
@@ -340,15 +346,10 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     )
     auth_before = int(state.metrics.get("皇威", 0) or 0)
 
-    # 召对真入口：extraction 明示反悔（breach_plea_decisions 为合法 delta 键）
-    todo_id = int(_pending_pleas(db)[0]["id"])
+    # 召对真入口：既有键 issue_advances / economy 续拨（禁 breach_plea_decisions 显式通道）
     out = apply_score_extraction(
         db, state,
         {
-            "breach_plea_decisions": [
-                {"todo_id": todo_id, "decision": "regret"}
-            ],
-            # 续拨信号：issue_advances 推进本承诺（同真入口可识别）
             "issue_advances": [{
                 "issue_id": cid, "delta_bar": 1,
                 "narrative": "朕加拨复其供亿，前诺照旧",
@@ -358,7 +359,7 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     )
     assert out.get("breach_plea_resolutions")
     assert out["breach_plea_resolutions"][0]["decision"] == "regret"
-    # 两轨零落账
+    # 两轨零落账（反悔不写撑腰边）
     assert _cost_events(db, did) == []
     assert db.get_decree_dossier(did)["status"] == "executing"
     assert db.conn.execute(
@@ -366,6 +367,11 @@ def test_regret_via_extraction_true_entry_zero_damage(game):
     ).fetchone()["status"] == "active"
     assert int(state.metrics.get("皇威", 0) or 0) == auth_before
     assert _pending_pleas(db) == []
+    assert db.conn.execute(
+        "SELECT COUNT(*) AS c FROM relation_edge_events "
+        "WHERE event_kind='撑腰' AND origin LIKE ?",
+        (f"issue:{cid}:%",),
+    ).fetchone()["c"] == 0
 
 
 def test_persist_foundation_tiers(game):
@@ -425,12 +431,20 @@ def test_persist_foundation_tiers(game):
             assert result.get("setback")
             assert int(result["setback"].get("setback_issue_id") or 0) > 0
             assert int(state.metrics.get("民心", 0) or 0) < minxin_before
+            # 0014 涌现缝：seed event_to_issue + event_triggers 终态账
+            assert str(result["setback"].get("event_id") or "") == "breach_halfway_setback"
             setback_row = db.conn.execute(
-                "SELECT title, status FROM issues WHERE id=?",
+                "SELECT title, status, origin_kind, origin_ref FROM issues WHERE id=?",
                 (int(result["setback"]["setback_issue_id"]),),
             ).fetchone()
             assert setback_row is not None
             assert "半途而废" in str(setback_row["title"])
+            assert str(setback_row["origin_kind"]) == "event_pool"
+            assert str(setback_row["origin_ref"]) == "breach_halfway_setback"
+            assert db.conn.execute(
+                "SELECT 1 FROM event_triggers WHERE event_id=? AND terminal_state='triggered'",
+                ("breach_halfway_setback",),
+            ).fetchone() is not None
         else:
             assert not result.get("setback")
 
@@ -698,3 +712,147 @@ def test_try_defer_only_for_commitment_kind(game):
         db, state, target_dossier_id=did, target_issue_id=issue_id, reason="撤",
     )
     assert deferred is None
+
+
+# ── 修后四组新增用例 ──────────────────────────────────────────────────
+
+
+def test_same_turn_dual_breach_kinds_merge_not_swallowed(game):
+    """同回合第二类松手不得静默吞：并入既有 pending + meta 记全被吞类。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="dual-kind")
+    origin = f"dossier:{did}"
+    db.record_issue_economy_move(
+        state, "国库", -3, "月供", "历史供拨", origin_ref=origin, commit=True,
+    )
+    cid, _ = _insert_commitment(
+        db, state, title="同回合双类之诺", origin_ref=origin,
+        ongoing_effects={}, bar_value=20, end_turn=state.turn + 40,
+        tags=["专款:国库"],
+    )
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    assert t1 > 0
+    # 同回合第二类：改弦（不推进 turn）
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="改弦", target_dossier_id=did, commit=True,
+    )
+    assert t2 == t1  # 并入同一条
+    pleas = _pending_pleas(db)
+    assert len(pleas) == 1
+    from ming_sim.breach_plea import decode_plea_meta
+    meta = decode_plea_meta(pleas[0]["origin_context"])
+    assert meta.get("breach_kind") == BREACH_KIND_FUNDING
+    absorbed = meta.get("absorbed_breach_kinds") or []
+    assert BREACH_KIND_POLICY_REVERSAL in absorbed
+    # try_defer 不得返空 todo_ids
+    deferred = try_defer_revoke_to_breach_plea(
+        db, state, target_dossier_id=did, reason="再撤", commit=True,
+    )
+    assert deferred and deferred.get("deferred")
+    assert deferred.get("todo_ids"), "try_defer 不得返空 todo_ids 掩蔽"
+
+
+def test_persist_reclaims_bundled_authority(game):
+    """坚持落地=立即 revoke 路径：捆带授权收回 fail-loud。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="auth-bundle")
+    origin = f"dossier:{did}"
+    # 目标案卷授予一条授权
+    db.conn.execute(
+        "INSERT INTO authority_records "
+        "(holder_id, privilege, scope, effective_turn, expires_turn, dossier_id, revoked) "
+        "VALUES (?, ?, ?, ?, NULL, ?, 0)",
+        (holder, "便宜行事", f"region:shaanxi", int(state.turn), int(did)),
+    )
+    db.conn.commit()
+    auth_id = int(db.conn.execute(
+        "SELECT id FROM authority_records WHERE dossier_id=? AND revoked=0",
+        (did,),
+    ).fetchone()["id"])
+    cid, _ = _insert_commitment(
+        db, state, title="捆带授权之诺", origin_ref=origin,
+        bar_value=15, end_turn=state.turn + 20,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="坚持撤·捆带", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is True
+    row = db.conn.execute(
+        "SELECT revoked FROM authority_records WHERE id=?", (auth_id,),
+    ).fetchone()
+    assert row is not None and int(row["revoked"] or 0) == 1
+    assert result.get("authority_reclaims")
+
+
+def test_remove_sponsor_persist_writes_credit_edge(game):
+    """0079：撤人坚持撤有案卷时仍写辜负边（0056 不触发，不重复）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="credit-rm")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="撤人信用边", origin_ref=origin,
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_id = write_breach_plea_todo(
+        db, state, commitment_ref=cid,
+        breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="罢主办", target_dossier_id=did, commit=True,
+    )
+    todo = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_id)
+    result = finalize_persist(db, state, todo, commit=True)
+    assert result["breach_0056"] is False
+    edges = list(db.conn.execute(
+        "SELECT event_kind, target, origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' ORDER BY id",
+        (holder,),
+    ).fetchall())
+    assert edges, "撤人坚持须写 0079 辜负边"
+    assert any(f"issue:{cid}" in str(e["origin"] or "") for e in edges)
+
+
+def test_misappropriation_via_tags_producer_pipeline(game):
+    """挪用真实管线：tags 专款写口（模拟 new_issues.tags producer）可达。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="mis-pipe")
+    origin = f"dossier:{did}"
+    # 经 insert_issue tags 参数（与 new_issues.tags 同写口）
+    cid, _ = _insert_commitment(
+        db, state, title="tags专款管线", origin_ref=origin,
+        bar_value=20, end_turn=state.turn + 12,
+        tags=["专款:国库", "清丈"],
+        ongoing_effects={
+            "economy": [{
+                "account": "国库", "delta": -4,
+                "category": "专款月供", "reason": "清丈专款",
+            }],
+        },
+    )
+    # 确认读口可达
+    from ming_sim.breach_plea import _dedicated_accounts
+    row = db.conn.execute("SELECT * FROM issues WHERE id=?", (cid,)).fetchone()
+    assert "国库" in _dedicated_accounts(row)
+    db.record_issue_economy_move(
+        state, "国库", -6, "他用", "挪作赏功",
+        origin_ref="盘面自发", commit=True,
+    )
+    written = scan_and_write_breach_pleas(db, state, commit=True)
+    assert written
+    assert any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))

@@ -5622,24 +5622,27 @@ def apply_issue_tracker_output(
             })
             continue
         # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
-        # 无 pending 哭谏则当回合只写挽留 todo；已有 pending 则本 cancel=坚持撤结账。
+        # cancel=改弦信号：只结改弦类 pending；其它类 pending 则并入改弦条，不按错 kind 定 0056。
         if str(row["commitment_kind"] or "").strip():
             from ming_sim.breach_plea import (
                 BREACH_KIND_POLICY_REVERSAL,
                 ENTRY_KIND_BREACH_PLEA,
+                decode_plea_meta,
                 finalize_persist,
                 has_pending_plea,
                 parse_dossier_id,
                 write_breach_plea_todo,
             )
             from ming_sim.staged_commitment import TODO_STATUS_PENDING as _TODO_PENDING
-            if has_pending_plea(db, issue_id):
-                # tracker/二次 cancel = 坚持撤（与 extraction 真入口同结账核）
+            origin_ref_c = str(row["origin_ref"] or "").strip()
+            if has_pending_plea(db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL):
                 plea_todo = next(
                     (
                         t for t in db.list_next_audience_todos(status=_TODO_PENDING)
                         if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
                         and int(t.get("commitment_ref") or 0) == int(issue_id)
+                        and str(decode_plea_meta(t.get("origin_context")).get("breach_kind") or "")
+                        == BREACH_KIND_POLICY_REVERSAL
                     ),
                     None,
                 )
@@ -5653,7 +5656,7 @@ def apply_issue_tracker_output(
                 })
                 touched_ids.add(issue_id)
                 continue
-            origin_ref_c = str(row["origin_ref"] or "").strip()
+            # 无改弦 pending：写/并入改弦挽留条（同回合他类松手走 merge，不静默吞）
             write_breach_plea_todo(
                 db, state,
                 commitment_ref=issue_id,

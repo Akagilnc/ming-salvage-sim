@@ -452,13 +452,9 @@ def apply_pending_due_reviews(
     for todo in pending:
         if int(todo.get("created_turn") or 0) >= turn:
             continue
-        kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-        # 哭谏不进终裁循环的「可消费」集合——仍走 apply 以便返回 skipped 证据，
-        # 但 created_turn 条件满足时也只保留 pending（apply_due_review_for_todo 内闸）。
+        # 哭谏/未知 kind 在 apply_due_review_for_todo 内闸为 skipped 并保留 pending。
         result = apply_due_review_for_todo(db, state, todo, commit=False)
-        # 不把纯 skip 算进「已 settle」噪音：仍返回供闸测
-        if kind == ENTRY_KIND_STAGED or result.get("skipped"):
-            results.append(result)
+        results.append(result)
     if commit and results:
         db.conn.commit()
     return results

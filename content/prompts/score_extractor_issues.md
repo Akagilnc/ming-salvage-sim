@@ -73,6 +73,7 @@
   `origin_ref`（格式 `dossier:<id>`）；不得自造 `decree:turn-*` 或按诏文猜绑。
 - `commitment_kind:"until_stop"`（或中文 `承诺标记:"until_stop"`）：这是承诺专门标记，不能只靠 `来源类型:"decree"`。
 - `ongoing_effects`/`持续效果`：每{{TURN_UNIT}}固定动作，例如每{{TURN_UNIT}}从国库拨银补某军欠饷；人物安抚类承诺必须写每{{TURN_UNIT}}的 `人物变更.评定` 忠诚增量，不能只写停止条件。
+- **专款/附带不动款**：诏书明定某账户专供本诺、不得挪作他用时，写 `tags` 含 `"专款:<账户>"`（账户仅 `国库`/`内库`），并在 `ongoing_effects.economy` 用同一账户承载月供；专款标签是挪用检测的真实写口，勿写进 `stop_condition`（那是停诺阈值 dict）。
 - `stop_condition`/`停止条件`：必须是 dict JSON，不要写成扁平字符串；key 带表前缀和英文 slug，比较算符写在 value 内，例如 `{"army.guanning.arrears":"<=0"}`，多军合计写 `{"army.xuan_da|jizhen.arrears.sum":"<=0"}`，人物忠诚写 `{"character.毛文龙.loyalty":">=65"}`。
 - 承诺 issue 的 `可撤销` 写 `decree`；`解决效果` 留空 `{}`，不要给承诺补普通国策的 resolve-effect。
 

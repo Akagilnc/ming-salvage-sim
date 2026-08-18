@@ -13327,7 +13327,10 @@ class GameDB:
 
         # #623 / ADR 0075：目标挂 active 承诺 → 当回合只写挽留 todo，
         # 0056 名声笔与事轴结账延迟到坚持后（不顺颁即 breach+close）。
-        from ming_sim.breach_plea import try_defer_revoke_to_breach_plea
+        from ming_sim.breach_plea import (
+            apply_persist_revoke_tail,
+            try_defer_revoke_to_breach_plea,
+        )
         deferred = try_defer_revoke_to_breach_plea(
             self, state,
             target_dossier_id=int(target_dossier_id),
@@ -13338,50 +13341,15 @@ class GameDB:
         if deferred and deferred.get("deferred"):
             return
 
-        # 0056 毁约轨：任何获准终结路径均须走同根代价（皇威+观感+派系）
-        self.breach_decree_dossier(
-            state, int(target_dossier_id), reason=reason, commit=False,
+        # 立即路径收尾：0056 + 捆带授权收回 + 同源停 tick（与坚持落地共享）
+        apply_persist_revoke_tail(
+            self, state,
+            target_dossier_id=int(target_dossier_id),
+            reason=reason,
+            apply_0056=True,
+            commitment_ref=int(target_issue_id or 0),
+            authority_source_dossier_id=int(dossier_id),
         )
-        # 捆带授权：授予源=被撤案卷 → authority_changes 收回（本项 dossier 为来源）
-        # ADR 0005：落库失败不得静默——对齐 _apply_revoke_authority_verdict_effect
-        bundled = self.conn.execute(
-            "SELECT id FROM authority_records "
-            "WHERE dossier_id=? AND revoked=0 ORDER BY id",
-            (int(target_dossier_id),),
-        ).fetchall()
-        if bundled:
-            changes = [{
-                "动作": "收回",
-                "authority_id": int(b["id"]),
-                "dossier_id": int(dossier_id),
-            } for b in bundled]
-            out = apply_score_extraction(
-                self, state, {"authority_changes": changes}, content=None,
-            )
-            rows = out.get("authority_changes") or []
-            for item in rows:
-                if isinstance(item, dict) and item.get("rejected"):
-                    reason_r = str(item.get("reason") or "捆带授权收回被拒")
-                    raise ValueError(reason_r)
-            if len(rows) < len(changes):
-                raise ValueError("捆带授权收回未完整落库")
-        # 同源 active initiative 停 tick
-        origin_ref = f"dossier:{int(target_dossier_id)}"
-        for iss in self.conn.execute(
-            "SELECT id FROM issues WHERE origin_ref=? AND status='active'",
-            (origin_ref,),
-        ).fetchall():
-            self.cancel_issue(
-                state, int(iss["id"]), narrative=reason, commit=False,
-            )
-        if target_issue_id > 0:
-            row_i = self.conn.execute(
-                "SELECT status FROM issues WHERE id=?", (int(target_issue_id),),
-            ).fetchone()
-            if row_i is not None and str(row_i["status"]) == "active":
-                self.cancel_issue(
-                    state, int(target_issue_id), narrative=reason, commit=False,
-                )
 
     def _apply_military_order_verdict_effect(
         self, state, row, payload, dossier_id, *, content=None, registry=None,
