@@ -1922,6 +1922,19 @@ def pre_settle(
                     }
                     for item in counter_hits
                 ]
+            # #626：承诺所系反噬——事废/烂尾/变形暴露状态驱动，#625 同格挂点。
+            backlash_hits = db.trigger_commitment_backlashes(state, commit=False)
+            if backlash_hits:
+                auto_triggered = list(auto_triggered) + [
+                    {
+                        "id": item.get("origin_ref"),
+                        "title": f"commitment_backlash:{item.get('source_kind')}",
+                        "issue_id": item.get("issue_id"),
+                        "source": "commitment_backlash",
+                        "trigger_ref": item.get("trigger_ref"),
+                    }
+                    for item in backlash_hits
+                ]
             if auto_triggered:
                 tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
