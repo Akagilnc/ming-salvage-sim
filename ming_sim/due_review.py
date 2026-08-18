@@ -495,12 +495,20 @@ def _apply_dossier_verdict(
         db.apply_execution_joint_liability(
             state, int(dossier_id), outcome, reason=note, commit=False,
         )
+    # #628 / 0079：到期复核兑付写信用事件（与 extraction 共调 record_fulfillment_credit）
+    credit_rows: list = []
+    if is_terminal and outcome == "fulfilled":
+        from ming_sim.credit_events import record_fulfillment_credit
+        credit_rows = record_fulfillment_credit(
+            db, state, dossier_id=int(dossier_id),
+        )
     return {
         "dossier_id": int(dossier_id),
         "outcome": outcome,
         "close": close,
         "is_terminal": is_terminal,
         "noop": False,
+        "credit_events": credit_rows,
     }
 
 
