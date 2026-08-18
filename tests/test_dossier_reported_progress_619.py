@@ -109,6 +109,15 @@ def test_execution_surface_dossier_can_record_and_list_full_history(game):
     ).fetchone()["n"]
     assert leaked == 0
 
+    # #883: general rail has no shared secret/track flag column.
+    cols = {
+        row["name"]
+        for row in db.conn.execute("PRAGMA table_info(dossier_reported_progress)").fetchall()
+    }
+    assert "is_secret" not in cols
+    assert "secret" not in cols
+    assert "track" not in cols
+
 
 def test_secret_monthly_path_unchanged_and_stays_on_private_rail(game):
     db, state, content = game
@@ -285,46 +294,31 @@ def test_restore_preserves_report_history(game, tmp_path, content):
         restored.close()
 
 
-def test_no_shared_table_flag_and_write_routing(game):
-    """#883: 禁共享表+flag；写端按案卷血缘分流。"""
+def test_terminal_surface_dossier_rejects_reported_progress(game):
+    """Terminal/non-execution surface: record raises; general rail stays empty."""
     db, state, content = game
-    general_id = _executing_assignment(db, state)
-    actor = db.conn.execute(
+    holder = db.conn.execute(
         "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
     ).fetchone()["name"]
-    order_id = db.create_secret_order(
-        state, actor, "稽核漕账", "逐月稽核", ["稽核"], deadline_months=3,
-    )
-    secret_dossier = int(db.get_dossier_for_secret_order(order_id)["id"])
-
-    db.record_dossier_progress(
-        general_id, state.turn, "在办", "一般差务月报",
-        origin=DOSSIER_REPORT_MONTHLY,
-    )
-    db.record_dossier_progress(
-        secret_dossier, state.turn, "在途", "密令月报",
-        origin=DOSSIER_REPORT_MONTHLY,
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="authorization",
+        decree_text="授以便宜行事",
+        target_kind="issue",
+        target_id="terminal-gate-619",
+        executor_kind="character",
+        executor_id=holder,
+        participants=[{"character_id": holder, "tier": "主办"}],
+        payload={"mode": "ordinary"},
     )
 
-    # No shared flag column anywhere on the general track.
-    cols = {
-        row["name"]
-        for row in db.conn.execute("PRAGMA table_info(dossier_reported_progress)").fetchall()
-    }
-    assert "is_secret" not in cols
-    assert "secret" not in cols
-    assert "track" not in cols
+    with pytest.raises(ValueError, match="非执行面"):
+        db.record_dossier_progress(
+            dossier_id, state.turn, "已授", "非法挂奏报",
+            origin=DOSSIER_REPORT_MONTHLY,
+        )
 
     assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM dossier_reported_progress WHERE dossier_id=?",
-        (general_id,),
-    ).fetchone()["n"] == 1
-    assert db.conn.execute(
-        "SELECT COUNT(*) AS n FROM dossier_reported_progress WHERE dossier_id=?",
-        (secret_dossier,),
+        "SELECT COUNT(*) AS n FROM dossier_reported_progress"
     ).fetchone()["n"] == 0
-    secret_json = db.conn.execute(
-        "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
-    ).fetchone()["dossier_progress_json"]
-    assert "密令月报" in secret_json
-    assert "一般差务月报" not in secret_json
+    assert db.list_dossier_progress(dossier_id) == []
