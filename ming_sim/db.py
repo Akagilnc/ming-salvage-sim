@@ -11648,8 +11648,8 @@ class GameDB:
             if match:
                 known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
-            """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title,
+            """SELECT d.*,
+                      s.title AS secret_title,
                       EXISTS(
                           SELECT 1 FROM decree_dossier_decisions h
                           WHERE h.dossier_id=d.id
@@ -11661,9 +11661,9 @@ class GameDB:
                ORDER BY d.id DESC""",
             (int(current_turn),),
         ).fetchall()
-        return [
-            dict(row) for row in rows
-            if (
+        visible: List[Dict[str, object]] = []
+        for row in rows:
+            admitted = (
                 row["secret_order_id"] is None
                 and (
                     str(row["promulgation_decision"] or "") == "promulgated"
@@ -11673,7 +11673,13 @@ class GameDB:
                 row["secret_order_id"] is not None
                 and int(row["secret_order_id"]) in known_secret_ids
             )
-        ]
+            if not admitted:
+                continue
+            # Same hydrate contract as get/list decree rows (ADR 0005: fail loud).
+            item = self._dossier_row(row)
+            item["was_force_promulgated"] = bool(row["was_force_promulgated"])
+            visible.append(item)
+        return visible
 
     def _record_dossier_link_rejection(
         self, source_id: int, target_id: int, relation: str, note: str,
