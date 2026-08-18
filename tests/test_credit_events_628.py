@@ -2,7 +2,7 @@
 
 测试预算 ≤4：
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
-② 兑付/撑完 + 谏处置三型（正）；校验拒收不落伪信用（负）
+② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/处置）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
 ④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读 + banned 单源
 """
@@ -175,7 +175,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
 
 
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled 不落。"""
+    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/处置不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -247,6 +247,28 @@ def test_fulfill_back_and_urge_three_decisions(game):
         content=content,
     )
     assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
+
+    # ── C1 负向：人物变更被拒 → 不得落信用边（包庇/弃卒等）──
+    did_rd = _transformed_dossier(
+        db, state, token="rej-disp-628",
+        roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
+    )
+    before_rd = len(_credit_edges(db))
+    out_rd = apply_score_extraction(
+        db, state,
+        {"人物变更": [{
+            "name": "孙承宗", "动作": "处置", "status": "not_a_real_status",
+            "reason": "包庇伪装应拒", "origin_ref": f"dossier:{did_rd}",
+        }]},
+        content=content,
+    )
+    pcs_rd = out_rd.get("applied_person_changes") or []
+    assert any(isinstance(r, dict) and r.get("rejected") for r in pcs_rd)
+    assert not any(
+        f"dossier:{did_rd}:credit:" in str(e["origin"])
+        for e in _credit_edges(db)
+    )
+    assert len(_credit_edges(db)) == before_rd
 
     # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
     def _host_roster(name: str):

@@ -7135,7 +7135,7 @@ def apply_score_extraction(
                 state, dossier_id, outcome, reason=note, commit=False,
             )
             dossier_execution_results.append({
-                "dossier_id": dossier_id, "outcome": outcome, "note": note,
+                "dossier_id": dossier_id, "outcome": outcome,
             })
         except (TypeError, ValueError, KeyError) as exc:
             dossier_execution_results.append({
@@ -8232,10 +8232,11 @@ def apply_score_extraction(
 
     _issue_sum = issue_summary if isinstance(issue_summary, dict) else {}
     _credit_applied: Dict[str, object] = {
-        "dossier_executions": [
-            r for r in dossier_execution_results
-            if isinstance(r, dict) and not r.get("rejected")
-        ],
+        # 返回契约仅 {dossier_id, outcome}；兑付语境承接 extracted 源项
+        # （含 note）minus 被拒项，与 economy_moves 同形，禁外溢返回契约。
+        "dossier_executions": _credit_source_minus_rejections(
+            extracted.get("dossier_executions"), dossier_execution_results,
+        ),
         "人物变更": [
             r for r in applied_person_changes
             if isinstance(r, dict) and not r.get("rejected")
