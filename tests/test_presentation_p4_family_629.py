@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
@@ -553,12 +554,14 @@ def test_urge_lever_due_review_import_order_both_succeed():
             "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
         ),
     )
+    repo_root = Path(__file__).resolve().parents[1]
     for script in scripts:
         completed = subprocess.run(
             [sys.executable, "-c", script],
             check=False,
             capture_output=True,
             text=True,
+            cwd=repo_root,
         )
         assert completed.returncode == 0, (
             f"import-order subprocess failed\n"
