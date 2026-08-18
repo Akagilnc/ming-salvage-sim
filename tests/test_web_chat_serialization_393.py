@@ -153,6 +153,10 @@ class _RecordingDB:
             if m["minister"] == minister_name
         ]
 
+    def set_message_highlights(self, message_id: int, phrases):
+        # #544 生产接口；chat_stream 尾随高亮会调此口（#567 r3 替身补齐）
+        return None
+
 
 def _runtime_for_stream_race():
     allow_finish = threading.Event()
