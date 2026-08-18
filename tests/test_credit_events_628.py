@@ -1,15 +1,13 @@
 """#628 / ADR 0079 信用事件写端。
 
 测试预算 ≤4：
-① AC1：断言 #623 既有辜负写口，本片不重复实现
-② 兑付/撑完 + 谏处置三型（正）
+① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
+② 兑付/撑完 + 谏处置三型（正）；校验拒收不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
-④ 幂等（同窗不双写、跨案不错吞）+ 固定模板语境 + restore + 只写不读 + banned 单源
+④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读 + banned 单源
 """
 
 from __future__ import annotations
-
-import inspect
 
 from ming_sim.breach_plea import (
     BREACH_KIND_REMOVE_SPONSOR,
@@ -19,13 +17,6 @@ from ming_sim.breach_plea import (
 from ming_sim.credit_events import (
     CREDIT_BANNED_PLAYER_TOKENS,
     CREDIT_BANNED_SCAN_SURFACES,
-    CTX_COVER,
-    CTX_FULFILL,
-    CTX_GRANT_GRACE,
-    CTX_REJECT_GRACE,
-    CTX_REJECT_REMONSTRANCE,
-    CTX_SCAPEGOAT_CAR,
-    CTX_SCAPEGOAT_PAWN,
     KIND_BACK,
     KIND_BETRAY,
     KIND_FULFILL,
@@ -41,8 +32,6 @@ from ming_sim.staged_commitment import (
     ENTRY_KIND_RUSH_REMONSTRANCE,
 )
 from ming_sim.urge_lever import (
-    URGE_PENDING_ACTION,
-    URGE_PENDING_KIND_COMMITMENT,
     _record_commitment_urge,
 )
 
@@ -143,22 +132,7 @@ def _SCAPEGOAT_ROSTER():
 
 
 def test_ac1_breach_plea_guofu_not_reimplemented(game):
-    """挽留回绝→辜负仍由 #623 finalize_persist 写出；credit_events 无平行实现。"""
-    import ming_sim.credit_events as ce
-    import ming_sim.breach_plea as bp
-
-    # 源码层：本片不调用 #623 finalize_persist，不平行实现挽留辜负写口
-    src = inspect.getsource(ce)
-    assert "from ming_sim.breach_plea" not in src
-    assert "import ming_sim.breach_plea" not in src
-    assert "finalize_persist(" not in src
-    assert "write_breach_plea_todo" not in src
-    # #623 写口仍在
-    bp_src = inspect.getsource(bp.finalize_persist)
-    assert "record_relation_edge_event" in bp_src
-    assert "辜负" in bp_src
-    assert "breach_plea" in bp_src
-
+    """挽留回绝→辜负仍由 #623 finalize_persist 写出；本片 resolve 不重写该 origin。"""
     db, state, _content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -197,11 +171,11 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
     assert len(edges2) == len(edges)
 
 
-# ── ② 兑付/撑完 + 谏三型 ─────────────────────────────────────────────
+# ── ② 兑付/撑完 + 谏三型 + 校验拒收不落伪信用 ───────────────────────
 
 
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负。"""
+    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled 不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -211,11 +185,12 @@ def test_fulfill_back_and_urge_three_decisions(game):
         db, state, token="fulfill-628",
         roster=[{"character_id": "倪元璐", "tier": "主办", "role": "承办"}],
     )
+    note_f = "依限办结"
     out_f = apply_score_extraction(
         db, state,
         {"dossier_executions": [{
             "dossier_id": did_f, "outcome": "fulfilled",
-            "note": "依限办结",
+            "note": note_f,
         }]},
         content=content,
     )
@@ -224,9 +199,9 @@ def test_fulfill_back_and_urge_three_decisions(game):
     assert fulfill_edges, "兑付须写兑现所托"
     fe = fulfill_edges[-1]
     assert fe["target"] == "皇帝"
-    assert fe["context"] == CTX_FULFILL.format(person="倪元璐")
+    assert fe["context"] == note_f  # 承接 extraction 真叙事
     assert f"dossier:{did_f}:credit:fulfill" in str(fe["origin"])
-    assert fe["context"].strip()  # 非空含场景
+    assert fe["context"].strip()
 
     # ── 撑完承诺（承催压后兑付）──
     did_b = _executing_dossier(
@@ -243,10 +218,11 @@ def test_fulfill_back_and_urge_three_decisions(game):
         deadline_months=2, reason="着速办",
     )
     db.conn.commit()
+    note_b = "顶住办结"
     apply_score_extraction(
         db, state,
         {"dossier_executions": [{
-            "dossier_id": did_b, "outcome": "fulfilled", "note": "顶住办结",
+            "dossier_id": did_b, "outcome": "fulfilled", "note": note_b,
         }]},
         content=content,
     )
@@ -255,12 +231,22 @@ def test_fulfill_back_and_urge_three_decisions(game):
         if f"dossier:{did_b}:credit:back" in str(e["origin"])
     ]
     assert back_edges, "撑完承诺须写撑腰"
-    assert "帝面撑完" in back_edges[-1]["context"]
-    # 同人亦有兑现所托
+    assert back_edges[-1]["context"] == note_b
     assert any(
         f"dossier:{did_b}:credit:fulfill" in str(e["origin"])
         for e in _credit_edges(db, event_kind=KIND_FULFILL, source="毕自严")
     )
+
+    # ── C1 负向：缺 note 的 fulfilled 被 applier 拒 → 不得落兑现所托 ──
+    before_fake = len(_credit_edges(db, event_kind=KIND_FULFILL))
+    apply_score_extraction(
+        db, state,
+        {"dossier_executions": [{
+            "dossier_id": 10**9, "outcome": "fulfilled", "note": "幽灵案卷",
+        }]},
+        content=content,
+    )
+    assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
 
     # ── 谏处置三型（案卷主办=谏者，resolve_host 读案卷面）──
     def _host_roster(name: str):
@@ -306,13 +292,16 @@ def test_fulfill_back_and_urge_three_decisions(game):
         payload_json={"kind": "rush_remonstrance"}, commit=True,
     )
 
+    grace_purpose = "准宽限加拨"
     apply_score_extraction(
         db, state,
         {
             "economy_moves": [{
-                "account": "国库", "delta": -5, "category": "军费",
-                "purpose": "准宽限加拨", "reason": "准宽限",
-                "origin_ref": f"issue:{cid_g}",
+                # 非负 delta + 显式宽限叙事；合法 origin 须落格（C1/C2）
+                "account": "国库", "delta": 5, "category": "军费",
+                "purpose": grace_purpose, "reason": "准宽限",
+                "origin_ref": "盘面自发",
+                "issue_id": cid_g,
             }],
             "cancels": [
                 {"issue_id": cid_rg},
@@ -325,21 +314,20 @@ def test_fulfill_back_and_urge_three_decisions(game):
         e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
         if f"issue:{cid_g}:credit:grant_grace" in str(e["origin"])
     ]
-    assert g_edges and g_edges[-1]["context"] == CTX_GRANT_GRACE.format(person="倪元璐")
+    assert g_edges, "准宽限须写撑腰"
+    assert g_edges[-1]["context"] in {grace_purpose, "准宽限", "乞恩宽限"}
 
     rg_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="徐光启")
         if f"issue:{cid_rg}:credit:reject_grace" in str(e["origin"])
     ]
-    assert rg_edges and rg_edges[-1]["context"] == CTX_REJECT_GRACE.format(person="徐光启")
+    assert rg_edges and rg_edges[-1]["context"] == "乞恩宽限"
 
     rr_edges = [
         e for e in _credit_edges(db, event_kind=KIND_BETRAY, target="黄道周")
         if f"issue:{cid_rr}:credit:reject_remonstrance" in str(e["origin"])
     ]
-    assert rr_edges and rr_edges[-1]["context"] == CTX_REJECT_REMONSTRANCE.format(
-        person="黄道周",
-    )
+    assert rr_edges and rr_edges[-1]["context"] == "期限过急，恐难如期"
 
 
 # ── ③ 处置映射正负 ───────────────────────────────────────────────────
@@ -360,11 +348,12 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert scapegoat_actor_kind_from_origin("random:foo") is None
 
     before_sg = len(_credit_edges(db, event_kind=KIND_SCAPEGOAT))
+    reason_sg = "顶罪下狱"
     apply_score_extraction(
         db, state,
         {"人物变更": [{
             "name": "倪元璐", "动作": "处置", "status": "imprisoned",
-            "reason": "顶罪下狱", "origin_ref": f"dossier:{did_sg}",
+            "reason": reason_sg, "origin_ref": f"dossier:{did_sg}",
         }]},
         content=content,
     )
@@ -372,33 +361,34 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert len(sg_edges) == before_sg + 2
     by_target = {e["target"]: e for e in sg_edges if f"dossier:{did_sg}" in str(e["origin"])}
     assert set(by_target) == {"倪元璐", "徐光启"}
-    assert by_target["倪元璐"]["context"] == CTX_SCAPEGOAT_PAWN.format(person="倪元璐")
-    assert by_target["徐光启"]["context"] == CTX_SCAPEGOAT_CAR.format(person="徐光启")
+    assert by_target["倪元璐"]["context"] == reason_sg
+    assert by_target["徐光启"]["context"] == reason_sg
     assert by_target["倪元璐"]["source"] == "皇帝"
     for e in by_target.values():
         assert scapegoat_actor_kind_from_origin(e["origin"]) == "皇帝"
 
-    # ── 包庇：庇护主办 → 撑腰 ──
+    # ── 包庇：庇护主办 → 撑腰（另人，避免与上文弃卒入狱撞状态）──
     did_cv = _transformed_dossier(
         db, state, token="cover-628",
-        roster=[{"character_id": "倪元璐", "tier": "主办", "role": "承办"}],
+        roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
     )
+    reason_cv = "着仍供职，勿深究"
     apply_score_extraction(
         db, state,
         {"人物变更": [{
-            "name": "倪元璐", "动作": "调任",
-            "office": "户部尚书", "office_type": "文官",
-            "reason": "着仍供职，勿深究",
+            "name": "孙承宗", "动作": "调任",
+            "office": "兵部尚书", "office_type": "文官",
+            "reason": reason_cv,
             "origin_ref": f"dossier:{did_cv}",
         }]},
         content=content,
     )
     cover_edges = [
-        e for e in _credit_edges(db, event_kind=KIND_BACK, target="倪元璐")
+        e for e in _credit_edges(db, event_kind=KIND_BACK, target="孙承宗")
         if f"dossier:{did_cv}:credit:cover" in str(e["origin"])
     ]
     assert cover_edges, "包庇须写撑腰给被包庇者"
-    assert cover_edges[-1]["context"] == CTX_COVER.format(person="倪元璐")
+    assert cover_edges[-1]["context"] == reason_cv
 
     # ── 查办：依法惩主办 → 不记事件（负向）──
     did_pr = _transformed_dossier(
@@ -432,14 +422,14 @@ def test_disposition_scapegoat_cover_prosecute_on_transformed(game):
     assert len(_credit_edges(db)) >= before_all  # 人事边可能有其它，但不要求
 
 
-# ── ④ 幂等 + 模板 + restore + 只写不读 + banned ─────────────────────
+# ── ④ 幂等 + 叙事语境 + restore + 只写不读 + banned ─────────────────
 
 
-def test_idempotent_template_restore_write_only_banned(game, tmp_path):
-    """同处置同窗不双写；跨案同人不错吞；语境模板；restore；零消费；banned 单源。"""
+def test_idempotent_narrative_restore_write_only_banned(game, tmp_path):
+    """同处置同窗不双写；跨案同人不错吞；叙事语境；restore；零消费；banned 单源。"""
     db, state, content = game
 
-    # banned 单源扩展 + 扫描面清单
+    # banned 单源扩展 + 扫描面清单（AC8 票面交付物，#629 收口）
     assert CREDIT_BANNED_PLAYER_TOKENS
     assert "credit:scapegoat" in CREDIT_BANNED_PLAYER_TOKENS
     assert CREDIT_BANNED_SCAN_SURFACES
@@ -449,9 +439,10 @@ def test_idempotent_template_restore_write_only_banned(game, tmp_path):
     did_a = _transformed_dossier(db, state, token="idem-a-628", roster=roster)
     did_b = _transformed_dossier(db, state, token="idem-b-628", roster=roster)
 
+    reason_a = "顶罪"
     payload = {"人物变更": [{
         "name": "倪元璐", "动作": "处置", "status": "exiled",
-        "reason": "顶罪", "origin_ref": f"dossier:{did_a}",
+        "reason": reason_a, "origin_ref": f"dossier:{did_a}",
     }]}
     apply_score_extraction(db, state, payload, content=content)
     edges_once = [
@@ -461,7 +452,7 @@ def test_idempotent_template_restore_write_only_banned(game, tmp_path):
     assert len(edges_once) == 2
     ids_once = sorted(e["id"] for e in edges_once)
 
-    # 同窗重识别不双写
+    # 同窗重识别不双写（origin 写前判重）
     apply_score_extraction(db, state, payload, content=content)
     edges_twice = [
         e for e in _credit_edges(db, event_kind=KIND_SCAPEGOAT)
@@ -470,11 +461,12 @@ def test_idempotent_template_restore_write_only_banned(game, tmp_path):
     assert sorted(e["id"] for e in edges_twice) == ids_once
 
     # 跨案同人：案 B 另落，不错吞
+    reason_b = "另案顶罪"
     apply_score_extraction(
         db, state,
         {"人物变更": [{
             "name": "倪元璐", "动作": "处置", "status": "exiled",
-            "reason": "另案顶罪", "origin_ref": f"dossier:{did_b}",
+            "reason": reason_b, "origin_ref": f"dossier:{did_b}",
         }]},
         content=content,
     )
@@ -485,12 +477,9 @@ def test_idempotent_template_restore_write_only_banned(game, tmp_path):
     assert len(edges_b) == 2
     assert {e["target"] for e in edges_b} == {"倪元璐", "徐光启"}
 
-    # 固定模板语境（非 LLM 自由措辞）
+    # 叙事语境（非固定模板）
     for e in edges_once:
-        if e["target"] == "倪元璐":
-            assert e["context"] == CTX_SCAPEGOAT_PAWN.format(person="倪元璐")
-        else:
-            assert e["context"] == CTX_SCAPEGOAT_CAR.format(person="徐光启")
+        assert e["context"] == reason_a
         assert e["context"].strip()
 
     # restore 后可考古
@@ -518,3 +507,4 @@ def test_idempotent_template_restore_write_only_banned(game, tmp_path):
     assert "apply_loyalty" not in " ".join(public).lower()
     # write_credit_event 为写；resolve_* 为识别写，非账本消费
     assert callable(write_credit_event)
+

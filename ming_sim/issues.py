@@ -7018,11 +7018,8 @@ def apply_score_extraction(
     breach_plea_resolutions = resolve_breach_pleas_from_extraction(
         db, state, extracted, commit=False,
     )
-    # #628 / 0079：信用事件写端——与哭谏同缝；只写不读、不新增串行 LLM 步。
-    from ming_sim.credit_events import resolve_credit_events_from_extraction
-    credit_event_resolutions = resolve_credit_events_from_extraction(
-        db, state, extracted, commit=False,
-    )
+    # #628 / 0079：信用事件写端后置于各模块校验落格之后（见 return 前），
+    # 只消费未 rejected 项——禁为被拒 fulfilled/人事立伪信用档。
     dossier_participant_results: List[Dict[str, object]] = []
     # Only the caller's frozen simulator input grants roster-write authority.
     # Missing authority is an empty closed set; never reconstruct it from live DB.
@@ -7138,7 +7135,7 @@ def apply_score_extraction(
                 state, dossier_id, outcome, reason=note, commit=False,
             )
             dossier_execution_results.append({
-                "dossier_id": dossier_id, "outcome": outcome,
+                "dossier_id": dossier_id, "outcome": outcome, "note": note,
             })
         except (TypeError, ValueError, KeyError) as exc:
             dossier_execution_results.append({
@@ -8210,6 +8207,58 @@ def apply_score_extraction(
     module_rejections = [
         item for item in raw_module_rejections if isinstance(item, dict)
     ] if isinstance(raw_module_rejections, list) else []
+
+    # #628 / 0079：校验后未 rejected 落格 → 信用事件同缝只写不读。
+    # economy/fiscal 落格摘要会丢 purpose/issue_id；对拒收项（带 item=源对象）求差，
+    # 保留源项叙事字段供识别，且不把被拒项喂进信用写端。
+    from ming_sim.credit_events import resolve_credit_events_from_extraction
+
+    def _credit_source_minus_rejections(
+        originals: object, rejections: object,
+    ) -> List[Dict[str, object]]:
+        rejected_obj_ids = {
+            id(r.get("item"))
+            for r in (rejections or [])
+            if isinstance(r, dict) and isinstance(r.get("item"), dict)
+        }
+        out: List[Dict[str, object]] = []
+        for item in originals or []:
+            if not isinstance(item, dict):
+                continue
+            if id(item) in rejected_obj_ids:
+                continue
+            out.append(item)
+        return out
+
+    _issue_sum = issue_summary if isinstance(issue_summary, dict) else {}
+    _credit_applied: Dict[str, object] = {
+        "dossier_executions": [
+            r for r in dossier_execution_results
+            if isinstance(r, dict) and not r.get("rejected")
+        ],
+        "人物变更": [
+            r for r in applied_person_changes
+            if isinstance(r, dict) and not r.get("rejected")
+        ],
+        "economy_moves": _credit_source_minus_rejections(
+            extracted.get("economy_moves"), economy_rejections,
+        ),
+        "fiscal_creates": _credit_source_minus_rejections(
+            extracted.get("fiscal_creates"),
+            [r for r in applied_fiscal_creates if isinstance(r, dict) and r.get("rejected")],
+        ),
+        "fiscal_changes": _credit_source_minus_rejections(
+            extracted.get("fiscal_changes"),
+            [r for r in applied_fiscal if isinstance(r, dict) and r.get("rejected")],
+        ),
+        "cancels": [
+            r for r in (_issue_sum.get("cancels") or [])
+            if isinstance(r, dict) and not r.get("rejected")
+        ],
+    }
+    credit_event_resolutions = resolve_credit_events_from_extraction(
+        db, state, _credit_applied, commit=False,
+    )
 
     state.clamp()
     return {
