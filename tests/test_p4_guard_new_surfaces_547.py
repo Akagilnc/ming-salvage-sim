@@ -346,3 +346,89 @@ def test_audience_archive_qiju_keeps_sentinels_out_and_world_facts_in(game, monk
     assert str(facts["manpower"]) in blob
     assert str(facts["treasury"]) in blob
     assert any(str(facts["year"]) in str(item.get("title") or "") for item in archives)
+
+
+# ── #570 族尾：本族新数据面扩写（认账 brief / 月度进展投影 / 案卷模拟器面）──
+
+_FAMILY_SYSTEM_LEAK = re.compile(
+    r"\b(?:promulgated|rejected|executing|proposed|force_promulgated|midzhi|"
+    r"break_rank|blocked_layer|degraded|failed|fulfilled|transformed|"
+    r"cabinet_drafting|palace_rescript|six_offices|is_break_rank)\b"
+    r"|破格标|进展档"
+)
+
+
+def test_family_dossier_brief_and_progress_keep_system_words_out(game):
+    """#474 族新面：认账 brief + monthly_progress 投影不得漏系统词/枚举。"""
+    from ming_sim.decree import project_dossiers_for_simulator
+    from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
+    from ming_sim.simulation import (
+        build_simulator_payload,
+        project_monthly_progress_for_simulator,
+    )
+    from tests.dossier_test_helpers import rejected_verdict
+
+    db, state, content = game
+    minister = active_ming_character(db, content)
+    plant_character_axis_sentinels(db, content, minister)
+    facts = _world_facts(db, state)
+
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="special_decree",
+        decree_text=(
+            f"{facts['year']}年发{facts['treasury']}万两，"
+            f"调{facts['army_name']}{facts['manpower']}人"
+        ),
+        target_kind="character",
+        target_id=minister,
+        payload={"mode": "midzhi"},
+    )
+    db.apply_dossier_verdicts(state, [rejected_verdict(dossier_id, midzhi=True)])
+    db.apply_dossier_promulgation(state, dossier_id, "force_promulgated")
+
+    # monthly_progress 真源＝长差密令（护行/稽核 + deadline≥2），与 #566/#569 同缝。
+    order_id = db.create_secret_order(
+        state, minister, f"护行{facts['army_name']}饷",
+        f"逐月核兵{facts['manpower']}不得外泄", ["护行"], deadline_months=4,
+    )
+    errand_id = int(db.get_dossier_for_secret_order(order_id)["id"])
+    db.record_dossier_progress(
+        errand_id, state.turn, "在途",
+        f"密奏：已核兵{facts['manpower']}，库银约{facts['treasury']}，不得外泄",
+        origin="dossier-report:monthly_errand",
+    )
+
+    candidates = db.list_referenceable_dossiers(minister, state.turn)
+    brief = render_referenceable_dossier_brief(candidates)
+    monthly = project_monthly_progress_for_simulator(db)
+    visible = [
+        row for row in (
+            db.get_decree_dossier(dossier_id),
+            db.get_decree_dossier(errand_id),
+        )
+        if row is not None
+    ]
+    sim_rows = project_dossiers_for_simulator(visible, db, state)
+    payload = build_simulator_payload(state, db, "", "", decree_dossiers=sim_rows)
+
+    # 玩家可读面：认账 brief + 公共 monthly_progress。
+    # 推演 decree_dossiers 投影按 #569 契约保留 status/mode 结构位（机器面，非 P4 玩家面）。
+    for label, surface in (
+        ("认账 brief", brief),
+        ("monthly_progress", monthly),
+        ("simulator payload monthly", payload.get("monthly_progress")),
+    ):
+        _assert_no_character_sentinel_leak(surface, where=label)
+        blob = surface if isinstance(surface, str) else _scan_blob(surface)
+        assert _FAMILY_SYSTEM_LEAK.search(str(blob)) is None, f"{label} 漏系统词: {blob}"
+
+    # 人物轴哨兵仍不得进机器投影键值（与既有 547 同构）。
+    _assert_no_character_sentinel_leak(sim_rows, where="sim dossiers")
+
+    # 世界事实仍可达（年月/兵额/库银）；进展档只投 band，密奏正文不进公共 monthly_progress。
+    assert str(facts["year"]) in brief or str(facts["treasury"]) in brief
+    assert all("memorial_text" not in row for row in monthly)
+    assert any(row.get("progress_band") == "在途" for row in monthly)
+    # brief 定性中文，不得把英文枚举念给皇帝。
+    assert "打回" in brief or "强颁" in brief
