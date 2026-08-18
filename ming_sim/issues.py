@@ -6314,6 +6314,8 @@ def _apply_person_changes(
                     "office": "听用候铨",
                     "office_type": "身名分",
                     "derived_from": "被顶替",
+                    # applier 合成级联回声：信用写端只消费 extractor 宣告本体行。
+                    "cascade_echo": True,
                 }
             )
         return results
@@ -6601,6 +6603,9 @@ def _apply_person_changes(
                     "status": release_status,
                     "reason": derive_label,
                     "derived_from": derive_label,
+                    # applier 合成级联回声（放归/赦还/起复/昭雪/夺情）：
+                    # 信用写端只消费 extractor 宣告本体行，禁盯 derived_from 文本特判。
+                    "cascade_echo": True,
                 }
             result = apply_office_appointment(
                 db,
@@ -7018,6 +7023,8 @@ def apply_score_extraction(
     breach_plea_resolutions = resolve_breach_pleas_from_extraction(
         db, state, extracted, commit=False,
     )
+    # #628 / 0079：信用事件写端后置于各模块校验落格之后（见 return 前），
+    # 只消费未 rejected 项——禁为被拒 fulfilled/人事立伪信用档。
     dossier_participant_results: List[Dict[str, object]] = []
     # Only the caller's frozen simulator input grants roster-write authority.
     # Missing authority is an empty closed set; never reconstruct it from live DB.
@@ -8206,6 +8213,65 @@ def apply_score_extraction(
         item for item in raw_module_rejections if isinstance(item, dict)
     ] if isinstance(raw_module_rejections, list) else []
 
+    # #628 / 0079：校验后未 rejected 落格 → 信用事件同缝只写不读。
+    # economy/fiscal 落格摘要会丢 purpose/issue_id；对拒收项（带 item=源对象）求差，
+    # 保留源项叙事字段供识别，且不把被拒项喂进信用写端。
+    from ming_sim.credit_events import resolve_credit_events_from_extraction
+
+    def _credit_source_minus_rejections(
+        originals: object, rejections: object,
+    ) -> List[Dict[str, object]]:
+        rejected_obj_ids = {
+            id(r.get("item"))
+            for r in (rejections or [])
+            if isinstance(r, dict) and isinstance(r.get("item"), dict)
+        }
+        out: List[Dict[str, object]] = []
+        for item in originals or []:
+            if not isinstance(item, dict):
+                continue
+            if id(item) in rejected_obj_ids:
+                continue
+            out.append(item)
+        return out
+
+    _issue_sum = issue_summary if isinstance(issue_summary, dict) else {}
+    _credit_applied: Dict[str, object] = {
+        # 返回契约仅 {dossier_id, outcome}；兑付语境承接 extracted 源项
+        # （含 note）minus 被拒项，与 economy_moves 同形，禁外溢返回契约。
+        # dossier_executions rejected 单一保护点（credit_events 不再二次滤）。
+        "dossier_executions": _credit_source_minus_rejections(
+            extracted.get("dossier_executions"), dossier_execution_results,
+        ),
+        # 人物变更 rejected 单一保护点（credit_events 不再二次滤）。
+        # cascade_echo：applier 合成级联回声（放归/被顶替等）在生产点打标，
+        # 此处唯一滤除；禁在 credit_events 另设第二闸或盯 derived_from 文本。
+        "人物变更": [
+            r for r in applied_person_changes
+            if isinstance(r, dict)
+            and not r.get("rejected")
+            and not r.get("cascade_echo")
+        ],
+        "economy_moves": _credit_source_minus_rejections(
+            extracted.get("economy_moves"), economy_rejections,
+        ),
+        "fiscal_creates": _credit_source_minus_rejections(
+            extracted.get("fiscal_creates"),
+            [r for r in applied_fiscal_creates if isinstance(r, dict) and r.get("rejected")],
+        ),
+        "fiscal_changes": _credit_source_minus_rejections(
+            extracted.get("fiscal_changes"),
+            [r for r in applied_fiscal if isinstance(r, dict) and r.get("rejected")],
+        ),
+        "cancels": [
+            r for r in (_issue_sum.get("cancels") or [])
+            if isinstance(r, dict) and not r.get("rejected")
+        ],
+    }
+    credit_event_resolutions = resolve_credit_events_from_extraction(
+        db, state, _credit_applied, commit=False,
+    )
+
     state.clamp()
     return {
         "metric_delta": applied_metric,
@@ -8227,6 +8293,7 @@ def apply_score_extraction(
         "dossier_executions": dossier_execution_results,
         "dossier_participants": dossier_participant_results,
         "breach_plea_resolutions": breach_plea_resolutions,
+        "credit_event_resolutions": credit_event_resolutions,
         "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
