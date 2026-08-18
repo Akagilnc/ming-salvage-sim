@@ -765,6 +765,13 @@ def _project_one_dossier_for_simulator(
     }
     # #613: tenure + #611 authority projection ride the fixed-key surface.
     projected.update(dict(side_fields or {}))
+    # #625: supervision fact bottom (read-only inject; empty when none).
+    surface = db.build_supervision_judge_surface(int(row["id"]))
+    projected["supervision_history"] = list(surface.get("supervision_history") or [])
+    projected["loophole_exposures"] = list(surface.get("loophole_exposures") or [])
+    projected["transformation_tendency_facts"] = dict(
+        surface.get("transformation_tendency_facts") or {}
+    )
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
         expected = SIM_DOSSIER_NARRATIVE_KEYS
@@ -1926,6 +1933,18 @@ def pre_settle(
                 tlog(f"[event_terminal] 本回合事件终态落账 {len(terminalized)} 条：{[(t['id'], t['terminal_state']) for t in terminalized]}")
             # 程序硬触发：标了 auto_trigger 的 seed 情势，gate 达标即由程序直接立项，绕过 LLM 因果判定。
             auto_triggered = auto_trigger_seed_issues(state, db)
+            # #625：孤直稽核反制——涌现缝＋逐人硬门读事实底，邸报前同缝立 issue。
+            counter_hits = db.trigger_supervision_countermeasures(state, commit=False)
+            if counter_hits:
+                auto_triggered = list(auto_triggered) + [
+                    {
+                        "id": item.get("origin_ref"),
+                        "title": f"supervision_countermeasure:{item.get('countermeasure_kind')}",
+                        "issue_id": item.get("issue_id"),
+                        "source": "supervision_countermeasure",
+                    }
+                    for item in counter_hits
+                ]
             if auto_triggered:
                 tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。
@@ -2200,6 +2219,9 @@ def _settle_after_extract_body(
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
     # this ordering all-or-nothing; the DB owns the single eligibility check.
+    # #625 / ADR 0077：监督在场事实底须先于月报 origin 标记与 grant 暴露派生
+    # （同段 atomic 内 commit=False；与 grant recon 同拍）。
+    db.record_monthly_supervision_facts(before_turn, commit=False)
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
     )
@@ -2207,6 +2229,8 @@ def _settle_after_extract_body(
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
     )
+    # 对账落账后再扫一次暴露（loss>0 ∧ 本 turn 稽核在场）；在场行已幂等。
+    db.record_monthly_supervision_facts(before_turn, commit=False)
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
