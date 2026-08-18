@@ -36,12 +36,15 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.urge_lever import (
     collect_urge_history,
+    consume_pending_urge_audience_todos,
     dare_speak_passes,
     derive_distortion_tendency,
     derive_grace_truth,
     derive_opportunity_band,
     is_deadline_unreasonable,
+    list_urge_audience_scenes,
     person_integrity_archetype,
+    project_urge_audience_scene,
     rush_staged_commitment_stage,
 )
 
@@ -239,12 +242,12 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     issue_id, _ = _insert_staged_commitment(
         db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
     )
-    before = normalize_commitment_stages(
-        db.conn.execute(
-            "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
-        ).fetchone()["stages_json"]
-    )
+    before_row = db.conn.execute(
+        "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    before = normalize_commitment_stages(before_row["stages_json"])
     old_due = int(before[0]["due_turn"])
+    end_turn_before = int(before_row["end_turn"] or 0)
 
     result = rush_staged_commitment_stage(
         db, state,
@@ -256,12 +259,13 @@ def test_rush_staged_commitment_advances_due_and_fills_urge_history(game):
     assert result["due_turn"] < old_due
     assert int(result["due_turn"]) == state.turn + 3
 
-    after = normalize_commitment_stages(
-        db.conn.execute(
-            "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
-        ).fetchone()["stages_json"]
-    )
+    after_row = db.conn.execute(
+        "SELECT stages_json, end_turn FROM issues WHERE id=?", (issue_id,),
+    ).fetchone()
+    after = normalize_commitment_stages(after_row["stages_json"])
     assert int(after[0]["due_turn"]) == state.turn + 3
+    # 宪法级：催办唯一写口=stages_json；issues.end_turn 逐位不变
+    assert int(after_row["end_turn"] or 0) == end_turn_before
     # 真源唯一：stages_json；不写 decree_dossiers.due_turn 作第二源
     dossier = db.get_decree_dossier(dossier_id)
     assert int(dossier.get("due_turn") or 0) == 0 or int(dossier.get("due_turn") or 0) != int(after[0]["due_turn"])
@@ -452,25 +456,56 @@ def test_grace_plea_payload_truth_hidden_from_player_ac6(game):
     assert payload.get("truth") in {"genuine", "pretextual"}
     assert "grace_fake" in payload
 
-    # 玩家投影路径不读 payload；scene 哨兵
-    scenes = list_due_review_scenes(db, state)
-    blob = json.dumps(scenes, ensure_ascii=False)
-    for token in (
+    banned = (
         "truth", "grace_fake", "pretextual", "genuine", "payload_json",
         "distortion_band", "urge_tightness",
-    ):
-        assert token not in blob
-    # 即使把 grace 误塞进 project（不应），origin/criterion/scene 也不得含底
-    staged = [
+    )
+    # 真实谏/宽限投影路径承压（非 due-review 白名单空集）
+    urge_scenes = list_urge_audience_scenes(db, state)
+    assert urge_scenes, "grace pending 必须顶出召对面"
+    ublob = json.dumps(urge_scenes, ensure_ascii=False)
+    for token in banned:
+        assert token not in ublob
+    grace_scene = project_urge_audience_scene(grace[0])
+    assert "payload_json" not in grace_scene
+    for token in banned:
+        assert token not in grace_scene.get("scene_text", "")
+        assert token not in json.dumps(grace_scene, ensure_ascii=False)
+
+    # 最坏形态：带真伪底 payload 的 staged 条走真实 due-review 投影，断言零泄漏
+    tid = db.insert_next_audience_todo(
+        commitment_ref=issue_id,
+        stage_idx=0,
+        due_turn=state.turn,
+        criterion_text="火器见眉目",
+        origin_context="三年火器见眉目",
+        status=TODO_STATUS_PENDING,
+        entry_kind=ENTRY_KIND_STAGED,
+        created_turn=state.turn,
+        payload_json={
+            "truth": "pretextual",
+            "grace_fake": True,
+            "genuine": False,
+            "distortion_band": "必歪",
+            "urge_tightness": 99,
+        },
+    )
+    assert tid > 0
+    staged_todo = [
         t for t in db.list_next_audience_todos(commitment_ref=issue_id)
-        if t["entry_kind"] == ENTRY_KIND_STAGED
-    ]
-    if staged:
-        scene = project_due_review_scene(db, staged[0])
-        sblob = json.dumps(scene, ensure_ascii=False)
-        for token in ("truth", "grace_fake", "pretextual", "payload_json"):
-            assert token not in sblob
-            assert token not in scene.get("scene_text", "")
+        if int(t["id"]) == tid
+    ][0]
+    assert staged_todo["payload_json"]["grace_fake"] is True
+    scene = project_due_review_scene(db, staged_todo)
+    sblob = json.dumps(scene, ensure_ascii=False)
+    for token in banned:
+        assert token not in sblob
+        assert token not in scene.get("scene_text", "")
+    # list_due_review_scenes 亦不得泄底
+    scenes = list_due_review_scenes(db, state)
+    blob = json.dumps(scenes, ensure_ascii=False)
+    for token in banned:
+        assert token not in blob
 
 
 # ── AC7 降级与 restore ───────────────────────────────────────────────
@@ -643,3 +678,189 @@ def test_payload_json_roundtrip_insert_list_restore(game):
     db2 = GameDB(path)
     row2 = [t for t in db2.list_next_audience_todos(commitment_ref=issue_id) if int(t["id"]) == tid][0]
     assert row2["payload_json"]["grace_fake"] is False
+
+
+def test_rush_does_not_side_write_end_turn(game):
+    """宪法级：催后 issues.end_turn 逐位不变（唯一写口=stages_json）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(db, state, content, stages=stages)
+    # 显式种 end_turn=0 与非零两种形态
+    for end_seed in (0, int(state.turn + 99)):
+        db.conn.execute(
+            "UPDATE issues SET end_turn=? WHERE id=?", (end_seed, issue_id),
+        )
+        db.conn.commit()
+        before = int(
+            db.conn.execute(
+                "SELECT end_turn FROM issues WHERE id=?", (issue_id,),
+            ).fetchone()["end_turn"] or 0
+        )
+        rush_staged_commitment_stage(
+            db, state, commitment_ref=issue_id, stage_idx=0,
+            deadline_months=2, reason=f"end-turn-probe-{end_seed}",
+        )
+        after = int(
+            db.conn.execute(
+                "SELECT end_turn FROM issues WHERE id=?", (issue_id,),
+            ).fetchone()["end_turn"] or 0
+        )
+        assert after == before == end_seed
+
+
+def test_grace_not_written_for_gudu_reasonable_long_deadline(game):
+    """负向：months>6 · 合理期限 · 孤直 → 无宽限条（months<=6 析取不得恒真）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["皇威"] = 40
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (40,))
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 90, courage=80)  # 孤直
+    # due 很近：催 months=12 几乎不压缩 → 合理期限
+    stages = [{
+        "stage_idx": 0,
+        "due_turn": state.turn + 14,
+        "criterion_text": "火器见眉目",
+        "origin_context": "近限期之诺",
+    }]
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="孤直合理不宽限",
+    )
+    r = rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=12, reason="稍缓催之",
+    )
+    assert r.get("unreasonable") is False
+    assert r.get("archetype") == "孤直"
+    assert r.get("grace_written") is False
+    grace = [
+        t for t in db.list_next_audience_todos(commitment_ref=issue_id)
+        if t["entry_kind"] == ENTRY_KIND_GRACE_PLEA
+    ]
+    assert grace == []
+
+
+def test_urge_audience_project_and_consume_path(game):
+    """谏/宽限：召对顶出投影可见 + settle 消费离 pending（不进 due-review）。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    state.metrics["皇威"] = 15
+    db.conn.execute("UPDATE metrics SET value=? WHERE key='皇威'", (15,))
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 85, courage=90)
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="召对顶出之诺",
+    )
+    rush_staged_commitment_stage(
+        db, state, commitment_ref=issue_id, stage_idx=0,
+        deadline_months=1, reason="着一月内了结",
+    )
+    scenes = list_urge_audience_scenes(db, state)
+    kinds = {s["entry_kind"] for s in scenes}
+    assert ENTRY_KIND_RUSH_REMONSTRANCE in kinds
+    for s in scenes:
+        assert s.get("scene_text")
+        assert "payload_json" not in s
+        assert "truth" not in s.get("scene_text", "")
+        assert "grace_fake" not in json.dumps(s, ensure_ascii=False)
+    # 不进 due-review、不占接管窗
+    assert list_due_review_scenes(db, state) == []
+    assert dossier_id not in dossiers_with_pending_due_review(db, state)
+
+    # 消费路径：created_turn < 下回合 → consumed
+    state.turn = int(state.turn) + 1
+    consumed = consume_pending_urge_audience_todos(db, state, commit=True)
+    assert consumed
+    assert all(c.get("consumed") for c in consumed)
+    still = [
+        t for t in db.list_next_audience_todos(status=TODO_STATUS_PENDING)
+        if t["entry_kind"] in {ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA}
+    ]
+    assert still == []
+
+
+def test_commitment_rush_via_pending_actions_gate(game):
+    """生产入口：pending_actions 确认闸门 → rush_staged_commitment_stage。"""
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    dossier_id = _executing_policy_dossier(db, state, host="倪元璐")
+    _set_integrity(db, "倪元璐", 30)
+    stages = _seed_stages(state)
+    issue_id, _ = _insert_staged_commitment(
+        db, state, content, stages=stages, origin_ref=f"dossier:{dossier_id}",
+        title="闸门催办之诺",
+    )
+    before = normalize_commitment_stages(
+        db.conn.execute(
+            "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()["stages_json"]
+    )
+    old_due = int(before[0]["due_turn"])
+    end_before = int(
+        db.conn.execute(
+            "SELECT end_turn FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()["end_turn"] or 0
+    )
+
+    pid = db.stage_pending_action(
+        state.turn, kind="commitment", action="催办",
+        minister_name="倪元璐", target_id=issue_id,
+        payload={"stage_idx": 0, "deadline_months": 3, "reason": "闸门催"},
+    )
+    assert pid > 0
+    applied = db.commit_pending_actions(state, content=content, registry=None)
+    assert any(int(a["id"]) == int(pid) for a in applied)
+
+    after = normalize_commitment_stages(
+        db.conn.execute(
+            "SELECT stages_json FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()["stages_json"]
+    )
+    assert int(after[0]["due_turn"]) == state.turn + 3
+    assert int(after[0]["due_turn"]) < old_due
+    end_after = int(
+        db.conn.execute(
+            "SELECT end_turn FROM issues WHERE id=?", (issue_id,),
+        ).fetchone()["end_turn"] or 0
+    )
+    assert end_after == end_before
+
+    hist = collect_urge_history(db, commitment_ref=issue_id)
+    assert len(hist) >= 1
+    assert hist[-1]["new_due"] == state.turn + 3
+    assert hist[-1]["reason"] == "闸门催"
+    # 单行史源：pending 标 committed，无双插
+    n_committed = db.conn.execute(
+        """
+        SELECT COUNT(*) AS c FROM pending_actions
+        WHERE status='committed' AND action='催办' AND kind='commitment' AND target_id=?
+        """,
+        (issue_id,),
+    ).fetchone()["c"]
+    assert int(n_committed) == 1
+
+
+def test_payload_json_corrupt_read_is_loud(game):
+    """腐坏 payload 读路响亮，禁静默等同空底。"""
+    from ming_sim.db import GameDB
+    with pytest.raises(ValueError, match="腐坏"):
+        GameDB.parse_engine_payload_json(
+            "{not-json", surface="test.payload_json",
+        )
+    with pytest.raises(ValueError, match="非对象|须为对象"):
+        GameDB.parse_engine_payload_json(
+            "[1,2]", surface="test.payload_json",
+        )
+    assert GameDB.parse_engine_payload_json(None) == {}
+    assert GameDB.parse_engine_payload_json("{}") == {}
+    assert GameDB.parse_engine_payload_json("") == {}
