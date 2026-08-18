@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional
 from agno.agent import Agent
 
 from ming_sim.agents import parse_agent_json, run_agent_stream_text, run_agent_text
+from ming_sim.commitment_backlash import build_backlash_narrative_features
 from ming_sim.constants import TURN_UNIT
 from ming_sim.context import historical_anchor_for_month, victory_status
 from ming_sim.db import GameDB
@@ -596,7 +597,17 @@ def build_simulator_payload(
         # LLM nudge：在途人物列表（#346）。simulator 优先产叙事到任（行止+location），
         # 代码在 pre_settle 中兜底强制（≥2月未到 → 强制；此 nudge 鼓励 LLM 主动叙事）。
         "transit_nudge": _build_transit_nudge(db, state),
-        "data_note": "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。",
+        # #626：承诺所系反噬——硬门只落结构化事实；玩家文案由叙事步从此特征包长出
+        "commitment_backlash_facts": build_backlash_narrative_features(db),
+        "data_note": (
+            "盘面表（buildings/court_roster/armies/regions）在本输入的开头以 TSV 文本块给出"
+            "（首行列名、tab 分隔、每行一条记录），不在本 JSON 内；本 JSON 只含其余字段"
+            "（含 powers_brief/factions_brief/classes_brief 叙述串、active_issues 等）。"
+            "due_commitments 是本月待复核的公开承诺（公开轨）。transit_nudge 为当前在途"
+            "（transit_to 非空）人物，months_in_transit ≥1 者按惯例本月应抵达，请优先产行止叙事。"
+            "commitment_backlash_facts 为承诺所系反噬结构化事实包（源类/承诺链接/metrics），"
+            "供叙事长出玩家可见文案；含与 #625 反制 bar 用语区分约束，不含成句模板。"
+        ),
     }
 
 
@@ -820,6 +831,8 @@ def _extractor_context_payload(
         "decree_text": decree_text,
         "active_issues": issues_brief,
         "issue_auto_economy": issue_auto_economy,
+        # #626：与 simulator 同包；issues 档房据此为反噬局势长出阶段/叙述
+        "commitment_backlash_facts": build_backlash_narrative_features(db),
         "candidate_events": [{"id": ev.id, "title": ev.title} for ev in gather_candidate_events(state, db)],
         "current_state": dict(state.metrics),
         "factions": db.faction_report(),

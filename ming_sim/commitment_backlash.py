@@ -7,11 +7,15 @@
 不回撤；本模块只落绑定源承诺的后续事件。同一松手不双扣。
 
 分档：触发侧重算 assess_foundation_tier，零新列；唯 halfway 触发。
+
+P7：硬门只落结构化事实（origin_ref/source_kind/commitment 链接/trigger_ref/
+metrics 账）；玩家可见文案由既有叙事 LLM 步从特征化输入长出（与 new_issues
+同格）。『与 #625 用语区分』以特征约束传给叙事步，不落代码文案常量。
 """
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # 涌现 origin 与 #625 反制隔离
 BACKLASH_ORIGIN_KIND = "commitment_backlash"
@@ -30,10 +34,6 @@ SOURCE_KINDS = frozenset({
 # 具名 metrics 集合（承诺所系一锤子；与 #623 民心-3/皇威-2 直击分立，禁同套双扣）
 BACKLASH_NAMED_METRICS: Dict[str, int] = {"民心": -1, "皇威": -1}
 
-# 呈现面：与 #625 bar「反噬平息/坐大」区分
-BACKLASH_BAR_GOOD = "所系余波已平"
-BACKLASH_BAR_BAD = "所系局势恶化"
-
 # 玩家可见面禁词（AC6 哨兵；含系统词 + #625 反制 bar 用语）
 BACKLASH_BANNED_PLAYER_TOKENS = (
     "commitment_backlash",
@@ -50,6 +50,19 @@ BACKLASH_BANNED_PLAYER_TOKENS = (
     "supervision_countermeasure",
 )
 
+# 代码侧曾用固定成句（P7 违宪样本）；AC6 断言真实玩家面不得再被硬门落这些成句
+BACKLASH_CODE_FIXED_PHRASES = (
+    "所系余波",
+    "所系之局反受其累",
+    "所系余波已平",
+    "所系局势恶化",
+    "变形暴露后",
+    "事废之后，",
+    "烂尾之后，",
+    "牵动的沉没投入化为负累",
+    "牵动的局势恶化",
+)
+
 
 def backlash_origin_ref(commitment_id: int, source_kind: str) -> str:
     """幂等键：一承诺一源一类至多一条。"""
@@ -59,20 +72,16 @@ def backlash_origin_ref(commitment_id: int, source_kind: str) -> str:
     return f"commitment:{int(commitment_id)}:{kind}"
 
 
-def classify_backlash_source(
-    *,
-    execution_outcome: object,
-    execution_note: object,
-) -> Optional[str]:
-    """执行格终值 → 触发源类；非本片三类返回 None。"""
+def classify_backlash_source(*, execution_outcome: object) -> Optional[str]:
+    """执行格终值 → 触发源类；非本片执行格源返回 None。
+
+    总纲：只读结构化执行格。事废不在此判别——事废=consumed 哭谏绑定
+    （#623 结构化既判，见 trigger 硬门 path ①）。执行格 failed 默认 failed_terminal。
+    """
     outcome = str(execution_outcome or "").strip()
-    note = str(execution_note or "")
     if outcome == "transformed":
         return SOURCE_DEFORMATION_EXPOSURE
     if outcome == "failed":
-        # #623 场面判词「事废」落 note；其余 failed = 烂尾终值（#621）
-        if "事废" in note:
-            return SOURCE_BREACH_VERDICT
         return SOURCE_FAILED_TERMINAL
     return None
 
@@ -84,21 +93,86 @@ def assert_no_backlash_banned_tokens(text: object, *, surface: str) -> None:
             raise AssertionError(f"{surface} 裸露禁词：{token!r}")
 
 
-def build_backlash_copy(
-    *,
-    commitment_title: str,
-    source_kind: str,
-) -> Tuple[str, str, str]:
-    """玩家可见 title / stage / narrative；禁系统词与 #625 反制用语。"""
-    title_base = str(commitment_title or "前诺").strip() or "前诺"
-    title = f"{title_base}所系余波"
-    if source_kind == SOURCE_DEFORMATION_EXPOSURE:
-        stage = f"{title_base}名实已乖，所系之局反受其累。"
-        narrative = f"变形暴露后，{title_base}牵动的局势恶化。"
-    elif source_kind == SOURCE_BREACH_VERDICT:
-        stage = f"半途撤手，{title_base}所系之局反受其累。"
-        narrative = f"事废之后，{title_base}牵动的沉没投入化为负累。"
-    else:
-        stage = f"{title_base}终至不济，所系之局反受其累。"
-        narrative = f"烂尾之后，{title_base}牵动的局势恶化。"
-    return title[:80], stage[:120], narrative[:400]
+def assert_no_backlash_code_fixed_phrases(text: object, *, surface: str) -> None:
+    """P7：真实玩家面不得残留代码侧固定成句。"""
+    raw = str(text or "")
+    for phrase in BACKLASH_CODE_FIXED_PHRASES:
+        if phrase and phrase in raw:
+            raise AssertionError(f"{surface} 残留代码固定成句：{phrase!r}")
+
+
+def parse_backlash_origin_ref(origin_ref: object) -> tuple[int, str]:
+    """origin_ref → (commitment_id, source_kind)；非法则 (0, "")."""
+    raw = str(origin_ref or "").strip()
+    parts = raw.split(":")
+    if len(parts) != 3 or parts[0] != "commitment":
+        return 0, ""
+    try:
+        cid = int(parts[1])
+    except (TypeError, ValueError):
+        return 0, ""
+    kind = str(parts[2] or "").strip()
+    if kind not in SOURCE_KINDS:
+        return 0, ""
+    return cid, kind
+
+
+def build_backlash_narrative_features(db: Any) -> List[Dict[str, object]]:
+    """特征化输入包：供既有叙事 LLM 步（simulator/extractor）长出玩家文案。
+
+    与 new_issues LLM 路径同格——引擎只供结构化事实与呈现约束，不供成句模板。
+    『与 #625 用语区分』经 presentation_constraints.avoid_phrases 传入，非 bar 常量。
+    """
+    rows = db.conn.execute(
+        """
+        SELECT i.id, i.origin_ref, i.title,
+               (
+                   SELECT a.trigger_ref FROM issue_advances a
+                   WHERE a.issue_id = i.id
+                     AND a.trigger_kind = 'commitment_backlash'
+                   ORDER BY a.id DESC LIMIT 1
+               ) AS trigger_ref
+        FROM issues i
+        WHERE i.origin_kind = ? AND i.status = 'active'
+        ORDER BY i.id
+        """,
+        (BACKLASH_ORIGIN_KIND,),
+    ).fetchall()
+    features: List[Dict[str, object]] = []
+    for row in rows:
+        origin_ref = str(row["origin_ref"] or "")
+        cid, source_kind = parse_backlash_origin_ref(origin_ref)
+        commitment_title = ""
+        if cid > 0:
+            crow = db.conn.execute(
+                "SELECT title FROM issues WHERE id=?", (cid,),
+            ).fetchone()
+            if crow is not None:
+                commitment_title = str(crow["title"] or "")
+        if not commitment_title:
+            # 回退：硬门可能以源承诺 title 作 issue 标题链接（仍是既有事实，非新模板）
+            commitment_title = str(row["title"] or "")
+        trigger_ref = str(row["trigger_ref"] or "")
+        if not trigger_ref and cid > 0:
+            trigger_ref = f"issue:{cid}"
+        features.append({
+            "issue_id": int(row["id"]),
+            "commitment_ref": int(cid),
+            "commitment_title": commitment_title,
+            "source_kind": source_kind,
+            "origin_ref": origin_ref,
+            "trigger_ref": trigger_ref,
+            "metrics_delta": dict(BACKLASH_NAMED_METRICS),
+            # 特征约束→叙事步：与 #625 bar「反噬平息/坐大」区分；禁系统词入玩家面
+            "presentation_constraints": {
+                "avoid_phrases": ["反噬平息", "反噬坐大"],
+                "banned_system_tokens": [
+                    "commitment_backlash",
+                    "foundation_tier",
+                    "breach_verdict",
+                    "failed_terminal",
+                    "deformation_exposure",
+                ],
+            },
+        })
+    return features

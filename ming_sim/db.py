@@ -11893,14 +11893,12 @@ class GameDB:
         list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
         """
         from ming_sim.commitment_backlash import (
-            BACKLASH_BAR_BAD,
-            BACKLASH_BAR_GOOD,
             BACKLASH_NAMED_METRICS,
             BACKLASH_ORIGIN_KIND,
             SOURCE_BREACH_VERDICT,
             SOURCE_DEFORMATION_EXPOSURE,
+            SOURCE_FAILED_TERMINAL,
             backlash_origin_ref,
-            build_backlash_copy,
             classify_backlash_source,
         )
         from ming_sim.breach_plea import (
@@ -11912,7 +11910,8 @@ class GameDB:
 
         candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
 
-        # ① 事废判决：已消费哭谏（坚持撤）→ 以承诺 closed_turn 为一拍差锚
+        # ① 事废判决：已消费哭谏（坚持撤）→ 结构化既判；以承诺 closed_turn 为一拍差锚
+        # 总纲：事废源=consumed 哭谏绑定，不读 execution_note 子串。
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
@@ -11938,11 +11937,16 @@ class GameDB:
                     did = 0
             candidates.append((cid, SOURCE_BREACH_VERDICT, did))
 
+        breach_commitment_ids = {
+            cid for cid, sk, _ in candidates if sk == SOURCE_BREACH_VERDICT
+        }
+
         # ② 烂尾终值 / 变形暴露候选：执行格终值（closed_turn 一拍差）
+        # 执行格 failed 默认 failed_terminal；事废已由 path ① 独占，同承诺不双立。
         # 变形不得仅凭 transformed 文本立案——须 #622 分叉读端确认 beyond_intent。
         rows = self.conn.execute(
             """
-            SELECT id, execution_outcome, execution_note, closed_turn, status
+            SELECT id, execution_outcome, closed_turn, status
             FROM decree_dossiers
             WHERE execution_outcome IN ('failed', 'transformed')
               AND closed_turn > 0
@@ -11955,7 +11959,6 @@ class GameDB:
             dossier_id = int(row["id"])
             source_kind = classify_backlash_source(
                 execution_outcome=row["execution_outcome"],
-                execution_note=row["execution_note"],
             )
             if source_kind is None:
                 continue
@@ -11970,9 +11973,14 @@ class GameDB:
             for commitment in self.list_commitments_for_dossier(dossier_id):
                 if not str(commitment.get("commitment_kind") or "").strip():
                     continue
-                candidates.append(
-                    (int(commitment["id"]), source_kind, dossier_id),
-                )
+                cid = int(commitment["id"])
+                # 事废承诺不由执行格 failed 再立 failed_terminal（一诺一源）
+                if (
+                    source_kind == SOURCE_FAILED_TERMINAL
+                    and cid in breach_commitment_ids
+                ):
+                    continue
+                candidates.append((cid, source_kind, dossier_id))
 
         triggered: List[Dict[str, object]] = []
         seen_origin: set[str] = set()
@@ -11991,11 +11999,10 @@ class GameDB:
             crow = self.conn.execute(
                 "SELECT title FROM issues WHERE id=?", (cid,),
             ).fetchone()
-            title_c = str(crow["title"] if crow is not None else "")
-            title, stage_text, narrative = build_backlash_copy(
-                commitment_title=title_c,
-                source_kind=source_kind,
-            )
+            # P7：硬门只落结构化事实；标题仅链接源承诺既有事实，不拼装新成句。
+            # 玩家 stage/narrative/bar 由叙事 LLM 步从特征化输入长出（见
+            # build_backlash_narrative_features → simulator payload）。
+            title_c = str(crow["title"] if crow is not None else "").strip()
             # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
             applied_metrics = _apply_metric_dict(
                 state, dict(BACKLASH_NAMED_METRICS), db=self,
@@ -12003,14 +12010,14 @@ class GameDB:
             issue_id = self.insert_issue(
                 state,
                 kind="situation",
-                title=title,
+                title=title_c,  # 源承诺事实链接；非 f-string 模板
                 origin_kind=BACKLASH_ORIGIN_KIND,
                 origin_ref=origin_ref,
-                stage_text=stage_text,
+                stage_text="",  # 玩家文案留给叙事 LLM 步
                 tags=[],  # 机读身份仅 origin_kind/origin_ref；tags 不进玩家面
                 bar_value=35,
-                bar_good_meaning=BACKLASH_BAR_GOOD,
-                bar_bad_meaning=BACKLASH_BAR_BAD,
+                bar_good_meaning="",  # 非代码 bar 常量；叙事步长出
+                bar_bad_meaning="",
                 inertia=-2,
                 severity=55,
                 ongoing_effects={},  # 一锤子，不镜像 metrics 到月扣
@@ -12022,8 +12029,8 @@ class GameDB:
                 trigger_kind="commitment_backlash",
                 trigger_ref=f"issue:{cid}",
                 delta_bar=0,
-                stage_text=stage_text,
-                narrative=narrative,
+                stage_text="",
+                narrative="",  # 结构化账：metrics；叙述留给叙事步
                 metric_delta=dict(applied_metrics),
                 commit=False,
             )
