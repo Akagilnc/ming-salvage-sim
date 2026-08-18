@@ -2099,6 +2099,10 @@ def _settle_after_extract_body(
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
     )
+    # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
+    db.record_monthly_grant_reconciliations(
+        before_turn, extracted.get("dossier_reconciliations"),
+    )
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
@@ -2147,6 +2151,10 @@ def _settle_after_extract_body(
             collector, inline_rejections,
             before_turn, source)
         collector.flush_to_db(db)
+
+    # #620 / ADR 0074：分段到期 → 次回合召对待办（结算内确定性写入，不停轮、不 DECISION）。
+    from ming_sim.staged_commitment import write_due_staged_commitment_todos
+    write_due_staged_commitment_todos(db, state, commit=False)
 
     # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
     # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
