@@ -59,6 +59,8 @@ from ming_sim.appointment_tenure import (
     execution_distortion_weight,
     normalize_appointment_tenure,
 )
+from ming_sim.participant_roster import resolve_dossier_owner_name
+from ming_sim.supervision import unpack_supervision_surface
 from ming_sim.decree_vocabulary import (
     SIM_DOSSIER_EXECUTION_KEYS,
     SIM_DOSSIER_NARRATIVE_KEYS,
@@ -144,40 +146,16 @@ def _dossier_payload_dict(row: Mapping[str, object] | Dict[str, object]) -> Dict
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _dossier_roster(row: Mapping[str, object] | Dict[str, object]) -> List[Dict[str, object]]:
-    roster = row.get("participant_roster") or []
-    if isinstance(roster, str):
-        try:
-            roster = json.loads(roster)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            roster = []
-    if not isinstance(roster, list):
-        return []
-    return [entry for entry in roster if isinstance(entry, dict)]
-
-
 def resolve_executor_appointment_tenure(
     db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
 ) -> str:
-    """#613：承办人现职任别——executor_id 优先，否则首名主办；缺档按真除。
+    """#613：承办人现职任别——归属人单源后查 character_offices；缺档按真除。
 
-    身份选定与档案取值分离：只定唯一承办人后查该人 character_offices；
-    缺行不得试下一候选换人（禁静默继承他人任别）。与 court_roster
-    COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
+    身份选定与档案取值分离：resolve_dossier_owner_name（#613/#625 共调）
+    只定唯一承办人后查该人任别；缺行不得试下一候选换人（禁静默继承他人任别）。
+    与 court_roster COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
     """
-    name = ""
-    executor_id = str(dossier.get("executor_id") or "").strip()
-    executor_kind = str(dossier.get("executor_kind") or "").strip()
-    if executor_id and executor_kind in {"", "character"}:
-        name = executor_id
-    else:
-        for entry in _dossier_roster(dossier):
-            if str(entry.get("tier") or "").strip() != "主办":
-                continue
-            character_id = str(entry.get("character_id") or "").strip()
-            if character_id:
-                name = character_id
-                break
+    name = resolve_dossier_owner_name(dossier)
     if not name:
         return DEFAULT_APPOINTMENT_TENURE
     row = db.conn.execute(
@@ -766,11 +744,10 @@ def _project_one_dossier_for_simulator(
     # #613: tenure + #611 authority projection ride the fixed-key surface.
     projected.update(dict(side_fields or {}))
     # #625: supervision fact bottom (read-only inject; empty when none).
-    surface = db.build_supervision_judge_surface(int(row["id"]))
-    projected["supervision_history"] = list(surface.get("supervision_history") or [])
-    projected["loophole_exposures"] = list(surface.get("loophole_exposures") or [])
-    projected["transformation_tendency_facts"] = dict(
-        surface.get("transformation_tendency_facts") or {}
+    projected.update(
+        unpack_supervision_surface(
+            db.build_supervision_judge_surface(int(row["id"]))
+        )
     )
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
@@ -2219,9 +2196,9 @@ def _settle_after_extract_body(
     # the same extraction, so the one authorized promotion event can project
     # the complete canonical history.  The enclosing atomic transaction keeps
     # this ordering all-or-nothing; the DB owns the single eligibility check.
-    # #625 / ADR 0077：监督在场事实底须先于月报 origin 标记与 grant 暴露派生
-    # （同段 atomic 内 commit=False；与 grant recon 同拍）。
-    db.record_monthly_supervision_facts(before_turn, commit=False)
+    # #625 / ADR 0077：在场扫描须先于月报 origin 标记；暴露派生须在对账之后
+    # （同段 atomic 内 commit=False；两单职责，各调一次）。
+    db.record_monthly_supervision_presence(before_turn, commit=False)
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
     )
@@ -2229,8 +2206,10 @@ def _settle_after_extract_body(
     db.record_monthly_grant_reconciliations(
         before_turn, extracted.get("dossier_reconciliations"),
     )
-    # 对账落账后再扫一次暴露（loss>0 ∧ 本 turn 稽核在场）；在场行已幂等。
-    db.record_monthly_supervision_facts(before_turn, commit=False)
+    # 对账落账后：loss>0 ∧ 本 turn 稽核在场 → 空子暴露。
+    db.record_monthly_loophole_exposures_from_reconciliations(
+        before_turn, commit=False,
+    )
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:

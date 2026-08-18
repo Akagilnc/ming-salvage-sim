@@ -106,17 +106,12 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     branch = resolve_due_review_branch(db, meta["origin_ref"])
     progress_reports: List[Dict[str, object]] = []
     durable_effects: List[Dict[str, object]] = []
-    supervision_history: List[Dict[str, object]] = []
-    loophole_exposures: List[Dict[str, object]] = []
-    transformation_tendency_facts: Dict[str, object] = {
-        "longest_consecutive_presence_months": 0,
-        "has_upright_auditor": False,
-        "has_mediocre_auditor": False,
-        "faction_relations": [],
-        "auditor_names": [],
-        "exposure_classes": [],
-        "exposure_count": 0,
-    }
+    # #625：监督三键空形以 supervision 导出常量为唯一真源。
+    from ming_sim.supervision import (
+        EMPTY_TRANSFORMATION_TENDENCY_FACTS,
+        unpack_supervision_surface,
+    )
+    supervision_pack = unpack_supervision_surface(None)
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
         # 不得吞成「空证据」误导裁决。催办缺源仍按空列表降级（#624 OOS）。
@@ -127,12 +122,15 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
             db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
         )
         # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
-        surface = db.build_supervision_judge_surface(int(branch["dossier_id"]))
-        supervision_history = list(surface.get("supervision_history") or [])
-        loophole_exposures = list(surface.get("loophole_exposures") or [])
-        transformation_tendency_facts = dict(
-            surface.get("transformation_tendency_facts") or transformation_tendency_facts
+        supervision_pack = unpack_supervision_surface(
+            db.build_supervision_judge_surface(int(branch["dossier_id"]))
         )
+    supervision_history = list(supervision_pack["supervision_history"])
+    loophole_exposures = list(supervision_pack["loophole_exposures"])
+    transformation_tendency_facts = dict(
+        supervision_pack["transformation_tendency_facts"]
+        or EMPTY_TRANSFORMATION_TENDENCY_FACTS
+    )
     # 催办史尚未建轨（#624 OOS）——空列表降级可判
     urge_history: List[Dict[str, object]] = []
     return {

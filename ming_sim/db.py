@@ -11393,13 +11393,25 @@ class GameDB:
 
     # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
 
-    def record_monthly_supervision_facts(
+    def dossier_has_supervision_presence(
+        self, dossier_id: int, turn: int,
+    ) -> bool:
+        """本 turn 该案卷是否有稽核在场（空子暴露统一在场门）。"""
+        row = self.conn.execute(
+            """
+            SELECT 1 FROM dossier_supervision_presence
+            WHERE dossier_id=? AND turn=? AND present=1 LIMIT 1
+            """,
+            (int(dossier_id), int(turn)),
+        ).fetchone()
+        return row is not None
+
+    def record_monthly_supervision_presence(
         self, turn: int, *, commit: bool = False,
     ) -> Dict[str, object]:
-        """月度节拍：扫描稽核在场链写事实行；同 turn 重跑 UNIQUE 幂等不双计。
+        """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
 
-        与 record_monthly_grant_reconciliations 同段（settle atomic，commit=False）。
-        空子暴露：本回合对账有折损且该案卷当月有稽核在场 → 记 grant_allocation+degraded。
+        settle 节拍：须先于月报 origin 标记调用（commit=False）。
         """
         from ming_sim.supervision import (
             SUPERVISION_RELATION,
@@ -11408,7 +11420,7 @@ class GameDB:
 
         turn_i = int(turn)
         presence_written = 0
-        # 入链 direction=incoming：source=稽核方案卷，target=被稽案卷
+        # 入链：source=稽核方案卷，target=被稽案卷
         link_rows = self.conn.execute(
             """
             SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
@@ -11453,8 +11465,20 @@ class GameDB:
             )
             presence_written += 1
 
+        if commit:
+            self.conn.commit()
+        return {"presence_written": presence_written, "turn": turn_i}
+
+    def record_monthly_loophole_exposures_from_reconciliations(
+        self, turn: int, *, commit: bool = False,
+    ) -> Dict[str, object]:
+        """对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。
+
+        settle 节拍：须在 record_monthly_grant_reconciliations 之后调用。
+        在场门与终值路共用 dossier_has_supervision_presence（统一口径）。
+        """
+        turn_i = int(turn)
         exposure_written = 0
-        # 对账折损 → 空子暴露（仅当本 turn 有稽核在场）
         recon_rows = self.conn.execute(
             """
             SELECT r.dossier_id, r.loss_amount, d.action_type
@@ -11466,16 +11490,12 @@ class GameDB:
         ).fetchall()
         for row in recon_rows:
             did = int(row["dossier_id"])
-            present = self.conn.execute(
-                """
-                SELECT 1 FROM dossier_supervision_presence
-                WHERE dossier_id=? AND turn=? AND present=1 LIMIT 1
-                """,
-                (did, turn_i),
-            ).fetchone()
-            if present is None:
+            if not self.dossier_has_supervision_presence(did, turn_i):
                 continue
-            action_type = str(row["action_type"] or "grant_allocation").strip() or "grant_allocation"
+            action_type = (
+                str(row["action_type"] or "grant_allocation").strip()
+                or "grant_allocation"
+            )
             if self.record_loophole_exposure(
                 did, turn_i, action_type, "degraded", commit=False,
             ):
@@ -11483,10 +11503,25 @@ class GameDB:
 
         if commit:
             self.conn.commit()
+        return {"exposure_written": exposure_written, "turn": turn_i}
+
+    def record_monthly_supervision_facts(
+        self, turn: int, *, commit: bool = False,
+    ) -> Dict[str, object]:
+        """兼容组合：在场扫描 + 对账暴露派生（测试/restore 便捷口）。
+
+        生产 settle 节拍应分调两单职责函数（origin 前 / 对账后）。
+        """
+        presence = self.record_monthly_supervision_presence(turn, commit=False)
+        exposure = self.record_monthly_loophole_exposures_from_reconciliations(
+            turn, commit=False,
+        )
+        if commit:
+            self.conn.commit()
         return {
-            "presence_written": presence_written,
-            "exposure_written": exposure_written,
-            "turn": turn_i,
+            "presence_written": int(presence.get("presence_written") or 0),
+            "exposure_written": int(exposure.get("exposure_written") or 0),
+            "turn": int(turn),
         }
 
     def record_loophole_exposure(
@@ -11608,7 +11643,7 @@ class GameDB:
             derive_consecutive_months,
             faction_relation,
             integrity_band,
-            subject_owner_name,
+            resolve_dossier_owner_name,
         )
 
         presence = self.list_supervision_presence(
@@ -11617,7 +11652,7 @@ class GameDB:
         if not presence:
             return []
         subject = self.get_decree_dossier(int(dossier_id)) or {}
-        subject_name = subject_owner_name(self, subject)
+        subject_name = resolve_dossier_owner_name(subject)
         subject_faction, _subj_integrity = character_faction_integrity(
             self, subject_name,
         )
@@ -12723,10 +12758,13 @@ class GameDB:
                 str(note or "") if outcome == "failed" else "",
                 commit=False,
             )
-        # #625：走样/变形/烂尾终值 → 空子暴露事实行（枚举类键，幂等）
+        # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
         if outcome in {"degraded", "transformed", "failed"}:
             action_type = str(row.get("action_type") or "").strip()
-            if action_type in DOSSIER_ACTION_TYPES:
+            if (
+                action_type in DOSSIER_ACTION_TYPES
+                and self.dossier_has_supervision_presence(int(dossier_id), int(turn))
+            ):
                 self.record_loophole_exposure(
                     int(dossier_id), int(turn), action_type, outcome,
                     commit=False,
