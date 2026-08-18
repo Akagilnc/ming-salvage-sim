@@ -11886,7 +11886,8 @@ class GameDB:
         与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
         breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
 
-        事废读源：consumed midcourse_breach_plea（#623 坚持撤常经 0056 先关案卷，
+        事废读源：todo.payload_json.verdict=='persist'（#623 finalize_persist 既判痕迹；
+        consumed 有三源不可区分，单独不得作既判证据；常经 0056 先关案卷时
         execution_outcome 可能空，故不以执行格为事废唯一源）。
         烂尾：读执行格终值 failed（#621）。
         变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
@@ -11904,16 +11905,23 @@ class GameDB:
         from ming_sim.breach_plea import (
             ENTRY_KIND_BREACH_PLEA,
             FOUNDATION_HALFWAY,
+            PLEA_VERDICT_KEY,
+            PLEA_VERDICT_PERSIST,
             assess_foundation_tier,
         )
         from ming_sim.flows import _apply_metric_dict
 
         candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
 
-        # ① 事废判决：已消费哭谏（坚持撤）→ 结构化既判；以承诺 closed_turn 为一拍差锚
-        # 总纲：事废源=consumed 哭谏绑定，不读 execution_note 子串。
+        # ① 事废判决：persist 既判结构化痕迹 ∧ 承诺 closed_turn 一拍差
+        # 总纲：不从 consumed 反推；不读 execution_note 子串。
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
+                continue
+            payload = todo.get("payload_json") or {}
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get(PLEA_VERDICT_KEY) or "") != PLEA_VERDICT_PERSIST:
                 continue
             cid = int(todo.get("commitment_ref") or 0)
             if cid <= 0:
@@ -16807,19 +16815,29 @@ class GameDB:
         todo_id: int,
         status: str,
         *,
+        payload_patch: object = None,
         commit: bool = True,
     ) -> bool:
         """#621 P3：待办消费单写口 pending→consumed/rolled。
 
         幂等：目标态已是 status 或非 pending 源态 → False 且不改行。
+        payload_patch：可选 dict，并入既有 payload_json（#626 判决痕迹等同缝落账）。
         commit=False 可入外层事务。
         """
         allowed = {"consumed", "rolled", "pending"}
         new_status = str(status or "").strip()
         if new_status not in allowed:
             raise ValueError(f"next_audience_todos status 非法：{new_status}")
+        patch: Dict[str, object] | None = None
+        if payload_patch is not None:
+            if not isinstance(payload_patch, dict):
+                raise ValueError(
+                    "next_audience_todos payload_patch 须为对象，得 "
+                    f"{type(payload_patch).__name__}"
+                )
+            patch = dict(payload_patch)
         row = self.conn.execute(
-            "SELECT id, status FROM next_audience_todos WHERE id=?",
+            "SELECT id, status, payload_json FROM next_audience_todos WHERE id=?",
             (int(todo_id),),
         ).fetchone()
         if row is None:
@@ -16832,14 +16850,28 @@ class GameDB:
             return False
         if current != "pending":
             return False
-        cur = self.conn.execute(
-            """
-            UPDATE next_audience_todos
-            SET status=?
-            WHERE id=? AND status='pending'
-            """,
-            (new_status, int(todo_id)),
-        )
+        if patch is not None:
+            existing = self._parse_todo_payload_json(row["payload_json"])
+            merged = dict(existing)
+            merged.update(patch)
+            payload_blob = self._coerce_todo_payload_json(merged)
+            cur = self.conn.execute(
+                """
+                UPDATE next_audience_todos
+                SET status=?, payload_json=?
+                WHERE id=? AND status='pending'
+                """,
+                (new_status, sanitize_sqlite_text(payload_blob), int(todo_id)),
+            )
+        else:
+            cur = self.conn.execute(
+                """
+                UPDATE next_audience_todos
+                SET status=?
+                WHERE id=? AND status='pending'
+                """,
+                (new_status, int(todo_id)),
+            )
         if commit:
             self.conn.commit()
         return int(cur.rowcount or 0) > 0
