@@ -344,5 +344,44 @@
       "class.士绅@nanzhili|zhejiang|fujian.satisfaction.max": "<=30"
     },
     "auto_trigger": true
+  },
+  {
+    "id": "breach_halfway_setback",
+    "title": "半途而废余波",
+    "kind": "人祸",
+    "summary": "办到一半松手，沉没投入化为负累，局势反受其累。",
+    "urgency": 70,
+    "severity": 55,
+    "credibility": 75,
+    "interests": [
+      "朝臣",
+      "百姓"
+    ],
+    "audiences": [],
+    "resolve_condition": "余波平息，朝野复安",
+    "fail_condition": "余波扩大，民心崩坏",
+    "trigger_gate": {
+      "民心": "<=-1"
+    },
+    "auto_trigger": true,
+    "bar_value": 35,
+    "bar_good_meaning": "余波已平",
+    "bar_bad_meaning": "余波失控",
+    "issue_inertia": -2,
+    "stage_text": "办到一半松手，局势反受其累",
+    "tags": [
+      "挽留",
+      "半途而废"
+    ],
+    "ongoing_effects": {
+      "metrics": {
+        "民心": -1
+      }
+    },
+    "effect_on_fail": {
+      "metrics": {
+        "民心": -1
+      }
+    }
   }
 ]

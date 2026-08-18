@@ -5625,6 +5625,48 @@ def apply_issue_tracker_output(
                 "category": "non_cancellable_converted",
             })
             continue
+        # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
+        # cancel=改弦信号：primary∪absorbed 含改弦即认并 finalize 该 merged 条；
+        # 其它类 pending 则并入改弦条。禁「报 persist 不执行」。
+        if str(row["commitment_kind"] or "").strip():
+            from ming_sim.breach_plea import (
+                BREACH_KIND_POLICY_REVERSAL,
+                finalize_persist,
+                find_pending_plea,
+                parse_dossier_id,
+                write_breach_plea_todo,
+            )
+            origin_ref_c = str(row["origin_ref"] or "").strip()
+            # 统一 primary∪absorbed：has_pending 与 todo 检索同一读口
+            plea_todo = find_pending_plea(
+                db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+            )
+            if plea_todo is not None:
+                finalize_persist(db, state, plea_todo, commit=False)
+                applied_cancels.append({
+                    "issue_id": issue_id,
+                    "rejected": False,
+                    "title": row["title"],
+                    "breach_plea_decision": "persist",
+                })
+                touched_ids.add(issue_id)
+                continue
+            # 无改弦 pending：写/并入改弦挽留条（同回合他类松手走 merge，不静默吞）
+            write_breach_plea_todo(
+                db, state,
+                commitment_ref=issue_id,
+                breach_kind=BREACH_KIND_POLICY_REVERSAL,
+                reason=str(cn.get("narrative") or "撤回成命")[:400],
+                target_dossier_id=int(parse_dossier_id(origin_ref_c) or 0),
+            )
+            applied_cancels.append({
+                "issue_id": issue_id,
+                "rejected": False,
+                "title": row["title"],
+                "deferred_breach_plea": True,
+            })
+            touched_ids.add(issue_id)
+            continue
         # 可撤成命：若事项来自已颁案卷，ADR 0056 的确定性毁约轨取代
         # extractor/default by_progress cancel_cost，防同一次撤旨双罚。
         linked_dossier = None
@@ -6970,6 +7012,12 @@ def apply_score_extraction(
         _register_runtime_rollback_snapshot(db, state, content, registry)
     # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
     extracted, validate_rejections = sanitize_delta_shape(extracted)
+    # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
+    # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
+    from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
+    breach_plea_resolutions = resolve_breach_pleas_from_extraction(
+        db, state, extracted, commit=False,
+    )
     dossier_participant_results: List[Dict[str, object]] = []
     # Only the caller's frozen simulator input grants roster-write authority.
     # Missing authority is an empty closed set; never reconstruct it from live DB.
@@ -8178,6 +8226,7 @@ def apply_score_extraction(
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
         "dossier_participants": dossier_participant_results,
+        "breach_plea_resolutions": breach_plea_resolutions,
         "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
