@@ -180,10 +180,10 @@ def _sponsor_names_for_commitment(db: Any, row: Any) -> List[str]:
 
 
 def _dedicated_accounts(row: Any) -> List[str]:
-    """专款账户读口（真实 producer 可达）：
+    """专款账户读口：仅 tags「专款:X」（prompt 钉的挪用检测写口）。
 
-    1. tags 含「专款:X」——承诺立项 new_issues.tags 既有写口（prompt 钉专款标签）
-    2. ongoing_effects.economy[].account——承诺月供账户即专款流向
+    ongoing_effects.economy[].account 是月供账户，不是专款声明。国库/内库月供
+    几乎每条带经费承诺都有；把它当专款会把建筑维护/军饷/他案开支误判挪用。
     """
     accounts: List[str] = []
     seen: Set[str] = set()
@@ -209,14 +209,6 @@ def _dedicated_accounts(row: Any) -> List[str]:
             t = str(tag or "").strip()
             if t.startswith("专款:"):
                 _add(t.split(":", 1)[1].strip())
-
-    ongoing_raw = row["ongoing_effects"] if "ongoing_effects" in keys else "{}"
-    ongoing = loads_effect_dict(ongoing_raw or "{}")
-    economy = ongoing.get("economy") if isinstance(ongoing, dict) else None
-    if isinstance(economy, list):
-        for item in economy:
-            if isinstance(item, dict):
-                _add(item.get("account"))
     return accounts
 
 
@@ -793,6 +785,25 @@ def finalize_persist(
         parsed = parse_dossier_id(origin_ref)
         target_dossier_id = int(parsed or 0)
 
+    # 同承诺跨回合多条独立哭谏：第一次坚持撤已停 tick。后续条只消费，不重落
+    # 0056 / 办到一半国势倒退。
+    if row is None or str(row["status"] or "") != "active":
+        consumed = db.mark_next_audience_todo_status(
+            int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+        )
+        if commit:
+            db.conn.commit()
+        return {
+            "decision": "persist",
+            "todo_id": int(todo["id"]),
+            "commitment_ref": commitment_ref,
+            "breach_kind": breach_kind,
+            "already_settled": True,
+            "setback": {},
+            "breach_0056": False,
+            "consumed": bool(consumed),
+        }
+
     tier = assess_foundation_tier(db, commitment_ref)
     setback: Dict[str, object] = {}
     exec_result: Dict[str, object] = {}
@@ -814,22 +825,16 @@ def finalize_persist(
         close = True
 
     apply_0056 = bool(kinds & _BREACH_KINDS_TRIGGER_0056)
-    tail = apply_persist_revoke_tail(
-        db, state,
-        target_dossier_id=target_dossier_id,
-        reason=reason,
-        apply_0056=apply_0056,
-        commitment_ref=commitment_ref,
-    )
-    breach_applied = bool(tail.get("breach_0056"))
 
-    # 执行格：经既有适配器落格（禁裸 SQL 宽吞）
+    # 执行格必须在 0056 关卷之前写。breach_decree_dossier 会把 status 改成
+    # closed，其后 record_dossier_execution 只接受 executing/无判定面已颁。
+    # 走 0056 时 close=False（关卷交给共享收尾）；撤人等不走 0056 时由此关卷。
     if target_dossier_id > 0:
         dossier = db.get_decree_dossier(int(target_dossier_id))
         if dossier is not None and str(dossier.get("status") or "") == "executing":
             db.record_dossier_execution(
                 int(target_dossier_id), outcome, note, int(state.turn),
-                close=close, commit=False,
+                close=not apply_0056, commit=False,
             )
             if outcome in {"degraded", "failed", "transformed"}:
                 db.record_dossier_progress(
@@ -861,6 +866,15 @@ def finalize_persist(
                         "record_dossier_execution backfill failed dossier=%s: %s",
                         target_dossier_id, exc,
                     )
+
+    tail = apply_persist_revoke_tail(
+        db, state,
+        target_dossier_id=target_dossier_id,
+        reason=reason,
+        apply_0056=apply_0056,
+        commitment_ref=commitment_ref,
+    )
+    breach_applied = bool(tail.get("breach_0056"))
 
     # 0079 信用事件：坚持=回绝哭谏
     # 所载含撤人 → 按主办集合落辜负；仅跳过本 finalize 0056 已实写同人
