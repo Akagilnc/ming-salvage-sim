@@ -1005,6 +1005,7 @@ def test_apply_score_extraction_materializes_displaced_holder_as_talent_pool_cha
                 "office": "听用候铨",
                 "office_type": "身名分",
                 "derived_from": "被顶替",
+                "cascade_echo": True,
             },
         ]
         assert db.conn.execute("SELECT COUNT(*) FROM person_logs").fetchone()[0] == before_logs + 2
