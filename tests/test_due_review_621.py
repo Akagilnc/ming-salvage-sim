@@ -486,16 +486,30 @@ def test_final_stage_terminal_close_joint_liability_at_most_once(game):
     dossier = db.get_decree_dossier(dossier_id)
     assert dossier["execution_outcome"] in {"fulfilled", "degraded", "failed", "transformed"}
     assert dossier["status"] == "closed"
-    # 连坐至多一次：整笔幂等门闩 cost_kind=liability 至多一行
+    # 无实账无表报 → failed ∈ 连坐触发集；整笔幂等门闩 cost_kind=liability 恰一行
     costs = _cost_events(db, dossier_id)
     liability_gates = [c for c in costs if c.get("cost_kind") == "liability"]
-    assert len(liability_gates) <= 1
+    assert len(liability_gates) == 1
 
-    # 再 apply 一次：不双计连坐
-    db.conn.execute("UPDATE next_audience_todos SET status='consumed'")
+    # 幂等腿：恢复 todo pending + created_turn < turn，并回退案卷 executing
+    # （resolve 仅对 executing 走 dossier 枝），使二次真正再入 _apply_dossier_verdict/连坐
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?",
+        (int(dossier_id),),
+    )
+    db.conn.execute(
+        "UPDATE next_audience_todos SET status=?, created_turn=?",
+        (TODO_STATUS_PENDING, state.turn - 1),
+    )
     db.conn.commit()
-    apply_pending_due_reviews(db, state, commit=True)
-    assert _cost_events(db, dossier_id) == costs
+    second = apply_pending_due_reviews(db, state, commit=True)
+    assert second, "幂等腿须真正再入正式复核"
+    assert second[0].get("branch") == "dossier", second
+    assert (second[0].get("execution") or {}).get("rejected") is not True, second
+    costs_after = _cost_events(db, dossier_id)
+    assert costs_after == costs
+    liability_after = [c for c in costs_after if c.get("cost_kind") == "liability"]
+    assert len(liability_after) == 1
 
 
 def test_executing_outcome_rejects_close_true(game):
@@ -803,8 +817,12 @@ def test_p6_gap_visible_cause_not_auto(game):
     )
     write_due_staged_commitment_todos(db, state)
     scene = list_due_review_scenes(db, state)[0]
-    assert scene.get("gap_text")
+    gap_text = scene.get("gap_text")
+    statement_text = scene.get("statement_text")
+    # 0118：缺口 + 陈词双到位（真值非空，缺席/None 不得靠 or "" 蒙混）
+    assert isinstance(gap_text, str) and gap_text.strip()
+    assert isinstance(statement_text, str) and statement_text.strip()
     # 因不自动：不得出现机械归因定论词
     for banned in ("真没办", "被吞", "欺瞒坐实", "归因="):
         assert banned not in scene["scene_text"]
-        assert banned not in str(scene.get("statement_text") or "")
+        assert banned not in statement_text
