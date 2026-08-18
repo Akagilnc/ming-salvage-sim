@@ -5622,32 +5622,23 @@ def apply_issue_tracker_output(
             })
             continue
         # #623 / ADR 0075：active 承诺松手不得顺 cancel 即 breach+close——
-        # cancel=改弦信号：只结改弦类 pending；其它类 pending 则并入改弦条，不按错 kind 定 0056。
+        # cancel=改弦信号：primary∪absorbed 含改弦即认并 finalize 该 merged 条；
+        # 其它类 pending 则并入改弦条。禁「报 persist 不执行」。
         if str(row["commitment_kind"] or "").strip():
             from ming_sim.breach_plea import (
                 BREACH_KIND_POLICY_REVERSAL,
-                ENTRY_KIND_BREACH_PLEA,
-                decode_plea_meta,
                 finalize_persist,
-                has_pending_plea,
+                find_pending_plea,
                 parse_dossier_id,
                 write_breach_plea_todo,
             )
-            from ming_sim.staged_commitment import TODO_STATUS_PENDING as _TODO_PENDING
             origin_ref_c = str(row["origin_ref"] or "").strip()
-            if has_pending_plea(db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL):
-                plea_todo = next(
-                    (
-                        t for t in db.list_next_audience_todos(status=_TODO_PENDING)
-                        if str(t.get("entry_kind") or "") == ENTRY_KIND_BREACH_PLEA
-                        and int(t.get("commitment_ref") or 0) == int(issue_id)
-                        and str(decode_plea_meta(t.get("origin_context")).get("breach_kind") or "")
-                        == BREACH_KIND_POLICY_REVERSAL
-                    ),
-                    None,
-                )
-                if plea_todo is not None:
-                    finalize_persist(db, state, plea_todo, commit=False)
+            # 统一 primary∪absorbed：has_pending 与 todo 检索同一读口
+            plea_todo = find_pending_plea(
+                db, issue_id, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+            )
+            if plea_todo is not None:
+                finalize_persist(db, state, plea_todo, commit=False)
                 applied_cancels.append({
                     "issue_id": issue_id,
                     "rejected": False,
