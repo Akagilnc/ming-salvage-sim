@@ -245,8 +245,15 @@ def augment_secret_orders_with_due_commitments(
         (int(state.turn),),
     ).fetchall()
     due_commitments: List[Dict[str, object]] = []
+    from ming_sim.staged_commitment import should_skip_form3_due_for_staged
     for row in rows:
         if effect_dict_has_work(row["ongoing_effects"]):
+            continue
+        # #620：仅段派生 end_turn 改道 next_audience_todos；独立 end_turn 待裁保留 form③
+        # （不停轮仅约束分段路径，0074/0076）。
+        stages_raw = row["stages_json"]
+        end_turn_val = int(row["end_turn"] or 0)
+        if should_skip_form3_due_for_staged(stages_raw, end_turn_val):
             continue
         due_commitments.append({
             "entry_kind": "due_commitment",
