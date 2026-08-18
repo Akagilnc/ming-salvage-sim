@@ -18,6 +18,7 @@ from ming_sim.due_review import (
     list_due_review_scenes,
 )
 from ming_sim.issues import apply_score_extraction
+from ming_sim.simulation import _sanitize_module_output
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 
@@ -367,4 +368,29 @@ def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
         assert token not in public, (token, public)
 
     # 执行格真值仍在（哨兵不覆盖机面）
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
+
+
+def test_extractor_sanitizer_persists_beyond_intent_for_due_review(game, content):
+    """生产 extractor 经 _sanitize_module_output 后，旨外标记仍须落库并驱动 transformed。"""
+    db, state, _content = game
+    dossier_id = _executing_policy(db, state, token="sanitize-622")
+    sanitized = _sanitize_module_output("internal", {
+        "economy_moves": [{
+            "account": "国库",
+            "delta": 5,
+            "category": "浮收",
+            "reason": "借旨加派",
+            "origin_ref": f"dossier:{dossier_id}",
+            "beyond_intent": True,
+        }],
+    })
+    apply_score_extraction(db, state, sanitized, content=content)
+    moves = db.list_economy_moves_for_dossier(dossier_id)
+    assert moves and moves[0]["beyond_intent"] is True
+
+    result = _prime_and_apply_due_review(
+        db, state, content, dossier_id=dossier_id, title="cleaner·清丈",
+    )
+    assert result["verdict"]["outcome"] == "transformed"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
