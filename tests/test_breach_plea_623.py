@@ -827,6 +827,59 @@ def test_remove_sponsor_persist_writes_credit_edge(game):
     assert any(f"issue:{cid}" in str(e["origin"] or "") for e in edges)
 
 
+def test_same_sponsor_two_commitments_both_remove_edges(game):
+    """同主办两承诺同回合各坚持撤人：两笔 issue:*:breach_plea 辜负边俱落。
+
+    去重只对本 finalize 自己的 0056 落账；跨承诺同人边不得吞。
+    """
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did_a, holder = _executing_policy_dossier(db, state, token="dual-rm-a")
+    did_b, _ = _executing_policy_dossier(
+        db, state, token="dual-rm-b", holder=holder,
+    )
+    cid_a, _ = _insert_commitment(
+        db, state, title="撤人双案甲", origin_ref=f"dossier:{did_a}",
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    cid_b, _ = _insert_commitment(
+        db, state, title="撤人双案乙", origin_ref=f"dossier:{did_b}",
+        bar_value=12, end_turn=state.turn + 12,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    todo_a = write_breach_plea_todo(
+        db, state, commitment_ref=cid_a,
+        breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="罢甲案主办", target_dossier_id=did_a, commit=True,
+    )
+    todo_b = write_breach_plea_todo(
+        db, state, commitment_ref=cid_b,
+        breach_kind=BREACH_KIND_REMOVE_SPONSOR,
+        reason="罢乙案主办", target_dossier_id=did_b, commit=True,
+    )
+    ta = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_a)
+    tb = next(t for t in _pending_pleas(db) if int(t["id"]) == todo_b)
+    ra = finalize_persist(db, state, ta, commit=True)
+    rb = finalize_persist(db, state, tb, commit=True)
+    assert ra["breach_0056"] is False
+    assert rb["breach_0056"] is False
+    edges = list(db.conn.execute(
+        "SELECT origin FROM relation_edge_events "
+        "WHERE target=? AND event_kind='辜负' AND turn=? "
+        "AND origin LIKE 'issue:%breach_plea%' ORDER BY id",
+        (holder, int(state.turn)),
+    ).fetchall())
+    origins = [str(e["origin"] or "") for e in edges]
+    assert any(
+        o.startswith(f"issue:{cid_a}:breach_plea") for o in origins
+    ), f"甲承诺撤人边须落，got={origins!r}"
+    assert any(
+        o.startswith(f"issue:{cid_b}:breach_plea") for o in origins
+    ), f"乙承诺撤人边须落，got={origins!r}"
+
+
 def test_misappropriation_via_tags_producer_pipeline(game):
     """挪用真实管线：tags 专款写口（模拟 new_issues.tags producer）可达。"""
     db, state, content = game
