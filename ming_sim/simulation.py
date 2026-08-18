@@ -926,10 +926,10 @@ def build_extractor_shared_context(
         "appointment_tenure", "held_authorities", "authorization_ids",
         "command_power_rank", "distortion_weight",
     )
-    supervision_keys = (
-        "supervision_history", "loophole_exposures",
-        "transformation_tendency_facts",
-    )
+    # #625：监督三键仅 issues 模块申报（票面=simulator+score_extractor_issues）；
+    # 其他 extractor 不得见未申报键。
+    from ming_sim.supervision import SUPERVISION_SURFACE_KEYS, unpack_supervision_surface
+
     for row in authorized_dossiers:
         if row["action_type"] == "secret_order":
             continue
@@ -949,21 +949,17 @@ def build_extractor_shared_context(
             # Need full dossier shape for projection (executor/roster/target).
             full = db.get_decree_dossier(int(row["id"])) or row
             entry.update(execution_side_read_fields(db, state, full))
-        # #625：监督事实底注入执行格面（只读；缺则现场读 DB）。
-        if all(key in row for key in supervision_keys):
-            for key in supervision_keys:
-                entry[key] = row[key]
-        else:
-            surface = db.build_supervision_judge_surface(int(row["id"]))
-            entry["supervision_history"] = list(
-                surface.get("supervision_history") or []
-            )
-            entry["loophole_exposures"] = list(
-                surface.get("loophole_exposures") or []
-            )
-            entry["transformation_tendency_facts"] = dict(
-                surface.get("transformation_tendency_facts") or {}
-            )
+        if module == "issues":
+            # 监督事实底注入执行格面（只读；缺则现场读 DB）。
+            if all(key in row for key in SUPERVISION_SURFACE_KEYS):
+                for key in SUPERVISION_SURFACE_KEYS:
+                    entry[key] = row[key]
+            else:
+                entry.update(
+                    unpack_supervision_surface(
+                        db.build_supervision_judge_surface(int(row["id"]))
+                    )
+                )
         slim_dossiers.append(entry)
     slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":

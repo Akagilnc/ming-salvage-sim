@@ -14,10 +14,29 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ming_sim.appointment_tenure import normalize_appointment_tenure
+from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.qualitative import qualitative_character_axis
 
 # 监督关系：本票只记「稽核」在场（护卫属 #567 押解口径，不入钝化事实底）
 SUPERVISION_RELATION = "稽核"
+
+# 判官读面三键（simulator / due_review / issues extractor 共调）
+SUPERVISION_SURFACE_KEYS = (
+    "supervision_history",
+    "loophole_exposures",
+    "transformation_tendency_facts",
+)
+
+# transformation_tendency_facts 空形——唯一真源（禁调用方手写七键字面量）
+EMPTY_TRANSFORMATION_TENDENCY_FACTS: Dict[str, object] = {
+    "longest_consecutive_presence_months": 0,
+    "has_upright_auditor": False,
+    "has_mediocre_auditor": False,
+    "faction_relations": [],
+    "auditor_names": [],
+    "exposure_classes": [],
+    "exposure_count": 0,
+}
 
 # 执行格形态闭集（与 GameDB._DOSSIER_EXECUTION_OUTCOMES 对齐）
 EXECUTION_FORMS = frozenset({
@@ -79,10 +98,6 @@ def integrity_band(value: object) -> str:
 
 def is_upright_integrity(value: object) -> bool:
     return integrity_band(value) in INTEGRITY_UPRIGHT_BANDS
-
-
-def is_mediocre_integrity(value: object) -> bool:
-    return integrity_band(value) in INTEGRITY_MEDIOCRE_BANDS
 
 
 def faction_relation(auditor_faction: object, subject_faction: object) -> str:
@@ -161,29 +176,20 @@ def derive_consecutive_months(
     return count
 
 
-def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
-    """稽核人＝稽核方案卷 owner：executor_id 优先，否则首名主办（与 #613 同构）。"""
-    executor_id = str(dossier.get("executor_id") or "").strip()
-    executor_kind = str(dossier.get("executor_kind") or "").strip()
-    if executor_id and executor_kind in {"", "character"}:
-        return executor_id
-    roster = dossier.get("participant_roster") or []
-    if isinstance(roster, str):
-        import json
-        try:
-            roster = json.loads(roster)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            roster = []
-    if isinstance(roster, list):
-        for entry in roster:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("tier") or "").strip() != "主办":
-                continue
-            name = str(entry.get("character_id") or "").strip()
-            if name:
-                return name
-    return ""
+def unpack_supervision_surface(
+    surface: Mapping[str, object] | None = None,
+) -> Dict[str, object]:
+    """surface 三键 unpack 单源 helper——due_review / simulator / extractor 共调。"""
+    src = surface or {}
+    tendency = src.get("transformation_tendency_facts")
+    return {
+        "supervision_history": list(src.get("supervision_history") or []),
+        "loophole_exposures": list(src.get("loophole_exposures") or []),
+        "transformation_tendency_facts": dict(
+            tendency if isinstance(tendency, Mapping) and tendency
+            else EMPTY_TRANSFORMATION_TENDENCY_FACTS
+        ),
+    }
 
 
 def build_transformation_tendency_facts(
@@ -217,7 +223,8 @@ def build_transformation_tendency_facts(
         for row in loophole_exposures
         if row.get("action_type") and row.get("execution_form")
     })
-    return {
+    out = dict(EMPTY_TRANSFORMATION_TENDENCY_FACTS)
+    out.update({
         "longest_consecutive_presence_months": longest,
         "has_upright_auditor": upright_hit,
         "has_mediocre_auditor": mediocre_hit,
@@ -225,7 +232,8 @@ def build_transformation_tendency_facts(
         "auditor_names": sorted(set(auditors)),
         "exposure_classes": exposure_classes,
         "exposure_count": len(list(loophole_exposures)),
-    }
+    })
+    return out
 
 
 def countermeasure_origin_ref(auditor_name: str, dossier_id: int) -> str:
@@ -237,13 +245,6 @@ def pick_countermeasure_kind(auditor_name: str, dossier_id: int) -> str:
     seed = f"{auditor_name}:{int(dossier_id)}"
     idx = sum(ord(ch) for ch in seed) % len(COUNTERMEASURE_KINDS)
     return COUNTERMEASURE_KINDS[idx]
-
-
-def strip_supervision_banned(text: str) -> str:
-    out = str(text or "")
-    for token in SUPERVISION_BANNED_PLAYER_TOKENS:
-        out = out.replace(token, "")
-    return out
 
 
 def assert_no_banned_tokens(text: object, *, surface: str) -> None:
@@ -275,7 +276,3 @@ def character_faction_integrity(db: Any, name: str) -> Tuple[str, object]:
     if row is None:
         return "", None
     return str(row["faction"] or ""), row["integrity"]
-
-
-def subject_owner_name(db: Any, dossier: Mapping[str, object]) -> str:
-    return resolve_dossier_owner_name(dossier)

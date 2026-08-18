@@ -34,9 +34,11 @@ from ming_sim.staged_commitment import (
     TODO_STATUS_PENDING,
     write_due_staged_commitment_todos,
 )
+from ming_sim.participant_roster import resolve_dossier_owner_name
 from ming_sim.supervision import (
     COUNTERMEASURE_ORIGIN_KIND,
     COUNTERMEASURE_PRESENCE_MONTHS,
+    EMPTY_TRANSFORMATION_TENDENCY_FACTS,
     EXPOSURE_ALLOWED_COLS,
     EXPOSURE_TABLE,
     FORBIDDEN_DULLING_COL_FRAGMENTS,
@@ -46,12 +48,14 @@ from ming_sim.supervision import (
     PRESENCE_TABLE,
     SUPERVISION_BANNED_PLAYER_TOKENS,
     SUPERVISION_RELATION,
+    SUPERVISION_SURFACE_KEYS,
     assert_no_banned_tokens,
     compose_report_origin,
     derive_consecutive_months,
     faction_relation,
     origin_has_mark,
     parse_report_origin,
+    unpack_supervision_surface,
 )
 
 
@@ -458,6 +462,110 @@ def test_ac4_exposure_history_delta_on_tendency_surface(game):
     assert after["loophole_exposures"] != before["loophole_exposures"]
 
 
+def test_ac4_unified_presence_gate_on_terminal_and_recon_paths(game):
+    """⑤统一在场门：终值路/对账路均须本 turn 稽核在场才写暴露；AC4 差分仍立。"""
+    db, state, _content = game
+    owner, auditor_row = _pair_same_faction(db)
+    turn = int(state.turn)
+
+    # 无人盯：终值变形不落暴露
+    bare_id = _subject_dossier(db, state, owner=str(owner["name"]), token="bare")
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (bare_id,),
+    )
+    db.conn.commit()
+    db.record_dossier_execution(
+        bare_id, "transformed", "无人盯走样", turn, close=True, commit=True,
+    )
+    assert db.list_loophole_exposures(bare_id) == []
+
+    # 被盯紧：终值变形落暴露 → 读入面差分
+    watched_id = _subject_dossier(db, state, owner=str(owner["name"]), token="watch")
+    _audit_dossier(
+        db, state, auditor=str(auditor_row["name"]), subject_id=watched_id, token="watch",
+    )
+    db.record_monthly_supervision_presence(turn, commit=True)
+    assert db.dossier_has_supervision_presence(watched_id, turn)
+    before = db.build_supervision_judge_surface(watched_id)
+    assert before["transformation_tendency_facts"]["exposure_count"] == 0
+
+    db.conn.execute(
+        "UPDATE decree_dossiers SET status='executing' WHERE id=?", (watched_id,),
+    )
+    db.conn.commit()
+    db.record_dossier_execution(
+        watched_id, "transformed", "被盯紧走样", turn, close=True, commit=True,
+    )
+    after = db.build_supervision_judge_surface(watched_id)
+    assert after["transformation_tendency_facts"]["exposure_count"] == 1
+    assert "policy+transformed" in after["transformation_tendency_facts"]["exposure_classes"]
+    assert after["loophole_exposures"] != before["loophole_exposures"]
+
+    # 对账路：同门——无在场不写，有在场才写
+    recon_bare = _subject_dossier(db, state, owner=str(owner["name"]), token="rb")
+    db.conn.execute(
+        """
+        INSERT INTO decree_dossier_reconciliations
+            (dossier_id, turn, ordered_amount, arrived_amount, loss_amount)
+        VALUES (?, ?, 100, 40, 60)
+        """,
+        (recon_bare, turn),
+    )
+    db.conn.commit()
+    out_bare = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    assert int(out_bare["exposure_written"]) == 0
+    assert db.list_loophole_exposures(recon_bare) == []
+
+    recon_watched = _subject_dossier(db, state, owner=str(owner["name"]), token="rw")
+    _audit_dossier(
+        db, state, auditor=str(auditor_row["name"]),
+        subject_id=recon_watched, token="rw",
+    )
+    db.record_monthly_supervision_presence(turn, commit=True)
+    db.conn.execute(
+        """
+        INSERT INTO decree_dossier_reconciliations
+            (dossier_id, turn, ordered_amount, arrived_amount, loss_amount)
+        VALUES (?, ?, 100, 40, 60)
+        """,
+        (recon_watched, turn),
+    )
+    db.conn.commit()
+    out_w = db.record_monthly_loophole_exposures_from_reconciliations(turn, commit=True)
+    assert int(out_w["exposure_written"]) >= 1
+    exps = db.list_loophole_exposures(recon_watched)
+    assert any(r["execution_form"] == "degraded" for r in exps)
+
+
+def test_owner_identity_single_source_shared_with_tenure():
+    """①归属人单源：executor 优先，否则首名主办；#613 任别共调。"""
+    by_executor = {
+        "executor_id": "张居正",
+        "executor_kind": "character",
+        "participant_roster": [{"character_id": "他人", "tier": "主办"}],
+    }
+    assert resolve_dossier_owner_name(by_executor) == "张居正"
+    by_roster = {
+        "executor_id": "",
+        "executor_kind": "",
+        "participant_roster": [
+            {"character_id": "知情甲", "tier": "知情"},
+            {"character_id": "主办乙", "tier": "主办"},
+        ],
+    }
+    assert resolve_dossier_owner_name(by_roster) == "主办乙"
+    assert resolve_dossier_owner_name({}) == ""
+
+
+def test_unpack_supervision_surface_empty_form_is_constant():
+    """②三键 unpack + 空形常量真源。"""
+    empty = unpack_supervision_surface(None)
+    assert empty["supervision_history"] == []
+    assert empty["loophole_exposures"] == []
+    assert empty["transformation_tendency_facts"] == EMPTY_TRANSFORMATION_TENDENCY_FACTS
+    assert set(empty) == set(SUPERVISION_SURFACE_KEYS)
+
+
 # ── AC5 哨兵 ──────────────────────────────────────────────────────
 
 
@@ -551,6 +659,36 @@ def test_injection_simulator_and_extractor_surfaces(game):
     dhit = next(r for r in ctx["decree_dossiers"] if int(r["id"]) == subject_id)
     assert dhit.get("supervision_history") is not None
     assert dhit.get("transformation_tendency_facts") is not None
+
+
+def test_extractor_supervision_keys_gated_to_issues_module(game):
+    """⑥监督三键仅 module==issues；其他 extractor 不得见未申报键。"""
+    db, state, _content = game
+    owner, auditor_row = _pair_same_faction(db)
+    subject_id = _subject_dossier(db, state, owner=str(owner["name"]), token="gate")
+    _audit_dossier(
+        db, state, auditor=str(auditor_row["name"]), subject_id=subject_id, token="gate",
+    )
+    db.record_monthly_supervision_presence(state.turn, commit=True)
+
+    issues_ctx = build_extractor_shared_context(
+        db, state, "邸报", "", module="issues",
+    )
+    issues_hit = next(
+        r for r in issues_ctx["decree_dossiers"] if int(r["id"]) == subject_id
+    )
+    for key in SUPERVISION_SURFACE_KEYS:
+        assert key in issues_hit
+
+    for module in ("internal", "military_external", "personnel_secret"):
+        other = build_extractor_shared_context(
+            db, state, "邸报", "", module=module,
+        )
+        other_hit = next(
+            r for r in other["decree_dossiers"] if int(r["id"]) == subject_id
+        )
+        for key in SUPERVISION_SURFACE_KEYS:
+            assert key not in other_hit, f"{module} 不得注入 {key}"
 
 
 def test_due_review_supervision_history_no_longer_hardcoded_empty(game):
