@@ -7052,6 +7052,10 @@ def apply_score_extraction(
             db.record_dossier_execution(
                 dossier_id, outcome, note, state.turn, close=True, commit=False,
             )
+            # #567：S10 结案同源读被护侧对账，经 merge_execution_note 增补（单写口）。
+            db.merge_grant_reconciliation_into_execution_note(
+                dossier_id, commit=False,
+            )
             # 连坐挂载点＝本适配器落终值笔；禁对 execution_outcome 列事后扫描。
             # 触发过滤由 apply 内 _JOINT_LIABILITY_TRIGGERS 单一真源承担。
             db.apply_execution_joint_liability(

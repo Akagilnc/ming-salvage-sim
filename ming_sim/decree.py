@@ -2001,6 +2001,10 @@ def _settle_after_extract_body(
     db.record_monthly_dossier_progress(
         before_turn, extracted.get("dossier_progress_reports"),
     )
+    # #567：在途拨帑月度机械对账（被护侧真源）；与 #566 进展分轨，不扩 0058。
+    db.record_monthly_grant_reconciliations(
+        before_turn, extracted.get("dossier_reconciliations"),
+    )
     if delta_applier is not None:
         applied = delta_applier(db, state, extracted, content, registry)
     else:
