@@ -11886,8 +11886,10 @@ class GameDB:
         与 #623 立即倒退去重：本片只立承诺所系 issue＋本片具名 metrics 一锤子，不重放
         breach_halfway_setback / 民心-3·皇威-2 直击；不写 ongoing_effects.metrics 镜像。
 
-        事废读源：consumed midcourse_breach_plea（#623 坚持撤常经 0056 先关案卷，
-        execution_outcome 可能空，故不以执行格为事废唯一源）。
+        事废读源：consumed midcourse_breach_plea 且承诺已 dropped（坚持撤
+        cancel_issue；#623 常经 0056 先关案卷，execution_outcome 可能空，
+        故不以执行格为事废唯一源）。反悔/到期失效只标 consumed，承诺仍
+        active 或其后 resolved/failed —— 不得当做事废。
         烂尾：读执行格终值 failed（#621）。
         变形：execution_outcome==transformed 仅作候选；须经 #622 公开读端
         list_economy_moves_for_dossier + beyond_intent 确认分叉事实后才立案。
@@ -11910,8 +11912,10 @@ class GameDB:
 
         candidates: List[Tuple[int, str, int]] = []  # (commitment_id, source_kind, dossier_id)
 
-        # ① 事废判决：已消费哭谏（坚持撤）→ 结构化既判；以承诺 closed_turn 为一拍差锚
-        # 总纲：事废源=consumed 哭谏绑定，不读 execution_note 子串。
+        # ① 事废判决：已消费哭谏 + 承诺已撤（dropped）→ 结构化既判。
+        # 一拍差锚=承诺 closed_turn。总纲：不读 execution_note 子串。
+        # 仅 consumed 不够：finalize_regret / expire 也标 consumed，
+        # 其后告成(resolved)/崩坏(failed) 不得立 breach_verdict。
         for todo in self.list_next_audience_todos(status="consumed"):
             if str(todo.get("entry_kind") or "") != ENTRY_KIND_BREACH_PLEA:
                 continue
@@ -11919,11 +11923,13 @@ class GameDB:
             if cid <= 0:
                 continue
             crow = self.conn.execute(
-                "SELECT id, title, closed_turn, commitment_kind, origin_ref "
-                "FROM issues WHERE id=?",
+                "SELECT id, title, closed_turn, commitment_kind, origin_ref, "
+                "status FROM issues WHERE id=?",
                 (cid,),
             ).fetchone()
             if crow is None or not str(crow["commitment_kind"] or "").strip():
+                continue
+            if str(crow["status"] or "") != "dropped":
                 continue
             judgment_turn = int(crow["closed_turn"] or 0)
             if judgment_turn <= 0 or judgment_turn >= int(state.turn):
