@@ -5,6 +5,7 @@ import pytest
 from ming_sim.appointment_tenure import (
     AUTHORITY_COMMAND_RELIEF,
     COMMAND_POWER_RANK,
+    DEFAULT_APPOINTMENT_TENURE,
     command_power_rank,
     execution_distortion_weight,
 )
@@ -345,3 +346,107 @@ def test_season_simulator_prompt_covers_command_power_order():
     assert "兼署" in text
     assert "held_authorities" in text or "在持授权" in text
     assert "appointment_tenure" in text
+
+
+def _clear_character_offices(db, name):
+    """人物仍在 characters，但 character_offices 无行（缺档合法态）。"""
+    db.conn.execute(
+        "DELETE FROM character_offices WHERE character_name=?", (name,),
+    )
+    db.conn.commit()
+    assert db.conn.execute(
+        "SELECT 1 FROM character_offices WHERE character_name=?", (name,),
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM characters WHERE name=?", (name,),
+    ).fetchone() is not None
+
+
+def test_missing_offices_explicit_executor_falls_to_bare_not_other_lead(game):
+    """显式 executor 缺 character_offices 行：bare 真除，不得静默继承他人主办任别。"""
+    db, state, _content = game
+    executor, other_lead = _ministers(db, 2)
+    _clear_character_offices(db, executor)
+    _set_tenure(db, other_lead, "加衔")
+
+    consumer = _executing_policy(
+        db, state, executor,
+        target_id="missing-offices-explicit-executor",
+        roster=[
+            {"character_id": executor, "tier": "主办", "role": "承办"},
+            {"character_id": other_lead, "tier": "主办", "role": "协理"},
+        ],
+    )
+    assert consumer["executor_id"] == executor
+
+    hit = _live_exec_side(db, state, consumer)
+    bare_weight = execution_distortion_weight(DEFAULT_APPOINTMENT_TENURE)
+    other_weight = execution_distortion_weight("加衔")
+    assert hit["appointment_tenure"] == DEFAULT_APPOINTMENT_TENURE == "真除"
+    assert hit["appointment_tenure"] != "加衔"
+    assert hit["command_power_rank"] == command_power_rank("真除")
+    assert hit["distortion_weight"] == bare_weight
+    assert hit["distortion_weight"] != other_weight
+    # 直读 resolve 同口径，禁跨候选换人
+    assert decree_mod.resolve_executor_appointment_tenure(db, consumer) == "真除"
+
+    # 与 court_roster COALESCE 缺档=真除自洽
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    cols = payload["court_roster"]["cols"]
+    name_idx = cols.index("name")
+    tenure_idx = cols.index("appointment_tenure")
+    by_name = {
+        row[name_idx]: row[tenure_idx] for row in payload["court_roster"]["rows"]
+    }
+    assert by_name[executor] == "真除"
+    assert by_name[other_lead] == "加衔"
+
+
+def test_missing_offices_first_lead_falls_to_bare_not_next_lead(game):
+    """无显式 character executor 时首位主办缺档：bare 真除，不得继承次名主办任别。"""
+    db, state, _content = game
+    first_lead, second_lead = _ministers(db, 2)
+    _clear_character_offices(db, first_lead)
+    _set_tenure(db, second_lead, "加衔")
+
+    dossier_id = db.create_decree_dossier(
+        state,
+        action_type="policy",
+        decree_text="疏浚运河",
+        target_kind="issue",
+        target_id="missing-offices-first-lead",
+        executor_kind="",
+        executor_id="",
+        participants=[
+            {"character_id": first_lead, "tier": "主办", "role": "承办"},
+            {"character_id": second_lead, "tier": "主办", "role": "协理"},
+        ],
+        payload={
+            "authorization_id": "payload-auth",
+            "authorization_ids": ["payload-list"],
+            "任别": "加衔",
+        },
+    )
+    db.apply_dossier_promulgation(state, dossier_id, "promulgated")
+    consumer = db.get_decree_dossier(dossier_id)
+    assert consumer["status"] == "executing"
+    assert not str(consumer.get("executor_id") or "").strip()
+
+    hit = _live_exec_side(db, state, consumer)
+    bare_weight = execution_distortion_weight(DEFAULT_APPOINTMENT_TENURE)
+    assert hit["appointment_tenure"] == DEFAULT_APPOINTMENT_TENURE == "真除"
+    assert hit["appointment_tenure"] != "加衔"
+    assert hit["command_power_rank"] == command_power_rank("真除")
+    assert hit["distortion_weight"] == bare_weight
+    assert hit["distortion_weight"] != execution_distortion_weight("加衔")
+    assert decree_mod.resolve_executor_appointment_tenure(db, consumer) == "真除"
+
+    payload = build_simulator_payload(state, db, decree_text="", previous_narrative="")
+    cols = payload["court_roster"]["cols"]
+    name_idx = cols.index("name")
+    tenure_idx = cols.index("appointment_tenure")
+    by_name = {
+        row[name_idx]: row[tenure_idx] for row in payload["court_roster"]["rows"]
+    }
+    assert by_name[first_lead] == "真除"
+    assert by_name[second_lead] == "加衔"
