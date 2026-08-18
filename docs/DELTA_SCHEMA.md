@@ -5,6 +5,12 @@
 用途：每回合月末，我以裁判身份产一份 delta JSON，由 driver 喂 `apply_score_extraction(db, state, extracted)` 落库。**未知顶层字段会响亮中止；已知 section 内值不合法的条目逐项拒收留痕。** 必须查表，不要凭"我以为"。
 v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、未知顶层字段）过不了 `validate_delta_shape`，结算会响亮中止（SettlementAbort + 诊断错误包），不再静默吞——产出前自查顶层字段集（与 `EMPTY_EXTRACTION` 对齐），别指望守门人帮忙兜。
 
+## ADR 0055 效果分工线与 origin 槽
+
+- **结构化载荷类**（任免 / 定额拨帑 / 授权等 payload 可机械导出且经外廷受判者）：判决后自案卷载荷物化；同类效果 extractor **禁抽**；apply 端按 origin 回指 dedup（`origin_ref: dossier:<id>` 或生产槽 `dossier_id`）。案卷须已具备可物化资格（已颁 / 执行中 / 强颁，或豁免直落）；打回、留中、未达资格不得改世界。
+- **叙事性政令**（新政 / 工程 / 改革等无结构化 payload 者）：效果经推演-extractor 链涌现；顺颁当月进推演正文，批红强颁自次月进（T+1）；打回受硬约束零效果。两路效果记录均带 origin 回指。
+- **origin 槽**：各 section 的 `origin_ref` / `dossier_id` / `origin_kind` 即回指锚（见下表各字段）；`盘面自发` 仅用于非旨意自然演化。dedup 只辖结构化类，不得误杀叙事政令的合法抽取。
+
 ## 顶层字段（容器类型固定；与 EMPTY_EXTRACTION 对齐）
 
 ```jsonc
@@ -67,6 +73,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `target_kind` | `purpose=补饷` 时必填 `army` | 配合 target_id 用 |
 | `target_id` | `purpose=补饷` 时必填合法 army_id | 缺失或不存在则整条拒收不扣账 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发` | 案卷引用必须存在且已颁；自然演化必须写精确哨兵。缺失、伪前缀及未授权案卷逐项拒收 |
+| `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`） | #622 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > ⚠️ **常踩坑**：建筑日常产出 / 固定月度收支 **不要写**（已由程序 `apply_fixed_period_flows` 落账）。这里只写本回合"诏书/事件导致的一次性真金白银收支"，每笔三要素「源→目标，金额」点死。
 > 「太仓岁亏三十万」是困境描述，不是本月一笔收支，**别照写成 economy_moves**。

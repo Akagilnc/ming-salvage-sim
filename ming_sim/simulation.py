@@ -94,6 +94,9 @@ ITEM_FIELD_ALIASES = {
     "inertia_delta": "inertia_delta", "惯性增量": "inertia_delta",
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
+    # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
+    "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
+    "旨外标记": "beyond_intent", "旨外恶果": "beyond_intent",
     "id": "id", "编号": "id",
     "kind": "kind", "类型": "kind",
     "title": "title", "标题": "title",
@@ -926,6 +929,10 @@ def build_extractor_shared_context(
         "appointment_tenure", "held_authorities", "authorization_ids",
         "command_power_rank", "distortion_weight",
     )
+    # #625：监督三键仅 issues 模块申报（票面=simulator+score_extractor_issues）；
+    # 其他 extractor 不得见未申报键。
+    from ming_sim.supervision import SUPERVISION_SURFACE_KEYS, unpack_supervision_surface
+
     for row in authorized_dossiers:
         if row["action_type"] == "secret_order":
             continue
@@ -945,6 +952,17 @@ def build_extractor_shared_context(
             # Need full dossier shape for projection (executor/roster/target).
             full = db.get_decree_dossier(int(row["id"])) or row
             entry.update(execution_side_read_fields(db, state, full))
+        if module == "issues":
+            # 监督事实底注入执行格面（只读；缺则现场读 DB）。
+            if all(key in row for key in SUPERVISION_SURFACE_KEYS):
+                for key in SUPERVISION_SURFACE_KEYS:
+                    entry[key] = row[key]
+            else:
+                entry.update(
+                    unpack_supervision_surface(
+                        db.build_supervision_judge_surface(int(row["id"]))
+                    )
+                )
         slim_dossiers.append(entry)
     slim["decree_dossiers"] = slim_dossiers
     if module == "personnel_secret":
@@ -1163,6 +1181,12 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
+        # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端
+        # GameDB.coerce_beyond_intent_flag。显式 False 亦透传——在场即原值放行，
+        # 缺省与 False 在 coerce 侧同归 0，cleaner 不替判官省键。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
