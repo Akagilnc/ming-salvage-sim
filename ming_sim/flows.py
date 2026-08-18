@@ -797,6 +797,7 @@ def _auto_pay_arrears_by_priority(
     commit: bool = True,
     allowed_army_ids: Optional[List[str]] = None,
     origin_ref: str = "",
+    beyond_intent: object = 0,
 ) -> int:
     """按 ARMY_SALARY_PRIORITY 顺序分配一笔已明确允许非定向的补饷。
 
@@ -841,6 +842,7 @@ def _auto_pay_arrears_by_priority(
             db, state, row, account, pay_cap, category,
             f"{reason}（按优先级分给{name}{pay_cap}万两）",
             "诏拨补饷", "按优先级", origin_ref=origin_ref,
+            beyond_intent=beyond_intent,
         )
         spent += spent_now
         remaining -= spent_now
@@ -890,6 +892,7 @@ def _pay_single_army_arrears(
     *,
     commit: bool = True,
     origin_ref: str = "",
+    beyond_intent: object = 0,
 ) -> int:
     _ = commit  # transaction ownership belongs to the caller/batch boundary.
     current_arrears = float(row["arrears"] or 0)
@@ -911,7 +914,7 @@ def _pay_single_army_arrears(
     actual = db.record_issue_economy_move(
         state, account, -actual_pay, category, reason,
         purpose="补饷", target_kind="army", target_id=str(row["id"]),
-        origin_ref=origin_ref, commit=False,
+        origin_ref=origin_ref, beyond_intent=beyond_intent, commit=False,
     )
     if not actual:
         return 0
@@ -1013,6 +1016,10 @@ def _apply_economy_list(
         # 校验枚举；非法值退化为"其它"常规扣账
         purpose = raw_purpose if raw_purpose in ECONOMY_PURPOSES else None
         target_kind = raw_target_kind if raw_target_kind in ECONOMY_TARGET_KINDS else None
+        # #622：旨外标记随效果写入（同 origin 载体）；缺省 0。补饷分支与常规扣账共用。
+        beyond_raw = move.get("beyond_intent")
+        if beyond_raw is None:
+            beyond_raw = move.get("旨外")
 
         # ── 补饷分发：按当前欠额占比分销两累加器 + 同步减 armies.arrears ───────
         # purpose=补饷 必须定向到具体 army_id；非定向补饷需要另立显式契约，
@@ -1047,6 +1054,7 @@ def _apply_economy_list(
                     commit=commit,
                     allowed_army_ids=allowed_pool_ids,
                     origin_ref=effective_origin_ref,
+                    beyond_intent=beyond_raw,
                 )
                 applied.append({"account": account, "delta": -spent, "reason": reason})
                 continue
@@ -1096,6 +1104,7 @@ def _apply_economy_list(
             spent = _pay_single_army_arrears(
                 db, state, row, account, min(abs(delta), payable_arrears), category,
                 reason, "诏拨补饷", origin_ref=effective_origin_ref,
+                beyond_intent=beyond_raw,
             )
             if spent:
                 if pay_source_cutover:
@@ -1111,10 +1120,6 @@ def _apply_economy_list(
         if origin_error:
             applied.append({"account": account, **origin_error, "item": move})
             continue
-        # #622：旨外标记随效果写入（同 origin 载体）；缺省 0。
-        beyond_raw = move.get("beyond_intent")
-        if beyond_raw is None:
-            beyond_raw = move.get("旨外")
         actual = db.record_issue_economy_move(
             state, account, delta, category, reason,
             purpose=purpose or "其它" if delta < 0 else None,

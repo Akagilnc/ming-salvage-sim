@@ -427,3 +427,64 @@ def test_web_sanitize_seam_beyond_intent_survives_to_transformed(game, content):
     )
     assert result["verdict"]["outcome"] == "transformed"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
+
+
+# ── ⑤ 补饷写路 seam（#622 旨外标记在 purpose=补饷 被剥）────────────────
+
+
+def test_pay_arrears_beyond_intent_survives_to_transformed(game, content):
+    """purpose=补饷 写路须透传 beyond_intent，否则到期复核把旨外补饷误判 fulfilled。
+
+    内政档房契约：真钱补欠必须写 purpose=补饷 + army target（score_extractor_internal）。
+    _apply_economy_list 的补饷分支走 _pay_single_army_arrears，该 helper 调
+    record_issue_economy_move 时不传 beyond_intent（默认 0）。常规「其它」分支已透传，
+    旧 #622 测全走浮收正增量、切在补饷分支外。本条强制 raw 补饷形（用途=补饷 + 旨外）
+    经 sanitizer → apply → ledger → 终裁。
+    """
+    db, state, _content = game
+    dossier_id = _executing_policy(db, state, token="pay-arrears-622")
+    origin = f"dossier:{dossier_id}"
+
+    army = db.conn.execute(
+        "SELECT id, arrears FROM armies "
+        "WHERE owner_power='ming' AND arrears >= 1 "
+        "ORDER BY arrears DESC LIMIT 1"
+    ).fetchone()
+    assert army is not None, "开局须有欠饷明军，否则补饷分支不落账"
+    army_id = str(army["id"])
+    state.metrics["国库"] = max(int(state.metrics.get("国库") or 0), 20)
+
+    raw_internal = {
+        "economy_moves": [
+            {
+                "账户": "国库",
+                "增量": -1,
+                "分类": "补饷",
+                "原因": "借清丈之名挪饷入私军",
+                "用途": "补饷",
+                "目标类型": "army",
+                "目标编号": army_id,
+                "来源引用": origin,
+                "旨外": True,
+            }
+        ],
+    }
+    cleaned = _sanitize_module_output("internal", raw_internal)
+    moves_out = cleaned.get("economy_moves") or []
+    assert len(moves_out) == 1, moves_out
+    assert moves_out[0].get("purpose") == "补饷", moves_out
+    assert "beyond_intent" in moves_out[0], moves_out
+
+    applied = apply_score_extraction(db, state, cleaned, content=content)
+    assert applied["economy_moves"], applied
+    stored = db.list_economy_moves_for_dossier(dossier_id)
+    assert stored, stored
+    assert all(m.get("purpose") == "补饷" for m in stored), stored
+    assert all(m["beyond_intent"] is True for m in stored), stored
+    assert all(m["origin_ref"] == origin for m in stored), stored
+
+    result = _prime_and_apply_due_review(
+        db, state, content, dossier_id=dossier_id, title="补饷缝·清丈",
+    )
+    assert result["verdict"]["outcome"] == "transformed"
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
