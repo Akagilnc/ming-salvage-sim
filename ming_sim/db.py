@@ -13325,6 +13325,19 @@ class GameDB:
             payload.get("text") or row.get("decree_text") or "撤回成命"
         )[:400]
 
+        # #623 / ADR 0075：目标挂 active 承诺 → 当回合只写挽留 todo，
+        # 0056 名声笔与事轴结账延迟到坚持后（不顺颁即 breach+close）。
+        from ming_sim.breach_plea import try_defer_revoke_to_breach_plea
+        deferred = try_defer_revoke_to_breach_plea(
+            self, state,
+            target_dossier_id=int(target_dossier_id),
+            target_issue_id=int(target_issue_id or 0),
+            reason=reason,
+            commit=False,
+        )
+        if deferred and deferred.get("deferred"):
+            return
+
         # 0056 毁约轨：任何获准终结路径均须走同根代价（皇威+观感+派系）
         self.breach_decree_dossier(
             state, int(target_dossier_id), reason=reason, commit=False,

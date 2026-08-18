@@ -15,6 +15,10 @@ import re
 from typing import Any, Dict, List, Optional
 
 from ming_sim.db import GameDB
+from ming_sim.breach_plea import (
+    ENTRY_KIND_BREACH_PLEA,
+    project_breach_plea_scene,
+)
 from ming_sim.staged_commitment import (
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
@@ -207,17 +211,20 @@ def project_due_review_scene(
 def list_due_review_scenes(
     db: Any, state: Any = None, *, status: str = TODO_STATUS_PENDING,
 ) -> List[Dict[str, object]]:
-    """次回合召对顶出序：复用 (due_turn, commitment_ref, stage_idx, id)。"""
+    """次回合召对顶出序：复用 (due_turn, commitment_ref, stage_idx, id)。
+
+    kind 分派：staged → 复命场面；midcourse_breach_plea → 哭谏场面；其它/未知跳过。
+    """
     todos = db.list_next_audience_todos(status=status)
     # list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
-    # 本片只消费分段到期；#623 挽留等 entry_kind 预留位，未知 kind 跳过。
-    # #620 写端只产 ENTRY_KIND_STAGED；其它 entry_kind（#623 预留）本片不投影。
     scenes: List[Dict[str, object]] = []
     for todo in todos:
         kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-        if kind != ENTRY_KIND_STAGED:
-            continue
-        scenes.append(project_due_review_scene(db, todo))
+        if kind == ENTRY_KIND_STAGED:
+            scenes.append(project_due_review_scene(db, todo))
+        elif kind == ENTRY_KIND_BREACH_PLEA:
+            scenes.append(project_breach_plea_scene(db, todo))
+        # 其它/未知 kind：跳过
     return scenes
 
 
@@ -233,22 +240,28 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     """接管窗：到期目标案卷仅正式复核可写终值（防 extractor 第二真源）。
 
     覆盖两段窗：
-    1) 已有 pending todo（含本 settle 刚写、created_turn == turn）——召对前后至 apply；
+    1) 已有 pending staged todo（含本 settle 刚写、created_turn == turn）——召对前后至 apply；
     2) 本拍将写 todo 的到期段——extract 早于 write_due，须预占，
        已 consumed/rolled 的段不再占窗（中段复核后还权）。
+
+    kind 分派法：midcourse_breach_plea / 其它 kind **不计入**接管窗。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     owned: set[int] = set()
 
     for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
+        kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
+        if kind != ENTRY_KIND_STAGED:
+            continue
         meta = _issue_meta(db, int(todo["commitment_ref"]))
         _add_owned_dossier(owned, db, meta["origin_ref"])
 
-    # 非 pending（consumed/rolled）段键：到期扫描不再预占
+    # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 段键）
     finished_keys = {
         (int(t["commitment_ref"]), int(t["stage_idx"]))
         for t in db.list_next_audience_todos()
         if str(t.get("status") or "") != TODO_STATUS_PENDING
+        and str(t.get("entry_kind") or ENTRY_KIND_STAGED) == ENTRY_KIND_STAGED
     }
     for item in list_due_stages_for_scan(db, turn):
         key = (int(item["commitment_ref"]), int(item["stage_idx"]))
@@ -372,7 +385,27 @@ def apply_due_review_for_todo(
     *,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """单条正式复核：落格（有案卷）或只场面消费（无案卷）+ todo 消费。"""
+    """单条正式复核：仅 staged 落格+消费；哭谏 pending 保留（禁当 staged 终裁）。"""
+    kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
+    if kind == ENTRY_KIND_BREACH_PLEA:
+        # 法：沉默/未答→跳过保留 pending；反悔/坚持由召对 extraction 真入口结账
+        return {
+            "todo_id": int(todo["id"]),
+            "entry_kind": kind,
+            "skipped": True,
+            "reason": "breach_plea_pending_retained",
+            "consumed": False,
+        }
+    if kind != ENTRY_KIND_STAGED:
+        # 负向闸：未知 kind 不落格不连坐
+        return {
+            "todo_id": int(todo["id"]),
+            "entry_kind": kind,
+            "skipped": True,
+            "reason": "unknown_entry_kind",
+            "consumed": False,
+        }
+
     inp = build_due_review_input(db, todo)
     verdict = decide_due_review_verdict(inp)
     scene = project_due_review_scene(db, todo, review_input=inp)
@@ -396,6 +429,7 @@ def apply_due_review_for_todo(
         db.conn.commit()
     return {
         "todo_id": int(todo["id"]),
+        "entry_kind": kind,
         "branch": branch,
         "mid_stage": bool(verdict.get("mid_stage")),
         "verdict": verdict,
@@ -408,16 +442,23 @@ def apply_due_review_for_todo(
 def apply_pending_due_reviews(
     db: Any, state: Any, *, commit: bool = False,
 ) -> List[Dict[str, object]]:
-    """消费 created_turn < 当前 turn 的 pending todo（经召对窗后的 settle 落格）。"""
+    """消费 created_turn < 当前 turn 的 pending todo（经召对窗后的 settle 落格）。
+
+    kind 分派：仅 staged 走到期终裁+连坐；哭谏条 skip 保留；未知 kind 负向闸跳过。
+    """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
     pending = db.list_next_audience_todos(status=TODO_STATUS_PENDING)
     for todo in pending:
         if int(todo.get("created_turn") or 0) >= turn:
             continue
-        results.append(
-            apply_due_review_for_todo(db, state, todo, commit=False)
-        )
+        kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
+        # 哭谏不进终裁循环的「可消费」集合——仍走 apply 以便返回 skipped 证据，
+        # 但 created_turn 条件满足时也只保留 pending（apply_due_review_for_todo 内闸）。
+        result = apply_due_review_for_todo(db, state, todo, commit=False)
+        # 不把纯 skip 算进「已 settle」噪音：仍返回供闸测
+        if kind == ENTRY_KIND_STAGED or result.get("skipped"):
+            results.append(result)
     if commit and results:
         db.conn.commit()
     return results

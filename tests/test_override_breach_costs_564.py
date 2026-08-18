@@ -437,6 +437,15 @@ def test_commit_false_breach_rolls_back_with_later_cancellation_failure(game, mo
 
 
 def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued(game):
+    """#564×#623：active 承诺 cancel 先入挽留；坚持后 0056 仍可认领已闭但曾颁发案卷。
+
+    未颁发案卷仍不得作 canonical origin 毁约。
+    """
+    from ming_sim.breach_plea import (
+        ENTRY_KIND_BREACH_PLEA,
+        finalize_persist,
+    )
+
     db, state, _ = game
     issued = _dossier(db, state)
     db.apply_dossier_promulgation(state, issued, "promulgated")
@@ -454,12 +463,28 @@ def test_active_commitment_can_breach_closed_issued_dossier_but_not_never_issued
     excluded = db.insert_issue(state, kind="initiative", title="未发之旨", origin_kind="decree",
                                origin_ref=f"dossier:{never}", cancellable="decree", commitment_kind="funding")
 
+    # #623：cancel 承诺 → 当回合只写挽留，不即时 0056
     issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": active}]})
-    with pytest.raises(ValueError, match="canonical origin 非法"):
-        issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
-
+    assert _cost_events(db, issued) == []
+    plea = next(
+        t for t in db.list_next_audience_todos(status="pending")
+        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
+        and int(t["commitment_ref"]) == int(active)
+    )
+    # 坚持撤 → 0056 认领已闭但曾颁发案卷
+    finalize_persist(db, state, plea, commit=True)
     assert any(x["cost_kind"] == "breach" for x in _cost_events(db, issued))
     assert db.get_decree_dossier(issued)["closed_turn"] == closed_turn
+
+    # 未颁发案卷：cancel 可写挽留，但坚持时 0056 不得落（无合法颁发源）
+    issues.apply_issue_tracker_output(db, state, {"cancels": [{"issue_id": excluded}]})
+    never_pleas = [
+        t for t in db.list_next_audience_todos(status="pending")
+        if t.get("entry_kind") == ENTRY_KIND_BREACH_PLEA
+        and int(t["commitment_ref"]) == int(excluded)
+    ]
+    if never_pleas:
+        finalize_persist(db, state, never_pleas[0], commit=True)
     assert _cost_events(db, never) == []
 
 

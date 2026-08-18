@@ -692,6 +692,8 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "authority_changes": [],
     "dossier_progress_reports": [],
     "emperor_fate": None,  # 崇祯结局：abdicate(退位/禅让)/suicide(自尽/殉国)/null(无)
+    # #623：召对真入口——挽留场反悔/坚持显式决策（非 DECISION 闸；extraction 识别后消费）
+    "breach_plea_decisions": [],
 }
 
 MODULE_FIELDS: Dict[str, set[str]] = {
@@ -700,7 +702,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     "issues": {
         "issue_advances", "new_issues", "事件结局", "cancels", "close_issues",
         "dossier_executions", "dossier_participants", "dossier_reconciliations",
-        "authority_changes",
+        "authority_changes", "breach_plea_decisions",
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
