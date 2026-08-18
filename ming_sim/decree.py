@@ -1922,6 +1922,21 @@ def pre_settle(
                     }
                     for item in counter_hits
                 ]
+            # #627：政敌检举——同涌现缝产检举条目（独立载体，零新 LLM 步）。
+            denunciation_hits = db.trigger_faction_denunciations(state, commit=False)
+            if denunciation_hits:
+                auto_triggered = list(auto_triggered) + [
+                    {
+                        "id": item.get("origin_ref"),
+                        "title": (
+                            f"faction_denunciation:"
+                            f"{'true' if item.get('is_true') else 'false'}:"
+                            f"{item.get('accuser_name')}"
+                        ),
+                        "source": "faction_denunciation",
+                    }
+                    for item in denunciation_hits
+                ]
             if auto_triggered:
                 tlog(f"[AUTO-TRIGGER] 本回合程序硬立项 {len(auto_triggered)} 条：{[t.get('title') for t in auto_triggered]}")
             # 密令期限：到期 active 自动转 pending_review，保证本月核议一锤定音。

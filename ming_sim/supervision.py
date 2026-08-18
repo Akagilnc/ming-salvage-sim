@@ -1,4 +1,4 @@
-"""#625 / ADR 0077 钝化事实底＋人身条件化判官口径。
+"""#625 / ADR 0077 钝化事实底＋人身条件化判官口径；#627 政敌检举轨。
 
 DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointment_tenure），
 不建钝化数值列。判官读事实软判；本模块提供：
@@ -6,6 +6,7 @@ DB 只机械记事实（监督在场 / 空子暴露 / 任期读既有 appointmen
 - 派系同/敌判定
 - #619 origin 结构化私货/同派标记
 - 孤直反制硬门（涌现缝立 issue）
+- #627 政敌检举：fork 单源谓词、烈度纯函数、真伪 origin、同渲染函数
 - 玩家可见面禁词
 """
 
@@ -46,7 +47,21 @@ EXECUTION_FORMS = frozenset({
 # #619 origin 结构化标记（扩 origin 字符串，不加列）
 ORIGIN_MARK_PRIVATE_GOODS = "private_goods"
 ORIGIN_MARK_SAME_FACTION_BLIND = "same_faction_blind"
+# #627 检举真伪底（compose_report_origin 单源常量，不加 veracity 列）
+ORIGIN_MARK_DENUNCIATION_TRUE = "denunciation_true"
+ORIGIN_MARK_DENUNCIATION_FALSE = "denunciation_false"
 ORIGIN_MARK_SEP = "+"
+
+DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
+DENUNCIATION_KIND = "faction_denunciation"
+
+# #627 烈度→条数硬门（确定性选形，禁概率抽签/新烈度列/LLM 报烈度）
+# (intensity 下界, 检举条数)；按 intensity 升序，命中最高门。
+DENUNCIATION_INTENSITY_GATES: Tuple[Tuple[int, int], ...] = (
+    (1, 1),
+    (40, 2),
+    (70, 3),
+)
 
 # 人身条件化：操守定性档（读 characters.integrity，不落钝化分）
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
@@ -74,7 +89,24 @@ SUPERVISION_BANNED_PLAYER_TOKENS = (
     "dulling",
     "dull_rate",
     "dullness",
+    # #627 真伪底 / 烈度 / fork 暴露系统词
+    "denunciation_true",
+    "denunciation_false",
+    "faction_conflict_intensity",
+    "faction_denunciation",
+    "fork_exposure",
+    "veracity",
+    "true_denunciation",
+    "false_denunciation",
 )
+
+# #627 检举事实表列白名单（PRAGMA 验收）
+DENUNCIATION_TABLE = "faction_denunciations"
+DENUNCIATION_ALLOWED_COLS = frozenset({
+    "id", "turn", "accuser_name", "accuser_faction",
+    "subject_name", "subject_faction", "target_dossier_id",
+    "origin", "payload_json", "memorial_text",
+})
 
 # PRAGMA 白名单：事实表仅 id / FK / turn / 枚举 / 布尔
 PRESENCE_TABLE = "dossier_supervision_presence"
@@ -109,6 +141,124 @@ def faction_relation(auditor_faction: object, subject_faction: object) -> str:
     if a == b:
         return "same"
     return "enemy"
+
+
+def is_reported_actual_fork(
+    *,
+    reported_bands: Sequence[object],
+    beyond_intent: bool,
+    execution_outcome: object,
+) -> bool:
+    """#622/#627 fork 判据单源：奏报面有 band，且（旨外实况 或 执行格非 fulfilled/executing/空）。
+
+    全库仅此一处表达该谓词；读端（#622 稽核信号 / #627 检举）共调。
+    """
+    bands = [
+        str(b).strip()
+        for b in (reported_bands or ())
+        if str(b or "").strip()
+    ]
+    outcome = str(execution_outcome or "").strip()
+    return bool(bands) and (
+        bool(beyond_intent) or outcome not in {"", "fulfilled", "executing"}
+    )
+
+
+def faction_conflict_intensity(
+    *,
+    relation: object,
+    enemy_leverage: object,
+    enemy_satisfaction: object = None,
+) -> int:
+    """派系冲突烈度纯函数：enemy × leverage(敌派)（可加 satisfaction 调制）。
+
+    禁概率抽签 / 禁新烈度列 / 禁 LLM 报烈度。非 enemy → 0。
+    """
+    if str(relation or "").strip() != "enemy":
+        return 0
+    try:
+        lev = int(enemy_leverage)
+    except (TypeError, ValueError):
+        lev = 0
+    lev = max(0, min(100, lev))
+    if enemy_satisfaction is None:
+        return lev
+    try:
+        sat = int(enemy_satisfaction)
+    except (TypeError, ValueError):
+        sat = 50
+    sat = max(0, min(100, sat))
+    # 低满意（怨气）最多 +10；不反向扣到负
+    anger_boost = max(0, (50 - sat) // 5)
+    return max(0, min(100, lev + anger_boost))
+
+
+def denunciation_quota(intensity: object) -> int:
+    """烈度→检举条数硬门（#625 同款确定性选形，无 RNG）。"""
+    try:
+        value = int(intensity)
+    except (TypeError, ValueError):
+        value = 0
+    n = 0
+    for threshold, count in DENUNCIATION_INTENSITY_GATES:
+        if value >= int(threshold):
+            n = int(count)
+    return n
+
+def compose_denunciation_origin(*, is_true: bool) -> str:
+    """检举 origin：base + 真/伪 mark（#619 compose_report_origin 单源）。"""
+    mark = (
+        ORIGIN_MARK_DENUNCIATION_TRUE
+        if is_true
+        else ORIGIN_MARK_DENUNCIATION_FALSE
+    )
+    return compose_report_origin(DENUNCIATION_ORIGIN_BASE, [mark])
+
+
+def render_denunciation_memorial(
+    *,
+    accuser_name: object,
+    subject_name: object,
+    case_summary: object,
+) -> str:
+    """真/伪同一渲染函数：剔除案由变量后串相等（AC2 可证伪判据）。"""
+    accuser = str(accuser_name or "").strip() or "臣工"
+    subject = str(subject_name or "").strip() or "某人"
+    case = str(case_summary or "").strip() or "差务"
+    return f"{accuser}奏称：{subject}办理{case}有异状，请皇上按问。"
+
+
+def denunciation_origin_ref(
+    accuser_name: object, dossier_id: object, turn: object, *,
+    is_true: bool,
+) -> str:
+    kind = "true" if is_true else "false"
+    return (
+        f"denunciation:{kind}:{str(accuser_name or '').strip()}"
+        f":dossier:{int(dossier_id)}:turn:{int(turn)}"
+    )
+
+
+def pick_denunciation_accusers(
+    names: Sequence[object],
+    *,
+    subject_name: object,
+    dossier_id: object,
+    quota: int,
+) -> List[str]:
+    """从敌派候选人中确定性取至多 quota 名（restore 可复现，无真 RNG）。"""
+    subject = str(subject_name or "").strip()
+    cleaned = sorted({
+        str(n).strip()
+        for n in names
+        if str(n or "").strip() and str(n).strip() != subject
+    })
+    if not cleaned or int(quota) <= 0:
+        return []
+    seed = f"{subject}:{int(dossier_id)}:" + ",".join(cleaned)
+    start = sum(ord(ch) for ch in seed) % len(cleaned)
+    rotated = cleaned[start:] + cleaned[:start]
+    return rotated[: int(quota)]
 
 
 def compose_report_origin(base: str, marks: Iterable[str] = ()) -> str:
