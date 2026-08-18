@@ -141,7 +141,7 @@ def test_b_narrative_and_execution_projection_keysets(game):
         if int(item["id"]) in {narrative_id, exec_id}:
             item["settlement_verdict"] = "promulgated"
         visible.append(item)
-    projected = project_dossiers_for_simulator(visible, db=db)
+    projected = project_dossiers_for_simulator(visible, db=db, state=state)
     by_id = {int(row["id"]): row for row in projected}
 
     narr = by_id[narrative_id]
@@ -314,7 +314,7 @@ def test_g_midzhi_stigma_projected_and_prompt_has_ledger_play(game):
     )
 
     visible = [dict(r) for r in db.list_decree_dossiers_for_simulation(state.turn)]
-    projected = project_dossiers_for_simulator(visible, db=db)
+    projected = project_dossiers_for_simulator(visible, db=db, state=state)
     hit = next(r for r in projected if int(r["id"]) == dossier_id)
     assert any(
         isinstance(item, dict) and item.get("kind") == "midzhi"
@@ -336,7 +336,7 @@ def test_h_projection_is_read_only(game):
     )
     before = db.get_decree_dossier(dossier_id)
     visible = [dict(row) for row in db.list_decree_dossiers_for_simulation(state.turn)]
-    project_dossiers_for_simulator(visible, db=db)
+    project_dossiers_for_simulator(visible, db=db, state=state)
     build_simulator_payload(state, db, "着清丈", "")
     after = db.get_decree_dossier(dossier_id)
     assert after["execution_outcome"] == before["execution_outcome"]

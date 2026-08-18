@@ -556,7 +556,7 @@ def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
             item["settlement_verdict"] = "promulgated"
         visible.append(item)
 
-    projected = project_dossiers_for_simulator(visible, db=db)
+    projected = project_dossiers_for_simulator(visible, db=db, state=state)
     hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
     assert hit["action_type"] == "punishment"
     assert hit["target_id"] == target.name
@@ -576,7 +576,9 @@ def test_promulgated_terminal_punishment_enters_sim_as_inert_context(game):
             item["settlement_verdict"] = "rejected"
         rejected_visible.append(item)
     rejected_ids = {
-        int(r["id"]) for r in project_dossiers_for_simulator(rejected_visible, db=db)
+        int(r["id"]) for r in project_dossiers_for_simulator(
+            rejected_visible, db=db, state=state,
+        )
     }
     assert int(dossier["id"]) not in rejected_ids
 
