@@ -6,6 +6,7 @@ import pytest
 
 from ming_sim import issues
 from ming_sim.applier import atomic
+from tests.dossier_test_helpers import _cost_events, _sat
 
 
 def _dossier(db, state, *, mode="ordinary", roster=None):
@@ -14,21 +15,6 @@ def _dossier(db, state, *, mode="ordinary", roster=None):
         target_kind="issue", target_id="land-survey",
         payload={"mode": mode}, participants=roster or [],
     )
-
-
-def _cost_events(db, dossier_id):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-        (int(dossier_id),),
-    ).fetchall()]
-
-
-def _sat(db, table, name):
-    return db.conn.execute(
-        f"SELECT satisfaction FROM {table} WHERE name=? ORDER BY region_id LIMIT 1"
-        if table == "classes" else f"SELECT satisfaction FROM {table} WHERE name=?",
-        (name,),
-    ).fetchone()[0]
 
 
 def _verdict(dossier_id, decision="rejected"):
