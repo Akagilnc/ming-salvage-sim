@@ -238,13 +238,29 @@ def test_fulfill_back_and_urge_three_decisions(game):
     )
 
     # ── C1 负向：缺 note 的 fulfilled 被 applier 拒 → 不得落兑现所托 ──
+    # 夹具=真 executing 案卷 + outcome=fulfilled + 缺 note（issues.py:7103 必拒，
+    # 拒项带 item=源对象）。DB 预置 execution_outcome=fulfilled（close=False 保持
+    # executing）：漏 minus-rejections 闸时 resolve 见 DB 终值必落兑现边——反空壳
+    # （旧夹具幽灵 dossier_id=10**9 且自带 note，双闸全拆仍绿）。
+    did_rej_f = _executing_dossier(
+        db, state, token="rej-ful-628",
+        roster=[{"character_id": "刘鸿训", "tier": "主办", "role": "承办"}],
+    )
+    db.record_dossier_execution(
+        did_rej_f, "fulfilled", "预置终值语境", int(state.turn),
+        close=False, commit=True,
+    )
     before_fake = len(_credit_edges(db, event_kind=KIND_FULFILL))
-    apply_score_extraction(
+    out_rej_f = apply_score_extraction(
         db, state,
         {"dossier_executions": [{
-            "dossier_id": 10**9, "outcome": "fulfilled", "note": "幽灵案卷",
+            "dossier_id": did_rej_f, "outcome": "fulfilled",
         }]},
         content=content,
+    )
+    assert any(
+        isinstance(r, dict) and r.get("rejected")
+        for r in (out_rej_f.get("dossier_executions") or [])
     )
     assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
 

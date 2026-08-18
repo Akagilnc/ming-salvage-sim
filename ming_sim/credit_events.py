@@ -750,13 +750,17 @@ def resolve_urge_credit_from_extraction(
 def resolve_fulfillment_credit_from_extraction(
     db: Any, state: Any, extracted: Dict[str, object],
 ) -> List[Dict[str, object]]:
-    """已校验未 rejected 的 dossier_executions outcome=fulfilled → 兑付/撑完。"""
+    """dossier_executions outcome=fulfilled → 兑付/撑完。
+
+    消费调用方已滤 rejected 的落格项；本轴不再二次闸（单一保护点在
+    apply_score_extraction 的 minus-rejections）。fulfilled 仍以 DB 终值为门。
+    """
     if not isinstance(extracted, dict):
         return []
     out: List[Dict[str, object]] = []
     seen: Set[int] = set()
     for it in extracted.get("dossier_executions") or []:
-        if not isinstance(it, dict) or it.get("rejected"):
+        if not isinstance(it, dict):
             continue
         if str(it.get("outcome") or "").strip() != "fulfilled":
             continue
