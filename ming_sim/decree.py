@@ -2261,8 +2261,16 @@ def _settle_after_extract_body(
 
     # #621 / ADR 0076：经召对窗后的 pending todo → 正式复核落格并消费（三拍第 3 拍）。
     # 须在本 settle 写新 todo 之前：只消费 created_turn < 当前 turn 者，保留本拍新写给次回合。
+    # kind 分派：仅 staged 终裁；哭谏 pending 保留。
     from ming_sim.due_review import apply_pending_due_reviews
     apply_pending_due_reviews(db, state, commit=False)
+
+    # #623 / ADR 0075：承诺 due 到 → 挽留条目失效关闭（不走坚持撤分档）。
+    from ming_sim.breach_plea import (
+        expire_breach_pleas_on_due,
+        scan_and_write_breach_pleas,
+    )
+    expire_breach_pleas_on_due(db, state, commit=False)
 
     # #624 / ADR 0078：谏/宽限经召对顶出后离 pending（不落执行格、不连坐）。
     from ming_sim.urge_lever import consume_pending_urge_audience_todos
@@ -2271,6 +2279,9 @@ def _settle_after_extract_body(
     # #620 / ADR 0074：分段到期 → 次回合召对待办（结算内确定性写入，不停轮、不 DECISION）。
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     write_due_staged_commitment_todos(db, state, commit=False)
+
+    # #623：断供/挪用/撤人机器扫描 → 当回合只写挽留 todo（改弦走 revoke 拦截缝）。
+    scan_and_write_breach_pleas(db, state, commit=False)
 
     # ADR 0008 决定 5：主 apply + inertia 拒收全部收齐后，玩家来源(player_decree/hitl_decision)的
     # 落库拒收 → 邸报附一句 in-world 提示，并**持久化进 turn_report**（web/history/重读都见，非仅即时
