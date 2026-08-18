@@ -17,21 +17,29 @@ export function ClosedIssuesModal({ items, onClose }: { items: ClosedIssue[]; on
   );
 }
 
+function closedBarLabel(cls: string, item: ClosedIssue): string {
+  const raw = cls === "resolved" ? item.bar_good_meaning : item.bar_bad_meaning;
+  return (raw || "").trim();
+}
+
 function ClosedGroup({ title, items, cls }: { title: string; items: ClosedIssue[]; cls: string }) {
   return (
     <div className="document-section">
       <h3 className={`closed-group-title ${cls}`}>{title}</h3>
       <ul className="closed-list">
-        {items.map((it) => (
-          <li key={it.id} className={`closed-card ${cls}`}>
-            <div className="closed-card-head">
-              <b>#{it.id} {it.title}</b>
-              <span>{cls === "resolved" ? it.bar_good_meaning : it.bar_bad_meaning}</span>
-            </div>
-            {it.stage_text ? <p className="closed-card-stage">{it.stage_text}</p> : null}
-            <div className="closed-card-effect">{formatClosedEffect(it.effect)}</div>
-          </li>
-        ))}
+        {items.map((it) => {
+          const barText = closedBarLabel(cls, it);
+          return (
+            <li key={it.id} className={`closed-card ${cls}`}>
+              <div className="closed-card-head">
+                <b>#{it.id} {it.title}</b>
+                {barText ? <span>{barText}</span> : null}
+              </div>
+              {it.stage_text ? <p className="closed-card-stage">{it.stage_text}</p> : null}
+              <div className="closed-card-effect">{formatClosedEffect(it.effect)}</div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

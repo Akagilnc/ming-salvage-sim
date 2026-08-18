@@ -44,6 +44,10 @@
 
 `extractor_context.grant_reconciliations` 列出本月仍在途的拨帑案卷（含 `ordered_amount`、`escorted` 护行/稽核在场标记，及已有对账时的 `arrived_amount`/`loss_amount`）。可按邸报事实输出 `拨帑对账`：`{"案卷编号":12,"实抵":16}` 或 `{"案卷编号":12,"折损":14}`（单位两，整数）。引擎只 clamp 到护行口径界，不二次扣库。无把握可不写——程序按口径中位落机械账。读同一键时，相关赈济/拨付 `局势推进` 须按实抵相对应解的折扣软判进度（有护行实抵更高则同额拨付可给更高进度），不得假装足额全到。
 
+## 承诺所系反噬（#626）
+
+`extractor_context.commitment_backlash_facts`（若有）列出本月已由硬门落账的承诺所系反噬局势：只含结构化事实（`issue_id`/`commitment_title`/`source_kind`/`trigger_ref`/`metrics_delta`）与 `presentation_constraints`（禁用「反噬平息」「反噬坐大」；禁系统词）。**硬门不写玩家文案**——须按邸报与事实包，对对应 `issue_id` 写 `局势推进` 的 `阶段`/`叙述`（与 new_issues 玩家文案同格：由你长出，不成句模板）。`source_kind` 仅机读：`breach_verdict`＝事废半途撤手牵连、`failed_terminal`＝烂尾终值牵连、`deformation_exposure`＝名实已乖变形暴露牵连；**不得**把这些英文字段名或 `commitment_backlash` 写入 `阶段`/`叙述`。
+
 ## 既有局势推进
 
 - `局势推进` 每项必须有 `局势编号`、`进度增量`、`阶段`、`叙述`。
