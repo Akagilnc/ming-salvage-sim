@@ -153,27 +153,34 @@ def _dossier_roster(row: Mapping[str, object] | Dict[str, object]) -> List[Dict[
 def resolve_executor_appointment_tenure(
     db: GameDB, dossier: Mapping[str, object] | Dict[str, object],
 ) -> str:
-    """#613：承办人现职任别——executor_id 优先，否则首名主办；缺档按真除。"""
-    names: List[str] = []
+    """#613：承办人现职任别——executor_id 优先，否则首名主办；缺档按真除。
+
+    身份选定与档案取值分离：只定唯一承办人后查该人 character_offices；
+    缺行不得试下一候选换人（禁静默继承他人任别）。与 court_roster
+    COALESCE(...,'真除') 及 DELTA_SCHEMA 缺省真除同构。
+    """
+    name = ""
     executor_id = str(dossier.get("executor_id") or "").strip()
     executor_kind = str(dossier.get("executor_kind") or "").strip()
     if executor_id and executor_kind in {"", "character"}:
-        names.append(executor_id)
-    for entry in _dossier_roster(dossier):
-        if str(entry.get("tier") or "").strip() != "主办":
-            continue
-        character_id = str(entry.get("character_id") or "").strip()
-        if character_id and character_id not in names:
-            names.append(character_id)
-    for name in names:
-        row = db.conn.execute(
-            "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
-            (name,),
-        ).fetchone()
-        if row is None:
-            continue
-        return normalize_appointment_tenure(row["appointment_tenure"])
-    return DEFAULT_APPOINTMENT_TENURE
+        name = executor_id
+    else:
+        for entry in _dossier_roster(dossier):
+            if str(entry.get("tier") or "").strip() != "主办":
+                continue
+            character_id = str(entry.get("character_id") or "").strip()
+            if character_id:
+                name = character_id
+                break
+    if not name:
+        return DEFAULT_APPOINTMENT_TENURE
+    row = db.conn.execute(
+        "SELECT appointment_tenure FROM character_offices WHERE character_name=?",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return DEFAULT_APPOINTMENT_TENURE
+    return normalize_appointment_tenure(row["appointment_tenure"])
 
 
 def execution_side_read_fields(
