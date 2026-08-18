@@ -2140,6 +2140,10 @@ class GameDB:
         self.ensure_column(
             "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
         )
+        # #622：旨外恶果/受益标记——效果行同列注解（#558 origin 同一载体，非平行轨）。
+        self.ensure_column(
+            "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
+        )
         # Rolling upgrades may already have the column while interrupted/older
         # migrations left individual rows blank.  Re-scan idempotently; only a
         # real dossier is authoritative and an existing origin is never replaced.
@@ -11121,6 +11125,47 @@ class GameDB:
             for row in rows
         ]
 
+    def _audit_fork_signals_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
+        """#622：稽核链在场时，月报输入面确定性携带被稽核案卷分叉信号。
+
+        读端复用 list_dossier_links（relation_type=稽核）；无链则返回空——调用方不挂键。
+        信号=奏报 progress_band 面 vs 执行格/实况 origin 面，供 extractor 读，不进密奏正文断言。
+        """
+        signals: List[Dict[str, object]] = []
+        for link in self.list_dossier_links(int(source_dossier_id), direction="outgoing"):
+            if str(link.get("relation_type") or "").strip() != "稽核":
+                continue
+            target_id = int(link["target_dossier_id"])
+            target = self.get_decree_dossier(target_id)
+            reports = self.list_dossier_progress(target_id)
+            reported_bands = [
+                str(item.get("progress_band") or "").strip()
+                for item in reports
+                if str(item.get("progress_band") or "").strip()
+            ]
+            execution_outcome = (
+                str(target.get("execution_outcome") or "").strip() if target else ""
+            )
+            moves = self.list_economy_moves_for_dossier(target_id)
+            actual_effect_count = len(moves) + len(
+                self.list_fiscal_effects_for_dossier(target_id)
+            )
+            # 分叉：奏报面有进展/兑现口径，而执行格非 fulfilled 或存在旨外实况。
+            beyond = any(bool(row.get("beyond_intent")) for row in moves)
+            fork = bool(reported_bands) and (
+                beyond or execution_outcome not in {"", "fulfilled", "executing"}
+            )
+            signals.append({
+                "target_dossier_id": target_id,
+                "relation_type": "稽核",
+                "reported_bands": reported_bands,
+                "execution_outcome": execution_outcome,
+                "actual_effect_count": actual_effect_count,
+                "beyond_intent": beyond,
+                "fork": bool(fork),
+            })
+        return signals
+
     def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
         """Long protection/audit errands due a monthly report, with history."""
         rows = self.conn.execute(
@@ -11132,17 +11177,24 @@ class GameDB:
             ORDER BY d.id
             """
         ).fetchall()
-        return [
-            {
-                "dossier_id": int(row["id"]),
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            tags = {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
+            if not (tags & {"护行", "稽核"}):
+                continue
+            dossier_id = int(row["id"])
+            item: Dict[str, object] = {
+                "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
                 "title": json.loads(row["payload_json"] or "{}").get("title", ""),
-                "progress": self.list_dossier_progress(int(row["id"])),
+                "progress": self.list_dossier_progress(dossier_id),
             }
-            for row in rows
-            if {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
-               & {"护行", "稽核"}
-        ]
+            # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
+            fork_signals = self._audit_fork_signals_for_source(dossier_id)
+            if fork_signals:
+                item["audit_fork_signals"] = fork_signals
+            out.append(item)
+        return out
 
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
@@ -16923,6 +16975,22 @@ class GameDB:
             (issue_id, limit),
         ).fetchall()
 
+    @staticmethod
+    def coerce_beyond_intent_flag(value: object) -> int:
+        """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+        肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+        开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+        """
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return 1 if int(value) != 0 else 0
+        text = str(value).strip().lower()
+        return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
+
     def record_issue_economy_move(
         self,
         state: GameState,
@@ -16934,12 +17002,15 @@ class GameDB:
         target_kind: str | None = None,
         target_id: str | None = None,
         origin_ref: str = "",
+        beyond_intent: object = 0,
         commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
         purpose/target_kind/target_id 仅对 extractor 抽出的 economy_moves（自由拨款）填，
         flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
+
+        beyond_intent：#622 旨外恶果/受益同列标记（与 origin_ref 同载体，非平行轨）。
 
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
         再落账。修正折进本笔流水，不另立账行。
@@ -16960,15 +17031,18 @@ class GameDB:
         if actual == 0:
             return 0
         state.metrics[account] = after
+        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.execute(
             """
             INSERT INTO economy_ledger
             (turn, year, period, account, delta, balance_after, category, reason,
-             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?)
+             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id,
+             origin_ref, beyond_intent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?, ?)
             """,
             (state.turn, state.year, state.period, account, actual, after,
-             category, reason, purpose, target_kind, target_id, origin_ref),
+             category, reason, purpose, target_kind, target_id, origin_ref,
+             beyond_flag),
         )
         self.sync_economy_accounts(state)
         if commit:
@@ -17009,12 +17083,18 @@ class GameDB:
         return rows
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
-                (f"dossier:{int(dossier_id)}",),
-            ).fetchall()
-        ]
+        rows: List[Dict[str, object]] = []
+        for row in self.conn.execute(
+            "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
+            (f"dossier:{int(dossier_id)}",),
+        ).fetchall():
+            item = dict(row)
+            # Normalize beyond_intent to bool for adjudicator consumers (#622).
+            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
+                item.get("beyond_intent")
+            ))
+            rows.append(item)
+        return rows
 
     def kv_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
