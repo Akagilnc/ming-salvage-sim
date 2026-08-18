@@ -1122,10 +1122,13 @@ def resolve_directives(
     simulator_payload["promulgation_instruction"] = (
         "颁布判决是硬约束：可演新旨意以 decree_dossiers 为权威；"
         "dossier_verdicts 承载本月判决（含打回）。"
-        "decision=rejected 的打回只在 dossier_verdicts，不进入 decree_dossiers"
-        "（双轨受理未放行）；严禁写成已办成、已生效、已到任或银已出库，"
-        "只据 verdict 字段写封驳／等待批红，不得假定案卷列表有打回全文。"
-        "decision=promulgated 的顺颁才可进入本月办理并出现在案卷列表。"
+        "纯打回未颁（verdict decision=rejected 且未入 decree_dossiers）"
+        "只在 dossier_verdicts；严禁写成已办成、已生效、已到任或银已出库，"
+        "只据 verdict 字段写封驳／等待批红，不得假定案卷列表有其全文。"
+        "列表内 decision 为「打回」且 status 为 promulgated／executing"
+        "乃强颁组合态（颁布格留打回本值、案已入办）：按已颁／在途演，"
+        "确已落地可标已办成，禁写成封驳待批红；识别以 decision+status 为准，"
+        "勿单靠 stigma 是否含强颁。顺颁与上述入列表者均可进入本月办理。"
         "decree_text 仅为兼容摘要，不得覆盖案卷列表与判决。"
     )
     simulator = create_season_simulator_agent(
