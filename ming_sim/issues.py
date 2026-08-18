@@ -7018,6 +7018,11 @@ def apply_score_extraction(
     breach_plea_resolutions = resolve_breach_pleas_from_extraction(
         db, state, extracted, commit=False,
     )
+    # #628 / 0079：信用事件写端——与哭谏同缝；只写不读、不新增串行 LLM 步。
+    from ming_sim.credit_events import resolve_credit_events_from_extraction
+    credit_event_resolutions = resolve_credit_events_from_extraction(
+        db, state, extracted, commit=False,
+    )
     dossier_participant_results: List[Dict[str, object]] = []
     # Only the caller's frozen simulator input grants roster-write authority.
     # Missing authority is an empty closed set; never reconstruct it from live DB.
@@ -8227,6 +8232,7 @@ def apply_score_extraction(
         "dossier_executions": dossier_execution_results,
         "dossier_participants": dossier_participant_results,
         "breach_plea_resolutions": breach_plea_resolutions,
+        "credit_event_resolutions": credit_event_resolutions,
         "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
         "fiscal_changes": applied_fiscal,
