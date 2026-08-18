@@ -1,3 +1,18 @@
+def _cost_events(db, dossier_id):
+    return [dict(row) for row in db.conn.execute(
+        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
+        (int(dossier_id),),
+    ).fetchall()]
+
+
+def _sat(db, table, name):
+    return db.conn.execute(
+        f"SELECT satisfaction FROM {table} WHERE name=? ORDER BY region_id LIMIT 1"
+        if table == "classes" else f"SELECT satisfaction FROM {table} WHERE name=?",
+        (name,),
+    ).fetchone()[0]
+
+
 def rejected_verdict(
     dossier_id,
     authority_band="偏弱",

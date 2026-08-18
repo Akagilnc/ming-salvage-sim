@@ -8,6 +8,7 @@ import ming_sim.decree as decree_mod
 from ming_sim import issues as issue_engine
 from ming_sim.db import GameDB
 from ming_sim.models import Character
+from tests.dossier_test_helpers import _cost_events, _sat
 
 
 BLOCKED_LAYERS = {"cabinet_drafting", "palace_rescript", "six_offices"}
@@ -32,21 +33,6 @@ def _add_white_body(db, state, name):
         aliases=[], personal_skills=[], loyalty=50, ability=50, integrity=50,
         courage=50, style="", power_id="ming",
     ))
-
-
-def _cost_events(db, dossier_id):
-    return [dict(row) for row in db.conn.execute(
-        "SELECT * FROM decree_cost_events WHERE dossier_id=? ORDER BY id",
-        (int(dossier_id),),
-    ).fetchall()]
-
-
-def _sat(db, table, name):
-    return db.conn.execute(
-        f"SELECT satisfaction FROM {table} WHERE name=? ORDER BY region_id LIMIT 1"
-        if table == "classes" else f"SELECT satisfaction FROM {table} WHERE name=?",
-        (name,),
-    ).fetchone()[0]
 
 
 def _stage_break_rank_acting(db, state, content, name):
@@ -164,11 +150,7 @@ def test_break_rank_appointment_rescript_td4_tracer(
     # 打回三格 + 四键快照（fixture 注入，同 #563/#614 自证）。
     before_auth = restored_state.metrics["皇威"]
     before_faction = _sat(restored, "factions", "东林")
-    gatekeeper = restored.conn.execute(
-        "SELECT name FROM characters WHERE status='active' AND name='韩爌' "
-        "UNION ALL "
-        "SELECT name FROM characters WHERE status='active' ORDER BY name LIMIT 1"
-    ).fetchone()["name"]
+    gatekeeper = _minister(restored)
     verdict = {
         "dossier_id": dossier_id,
         "decision": "rejected",
@@ -209,7 +191,6 @@ def test_break_rank_appointment_rescript_td4_tracer(
         "FROM decree_dossier_decisions WHERE dossier_id=? ORDER BY id DESC LIMIT 1",
         (dossier_id,),
     ).fetchone()
-    assert dec["gatekeeper_id"] in {None, gatekeeper}
     assert dec["gatekeeper_id"] == gatekeeper
     assert str(dec["reason"] or "").strip()
     snap = json.loads(dec["criteria_snapshot_json"])
