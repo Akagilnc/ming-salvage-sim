@@ -14,6 +14,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from ming_sim.due_review import URGE_TRUTH_BANNED_PLAYER_TOKENS
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -24,12 +25,8 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.token_stats import tlog
 
-# 谏/宽限玩家面禁词（与 due_review._BANNED_PLAYER_TOKENS 对齐的引擎底）
-_URGE_SCENE_BANNED = (
-    "truth", "grace_fake", "pretextual", "genuine",
-    "payload_json", "distortion_band", "urge_tightness",
-    "distortion_tendency", "unreasonable",
-)
+# 谏/宽限玩家面禁词——#629 单源：共引 due_review.URGE_TRUTH_BANNED_PLAYER_TOKENS
+_URGE_SCENE_BANNED = URGE_TRUTH_BANNED_PLAYER_TOKENS
 _URGE_SCENE_BANNED_RE = re.compile(
     "|".join(re.escape(t) for t in _URGE_SCENE_BANNED),
     re.IGNORECASE,

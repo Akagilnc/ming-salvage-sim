@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 
 from ming_sim.db import GameDB
-from ming_sim.decree_vocabulary import format_public_progress_disclosure
+from ming_sim.decree_vocabulary import (
+    DEFORMATION_BANNED_PLAYER_TOKENS,
+    format_public_progress_disclosure,
+)
 from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
@@ -104,11 +107,8 @@ def _cost_liability(db, dossier_id):
     ]
 
 
-_BANNED_SURFACE_TOKENS = (
-    "transformed", "degraded", "fulfilled", "failed", "executing",
-    "progress_band", "is_terminal", "beyond_intent",
-    "变形", "分界", "打折走样", "烂尾",
-)
+# #629：提升入生产单源 decree_vocabulary.DEFORMATION_BANNED_PLAYER_TOKENS
+_BANNED_SURFACE_TOKENS = DEFORMATION_BANNED_PLAYER_TOKENS
 
 
 # ── ① AC1+AC2(+AC4) tracer ───────────────────────────────────────────
