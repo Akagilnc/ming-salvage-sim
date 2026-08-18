@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 
 ENTRY_KIND_BREACH_PLEA = "midcourse_breach_plea"
 
+# 哭谏 todo.payload_json 判决痕迹（#626 path① 真源；不扩三态枚举）
+PLEA_VERDICT_KEY = "verdict"
+PLEA_VERDICT_PERSIST = "persist"
+PLEA_VERDICT_REGRET = "regret"
+PLEA_VERDICT_EXPIRED = "expired"
+
 BREACH_KIND_FUNDING = "funding_cutoff"
 BREACH_KIND_MISAPPROPRIATION = "misappropriation"
 BREACH_KIND_REMOVE_SPONSOR = "remove_sponsor"
@@ -888,7 +894,9 @@ def finalize_persist(
             )
 
     consumed = db.mark_next_audience_todo_status(
-        int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+        int(todo["id"]), TODO_STATUS_CONSUMED,
+        payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_PERSIST},
+        commit=False,
     )
     if commit:
         db.conn.commit()
@@ -919,7 +927,9 @@ def finalize_regret(
     meta = decode_plea_meta(todo.get("origin_context"))
     commitment_ref = int(todo["commitment_ref"])
     consumed = db.mark_next_audience_todo_status(
-        int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+        int(todo["id"]), TODO_STATUS_CONSUMED,
+        payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_REGRET},
+        commit=False,
     )
     if commit:
         db.conn.commit()
@@ -946,7 +956,9 @@ def expire_breach_pleas_on_due(
         row = _issue_row(db, commitment_ref)
         if row is None or str(row["status"] or "") != "active":
             db.mark_next_audience_todo_status(
-                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+                int(todo["id"]), TODO_STATUS_CONSUMED,
+                payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_EXPIRED},
+                commit=False,
             )
             results.append({
                 "todo_id": int(todo["id"]),
@@ -957,7 +969,9 @@ def expire_breach_pleas_on_due(
         natural_due = commitment_natural_due_turn(row)
         if natural_due > 0 and natural_due <= turn:
             db.mark_next_audience_todo_status(
-                int(todo["id"]), TODO_STATUS_CONSUMED, commit=False,
+                int(todo["id"]), TODO_STATUS_CONSUMED,
+                payload_patch={PLEA_VERDICT_KEY: PLEA_VERDICT_EXPIRED},
+                commit=False,
             )
             results.append({
                 "todo_id": int(todo["id"]),

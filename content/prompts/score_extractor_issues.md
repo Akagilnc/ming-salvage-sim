@@ -53,6 +53,10 @@
 - `弹章正文` 照录奏章中的弹章口吻，**不要**自标真伪、不要写系统词。
 - 无弹劾则输出 `[]`。引擎只做存在性 clamp 与真伪底对账，不替你决定谁该弹。
 
+## 承诺所系反噬（#626）
+
+`extractor_context.commitment_backlash_facts`（若有）列出本月已由硬门落账的承诺所系反噬局势：只含结构化事实（`issue_id`/`commitment_title`/`source_kind`/`trigger_ref`/`metrics_delta`）与 `presentation_constraints`（禁用「反噬平息」「反噬坐大」；禁系统词）。**硬门不写玩家文案**——须按邸报与事实包，对对应 `issue_id` 写 `局势推进` 的 `阶段`/`叙述`（与 new_issues 玩家文案同格：由你长出，不成句模板）。`source_kind` 仅机读：`breach_verdict`＝事废半途撤手牵连、`failed_terminal`＝烂尾终值牵连、`deformation_exposure`＝名实已乖变形暴露牵连；**不得**把这些英文字段名或 `commitment_backlash` 写入 `阶段`/`叙述`。
+
 ## 既有局势推进
 
 - `局势推进` 每项必须有 `局势编号`、`进度增量`、`阶段`、`叙述`。

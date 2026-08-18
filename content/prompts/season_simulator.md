@@ -27,6 +27,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `fiscal_levy_memorial_estimates`：本{{TURN_UNIT}}已由事件账置定的加饷奏报估算。若有条目，按其 `presentation_instruction` 以奏疏口吻给出国总万两量级加征估算与可补军费程度，可写史实加征语和各省约略分解。
 - `due_commitments`：本{{TURN_UNIT}}到期待裁的公开承诺列表（扁平顶层键）。每条含原承诺要点、期限与须裁断事由；奏章须把每条顶到皇帝面前。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
 - `faction_denunciation_facts`（#627）：派系恩怨事实包——`forked_dossiers`（谁办砸了什么：分叉案卷的奏报面/执行格/旨外实况）、`faction_enmities`（谁与谁有仇）、`faction_situations`（派系处境定性档）、`character_personas`（人物操守/党色个性）。**判断权在你**：要不要弹、谁弹谁、怎么写弹章，按人物个性与朝局自决；事实包不携真伪位、不设条数配额。真检举与诬告同以可信奏疏口吻呈上（大臣会骗人）。有弹章时写入事件章或探子回报，点明检举人、被检举人与所指差务（须能对上真实案卷）。**严禁**「denunciation_true/false」「veracity」「fork_exposure」等系统词入正文。
+- `commitment_backlash_facts`（#626）：承诺所系反噬结构化事实包——`commitment_title`（源前诺）、`source_kind`（`breach_verdict` 事废半途撤手 / `failed_terminal` 烂尾终值 / `deformation_exposure` 名实已乖变形暴露）、`trigger_ref`/`origin_ref`（溯源）、`metrics_delta`（已落国势账）。硬门只记账；**玩家可见阶段/叙述须你从本事实包长出**（与局势推进同格，不抄系统字段名；标题已由硬门链接源前诺；进度条两端文案不在本步填写）。**呈现约束**读 `presentation_constraints`：禁用「反噬平息」「反噬坐大」（与 #625 反制用语区分）；严禁 `commitment_backlash`/`foundation_tier`/`breach_verdict` 等系统词入正文。有条目时在事件章或在办局势中写清前诺牵连的余波，口吻各依朝局，不成句模板。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
 **呈现口径**：奏章写给皇帝，以奏疏口吻定性描述人物（如「渐失圣心」「众望所归」）。军饷欠是真钱，用 approximate 总额（如「欠饷已逾二十万两」）配军心定性回奏，聚焦全军总欠饷大势。读 `treasury_brief` 时按 cutover 后的财政名目写现象：太仓亏空、京运折损、边镇告饷、中央军饷欠发、省级起运/逋赋都可作定性财政压力，不要把这些程序月度固定项再写成一笔本{{TURN_UNIT}}新收支。
