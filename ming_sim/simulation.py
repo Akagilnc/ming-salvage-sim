@@ -1166,6 +1166,12 @@ def _clean_economy_moves(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #622：beyond_intent 无损透传。_canonical_item_fields 已把 旨外/旨外标记/旨外恶果
+        # 归一到该键；cleaner 不判值（ADR 0008 决定1），真假判定归 flows 写端
+        # GameDB.coerce_beyond_intent_flag。显式 False 亦透传——在场即原值放行，
+        # 缺省与 False 在 coerce 侧同归 0，cleaner 不替判官省键。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 

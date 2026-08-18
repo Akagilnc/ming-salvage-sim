@@ -18,6 +18,7 @@ from ming_sim.due_review import (
     list_due_review_scenes,
 )
 from ming_sim.issues import apply_score_extraction
+from ming_sim.simulation import _sanitize_module_output
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 from tests.test_dossier_reported_progress_619 import _world_fingerprint
 
@@ -367,4 +368,62 @@ def test_ac6_sentinel_no_system_tokens_on_three_surfaces(game):
         assert token not in public, (token, public)
 
     # 执行格真值仍在（哨兵不覆盖机面）
+    assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
+
+
+# ── ④ web 路真清洗器 seam（#622 剥键点）────────────────────────────────
+
+
+def test_web_sanitize_seam_beyond_intent_survives_to_transformed(game, content):
+    """穿 _sanitize_module_output 真清洗器 seam：beyond_intent 须存活到 apply 与终裁。
+
+    旧测失明原因：test_deformation_dual_rail_622.py:127/:266/:316/:205-228 全部直调
+    applier/DB/裁决函数，注入起点在剥键点（_clean_economy_moves 合法行重建）下游一站，
+    清洗器被切在断言线外——web 真路经 cleaner 重建 entry 时 beyond_intent 被静默丢掉，
+    旧测仍绿。本条强制 raw extractor 输出形（旨外别名 + beyond_intent 英文键）先过
+    _sanitize_module_output("internal", …）再合并喂 apply_score_extraction。
+    """
+    db, state, _content = game
+    dossier_id = _executing_policy(db, state, token="sanitize-seam-622")
+    origin = f"dossier:{dossier_id}"
+
+    # raw extractor 输出形：一条中文别名 旨外:true + 一条 beyond_intent:true
+    raw_internal = {
+        "economy_moves": [
+            {
+                "account": "国库",
+                "delta": 8,
+                "category": "地方浮收",
+                "reason": "借清丈加派入私",
+                "origin_ref": origin,
+                "旨外": True,
+            },
+            {
+                "account": "内库",
+                "delta": 4,
+                "category": "额外进项",
+                "reason": "旨外受益入内",
+                "origin_ref": origin,
+                "beyond_intent": True,
+            },
+        ],
+    }
+    cleaned = _sanitize_module_output("internal", raw_internal)
+    moves_out = cleaned.get("economy_moves") or []
+    assert len(moves_out) == 2, moves_out
+    # cleaner 须无损透传（别名已由 _canonical_item_fields 归一）；不在此判真假
+    assert all("beyond_intent" in m for m in moves_out), moves_out
+
+    applied = apply_score_extraction(db, state, cleaned, content=content)
+    assert applied["economy_moves"], applied
+    stored = db.list_economy_moves_for_dossier(dossier_id)
+    assert len(stored) >= 2, stored
+    assert all(m["beyond_intent"] is True for m in stored), stored
+    assert all(m["origin_ref"] == origin for m in stored), stored
+
+    # 续走到到期复核：终裁须落 transformed（标记存活到裁决读端）
+    result = _prime_and_apply_due_review(
+        db, state, content, dossier_id=dossier_id, title="清洗器缝·清丈",
+    )
+    assert result["verdict"]["outcome"] == "transformed"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
