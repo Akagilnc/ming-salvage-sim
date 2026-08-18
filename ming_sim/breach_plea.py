@@ -458,10 +458,13 @@ def project_breach_plea_scene(
             f"主办哭谏：前诺「{title}」遭{label}，"
             f"臣的信心一半是皇爷给的，求皇上收回成命。"
         )
+    from ming_sim.credit_events import FOUNDATION_BANNED_PLAYER_TOKENS
+    from ming_sim.decree_vocabulary import DEFORMATION_STRIP_PLAYER_TOKENS
+    # 静默剥离只载无歧义系统词；汉语普通词（变形/分界…）归 assert 哨兵。
     for token in (
-        "fulfilled", "degraded", "failed", "transformed", "executing",
-        "AWAITING_DECISION", "<<DECISION>>", "midcourse_breach_plea",
-        "progress_band", "just_started", "halfway", "rooted",
+        *DEFORMATION_STRIP_PLAYER_TOKENS,
+        *FOUNDATION_BANNED_PLAYER_TOKENS,
+        "AWAITING_DECISION", "<<DECISION>>",
     ):
         display = display.replace(token, "")
     return {
