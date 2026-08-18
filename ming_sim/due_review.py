@@ -20,7 +20,8 @@ from ming_sim.breach_plea import (
     project_breach_plea_scene,
 )
 from ming_sim.decree_vocabulary import (
-    DEFORMATION_BANNED_PLAYER_TOKENS,
+    DEFORMATION_STRIP_PLAYER_TOKENS,
+    URGE_TRUTH_BANNED_PLAYER_TOKENS,
     terminal_report_facade,
 )
 from ming_sim.staged_commitment import (
@@ -34,20 +35,24 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
-# #624/#629：真伪底/失真引擎词——urge_lever 与 due_review 共引，禁双份漂移
-URGE_TRUTH_BANNED_PLAYER_TOKENS = (
-    "truth", "grace_fake", "pretextual", "genuine",
-    "payload_json", "distortion_band", "urge_tightness",
-    "distortion_tendency", "unreasonable", "supervision_history",
-)
+# 真伪底禁词叶源在 decree_vocabulary；此处再导出供既有 import 路径兼容。
+# URGE_TRUTH_BANNED_PLAYER_TOKENS  # re-export
 
-# 玩家可见串禁词（P4 哨兵；#622 变形 + #624 真伪底 + #625 钝化 + 结算系统词）
+# 玩家可见串静默剥离集（运行时）：仅无歧义系统词/引擎键。
+# 汉语普通词（变形/分界/打折走样/烂尾/钝化…）不进本集——由 assert 哨兵响亮拦截。
 _BANNED_PLAYER_TOKENS = (
     "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
     "close=True", "close=False",
-) + tuple(DEFORMATION_BANNED_PLAYER_TOKENS) + tuple(
+) + tuple(DEFORMATION_STRIP_PLAYER_TOKENS) + tuple(
     URGE_TRUTH_BANNED_PLAYER_TOKENS
-) + tuple(SUPERVISION_BANNED_PLAYER_TOKENS)
+) + tuple(
+    token for token in SUPERVISION_BANNED_PLAYER_TOKENS
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
+)
+assert not any(
+    any("\u4e00" <= ch <= "\u9fff" for ch in token)
+    for token in _BANNED_PLAYER_TOKENS
+)
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
 #   staged       → 到期终裁（due-review 四缝）

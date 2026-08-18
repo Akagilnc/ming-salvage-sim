@@ -107,11 +107,35 @@ DOSSIER_OUTCOME_CN = {
 
 # #622：奏报轨终值旁路——定性中文 band + 承办人假象，禁英文枚举/判官真值回填。
 # 系统词（变形/打折走样/分界 等）不得出现在 progress_band / memorial。
-# #629：测试本地禁词提升为生产单源（due_review / 全族 P4 哨兵共引）。
+# #629：测试本地禁词提升为生产单源（全族 P4 assert 哨兵共引）。
+# 汉语普通词（变形/分界/打折走样/烂尾）只进 assert 哨兵响亮拦截，
+# 不进运行时静默剥离——静默剜字会把 diegetic 朝语剜成病句。
 DEFORMATION_BANNED_PLAYER_TOKENS = (
     "transformed", "degraded", "fulfilled", "failed", "executing",
     "progress_band", "is_terminal", "beyond_intent",
     "变形", "分界", "打折走样", "烂尾",
+)
+# 生产静默剥离子集：仅无歧义系统词（英文枚举/引擎键），零汉语普通词。
+DEFORMATION_STRIP_PLAYER_TOKENS = tuple(
+    token for token in DEFORMATION_BANNED_PLAYER_TOKENS
+    if not any("\u4e00" <= ch <= "\u9fff" for ch in token)
+)
+assert DEFORMATION_STRIP_PLAYER_TOKENS
+assert all(
+    token in DEFORMATION_BANNED_PLAYER_TOKENS
+    for token in DEFORMATION_STRIP_PLAYER_TOKENS
+)
+assert not any(
+    any("\u4e00" <= ch <= "\u9fff" for ch in token)
+    for token in DEFORMATION_STRIP_PLAYER_TOKENS
+)
+
+# #624/#629：真伪底/失真引擎词——urge_lever 与 due_review 共引叶模块，
+# 禁双份漂移；亦消 urge_lever↔due_review 顶层环边。
+URGE_TRUTH_BANNED_PLAYER_TOKENS = (
+    "truth", "grace_fake", "pretextual", "genuine",
+    "payload_json", "distortion_band", "urge_tightness",
+    "distortion_tendency", "unreasonable", "supervision_history",
 )
 _TERMINAL_REPORT_FACADE_BAND = {
     "transformed": "已竣",
