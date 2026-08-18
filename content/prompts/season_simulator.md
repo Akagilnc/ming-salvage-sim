@@ -26,6 +26,7 @@ input 含本{{TURN_UNIT}}全量盘面，不另查。**盘面表（buildings/cour
 - `simulator_payload.hitl_min_decisions`：本{{TURN_UNIT}}须产出的 `<<DECISION>>` 决策块下限（0 或正整数），用法见「重大抉择」节。
 - `fiscal_levy_memorial_estimates`：本{{TURN_UNIT}}已由事件账置定的加饷奏报估算。若有条目，按其 `presentation_instruction` 以奏疏口吻给出国总万两量级加征估算与可补军费程度，可写史实加征语和各省约略分解。
 - `due_commitments`：本{{TURN_UNIT}}到期待裁的公开承诺列表（扁平顶层键）。每条含原承诺要点、期限与须裁断事由；奏章须把每条顶到皇帝面前。`relevant_memories`：过往事件/承诺/情报，用于连续性与避错。
+- `faction_denunciation_facts`（#627）：派系恩怨事实包——`forked_dossiers`（谁办砸了什么：分叉案卷的奏报面/执行格/旨外实况）、`faction_enmities`（谁与谁有仇）、`faction_situations`（派系处境定性档）、`character_personas`（人物操守/党色个性）。**判断权在你**：要不要弹、谁弹谁、怎么写弹章，按人物个性与朝局自决；事实包不携真伪位、不设条数配额。真检举与诬告同以可信奏疏口吻呈上（大臣会骗人）。有弹章时写入事件章或探子回报，点明检举人、被检举人与所指差务（须能对上真实案卷）。**严禁**「denunciation_true/false」「veracity」「fork_exposure」等系统词入正文。
 - `historical_anchor` / `victory_status` / `deaths_this_turn` / `debuts_this_turn`：历史锚点、终局状态、讣闻、史实登场。
 
 **呈现口径**：奏章写给皇帝，以奏疏口吻定性描述人物（如「渐失圣心」「众望所归」）。军饷欠是真钱，用 approximate 总额（如「欠饷已逾二十万两」）配军心定性回奏，聚焦全军总欠饷大势。读 `treasury_brief` 时按 cutover 后的财政名目写现象：太仓亏空、京运折损、边镇告饷、中央军饷欠发、省级起运/逋赋都可作定性财政压力，不要把这些程序月度固定项再写成一笔本{{TURN_UNIT}}新收支。
@@ -95,7 +96,7 @@ N+6、诏书核销               ← 有案卷／decree_text 必写
 
 ### 探子回报
 
-写皇帝未必掌握、但足以影响下{{TURN_UNIT}}判断的暗线；无新暗线可写时，此章可略（或一句「厂卫无异闻」收束），不得为凑章节而臆造情报。不塞满重复旧闻。
+写皇帝未必掌握、但足以影响下{{TURN_UNIT}}判断的暗线；无新暗线可写时，此章可略（或一句「厂卫无异闻」收束），不得为凑章节而臆造情报。不塞满重复旧闻。朝堂弹劾/检举亦可落此章或事件章：读 `faction_denunciation_facts`，按恩怨与个性决定是否出弹章；有则写清谁参谁、所指何差，口吻各依人物，真伪同以可信奏疏呈上。
 
 ### 人事除目（有本{{TURN_UNIT}}新人事才写）
 
