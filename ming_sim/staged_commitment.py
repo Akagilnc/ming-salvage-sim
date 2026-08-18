@@ -17,6 +17,9 @@ import re
 from typing import Any, Dict, List
 
 ENTRY_KIND_STAGED = "staged_commitment"
+# #624 / ADR 0078：反催谏 / 求宽限（0075 同款 next_audience_todos 通道；不进 due-review 白名单）
+ENTRY_KIND_RUSH_REMONSTRANCE = "rush_remonstrance"
+ENTRY_KIND_GRACE_PLEA = "grace_plea"
 TODO_STATUS_PENDING = "pending"
 TODO_STATUS_CONSUMED = "consumed"
 # rolled 写口仍由 mark_next_audience_todo_status 接受（P3 契约）；常量待 #623 超额滚存启用再导出。
