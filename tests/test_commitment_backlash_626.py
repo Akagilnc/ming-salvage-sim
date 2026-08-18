@@ -7,13 +7,15 @@ Seams:
 - find_any_issue_by_origin 幂等
 - issue_advances.trigger_ref 溯源源承诺
 - 与 #623 _apply_halfway_national_setback 去重（无双份 metrics 直击）
-- 呈现哨兵：真实玩家面无系统词/无代码固定成句；#625 区分经特征约束
+- 呈现哨兵：真实玩家面无系统词；bar 空串 web 条件渲染（无空括号/端标）；#625 区分经特征约束
+- extractor commitment_backlash_facts 仅 module==issues 门控
 """
 
 from __future__ import annotations
 
 import inspect
 import json
+from pathlib import Path
 
 import ming_sim.commitment_backlash as backlash_mod
 from ming_sim.breach_plea import (
@@ -28,14 +30,12 @@ from ming_sim.breach_plea import (
 )
 from ming_sim.commitment_backlash import (
     BACKLASH_BANNED_PLAYER_TOKENS,
-    BACKLASH_CODE_FIXED_PHRASES,
     BACKLASH_NAMED_METRICS,
     BACKLASH_ORIGIN_KIND,
     SOURCE_BREACH_VERDICT,
     SOURCE_DEFORMATION_EXPOSURE,
     SOURCE_FAILED_TERMINAL,
     assert_no_backlash_banned_tokens,
-    assert_no_backlash_code_fixed_phrases,
     backlash_origin_ref,
     build_backlash_narrative_features,
     classify_backlash_source,
@@ -45,7 +45,7 @@ from ming_sim.db import GameDB
 from ming_sim.decree import pre_settle
 from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
 from ming_sim.models import TurnPhase, loads_effect_dict
-from ming_sim.simulation import build_simulator_payload
+from ming_sim.simulation import build_extractor_shared_context, build_simulator_payload
 from ming_sim.staged_commitment import TODO_STATUS_PENDING
 
 
@@ -602,7 +602,7 @@ def test_ac5_hook_idempotent_no_gate_table_expansion(game):
 
 
 def test_ac6_presentation_sentinel_distinct_from_625(game):
-    """真实玩家面：无系统词裸露、无代码侧固定成句；#625 区分经特征约束。"""
+    """真实玩家面：无系统词裸露；bar 空串无空括号/端标（甲）；#625 区分经特征约束。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -639,6 +639,8 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert not hasattr(backlash_mod, "build_backlash_copy")
     assert not hasattr(backlash_mod, "BACKLASH_BAR_GOOD")
     assert not hasattr(backlash_mod, "BACKLASH_BAR_BAD")
+    assert not hasattr(backlash_mod, "BACKLASH_CODE_FIXED_PHRASES")
+    assert not hasattr(backlash_mod, "assert_no_backlash_code_fixed_phrases")
     gate_src = inspect.getsource(GameDB.trigger_commitment_backlashes)
     assert "build_backlash_copy" not in gate_src
     assert "所系余波" not in gate_src
@@ -655,7 +657,7 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert "execution_note=" not in gate_src
     assert "execution_note=row" not in gate_src
 
-    # 真实玩家面：title 仅源承诺事实链接；stage/narrative/bar 硬门留空给叙事步
+    # 真实玩家面：title 仅源承诺事实链接；stage/narrative/bar 硬门留空
     assert str(issue["title"]) == "哨兵之诺"
     assert str(issue["stage_text"] or "") == ""
     assert str(issue["bar_good_meaning"] or "") == ""
@@ -671,7 +673,6 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     )
     for surface_name, text in player_surfaces:
         assert_no_backlash_banned_tokens(text, surface=surface_name)
-        assert_no_backlash_code_fixed_phrases(text, surface=surface_name)
 
     adv = db.conn.execute(
         "SELECT narrative, to_stage_text FROM issue_advances "
@@ -682,10 +683,8 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert str(adv["to_stage_text"] or "") == ""
     assert_no_backlash_banned_tokens(adv["narrative"], surface="narrative")
     assert_no_backlash_banned_tokens(adv["to_stage_text"], surface="advance.stage")
-    assert_no_backlash_code_fixed_phrases(adv["narrative"], surface="narrative")
-    assert_no_backlash_code_fixed_phrases(adv["to_stage_text"], surface="advance.stage")
 
-    # issue_payloads 对应字段（web situation 主行/tip 同源）不得裸露禁词/固定成句
+    # issue_payloads 对应字段（web situation 主行/tip 同源）不得裸露禁词
     payload_fields = {
         "title": issue["title"],
         "stage_text": issue["stage_text"],
@@ -695,7 +694,6 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     }
     payload_blob = json.dumps(payload_fields, ensure_ascii=False)
     assert_no_backlash_banned_tokens(payload_blob, surface="issue_payloads")
-    assert_no_backlash_code_fixed_phrases(payload_blob, surface="issue_payloads")
 
     # 特征化输入注入叙事步；#625 用语区分以约束传递（非代码 bar 常量）
     features = build_backlash_narrative_features(db)
@@ -713,8 +711,81 @@ def test_ac6_presentation_sentinel_distinct_from_625(game):
     assert payload["commitment_backlash_facts"]
     assert int(payload["commitment_backlash_facts"][0]["issue_id"]) == int(issue["id"])
 
-    # 禁词表含 #625 反制用语与系统词；固定成句表非空（哨兵有物可断）
+    # 禁词表含 #625 反制用语与系统词
     for token in ("反噬平息", "反噬坐大", "commitment_backlash", "foundation_tier"):
         assert token in BACKLASH_BANNED_PLAYER_TOKENS
-    assert BACKLASH_CODE_FIXED_PHRASES
-    assert "所系余波已平" in BACKLASH_CODE_FIXED_PHRASES
+
+    # AC6 增断（甲）：玩家面无空括号/空端标——硬门 bar 空 + 无 LLM bar 写口
+    # + web 条件渲染；advance_issue 不写 bar_*_meaning；season_simulator 不承诺 bar 语义
+    advance_src = inspect.getsource(GameDB.advance_issue)
+    assert "bar_good_meaning" not in advance_src
+    assert "bar_bad_meaning" not in advance_src
+    root = Path(__file__).resolve().parents[1]
+    sim_prompt = (root / "content/prompts/season_simulator.md").read_text(encoding="utf-8")
+    # 反噬段不得再要求 LLM 长出进度条两端文案（甲：无 bar 写口）
+    bl_idx = sim_prompt.find("commitment_backlash_facts")
+    assert bl_idx >= 0
+    bl_section = sim_prompt[bl_idx: bl_idx + 600]
+    assert "bar 语义" not in bl_section
+    assert "进度条两端文案不在本步填写" in bl_section
+    assert "标题/阶段/叙述/bar" not in bl_section
+    web_src = (root / "web/src/components/situation.tsx").read_text(encoding="utf-8")
+    assert "outcomeHead" in web_src
+    assert "barLabel" in web_src
+    # 空串渲染契约：不得再无条件插值『达成（{bar}）』
+    assert "达成（{issue.bar_good_meaning}）" not in web_src
+    assert "失败（{issue.bar_bad_meaning}）" not in web_src
+    # 空 bar 时玩家可见面不得出现空括号（web 契约由 outcomeHead 保证）
+    good = str(issue["bar_good_meaning"] or "").strip()
+    bad = str(issue["bar_bad_meaning"] or "").strip()
+    assert good == "" and bad == ""
+    # 等价于 web outcomeHead：空 → 仅『达成』/『失败』，无『（）』
+    assert (f"达成（{good}）" if good else "达成") == "达成"
+    assert (f"失败（{bad}）" if bad else "失败") == "失败"
+    assert "达成（）" not in (f"达成（{good}）" if good else "达成")
+    assert "失败（）" not in (f"失败（{bad}）" if bad else "失败")
+
+
+def test_extractor_commitment_backlash_facts_gated_to_issues_module(game):
+    """#626 P3：commitment_backlash_facts 仅 module==issues；他模块不得见。"""
+    db, state, _content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+
+    did, holder = _executing_policy_dossier(db, state, token="xgate")
+    bar = _seed_halfway(db, state, did=did)
+    _insert_commitment(
+        db, state, title="门控之诺", origin_ref=f"dossier:{did}",
+        bar_value=bar,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    db.record_dossier_execution(
+        did, "failed", "期限已过，诸事不济", int(state.turn),
+        close=True, commit=True,
+    )
+    state.turn = int(state.turn) + 1
+    hits = db.trigger_commitment_backlashes(state, commit=True)
+    assert hits
+
+    issues_ctx = build_extractor_shared_context(
+        db, state, "邸报", "", module="issues",
+    )
+    assert "commitment_backlash_facts" in issues_ctx
+    assert issues_ctx["commitment_backlash_facts"]
+    assert int(issues_ctx["commitment_backlash_facts"][0]["issue_id"]) == int(
+        hits[0]["issue_id"]
+    )
+
+    for module in ("internal", "military_external", "personnel_secret"):
+        other = build_extractor_shared_context(
+            db, state, "邸报", "", module=module,
+        )
+        assert "commitment_backlash_facts" not in other, (
+            f"{module} 不得注入 commitment_backlash_facts"
+        )
+
+    # 无门副本已撤：_extractor_context_payload 不再常驻该键
+    from ming_sim.simulation import _extractor_context_payload
+
+    base = _extractor_context_payload(db, state, "邸报", "")
+    assert "commitment_backlash_facts" not in base

@@ -11974,7 +11974,8 @@ class GameDB:
                 if not str(commitment.get("commitment_kind") or "").strip():
                     continue
                 cid = int(commitment["id"])
-                # 事废承诺不由执行格 failed 再立 failed_terminal（一诺一源）
+                # 仅交叉去重：path① 已入候选的事废承诺，执行格 failed 不再叠 failed_terminal。
+                # origin_ref 仍按 source_kind 分键（非全局「一诺一源」）。
                 if (
                     source_kind == SOURCE_FAILED_TERMINAL
                     and cid in breach_commitment_ids
@@ -12000,8 +12001,8 @@ class GameDB:
                 "SELECT title FROM issues WHERE id=?", (cid,),
             ).fetchone()
             # P7：硬门只落结构化事实；标题仅链接源承诺既有事实，不拼装新成句。
-            # 玩家 stage/narrative/bar 由叙事 LLM 步从特征化输入长出（见
-            # build_backlash_narrative_features → simulator payload）。
+            # 玩家 stage/narrative 由叙事 LLM 步从特征化输入长出；bar 端标故意留空，
+            # web 空串不渲染（#626 甲：不开 bar 写口）。
             title_c = str(crow["title"] if crow is not None else "").strip()
             # 一锤子：复用既有 _apply_metric_dict（ISSUE_METRIC_KEYS），不自建 clamp。
             applied_metrics = _apply_metric_dict(
@@ -12016,7 +12017,7 @@ class GameDB:
                 stage_text="",  # 玩家文案留给叙事 LLM 步
                 tags=[],  # 机读身份仅 origin_kind/origin_ref；tags 不进玩家面
                 bar_value=35,
-                bar_good_meaning="",  # 非代码 bar 常量；叙事步长出
+                bar_good_meaning="",  # 空串；web 条件渲染，无 LLM bar 写口
                 bar_bad_meaning="",
                 inertia=-2,
                 severity=55,
