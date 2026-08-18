@@ -3,7 +3,36 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, List
+from typing import Dict, List, Mapping
+
+
+def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
+    """案卷归属人：executor_id 优先，否则首名主办。
+
+    #613 任别读端与 #625 监督事实底共调此单源；roster 解析禁止第三份遍历。
+    缺档（无 executor 且无主办）返回空串，由调用方按真除或缺席降级。
+    """
+    executor_id = str(dossier.get("executor_id") or "").strip()
+    executor_kind = str(dossier.get("executor_kind") or "").strip()
+    if executor_id and executor_kind in {"", "character"}:
+        return executor_id
+    roster = dossier.get("participant_roster") or []
+    if isinstance(roster, str):
+        try:
+            roster = json.loads(roster)
+        except (TypeError, ValueError):
+            # json.JSONDecodeError ⊂ ValueError
+            roster = []
+    if isinstance(roster, list):
+        for entry in roster:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("tier") or "").strip() != "主办":
+                continue
+            name = str(entry.get("character_id") or "").strip()
+            if name:
+                return name
+    return ""
 
 
 def participant_roster_names(raw: object) -> set[str]:

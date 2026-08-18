@@ -22,13 +22,14 @@ from ming_sim.staged_commitment import (
     list_due_stages_for_scan,
     normalize_commitment_stages,
 )
+from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
-# 玩家可见串禁词（P4 哨兵）
+# 玩家可见串禁词（P4 哨兵 + #625 钝化/陋规化系统词）
 _BANNED_PLAYER_TOKENS = (
     "fulfilled", "degraded", "failed", "transformed", "executing",
     "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
     "progress_band", "is_terminal", "close=True", "close=False",
-)
+) + tuple(SUPERVISION_BANNED_PLAYER_TOKENS)
 
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 
@@ -105,18 +106,33 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     branch = resolve_due_review_branch(db, meta["origin_ref"])
     progress_reports: List[Dict[str, object]] = []
     durable_effects: List[Dict[str, object]] = []
+    # #625：监督三键空形以 supervision 导出常量为唯一真源。
+    from ming_sim.supervision import (
+        EMPTY_TRANSFORMATION_TENDENCY_FACTS,
+        unpack_supervision_surface,
+    )
+    supervision_pack = unpack_supervision_surface(None)
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
-        # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级（#624/#625 OOS）。
+        # 不得吞成「空证据」误导裁决。催办缺源仍按空列表降级（#624 OOS）。
         progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
         durable_effects = list(
             db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
         ) + list(
             db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
         )
-    # 催办/监督史尚未建轨（#624/#625 OOS）——空列表降级可判
+        # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
+        supervision_pack = unpack_supervision_surface(
+            db.build_supervision_judge_surface(int(branch["dossier_id"]))
+        )
+    supervision_history = list(supervision_pack["supervision_history"])
+    loophole_exposures = list(supervision_pack["loophole_exposures"])
+    transformation_tendency_facts = dict(
+        supervision_pack["transformation_tendency_facts"]
+        or EMPTY_TRANSFORMATION_TENDENCY_FACTS
+    )
+    # 催办史尚未建轨（#624 OOS）——空列表降级可判
     urge_history: List[Dict[str, object]] = []
-    supervision_history: List[Dict[str, object]] = []
     return {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
@@ -135,6 +151,8 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "durable_effects": durable_effects,
         "urge_history": urge_history,
         "supervision_history": supervision_history,
+        "loophole_exposures": loophole_exposures,
+        "transformation_tendency_facts": transformation_tendency_facts,
     }
 
 
