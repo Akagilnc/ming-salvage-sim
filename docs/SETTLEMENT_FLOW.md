@@ -6,7 +6,7 @@
 
 ## #571 S1 案卷颁布关（当前实码顺序）
 
-`pre_settle` 提交后，结算读取 DB 中的 `proposed` 案卷作为待判集；有待判案卷时只调用一次批量颁布判官，并要求 verdict 覆盖全集。随后将已颁与本回合可执行的案卷过滤进 simulator/extractor：被拒案卷的效果文本不进入执行输入。若判决产生批红动作，先保存 rescript 决策并暂停；皇帝选择后，verdict/rescript 与 pending actions 在 `settle_with_delta` 的同一 atomic 中应用。无诏推进若存在待判案卷，也走同一判决与原子应用链，不绕过颁布关。
+`pre_settle` 提交后，结算读取 DB 中的 `proposed` 案卷作为待判集；有待判案卷时只调用一次批量颁布判官，并要求 verdict 覆盖全集。随后将已颁与本回合可执行的案卷过滤进 simulator/extractor：被拒案卷的效果文本不进入执行输入。若判决产生批红动作，先保存 rescript 决策并暂停；皇帝选择后，verdict/rescript 与 pending actions 在 `settle_with_delta` 的同一 atomic 中应用。无诏推进若存在待判案卷，也走同一判决与原子应用链，不绕过颁布关。批红三选＝强颁（中旨，代价 0056）／收回（零皇威/派系代价）／留中（押后下月再判）。密令与内库内批豁免颁布关（应允即落地，0055）；经外廷受判类在 `commit_pending_actions` 只物化案卷、效果经颁布判决后落。
 
 打回判决沿用同一 verdict/历史 seam，并严格携带：`blocked_layer` 三值之一（`cabinet_drafting` / `palace_rescript` / `six_offices`）、非空 `primary_opponents` typed 清单（每项须且仅为 `{"kind":"faction","key":<在册派系>}`）、`gatekeeper_id`（null 或在册人物 id）、非空缘由及完整 `criteria_snapshot`。快照只保存判决时的皇威档位、涉事任别、在持授权 id、背书条目 id；盘面后来变化不回写、不重算历史。部院与场外 class 不能成为主否决方。
 
