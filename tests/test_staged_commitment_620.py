@@ -504,13 +504,17 @@ def test_stage_due_writes_next_audience_todo_and_continues(game):
     # 承诺对象仍 active，段间无需玩家 ACK
     assert _issue_row(db, issue_id)["status"] == "active"
 
-    # 段 1 到期再写一条；去重键含 commitment_id×stage_idx
+    # 段 1 到期再写一条；去重键含 commitment_id×stage_idx。
+    # #621 三拍：前回合 todo 于次回合 settle 消费，故段0已 consumed、段1 pending。
     _settle_empty_month(db, state, content)
     _settle_empty_month(db, state, content)
-    todos = db.list_next_audience_todos(status="pending")
-    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in todos} == {
-        (issue_id, 0),
+    pending = db.list_next_audience_todos(status="pending")
+    consumed = db.list_next_audience_todos(status="consumed")
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in pending} == {
         (issue_id, 1),
+    }
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in consumed} == {
+        (issue_id, 0),
     }
 
 
@@ -611,11 +615,13 @@ def test_multi_stage_due_settlement_stays_out_of_awaiting_decision(game):
     assert db.list_pending_decisions(state.turn) == []
     assert len(db.list_next_audience_todos(status="pending")) == 1
 
-    _settle_empty_month(db, state, content)  # 段1
+    _settle_empty_month(db, state, content)  # 段1：#621 消费段0，新写段1
     assert state.turn_phase != TurnPhase.AWAITING_DECISION.value
     assert state.turn_phase == TurnPhase.SUMMONING.value
     assert db.list_pending_decisions(state.turn) == []
-    assert len(db.list_next_audience_todos(status="pending")) == 2
+    assert len(db.list_next_audience_todos(status="pending")) == 1
+    assert int(db.list_next_audience_todos(status="pending")[0]["stage_idx"]) == 1
+    assert len(db.list_next_audience_todos(status="consumed")) == 1
 
 
 def test_staged_commitment_skips_form3_one_shot_due_channel(game):
@@ -719,10 +725,14 @@ def test_last_stage_due_with_ongoing_does_not_mechanical_expire(game):
         (issue_id,),
     ).fetchall()
     assert "expire" not in {a["trigger_kind"] for a in advances}
-    todos = db.list_next_audience_todos(status="pending")
-    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in todos} == {
-        (issue_id, 0),
+    # #621 三拍消费：末段 settle 后段0 consumed、段1 本拍新写仍 pending
+    pending = db.list_next_audience_todos(status="pending")
+    consumed = db.list_next_audience_todos(status="consumed")
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in pending} == {
         (issue_id, 1),
+    }
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in consumed} == {
+        (issue_id, 0),
     }
 
 
@@ -927,11 +937,14 @@ def test_mid_stage_restore_continues_later_stages(game):
     assert len(stored) == 2
 
     _settle_empty_month(db, reloaded, content)
-    _settle_empty_month(db, reloaded, content)  # 段1 到期
-    todos = db.list_next_audience_todos(status="pending")
-    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in todos} == {
-        (issue_id, 0),
+    _settle_empty_month(db, reloaded, content)  # 段1 到期；#621 消费段0
+    pending = db.list_next_audience_todos(status="pending")
+    consumed = db.list_next_audience_todos(status="consumed")
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in pending} == {
         (issue_id, 1),
+    }
+    assert {(int(t["commitment_ref"]), int(t["stage_idx"])) for t in consumed} == {
+        (issue_id, 0),
     }
 
 

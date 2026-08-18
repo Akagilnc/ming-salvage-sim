@@ -16018,6 +16018,48 @@ class GameDB:
             for r in rows
         ]
 
+    def mark_next_audience_todo_status(
+        self,
+        todo_id: int,
+        status: str,
+        *,
+        commit: bool = True,
+    ) -> bool:
+        """#621 P3：待办消费单写口 pending→consumed/rolled。
+
+        幂等：目标态已是 status 或非 pending 源态 → False 且不改行。
+        commit=False 可入外层事务。
+        """
+        allowed = {"consumed", "rolled", "pending"}
+        new_status = str(status or "").strip()
+        if new_status not in allowed:
+            raise ValueError(f"next_audience_todos status 非法：{new_status}")
+        row = self.conn.execute(
+            "SELECT id, status FROM next_audience_todos WHERE id=?",
+            (int(todo_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        current = str(row["status"] or "")
+        if current == new_status:
+            return False
+        # 消费/滚存仅自 pending；已消费不得被 pending 复活
+        if new_status == "pending":
+            return False
+        if current != "pending":
+            return False
+        cur = self.conn.execute(
+            """
+            UPDATE next_audience_todos
+            SET status=?
+            WHERE id=? AND status='pending'
+            """,
+            (new_status, int(todo_id)),
+        )
+        if commit:
+            self.conn.commit()
+        return int(cur.rowcount or 0) > 0
+
     def insert_issue(
         self,
         state: GameState,
