@@ -19,7 +19,10 @@ from ming_sim.breach_plea import (
     ENTRY_KIND_BREACH_PLEA,
     project_breach_plea_scene,
 )
-from ming_sim.decree_vocabulary import terminal_report_facade
+from ming_sim.decree_vocabulary import (
+    DEFORMATION_BANNED_PLAYER_TOKENS,
+    terminal_report_facade,
+)
 from ming_sim.staged_commitment import (
     ENTRY_KIND_GRACE_PLEA,
     ENTRY_KIND_RUSH_REMONSTRANCE,
@@ -31,15 +34,19 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
-# 玩家可见串禁词（P4 哨兵；#624 扩真伪底/失真引擎词 + #625 钝化/陋规化系统词）
-_BANNED_PLAYER_TOKENS = (
-    "fulfilled", "degraded", "failed", "transformed", "executing",
-    "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
-    "progress_band", "is_terminal", "close=True", "close=False",
-    # #624 / 0078 引擎知底，禁泄玩家面
+# #624/#629：真伪底/失真引擎词——urge_lever 与 due_review 共引，禁双份漂移
+URGE_TRUTH_BANNED_PLAYER_TOKENS = (
     "truth", "grace_fake", "pretextual", "genuine",
     "payload_json", "distortion_band", "urge_tightness",
-    "distortion_tendency", "supervision_history",
+    "distortion_tendency", "unreasonable", "supervision_history",
+)
+
+# 玩家可见串禁词（P4 哨兵；#622 变形 + #624 真伪底 + #625 钝化 + 结算系统词）
+_BANNED_PLAYER_TOKENS = (
+    "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
+    "close=True", "close=False",
+) + tuple(DEFORMATION_BANNED_PLAYER_TOKENS) + tuple(
+    URGE_TRUTH_BANNED_PLAYER_TOKENS
 ) + tuple(SUPERVISION_BANNED_PLAYER_TOKENS)
 
 # next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：

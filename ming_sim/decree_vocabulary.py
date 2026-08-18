@@ -107,6 +107,12 @@ DOSSIER_OUTCOME_CN = {
 
 # #622：奏报轨终值旁路——定性中文 band + 承办人假象，禁英文枚举/判官真值回填。
 # 系统词（变形/打折走样/分界 等）不得出现在 progress_band / memorial。
+# #629：测试本地禁词提升为生产单源（due_review / 全族 P4 哨兵共引）。
+DEFORMATION_BANNED_PLAYER_TOKENS = (
+    "transformed", "degraded", "fulfilled", "failed", "executing",
+    "progress_band", "is_terminal", "beyond_intent",
+    "变形", "分界", "打折走样", "烂尾",
+)
 _TERMINAL_REPORT_FACADE_BAND = {
     "transformed": "已竣",
     "degraded": "将结",

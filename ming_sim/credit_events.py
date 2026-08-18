@@ -81,6 +81,51 @@ CREDIT_BANNED_SCAN_SURFACES = (
     "criterion_text",
 )
 
+# 根基档/哭谏通道系统词（#623 场面投影剥离；#629 并入全族）
+FOUNDATION_BANNED_PLAYER_TOKENS = (
+    "foundation_tier",
+    "assess_foundation_tier",
+    "just_started",
+    "halfway",
+    "rooted",
+    "midcourse_breach_plea",
+)
+
+
+def _family_p4_banned_tokens() -> tuple[str, ...]:
+    """全族 P4 禁词并集——变形/真伪底/信用事件/钝化/根基档。"""
+    from ming_sim.commitment_backlash import BACKLASH_BANNED_PLAYER_TOKENS
+    from ming_sim.decree_vocabulary import DEFORMATION_BANNED_PLAYER_TOKENS
+    from ming_sim.due_review import URGE_TRUTH_BANNED_PLAYER_TOKENS
+    from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for token in (
+        *DEFORMATION_BANNED_PLAYER_TOKENS,
+        *URGE_TRUTH_BANNED_PLAYER_TOKENS,
+        *SUPERVISION_BANNED_PLAYER_TOKENS,
+        *CREDIT_BANNED_PLAYER_TOKENS,
+        *BACKLASH_BANNED_PLAYER_TOKENS,
+        *FOUNDATION_BANNED_PLAYER_TOKENS,
+    ):
+        if token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return tuple(ordered)
+
+
+FAMILY_P4_BANNED_PLAYER_TOKENS = _family_p4_banned_tokens()
+
+
+def assert_no_family_p4_banned_tokens(text: object, *, surface: str) -> None:
+    """#629 全族 P4 哨兵：七扫描面共用。"""
+    raw = str(text or "")
+    for token in FAMILY_P4_BANNED_PLAYER_TOKENS:
+        if token in raw:
+            raise AssertionError(f"{surface} 裸露禁词：{token!r}")
+
 
 def scapegoat_actor_kind_from_origin(origin: object) -> Optional[str]:
     """方案 b 消费侧契约：由 origin 类型机械派生施弃方∈{皇帝,党魁}。
