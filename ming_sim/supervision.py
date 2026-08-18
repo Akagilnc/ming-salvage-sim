@@ -54,7 +54,6 @@ ORIGIN_MARK_DENUNCIATION_FALSE = "denunciation_false"
 ORIGIN_MARK_SEP = "+"
 
 DENUNCIATION_ORIGIN_BASE = "dossier-report:faction_denunciation"
-DENUNCIATION_KIND = "faction_denunciation"
 
 # 人身条件化：操守定性档（读 characters.integrity，不落钝化分）
 INTEGRITY_UPRIGHT_BANDS = frozenset({"操守清正", "清介可称"})  # 孤直型
@@ -171,17 +170,6 @@ def compose_denunciation_origin(*, is_true: bool) -> str:
         else ORIGIN_MARK_DENUNCIATION_FALSE
     )
     return compose_report_origin(DENUNCIATION_ORIGIN_BASE, [mark])
-
-
-def denunciation_origin_ref(
-    accuser_name: object, dossier_id: object, turn: object, *,
-    is_true: bool,
-) -> str:
-    kind = "true" if is_true else "false"
-    return (
-        f"denunciation:{kind}:{str(accuser_name or '').strip()}"
-        f":dossier:{int(dossier_id)}:turn:{int(turn)}"
-    )
 
 
 def denunciation_case_upgraded(
