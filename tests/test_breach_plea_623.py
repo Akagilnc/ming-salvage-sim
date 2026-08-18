@@ -453,6 +453,11 @@ def test_persist_foundation_tiers(game):
         assert db.conn.execute(
             "SELECT status FROM issues WHERE id=?", (cid,),
         ).fetchone()["status"] == "dropped"
+        # 0056 关卷前须已落执行格，否则 restore 只剩空 outcome
+        dossier_row = db.get_decree_dossier(did)
+        assert dossier_row is not None
+        assert str(dossier_row.get("execution_outcome") or "") == expect_outcome
+        assert str(dossier_row.get("status") or "") == "closed"
 
 
 def test_persist_remove_sponsor_no_0056(game):
@@ -480,6 +485,10 @@ def test_persist_remove_sponsor_no_0056(game):
     assert db.conn.execute(
         "SELECT status FROM issues WHERE id=?", (cid,),
     ).fetchone()["status"] == "dropped"
+    dossier_row = db.get_decree_dossier(did)
+    assert dossier_row is not None
+    assert str(dossier_row.get("execution_outcome") or "") == result["outcome"]
+    assert str(dossier_row.get("status") or "") == "closed"
 
 
 def test_persist_via_extraction_cancels_true_entry(game):
@@ -1079,3 +1088,103 @@ def test_merged_remove_sponsor_primary_funding_absorbed_accounts(game):
     ).fetchall())
     assert edges, "撤人边/0056 辜负不得丢"
     assert len(edges) == 1, "同人辜负不重复"
+
+
+def test_ordinary_treasury_funding_is_not_misappropriation(game):
+    """无专款标签的普通国库月供，不得因他源国库开支误判挪用。
+
+    专款标签才是挪用检测写口（prompt / ADR 0075）。ongoing.economy.account=国库
+    只是月供账户，几乎每条带经费承诺都有；若把它当专款，建筑维护/军饷/他案
+    的国库开支会每月误顶哭谏。
+    """
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, _ = _executing_policy_dossier(db, state, token="ordinary-treasury")
+    origin = f"dossier:{did}"
+    cid, _ = _insert_commitment(
+        db, state, title="普通月供之诺", origin_ref=origin,
+        bar_value=20, end_turn=state.turn + 12,
+        ongoing_effects={
+            "economy": [{
+                "account": "国库", "delta": -4,
+                "category": "月供", "reason": "清丈月供",
+            }],
+        },
+    )
+    from ming_sim.breach_plea import _dedicated_accounts
+    row = db.conn.execute("SELECT * FROM issues WHERE id=?", (cid,)).fetchone()
+    assert "国库" not in _dedicated_accounts(row)
+
+    db.record_issue_economy_move(
+        state, "国库", -6, "建筑维护", "东川铜矿厂月维护费",
+        origin_ref="盘面自发", commit=True,
+    )
+    scan_and_write_breach_pleas(db, state, commit=True)
+    assert not any(p["criterion_text"] == "挪用" for p in _pending_pleas(db))
+
+
+def test_two_independent_pleas_persist_once_via_dossier_execution(game):
+    """同承诺跨回合两条独立哭谏，经 dossier_executions 坚持撤只结一次账。
+
+    两次松手各得独立条是法；坚持撤是一次毁约，0056/办到一半国势倒退不得双落。
+    """
+    db, state, content = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.commit()
+    did, holder = _executing_policy_dossier(db, state, token="once-persist")
+    origin = f"dossier:{did}"
+    db.record_issue_economy_move(
+        state, "国库", -10, "投入", "过半投入", origin_ref=origin, commit=True,
+    )
+    db.record_dossier_progress(
+        did, state.turn, "在办", "过半", is_terminal=False, commit=True,
+    )
+    cid, _ = _insert_commitment(
+        db, state, title="两度松手一次结", origin_ref=origin,
+        bar_value=45, end_turn=state.turn + 40,
+        participants=[{"character_id": holder, "tier": "主办", "role": "承办"}],
+    )
+    assert assess_foundation_tier(db, cid) == FOUNDATION_HALFWAY
+    t1 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_FUNDING,
+        reason="断供", target_dossier_id=did, commit=True,
+    )
+    state.turn += 1
+    db.save_state(state)
+    t2 = write_breach_plea_todo(
+        db, state, commitment_ref=cid, breach_kind=BREACH_KIND_POLICY_REVERSAL,
+        reason="改弦", target_dossier_id=did, commit=True,
+    )
+    assert t2 != t1
+    assert len(_pending_pleas(db)) == 2
+
+    minxin_before = int(state.metrics.get("民心", 0) or 0)
+    out = apply_score_extraction(
+        db, state,
+        {"dossier_executions": [{
+            "dossier_id": did,
+            "outcome": "failed",
+            "note": "朕意已决，仍撤此诺",
+        }]},
+        content=content,
+    )
+    resolutions = [
+        r for r in (out.get("breach_plea_resolutions") or [])
+        if r.get("decision") == "persist"
+    ]
+    assert resolutions
+    setbacks = [r for r in resolutions if r.get("setback")]
+    assert len(setbacks) == 1, f"办到一半倒退只应一次，got={setbacks!r}"
+    minxin_after = int(state.metrics.get("民心", 0) or 0)
+    assert minxin_before - minxin_after == 3
+    breach_costs = _cost_events(db, did, identity="breach")
+    assert breach_costs, "0056 应落一次"
+    already_settled = [r for r in resolutions if r.get("already_settled")]
+    assert already_settled, "第二条独立哭谏应只消费、不重结账"
+    dossier = db.get_decree_dossier(did)
+    assert dossier is not None
+    assert str(dossier.get("execution_outcome") or "") == "failed"
+    assert _pending_pleas(db) == []
+    iss = db.conn.execute("SELECT status FROM issues WHERE id=?", (cid,)).fetchone()
+    assert iss is not None and str(iss["status"]) != "active"
