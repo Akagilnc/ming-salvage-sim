@@ -689,14 +689,15 @@ def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, i
 
 
 def clamp_grant_arrival_amount(
-    ordered_amount: int, proposed_arrived: object, *, escorted: bool,
+    ordered_amount: int, proposed_arrived: int, *, escorted: bool,
 ) -> int:
-    """P2：软判提案 → 代码只 clamp 到护行口径界内。"""
+    """P2：软判提案 → 代码只 clamp 到护行口径界内。
+
+    提案须已由调用方解析为 int；非法量字段不得落入此函数（fail-loud 在 record）。
+    合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
+    """
     lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
-    try:
-        proposed = int(proposed_arrived)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        proposed = (lo + hi) // 2
+    proposed = int(proposed_arrived)
     return max(lo, min(hi, proposed))
 
 
@@ -11120,15 +11121,21 @@ class GameDB:
             if dossier_id in supplied:
                 raise ValueError("对账提案存在重复案卷")
             if "arrived_amount" in item:
-                proposed = item.get("arrived_amount")
+                raw_amount = item.get("arrived_amount")
+                amount_label = "实抵"
             elif "loss_amount" in item:
-                try:
-                    loss = int(item.get("loss_amount"))  # type: ignore[arg-type]
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("对账折损值无效") from exc
-                proposed = int(targets[dossier_id]["ordered_amount"]) - loss
+                raw_amount = item.get("loss_amount")
+                amount_label = "折损"
             else:
                 raise ValueError("对账提案须含 arrived_amount 或 loss_amount")
+            try:
+                amount = strict_int(raw_amount)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"对账{amount_label}值无效") from exc
+            if amount_label == "实抵":
+                proposed = amount
+            else:
+                proposed = int(targets[dossier_id]["ordered_amount"]) - amount
             note = str(item.get("note") or "").strip()
             supplied[dossier_id] = (proposed, note)
 
