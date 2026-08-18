@@ -77,3 +77,160 @@ def dossier_action_policy(action_type: object, payload=None):
             raise ValueError("拨帑旨意 execution_surface 非法")
         policy["execution_surface"] = surface
     return policy
+
+
+# ── #569 认账 brief / 推演投影词表（禁 session/web 双写）────────────────
+# 认账 brief：status/颁布格/执行格/中旨标记一律定性中文（ADR 0052 P4 方向）。
+# 推演投影：颁布格/执行格定性；status/mode/stigma 结构位仍按契约原样投出。
+
+DOSSIER_STATUS_CN = {
+    "proposed": "准旨",
+    "promulgated": "已颁",
+    "executing": "执行中",
+    "closed": "结案",
+}
+
+DOSSIER_DECISION_CN = {
+    "promulgated": "顺颁",
+    "rejected": "打回",
+    "force_promulgated": "强颁",
+    "hold": "留中",
+    "withdrawn": "收回",
+}
+
+DOSSIER_OUTCOME_CN = {
+    "fulfilled": "兑现",
+    "degraded": "打折走样",
+    "failed": "烂尾",
+    "transformed": "变形",
+}
+
+SIM_DOSSIER_COMMON_KEYS = frozenset({
+    "id", "action_type", "status",
+    "decision", "outcome", "note",
+    "mode", "stigma", "participant_roster", "links",
+    "due_turn", "created_turn", "promulgated_turn",
+    "target_kind", "target_id", "executor_kind", "executor_id",
+    # #613 执行侧任别读端（与 #569 固定键投影同面）
+    "appointment_tenure", "held_authorities", "authorization_ids",
+    "command_power_rank", "distortion_weight",
+})
+SIM_DOSSIER_NARRATIVE_KEYS = SIM_DOSSIER_COMMON_KEYS | {"decree_text"}
+SIM_DOSSIER_EXECUTION_KEYS = SIM_DOSSIER_COMMON_KEYS | {"execution_summary"}
+
+
+def qualitative_dossier_status(value: object) -> str:
+    key = str(value or "").strip()
+    return DOSSIER_STATUS_CN.get(key, "")
+
+
+def qualitative_dossier_decision(value: object) -> str:
+    key = str(value or "").strip()
+    return DOSSIER_DECISION_CN.get(key, "")
+
+
+def qualitative_dossier_outcome(value: object, *, status: object = "") -> str:
+    key = str(value or "").strip()
+    if key in DOSSIER_OUTCOME_CN:
+        return DOSSIER_OUTCOME_CN[key]
+    if str(status or "").strip() == "executing" and not key:
+        return "执行中"
+    return ""
+
+
+def _promulgation_decision_raw(row: dict) -> str:
+    """Resolve the current promulgation-slot raw enum for a dossier row."""
+    verdict = str(row.get("settlement_verdict") or "").strip()
+    if verdict in DOSSIER_DECISION_CN:
+        return verdict
+    decision = str(row.get("promulgation_decision") or "").strip()
+    if decision in DOSSIER_DECISION_CN:
+        return decision
+    if bool(row.get("was_force_promulgated")):
+        return "force_promulgated"
+    stigma = row.get("stigma") or []
+    if isinstance(stigma, list):
+        for item in stigma:
+            if not isinstance(item, dict) or item.get("kind") != "midzhi":
+                continue
+            source = str(item.get("source_action") or "").strip()
+            if source == "force_promulgated":
+                return "force_promulgated"
+            if source == "promulgated":
+                return "promulgated"
+            if source == "rejected":
+                return "rejected"
+    return decision
+
+
+def qualitative_promulgation_slot(row: dict) -> str:
+    """颁布格定性。强颁组合态保留「打回」本值，另由 stigma/标记位表达强颁。"""
+    raw = _promulgation_decision_raw(row)
+    # 强颁：颁布格 outcome 仍是打回（0052），brief 侧并列「强颁」标记。
+    if raw == "force_promulgated":
+        base = str(row.get("promulgation_decision") or "").strip()
+        if base == "rejected":
+            return DOSSIER_DECISION_CN["rejected"]
+        return DOSSIER_DECISION_CN["force_promulgated"]
+    return qualitative_dossier_decision(raw)
+
+
+def qualitative_midzhi_markers(row: dict) -> list[str]:
+    markers: list[str] = []
+    mode = str(row.get("mode") or "").strip()
+    if mode == "midzhi":
+        markers.append("中旨")
+    stigma = row.get("stigma") or []
+    if isinstance(stigma, list):
+        for item in stigma:
+            if not isinstance(item, dict) or item.get("kind") != "midzhi":
+                continue
+            source = str(item.get("source_action") or "").strip()
+            if source == "force_promulgated":
+                label = "批红强颁"
+            elif source == "rejected":
+                label = "中旨打回"
+            else:
+                label = "中旨"
+            if label not in markers:
+                markers.append(label)
+    if bool(row.get("was_force_promulgated")) and "批红强颁" not in markers:
+        markers.append("批红强颁")
+    return markers
+
+
+def render_referenceable_dossier_brief(candidates) -> str:
+    """认账唯一 brief 渲染：status/颁布格/执行格/中旨标记一律定性中文。"""
+    if not candidates:
+        return ""
+    lines = [
+        "【可参考既有旨意（若有关联，请按标题或事项复述；勿向陛下念内部编号）】",
+    ]
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        title = str(
+            row.get("secret_title") or row.get("decree_text") or row.get("action_type") or ""
+        ).strip()
+        status_cn = qualitative_dossier_status(row.get("status"))
+        decision_cn = qualitative_promulgation_slot(row)
+        outcome_cn = qualitative_dossier_outcome(
+            row.get("execution_outcome"), status=row.get("status"),
+        )
+        note = str(row.get("execution_note") or "").strip()
+        markers = qualitative_midzhi_markers(row)
+        facts = []
+        if status_cn:
+            facts.append(f"状态：{status_cn}")
+        if decision_cn:
+            facts.append(f"颁布：{decision_cn}")
+        if outcome_cn:
+            facts.append(f"执行：{outcome_cn}")
+        if note:
+            facts.append(f"说明：{note}")
+        if markers:
+            facts.append("标记：" + "、".join(markers))
+        fact_text = "；".join(facts)
+        suffix = f"（{fact_text}）" if fact_text else ""
+        lines.append(f"- [内部键 {int(row['id'])}] {title}{suffix}")
+    return "\n".join(lines)

@@ -665,6 +665,42 @@ def resolve_office_type_preserving_title(
     return infer_office_type_from_office(office, declared or fallback, llm_config, use_llm=use_llm)
 
 
+# #567 / ADR 0054：押解实抵 clamp 界（北极星 30 两面值 → 无护 15-18 / 有护 22-25）。
+# 代码只 clamp；软判提案落在界内原样收。比例相对 30 锚定，保证有护下界 > 无护上界。
+_GRANT_ARRIVAL_SCALE = 30
+_GRANT_ARRIVAL_BARE = (15, 18)
+_GRANT_ARRIVAL_ESCORT = (22, 25)
+_GRANT_ESCORT_RELATIONS = frozenset({"护卫", "稽核"})
+
+
+def grant_arrival_bounds(ordered_amount: int, *, escorted: bool) -> Tuple[int, int]:
+    """返回 (arrived_lo, arrived_hi)，含端点；ordered<=0 时 (0, 0)。"""
+    ordered = int(ordered_amount)
+    if ordered <= 0:
+        return (0, 0)
+    lo_n, hi_n = _GRANT_ARRIVAL_ESCORT if escorted else _GRANT_ARRIVAL_BARE
+    lo = (ordered * lo_n) // _GRANT_ARRIVAL_SCALE
+    hi = (ordered * hi_n) // _GRANT_ARRIVAL_SCALE
+    if hi < lo:
+        hi = lo
+    if hi > ordered:
+        hi = ordered
+    return (lo, hi)
+
+
+def clamp_grant_arrival_amount(
+    ordered_amount: int, proposed_arrived: int, *, escorted: bool,
+) -> int:
+    """P2：软判提案 → 代码只 clamp 到护行口径界内。
+
+    提案须已由调用方解析为 int；非法量字段不得落入此函数（fail-loud 在 record）。
+    合法无提案中位默认仅经 record_monthly_grant_reconciliations 内联路径。
+    """
+    lo, hi = grant_arrival_bounds(int(ordered_amount), escorted=escorted)
+    proposed = int(proposed_arrived)
+    return max(lo, min(hi, proposed))
+
+
 class GameDB:
     def __init__(self, path: str, content: Optional[GameContent] = None, llm_config: Any = None):
         self.path = path
@@ -1360,6 +1396,24 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_links_target
                 ON decree_dossier_links(target_dossier_id, id);
+            -- #567 / ADR 0054+0058：被护案卷侧机械对账（逐路×回合）；非 0058 进展容器。
+            CREATE TABLE IF NOT EXISTS decree_dossier_reconciliations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                ordered_amount INTEGER NOT NULL,
+                arrived_amount INTEGER NOT NULL,
+                loss_amount INTEGER NOT NULL,
+                escorted INTEGER NOT NULL DEFAULT 0 CHECK(escorted IN (0,1)),
+                escort_source_dossier_id INTEGER,
+                relation_type TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(dossier_id, turn),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_reconciliations_dossier
+                ON decree_dossier_reconciliations(dossier_id, turn, id);
             -- ADR 0070：担名与办事名单分立；条目只能指向落条目前已存在的案卷。
             CREATE TABLE IF NOT EXISTS decree_dossier_endorsements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1409,6 +1463,22 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_decree_dossier_decisions_dossier
                 ON decree_dossier_decisions(dossier_id, id);
+            -- #619 / ADR 0073: general reported-progress rail for non-secret
+            -- execution-surface dossiers. Secret monthly rows stay on
+            -- secret_orders.dossier_progress_json (#566/#883); no shared table+flag.
+            CREATE TABLE IF NOT EXISTS dossier_reported_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                progress_band TEXT NOT NULL,
+                memorial_text TEXT NOT NULL,
+                is_terminal INTEGER NOT NULL DEFAULT 0 CHECK(is_terminal IN (0,1)),
+                origin TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
+                ON dossier_reported_progress(dossier_id, turn, id);
             -- ADR 0056: existence of this append-only rail is the idempotency key;
             -- stigma_json is deliberately not used as a cost guard.
             CREATE TABLE IF NOT EXISTS decree_cost_events (
@@ -1594,12 +1664,31 @@ class GameDB:
                 end_turn INTEGER NOT NULL DEFAULT 0,
                 stop_condition TEXT NOT NULL DEFAULT '',
                 commitment_kind TEXT NOT NULL DEFAULT '',
+                stages_json TEXT NOT NULL DEFAULT '[]',
                 resolution_summary TEXT NOT NULL DEFAULT '',
                 last_advance_turn INTEGER NOT NULL DEFAULT 0,
                 closed_turn INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
+            CREATE TABLE IF NOT EXISTS next_audience_todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                commitment_ref INTEGER NOT NULL,
+                stage_idx INTEGER NOT NULL,
+                due_turn INTEGER NOT NULL,
+                criterion_text TEXT NOT NULL DEFAULT '',
+                origin_context TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
+                created_turn INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(commitment_ref, stage_idx, entry_kind),
+                FOREIGN KEY(commitment_ref) REFERENCES issues(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_next_audience_todos_status
+                ON next_audience_todos(status, due_turn);
 
             CREATE TABLE IF NOT EXISTS issue_advances (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1844,6 +1933,7 @@ class GameDB:
         self.ensure_column("issues", "end_turn", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
+        self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -1894,8 +1984,9 @@ class GameDB:
                 "MAX(COALESCE(due_turn, 0)-COALESCE(turn_issued, 0), 0)"
             )
         self.ensure_column("secret_orders", "excluded_names", "TEXT NOT NULL DEFAULT '[]'")
-        # #566/#883: monthly reports are private derivatives of the order itself;
-        # no parallel dossier report store is authorized.
+        # #566/#883: secret monthly reports stay private on the order itself.
+        # #619 adds a separate physical general track (dossier_reported_progress);
+        # the retired shared table name remains forbidden (no shared table+flag).
         self.ensure_column(
             "secret_orders", "dossier_progress_json", "TEXT NOT NULL DEFAULT '[]'")
         self.conn.execute("DROP TABLE IF EXISTS dossier_progress_reports")
@@ -10793,25 +10884,58 @@ class GameDB:
         out["participant_roster"] = roster if isinstance(roster, list) else []
         return out
 
-    def record_dossier_progress(
+    # #619 / ADR 0073 reported-progress origin namespace (ID-11 open append).
+    DOSSIER_REPORT_ORIGIN_NS = "dossier-report:"
+    DOSSIER_REPORT_ORIGIN_MONTHLY = "dossier-report:monthly_errand"
+    DOSSIER_REPORT_ORIGIN_VERDICT = "dossier-report:execution_verdict"
+
+    @classmethod
+    def _normalize_dossier_report_origin(
+        cls, origin: object, *, is_terminal: bool = False,
+    ) -> str:
+        raw = str(origin or "").strip()
+        if not raw:
+            return (
+                cls.DOSSIER_REPORT_ORIGIN_VERDICT
+                if is_terminal
+                else cls.DOSSIER_REPORT_ORIGIN_MONTHLY
+            )
+        prefix = cls.DOSSIER_REPORT_ORIGIN_NS
+        if not raw.startswith(prefix) or not raw[len(prefix):].strip():
+            raise ValueError("奏报 origin 须带 dossier-report 命名空间前缀")
+        return raw
+
+    @classmethod
+    def _coerce_dossier_progress_row(
+        cls, item: Mapping[str, object], *, dossier_id: int,
+    ) -> Dict[str, object]:
+        is_terminal = bool(item.get("is_terminal"))
+        # Empty origin defaults live only in _normalize_dossier_report_origin.
+        origin = cls._normalize_dossier_report_origin(
+            item.get("origin"), is_terminal=is_terminal,
+        )
+        return {
+            "id": int(item["id"]),
+            "dossier_id": int(item.get("dossier_id") or dossier_id),
+            "turn": int(item["turn"]),
+            "progress_band": str(item["progress_band"]),
+            "memorial_text": str(item["memorial_text"]),
+            "is_terminal": is_terminal,
+            "origin": origin,
+        }
+
+    def _record_secret_dossier_progress(
         self,
         dossier_id: int,
+        order_id: int,
         turn: int,
-        progress_band: str,
-        memorial_text: str,
+        band: str,
+        text: str,
         *,
-        is_terminal: bool = False,
-        commit: bool = True,
+        is_terminal: bool,
+        origin: str,
+        commit: bool,
     ) -> int:
-        """Append one canonical reported-progress entry to its private order."""
-        dossier = self.get_decree_dossier(int(dossier_id))
-        band = str(progress_band or "").strip()
-        text = str(memorial_text or "").strip()
-        if dossier is None or not dossier.get("secret_order_id"):
-            raise ValueError("密令案卷不存在")
-        if not band or not text:
-            raise ValueError("进展档和密奏均不能为空")
-        order_id = int(dossier["secret_order_id"])
         row = self.conn.execute(
             "SELECT dossier_progress_json FROM secret_orders WHERE id=?", (order_id,),
         ).fetchone()
@@ -10825,12 +10949,14 @@ class GameDB:
             existing = {
                 "id": report_id, "dossier_id": int(dossier_id), "turn": int(turn),
                 "progress_band": band, "memorial_text": text,
-                "is_terminal": bool(is_terminal),
+                "is_terminal": bool(is_terminal), "origin": origin,
             }
             reports.append(existing)
         else:
             report_id = int(existing["id"])
-            existing.update(progress_band=band, memorial_text=text)
+            existing.update(
+                progress_band=band, memorial_text=text, origin=origin,
+            )
         reports.sort(key=lambda item: (int(item["turn"]), int(item["id"])))
         self.conn.execute(
             "UPDATE secret_orders SET dossier_progress_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -10840,25 +10966,130 @@ class GameDB:
             self._commit_dossier_write(True)
         return report_id
 
-    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
-        """Canonical read seam shared by monthly push and future inquiry pull."""
+    def _record_general_dossier_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        band: str,
+        text: str,
+        *,
+        is_terminal: bool,
+        origin: str,
+        commit: bool,
+    ) -> int:
+        existing = None
+        if not is_terminal:
+            existing = self.conn.execute(
+                """
+                SELECT id FROM dossier_reported_progress
+                WHERE dossier_id=? AND turn=? AND is_terminal=0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(dossier_id), int(turn)),
+            ).fetchone()
+        if existing is not None:
+            report_id = int(existing["id"])
+            self.conn.execute(
+                """
+                UPDATE dossier_reported_progress
+                SET progress_band=?, memorial_text=?, origin=?
+                WHERE id=?
+                """,
+                (band, text, origin, report_id),
+            )
+        else:
+            cur = self.conn.execute(
+                """
+                INSERT INTO dossier_reported_progress
+                    (dossier_id, turn, progress_band, memorial_text, is_terminal, origin)
+                VALUES (?,?,?,?,?,?)
+                """,
+                (
+                    int(dossier_id), int(turn), band, text,
+                    1 if is_terminal else 0, origin,
+                ),
+            )
+            report_id = int(cur.lastrowid)
+        if commit:
+            self._commit_dossier_write(True)
+        return report_id
+
+    def record_dossier_progress(
+        self,
+        dossier_id: int,
+        turn: int,
+        progress_band: str,
+        memorial_text: str,
+        *,
+        is_terminal: bool = False,
+        origin: str = "",
+        commit: bool = True,
+    ) -> int:
+        """Append one reported-progress entry; write path splits by physical track.
+
+        Secret-order dossiers stay on secret_orders.dossier_progress_json (#566).
+        Non-secret execution-surface dossiers use dossier_reported_progress (#619).
+        Reported rows never enter apply (ADR 0073).
+        """
         dossier = self.get_decree_dossier(int(dossier_id))
-        if dossier is None or not dossier.get("secret_order_id"):
+        band = str(progress_band or "").strip()
+        text = str(memorial_text or "").strip()
+        if dossier is None:
+            raise ValueError("案卷不存在")
+        if not band or not text:
+            raise ValueError("进展档和密奏均不能为空")
+        origin_norm = self._normalize_dossier_report_origin(
+            origin, is_terminal=bool(is_terminal),
+        )
+        secret_order_id = dossier.get("secret_order_id")
+        if secret_order_id:
+            return self._record_secret_dossier_progress(
+                int(dossier_id), int(secret_order_id), int(turn), band, text,
+                is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
+            )
+        payload = {}
+        try:
+            loaded = json.loads(str(dossier.get("payload_json") or "{}"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (TypeError, ValueError):
+            payload = {}
+        if not self._dossier_has_execution_surface(dossier.get("action_type"), payload):
+            raise ValueError("非执行面案卷不可挂奏报")
+        return self._record_general_dossier_progress(
+            int(dossier_id), int(turn), band, text,
+            is_terminal=bool(is_terminal), origin=origin_norm, commit=commit,
+        )
+
+    def list_dossier_progress(self, dossier_id: int) -> List[Dict[str, object]]:
+        """Unified read seam over secret private rail and general reported rail."""
+        dossier = self.get_decree_dossier(int(dossier_id))
+        if dossier is None:
             return []
-        row = self.conn.execute(
-            "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
-            (int(dossier["secret_order_id"]),),
-        ).fetchone()
-        if row is None:
-            return []
+        if dossier.get("secret_order_id"):
+            row = self.conn.execute(
+                "SELECT dossier_progress_json FROM secret_orders WHERE id=?",
+                (int(dossier["secret_order_id"]),),
+            ).fetchone()
+            if row is None:
+                return []
+            return [
+                self._coerce_dossier_progress_row(item, dossier_id=int(dossier_id))
+                for item in json.loads(row["dossier_progress_json"] or "[]")
+            ]
+        rows = self.conn.execute(
+            """
+            SELECT id, dossier_id, turn, progress_band, memorial_text,
+                   is_terminal, origin
+            FROM dossier_reported_progress
+            WHERE dossier_id=?
+            ORDER BY turn, id
+            """,
+            (int(dossier_id),),
+        ).fetchall()
         return [
-            {
-                "id": int(item["id"]), "dossier_id": int(item["dossier_id"]),
-                "turn": int(item["turn"]), "progress_band": str(item["progress_band"]),
-                "memorial_text": str(item["memorial_text"]),
-                "is_terminal": bool(item["is_terminal"]),
-            }
-            for item in json.loads(row["dossier_progress_json"] or "[]")
+            self._coerce_dossier_progress_row(dict(row), dossier_id=int(dossier_id))
+            for row in rows
         ]
 
     def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
@@ -10920,10 +11151,228 @@ class GameDB:
         for dossier_id, item in supplied.items():
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
-                str(item["memorial_text"]).strip(), commit=False,
+                str(item["memorial_text"]).strip(),
+                origin=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
+                commit=False,
             )
             reports.append(self.list_dossier_progress(dossier_id)[-1])
         return reports
+
+    def _grant_escort_presence(
+        self, dossier_id: int,
+    ) -> Tuple[bool, Optional[int], str]:
+        """被护案卷侧查入链：护卫/稽核在场与否（0054 逐路独立）。"""
+        for link in self.list_dossier_links(int(dossier_id), direction="incoming"):
+            relation = str(link.get("relation_type") or "").strip()
+            if relation in _GRANT_ESCORT_RELATIONS:
+                return True, int(link["source_dossier_id"]), relation
+        return False, None, ""
+
+    def list_monthly_grant_reconciliation_targets(self) -> List[Dict[str, object]]:
+        """扫描面：executing 且仍在途的拨帑案卷（排除成案不足额已 failed+close）。"""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM decree_dossiers
+            WHERE status='executing' AND action_type='grant_allocation'
+            ORDER BY id
+            """
+        ).fetchall()
+        targets: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            policy = dossier_action_policy("grant_allocation", payload)
+            if policy.get("execution_surface") != "in_transit":
+                continue
+            if self._grant_allocation_is_monthly(payload):
+                continue
+            if self._grant_allocation_is_honorific(payload):
+                continue
+            try:
+                ordered = int(payload.get("amount") or 0)
+            except (TypeError, ValueError):
+                ordered = 0
+            if ordered <= 0:
+                continue
+            dossier_id = int(row["id"])
+            escorted, source_id, relation = self._grant_escort_presence(dossier_id)
+            targets.append({
+                "dossier_id": dossier_id,
+                "ordered_amount": ordered,
+                "escorted": escorted,
+                "escort_source_dossier_id": source_id,
+                "relation_type": relation,
+                "decree_text": str(row["decree_text"] or ""),
+                "target_id": str(row["target_id"] or ""),
+            })
+        return targets
+
+    def list_dossier_reconciliations(
+        self, dossier_id: int,
+    ) -> List[Dict[str, object]]:
+        """被护案卷侧对账真源读缝（逐路×回合，restore 同源）。"""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM decree_dossier_reconciliations
+            WHERE dossier_id=? ORDER BY turn, id
+            """,
+            (int(dossier_id),),
+        ).fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "dossier_id": int(row["dossier_id"]),
+                "turn": int(row["turn"]),
+                "ordered_amount": int(row["ordered_amount"]),
+                "arrived_amount": int(row["arrived_amount"]),
+                "loss_amount": int(row["loss_amount"]),
+                "escorted": bool(row["escorted"]),
+                "escort_source_dossier_id": (
+                    int(row["escort_source_dossier_id"])
+                    if row["escort_source_dossier_id"] is not None else None
+                ),
+                "relation_type": str(row["relation_type"] or ""),
+                "note": str(row["note"] or ""),
+            }
+            for row in rows
+        ]
+
+    def list_open_grant_reconciliations(self) -> List[Dict[str, object]]:
+        """在途拨帑的最新对账快照，供 issues 软判读账打折。"""
+        snapshots: List[Dict[str, object]] = []
+        for target in self.list_monthly_grant_reconciliation_targets():
+            history = self.list_dossier_reconciliations(int(target["dossier_id"]))
+            if history:
+                latest = dict(history[-1])
+            else:
+                latest = {
+                    "dossier_id": int(target["dossier_id"]),
+                    "turn": 0,
+                    "ordered_amount": int(target["ordered_amount"]),
+                    "arrived_amount": None,
+                    "loss_amount": None,
+                    "escorted": bool(target["escorted"]),
+                    "escort_source_dossier_id": target["escort_source_dossier_id"],
+                    "relation_type": str(target["relation_type"] or ""),
+                }
+            latest["decree_text"] = target["decree_text"]
+            latest["target_id"] = target["target_id"]
+            snapshots.append(latest)
+        return snapshots
+
+    def record_monthly_grant_reconciliations(
+        self, turn: int, generated: object = None,
+    ) -> List[Dict[str, object]]:
+        """月度节拍：逐路软判实抵 → clamp → 落被护侧对账记录。
+
+        无提案时用护行口径中位（无护行亦可机械落账，供 S10 结案合并）。
+        不写 0058 进展、不二次扣库、不改原 economy_move。
+        """
+        targets = {
+            int(item["dossier_id"]): item
+            for item in self.list_monthly_grant_reconciliation_targets()
+        }
+        if not targets:
+            if generated in (None, []):
+                return []
+            raise ValueError("无在途拨帑却收到对账提案")
+
+        supplied: Dict[int, Tuple[object, str]] = {}
+        if generated is None:
+            generated = []
+        if not isinstance(generated, list):
+            raise ValueError("对账提案须为列表")
+        for item in generated:
+            if not isinstance(item, dict):
+                raise ValueError("对账提案格式无效")
+            try:
+                dossier_id = strict_int(item.get("dossier_id", 0))
+                if dossier_id <= 0:
+                    raise ValueError("not positive")
+            except (TypeError, ValueError) as exc:
+                raise ValueError("对账提案案卷编号无效") from exc
+            if dossier_id not in targets:
+                raise ValueError(f"对账提案指向非在途拨帑案卷：{dossier_id}")
+            if dossier_id in supplied:
+                raise ValueError("对账提案存在重复案卷")
+            if "arrived_amount" in item:
+                raw_amount = item.get("arrived_amount")
+                amount_label = "实抵"
+            elif "loss_amount" in item:
+                raw_amount = item.get("loss_amount")
+                amount_label = "折损"
+            else:
+                raise ValueError("对账提案须含 arrived_amount 或 loss_amount")
+            try:
+                amount = strict_int(raw_amount)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"对账{amount_label}值无效") from exc
+            if amount_label == "实抵":
+                proposed = amount
+            else:
+                proposed = int(targets[dossier_id]["ordered_amount"]) - amount
+            note = str(item.get("note") or "").strip()
+            supplied[dossier_id] = (proposed, note)
+
+        reports: List[Dict[str, object]] = []
+        for dossier_id, target in targets.items():
+            ordered = int(target["ordered_amount"])
+            escorted = bool(target["escorted"])
+            if dossier_id in supplied:
+                proposed, note = supplied[dossier_id]
+                arrived = clamp_grant_arrival_amount(
+                    ordered, proposed, escorted=escorted,
+                )
+            else:
+                lo, hi = grant_arrival_bounds(ordered, escorted=escorted)
+                arrived = (lo + hi) // 2
+                note = ""
+            loss = ordered - arrived
+            source_id = target["escort_source_dossier_id"]
+            relation = str(target["relation_type"] or "")
+            self.conn.execute(
+                """
+                INSERT INTO decree_dossier_reconciliations
+                    (dossier_id, turn, ordered_amount, arrived_amount, loss_amount,
+                     escorted, escort_source_dossier_id, relation_type, note)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(dossier_id, turn) DO UPDATE SET
+                    ordered_amount=excluded.ordered_amount,
+                    arrived_amount=excluded.arrived_amount,
+                    loss_amount=excluded.loss_amount,
+                    escorted=excluded.escorted,
+                    escort_source_dossier_id=excluded.escort_source_dossier_id,
+                    relation_type=excluded.relation_type,
+                    note=excluded.note
+                """,
+                (
+                    int(dossier_id), int(turn), ordered, arrived, loss,
+                    1 if escorted else 0,
+                    int(source_id) if source_id is not None else None,
+                    relation, note,
+                ),
+            )
+            history = self.list_dossier_reconciliations(int(dossier_id))
+            reports.append(history[-1])
+        return reports
+
+    def merge_grant_reconciliation_into_execution_note(
+        self, dossier_id: int, *, commit: bool = True,
+    ) -> Optional[str]:
+        """S10 结案消费对账真源：经 merge_execution_note 单一写口增补说明。"""
+        history = self.list_dossier_reconciliations(int(dossier_id))
+        if not history:
+            return None
+        latest = history[-1]
+        fragment = (
+            f"押解对账：应解{int(latest['ordered_amount'])}两，"
+            f"实抵{int(latest['arrived_amount'])}两"
+        )
+        return self.merge_execution_note(int(dossier_id), fragment, commit=commit)
 
     def _backfill_proposed_appointment_break_ranks(self) -> None:
         """Idempotently upgrade in-flight pre-#562 appointment dossiers."""
@@ -11358,8 +11807,8 @@ class GameDB:
             if match:
                 known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
-            """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title,
+            """SELECT d.*,
+                      s.title AS secret_title,
                       EXISTS(
                           SELECT 1 FROM decree_dossier_decisions h
                           WHERE h.dossier_id=d.id
@@ -11371,9 +11820,9 @@ class GameDB:
                ORDER BY d.id DESC""",
             (int(current_turn),),
         ).fetchall()
-        return [
-            dict(row) for row in rows
-            if (
+        visible: List[Dict[str, object]] = []
+        for row in rows:
+            admitted = (
                 row["secret_order_id"] is None
                 and (
                     str(row["promulgation_decision"] or "") == "promulgated"
@@ -11383,7 +11832,13 @@ class GameDB:
                 row["secret_order_id"] is not None
                 and int(row["secret_order_id"]) in known_secret_ids
             )
-        ]
+            if not admitted:
+                continue
+            # Same hydrate contract as get/list decree rows (ADR 0005: fail loud).
+            item = self._dossier_row(row)
+            item["was_force_promulgated"] = bool(row["was_force_promulgated"])
+            visible.append(item)
+        return visible
 
     def _record_dossier_link_rejection(
         self, source_id: int, target_id: int, relation: str, note: str,
@@ -13110,6 +13565,19 @@ class GameDB:
         ongoing = payload.get("ongoing_effects")
         if isinstance(ongoing, dict) and ongoing:
             ni["ongoing_effects"] = ongoing
+        # #620 扩展面：分段里程碑（#520 本体字段语义不动）
+        from ming_sim.staged_commitment import capture_commitment_stages
+        stages_norm = capture_commitment_stages(
+            payload.get("stages") or payload.get("stages_json"),
+            narrative_text=str(
+                payload.get("text") or row.get("decree_text") or title or ""
+            ),
+            origin_turn=int(getattr(state, "turn", 0) or 0),
+        )
+        if stages_norm:
+            ni["stages"] = stages_norm
+            if not commitment_kind:
+                ni["commitment_kind"] = "until_stop"
         # ongoing_effects / end_turn 选择规则与缺 marker 拒收交既有校验。
 
         out = apply_score_extraction(
@@ -15468,6 +15936,88 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    def insert_next_audience_todo(
+        self,
+        *,
+        commitment_ref: int,
+        stage_idx: int,
+        due_turn: int,
+        criterion_text: str = "",
+        origin_context: str = "",
+        status: str = "pending",
+        entry_kind: str = "staged_commitment",
+        created_turn: int = 0,
+        commit: bool = True,
+    ) -> int:
+        """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
+
+        返回新建行 id；已存在则返回 0（幂等，不覆盖）。
+        """
+        cur = self.conn.execute(
+            """
+            INSERT OR IGNORE INTO next_audience_todos (
+                commitment_ref, stage_idx, due_turn, criterion_text, origin_context,
+                status, entry_kind, created_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(commitment_ref),
+                int(stage_idx),
+                int(due_turn),
+                sanitize_sqlite_text(str(criterion_text or "")),
+                sanitize_sqlite_text(str(origin_context or "")),
+                sanitize_sqlite_text(str(status or "pending") or "pending"),
+                sanitize_sqlite_text(str(entry_kind or "staged_commitment") or "staged_commitment"),
+                int(created_turn or 0),
+            ),
+        )
+        if commit:
+            self.conn.commit()
+        if cur.rowcount <= 0:
+            return 0
+        return int(cur.lastrowid)
+
+    def list_next_audience_todos(
+        self,
+        *,
+        status: str | None = None,
+        commitment_ref: int | None = None,
+    ) -> List[Dict[str, object]]:
+        """下一召对回合可读的待办条目（restore 只读 DB 接续）。"""
+        clauses: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            clauses.append("status=?")
+            params.append(str(status))
+        if commitment_ref is not None:
+            clauses.append("commitment_ref=?")
+            params.append(int(commitment_ref))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
+                   origin_context, status, entry_kind, created_turn
+            FROM next_audience_todos
+            {where}
+            ORDER BY due_turn, commitment_ref, stage_idx, id
+            """,
+            tuple(params),
+        ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "commitment_ref": int(r["commitment_ref"]),
+                "stage_idx": int(r["stage_idx"]),
+                "due_turn": int(r["due_turn"]),
+                "criterion_text": str(r["criterion_text"] or ""),
+                "origin_context": str(r["origin_context"] or ""),
+                "status": str(r["status"] or ""),
+                "entry_kind": str(r["entry_kind"] or ""),
+                "created_turn": int(r["created_turn"] or 0),
+            }
+            for r in rows
+        ]
+
     def insert_issue(
         self,
         state: GameState,
@@ -15496,6 +16046,7 @@ class GameDB:
         end_turn: int = 0,
         stop_condition: Dict[str, object] | str = "",
         commitment_kind: str = "",
+        stages_json: str | list | None = None,
         commit: bool = True,
     ) -> int:
         if kind not in ("situation", "initiative"):
@@ -15511,6 +16062,9 @@ class GameDB:
         phase = self._derive_issue_phase(bar_value)
         participant_roster = self._normalize_participant_roster(participants)
         participant_names = [item["character_id"] for item in participant_roster]
+        from ming_sim.staged_commitment import stages_to_json
+        # 字符串面经 stages_to_json 正确解析或响亮拒绝，禁止 char-iterate 静默存 []
+        stages_blob = stages_to_json([] if stages_json is None else stages_json)
         cur = self.conn.execute(
             """
             INSERT INTO issues (
@@ -15519,8 +16073,8 @@ class GameDB:
                 phase, stage_text, status, severity, region_hint, faction_hint,
                 tags, participants, participant_roster, ongoing_effects, cancellable, cancel_cost,
                 effect_on_resolve, effect_on_fail, resolve_condition, fail_condition,
-                end_turn, stop_condition, commitment_kind, last_advance_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                end_turn, stop_condition, commitment_kind, stages_json, last_advance_turn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sanitize_sqlite_text(kind), sanitize_sqlite_text(title),
@@ -15544,6 +16098,7 @@ class GameDB:
                     else sanitize_sqlite_text(str(stop_condition or ""))
                 ),
                 sanitize_sqlite_text(str(commitment_kind or "")),
+                sanitize_sqlite_text(stages_blob),
                 state.turn,
             ),
         )

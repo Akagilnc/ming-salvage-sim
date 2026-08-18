@@ -46,6 +46,7 @@ from ming_sim.decree import (
 from ming_sim.error_pack import clear_for_resimulation
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
+from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
 from ming_sim.knowledge import render_character_knowledge
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text
@@ -1476,11 +1477,8 @@ class GameSession:
         if brief:
             augmented = brief + "\n\n" + augmented
         candidates = self.db.list_referenceable_dossiers(character.name, self.state.turn)
-        if candidates:
-            dossier_brief = "【可参考既有旨意（若有关联，请按标题或事项复述；勿向陛下念内部编号）】\n" + "\n".join(
-                f"- [内部键 {int(row['id'])}] {row.get('secret_title') or row.get('decree_text') or row.get('action_type') or ''}"
-                for row in candidates
-            )
+        dossier_brief = render_referenceable_dossier_brief(candidates)
+        if dossier_brief:
             augmented = dossier_brief + "\n\n" + augmented
         # 连场 presence-aware（#507 / ADR 0035）：宣下一个不断场、前一位留殿侧侍立时，
         # 对话流按在场名单送入组装——在场者补话可引用其在场时段殿上公开对话，未在场者
