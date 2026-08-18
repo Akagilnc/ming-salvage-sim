@@ -1030,6 +1030,7 @@ def stage_assignment_candidate(
     end_turn: object = 0,
     deadline_months: object = 0,
     ongoing_effects: object = None,
+    stages: object = None,
     target_candidate: object = None,
     pend_for_minister: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
@@ -1109,13 +1110,33 @@ def stage_assignment_candidate(
     has_ongoing = isinstance(parsed_ongoing, dict) and bool(parsed_ongoing)
     if kind_raw == "until_stop":
         staged["commitment_kind"] = "until_stop"
-    if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing:
+    # #620 AC2：生产捕获——结构化 stages / JSON 串 / 正文「三年X五年Y」→ 绝对 due 段表
+    # 分层：召对入口对分类器坏形 stages 容错（回落正文年诺）；库层 capture/stages_to_json 仍响亮 ValueError
+    from ming_sim.staged_commitment import capture_commitment_stages
+    stages_raw = stages if stages not in (None, "") else None
+    try:
+        stages_norm = capture_commitment_stages(
+            stages_raw,
+            narrative_text=body,
+            origin_turn=int(turn),
+        )
+    except ValueError:
+        stages_norm = capture_commitment_stages(
+            None,
+            narrative_text=body,
+            origin_turn=int(turn),
+        )
+    if kind_raw == "until_stop" or has_stop or absolute_end > 0 or has_ongoing or stages_norm:
         if has_stop:
             staged["stop_condition"] = parsed_stop
         if absolute_end > 0:
             staged["end_turn"] = absolute_end
         if has_ongoing:
             staged["ongoing_effects"] = parsed_ongoing
+        if stages_norm:
+            staged["stages"] = stages_norm
+            staged["commitment_kind"] = staged.get("commitment_kind") or "until_stop"
+            # 段派生 end_turn（max due）不写入候选/DB（#620 勿驱动 expire）
     if existing_id:
         return db.update_directive_candidate(existing_id, staged)
     return db.stage_directive_candidate(int(turn), minister_name, payload=staged)
@@ -1174,6 +1195,7 @@ def _materialize_assignment(ctx: MaterializeCtx) -> None:
         end_turn=intent.get("end_turn"),
         deadline_months=intent.get("deadline_months"),
         ongoing_effects=intent.get("ongoing_effects"),
+        stages=intent.get("stages"),
         target_candidate=intent.get("target_candidate"),
         pend_for_minister=ctx.pend_for_minister,
     )
@@ -2596,6 +2618,8 @@ def _build_catalog() -> Tuple[ActionCluster, ...]:
                 # 相对月数（共享 secret 的期限月数）由 stage 换算绝对 end_turn
                 FieldSpec("end_turn", "截止回合", None, 0, as_int=True),
                 FieldSpec("ongoing_effects", "持续效果", None, "", max_len=1000),
+                # #620 扩展面：分段里程碑（不改 #520 本体字段语义）
+                FieldSpec("stages", "分段里程碑", None, "", max_len=2000),
                 FieldSpec(
                     "mode", "颁布方式",
                     frozenset({"ordinary", "midzhi"}), "",
