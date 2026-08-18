@@ -8234,6 +8234,7 @@ def apply_score_extraction(
     _credit_applied: Dict[str, object] = {
         # 返回契约仅 {dossier_id, outcome}；兑付语境承接 extracted 源项
         # （含 note）minus 被拒项，与 economy_moves 同形，禁外溢返回契约。
+        # dossier_executions rejected 单一保护点（credit_events 不再二次滤）。
         "dossier_executions": _credit_source_minus_rejections(
             extracted.get("dossier_executions"), dossier_execution_results,
         ),
