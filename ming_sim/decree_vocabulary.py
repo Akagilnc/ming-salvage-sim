@@ -79,8 +79,9 @@ def dossier_action_policy(action_type: object, payload=None):
     return policy
 
 
-# ── #569 认账 / 推演投影：单一中文定性映射（禁 session/web 双写）──────────
-# ADR 0052 P4：格子对玩家只经定性叙事呈现，系统词与枚举值永不裸露。
+# ── #569 认账 brief / 推演投影词表（禁 session/web 双写）────────────────
+# 认账 brief：status/颁布格/执行格/中旨标记一律定性中文（ADR 0052 P4 方向）。
+# 推演投影：颁布格/执行格定性；status/mode/stigma 结构位仍按契约原样投出。
 
 DOSSIER_STATUS_CN = {
     "proposed": "准旨",
@@ -102,11 +103,6 @@ DOSSIER_OUTCOME_CN = {
     "degraded": "打折走样",
     "failed": "烂尾",
     "transformed": "变形",
-}
-
-DOSSIER_MODE_CN = {
-    "ordinary": "常程",
-    "midzhi": "中旨",
 }
 
 SIM_DOSSIER_COMMON_KEYS = frozenset({
@@ -137,11 +133,6 @@ def qualitative_dossier_outcome(value: object, *, status: object = "") -> str:
     if str(status or "").strip() == "executing" and not key:
         return "执行中"
     return ""
-
-
-def qualitative_dossier_mode(value: object) -> str:
-    key = str(value or "").strip()
-    return DOSSIER_MODE_CN.get(key, "")
 
 
 def _promulgation_decision_raw(row: dict) -> str:

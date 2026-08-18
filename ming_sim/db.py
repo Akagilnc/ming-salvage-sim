@@ -11358,9 +11358,8 @@ class GameDB:
             if match:
                 known_secret_ids.add(int(match.group(1)))
         rows = self.conn.execute(
-            """SELECT d.id,d.action_type,d.decree_text,d.status,d.created_turn,
-                      d.promulgation_decision,d.secret_order_id,s.title AS secret_title,
-                      d.execution_outcome,d.execution_note,d.stigma_json,d.payload_json,
+            """SELECT d.*,
+                      s.title AS secret_title,
                       EXISTS(
                           SELECT 1 FROM decree_dossier_decisions h
                           WHERE h.dossier_id=d.id
@@ -11386,20 +11385,9 @@ class GameDB:
             )
             if not admitted:
                 continue
-            item = dict(row)
-            try:
-                stigma = json.loads(item.pop("stigma_json", None) or "[]")
-            except (TypeError, ValueError):
-                stigma = []
-            item["stigma"] = stigma if isinstance(stigma, list) else []
-            try:
-                payload = json.loads(item.pop("payload_json", None) or "{}")
-            except (TypeError, ValueError):
-                payload = {}
-            if not isinstance(payload, dict):
-                payload = {}
-            item["mode"] = str(payload.get("mode") or "ordinary")
-            item["was_force_promulgated"] = bool(item.get("was_force_promulgated"))
+            # Same hydrate contract as get/list decree rows (ADR 0005: fail loud).
+            item = self._dossier_row(row)
+            item["was_force_promulgated"] = bool(row["was_force_promulgated"])
             visible.append(item)
         return visible
 

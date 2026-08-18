@@ -561,7 +561,7 @@ def test_military_order_survives_ordinary_and_no_edict_paths(game):
             item["settlement_verdict"] = "rejected"
         visible_no.append(item)
     rejected_ids = {
-        int(r["id"]) for r in project_dossiers_for_simulator(visible_no)
+        int(r["id"]) for r in project_dossiers_for_simulator(visible_no, db=db)
     }
     assert int(dossier["id"]) not in rejected_ids
     assert str(_army_row(db, army_id)["station"]) == old_station
@@ -583,7 +583,7 @@ def test_military_order_survives_ordinary_and_no_edict_paths(game):
         if int(item["id"]) == int(dossier["id"]):
             item["settlement_verdict"] = "promulgated"
         visible.append(item)
-    projected = project_dossiers_for_simulator(visible)
+    projected = project_dossiers_for_simulator(visible, db=db)
     hit = next(r for r in projected if int(r["id"]) == int(dossier["id"]))
     assert hit["action_type"] == "military_order"
     assert hit["target_id"] == army_id
