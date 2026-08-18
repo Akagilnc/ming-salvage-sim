@@ -716,6 +716,58 @@ def build_minister_tools(character: Character, context: CourtContext,
             "催办", int(order["id"]), {"deadline_months": deadline, "reason": (reason or "").strip()[:120]}
         )
 
+    def rush_staged_commitment(
+        issue_id: int,
+        stage_idx: int = 0,
+        deadline_months: int = 1,
+        reason: str = "",
+    ) -> str:
+        """催办分段承诺（#624 / ADR 0078）。经确认闸门缩短 issues.stages_json[].due_turn。
+
+        issue_id：承诺 issue 编号（须为 active 且含分段）。
+        stage_idx：段序号（默认 0=首段）。
+        deadline_months：1=下月核、3=三月内、0=本月即核。
+        reason：催办缘由（简短）。
+        """
+        if context.state.turn_phase in FRONT_HALF_DONE_PHASES:
+            return "本月结算未完（恢复中），暂不能催办承诺；请先续跑结算。"
+        try:
+            iid = int(issue_id)
+        except (TypeError, ValueError):
+            return "催办失败：issue_id 无效。"
+        if iid <= 0:
+            return "催办失败：issue_id 无效。"
+        row = context.db.conn.execute(
+            "SELECT id, status, stages_json FROM issues WHERE id=?",
+            (iid,),
+        ).fetchone()
+        if row is None:
+            return f"催办失败：查无承诺 issue#{iid}。"
+        if str(row["status"] or "") != "active":
+            return f"催办失败：承诺 issue#{iid} 状态 {row['status']}，不能催办。"
+        from ming_sim.staged_commitment import normalize_commitment_stages
+        stages = normalize_commitment_stages(row["stages_json"])
+        if not stages:
+            return f"催办失败：承诺 issue#{iid} 无分段，不能催办。"
+        try:
+            sidx = int(stage_idx if stage_idx is not None else 0)
+        except (TypeError, ValueError):
+            sidx = 0
+        if not any(int(s["stage_idx"]) == sidx for s in stages):
+            return f"催办失败：承诺 issue#{iid} 无 stage_idx={sidx}。"
+        try:
+            raw_deadline = 1 if deadline_months is None or deadline_months == "" else deadline_months
+            deadline = max(0, min(int(raw_deadline), 36))
+        except (TypeError, ValueError):
+            deadline = 1
+        payload = {
+            "issue_id": iid,
+            "stage_idx": sidx,
+            "deadline_months": deadline,
+            "reason": (reason or "").strip()[:120],
+        }
+        return "__commitment_rush__" + json.dumps(payload, ensure_ascii=False)
+
     def dismiss_minister() -> str:
         """结束本次召见，退朝。"""
         return "__dismiss__"
@@ -758,6 +810,7 @@ def build_minister_tools(character: Character, context: CourtContext,
         inspect_treasury_ledger,
         propose_directive,
         secret_order,
+        rush_staged_commitment,
         dismiss_minister,
         summon_minister,
         recommend_person,

@@ -21,6 +21,8 @@ from ming_sim.breach_plea import (
 )
 from ming_sim.decree_vocabulary import terminal_report_facade
 from ming_sim.staged_commitment import (
+    ENTRY_KIND_GRACE_PLEA,
+    ENTRY_KIND_RUSH_REMONSTRANCE,
     ENTRY_KIND_STAGED,
     TODO_STATUS_CONSUMED,
     TODO_STATUS_PENDING,
@@ -29,12 +31,51 @@ from ming_sim.staged_commitment import (
 )
 from ming_sim.supervision import SUPERVISION_BANNED_PLAYER_TOKENS
 
-# 玩家可见串禁词（P4 哨兵 + #625 钝化/陋规化系统词）
+# 玩家可见串禁词（P4 哨兵；#624 扩真伪底/失真引擎词 + #625 钝化/陋规化系统词）
 _BANNED_PLAYER_TOKENS = (
     "fulfilled", "degraded", "failed", "transformed", "executing",
     "AWAITING_DECISION", "<<DECISION>>", "EXTRACTION_MODULES",
     "progress_band", "is_terminal", "close=True", "close=False",
+    # #624 / 0078 引擎知底，禁泄玩家面
+    "truth", "grace_fake", "pretextual", "genuine",
+    "payload_json", "distortion_band", "urge_tightness",
+    "distortion_tendency", "supervision_history",
 ) + tuple(SUPERVISION_BANNED_PLAYER_TOKENS)
+
+# next_audience_todos.entry_kind 单一分派（#623+#624 合成，禁第二份谓词）：
+#   staged       → 到期终裁（due-review 四缝）
+#   breach_plea  → 挽留投影 / apply 跳过保留 pending
+#   urge         → #624 谏/宽限通道（list_urge / consume_urge）
+#   unknown      → 跳过
+_AUDIENCE_LANE_STAGED = "staged"
+_AUDIENCE_LANE_BREACH_PLEA = "breach_plea"
+_AUDIENCE_LANE_URGE = "urge"
+_AUDIENCE_LANE_UNKNOWN = "unknown"
+
+# #624 四缝白名单钉：仅 staged 进 due-review 终裁（由分派矩阵派生，非平行谓词）
+DUE_REVIEW_ENTRY_KIND_WHITELIST = frozenset({ENTRY_KIND_STAGED})
+
+
+def normalize_audience_entry_kind(entry_kind: object) -> str:
+    text = str(entry_kind or ENTRY_KIND_STAGED).strip()
+    return text or ENTRY_KIND_STAGED
+
+
+def audience_todo_lane(entry_kind: object) -> str:
+    """entry_kind → 通道分派（唯一谓词）。"""
+    kind = normalize_audience_entry_kind(entry_kind)
+    if kind == ENTRY_KIND_STAGED:
+        return _AUDIENCE_LANE_STAGED
+    if kind == ENTRY_KIND_BREACH_PLEA:
+        return _AUDIENCE_LANE_BREACH_PLEA
+    if kind in (ENTRY_KIND_RUSH_REMONSTRANCE, ENTRY_KIND_GRACE_PLEA):
+        return _AUDIENCE_LANE_URGE
+    return _AUDIENCE_LANE_UNKNOWN
+
+
+def is_due_review_entry_kind(entry_kind: object) -> bool:
+    """#624 四缝：仅 staged 可投影/apply/占接管窗为到期复核。"""
+    return audience_todo_lane(entry_kind) == _AUDIENCE_LANE_STAGED
 
 _DOSSIER_REF_RE = re.compile(r"^dossier:([1-9][0-9]*)$")
 
@@ -104,6 +145,14 @@ def resolve_due_review_branch(
 
 def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object]:
     """P5 输入闭集：todo 字段 + stages + list_dossier_progress + 实况；催办/监督缺源=空列表。"""
+    from ming_sim.urge_lever import (
+        collect_urge_history,
+        derive_distortion_tendency,
+        derive_opportunity_band,
+        resolve_host_character,
+        summarize_urge_pressure,
+    )
+
     commitment_ref = int(todo["commitment_ref"])
     stage_idx = int(todo["stage_idx"])
     meta = _issue_meta(db, commitment_ref)
@@ -119,7 +168,7 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
     supervision_pack = unpack_supervision_surface(None)
     if branch["dossier_id"] is not None:
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
-        # 不得吞成「空证据」误导裁决。催办缺源仍按空列表降级（#624 OOS）。
+        # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级。
         progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
         durable_effects = list(
             db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
@@ -136,8 +185,26 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         supervision_pack["transformation_tendency_facts"]
         or EMPTY_TRANSFORMATION_TENDENCY_FACTS
     )
-    # 催办史尚未建轨（#624 OOS）——空列表降级可判
-    urge_history: List[Dict[str, object]] = []
+    # #624：催办史唯一填充点；缺源=[]。
+    urge_history: List[Dict[str, object]] = collect_urge_history(
+        db,
+        commitment_ref=commitment_ref,
+        dossier_id=branch["dossier_id"],
+    )
+    pressure = summarize_urge_pressure(urge_history)
+    host = resolve_host_character(
+        db,
+        commitment_ref=commitment_ref,
+        dossier_id=branch["dossier_id"],
+    )
+    opportunity_band = derive_opportunity_band(durable_effects)
+    distortion_tendency = derive_distortion_tendency(
+        integrity=host["integrity"],
+        urge_count=int(pressure["urge_count"]),
+        urge_tightness=int(pressure["urge_tightness"]),
+        supervision_history=supervision_history,
+        opportunity_band=opportunity_band,
+    )
     return {
         "todo": dict(todo),
         "commitment_ref": commitment_ref,
@@ -158,6 +225,9 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         "supervision_history": supervision_history,
         "loophole_exposures": loophole_exposures,
         "transformation_tendency_facts": transformation_tendency_facts,
+        "host": host,
+        "opportunity_band": opportunity_band,
+        "distortion_tendency": distortion_tendency,
     }
 
 
@@ -232,18 +302,19 @@ def list_due_review_scenes(
 ) -> List[Dict[str, object]]:
     """次回合召对顶出序：复用 (due_turn, commitment_ref, stage_idx, id)。
 
-    kind 分派：staged → 复命场面；midcourse_breach_plea → 哭谏场面；其它/未知跳过。
+    单一分派：staged → 复命场面；breach_plea → 哭谏场面；
+    urge（谏/宽限）走 #624 list_urge_audience_scenes；未知跳过。
     """
     todos = db.list_next_audience_todos(status=status)
     # list_next_audience_todos 已按 due_turn, commitment_ref, stage_idx, id 排序
     scenes: List[Dict[str, object]] = []
     for todo in todos:
-        kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-        if kind == ENTRY_KIND_STAGED:
+        lane = audience_todo_lane(todo.get("entry_kind"))
+        if lane == _AUDIENCE_LANE_STAGED:
             scenes.append(project_due_review_scene(db, todo))
-        elif kind == ENTRY_KIND_BREACH_PLEA:
+        elif lane == _AUDIENCE_LANE_BREACH_PLEA:
             scenes.append(project_breach_plea_scene(db, todo))
-        # 其它/未知 kind：跳过
+        # urge / unknown：不投影为 due-review 场面
     return scenes
 
 
@@ -269,18 +340,18 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
     owned: set[int] = set()
 
     for todo in db.list_next_audience_todos(status=TODO_STATUS_PENDING):
-        kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-        if kind != ENTRY_KIND_STAGED:
+        # 仅 staged 占接管窗（breach_plea / urge / unknown 均不占）
+        if not is_due_review_entry_kind(todo.get("entry_kind")):
             continue
         meta = _issue_meta(db, int(todo["commitment_ref"]))
         _add_owned_dossier(owned, db, meta["origin_ref"])
 
-    # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 段键）
+    # 非 pending（consumed/rolled）段键：到期扫描不再预占（仅 staged 键）
     finished_keys = {
         (int(t["commitment_ref"]), int(t["stage_idx"]))
         for t in db.list_next_audience_todos()
         if str(t.get("status") or "") != TODO_STATUS_PENDING
-        and str(t.get("entry_kind") or ENTRY_KIND_STAGED) == ENTRY_KIND_STAGED
+        and is_due_review_entry_kind(t.get("entry_kind"))
     }
     for item in list_due_stages_for_scan(db, turn):
         key = (int(item["commitment_ref"]), int(item["stage_idx"]))
@@ -305,17 +376,20 @@ def durable_effects_beyond_intent(effects: object) -> bool:
 
 
 def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, object]:
-    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值。
+    """确定性裁决（不新增 LLM 步）。中段过程态 vs 末段四终值；#624 失真档可观察调制。
 
     #622：消费效果行旨外标记——有旨外恶果/受益 → transformed；
     有实况无旨外 → fulfilled；无实况有表报 → degraded；皆无 → failed。
     禁另立第二裁决函数。
     """
+    from ming_sim.urge_lever import apply_distortion_to_verdict
+
     mid = bool(review_input.get("mid_stage"))
     effects = list(review_input.get("durable_effects") or [])
     reports = list(review_input.get("progress_reports") or [])
     criterion = str(review_input.get("criterion_text") or "").strip() or "所约之事"
     origin = str(review_input.get("origin_context") or "").strip()
+    distortion = dict(review_input.get("distortion_tendency") or {})
 
     if mid:
         note = f"中段复核：{criterion}仍在办理"
@@ -327,6 +401,7 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
             "close": False,
             "is_terminal": False,
             "mid_stage": True,
+            "distortion_band": str(distortion.get("band") or "不歪"),
         }
 
     # 末段终裁：机械读旨外标记（0072 分界；0118 对账不翻因）
@@ -345,13 +420,20 @@ def decide_due_review_verdict(review_input: Dict[str, object]) -> Dict[str, obje
         note = f"到期复核：{criterion}届期无实绩"
     if origin:
         note = f"{note}（原诺：{origin}）"
-    return {
+    verdict = {
         "outcome": outcome,
         "note": note[:200],
         "close": True,
         "is_terminal": True,
         "mid_stage": False,
+        "distortion_band": str(distortion.get("band") or "不歪"),
     }
+    return apply_distortion_to_verdict(
+        verdict,
+        distortion,
+        has_effects=bool(effects),
+        has_reports=bool(reports),
+    )
 
 
 def _apply_dossier_verdict(
@@ -429,24 +511,25 @@ def apply_due_review_for_todo(
     *,
     commit: bool = False,
 ) -> Dict[str, object]:
-    """单条正式复核：仅 staged 落格+消费；哭谏 pending 保留（禁当 staged 终裁）。"""
-    kind = str(todo.get("entry_kind") or ENTRY_KIND_STAGED)
-    if kind == ENTRY_KIND_BREACH_PLEA:
+    """单条正式复核：仅 staged 落格+消费；其它 lane 按分派闸。"""
+    kind = normalize_audience_entry_kind(todo.get("entry_kind"))
+    lane = audience_todo_lane(kind)
+    if lane == _AUDIENCE_LANE_BREACH_PLEA:
         # 法：沉默/未答→跳过保留 pending；反悔/坚持由召对 extraction 真入口结账
         return {
-            "todo_id": int(todo["id"]),
+            "todo_id": int(todo.get("id") or 0),
             "entry_kind": kind,
             "skipped": True,
             "reason": "breach_plea_pending_retained",
             "consumed": False,
         }
-    if kind != ENTRY_KIND_STAGED:
-        # 负向闸：未知 kind 不落格不连坐
+    if lane != _AUDIENCE_LANE_STAGED:
+        # urge / unknown：不得当到期复核落格（#624 四缝 + 负向闸）
         return {
-            "todo_id": int(todo["id"]),
+            "todo_id": int(todo.get("id") or 0),
+            "rejected": True,
+            "reason": "entry_kind 不在 due-review 白名单",
             "entry_kind": kind,
-            "skipped": True,
-            "reason": "unknown_entry_kind",
             "consumed": False,
         }
 
@@ -488,7 +571,8 @@ def apply_pending_due_reviews(
 ) -> List[Dict[str, object]]:
     """消费 created_turn < 当前 turn 的 pending todo（经召对窗后的 settle 落格）。
 
-    kind 分派：仅 staged 走到期终裁+连坐；哭谏条 skip 保留；未知 kind 负向闸跳过。
+    单一分派：staged 终裁+连坐；breach_plea skip 保留（入 results）；
+    urge 交给 #624 consume_pending_urge_audience_todos（本函数不扫）；未知负向闸。
     """
     turn = int(getattr(state, "turn", 0) or 0)
     results: List[Dict[str, object]] = []
@@ -496,9 +580,14 @@ def apply_pending_due_reviews(
     for todo in pending:
         if int(todo.get("created_turn") or 0) >= turn:
             continue
-        # 哭谏/未知 kind 在 apply_due_review_for_todo 内闸为 skipped 并保留 pending。
-        result = apply_due_review_for_todo(db, state, todo, commit=False)
-        results.append(result)
+        lane = audience_todo_lane(todo.get("entry_kind"))
+        if lane == _AUDIENCE_LANE_URGE:
+            # #624 通道自管消费；不进 due-review apply 结果集
+            continue
+        # staged / breach_plea / unknown → apply_due_review_for_todo 内分派
+        results.append(
+            apply_due_review_for_todo(db, state, todo, commit=False)
+        )
     if commit and results:
         db.conn.commit()
     return results

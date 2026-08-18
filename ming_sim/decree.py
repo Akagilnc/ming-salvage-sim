@@ -2272,6 +2272,10 @@ def _settle_after_extract_body(
     )
     expire_breach_pleas_on_due(db, state, commit=False)
 
+    # #624 / ADR 0078：谏/宽限经召对顶出后离 pending（不落执行格、不连坐）。
+    from ming_sim.urge_lever import consume_pending_urge_audience_todos
+    consume_pending_urge_audience_todos(db, state, commit=False)
+
     # #620 / ADR 0074：分段到期 → 次回合召对待办（结算内确定性写入，不停轮、不 DECISION）。
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     write_due_staged_commitment_todos(db, state, commit=False)

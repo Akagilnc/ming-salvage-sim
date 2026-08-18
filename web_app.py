@@ -2135,6 +2135,40 @@ class WebGame:
                             self.session.start_chat_turn_exit_scene(
                                 character.name, int(chat_turn_id), int(entry_id),
                             )
+                elif res.startswith("__commitment_rush__"):
+                    if confirmation_turn or explicit_draft_prefix:
+                        continue
+                    if GameSession._proposal_blocked(self.state):
+                        continue
+                    payload_json = res.removeprefix("__commitment_rush__").strip()
+                    try:
+                        payload = json.loads(payload_json) if payload_json else {}
+                    except (ValueError, TypeError):
+                        payload = {}
+                    if isinstance(payload, dict):
+                        try:
+                            issue_id = int(payload.get("issue_id") or 0)
+                        except (TypeError, ValueError):
+                            issue_id = 0
+                        if issue_id > 0:
+                            staged_id = self.db.stage_pending_action(
+                                self.state.turn,
+                                kind="commitment",
+                                action="催办",
+                                minister_name=character.name,
+                                target_id=issue_id,
+                                payload={
+                                    "stage_idx": int(payload.get("stage_idx") or 0),
+                                    "deadline_months": payload.get("deadline_months", 1),
+                                    "reason": str(payload.get("reason") or "")[:120],
+                                },
+                            )
+                            pending_action_id = coalesce_pending_action_id(
+                                pending_action_id, staged_id,
+                            )
+                            tool_pending_action_id = coalesce_pending_action_id(
+                                tool_pending_action_id, staged_id,
+                            )
                 elif (
                     res.startswith("__secret_order_registered__")
                     or res.startswith("__secret_order__")
