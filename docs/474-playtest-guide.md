@@ -71,7 +71,7 @@
 | 维 | 内容 |
 | --- | --- |
 | 预期 | 卷轴/判官清单/批红页/起居注/认账 brief 等确定性面不露系统枚举与人物轴裸数；邸报/密奏/召对回话 LLM 面同。 |
-| 现游戏 | 确定性：`tests/test_p4_guard_new_surfaces_547.py`（本族夹具扩写）；LLM 面：族尾闸级脚本扫真实渲染产物。 |
+| 现游戏 | 确定性：`tests/test_p4_guard_new_surfaces_547.py`（本族夹具扩写）；LLM/正文三面：族尾闸消费真实产物——邸报=`get_turn_report(0)` 开局 gazette、密奏=`list_dossier_progress` memorial、召对=`render_referenceable_dossier_brief`（空 brief 不计过；每面正负各一）。 |
 | 若不符 | 人物/国势裸分 → #347；案卷系统词裸露 → 记本族债。 |
 
 ---
@@ -121,9 +121,9 @@ python -m pytest tests/test_family_tail_restore_570.py tests/test_p4_guard_new_s
 
 ### 3. 中旨螺旋闸级对照当前未达 α=0.05
 
-- **现象**：`scripts/midzhi_spiral_judge_gate_570.py` 在 live 模型上跑配对符号检验——边际行政中旨时 discordant 过少；略加强程序绕开措辞后两端同向饱和（12/12 均打回），`p_value_two_sided=1.0`，闸退出码 1。方向/机制未造生产棘轮。
-- **归属**：#570（本族尾闸红；判官对 `promulgation_history` 强颁标记的可观察敏感性不足，属验收债，不在本片改 prompt/引擎）
-- **证据**：`docs/evidence/issue-570-midzhi-spiral.json` → `summary`（`hist3_rejections`/`hist0_rejections`/`p_value_two_sided`/`passed`）。
+- **现象**：`scripts/midzhi_spiral_judge_gate_570.py` 配对符号检验未过。r0 用田亩清册+反对清丈议程 → 两端 12/12 打回（场景天花板，无法区分判官是否读历史）。r1 重校为 #561 行政中旨「内廷整理既有文册，不动外廷钱权」+ 中性议程 + 皇威 55，sole intervention 仍=强颁流水 3 vs 0；见证据 `summary.diagnosis`。未造生产棘轮，不自豁 AC④。
+- **归属**：#570（验收债）。若 diagnosis=`judge_history_insensitive`：生产颁布判官 instructions 未点名 `promulgation_history` 字段——属引擎侧不敏感，持证据回庭，本片不改 prompt（P-7）。若仍 `scenario_ceiling_*`：继续只在 scripts/ 重校场景。
+- **证据**：`docs/evidence/issue-570-midzhi-spiral.json` → `summary`（`hist3_rejections`/`hist0_rejections`/`hist_only_discordant`/`p_value_two_sided`/`passed`/`diagnosis`）。
 
 ---
 

@@ -7,6 +7,16 @@ test α=0.05. samples default 12, minimum 6.
 This is acceptance evidence only — MUST NOT add production midzhi
 threshold / counter / ratchet (PRD #556 OOS).
 
+Scenario design (r1 diagnosis):
+  Prior red evidence used a 田亩清册 decree that hit Donglin anti-清丈 agenda on
+  BOTH arms → 12/12 reject / 0 discordant → cannot distinguish scenario ceiling
+  from Judge history-insensitivity. This revision uses the #561 administrative
+  midzhi that is designed to promulgate on a clean board (sole intervention =
+  history markers). If clean promulgates and hist does not reject more often,
+  the failure diagnoses Judge-side history insensitivity (prompt never names
+  promulgation_history) — hold evidence, do not self-exempt AC④, no production
+  ratchet.
+
   MING_SIM_TRACE_PATH=/tmp/issue-570-spiral-trace.jsonl \
     python scripts/midzhi_spiral_judge_gate_570.py \
       --runner codex --model gpt-5.6-sol --samples 12 \
@@ -41,14 +51,12 @@ from ming_sim.cli_backend import cli_backend_parallel_safe
 from ming_sim.issues import bind_content as bind_issue_content
 from ming_sim.models import LLMConfig
 
-# Borderline administrative midzhi — not a vital 命门 reverse-scale item.
-# Vital land-survey midzhi rejects on both arms → zero discordant pairs, dead gate.
-# Spiral signal needs a decree that can pass without force-history and is more
-# rejectable once 批红强颁 markers accumulate (Court pin P-4).
-TEST_MIDZHI_TEXT = (
-    "中旨绕开内阁票拟，径令各省布政司旬日造报田亩清册并送内廷备览，"
-    "仍不追夺隐田、不动正项钱粮"
-)
+# #561 administrative midzhi — designed to promulgate (stigma path), not a
+# vital 命门 reverse-scale item. Spiral signal needs a decree that CAN pass
+# without force-history; only the history arm should become more rejectable.
+TEST_MIDZHI_TEXT = "中旨命内廷整理既有文册，不动外廷钱权"
+# Board agenda must NOT itself veto the test decree (prior 反对清丈 ceiling).
+BOARD_DONGLIN_AGENDA = "整肃吏治，慎核边饷"
 
 
 def _args() -> argparse.Namespace:
@@ -172,10 +180,11 @@ def _open_pair(root: str, index: int, content: GameContent) -> tuple:
         db = GameDB(str(arm_dir / "game.db"), content)
         db.seed_static_data()
         state = db.load_state()
-        state.metrics["皇威"] = 40
+        # Moderate authority: admin midzhi should clear on clean arm (#561 path).
+        state.metrics["皇威"] = 55
         db.conn.execute(
-            "UPDATE factions SET leverage=90, agenda=? WHERE name='东林'",
-            ("反对清丈，维护田赋旧例",),
+            "UPDATE factions SET leverage=70, agenda=? WHERE name='东林'",
+            (BOARD_DONGLIN_AGENDA,),
         )
         db.save_state(state)
         db.conn.commit()
@@ -289,17 +298,65 @@ def main() -> int:
         s["classification"]["clean_rejected"] and not s["classification"]["hist_rejected"]
         for s in samples
     )
+    both_rej = sum(
+        s["classification"]["hist_rejected"] and s["classification"]["clean_rejected"]
+        for s in samples
+    )
+    both_pass = sum(
+        (not s["classification"]["hist_rejected"])
+        and (not s["classification"]["clean_rejected"])
+        for s in samples
+    )
     trace_records = [
         json.loads(line)
         for line in trace_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    if any(record.get("error") is not None for record in trace_records):
-        raise RuntimeError("CLI trace contains failed records")
+    # Spiral: two arms × samples judge calls (do NOT copy 562's 1×samples).
+    expected_traces = 2 * args.samples
+    if len(trace_records) != expected_traces or any(
+        record.get("error") is not None for record in trace_records
+    ):
+        raise RuntimeError(
+            f"expected {expected_traces} successful raw trace records "
+            f"(2 arms × {args.samples} samples); got {len(trace_records)}"
+        )
 
     p_value = _two_sided_sign_p(hist_only, clean_only)
     correct_direction = hist_only > clean_only
     passed = correct_direction and p_value < 0.05
+
+    # Minimal diagnosis labels for the evidence artifact (scripts-only).
+    if both_rej == args.samples:
+        diagnosis = (
+            "scenario_ceiling_both_reject: both arms saturated reject — "
+            "scenario still too hostile; not yet informative about history sensitivity"
+        )
+    elif both_pass == args.samples and hist_only == 0:
+        diagnosis = (
+            "judge_history_insensitive: clean arm can pass (scenario OK) but "
+            "hist arm never rejects more — Judge does not differentially weight "
+            "promulgation_history 批红强颁 markers (production prompt never names the field). "
+            "Hold evidence; do not self-exempt AC④; no production ratchet."
+        )
+    elif passed:
+        diagnosis = (
+            "history_sensitive_pass: hist arm rejects more often with p<0.05"
+        )
+    elif correct_direction and p_value >= 0.05:
+        diagnosis = (
+            "direction_correct_underpowered: hist_only>clean_only but p≥0.05; "
+            "need more samples or stronger history salience (still no production ratchet)"
+        )
+    elif clean_only > hist_only:
+        diagnosis = (
+            "wrong_direction: clean rejects more than hist — unexpected; inspect traces"
+        )
+    else:
+        diagnosis = (
+            f"inconclusive: hist_only={hist_only} clean_only={clean_only} "
+            f"both_rej={both_rej} both_pass={both_pass} p={p_value}"
+        )
 
     artifact = {
         "gate": "issue-570-midzhi-spiral-live-production-judge-comparison",
@@ -308,7 +365,9 @@ def main() -> int:
                 "paired independent samples on isolated DBs; sole intervention is "
                 "promulgation_history force_promulgated markers 3 vs 0; "
                 "opaque target IDs and arm run-order counterbalanced; "
-                "single borderline administrative midzhi test decree per arm"
+                "single administrative midzhi test decree per arm "
+                f"({TEST_MIDZHI_TEXT!r}); board agenda neutral to the decree "
+                f"({BOARD_DONGLIN_AGENDA!r}); 皇威=55"
             ),
             "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
             "alpha": 0.05,
@@ -322,22 +381,37 @@ def main() -> int:
                 "Acceptance evidence only. No production midzhi threshold, "
                 "counter gate, or ratchet may be added (#556 OOS 中旨闸量化)."
             ),
+            "trace_contract": (
+                f"raw_cli_trace length == 2×samples ({expected_traces})"
+            ),
+            "prior_red_diagnosis": (
+                "r0 used 田亩清册 + 反对清丈 agenda → both arms 12/12 reject "
+                "(scenario ceiling). r1 recalibrates to #561 admin midzhi + neutral agenda."
+            ),
         },
         "summary": {
             "hist3_rejections": hist_rej,
             "hist0_rejections": clean_rej,
             "hist_only_discordant": hist_only,
             "clean_only_discordant": clean_only,
+            "both_reject": both_rej,
+            "both_promulgate": both_pass,
             "p_value_two_sided": p_value,
             "hist3_rejected_more_often": correct_direction,
             "statistically_distinct_at_0_05": p_value < 0.05,
             "passed": passed,
+            "diagnosis": diagnosis,
+            "trace_records": len(trace_records),
+            "expected_trace_records": expected_traces,
         },
         "limitations": [
-            "One configured model/provider and one matched midzhi hostile scenario; "
+            "One configured model/provider and one matched midzhi admin scenario; "
             "acceptance evidence, not population-wide calibration.",
             "History is injected as durable decision rows (批红强颁 markers), not via "
             "a production counter; if the Judge ignores history the gate fails honestly.",
+            "Production promulgation Judge instructions do not name promulgation_history; "
+            "a clean-pass + hist-insensitive result is engine-side evidence to hold, "
+            "not a license to add production ratchet or self-exempt AC④ (P-4/P-7).",
             "Repeated live-model calls may drift across provider/model revisions; "
             "embedded raw trace makes this run auditable.",
             "Pairs share the same production Judge instruction and game snapshot shape; "
