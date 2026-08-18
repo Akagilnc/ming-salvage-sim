@@ -2256,6 +2256,11 @@ def _settle_after_extract_body(
             before_turn, source)
         collector.flush_to_db(db)
 
+    # #621 / ADR 0076：经召对窗后的 pending todo → 正式复核落格并消费（三拍第 3 拍）。
+    # 须在本 settle 写新 todo 之前：只消费 created_turn < 当前 turn 者，保留本拍新写给次回合。
+    from ming_sim.due_review import apply_pending_due_reviews
+    apply_pending_due_reviews(db, state, commit=False)
+
     # #620 / ADR 0074：分段到期 → 次回合召对待办（结算内确定性写入，不停轮、不 DECISION）。
     from ming_sim.staged_commitment import write_due_staged_commitment_todos
     write_due_staged_commitment_todos(db, state, commit=False)
