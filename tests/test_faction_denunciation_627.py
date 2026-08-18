@@ -268,7 +268,8 @@ def test_ac1_fact_supply_four_classes_no_veracity_no_quota(game):
     # 处境/个性为定性档，非裸分
     for sit in facts["faction_situations"]:
         assert "leverage_band" in sit and "satisfaction_band" in sit
-        assert "leverage" not in sit or not isinstance(sit.get("leverage"), int)
+        assert "leverage" not in sit
+        assert "satisfaction" not in sit
     for persona in facts["character_personas"]:
         assert "integrity_band" in persona
 
