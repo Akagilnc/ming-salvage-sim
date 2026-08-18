@@ -54,6 +54,8 @@ from ming_sim.llm_model import extract_agent_text, llm_unavailable_from_error
 from ming_sim.models import FRONT_HALF_DONE_PHASES, GameState, LLMConfig, TurnPhase
 from ming_sim.qualitative import power_band, qualitative_band, qualitative_character_axis
 from ming_sim.decree_vocabulary import (
+    SIM_DOSSIER_EXECUTION_KEYS,
+    SIM_DOSSIER_NARRATIVE_KEYS,
     dossier_action_policy,
     qualitative_dossier_outcome,
     qualitative_promulgation_slot,
@@ -604,57 +606,43 @@ def write_decree_with_agno(
     return text.strip()
 
 
-def _simulator_promulgated_turn(
-    row: Dict[str, object], db: Optional[GameDB],
-) -> int:
+def _simulator_link_item(item: Dict[str, object]) -> Dict[str, object]:
+    return {
+        "target_dossier_id": int(item["target_dossier_id"]),
+        "relation_type": str(item.get("relation_type") or ""),
+        "note": str(item.get("note") or ""),
+    }
+
+
+def _simulator_promulgated_turn(row: Dict[str, object], db: GameDB) -> int:
+    """Resolve promulgated_turn from row or durable decision history (fail loud)."""
     if row.get("promulgated_turn") not in (None, ""):
         try:
             return int(row["promulgated_turn"])  # type: ignore[arg-type]
         except (TypeError, ValueError):
             pass
-    if db is None:
-        return 0
-    try:
-        hist = db.list_decree_dossier_decisions(int(row["id"]))
-    except Exception:
-        return 0
+    # ADR 0005: db read errors must not collapse into hollow 0 for 邸报 inputs.
+    hist = db.list_decree_dossier_decisions(int(row["id"]))
     for item in hist:
         if str(item.get("decision") or "") == "promulgated":
             return int(item.get("turn") or 0)
         if str(item.get("rescript_action") or "") == "force_promulgated":
             return int(item.get("turn") or 0)
-    if str(row.get("settlement_verdict") or "") == "promulgated":
-        # Settlement window: verdict known before durable decision row is visible.
-        return 0
     return 0
 
 
 def _simulator_dossier_links(
-    row: Dict[str, object], db: Optional[GameDB],
+    row: Dict[str, object], db: GameDB,
 ) -> List[Dict[str, object]]:
     if isinstance(row.get("links"), list):
-        return [
-            {
-                "target_dossier_id": int(item["target_dossier_id"]),
-                "relation_type": str(item.get("relation_type") or ""),
-                "note": str(item.get("note") or ""),
-            }
-            for item in row["links"]  # type: ignore[index]
-            if isinstance(item, dict) and item.get("target_dossier_id") is not None
-        ]
-    if db is None:
-        return []
-    try:
+        raw = row["links"]  # type: ignore[assignment]
+    else:
+        # ADR 0005: no silent empty-links on db/schema failure.
         raw = db.list_dossier_links(int(row["id"]))
-    except Exception:
-        return []
     return [
-        {
-            "target_dossier_id": int(item["target_dossier_id"]),
-            "relation_type": str(item.get("relation_type") or ""),
-            "note": str(item.get("note") or ""),
-        }
+        _simulator_link_item(item)
         for item in raw
+        if isinstance(item, dict) and item.get("target_dossier_id") is not None
     ]
 
 
@@ -662,8 +650,8 @@ def _project_one_dossier_for_simulator(
     row: Dict[str, object],
     *,
     track: str,
+    db: GameDB,
     execution_summary: Optional[Dict[str, object]] = None,
-    db: Optional[GameDB] = None,
 ) -> Dict[str, object]:
     """#569 B: fixed-key projection; never pass through raw JSON string columns."""
     stigma = row.get("stigma")
@@ -695,16 +683,28 @@ def _project_one_dossier_for_simulator(
     }
     if track == "narrative":
         projected["decree_text"] = str(row.get("decree_text") or "")
+        expected = SIM_DOSSIER_NARRATIVE_KEYS
     else:
         projected["execution_summary"] = dict(execution_summary or {})
+        expected = SIM_DOSSIER_EXECUTION_KEYS
+    keys = set(projected)
+    if keys != expected:
+        raise RuntimeError(
+            f"simulator dossier projection key drift track={track} "
+            f"missing={sorted(expected - keys)} extra={sorted(keys - expected)}"
+        )
     return projected
 
 
 def project_dossiers_for_simulator(
     simulation_visible_dossiers: List[Dict[str, object]],
-    db: Optional[GameDB] = None,
+    db: GameDB,
 ) -> List[Dict[str, object]]:
-    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569)."""
+    """Assemble decree_dossiers for the month simulator (ADR 0055 / #517 / #569).
+
+    ``db`` is required: links / promulgated_turn read durable truth; optional-db
+    hollow defaults are not allowed on the player-visible 邸报 path (ADR 0005).
+    """
     dossier_payload: List[Dict[str, object]] = []
     for row in simulation_visible_dossiers:
         payload = row.get("payload")
@@ -1120,10 +1120,12 @@ def resolve_directives(
     )
     simulator_payload["dossier_verdicts"] = verdict_rows
     simulator_payload["promulgation_instruction"] = (
-        "颁布判决是硬约束：以 decree_dossiers（+dossier_verdicts）为权威。"
-        "颁布格为打回／decision=rejected 的案卷本月未颁，严禁写成已办成、已生效、"
-        "已到任或银已出库；只能叙述其被打回并等待批红。"
-        "颁布格为顺颁／decision=promulgated 的案卷才可进入本月办理。"
+        "颁布判决是硬约束：可演新旨意以 decree_dossiers 为权威；"
+        "dossier_verdicts 承载本月判决（含打回）。"
+        "decision=rejected 的打回只在 dossier_verdicts，不进入 decree_dossiers"
+        "（双轨受理未放行）；严禁写成已办成、已生效、已到任或银已出库，"
+        "只据 verdict 字段写封驳／等待批红，不得假定案卷列表有打回全文。"
+        "decision=promulgated 的顺颁才可进入本月办理并出现在案卷列表。"
         "decree_text 仅为兼容摘要，不得覆盖案卷列表与判决。"
     )
     simulator = create_season_simulator_agent(
