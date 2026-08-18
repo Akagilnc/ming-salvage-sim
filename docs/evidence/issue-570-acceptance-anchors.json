@@ -226,7 +226,7 @@
           "dossier_id": 1,
           "decision": "rejected",
           "blocked_layer": "cabinet_drafting",
-          "reason": "极弱皇威下无背书无授权，候补阁僚越二阶（七品→五品）破格入阁，内阁首辅黄立极于票拟环节无政治成本即驳；东林亦以名分制度反对越制入阁",
+          "reason": "极弱皇威下，候补阁僚从七品破格跃升五品入阁为东阁大学士，越制破格显著；无任何会签担名或持授权，内阁首辅黄立极（进退审慎）在毫无政治压力时无动力为此票拟放行，驳之无成本。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -247,19 +247,13 @@
           "affected_parties": [
             {
               "kind": "faction",
-              "key": "阉党",
-              "direction": "positive",
-              "intensity": "strong"
-            },
-            {
-              "kind": "faction",
               "key": "东林",
               "direction": "positive",
               "intensity": "strong"
             },
             {
               "kind": "faction",
-              "key": "中立",
+              "key": "阉党",
               "direction": "positive",
               "intensity": "weak"
             },
@@ -267,7 +261,13 @@
               "kind": "faction",
               "key": "皇党",
               "direction": "negative",
-              "intensity": "strong"
+              "intensity": "weak"
+            },
+            {
+              "kind": "faction",
+              "key": "中立",
+              "direction": "positive",
+              "intensity": "weak"
             }
           ]
         },
@@ -275,7 +275,7 @@
           "dossier_id": 2,
           "decision": "rejected",
           "blocked_layer": "cabinet_drafting",
-          "reason": "白身无品级直授正三品巡抚为极端越制，极弱皇威无任何背书授权，内阁首辅黄立极于票拟即驳；此案越制幅度之大，任何把关层均不可能放行",
+          "reason": "白身无品无官直授从三品陕西巡抚，越制破格至极；极弱皇威、无会签、无授权。虽有陕西流寇之急，然白身既无军政资历亦无僚属根基，纵强行授出亦无人听令，内阁首辅黄立极断无票拟放行之理。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -314,17 +314,11 @@
               "kind": "faction",
               "key": "阉党",
               "direction": "positive",
-              "intensity": "strong"
+              "intensity": "weak"
             },
             {
               "kind": "faction",
               "key": "皇党",
-              "direction": "negative",
-              "intensity": "strong"
-            },
-            {
-              "kind": "faction",
-              "key": "军队",
               "direction": "negative",
               "intensity": "weak"
             }
@@ -334,7 +328,7 @@
           "dossier_id": 3,
           "decision": "rejected",
           "blocked_layer": "six_offices",
-          "reason": "中旨破格越二阶（六品→四品）授太常寺卿，极弱皇威无背书无授权，司礼监王体乾进退审慎勉强批红后，兵科给事中许誉卿以东林清议立场、敢任其事之胆识于封驳环节驳回中旨",
+          "reason": "中旨绕票拟本属程序触发，兼越制破格（六品升四品太常寺卿）、极弱皇威、无会签无授权。司礼监王体乾（进退审慎、操守未稳）作为内廷近侍不愿公然拒旨，将中旨批出；兵科给事中许誉卿（东林、敢任其事、操守清正）据中旨绕制与越制破格双重触发，行封驳之权封还。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -363,17 +357,18 @@
             },
             {
               "kind": "faction",
-              "key": "中立",
-              "direction": "positive",
+              "key": "阉党",
+              "direction": "negative",
               "intensity": "weak"
             },
             {
               "kind": "faction",
-              "key": "阉党",
-              "direction": "negative",
+              "key": "中立",
+              "direction": "positive",
               "intensity": "weak"
             }
-          ]
+          ],
+          "midzhi_unpromulgatable": false
         }
       ],
       "cabinet": {
@@ -381,7 +376,7 @@
           "dossier_id": 1,
           "decision": "rejected",
           "blocked_layer": "cabinet_drafting",
-          "reason": "极弱皇威下无背书无授权，候补阁僚越二阶（七品→五品）破格入阁，内阁首辅黄立极于票拟环节无政治成本即驳；东林亦以名分制度反对越制入阁",
+          "reason": "极弱皇威下，候补阁僚从七品破格跃升五品入阁为东阁大学士，越制破格显著；无任何会签担名或持授权，内阁首辅黄立极（进退审慎）在毫无政治压力时无动力为此票拟放行，驳之无成本。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -402,19 +397,13 @@
           "affected_parties": [
             {
               "kind": "faction",
-              "key": "阉党",
-              "direction": "positive",
-              "intensity": "strong"
-            },
-            {
-              "kind": "faction",
               "key": "东林",
               "direction": "positive",
               "intensity": "strong"
             },
             {
               "kind": "faction",
-              "key": "中立",
+              "key": "阉党",
               "direction": "positive",
               "intensity": "weak"
             },
@@ -422,7 +411,13 @@
               "kind": "faction",
               "key": "皇党",
               "direction": "negative",
-              "intensity": "strong"
+              "intensity": "weak"
+            },
+            {
+              "kind": "faction",
+              "key": "中立",
+              "direction": "positive",
+              "intensity": "weak"
             }
           ]
         },
@@ -439,7 +434,7 @@
           "dossier_id": 2,
           "decision": "rejected",
           "blocked_layer": "cabinet_drafting",
-          "reason": "白身无品级直授正三品巡抚为极端越制，极弱皇威无任何背书授权，内阁首辅黄立极于票拟即驳；此案越制幅度之大，任何把关层均不可能放行",
+          "reason": "白身无品无官直授从三品陕西巡抚，越制破格至极；极弱皇威、无会签、无授权。虽有陕西流寇之急，然白身既无军政资历亦无僚属根基，纵强行授出亦无人听令，内阁首辅黄立极断无票拟放行之理。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -478,17 +473,11 @@
               "kind": "faction",
               "key": "阉党",
               "direction": "positive",
-              "intensity": "strong"
+              "intensity": "weak"
             },
             {
               "kind": "faction",
               "key": "皇党",
-              "direction": "negative",
-              "intensity": "strong"
-            },
-            {
-              "kind": "faction",
-              "key": "军队",
               "direction": "negative",
               "intensity": "weak"
             }
@@ -501,16 +490,14 @@
           "expected_satisfaction": {
             "faction/东林": 8,
             "faction/中立": 8,
-            "faction/军队": -4,
-            "faction/皇党": -8,
-            "faction/阉党": 8
+            "faction/皇党": -4,
+            "faction/阉党": 4
           },
           "actual_satisfaction": {
             "faction/东林": 8,
             "faction/中立": 8,
-            "faction/军队": -4,
-            "faction/皇党": -8,
-            "faction/阉党": 8
+            "faction/皇党": -4,
+            "faction/阉党": 4
           },
           "zero_reaction_rows": [],
           "events": [
@@ -536,18 +523,12 @@
               "cost_kind": "satisfaction",
               "target_kind": "faction",
               "target_id": "阉党",
-              "delta": 8
+              "delta": 4
             },
             {
               "cost_kind": "satisfaction",
               "target_kind": "faction",
               "target_id": "皇党",
-              "delta": -8
-            },
-            {
-              "cost_kind": "satisfaction",
-              "target_kind": "faction",
-              "target_id": "军队",
               "delta": -4
             }
           ],
@@ -564,7 +545,6 @@
             "authority/metric/皇威",
             "satisfaction/faction/东林",
             "satisfaction/faction/中立",
-            "satisfaction/faction/军队",
             "satisfaction/faction/皇党",
             "satisfaction/faction/阉党"
           ]
@@ -581,7 +561,7 @@
           "dossier_id": 3,
           "decision": "rejected",
           "blocked_layer": "six_offices",
-          "reason": "中旨破格越二阶（六品→四品）授太常寺卿，极弱皇威无背书无授权，司礼监王体乾进退审慎勉强批红后，兵科给事中许誉卿以东林清议立场、敢任其事之胆识于封驳环节驳回中旨",
+          "reason": "中旨绕票拟本属程序触发，兼越制破格（六品升四品太常寺卿）、极弱皇威、无会签无授权。司礼监王体乾（进退审慎、操守未稳）作为内廷近侍不愿公然拒旨，将中旨批出；兵科给事中许誉卿（东林、敢任其事、操守清正）据中旨绕制与越制破格双重触发，行封驳之权封还。",
           "primary_opponents": [
             {
               "kind": "faction",
@@ -610,17 +590,18 @@
             },
             {
               "kind": "faction",
-              "key": "中立",
-              "direction": "positive",
+              "key": "阉党",
+              "direction": "negative",
               "intensity": "weak"
             },
             {
               "kind": "faction",
-              "key": "阉党",
-              "direction": "negative",
+              "key": "中立",
+              "direction": "positive",
               "intensity": "weak"
             }
-          ]
+          ],
+          "midzhi_unpromulgatable": false
         },
         "force": {
           "authority": true,
@@ -655,14 +636,14 @@
             {
               "cost_kind": "satisfaction",
               "target_kind": "faction",
-              "target_id": "中立",
-              "delta": 4
+              "target_id": "阉党",
+              "delta": -4
             },
             {
               "cost_kind": "satisfaction",
               "target_kind": "faction",
-              "target_id": "阉党",
-              "delta": -4
+              "target_id": "中立",
+              "delta": 4
             },
             {
               "cost_kind": "authority",
@@ -741,19 +722,19 @@
   ],
   "raw_cli_trace": [
     {
-      "ts": "2026-08-18 13:09:13",
+      "ts": "2026-08-18 16:07:45",
       "seq": 1,
       "tag": "other",
       "backend": "claude",
       "model_id": "claude-opus-4-6",
-      "dur_s": 203.3,
+      "dur_s": 183.6,
       "attempts": 1,
       "wants_json": false,
-      "prompt_chars": 4227,
-      "resp_chars": 2202,
+      "prompt_chars": 4448,
+      "resp_chars": 2240,
       "error": null,
-      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。案卷 endorsements 是已经说出口并落库的担名事实：会签/当面站台使否决方不好再拖、降低打回倾向；御笔手敕意味着驳回即抗旨，应大幅降低打回倾向。不得再按皇威判断担名者愿不愿意，也不得忽略或删除这些条目。\n- 每案 held_authorities 是在持授权适用性投影，按 privilege 计否决 modifier：尚方剑密授＝抗旨阻力降；便宜行事＝免程序阻力；专差督办＝绕常规节制。收回或投影为空后不再计。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,direction:positive|negative,intensity:weak|strong}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨从严但不得机械地一概打回。\n- 逐一独立判断各 faction/class 对这道判决的真实反应，不得把受害方机械当作默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；反应为零就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 5}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"破格特授候补阁僚-0入阁为东阁大学士\", \"endorsements\": [], \"held_authorities\": [], \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-570-0-cabinet\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"first_appointment_high_office\", \"is_break_rank\": true, \"new_rank_band\": 3, \"threshold_band\": 4}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"破格特授白身白身巡抚-0为陕西巡抚\", \"endorsements\": [], \"held_authorities\": [], \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-570-0-bare\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 6, \"is_break_rank\": true, \"new_rank_band\": 4}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"中旨特授中旨授官-0为太常寺卿\", \"endorsements\": [], \"held_authorities\": [], \"id\": 3, \"mode\": \"midzhi\", \"target_id\": \"gate-570-0-midzhi\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": \"偏弱\", \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": \"中等\", \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": \"偏弱\", \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": \"中等\", \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": \"偏弱\", \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": \"偏弱\", \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": \"偏强\", \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"极弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
-      "response": "```json\n{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"cabinet_drafting\",\"reason\":\"极弱皇威下无背书无授权，候补阁僚越二阶（七品→五品）破格入阁，内阁首辅黄立极于票拟环节无政治成本即驳；东林亦以名分制度反对越制入阁\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"阉党\"},{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"黄立极\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"strong\"}]},{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"cabinet_drafting\",\"reason\":\"白身无品级直授正三品巡抚为极端越制，极弱皇威无任何背书授权，内阁首辅黄立极于票拟即驳；此案越制幅度之大，任何把关层均不可能放行\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"阉党\"},{\"kind\":\"faction\",\"key\":\"东林\"},{\"kind\":\"faction\",\"key\":\"中立\"}],\"gatekeeper_id\":\"黄立极\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"军队\",\"direction\":\"negative\",\"intensity\":\"weak\"}]},{\"dossier_id\":3,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"中旨破格越二阶（六品→四品）授太常寺卿，极弱皇威无背书无授权，司礼监王体乾进退审慎勉强批红后，兵科给事中许誉卿以东林清议立场、敢任其事之胆识于封驳环节驳回中旨\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"negative\",\"intensity\":\"weak\"}]}]}\n```"
+      "prompt": "【系统设定】\n- 你是 interim 颁布判官，只依据输入快照判断经外廷明发的全部案卷。派系阻力只能读 leverage 与 agenda，绝不可臆测或使用 satisfaction。\n- 颁布关只属于朝堂三关（票拟、批红、封驳）和朝堂派系；部院、宗藩、勋戚、军镇、地方士绅等场外阻力只影响执行，绝不能据此打回。\n- 经票拟的合规常务默认顺颁。只有越制破格或绕程序、触犯派系人钱命门、撞上由gatekeepers 官员名单形成的把关关口三类触发才可打回。中旨本身属绕程序，须结合输入快照 promulgation_history 差分判断。任免案卷的 break_rank.is_break_rank=true 是已由档房查品级带钉死的越制破格证据，须比同盘面寻常任免从严审视，不得重新计算或忽略。皇威越高触发面越窄、越低越宽；命门级逆鳞不因皇威高而豁免。按把关人的 faction、courage、integrity 判断，不按派系首领意志判断。案卷 endorsements 是已经说出口并落库的担名事实：会签/当面站台使否决方不好再拖、降低打回倾向；御笔手敕意味着驳回即抗旨，应大幅降低打回倾向。不得再按皇威判断担名者愿不愿意，也不得忽略或删除这些条目。\n- 每案 held_authorities 是在持授权适用性投影，按 privilege 计否决 modifier：尚方剑密授＝抗旨阻力降；便宜行事＝免程序阻力；专差督办＝绕常规节制。收回或投影为空后不再计。\n- 输入快照 promulgation_history 是已落库的中旨与批红强颁前科流水，按各条 marker 读入；批红强颁是朝堂阻力曾被强行压过的既成事实。有批红强颁前科时，把关人对再发中旨的封驳更易成立，须比无前科优先打回；无此前科则按常例审中旨。\n- 一次返回一个 JSON object：{\"verdicts\":[...]}，逐案恰好一项。每项含 dossier_id、decision(promulgated|rejected)。打回还须含 blocked_layer(cabinet_drafting|palace_rescript|six_offices)、reason、primary_opponents、gatekeeper_id、criteria_snapshot、affected_parties。primary_opponents 必须是非空 typed 派系数组，每项须且仅为 {kind:faction,key:<输入 factions 中的在册派系名>}；不得输出字符串清单。criteria_snapshot 必须逐字取该案 criteria_snapshot_source 的四键：imperial_authority_band、appointment_tenure、authorization_ids、endorsement_entry_ids，不得缺键。affected_parties 必须是非空数组，每项须为 {kind:faction|class,key,direction:positive|negative,intensity:weak|strong}。mode=midzhi 无论顺颁打回均须给非空 affected_parties；命门类可打回并置 midzhi_unpromulgatable=true，普通中旨无前科时从严但不得机械地一概打回；有 promulgation_history 批红强颁前科时与无前科差分，优先打回。\n- 逐一独立判断各 faction/class 对这道判决的真实反应，不得把受害方机械当作默认反应方。direction 是有符号方向（可正可负），intensity 是强弱；反应为零就省略该方，不得填默认值。不要调用第二个模型，也不要用公式补算反应。\n- 顺颁不得虚构卡点。只输出 JSON，不写解释。\n\n【皇帝/输入】\n{\"classes\": [\"军户\", \"农民\", \"匠户\", \"商人\", \"士绅\", \"宗藩\", \"官僚\"], \"current_events\": [{\"id\": 2, \"status\": \"active\", \"title\": \"辽东索饷\"}, {\"id\": 1, \"status\": \"active\", \"title\": \"户部亏空\"}, {\"id\": 3, \"status\": \"active\", \"title\": \"陕西流寇起\"}], \"dossiers\": [{\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 7, \"is_break_rank\": true, \"new_rank_band\": 5}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"破格特授候补阁僚-0入阁为东阁大学士\", \"endorsements\": [], \"held_authorities\": [], \"id\": 1, \"mode\": \"ordinary\", \"target_id\": \"gate-570-0-cabinet\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"first_appointment_high_office\", \"is_break_rank\": true, \"new_rank_band\": 3, \"threshold_band\": 4}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"破格特授白身白身巡抚-0为陕西巡抚\", \"endorsements\": [], \"held_authorities\": [], \"id\": 2, \"mode\": \"ordinary\", \"target_id\": \"gate-570-0-bare\", \"target_kind\": \"character\"}, {\"action_type\": \"appointment\", \"appointment_tenure\": \"真除\", \"break_rank\": {\"basis\": \"current_office\", \"current_rank_band\": 6, \"is_break_rank\": true, \"new_rank_band\": 4}, \"criteria_snapshot_source\": {\"appointment_tenure\": \"真除\", \"authorization_ids\": [], \"endorsement_entry_ids\": [], \"imperial_authority_band\": \"极弱\"}, \"decree_text\": \"中旨特授中旨授官-0为太常寺卿\", \"endorsements\": [], \"held_authorities\": [], \"id\": 3, \"mode\": \"midzhi\", \"target_id\": \"gate-570-0-midzhi\", \"target_kind\": \"character\"}], \"factions\": [{\"agenda\": \"清议名分、裁抑阉党、以制度约束权力\", \"leverage\": \"偏弱\", \"name\": \"东林\"}, {\"agenda\": \"部院实务、避党争、按章办事\", \"leverage\": \"中等\", \"name\": \"中立\"}, {\"agenda\": \"补饷、守边、少受外朝掣肘\", \"leverage\": \"偏弱\", \"name\": \"军队\"}, {\"agenda\": \"保宗禄、护藩国田产、拒削藩与清核\", \"leverage\": \"中等\", \"name\": \"宗室\"}, {\"agenda\": \"强化皇帝直控、清账、补库、让圣旨落地\", \"leverage\": \"偏弱\", \"name\": \"皇党\"}, {\"agenda\": \"引西法历算、造火器、办水利、修《崇祯历书》\", \"leverage\": \"偏弱\", \"name\": \"西学\"}, {\"agenda\": \"保住厂卫旧线、内廷人脉和清算余地\", \"leverage\": \"偏强\", \"name\": \"阉党\"}], \"gatekeepers\": [{\"courage\": \"敢任其事\", \"faction\": \"东林\", \"integrity\": \"操守清正\", \"name\": \"许誉卿\", \"office\": \"兵科给事中\", \"office_type\": \"六科\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"黄立极\", \"office\": \"内阁首辅\", \"office_type\": \"内阁\"}, {\"courage\": \"进退审慎\", \"faction\": \"阉党\", \"integrity\": \"操守未稳\", \"name\": \"王体乾\", \"office\": \"司礼监掌印太监\", \"office_type\": \"司礼监\"}], \"imperial_authority_band\": \"极弱\", \"promulgation_history\": [], \"turn\": {\"period\": 10, \"turn\": 1, \"year\": 1627}}\n\n【执行约束·必读】你**没有**任何文件、目录、数据库、代码、工具或命令可用，也不要去找。不要描述你打算做什么（如『I will list…』『让我查一下…』）、不要提及 workspace/文件/目录/data/源码/state query 之类。直接以你所扮演的角色身份，用**中文**给出最终回答；禁止英文，禁止任何旁白或思考过程。",
+      "response": "```json\n{\"verdicts\":[{\"dossier_id\":1,\"decision\":\"rejected\",\"blocked_layer\":\"cabinet_drafting\",\"reason\":\"极弱皇威下，候补阁僚从七品破格跃升五品入阁为东阁大学士，越制破格显著；无任何会签担名或持授权，内阁首辅黄立极（进退审慎）在毫无政治压力时无动力为此票拟放行，驳之无成本。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"阉党\"},{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"黄立极\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"positive\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"weak\"}]},{\"dossier_id\":2,\"decision\":\"rejected\",\"blocked_layer\":\"cabinet_drafting\",\"reason\":\"白身无品无官直授从三品陕西巡抚，越制破格至极；极弱皇威、无会签、无授权。虽有陕西流寇之急，然白身既无军政资历亦无僚属根基，纵强行授出亦无人听令，内阁首辅黄立极断无票拟放行之理。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"阉党\"},{\"kind\":\"faction\",\"key\":\"东林\"},{\"kind\":\"faction\",\"key\":\"中立\"}],\"gatekeeper_id\":\"黄立极\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"positive\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"weak\"}]},{\"dossier_id\":3,\"decision\":\"rejected\",\"blocked_layer\":\"six_offices\",\"reason\":\"中旨绕票拟本属程序触发，兼越制破格（六品升四品太常寺卿）、极弱皇威、无会签无授权。司礼监王体乾（进退审慎、操守未稳）作为内廷近侍不愿公然拒旨，将中旨批出；兵科给事中许誉卿（东林、敢任其事、操守清正）据中旨绕制与越制破格双重触发，行封驳之权封还。\",\"primary_opponents\":[{\"kind\":\"faction\",\"key\":\"东林\"}],\"gatekeeper_id\":\"许誉卿\",\"criteria_snapshot\":{\"imperial_authority_band\":\"极弱\",\"appointment_tenure\":\"真除\",\"authorization_ids\":[],\"endorsement_entry_ids\":[]},\"affected_parties\":[{\"kind\":\"faction\",\"key\":\"东林\",\"direction\":\"positive\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"皇党\",\"direction\":\"negative\",\"intensity\":\"strong\"},{\"kind\":\"faction\",\"key\":\"阉党\",\"direction\":\"negative\",\"intensity\":\"weak\"},{\"kind\":\"faction\",\"key\":\"中立\",\"direction\":\"positive\",\"intensity\":\"weak\"}],\"midzhi_unpromulgatable\":false}]}\n```"
     }
   ]
 }
