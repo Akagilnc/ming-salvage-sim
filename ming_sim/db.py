@@ -1702,6 +1702,7 @@ class GameDB:
             );
 
             -- #620 / ADR 0074：次回合召对待办（分段到期等）；结算内确定性写入、不停轮。
+            -- #624 / ADR 0078：payload_json 引擎侧列（真伪底）；玩家投影路径不读。
             CREATE TABLE IF NOT EXISTS next_audience_todos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 commitment_ref INTEGER NOT NULL,
@@ -1712,6 +1713,7 @@ class GameDB:
                 status TEXT NOT NULL DEFAULT 'pending',
                 entry_kind TEXT NOT NULL DEFAULT 'staged_commitment',
                 created_turn INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(commitment_ref, stage_idx, entry_kind),
                 FOREIGN KEY(commitment_ref) REFERENCES issues(id)
@@ -1963,6 +1965,9 @@ class GameDB:
         self.ensure_column("issues", "stop_condition", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "commitment_kind", "TEXT NOT NULL DEFAULT ''")
         self.ensure_column("issues", "stages_json", "TEXT NOT NULL DEFAULT '[]'")
+        # #624 / ADR 0078：next_audience_todos 引擎侧真伪底（方案 A）；老档迁移
+        self.ensure_column(
+            "next_audience_todos", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self.ensure_column("characters", "birth_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_year", "INTEGER NOT NULL DEFAULT 0")
         self.ensure_column("characters", "historical_death_month", "INTEGER NOT NULL DEFAULT 0")
@@ -15317,6 +15322,44 @@ class GameDB:
                             origin_chat_message_id=origin_mid,
                         )
                 return ok
+        # #624 / ADR 0078：分段承诺催办——经 pending_actions 确认闸门到唯一写口
+        if pa["kind"] == "commitment" and pa["action"] == "催办":
+            target_id = pa.get("target_id")
+            if target_id is None:
+                return False
+            try:
+                stage_idx = int(payload.get("stage_idx") if payload.get("stage_idx") is not None else 0)
+            except (TypeError, ValueError):
+                stage_idx = 0
+            deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
+            from ming_sim.urge_lever import rush_staged_commitment_stage
+            result = rush_staged_commitment_stage(
+                self, state,
+                commitment_ref=int(target_id),
+                stage_idx=stage_idx,
+                deadline_months=deadline,
+                reason=str(payload.get("reason") or ""),
+                commit=False,
+                record_history=False,  # 本 pending 行标 committed 即史源，禁双插
+            )
+            # 史源字段写回本行 payload（commit_pending_actions 随后标 committed）
+            merged = dict(payload)
+            merged.update({
+                "stage_idx": int(stage_idx),
+                "old_due": int(result["old_due"]),
+                "new_due": int(result["due_turn"]),
+                "deadline_months": int(result["deadline_months"]),
+                "tightness": max(0, int(result["old_due"]) - int(result["due_turn"])),
+                "reason": str(result.get("reason") or "")[:120],
+            })
+            self.conn.execute(
+                "UPDATE pending_actions SET payload_json=? WHERE id=?",
+                (
+                    json.dumps(merged, ensure_ascii=False, separators=(",", ":")),
+                    int(pa["id"]),
+                ),
+            )
+            return True
         if pa["kind"] == "consort" and pa["action"] == "调教":
             skill = str(payload.get("skill") or "")
             trait = str(payload.get("trait") or "")
@@ -16437,6 +16480,67 @@ class GameDB:
         if commit:
             self.conn.commit()
 
+    @staticmethod
+    def _coerce_todo_payload_json(payload_json: object) -> str:
+        """#624：引擎侧 payload_json 序列化；非法非空响亮拒绝，禁静默丢底。"""
+        if payload_json is None:
+            return "{}"
+        if isinstance(payload_json, str):
+            text = payload_json.strip()
+            if not text:
+                return "{}"
+            try:
+                data = json.loads(text)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"next_audience_todos.payload_json 须为 JSON 对象：{text[:80]!r}"
+                ) from exc
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"next_audience_todos.payload_json 须为对象，得 {type(data).__name__}"
+                )
+            return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(payload_json, dict):
+            return json.dumps(payload_json, ensure_ascii=False, separators=(",", ":"))
+        raise ValueError(
+            f"next_audience_todos.payload_json 类型非法：{type(payload_json).__name__}"
+        )
+
+    @staticmethod
+    def parse_engine_payload_json(
+        raw: object, *, surface: str = "payload_json",
+    ) -> Dict[str, object]:
+        """#624 / ADR 0005：引擎侧 payload 读路单一助手。
+
+        真空/缺省 → {}；腐坏 JSON 或非对象 → 响亮 tlog + ValueError（禁静默吞成空底）。
+        """
+        if isinstance(raw, dict):
+            return dict(raw)
+        if raw is None:
+            return {}
+        text = str(raw).strip()
+        if not text or text == "{}":
+            return {}
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            tlog(f"[{surface}] 腐坏 JSON，拒绝静默等同空底：{text[:80]!r}")
+            raise ValueError(
+                f"{surface} 腐坏 JSON：{text[:80]!r}"
+            ) from exc
+        if not isinstance(data, dict):
+            tlog(f"[{surface}] 非对象，拒绝静默：{type(data).__name__}")
+            raise ValueError(
+                f"{surface} 须为对象，得 {type(data).__name__}"
+            )
+        return dict(data)
+
+    @classmethod
+    def _parse_todo_payload_json(cls, raw: object) -> Dict[str, object]:
+        return cls.parse_engine_payload_json(
+            raw, surface="next_audience_todos.payload_json",
+        )
+
     def insert_next_audience_todo(
         self,
         *,
@@ -16448,18 +16552,21 @@ class GameDB:
         status: str = "pending",
         entry_kind: str = "staged_commitment",
         created_turn: int = 0,
+        payload_json: object = None,
         commit: bool = True,
     ) -> int:
         """#620 P2：次回合召对待办写端。UNIQUE(commitment_ref, stage_idx, entry_kind) 去重。
 
+        #624：payload_json 引擎侧列（真伪底）；默认 '{}'。
         返回新建行 id；已存在则返回 0（幂等，不覆盖）。
         """
+        payload_blob = self._coerce_todo_payload_json(payload_json)
         cur = self.conn.execute(
             """
             INSERT OR IGNORE INTO next_audience_todos (
                 commitment_ref, stage_idx, due_turn, criterion_text, origin_context,
-                status, entry_kind, created_turn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                status, entry_kind, created_turn, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(commitment_ref),
@@ -16470,6 +16577,7 @@ class GameDB:
                 sanitize_sqlite_text(str(status or "pending") or "pending"),
                 sanitize_sqlite_text(str(entry_kind or "staged_commitment") or "staged_commitment"),
                 int(created_turn or 0),
+                sanitize_sqlite_text(payload_blob),
             ),
         )
         if commit:
@@ -16497,7 +16605,7 @@ class GameDB:
         rows = self.conn.execute(
             f"""
             SELECT id, commitment_ref, stage_idx, due_turn, criterion_text,
-                   origin_context, status, entry_kind, created_turn
+                   origin_context, status, entry_kind, created_turn, payload_json
             FROM next_audience_todos
             {where}
             ORDER BY due_turn, commitment_ref, stage_idx, id
@@ -16515,6 +16623,7 @@ class GameDB:
                 "status": str(r["status"] or ""),
                 "entry_kind": str(r["entry_kind"] or ""),
                 "created_turn": int(r["created_turn"] or 0),
+                "payload_json": self._parse_todo_payload_json(r["payload_json"]),
             }
             for r in rows
         ]
