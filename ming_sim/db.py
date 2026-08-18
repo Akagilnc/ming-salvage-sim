@@ -1479,6 +1479,35 @@ class GameDB:
             );
             CREATE INDEX IF NOT EXISTS idx_dossier_reported_progress_dossier
                 ON dossier_reported_progress(dossier_id, turn, id);
+            -- #625 / ADR 0077: supervision fact bottom (no dulling numeric cols).
+            -- Presence: one row per (dossier_id, turn, auditor); consecutive months derived at read.
+            CREATE TABLE IF NOT EXISTS dossier_supervision_presence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                auditor_name TEXT NOT NULL,
+                audit_dossier_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL
+                    CHECK(relation_type IN ('稽核')),
+                present INTEGER NOT NULL DEFAULT 1 CHECK(present IN (0,1)),
+                UNIQUE(dossier_id, turn, auditor_name),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE,
+                FOREIGN KEY(audit_dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_supervision_presence_dossier
+                ON dossier_supervision_presence(dossier_id, turn, id);
+            -- Loophole exposure: class key = action_type + execution_form (enums only).
+            CREATE TABLE IF NOT EXISTS dossier_loophole_exposures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dossier_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                action_type TEXT NOT NULL,
+                execution_form TEXT NOT NULL,
+                UNIQUE(dossier_id, turn, action_type, execution_form),
+                FOREIGN KEY(dossier_id) REFERENCES decree_dossiers(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_loophole_exposures_dossier
+                ON dossier_loophole_exposures(dossier_id, turn, id);
             -- ADR 0056: existence of this append-only rail is the idempotency key;
             -- stigma_json is deliberately not used as a cost guard.
             CREATE TABLE IF NOT EXISTS decree_cost_events (
@@ -2115,6 +2144,10 @@ class GameDB:
         self.ensure_column("economy_ledger", "dossier_id", "INTEGER")
         self.ensure_column(
             "economy_ledger", "origin_ref", "TEXT NOT NULL DEFAULT ''"
+        )
+        # #622：旨外恶果/受益标记——效果行同列注解（#558 origin 同一载体，非平行轨）。
+        self.ensure_column(
+            "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
         )
         # Rolling upgrades may already have the column while interrupted/older
         # migrations left individual rows blank.  Re-scan idempotently; only a
@@ -11097,6 +11130,47 @@ class GameDB:
             for row in rows
         ]
 
+    def _audit_fork_signals_for_source(self, source_dossier_id: int) -> List[Dict[str, object]]:
+        """#622：稽核链在场时，月报输入面确定性携带被稽核案卷分叉信号。
+
+        读端复用 list_dossier_links（relation_type=稽核）；无链则返回空——调用方不挂键。
+        信号=奏报 progress_band 面 vs 执行格/实况 origin 面，供 extractor 读，不进密奏正文断言。
+        """
+        signals: List[Dict[str, object]] = []
+        for link in self.list_dossier_links(int(source_dossier_id), direction="outgoing"):
+            if str(link.get("relation_type") or "").strip() != "稽核":
+                continue
+            target_id = int(link["target_dossier_id"])
+            target = self.get_decree_dossier(target_id)
+            reports = self.list_dossier_progress(target_id)
+            reported_bands = [
+                str(item.get("progress_band") or "").strip()
+                for item in reports
+                if str(item.get("progress_band") or "").strip()
+            ]
+            execution_outcome = (
+                str(target.get("execution_outcome") or "").strip() if target else ""
+            )
+            moves = self.list_economy_moves_for_dossier(target_id)
+            actual_effect_count = len(moves) + len(
+                self.list_fiscal_effects_for_dossier(target_id)
+            )
+            # 分叉：奏报面有进展/兑现口径，而执行格非 fulfilled 或存在旨外实况。
+            beyond = any(bool(row.get("beyond_intent")) for row in moves)
+            fork = bool(reported_bands) and (
+                beyond or execution_outcome not in {"", "fulfilled", "executing"}
+            )
+            signals.append({
+                "target_dossier_id": target_id,
+                "relation_type": "稽核",
+                "reported_bands": reported_bands,
+                "execution_outcome": execution_outcome,
+                "actual_effect_count": actual_effect_count,
+                "beyond_intent": beyond,
+                "fork": bool(fork),
+            })
+        return signals
+
     def list_monthly_dossier_progress_nudges(self) -> List[Dict[str, object]]:
         """Long protection/audit errands due a monthly report, with history."""
         rows = self.conn.execute(
@@ -11108,17 +11182,24 @@ class GameDB:
             ORDER BY d.id
             """
         ).fetchall()
-        return [
-            {
-                "dossier_id": int(row["id"]),
+        out: List[Dict[str, object]] = []
+        for row in rows:
+            tags = {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
+            if not (tags & {"护行", "稽核"}):
+                continue
+            dossier_id = int(row["id"])
+            item: Dict[str, object] = {
+                "dossier_id": dossier_id,
                 "secret_order_id": int(row["secret_order_id"]),
                 "title": json.loads(row["payload_json"] or "{}").get("title", ""),
-                "progress": self.list_dossier_progress(int(row["id"])),
+                "progress": self.list_dossier_progress(dossier_id),
             }
-            for row in rows
-            if {str(tag).strip() for tag in json.loads(row["tags"] or "[]")}
-               & {"护行", "稽核"}
-        ]
+            # #622 AC5：仅当稽核链在场时挂分叉信号键；无链则键不出现。
+            fork_signals = self._audit_fork_signals_for_source(dossier_id)
+            if fork_signals:
+                item["audit_fork_signals"] = fork_signals
+            out.append(item)
+        return out
 
     def record_monthly_dossier_progress(
         self, turn: int, generated: object = None,
@@ -11154,10 +11235,12 @@ class GameDB:
 
         reports: List[Dict[str, object]] = []
         for dossier_id, item in supplied.items():
+            # #625：有在场稽核时 origin 带同派/私货结构化标记（扩 origin，不加列）。
+            origin = self.compose_supervision_report_origin(int(dossier_id), int(turn))
             self.record_dossier_progress(
                 dossier_id, int(turn), str(item["progress_band"]).strip(),
                 str(item["memorial_text"]).strip(),
-                origin=self.DOSSIER_REPORT_ORIGIN_MONTHLY,
+                origin=origin,
                 commit=False,
             )
             reports.append(self.list_dossier_progress(dossier_id)[-1])
@@ -11364,6 +11447,432 @@ class GameDB:
             history = self.list_dossier_reconciliations(int(dossier_id))
             reports.append(history[-1])
         return reports
+
+    # ── #625 / ADR 0077 supervision fact bottom ─────────────────────────
+
+    def dossier_has_supervision_presence(
+        self, dossier_id: int, turn: int,
+    ) -> bool:
+        """本 turn 该案卷是否有稽核在场（空子暴露统一在场门）。"""
+        row = self.conn.execute(
+            """
+            SELECT 1 FROM dossier_supervision_presence
+            WHERE dossier_id=? AND turn=? AND present=1 LIMIT 1
+            """,
+            (int(dossier_id), int(turn)),
+        ).fetchone()
+        return row is not None
+
+    def record_monthly_supervision_presence(
+        self, turn: int, *, commit: bool = False,
+    ) -> Dict[str, object]:
+        """月度在场扫描：稽核链 → presence 行；同 turn UNIQUE 幂等不双计。
+
+        settle 节拍：须先于月报 origin 标记调用（commit=False）。
+        """
+        from ming_sim.supervision import (
+            SUPERVISION_RELATION,
+            resolve_dossier_owner_name,
+        )
+
+        turn_i = int(turn)
+        presence_written = 0
+        # 入链：source=稽核方案卷，target=被稽案卷
+        link_rows = self.conn.execute(
+            """
+            SELECT l.source_dossier_id, l.target_dossier_id, l.relation_type,
+                   s.status AS source_status, t.status AS target_status
+            FROM decree_dossier_links l
+            JOIN decree_dossiers s ON s.id = l.source_dossier_id
+            JOIN decree_dossiers t ON t.id = l.target_dossier_id
+            WHERE l.relation_type = ?
+            ORDER BY l.id
+            """,
+            (SUPERVISION_RELATION,),
+        ).fetchall()
+        for link in link_rows:
+            source_status = str(link["source_status"] or "")
+            target_status = str(link["target_status"] or "")
+            # 双方仍在执行面（promulgated/executing）才记在场
+            if source_status not in {"promulgated", "executing"}:
+                continue
+            if target_status not in {"promulgated", "executing"}:
+                continue
+            audit_dossier = self.get_decree_dossier(int(link["source_dossier_id"]))
+            if audit_dossier is None:
+                continue
+            auditor = resolve_dossier_owner_name(audit_dossier)
+            if not auditor:
+                continue
+            self.conn.execute(
+                """
+                INSERT INTO dossier_supervision_presence
+                    (dossier_id, turn, auditor_name, audit_dossier_id,
+                     relation_type, present)
+                VALUES (?,?,?,?,?,1)
+                ON CONFLICT(dossier_id, turn, auditor_name) DO UPDATE SET
+                    audit_dossier_id=excluded.audit_dossier_id,
+                    relation_type=excluded.relation_type,
+                    present=1
+                """,
+                (
+                    int(link["target_dossier_id"]), turn_i, auditor,
+                    int(link["source_dossier_id"]), SUPERVISION_RELATION,
+                ),
+            )
+            presence_written += 1
+
+        if commit:
+            self.conn.commit()
+        return {"presence_written": presence_written, "turn": turn_i}
+
+    def record_monthly_loophole_exposures_from_reconciliations(
+        self, turn: int, *, commit: bool = False,
+    ) -> Dict[str, object]:
+        """对账后暴露派生：本回合 loss>0 且该案卷当月稽核在场 → 暴露行。
+
+        settle 节拍：须在 record_monthly_grant_reconciliations 之后调用。
+        在场门与终值路共用 dossier_has_supervision_presence（统一口径）。
+        """
+        turn_i = int(turn)
+        exposure_written = 0
+        recon_rows = self.conn.execute(
+            """
+            SELECT r.dossier_id, r.loss_amount, d.action_type
+            FROM decree_dossier_reconciliations r
+            JOIN decree_dossiers d ON d.id = r.dossier_id
+            WHERE r.turn = ? AND r.loss_amount > 0
+            """,
+            (turn_i,),
+        ).fetchall()
+        for row in recon_rows:
+            did = int(row["dossier_id"])
+            if not self.dossier_has_supervision_presence(did, turn_i):
+                continue
+            action_type = (
+                str(row["action_type"] or "grant_allocation").strip()
+                or "grant_allocation"
+            )
+            if self.record_loophole_exposure(
+                did, turn_i, action_type, "degraded", commit=False,
+            ):
+                exposure_written += 1
+
+        if commit:
+            self.conn.commit()
+        return {"exposure_written": exposure_written, "turn": turn_i}
+
+    def record_monthly_supervision_facts(
+        self, turn: int, *, commit: bool = False,
+    ) -> Dict[str, object]:
+        """兼容组合：在场扫描 + 对账暴露派生（测试/restore 便捷口）。
+
+        生产 settle 节拍应分调两单职责函数（origin 前 / 对账后）。
+        """
+        presence = self.record_monthly_supervision_presence(turn, commit=False)
+        exposure = self.record_monthly_loophole_exposures_from_reconciliations(
+            turn, commit=False,
+        )
+        if commit:
+            self.conn.commit()
+        return {
+            "presence_written": int(presence.get("presence_written") or 0),
+            "exposure_written": int(exposure.get("exposure_written") or 0),
+            "turn": int(turn),
+        }
+
+    def record_loophole_exposure(
+        self,
+        dossier_id: int,
+        turn: int,
+        action_type: str,
+        execution_form: str,
+        *,
+        commit: bool = True,
+    ) -> bool:
+        """逐次暴露一行；同 (dossier,turn,action_type,execution_form) 幂等。"""
+        from ming_sim.supervision import EXECUTION_FORMS
+
+        form = str(execution_form or "").strip()
+        if form not in EXECUTION_FORMS:
+            raise ValueError(f"空子暴露执行格形态非法：{form!r}")
+        atype = str(action_type or "").strip()
+        if not atype:
+            raise ValueError("空子暴露 action_type 不能为空")
+        if atype not in DOSSIER_ACTION_TYPES:
+            # 允许既有枚举；未知响亮拒（禁自由文本类）
+            raise ValueError(f"空子暴露 action_type 非法：{atype!r}")
+        if self.get_decree_dossier(int(dossier_id)) is None:
+            raise ValueError("案卷不存在")
+        cur = self.conn.execute(
+            """
+            INSERT INTO dossier_loophole_exposures
+                (dossier_id, turn, action_type, execution_form)
+            VALUES (?,?,?,?)
+            ON CONFLICT(dossier_id, turn, action_type, execution_form) DO NOTHING
+            """,
+            (int(dossier_id), int(turn), atype, form),
+        )
+        wrote = int(cur.rowcount or 0) > 0
+        if commit:
+            self.conn.commit()
+        return wrote
+
+    def list_supervision_presence(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        if as_of_turn is None:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
+                       relation_type, present
+                FROM dossier_supervision_presence
+                WHERE dossier_id=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, auditor_name, audit_dossier_id,
+                       relation_type, present
+                FROM dossier_supervision_presence
+                WHERE dossier_id=? AND turn<=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id), int(as_of_turn)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "dossier_id": int(r["dossier_id"]),
+                "turn": int(r["turn"]),
+                "auditor_name": str(r["auditor_name"] or ""),
+                "audit_dossier_id": int(r["audit_dossier_id"]),
+                "relation_type": str(r["relation_type"] or ""),
+                "present": bool(r["present"]),
+            }
+            for r in rows
+        ]
+
+    def list_loophole_exposures(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        if as_of_turn is None:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, action_type, execution_form
+                FROM dossier_loophole_exposures
+                WHERE dossier_id=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id),),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, dossier_id, turn, action_type, execution_form
+                FROM dossier_loophole_exposures
+                WHERE dossier_id=? AND turn<=?
+                ORDER BY turn, id
+                """,
+                (int(dossier_id), int(as_of_turn)),
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "dossier_id": int(r["dossier_id"]),
+                "turn": int(r["turn"]),
+                "action_type": str(r["action_type"] or ""),
+                "execution_form": str(r["execution_form"] or ""),
+            }
+            for r in rows
+        ]
+
+    def list_supervision_history(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """读端：在场行 + 连号派生 + 稽核人任期/派系/操守定性（不落钝化分）。"""
+        from ming_sim.supervision import (
+            character_faction_integrity,
+            character_tenure,
+            derive_consecutive_months,
+            faction_relation,
+            integrity_band,
+            resolve_dossier_owner_name,
+        )
+
+        presence = self.list_supervision_presence(
+            int(dossier_id), as_of_turn=as_of_turn,
+        )
+        if not presence:
+            return []
+        subject = self.get_decree_dossier(int(dossier_id)) or {}
+        subject_name = resolve_dossier_owner_name(subject)
+        subject_faction, _subj_integrity = character_faction_integrity(
+            self, subject_name,
+        )
+        # 按稽核人聚合 turn 以派生连续月数
+        turns_by_auditor: Dict[str, List[int]] = {}
+        for row in presence:
+            if not row["present"]:
+                continue
+            turns_by_auditor.setdefault(
+                str(row["auditor_name"]), [],
+            ).append(int(row["turn"]))
+
+        end = int(as_of_turn) if as_of_turn is not None else max(
+            int(r["turn"]) for r in presence
+        )
+        out: List[Dict[str, object]] = []
+        for row in presence:
+            auditor = str(row["auditor_name"] or "")
+            a_faction, a_integrity = character_faction_integrity(self, auditor)
+            months = derive_consecutive_months(
+                turns_by_auditor.get(auditor, []), end_turn=end,
+            )
+            out.append({
+                **row,
+                "consecutive_months": months,
+                "auditor_tenure": character_tenure(self, auditor),
+                "auditor_faction": a_faction,
+                "auditor_integrity_band": integrity_band(a_integrity),
+                "subject_name": subject_name,
+                "subject_faction": subject_faction,
+                "subject_tenure": character_tenure(self, subject_name),
+                "faction_relation": faction_relation(a_faction, subject_faction),
+            })
+        return out
+
+    def build_supervision_judge_surface(
+        self, dossier_id: int, *, as_of_turn: Optional[int] = None,
+    ) -> Dict[str, object]:
+        """观察槽：监督史 + 暴露史 + 变形倾向定性事实（禁钝化数值）。"""
+        from ming_sim.supervision import build_transformation_tendency_facts
+
+        history = self.list_supervision_history(
+            int(dossier_id), as_of_turn=as_of_turn,
+        )
+        exposures = self.list_loophole_exposures(
+            int(dossier_id), as_of_turn=as_of_turn,
+        )
+        return {
+            "dossier_id": int(dossier_id),
+            "supervision_history": history,
+            "loophole_exposures": exposures,
+            "transformation_tendency_facts": build_transformation_tendency_facts(
+                supervision_history=history,
+                loophole_exposures=exposures,
+            ),
+        }
+
+    def compose_supervision_report_origin(
+        self, dossier_id: int, turn: int,
+    ) -> str:
+        """按当月在场稽核派系关系给 #619 origin 打私货/同派标记（扩 origin，不加列）。"""
+        from ming_sim.supervision import (
+            ORIGIN_MARK_PRIVATE_GOODS,
+            ORIGIN_MARK_SAME_FACTION_BLIND,
+            compose_report_origin,
+        )
+
+        base = self.DOSSIER_REPORT_ORIGIN_MONTHLY
+        history = self.list_supervision_history(
+            int(dossier_id), as_of_turn=int(turn),
+        )
+        # 只看本 turn 在场行
+        marks: List[str] = []
+        for row in history:
+            if int(row.get("turn") or 0) != int(turn):
+                continue
+            if not row.get("present"):
+                continue
+            rel = str(row.get("faction_relation") or "")
+            if rel == "same":
+                marks.append(ORIGIN_MARK_SAME_FACTION_BLIND)
+            elif rel == "enemy":
+                marks.append(ORIGIN_MARK_PRIVATE_GOODS)
+        return compose_report_origin(base, marks)
+
+    def trigger_supervision_countermeasures(
+        self, state: GameState, *, commit: bool = False,
+    ) -> List[Dict[str, object]]:
+        """孤直稽核连续在场满 12 月 → 涌现缝立反制 issue（邸报前 auto_trigger 同缝）。
+
+        禁 0099/0091 新机制；禁占 #623 entry_kind；明升暗调形态走既有 issue 载体，
+        人事落地仍经 office_changes applier（本硬门只立局势）。
+        """
+        from ming_sim.supervision import (
+            COUNTERMEASURE_ORIGIN_KIND,
+            COUNTERMEASURE_PRESENCE_MONTHS,
+            countermeasure_origin_ref,
+            is_upright_integrity,
+            pick_countermeasure_kind,
+            character_faction_integrity,
+            derive_consecutive_months,
+        )
+
+        # 全库在场行按 (auditor, dossier) 聚合
+        rows = self.conn.execute(
+            """
+            SELECT dossier_id, auditor_name, turn
+            FROM dossier_supervision_presence
+            WHERE present=1
+            ORDER BY auditor_name, dossier_id, turn
+            """
+        ).fetchall()
+        grouped: Dict[Tuple[str, int], List[int]] = {}
+        for row in rows:
+            key = (str(row["auditor_name"]), int(row["dossier_id"]))
+            grouped.setdefault(key, []).append(int(row["turn"]))
+
+        triggered: List[Dict[str, object]] = []
+        for (auditor, dossier_id), turns in grouped.items():
+            months = derive_consecutive_months(turns)
+            if months < COUNTERMEASURE_PRESENCE_MONTHS:
+                continue
+            _fac, integrity = character_faction_integrity(self, auditor)
+            if not is_upright_integrity(integrity):
+                continue
+            origin_ref = countermeasure_origin_ref(auditor, dossier_id)
+            existing = self.find_any_issue_by_origin(
+                COUNTERMEASURE_ORIGIN_KIND, origin_ref,
+            )
+            if existing is not None:
+                continue
+            kind = pick_countermeasure_kind(auditor, dossier_id)
+            title = f"针对{auditor}的{kind}"
+            # 玩家可见 stage 禁系统词：崇祯朝口语，不写钝化/陋规化
+            stage_text = f"{auditor}连月按核不贷，官场反噬已起，{kind}之议渐露。"
+            issue_id = self.insert_issue(
+                state,
+                kind="situation",
+                title=title,
+                origin_kind=COUNTERMEASURE_ORIGIN_KIND,
+                origin_ref=origin_ref,
+                stage_text=stage_text,
+                tags=["supervision_countermeasure", kind, auditor],
+                participants=[auditor],
+                bar_value=35,
+                bar_good_meaning="反噬平息",
+                bar_bad_meaning="反噬坐大",
+                inertia=1,
+                severity=55,
+                faction_hint=str(_fac or ""),
+                commit=False,
+            )
+            triggered.append({
+                "issue_id": int(issue_id),
+                "auditor_name": auditor,
+                "dossier_id": int(dossier_id),
+                "countermeasure_kind": kind,
+                "origin_ref": origin_ref,
+                "consecutive_months": months,
+            })
+        if commit and triggered:
+            self.conn.commit()
+        return triggered
 
     def merge_grant_reconciliation_into_execution_note(
         self, dossier_id: int, *, commit: bool = True,
@@ -12306,6 +12815,17 @@ class GameDB:
                 str(note or "") if outcome == "failed" else "",
                 commit=False,
             )
+        # #625：走样/变形/烂尾终值 → 空子暴露（与对账路统一：本 turn 稽核在场门）
+        if outcome in {"degraded", "transformed", "failed"}:
+            action_type = str(row.get("action_type") or "").strip()
+            if (
+                action_type in DOSSIER_ACTION_TYPES
+                and self.dossier_has_supervision_presence(int(dossier_id), int(turn))
+            ):
+                self.record_loophole_exposure(
+                    int(dossier_id), int(turn), action_type, outcome,
+                    commit=False,
+                )
         self._commit_dossier_write(commit)
 
     def apply_dossier_promulgation(
@@ -16564,6 +17084,22 @@ class GameDB:
             (issue_id, limit),
         ).fetchall()
 
+    @staticmethod
+    def coerce_beyond_intent_flag(value: object) -> int:
+        """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+        肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+        开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+        """
+        if value is None:
+            return 0
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return 1 if int(value) != 0 else 0
+        text = str(value).strip().lower()
+        return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
+
     def record_issue_economy_move(
         self,
         state: GameState,
@@ -16575,12 +17111,15 @@ class GameDB:
         target_kind: str | None = None,
         target_id: str | None = None,
         origin_ref: str = "",
+        beyond_intent: object = 0,
         commit: bool = True,
     ) -> int:
         """记一笔经济流水到 economy_ledger，同步更新 metrics[account]。
 
         purpose/target_kind/target_id 仅对 extractor 抽出的 economy_moves（自由拨款）填，
         flows 月固定支出与所有收入一律 None。受控枚举见 constants.ECONOMY_PURPOSES。
+
+        beyond_intent：#622 旨外恶果/受益同列标记（与 origin_ref 同载体，非平行轨）。
 
         遗产修正：account 上若有 active 遗产百分比修正符，先按 apply_legacy_pct 放大/缩小 delta
         再落账。修正折进本笔流水，不另立账行。
@@ -16601,15 +17140,18 @@ class GameDB:
         if actual == 0:
             return 0
         state.metrics[account] = after
+        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.execute(
             """
             INSERT INTO economy_ledger
             (turn, year, period, account, delta, balance_after, category, reason,
-             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id, origin_ref)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?)
+             event_id, edict_id, actor, purpose, target_kind, target_id, dossier_id,
+             origin_ref, beyond_intent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '事项推演', ?, ?, ?, NULL, ?, ?)
             """,
             (state.turn, state.year, state.period, account, actual, after,
-             category, reason, purpose, target_kind, target_id, origin_ref),
+             category, reason, purpose, target_kind, target_id, origin_ref,
+             beyond_flag),
         )
         self.sync_economy_accounts(state)
         if commit:
@@ -16650,12 +17192,18 @@ class GameDB:
         return rows
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
-        return [
-            dict(row) for row in self.conn.execute(
-                "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
-                (f"dossier:{int(dossier_id)}",),
-            ).fetchall()
-        ]
+        rows: List[Dict[str, object]] = []
+        for row in self.conn.execute(
+            "SELECT * FROM economy_ledger WHERE origin_ref=? ORDER BY id",
+            (f"dossier:{int(dossier_id)}",),
+        ).fetchall():
+            item = dict(row)
+            # Normalize beyond_intent to bool for adjudicator consumers (#622).
+            item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
+                item.get("beyond_intent")
+            ))
+            rows.append(item)
+        return rows
 
     def kv_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()

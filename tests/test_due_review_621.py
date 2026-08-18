@@ -607,10 +607,11 @@ def test_input_closed_set_degrades_when_sources_missing(game):
     write_due_staged_commitment_todos(db, state)
     todo = db.list_next_audience_todos(status=TODO_STATUS_PENDING)[0]
     inp = build_due_review_input(db, todo)
-    # 缺源降级：催办/监督空列表，不崩
+    # 缺源降级：催办空列表不崩；监督史无在场行时亦为空（#625 建轨后仍可空）
     assert inp["urge_history"] == []
-    assert inp["supervision_history"] == []
+    assert inp["supervision_history"] == []  # 本夹具未挂稽核链
     assert inp["progress_reports"] == []
+    assert inp.get("transformation_tendency_facts", {}).get("exposure_count", 0) == 0
     scene = project_due_review_scene(db, todo, review_input=inp)
     assert scene["scene_text"]
 
