@@ -2,7 +2,7 @@
 
 测试预算 ≤4：
 ① AC1：#623 既有辜负写口行为覆盖，本片不重写该 origin
-② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/处置）不落伪信用（负）
+② 兑付/撑完 + 谏处置三型（正）；校验拒收（fulfilled/任命）不落伪信用（负）
 ③ 处置映射：丢卒两笔 / 包庇撑腰 / 查办不记（负）；真变形案卷 + #565 连坐面
 ④ 幂等（origin 写前判重）+ 叙事语境 + restore + 只写不读 + banned 单源
 """
@@ -175,7 +175,7 @@ def test_ac1_breach_plea_guofu_not_reimplemented(game):
 
 
 def test_fulfill_back_and_urge_three_decisions(game):
-    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/处置不落。"""
+    """兑付→兑现所托；撑完→撑腰；准宽限撑腰 / 拒宽限·斥退辜负；被拒 fulfilled/任命不落。"""
     db, state, content = game
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     db.conn.commit()
@@ -249,15 +249,17 @@ def test_fulfill_back_and_urge_three_decisions(game):
     assert len(_credit_edges(db, event_kind=KIND_FULFILL)) == before_fake
 
     # ── C1 负向：人物变更被拒 → 不得落信用边（包庇/弃卒等）──
+    # 夹具=任命+缺 office（必拒 missing_field）；_is_cover_change 对任命无条件命中，
+    # 漏 rejected 闸即落包庇撑腰边——反空壳（旧夹具处置+非法 status 不可归类，拆闸仍绿）。
     did_rd = _transformed_dossier(
-        db, state, token="rej-disp-628",
+        db, state, token="rej-appt-628",
         roster=[{"character_id": "孙承宗", "tier": "主办", "role": "承办"}],
     )
     before_rd = len(_credit_edges(db))
     out_rd = apply_score_extraction(
         db, state,
         {"人物变更": [{
-            "name": "孙承宗", "动作": "处置", "status": "not_a_real_status",
+            "name": "孙承宗", "动作": "任命",
             "reason": "包庇伪装应拒", "origin_ref": f"dossier:{did_rd}",
         }]},
         content=content,

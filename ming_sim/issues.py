@@ -8237,6 +8237,7 @@ def apply_score_extraction(
         "dossier_executions": _credit_source_minus_rejections(
             extracted.get("dossier_executions"), dossier_execution_results,
         ),
+        # 人物变更 rejected 单一保护点（credit_events 不再二次滤）。
         "人物变更": [
             r for r in applied_person_changes
             if isinstance(r, dict) and not r.get("rejected")
