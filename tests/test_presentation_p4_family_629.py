@@ -10,8 +10,8 @@ Seams:
 
 from __future__ import annotations
 
-import importlib
 import json
+import subprocess
 import sys
 
 from ming_sim.breach_plea import (
@@ -539,37 +539,29 @@ def test_due_review_preserves_diegetic_fenjie_phrase(game):
 
 def test_urge_lever_due_review_import_order_both_succeed():
     """负向：先 import urge_lever 与先 import due_review 两种乱序均成功（无环烟）。"""
-    mods = [
-        "ming_sim.urge_lever",
-        "ming_sim.due_review",
-        "ming_sim.decree_vocabulary",
-        "ming_sim.credit_events",
-    ]
-    saved = {name: sys.modules.pop(name) for name in mods if name in sys.modules}
-    try:
-        # 序 1：urge_lever 先
-        ul = importlib.import_module("ming_sim.urge_lever")
-        dr = importlib.import_module("ming_sim.due_review")
-        assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is dr.URGE_TRUTH_BANNED_PLAYER_TOKENS or (
-            tuple(ul.URGE_TRUTH_BANNED_PLAYER_TOKENS)
-            == tuple(dr.URGE_TRUTH_BANNED_PLAYER_TOKENS)
+    scripts = (
+        (
+            "import ming_sim.urge_lever as ul\n"
+            "import ming_sim.due_review as dr\n"
+            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
+            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+        ),
+        (
+            "import ming_sim.due_review as dr\n"
+            "import ming_sim.urge_lever as ul\n"
+            "assert ul.URGE_TRUTH_BANNED_PLAYER_TOKENS is "
+            "dr.URGE_TRUTH_BANNED_PLAYER_TOKENS\n"
+        ),
+    )
+    for script in scripts:
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
         )
-        for name in mods:
-            sys.modules.pop(name, None)
-        # 序 2：due_review 先
-        dr2 = importlib.import_module("ming_sim.due_review")
-        ul2 = importlib.import_module("ming_sim.urge_lever")
-        assert ul2.URGE_TRUTH_BANNED_PLAYER_TOKENS is dr2.URGE_TRUTH_BANNED_PLAYER_TOKENS or (
-            tuple(ul2.URGE_TRUTH_BANNED_PLAYER_TOKENS)
-            == tuple(dr2.URGE_TRUTH_BANNED_PLAYER_TOKENS)
+        assert completed.returncode == 0, (
+            f"import-order subprocess failed\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
         )
-    finally:
-        # 恢复会话内已加载模块，避免污染后续用例
-        for name in mods:
-            sys.modules.pop(name, None)
-        sys.modules.update(saved)
-        # 确保后续测试拿到完整图
-        importlib.import_module("ming_sim.decree_vocabulary")
-        importlib.import_module("ming_sim.due_review")
-        importlib.import_module("ming_sim.urge_lever")
-        importlib.import_module("ming_sim.credit_events")
