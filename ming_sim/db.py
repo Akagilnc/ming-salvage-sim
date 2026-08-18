@@ -16509,7 +16509,11 @@ class GameDB:
 
     @staticmethod
     def coerce_beyond_intent_flag(value: object) -> int:
-        """Normalize extractor/API beyond-intent marker to 0/1 for economy_ledger."""
+        """闭世界肯定识别器：仅契约内肯定表示 →1；缺席/否定/空/畸形一律 →0。
+
+        肯定：True / 非零 int·float / 肯定串集 {"1","true","yes","on","是","有","真"}。
+        开放兜底永不得回归——畸形输入不得捏造肯定标记（0072/0118 真相层）。
+        """
         if value is None:
             return 0
         if isinstance(value, bool):
@@ -16517,9 +16521,7 @@ class GameDB:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return 1 if int(value) != 0 else 0
         text = str(value).strip().lower()
-        if not text or text in {"0", "false", "no", "off", "否", "无"}:
-            return 0
-        return 1
+        return 1 if text in {"1", "true", "yes", "on", "是", "有", "真"} else 0
 
     def record_issue_economy_move(
         self,

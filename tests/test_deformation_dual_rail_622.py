@@ -427,3 +427,44 @@ def test_web_sanitize_seam_beyond_intent_survives_to_transformed(game, content):
     )
     assert result["verdict"]["outcome"] == "transformed"
     assert db.get_decree_dossier(dossier_id)["execution_outcome"] == "transformed"
+
+
+# ── ⑤ coerce 闭世界肯定识别器（#622 r2 畸形归 0）────────────────────
+
+
+def test_coerce_beyond_intent_flag_closed_affirmative_world():
+    """coerce_beyond_intent_flag 是闭世界肯定识别器。
+
+    仅契约内肯定表示（True / 非零 int·float / 肯定串集）→1；
+    缺席、否定、空、任何畸形（含非标量、非契约串）一律 →0。
+    开放兜底永不得回归。
+    """
+    coerce = GameDB.coerce_beyond_intent_flag
+
+    # 肯定集
+    for value in (True, 1, 2, 1.5, "true", "TRUE", "1", "yes", "on", "是", "有", "真"):
+        assert coerce(value) == 1, value
+
+    # 否定 / 缺省
+    for value in (False, 0, 0.0, None, "否", "无", "off", "false", "no", "0"):
+        assert coerce(value) == 0, value
+
+    # 畸形：非标量 + 垃圾串 + 空串 —— 一律 0（不得捏造肯定）
+    for value in ([], {}, [False], {"a": 1}, "null", "None", "0.0", "", "  ", "maybe", "garbage"):
+        assert coerce(value) == 0, value
+
+
+def test_decide_due_review_malformed_beyond_intent_stays_fulfilled():
+    """durable_effects 带 beyond_intent=[] 畸形标记须判 fulfilled 而非 transformed。"""
+    review_input = {
+        "mid_stage": False,
+        "criterion_text": "清丈见成数",
+        "origin_context": "清丈畿辅田亩",
+        "progress_reports": [{"progress_band": "在办", "memorial_text": "已办十之八九"}],
+        "durable_effects": [{
+            "origin_ref": "dossier:0",
+            "delta": 12,
+            "beyond_intent": [],
+        }],
+    }
+    assert decide_due_review_verdict(review_input)["outcome"] == "fulfilled"
