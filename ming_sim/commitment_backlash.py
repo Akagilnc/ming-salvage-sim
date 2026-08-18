@@ -61,8 +61,9 @@ def backlash_origin_ref(commitment_id: int, source_kind: str) -> str:
 def classify_backlash_source(*, execution_outcome: object) -> Optional[str]:
     """执行格终值 → 触发源类；非本片执行格源返回 None。
 
-    总纲：只读结构化执行格。事废不在此判别——事废=consumed 哭谏绑定
-    （#623 结构化既判，见 trigger 硬门 path ①）。执行格 failed 默认 failed_terminal。
+    总纲：只读结构化执行格。事废不在此判别——事废=todo.payload_json.verdict
+    =='persist' 既判痕迹（#623 finalize_persist；见 trigger 硬门 path ①；
+    consumed 单独不得作既判证据）。执行格 failed 默认 failed_terminal。
     """
     outcome = str(execution_outcome or "").strip()
     if outcome == "transformed":
