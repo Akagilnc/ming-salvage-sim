@@ -1,5 +1,5 @@
 import React from "react";
-import { api } from "./api";
+import { ApiRequestError, api } from "./api";
 import { consumeSettleStream } from "./settleStream";
 import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
 import { forwardSteamEvents } from "./steamEvents";
@@ -159,14 +159,38 @@ export function useSettlementFlow({
   const advanceWithoutEdict = async () => {
     setBusy("退朝");
     setError("");
+    // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
+    const expectedTurn = state?.turn?.turn;
     try {
-      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>("/api/decree/advance_without_edict", { method: "POST" });
+      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>(
+        "/api/decree/advance_without_edict",
+        {
+          method: "POST",
+          body: JSON.stringify(
+            expectedTurn != null && Number.isFinite(Number(expectedTurn))
+              ? { expected_turn: Number(expectedTurn) }
+              : {},
+          ),
+        },
+      );
       if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
         return;
       }
       window.location.reload();
     } catch (err: any) {
-      const detail = err?.detail && typeof err.detail === "object" ? err.detail : err;
+      const detail = err instanceof ApiRequestError
+        ? err.detail
+        : (err?.detail && typeof err.detail === "object" ? err.detail : err);
+      const serverTurn = Number(detail?.turn);
+      if (
+        Number(detail?.status_code) === 409
+        && expectedTurn != null
+        && Number.isFinite(serverTurn)
+        && serverTurn > Number(expectedTurn)
+      ) {
+        window.location.reload();
+        return;
+      }
       const failures = detail?.pending_action_failures;
       if (Array.isArray(failures) && await surfacePendingActionFailures(failures)) {
         setError(detail?.message || "退朝失败。");

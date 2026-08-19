@@ -135,6 +135,98 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+describe("#1351 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等", () => {
+  it("POST 携 state.turn 为 expected_turn", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ state: preClickState, pending_action_failures: [] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    const { hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toContain("/api/decree/advance_without_edict");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
+    expect(reload).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("409 且服务端 turn>expected 时按已推进 reload，不设 error 条", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({
+        detail: { message: "月份已变更（当前第 6 月），与退朝令牌不符，请刷新后再试。", turn: 6 },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+    cleanup();
+  });
+
+  it("409 且服务端 turn<=expected 时仍报错条、不 reload", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({
+        detail: { message: "月末结算进行中，请待结算完成后再操作。" },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.advanceWithoutEdict();
+    });
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(host.querySelector("[data-testid=error]")?.textContent || "").not.toBe("");
+    cleanup();
+  });
+});
+
 describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口", () => {
   it("decisions 分支 await loadState：·核账出现 + 四键为月初值，且不 reload", async () => {
     const loadState = vi.fn(async () => awaitingState);
