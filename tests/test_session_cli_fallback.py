@@ -228,8 +228,8 @@ def test_generic_please_your_majesty_does_not_suppress_confirmation_cue():
     _assert_confirmation_cue_appended(seed, answer)
 
 
-def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypatch):
-    """#413/#405：tool-call 已暂存的新密令仍要把玩家任务和大臣补充并入正文真源。"""
+def test_tool_call_staged_new_secret_order_merges_emperor_not_reply(game, monkeypatch):
+    """#413/#405/#1274 K1：staged 合并 = 御旨+既有 schema 内容；reply 不入 content。"""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "工具密令承办官"
@@ -246,7 +246,8 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
 
     result = _result()
     result.pending_action_id = pid
-    result.answer = "臣当先封存兵部辽饷册，再密访关宁诸将。"
+    reply_only = "臣当先封存兵部辽饷册，再密访关宁诸将。"
+    result.answer = reply_only
 
     _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
         result,
@@ -260,25 +261,21 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
     assert "暗查辽饷侵冒" in payload["content"]
     assert "三月内回奏" in payload["content"]
     assert "不可声张" in payload["content"]
-    assert "封存兵部辽饷册" in payload["content"]
+    # reply 实质补充未走 extractor 字段 → 不得散文并入
+    assert "封存兵部辽饷册" not in payload["content"]
+    assert reply_only not in payload["content"]
 
 
-def test_opening_seed_secret_orders_have_no_ceremonial_answer(game):
-    """#1274 K1 seed 开局合约：生产开局同核不预置脏 content（无答奏拼进正文的 seed 密令）。
-
-    诊断：开局无静态 secret_orders seed；若将来有 seed，content 亦不得含答奏标志。
-    """
+def test_opening_seed_secret_orders_empty_or_structured(game):
+    """#1274 K1 seed 开局合约：生产开局同核无预置密令（或 content 来自结构化源）。"""
     db, _state, _ = game
     orders = db.list_secret_orders()
-    # 当前生产开局：零条预置密令（答奏污染来自召对抽取/暂存合并缝，非 seed 数据）
-    assert orders == [] or all(
-        all(m not in str(o.get("content") or "") for m in ("谨领圣谕", "闻命如雷"))
-        for o in orders
-    )
+    # 当前生产开局：零条预置密令
+    assert orders == []
 
 
-def test_tool_call_staged_secret_order_excludes_ceremonial_answer(game, monkeypatch):
-    """#1274 K1：staged 合并缝不得把「谨领圣谕」类答奏拼进 content；补全字段保留。"""
+def test_tool_call_staged_secret_order_structured_merge_keeps_completion(game, monkeypatch):
+    """#1274 K1：staged 合并缝只并御旨+既有 content；补全字段保留；reply 不入。"""
     db, state, _ = game
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
     minister = "李若琏"
@@ -286,7 +283,7 @@ def test_tool_call_staged_secret_order_excludes_ceremonial_answer(game, monkeypa
         state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
         payload={
             "title": "密查关宁欠饷",
-            "content": "密查关宁欠饷。",
+            "content": "密查关宁欠饷。\n方法：密访核册",
             "assignee": minister,
             "tags": [],
             # 漏填期限：由命令文本回填（显式 0 会被保留，见 keeps_explicit_zero 测）
@@ -310,8 +307,7 @@ def test_tool_call_staged_secret_order_excludes_ceremonial_answer(game, monkeypa
     body = payload["content"]
     assert "密查关宁欠饷" in body
     assert "密访" in body or "核" in body
-    for banned in ("谨领圣谕", "闻命如雷"):
-        assert banned not in body, (banned, body)
+    assert "谨领圣谕" not in body  # reply 未入拼装
     assert payload["tags"] == ["关宁", "欠饷"]
     assert payload["deadline_months"] == 3
 
@@ -1875,9 +1871,8 @@ def test_secret_order_body_excludes_audience_role_labels(game, monkeypatch):
     assert confirm_noise not in body
 
 
-def test_secret_context_path_preserves_prior_minister_supplement(game, monkeypatch):
-    """#354 (cmr r3): 「大臣领命回话」的实质补充也是密令正文一部分——若前文大臣加了实质承办
-    步骤，按钮轮只「臣领命」、LLM 又漏掉该补充，补充守门须照样兜底保住它。"""
+def test_secret_context_path_minister_supplement_not_prose_merged(game, monkeypatch):
+    """#1274 K1 / #354：extractor 漏补充时，前文大臣行散文不得兜底并入 content。"""
     db, state, _ = game
     minister = "魏忠贤"
     task_mark, supp_mark = "MARK_TASK_阉党", "MARK_SUPP_封存辽饷册"
@@ -1888,13 +1883,33 @@ def test_secret_context_path_preserves_prior_minister_supplement(game, monkeypat
         db, state, monkeypatch, minister,
         fake_payload={
             "标题": "暗查阉党",
-            "内容": f"命李若琏暗查阉党余孽 {task_mark}。",  # 故意漏大臣补充
+            "内容": f"命李若琏暗查阉党余孽 {task_mark}。",
             "承办人": minister, "期限月数": 0, "标签": ["阉党"],
         },
     )
-    body = row["content"]
-    assert supp_mark in body
-    assert "皇帝：" not in body and "大臣：" not in body
+    assert supp_mark not in row["content"]
+    assert task_mark in row["content"]
+    assert "皇帝：" not in row["content"] and "大臣：" not in row["content"]
+
+
+def test_secret_context_path_minister_supplement_via_extractor_field(game, monkeypatch):
+    """#1274 K1 / #354：extractor「内容」显式携带补充时保留。"""
+    db, state, _ = game
+    minister = "魏忠贤"
+    task_mark, supp_mark = "MARK_TASK_阉党B", "MARK_SUPP_封存辽饷册B"
+    db.append_chat_message(minister, state.turn, "user", f"命李若琏暗查阉党余孽 {task_mark}。")
+    db.append_chat_message(
+        minister, state.turn, "minister", f"臣领密旨，另需封存兵部辽饷册 {supp_mark} 以防串改。")
+    row = _cli_stage_secret_from_prefix(
+        db, state, monkeypatch, minister,
+        fake_payload={
+            "标题": "暗查阉党",
+            "内容": f"命李若琏暗查阉党余孽 {task_mark}；封存兵部辽饷册 {supp_mark}。",
+            "承办人": minister, "期限月数": 0, "标签": ["阉党"],
+        },
+    )
+    assert supp_mark in row["content"]
+    assert task_mark in row["content"]
 
 
 def test_secret_context_path_ignores_unrelated_prior_conversation(game, monkeypatch):
@@ -2614,10 +2629,11 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
     who = "测试承办官F3"
 
     def fake_agy(prompt):
-        if "臣领旨二" in prompt:
-            content = "改查甲；臣领旨二。"
+        # extractor「内容」只给任务本体（不夹答奏）——结构化契约
+        if "改查甲" in prompt or "臣领旨二" in prompt:
+            content = "改查甲"
         else:
-            content = "查甲；臣领旨一。"
+            content = "查甲"
         return (json.dumps({"标题": "查甲", "内容": content, "承办人": who,
                             "期限月数": 0, "标签": []}, ensure_ascii=False), 1)
     monkeypatch.setattr(cb, "_run_agy", fake_agy)
@@ -2642,10 +2658,8 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
             "SELECT content FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
         ).fetchall()
     }
-    # #1274 K1：content 只留密令本体；「臣领旨一/二」答奏不入正文
+    # #1274 K1：content=御旨+extractor；答奏 reply 不入
     assert contents == {"查甲", "改查甲"}
-    for body in contents:
-        assert "领旨" not in body
     assert refreshed.count(who) == 2
 
 

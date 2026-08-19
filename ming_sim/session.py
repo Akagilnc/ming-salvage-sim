@@ -1893,7 +1893,11 @@ class GameSession:
     def _merge_staged_new_secret_order_content(
         self, pending_action_id: int, minister_name: str, player_message: str, minister_reply: str,
     ) -> None:
-        """Tool/API staged new secret orders still need the reply-merge content contract."""
+        """Tool/API/哨兵 staged 新密令：与抽取路同一结构化 content 装配（御旨+既有 schema 内容）。
+
+        #1274 K1 / ADR 0142：reply 永不入 content 拼装；大臣实质补充须已在 payload.content
+        （extractor/tool 显式字段）。reply 仅供承办人线索与对话记录。
+        """
         if not pending_action_id:
             return
         row = self.db.conn.execute(
@@ -1920,27 +1924,17 @@ class GameSession:
         reply = (minister_reply or "").strip()
         from ming_sim.cli_backend import (
             _choose_assignee,
-            _merge_secret_content,
-            _minister_material_clauses,
             _secret_metadata_from_command,
-            _strip_secret_content_acknowledgments,
+            assemble_secret_order_content,
         )
-        # #1274 K1：回话只并入实质补充，答奏（谨领圣谕…）不进 content。
-        reply_material = "\n".join(_minister_material_clauses(reply))
-        existing_key = GameSession._normalized_content_key(content)
-        parts = [content]
+        # 与 _extract_secret_order 同口径：content = 御旨 + 既有 schema 内容；reply 不入。
+        assembled = assemble_secret_order_content(
+            emperor_intent=command,
+            extractor_content=content,
+        )
         changed = False
-        for material in (command, reply_material):
-            material_key = GameSession._normalized_content_key(material)
-            if material_key and material_key not in existing_key:
-                parts.append(material)
-        if len(parts) > 1:
-            payload["content"] = _merge_secret_content(*parts)
-            changed = True
-        # 写前单缝净化：已暂存脏 content（LLM/旧合并夹答奏）同样剥净。
-        cleaned = _strip_secret_content_acknowledgments(str(payload.get("content") or ""))
-        if cleaned != str(payload.get("content") or "").strip():
-            payload["content"] = cleaned
+        if assembled != content:
+            payload["content"] = assembled
             changed = True
 
         assignee = _choose_assignee(

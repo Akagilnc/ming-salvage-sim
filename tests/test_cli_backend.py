@@ -179,12 +179,15 @@ def test_cli_and_durable_secret_exclusion_share_the_same_parser(game, monkeypatc
 
 
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
-    """密令按钮只补期限时，从前文召对恢复任务正文（结构：content 含任务+期限+补充）。"""
+    """密令按钮只补期限时，从前文皇帝任务恢复正文；大臣补充须在 extractor「内容」。"""
     task = "查辽东军饷有无侵冒"
     material = "封存兵部辽饷册"
     deadline_bit = "三月内回奏"
+    # extractor 契约字段已含任务+补充+期限（不再从大臣行散文抠）
     _patch_backend(monkeypatch, _so_json(
-        标题="密查辽东军饷", 内容=deadline_bit, 承办人="", 期限月数=3, 标签=["辽饷"],
+        标题="密查辽东军饷",
+        内容=f"{task}，着李若琏暗查并{material}，{deadline_bit}",
+        承办人="李若琏", 期限月数=3, 标签=["辽饷"],
     ))
     so = _resolve_secret(
         monkeypatch, "臣领旨。", f"密令如下：{deadline_bit}",
@@ -198,18 +201,83 @@ def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatc
     assert task in so["content"]
     assert deadline_bit in so["content"]
     assert material in so["content"]
+    # force_default 上下文路径固定默认召对大臣为承办人
+    assert so["assignee"] == "孙承宗"
+
+
+def test_secret_content_assembly_is_emperor_plus_extractor_only():
+    """#1274 K1：拼装输入结构化——仅 emperor_intent + extractor_content；无 reply 形参。"""
+    import inspect
+
+    params = inspect.signature(cb.assemble_secret_order_content).parameters
+    assert set(params) == {"emperor_intent", "extractor_content"}
+    assert "reply" not in params and "minister_reply" not in params
+
+    task = "密查关宁欠饷"
+    extracted = f"{task}，三月内回奏，方法：密访核册"
+    body = cb.assemble_secret_order_content(
+        emperor_intent=task,
+        extractor_content=extracted,
+    )
+    assert body == extracted
+    # 御旨未覆盖时兜底并入御旨，仍不接受第三路 reply
+    partial = "臣已领旨办理。"
+    merged = cb.assemble_secret_order_content(
+        emperor_intent=f"{task}，三月内回奏",
+        extractor_content=partial,
+    )
+    assert task in merged and "三月内回奏" in merged
+    assert partial in merged
+
+
+def test_secret_content_assembly_mutation_reply_not_in_signature_or_merge_sites(monkeypatch):
+    """变异：把 reply 塞回拼装必红——签名与三路源码不得再合并 reply/material。"""
+    import inspect
+
+    from ming_sim.session import GameSession
+
+    sig = inspect.signature(cb.assemble_secret_order_content)
+    assert "reply" not in sig.parameters and "minister_reply" not in sig.parameters
+
+    extract_src = inspect.getsource(cb._extract_secret_order)
+    assert "assemble_secret_order_content" in extract_src
+    assert "_minister_material_clauses" not in extract_src
+    assert "_strip_secret_content_acknowledgments" not in extract_src
+    assert "_content_reflects_minister_supplements" not in extract_src
+
+    staged_src = inspect.getsource(GameSession._merge_staged_new_secret_order_content)
+    assert "assemble_secret_order_content" in staged_src
+    assert "_minister_material_clauses" not in staged_src
+    assert "reply_material" not in staged_src
+    assert "_strip_secret_content_acknowledgments" not in staged_src
+
+    # 运行时：reply 独有标记不得仅因回话出现而进入 content
+    reply_mark = "MARK_REPLY_ONLY_答奏不得入正文"
+    so = _resolve_secret(
+        monkeypatch,
+        f"臣领旨。{reply_mark}",
+        "密令如下：密查关宁欠饷，三月内回奏",
+        default="李若琏",
+        payload=_so_json(
+            内容="密查关宁欠饷，三月内回奏", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
+        ),
+    )
+    assert so is not None
+    assert reply_mark not in so["content"]
+    assert "密查关宁欠饷" in so["content"]
 
 
 @pytest.mark.parametrize(
-    "case_id,llm_content,llm_assignee,reply,message,expect_bits,expect_assignee",
+    "case_id,llm_content,llm_assignee,reply,message,expect_content_bits,absent_content_bits,expect_assignee",
     [
         (
-            "bad_llm_ack_content",
+            "bad_llm_ack_falls_back_to_emperor",
             "臣领密旨，可授李若琏暗查。",
             "李若琏",
             "臣领密旨，可授李若琏暗查。",
             "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "李若琏"),
+            ("查辽东军饷有无侵冒", "三月内回奏"),
+            (),
             "李若琏",
         ),
         (
@@ -219,56 +287,62 @@ def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatc
             "臣领密旨，可授李若琏暗查。",
             "密令如下：查辽东军饷有无侵冒，三月内回奏",
             ("查辽东军饷有无侵冒", "三月内回奏", "李若琏"),
+            (),
             "李若琏",
         ),
         (
-            "drops_minister_assignee",
+            "reply_assignee_hint_not_forced_into_content",
             "查辽东军饷有无侵冒，三月内回奏",
             "",
             "臣领密旨，可授李若琏暗查。",
             "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "李若琏"),
+            ("查辽东军饷有无侵冒", "三月内回奏"),
+            (),  # 承办人走结构化字段/线索，不要求写入 content
             "李若琏",
         ),
         (
-            "assignee_field_ok_content_drops_name",
-            "查辽东军饷有无侵冒，三月内回奏",
-            "李若琏",
-            "臣领密旨，可授李若琏暗查。",
-            "密令如下：查辽东军饷有无侵冒，三月内回奏",
-            ("查辽东军饷有无侵冒", "李若琏"),
-            "李若琏",
-        ),
-        (
-            "drops_non_assignee_supplements",
-            "查辽东军饷有无侵冒，三月内回奏",
+            "extractor_carries_minister_supplement",
+            "查辽东军饷有无侵冒，三月内回奏；须先封存兵部辽饷册，再密访关宁诸将",
             "",
             "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
             "密令如下：查辽东军饷有无侵冒，三月内回奏",
             ("查辽东军饷有无侵冒", "三月内回奏", "封存兵部辽饷册", "密访关宁诸将"),
+            (),
+            "王在晋",
+        ),
+        (
+            "reply_only_supplement_not_merged_without_extractor",
+            "查辽东军饷有无侵冒，三月内回奏",
+            "",
+            "臣领密旨，须先封存兵部辽饷册，再密访关宁诸将。",
+            "密令如下：查辽东军饷有无侵冒，三月内回奏",
+            ("查辽东军饷有无侵冒", "三月内回奏"),
+            ("封存兵部辽饷册", "密访关宁诸将"),
             "王在晋",
         ),
     ],
     ids=[
-        "bad_llm_ack_content",
+        "bad_llm_ack_falls_back_to_emperor",
         "partial_drops_deadline_clause",
-        "drops_minister_assignee",
-        "assignee_field_ok_content_drops_name",
-        "drops_non_assignee_supplements",
+        "reply_assignee_hint_not_forced_into_content",
+        "extractor_carries_minister_supplement",
+        "reply_only_supplement_not_merged_without_extractor",
     ],
 )
-def test_secret_prefix_merge_guards(
+def test_secret_prefix_structured_assembly_guards(
     monkeypatch, case_id, llm_content, llm_assignee, reply, message,
-    expect_bits, expect_assignee,
+    expect_content_bits, absent_content_bits, expect_assignee,
 ):
-    """密令 merge 守门：坏/残 LLM 正文仍保留御旨与大臣实质补充（公开 resolve）。"""
+    """#1274 K1：content=御旨+extractor；reply 不入拼装；承办人仍可从回话线索选定。"""
     so = _resolve_secret(
         monkeypatch, reply, message,
         payload=_so_json(内容=llm_content, 承办人=llm_assignee, 期限月数=3, 标签=["辽饷"]),
     )
     assert so is not None
-    for bit in expect_bits:
+    for bit in expect_content_bits:
         assert bit in so["content"], (case_id, bit, so["content"])
+    for bit in absent_content_bits:
+        assert bit not in so["content"], (case_id, bit, so["content"])
     assert so["assignee"] == expect_assignee
     assert so["deadline_months"] == 3
 
@@ -283,15 +357,15 @@ def test_secret_prefix_merge_guards(
     ],
     ids=["协办", "监督", "处理", "负责"],
 )
-def test_secret_action_verb_not_swallowed_by_generic_chengban(
+def test_secret_action_verb_preserved_when_in_extractor_content(
     monkeypatch, action_verb, person, reply,
 ):
-    """公开 resolve：LLM 把大臣动作词泛化成『承办』时，协办/监督/处理/负责须各自保留。"""
+    """公开 resolve：动作词由 extractor「内容」显式承载（非回话散文回填）。"""
     task = "查辽东军饷有无侵冒"
     so = _resolve_secret(
         monkeypatch, reply, f"密令如下：{task}",
         payload=_so_json(
-            内容=f"{task}，着{person}承办", 承办人=person, 期限月数=3, 标签=["辽饷"],
+            内容=f"{task}，着{person}{action_verb}", 承办人=person, 期限月数=3, 标签=["辽饷"],
         ),
     )
     assert so is not None
@@ -309,8 +383,8 @@ def test_secret_assignee_defaults_when_unspecified(monkeypatch):
     assert so["assignee"] == "毕自严"
 
 
-def test_secret_ack_only_reply_does_not_force_merge(monkeypatch):
-    """纯领命回话无实质补充 → 守门放行合法 LLM 正文，不强制并入领命噪声。"""
+def test_secret_ack_only_reply_does_not_enter_content(monkeypatch):
+    """纯领命回话不入 content；合法 extractor 正文原样采纳。"""
     task = "查辽东军饷有无侵冒，着李若琏暗查"
     so = _resolve_secret(
         monkeypatch, "领命。", f"密令如下：{task}",
@@ -322,48 +396,43 @@ def test_secret_ack_only_reply_does_not_force_merge(monkeypatch):
     assert so["assignee"] == "李若琏"
 
 
-def test_secret_content_excludes_ceremonial_answer_keeps_completion(monkeypatch):
-    """#1274 K1：content=补全后密令本体；「谨领圣谕」类答奏整段不入 content。
+def test_secret_content_structured_assembly_keeps_completion(monkeypatch):
+    """#1274 K1：content=御旨+extractor schema 内容；补全字段（标签/期限）保留。
 
-    标签/期限/方法补全为设计保留；答奏归对话/回执，不落密令正文。
+    答奏只在回话侧；拼装不读 reply。extractor「内容」已含任务与方法。
     """
     task = "密查关宁欠饷"
     answer = (
         "臣李若琏，谨领圣谕，闻命如雷。"
         "臣当密访关宁诸将，核其欠饷册籍，三月内据实回奏。"
     )
-    # LLM 脏内容：把答奏拼进正文（召对抽取常见漂移）
-    dirty = (
-        f"{task}\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册\n"
-        f"{answer}"
-    )
+    extracted = f"{task}\n方法：密访核册"
     so = _resolve_secret(
         monkeypatch,
         answer,
         f"密令如下：{task}\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册",
         default="李若琏",
         payload=_so_json(
-            标题=task, 内容=dirty, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
+            标题=task, 内容=extracted, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
         ),
     )
     assert so is not None
     body = so["content"]
     assert task in body
-    # 负向：答奏标志整段不入 content
-    for banned in ("谨领圣谕", "闻命如雷", "臣李若琏，谨领"):
-        assert banned not in body, (banned, body)
+    assert body == extracted or task in body
     # 补全字段保留（结构化 + 正文方法）
     assert so["deadline_months"] == 3
     assert "关宁" in so["tags"] and "欠饷" in so["tags"]
     assert "密访" in body or "核" in body
     assert so["assignee"] == "李若琏"
+    # reply 独有答奏不因回话而进入（extractor 未携带）
+    assert answer not in body
 
 
-def test_secret_content_merge_fallback_strips_ceremonial_answer(monkeypatch):
-    """#1274 K1：御旨守门失败走兜底合并时，仍不得把答奏原文拼进 content。"""
+def test_secret_content_merge_fallback_excludes_reply(monkeypatch):
+    """#1274 K1：御旨守门失败走兜底合并时，只并御旨+extractor，不并 reply。"""
     task = "密查关宁欠饷"
     answer = "臣李若琏，谨领圣谕，闻命如雷。"
-    # LLM 跑题 → 触发兜底合并 emperor + llm + reply
     so = _resolve_secret(
         monkeypatch,
         answer,
@@ -376,8 +445,7 @@ def test_secret_content_merge_fallback_strips_ceremonial_answer(monkeypatch):
     assert so is not None
     body = so["content"]
     assert task in body
-    assert "谨领圣谕" not in body
-    assert "闻命如雷" not in body
+    assert answer not in body
     assert so["deadline_months"] == 3
     assert "关宁" in so["tags"]
 
@@ -392,8 +460,8 @@ def test_secret_content_merge_fallback_strips_ceremonial_answer(monkeypatch):
     ],
     ids=["colon_multiline", "领命_即办", "谨遵", "遵旨"],
 )
-def test_secret_mixed_ack_clauses_stripped_from_persisted_content(monkeypatch, reply):
-    """混合领命+实质补充：分句剥领命后守门放行完整 LLM 正文；领命/即办/谨遵/遵旨不得入档。"""
+def test_secret_mixed_reply_does_not_override_extractor_content(monkeypatch, reply):
+    """混合领命+实质补充的回话不覆盖 extractor 正文；content 以 schema 字段为准。"""
     task, material = "查辽东军饷有无侵冒", "封存兵部辽饷册"
     llm_content = f"{task}，着李若琏暗查并{material}，三月内回奏"
     so = _resolve_secret(
@@ -403,8 +471,6 @@ def test_secret_mixed_ack_clauses_stripped_from_persisted_content(monkeypatch, r
     assert so is not None
     assert so["content"] == llm_content
     assert task in so["content"] and material in so["content"]
-    for ack in ("领命", "即办", "谨遵", "遵旨"):
-        assert ack not in so["content"], (ack, so["content"])
     assert so["assignee"] == "李若琏"
 
 
@@ -452,6 +518,7 @@ def test_secret_assignee_does_not_drift_to_unvalidated_llm_field(monkeypatch):
 
 
 def test_secret_assignee_prefers_hint_when_bad_llm_field_survives_merge(monkeypatch):
+    """正文可留 LLM 写的王在晋；承办人仍采信回话建议线索李若琏（字段≠content 拼装）。"""
     so = _resolve_secret(
         monkeypatch,
         "臣领密旨，可授李若琏暗查。",
@@ -462,7 +529,8 @@ def test_secret_assignee_prefers_hint_when_bad_llm_field_survives_merge(monkeypa
         ),
     )
     assert so is not None
-    assert "王在晋" in so["content"] and "李若琏" in so["content"]
+    assert "王在晋" in so["content"]
+    # reply 不入 content 拼装——李若琏不必出现在正文，但 assignee 字段采信回话线索
     assert so["assignee"] == "李若琏"
 
 
@@ -623,15 +691,19 @@ def test_run_backend_dispatch(monkeypatch, env, attr, out):
 # ── secret extract keep family ──
 
 def test_secret_extract_backend_error_falls_back(monkeypatch):
+    """extractor 失败：content 兜底御旨；reply 不入拼装（#1274 K1）。"""
     monkeypatch.setattr(cb, "_run_backend", lambda p: (_ for _ in ()).throw(RuntimeError("backend down")))
     monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    reply = "臣领密旨，暗查辽东军饷虚冒事。"
     acts = cb.resolve_minister_actions(
-        "臣领密旨，暗查辽东军饷虚冒事。", "密令如下：查辽东军饷", default_assignee="王在晋",
+        reply, "密令如下：查辽东军饷", default_assignee="王在晋",
     )
     so = acts["secret_order"]
     assert so is not None
     assert "查辽东军饷" in so["content"]
-    assert "暗查辽东军饷虚冒事" in so["content"]
+    # reply 实质补充未进 extractor → 不得散文并入 content
+    assert "暗查辽东军饷虚冒事" not in so["content"]
+    assert reply not in so["content"]
     assert so["assignee"] == "王在晋"
     assert so["deadline_months"] == 0
 
