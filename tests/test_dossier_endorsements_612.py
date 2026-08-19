@@ -593,22 +593,24 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
     assert int(open_n["id"]) == night_id4
     monkeypatch.setattr(db, "settle_endorsement_batch", real_settle)
 
-    # ── Case E: story-drain fails → still join/drain; original from cleanup ─
+    # ── Case E: story-drain fails → abandon scaffold（#1353 禁 join 拉长双源窗）─
     night_id5, _cid5 = _prep("phase2-story-drain-cleanup", "臣五保。")
-    drain_joined = threading.Event()
+    drain_abandoned = threading.Event()
 
     def _boom_drain(*_a, **_k):
         raise RuntimeError("story drain boom")
 
-    def _boom_join(*_a, **_k):
-        drain_joined.set()
-        raise RuntimeError("close join cleanup boom")
-
     def _ok_beat(_inputs):
         return "不应落账的收夜旁白"
 
+    real_abandon = scene_registry.abandon
+
+    def _track_abandon(ctid):
+        drain_abandoned.set()
+        return real_abandon(ctid)
+
     monkeypatch.setattr(an, "_drain_story_extraction_or_fail_closed", _boom_drain)
-    monkeypatch.setattr(bo, "join_close_scene_on_registry", _boom_join)
+    monkeypatch.setattr(scene_registry, "abandon", _track_abandon)
     monkeypatch.setattr(
         agents_mod, "create_endorsement_extractor_agent",
         lambda cfg: _SkipBind(),
@@ -620,9 +622,8 @@ def test_close_night_beat_and_endorsement_exceptions_terminate_before_reopen(gam
             beat_generator=_ok_beat,
             scene_registry=scene_registry,
         )
-    assert drain_joined.is_set(), "story-drain failure must still join/drain close scene"
-    assert ei5.value.__cause__ is not None
-    assert "close join cleanup boom" in str(ei5.value.__cause__)
+    assert drain_abandoned.is_set(), "story-drain failure must abandon close scaffold"
+    assert ei5.value.__cause__ is None or "join" not in str(ei5.value.__cause__).lower()
     failed5 = an.get_night(db, night_id5)
     assert failed5["status"] == an.NIGHT_STATUS_OPEN
     assert int(failed5["close_commit_cursor"] or 0) == 0

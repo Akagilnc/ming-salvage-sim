@@ -678,6 +678,8 @@ class WebGame:
         self.session = GameSession(db_path, llm_config)
         # #542：Web/CLI/收夜共用 session 持有的真实 scene LLM adapter；测试可在此 seam 注入 fake。
         self._write_gate = threading.Lock()
+        # #1353：session 口令收夜与颁诏 auto_close 同穿既有 runtime write_gate（禁第二锁）。
+        self.session._write_gate = self._write_gate  # type: ignore[attr-defined]
         # #396 Gap B: 排队等 gate 的旧召对 worker 计数 + 条件变量。
         # drain 须等计数归零（所有排队 worker 跑完）再关连接——否则只等当前持锁者，
         # drain 抢下一轮 acquire 后关 session，排队 worker 永不跑或写 closed DB。
@@ -793,6 +795,8 @@ class WebGame:
     def _rebuild_session(self, llm_config: LLMConfig) -> None:
         """用新 llm_config（或换完 DB 后）重建 GameSession + 内存缓存。"""
         self.session = GameSession(self.db_path, llm_config)
+        # 换档后仍共享既有 runtime write_gate（#1353 口令收夜穿锁）。
+        self.session._write_gate = self._runtime_write_gate()  # type: ignore[attr-defined]
         self.session.begin_turn()
         self.chat_history = {name: [] for name in self.session.content.characters}
         for name, msgs in self.db.load_all_chat_history().items():
@@ -1805,9 +1809,13 @@ class WebGame:
                     )
                 raise
             # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
+            # #1353：穿既有 runtime write_gate，与颁诏 auto_close 同行为（禁第二锁）。
             close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
             if close_after is not None:
-                close_after(getattr(result, "court_action", "") or "")
+                close_after(
+                    getattr(result, "court_action", "") or "",
+                    write_gate=self._runtime_write_gate(),
+                )
             return payload
         finally:
             self._complete_pending_write()
@@ -1932,9 +1940,13 @@ class WebGame:
                     )
                 raise
             # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
+            # #1353：穿既有 runtime write_gate，与颁诏 auto_close 同行为（禁第二锁）。
             close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
             if close_after is not None:
-                close_after(getattr(result, "court_action", "") or "")
+                close_after(
+                    getattr(result, "court_action", "") or "",
+                    write_gate=self._runtime_write_gate(),
+                )
             return payload
         finally:
             self._complete_pending_write()
@@ -2607,12 +2619,20 @@ class WebGame:
         """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import NIGHT_STATUS_CLOSING, get_open_night
+        from ming_sim.audience_night import (
+            NIGHT_STATUS_CLOSING,
+            _pending_extraction_rows,
+            get_open_night,
+        )
 
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
         night_status = str((open_n or {}).get("status") or "")
-        rows = self.db.list_unextracted_replies(night_id=nid)
+        # #1353：与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
+        if nid is not None and int(nid) > 0:
+            rows = _pending_extraction_rows(self.db, int(nid))
+        else:
+            rows = self.db.list_unextracted_replies(night_id=nid)
         pending = [
             {
                 "chat_turn_id": int(r.get("chat_turn_id") or 0),
@@ -2801,10 +2821,14 @@ class WebGame:
                     return
 
                 # #526：回话已落库后收夜。失败响亮可见，不得回滚已成回话；夜可恢复。
+                # #1353：穿既有 runtime write_gate，与颁诏 auto_close 同行为（禁第二锁）。
                 close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
                 if close_after is not None:
                     try:
-                        close_after((payload or {}).get("court_action") or "")
+                        close_after(
+                            (payload or {}).get("court_action") or "",
+                            write_gate=write_gate,
+                        )
                     except Exception as close_err:
                         from ming_sim.audience_night import AudienceNightError
                         if isinstance(close_err, AudienceNightError):
