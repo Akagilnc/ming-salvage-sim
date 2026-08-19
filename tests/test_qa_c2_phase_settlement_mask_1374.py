@@ -163,3 +163,46 @@ def test_resolve_stream_entry_failure_exits_display_when_not_front_half(game, mo
     assert "event: error" in serialized
     assert db.get_month_open_snapshot(int(state.turn)) is None
     assert runtime.state_payload()["turn"]["settlement_display"] is False
+
+
+def test_resolve_stream_clear_throw_emits_error_not_done(game, monkeypatch):
+    """负向：stream __done__ 须在 clear 成功后入队——clear 抛不得先推 done。"""
+    db, state, _content = game
+    runtime = _runtime(db, state)
+    state.turn_phase = TurnPhase.AWAITING_DECISION.value
+    db.save_state(state)
+    db.capture_month_open_snapshot(state)
+    db.save_pending_decisions(int(state.turn), [{
+        "event_id": "evt-1",
+        "title": "饷银",
+        "context": "是否发帑",
+        "options": [{"label": "发", "hint": "发内帑"}],
+    }])
+
+    def _submit(choices, on_event=None, cheat_directive=""):
+        if on_event:
+            on_event("stage", "数值推演结算")
+        # 回 summoning 常态，使成功支 clear_orphan 真触发
+        state.turn_phase = TurnPhase.SUMMONING.value
+        db.save_state(state)
+        return "邸报：测。"
+
+    runtime.session.submit_decisions = _submit
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
+    monkeypatch.setattr(web_app, "_failed_secret_order_ids_for_turn", lambda *_a, **_k: set())
+    monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
+
+    import ming_sim.month_open_snapshot as mos
+
+    def _boom_orphan(_db, _state):
+        raise RuntimeError("stream clear boom")
+
+    monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
+
+    serialized = asyncio.run(_drain_resolve_sse([{"label": "发"}]))
+    assert "event: done" not in serialized, "clear 抛后禁推 done"
+    assert "event: error" in serialized
+    assert "stream clear boom" in serialized
+    assert runtime.state_payload()["turn"]["settlement_display"] is False

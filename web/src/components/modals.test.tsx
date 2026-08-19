@@ -60,6 +60,7 @@ function renderModal(props: {
   onRetryReply?: (ministerName: string) => void;
   extractionPendingCount?: number;
   extractionHealedHint?: string;
+  registerHealedHintUpdate?: (update: (hint: string) => void) => void;
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
@@ -85,6 +86,7 @@ function renderModal(props: {
     const [input, setInput] = React.useState("");
     const [currentNightId, setCurrentNightId] = React.useState(props.currentNightId ?? 0);
     const [undoneChatTurnId, setUndoneChatTurnId] = React.useState<number | null>(props.undoneChatTurnId ?? null);
+    const [healedHint, setHealedHint] = React.useState(props.extractionHealedHint ?? "");
     const [chat, dispatchChat] = React.useReducer(chatReducer, props.chat ?? []);
     const setChat = React.useCallback((next: ChatMessage[]) => dispatchChat({
       type: "history",
@@ -99,6 +101,7 @@ function renderModal(props: {
     React.useEffect(() => props.registerNightUpdate?.(setCurrentNightId), []);
     React.useEffect(() => props.registerUndoUpdate?.(setUndoneChatTurnId), []);
     React.useEffect(() => props.registerChatDispatch?.(dispatchChat), []);
+    React.useEffect(() => props.registerHealedHintUpdate?.(setHealedHint), []);
     return (
       <ChatModal
         minister={props.minister}
@@ -124,7 +127,7 @@ function renderModal(props: {
         secretOrders={props.secretOrders ?? []}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
-        extractionHealedHint={props.extractionHealedHint}
+        extractionHealedHint={healedHint}
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
@@ -554,6 +557,37 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(note?.textContent).toMatch(/自愈/);
     expect(note?.textContent).toMatch(/可重试/);
     expect(document.querySelector('[data-testid="extraction-pending"]')).toBeNull();
+  });
+
+  it("#1353 closing-healed：hint 晚到时滚动 effect 须跟尾（依赖含 extractionHealedHint）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 0, messages: [] }),
+    }));
+    let updateHint!: (hint: string) => void;
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      extractionPendingCount: 0,
+      chat: [{ role: "user", content: "初问" }],
+      registerHealedHintUpdate: (update) => { updateHint = update; },
+    });
+    const log = host.querySelector(".chat-log") as HTMLDivElement;
+    let scrollHeight = 600;
+    Object.defineProperties(log, {
+      scrollHeight: { get: () => scrollHeight },
+      clientHeight: { get: () => 200 },
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(log.scrollTop).toBe(600);
+
+    scrollHeight = 750;
+    await act(async () => {
+      updateHint("待补账本已自愈，可重试收夜或颁诏。");
+      await Promise.resolve();
+    });
+    expect(host.querySelector('[data-testid="extraction-healed"]')?.textContent).toMatch(/自愈/);
+    expect(log.scrollTop).toBe(750);
   });
 });
 
