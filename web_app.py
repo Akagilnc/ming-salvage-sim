@@ -1943,9 +1943,14 @@ class WebGame:
         # 传 agent= 让 _dump_llm_messages 走 agent.get_last_run_output() fallback 取 system/user。
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}", agent=agent)
         answer = "".join(chunks).strip()
-        fail_if_llm_error(answer, "LLM 调用")
-        if not answer and run_output is not None:
-            answer = extract_agent_text(run_output)
+        # #1299/#1310：run_output.status=ERROR 时 extract 翻 typed（禁横幅当台词）；
+        # 有 chunks 也必须过 status 闸，不能只在空 answer 时才 extract。
+        if run_output is not None:
+            extracted = extract_agent_text(run_output)
+            if not answer:
+                answer = extracted
+        else:
+            fail_if_llm_error(answer, "LLM 调用")
         if not answer:
             raise LLMUnavailable("LLM 调用失败：流式回复为空。")
 
