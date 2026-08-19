@@ -19,7 +19,13 @@ from ming_sim.decree import (
     atomic_and_reload,
     persist_resolve_context,
     pre_settle,
+    secret_dossier_ids_from_secret_orders,
     settle_with_delta,
+)
+from ming_sim.settlement_payload import (
+    _select_secret_orders_for_sim,
+    augment_secret_orders_with_due_commitments,
+    group_secret_orders_for_sim,
 )
 import ming_sim.issues as issues_mod
 from ming_sim.issues import apply_score_extraction, validate_delta_shape as _validate_delta_shape
@@ -141,6 +147,18 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
     dossier_ids_at_input = {
         int(row["id"]) for row in db.list_decree_dossiers_for_simulation(before_turn)
     }
+    # #1252: freeze secret-order batch the same way decree does — DB select +
+    # group, then derive secret_dossier_ids_at_input. Persist the grouped
+    # secret_orders so recovery can re-derive the closed set (never []).
+    secret_orders_for_sim = group_secret_orders_for_sim(
+        _select_secret_orders_for_sim(db)
+    )
+    secret_orders_for_sim = augment_secret_orders_with_due_commitments(
+        secret_orders_for_sim, db, state,
+    )
+    secret_dossier_ids_at_input = secret_dossier_ids_from_secret_orders(
+        db, secret_orders_for_sim,
+    )
     # 「settling 已提交、context 未落」的窗口=违背「settling ⟹ context 可见」不变式。
     with atomic_and_reload(db, state, content=content, registry=registry):
         pre_settle(state, db)
@@ -152,7 +170,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
                     {"id": dossier_id} for dossier_id in sorted(dossier_ids_at_input)
                 ],
             },
-            secret_orders=[], relevant_memories=[],
+            secret_orders=secret_orders_for_sim, relevant_memories=[],
             source=source,  # 持久化来源，崩溃恢复重放据此还原（#144）
         )
     report = settle_with_delta(
@@ -170,6 +188,7 @@ def run_settle(db, state, content, raw_delta, *, narrative="", decree_text="", r
         delta_applier=lambda d, s, ex, ct, rg: apply_score_extraction(
             d, s, ex, content=ct, registry=rg, llm_config=_DETERMINISTIC_LLM,
             dossier_ids_at_input=dossier_ids_at_input,
+            secret_dossier_ids_at_input=secret_dossier_ids_at_input,
         ),
     )
     # settle 成功推进后才记审计：driver 不注入 chapter_recorder（无 llm_config，章节记忆由对话方另产），
