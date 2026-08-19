@@ -258,7 +258,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `dossier_participants` — S2 案卷参与人追加
-- 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
+- 每项必须带 `dossier_id`、`character_id`、`tier`、`delegator_id`；`tier` 只收 `主办` / `协办` / `知情`，`role` 可选。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
 ### `secret_dossier_participants` — #1252 密令案卷参与人追加
