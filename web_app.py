@@ -4499,12 +4499,18 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         ev_queue.put((kind, data))
 
     def worker() -> None:
+        game = None
+        turn_before = 0
+        failed_before: set[int] = set()
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
-            with _game_write_gate(game):
+            # #1374：与 issue/stream 同款受理样板——phase2 窗有核账展示态；
+            # decided 先写后跑的崩溃安全时序仍在 session.submit_decisions 内，不动。
+            # 锁语义 = 阻塞 _game_write_gate（与 issue/stream 同，禁改非阻塞）。
+            with _settlement_period_entry(game, write_cm=_game_write_gate):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
                 )
@@ -4525,17 +4531,16 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                     pending_action_failures=failures,
                 )))
         except ValueError as e:
+            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
-                else []
+                if game is not None else []
             )
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
-                else []
+                if game is not None else []
             )
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
             ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))

@@ -2,6 +2,12 @@ import type { PendingDecision } from "./types";
 
 export const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。";
 
+/** #1374：phase2 已落 decided（先写后跑）——不可再当待批弹窗，禁「可再提交」假象。 */
+export function isDecisionAlreadyDecided(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  return String((event as { status?: unknown }).status || "") === "decided";
+}
+
 export function pendingDecisionsFrom(events: unknown[]): PendingDecision[] {
   if (events.length === 0) return [];
   const validated: PendingDecision[] = [];
@@ -56,6 +62,10 @@ export function routeRefreshDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
+  // #1374：全员 decided = phase2 在办（崩溃安全先写），不重开批红弹窗、不报损坏。
+  if (events.length > 0 && events.every(isDecisionAlreadyDecided)) {
+    return { pendingDecisions: null, error: null };
+  }
   const decisions = pendingDecisionsFrom(events);
   if (decisions.length === 0) {
     return { pendingDecisions: [], error: PAUSED_DECISION_MSG };
@@ -68,6 +78,10 @@ export function routeRetryDecisions(
   events: unknown[],
 ): DecisionRouteOutcome {
   if (phase !== "awaiting_decision") {
+    return { pendingDecisions: [], error: "" };
+  }
+  // #1374：phase2 在办时重拉不弹「可再提交」、不清成错误条。
+  if (events.length > 0 && events.every(isDecisionAlreadyDecided)) {
     return { pendingDecisions: [], error: "" };
   }
   const decisions = pendingDecisionsFrom(events);
