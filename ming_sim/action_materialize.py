@@ -56,6 +56,21 @@ class MaterializeCtx:
     chat_turn_id: int = 0
 
 
+def _draft_path_took_effect(ctx: MaterializeCtx) -> bool:
+    """#1380：拟旨通道是否已占本轮（含显式前缀 / 对话拟旨 / multi draft 候选）。"""
+    from ming_sim.cli_backend import _DRAFT_PREFIXES
+
+    if ctx.draft_staged or ctx.intent_kind == "draft":
+        return True
+    if (ctx.message_text or "").startswith(_DRAFT_PREFIXES):
+        return True
+    if ctx.intent_candidates and any(
+        str(c.get("kind") or "") == "draft" for c in ctx.intent_candidates
+    ):
+        return True
+    return False
+
+
 def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
     """按登记 priority 依次调用已注册 materializer。
 
@@ -98,6 +113,11 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             )
             fn(candidate_ctx)
             ctx.out.update(candidate_out)
+            if candidate_ctx.draft_staged:
+                ctx.draft_staged = True
+        # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
+        if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
+            parallel_stage_office_from_appointment_intent(ctx)
         return
 
     seen: set = set()
@@ -107,6 +127,11 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
             continue
         seen.add(fn)
         fn(ctx)
+    # #1380：LLM 分类拟旨路并行 office（无任免意图则 no-op）。
+    # 显式「拟旨如下」前缀任免走随诏 extractor office_changes（#344 US3 / ADR 0028 /
+    # test_decree_prefix_appointment_not_double_staged）；禁并行 LLM 抽取。
+    if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
+        parallel_stage_office_from_appointment_intent(ctx)
 
 
 # ── handlers（委派既有 stage，不另造落库）────────────────────────────
@@ -382,20 +407,30 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             roster = session.db._normalize_participant_roster(
                 roster, strict_structured=True,
             )
-            roster = [
-                {
+            # #1279 / #1380 r1 二选一：静默滤非人（filter-before-canon，禁司礼监→王承恩）。
+            # 人话提示留给直达 _validate_participant_roster_references 的路径。
+            from ming_sim.participant_roster import is_non_person_participant_name
+            person_roster: List[Dict[str, Any]] = []
+            for item in roster:
+                cid = str(item.get("character_id") or "").strip()
+                if is_non_person_participant_name(cid):
+                    continue
+                item = {
                     **item,
                     "character_id": _canonical_minister_key(
-                        session.content, item.get("character_id"), session.db,
+                        session.content, cid, session.db,
                     ),
-                    **({
-                        "delegator_id": _canonical_minister_key(
-                            session.content, item.get("delegator_id"), session.db,
-                        ),
-                    } if item.get("delegator_id") else {}),
                 }
-                for item in roster
-            ]
+                delegator = str(item.get("delegator_id") or "").strip()
+                if delegator:
+                    if is_non_person_participant_name(delegator):
+                        item["delegator_id"] = None
+                    else:
+                        item["delegator_id"] = _canonical_minister_key(
+                            session.content, delegator, session.db,
+                        )
+                person_roster.append(item)
+            roster = person_roster
             draft_res["participant_roster"] = roster
         _target = str(draft_res.get("target_candidate") or "")
         _target_id = int(_target) if _target.isdigit() else None
@@ -494,6 +529,191 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             )
             ctx.out["pending_action_id"] = pid
         ctx.draft_staged = True
+
+
+def _structured_appointment_from_ctx(ctx: MaterializeCtx) -> Optional[Dict[str, Any]]:
+    """P5：先读结构化 intent / multi 候选，有则免 LLM 抽取。
+
+    返回 appointment 形 dict（含 appoint_action/name/office…）；无可复用结构返 None。
+    注意：None 在「分类器/预分类已跑且无 appointment」与「分类器未跑」两种语义下
+    均可能出现——调用方须用 intent/candidates 是否非 None 区分，见 parallel。
+    """
+    intent = ctx.intent
+    if isinstance(intent, dict) and str(intent.get("kind") or "") == "appointment":
+        return dict(intent)
+    if isinstance(intent, dict):
+        action = str(intent.get("appoint_action") or "").strip()
+        if action in {"任命", "罢免"}:
+            return dict(intent)
+    for candidate in ctx.intent_candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        if str(candidate.get("kind") or "") == "appointment":
+            return dict(candidate)
+        action = str(candidate.get("appoint_action") or "").strip()
+        if action in {"任命", "罢免"}:
+            return dict(candidate)
+    return None
+
+
+def _stage_office_pending_core(
+    ctx: MaterializeCtx,
+    appt: Dict[str, Any],
+    *,
+    mode_mark: Optional[str] = None,
+    tenure_mark: Optional[str] = None,
+    annotate_existing: bool = False,
+    require_office_for_appoint: bool = False,
+    write_primary_pending_id: bool = True,
+) -> Optional[int]:
+    """#1380 DRY：_materialize_appointment 与 parallel 旁路共用 hedge/去重/落库。
+
+    返回 pending id；对冲 no-op / 字段不全返 None。
+    annotate_existing：主路径对既有同向任命并入路径标记。
+    require_office_for_appoint：parallel 任命必须带职名。
+    write_primary_pending_id：主路径写 out['pending_action_id']；parallel 不覆盖 directive id。
+    """
+    from ming_sim.cli_backend import resolve_directive_mode
+    from ming_sim.session import (
+        _appointment_intent_is_current_office_noop,
+        _cancel_staged_opposing_office,
+        _target_active_officeholder,
+    )
+
+    session = ctx.session
+    minister_name = ctx.character.name
+    content_ref = getattr(session, "content", None)
+    action = str(appt.get("appoint_action") or "").strip()
+    appt_name = str(appt.get("name") or "").strip()
+    appt_office = str(appt.get("office") or "").strip()
+
+    if action not in {"任命", "罢免"} or not appt_name:
+        return None
+    if action == "任命" and require_office_for_appoint and not appt_office:
+        return None
+
+    # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入，不双落。
+    if action == "任命" and appt_name:
+        existing_hits = [
+            r for r in _match_office_row_by_name_office(
+                _list_pending_office_rows(
+                    session.db, int(session.state.turn),
+                    pend_for_minister=ctx.pend_for_minister,
+                ),
+                name=appt_name,
+                office=appt_office,
+                content=content_ref,
+                db=session.db,
+            )
+            if str(r.get("action") or "") == "任命"
+        ]
+        if len(existing_hits) == 1:
+            if annotate_existing:
+                pending_id = _annotate_office_pending_path(
+                    session.db,
+                    existing_hits[0],
+                    mode_mark=mode_mark,
+                    tenure_mark=tenure_mark,
+                    minister_name=minister_name,
+                    turn=int(session.state.turn),
+                )
+                resolved = int(pending_id or existing_hits[0]["id"])
+            else:
+                resolved = int(existing_hits[0]["id"])
+            if write_primary_pending_id:
+                ctx.out["pending_action_id"] = resolved
+            return resolved
+
+    if action == "任命":
+        hedged = _cancel_staged_opposing_office(
+            session.db, "罢免", appt_name, int(session.state.turn),
+            content=content_ref,
+        )
+        if hedged or _appointment_intent_is_current_office_noop(
+            session.db, appt_name, appt_office or appt.get("office", ""),
+            content=content_ref,
+        ):
+            return None
+    elif action == "罢免":
+        cancelled = _cancel_staged_opposing_office(
+            session.db, "任命", appt_name, int(session.state.turn),
+            content=content_ref,
+        )
+        if cancelled and not _target_active_officeholder(
+            session.db, appt_name, content=content_ref,
+        ):
+            return None
+
+    payload = {
+        "name": appt_name,
+        "office": appt_office,
+        "appointer": minister_name,
+        "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
+    }
+    # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
+    if tenure_mark == "署理":
+        payload["任别"] = "署理"
+    else:
+        tenure = str(
+            appt.get("appointment_tenure") or appt.get("任别") or ""
+        ).strip()
+        if tenure in {"真除", "署理", "兼署", "加衔"}:
+            payload["任别"] = tenure
+    pending_id = session.db.stage_pending_action(
+        session.state.turn, kind="office", action=action,
+        minister_name=minister_name, target_id=None,
+        payload=payload,
+    )
+    if not pending_id:
+        return None
+    resolved = int(pending_id)
+    if write_primary_pending_id:
+        ctx.out["pending_action_id"] = resolved
+    return resolved
+
+
+def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Optional[int]:
+    """#1380 处方 A：拟旨通道并行 stage kind=office。
+
+    仅作用于非前缀（explicit_prefixed=False）的分类/串行拟旨路。
+    前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3 / ADR 0028）。
+    P5 三态：
+      1) intent/candidates 含 appointment 结构 → 用之，禁 LLM；
+      2) 分类器/预分类已跑（intent 或 candidates 非 None）且无 appointment
+         → 结构化缺席即定论，禁 LLM（#568 strategy_selection 等）；
+      3) 分类器未跑（二者皆 None）→ 才允许 extract_appointment_action。
+    multi 已含 appointment 时主路径 _materialize_appointment 先落库；本缝以
+    实时 DB 去重并入，禁因 pend_for_minister 快照过期而双 stage（#515/#519）。
+    无任免意图 → 不写 office（负向契约）。返回新建/并入的 pending id；无动作返回 None。
+    """
+    from ming_sim.cli_backend import extract_appointment_action
+
+    # 前缀路零 LLM（#344 US3）——调用方亦应闸，此处双保险
+    if ctx.explicit_prefixed:
+        return None
+    # 主路径 appointment 单项物化中；禁本缝重复
+    if ctx.intent_kind == "appointment":
+        return None
+
+    # P5：结构化优先
+    appt = _structured_appointment_from_ctx(ctx)
+    if appt is None:
+        # 分类器/预分类已给出结构化产物且无 appointment → 不得补串行抽取
+        # （#568 点策 draft/strategy_selection 本就有结构，禁 must-not-call 违约）
+        has_structure = ctx.intent is not None or ctx.intent_candidates is not None
+        if has_structure:
+            return None
+        appt = extract_appointment_action(
+            ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
+        )
+
+    # 去重读实时 DB：同回合主路径刚 stage 的 office 不在 apply 入口 pend 快照里
+    stage_ctx = replace(ctx, pend_for_minister=None)
+    return _stage_office_pending_core(
+        stage_ctx, appt,
+        require_office_for_appoint=True,
+        write_primary_pending_id=False,
+    )
 
 
 def stage_pacification_candidate(
@@ -2393,12 +2613,7 @@ def _write_path_nature_ledger(
 
 
 def _materialize_appointment(ctx: MaterializeCtx) -> None:
-    from ming_sim.cli_backend import extract_appointment_action, resolve_directive_mode
-    from ming_sim.session import (
-        _appointment_intent_is_current_office_noop,
-        _cancel_staged_opposing_office,
-        _target_active_officeholder,
-    )
+    from ming_sim.cli_backend import extract_appointment_action
 
     if (
         ctx.explicit_prefixed or ctx.draft_staged
@@ -2475,69 +2690,14 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
                 return
         # miss：无对应暂存 → fallback 走下方普通人事管线（需完整任命字段）
 
-    # #519 同人同职 no-op 去重：仅对同向「任命」pending 并入路径语义，不双落。
-    # 不得命中反向「罢免」暂存——那条由下方 _cancel_staged_opposing_office 对冲（#504）。
-    if appt.get("appoint_action") == "任命" and appt_name:
-        existing_hits = [
-            r for r in _match_office_row_by_name_office(
-                _list_pending_office_rows(
-                    session.db, int(session.state.turn),
-                    pend_for_minister=ctx.pend_for_minister,
-                ),
-                name=appt_name,
-                office=appt_office,
-                content=content_ref,
-                db=session.db,
-            )
-            if str(r.get("action") or "") == "任命"
-        ]
-        if len(existing_hits) == 1:
-            pending_id = _annotate_office_pending_path(
-                session.db,
-                existing_hits[0],
-                mode_mark=mode_mark,
-                tenure_mark=tenure_mark,
-                minister_name=minister_name,
-                turn=int(session.state.turn),
-            )
-            # 无新路径标记时仍回既有 id，避免双落
-            ctx.out["pending_action_id"] = int(
-                pending_id or existing_hits[0]["id"]
-            )
-            return
-
-    if appt.get("appoint_action") == "任命" and appt_name:
-        hedged = _cancel_staged_opposing_office(
-            session.db, "罢免", appt_name, int(session.state.turn), content=content_ref)
-        if hedged or _appointment_intent_is_current_office_noop(
-                session.db, appt_name, appt.get("office", ""), content=content_ref):
-            appt = {"appoint_action": "无", "name": "", "office": ""}
-    elif appt.get("appoint_action") == "罢免" and appt_name:
-        cancelled = _cancel_staged_opposing_office(
-            session.db, "任命", appt_name, int(session.state.turn), content=content_ref)
-        if cancelled and not _target_active_officeholder(
-                session.db, appt_name, content=content_ref):
-            appt = {"appoint_action": "无", "name": "", "office": ""}
-    if appt.get("appoint_action") in ("任命", "罢免") and appt.get("name"):
-        payload = {
-            "name": appt["name"], "office": appt.get("office", ""),
-            "appointer": minister_name,
-            "mode": resolve_directive_mode(ctx.player_message, appt.get("mode")),
-        }
-        # 署理等任别随新建候选写入；特旨仅 mode（上已 resolve）
-        if tenure_mark == "署理":
-            payload["任别"] = "署理"
-        elif str(appt.get("appointment_tenure") or appt.get("任别") or "").strip() in {
-            "真除", "署理", "兼署", "加衔",
-        }:
-            payload["任别"] = str(
-                appt.get("appointment_tenure") or appt.get("任别")
-            ).strip()
-        ctx.out["pending_action_id"] = session.db.stage_pending_action(
-            session.state.turn, kind="office", action=appt["appoint_action"],
-            minister_name=minister_name, target_id=None,
-            payload=payload,
-        )
+    # #519/#504/#1380：同人同职去重 + 对冲 + 落库 —— 与 parallel 共用 helper
+    _stage_office_pending_core(
+        ctx, appt,
+        mode_mark=mode_mark,
+        tenure_mark=tenure_mark,
+        annotate_existing=True,
+        write_primary_pending_id=True,
+    )
 
 
 def _pending_office_brief(row: Dict[str, Any]) -> str:

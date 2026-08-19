@@ -1,8 +1,10 @@
 import React, { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { IssueGroup, SituationDetailModal, SituationRow } from "./situation";
-import type { Issue } from "../types";
+import { IssueGroup, SituationDetailModal, SituationPanel, SituationRow } from "./situation";
+import { StateModal } from "./stateModal";
+import type { GameState, Issue } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -157,6 +159,110 @@ describe("empty bar label presentation (#626)", () => {
     const ends = Array.from(document.querySelectorAll(".issue-progress > span"));
     expect(ends).toHaveLength(2);
     expect(ends.every((el) => (el.textContent || "").trim() === "")).toBe(true);
+    cleanup();
+  });
+});
+
+describe("#1432 StateModal 奏疏卷心列表可见", () => {
+  const SITUATION_CSS = readFileSync(`${process.cwd()}/src/styles/situation.css`, "utf8");
+
+  function injectSituationCss() {
+    const style = document.createElement("style");
+    style.setAttribute("data-situation-fixture", "true");
+    style.textContent = SITUATION_CSS;
+    document.head.appendChild(style);
+    return style;
+  }
+
+  function baseState(issues: Issue[]): GameState {
+    return {
+      turn: { year: 1627, period: 10, turn: 1, phase: "player" },
+      metrics: {},
+      previous_summary: "",
+      issues,
+      legacies: [],
+      closed_this_turn: [],
+      budget: {
+        国库: { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 },
+        内库: { balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 },
+      },
+      region_warning: "",
+      army_warning: "",
+      power_warning: "",
+      powers: [],
+      victory_status: { status: "ongoing", summary: "" },
+      ending: null,
+      events: [],
+      regions: [],
+      armies: [],
+      map_nodes: [],
+      ministers: [],
+      consorts: [],
+      directives: [],
+      pending_count: 0,
+      pending_directive_count: 0,
+      pending_secret_order_count: 0,
+      pending_non_directive_action_count: 0,
+      last_decree: "",
+      last_report: "",
+    };
+  }
+
+  afterEach(() => {
+    document.head.querySelectorAll("[data-situation-fixture]").forEach((node) => node.remove());
+  });
+
+  it("模态内 situation 列表可见，且 CSS 覆盖 fixed 逃逸", () => {
+    injectSituationCss();
+    const issue = makeIssue();
+    const cleanup = render(<StateModal state={baseState([issue])} showIssues />);
+
+    const doc = document.querySelector(".state-document");
+    expect(doc).toBeTruthy();
+    const panel = doc!.querySelector(".situation-panel");
+    expect(panel).toBeTruthy();
+    // 卷心不空白：议题行在模态文档内
+    expect(doc!.querySelector(".situation-row")).toBeTruthy();
+    expect(doc!.textContent).toContain(issue.title);
+    expect(doc!.textContent).not.toContain("本月无疏");
+
+    // 模态 scope 须覆盖 .situation-panel 的 position:fixed（仅 .hud2-issue-quad 后代不够）
+    let modalOverride: CSSStyleRule | undefined;
+    let baseFixed: CSSStyleRule | undefined;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules: CSSRuleList;
+      try { rules = sheet.cssRules; } catch { continue; }
+      for (const rule of Array.from(rules)) {
+        if (!(rule instanceof CSSStyleRule)) continue;
+        if (rule.selectorText === ".situation-panel") baseFixed = rule;
+        if (
+          rule.selectorText.includes("state-document")
+          && rule.selectorText.includes("situation-panel")
+        ) {
+          modalOverride = rule;
+        }
+      }
+    }
+    expect(baseFixed?.style.position).toBe("fixed");
+    expect(modalOverride).toBeTruthy();
+    expect(modalOverride!.style.position).not.toBe("fixed");
+    expect(["static", "relative", "absolute"]).toContain(modalOverride!.style.position);
+    // 完整中和 fixed 四向 inset（漏 bottom 时基规则/媒体查询 bottom 仍可能拴住）
+    expect(modalOverride!.style.top).toBe("auto");
+    expect(modalOverride!.style.left).toBe("auto");
+    expect(modalOverride!.style.right).toBe("auto");
+    expect(modalOverride!.style.bottom).toBe("auto");
+
+    cleanup();
+  });
+
+  it("SituationPanel 真渲染有议题时不返回 null", () => {
+    const issue = makeIssue();
+    const cleanup = render(
+      <SituationPanel issues={[issue]} closedIssues={[]} hasLegacies={false} />
+    );
+    expect(document.querySelector(".situation-panel")).toBeTruthy();
+    expect(document.body.textContent).toContain(issue.title);
     cleanup();
   });
 });
