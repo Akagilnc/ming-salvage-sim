@@ -2,7 +2,14 @@ import React from "react";
 import { FullscreenModal } from "./hud";
 import type { HistoryDetail, HistoryTurnItem } from "../types";
 
-export function HistoryModal({ onClose }: { onClose: () => void }) {
+export function HistoryModal({
+  onClose,
+  onOpenAudienceArchive,
+}: {
+  onClose: () => void;
+  /** #1276：起居注另入口（邸报木牌归还 gazette 后）。 */
+  onOpenAudienceArchive?: () => void;
+}) {
   const [turns, setTurns] = React.useState<HistoryTurnItem[]>([]);
   const [listLoading, setListLoading] = React.useState(true);
   const [listError, setListError] = React.useState("");
@@ -52,7 +59,17 @@ export function HistoryModal({ onClose }: { onClose: () => void }) {
   const subtitle = turns.length ? `共 ${turns.length} 月档 · 仅收奏报与诏书` : "尚无奏报或诏书";
 
   return (
-    <FullscreenModal title="史册：历代奏报与诏书" subtitle={subtitle} bgClass="modal-bg-state" onClose={onClose}>
+    <FullscreenModal
+      title="史册：历代奏报与诏书"
+      subtitle={subtitle}
+      bgClass="modal-bg-state"
+      onClose={onClose}
+      headerExtra={onOpenAudienceArchive ? (
+        <button type="button" className="secondary-action" onClick={onOpenAudienceArchive} aria-label="起居注">
+          起居注
+        </button>
+      ) : null}
+    >
       <div className="history-modal-body">
         <aside className="history-turn-list">
           {listLoading ? <p className="long-copy">加载中…</p> : null}
