@@ -7853,6 +7853,35 @@ class GameDB:
         ]
         return "\n".join(lines)
 
+    def previous_turn_reign_period_label(self, state: GameState) -> str:
+        """邸报面报头年月 ≡ 所显示报文自身所属月（#1356）。
+
+        与 previous_turn_summary 同源：优先读 turn_reports 已存 year/period，
+        经 reign_period_label 投影；无行时按当前 state 回推上一月（与
+        seed_opening_gazette 算法一致）。当前 turn 年号不得混充上月报头。
+        """
+        previous_turn = int(state.turn) - 1
+        if previous_turn < 0:
+            return ""
+        row = self.conn.execute(
+            "SELECT year, period FROM turn_reports WHERE turn = ?",
+            (previous_turn,),
+        ).fetchone()
+        if row is not None:
+            try:
+                return reign_period_label(int(row["year"]), int(row["period"]))
+            except (TypeError, ValueError):
+                return ""
+        # 无 turn_reports 行（日志回落路径）：回推上一月，与 seed 算法同形
+        prev_year, prev_period = int(state.year), int(state.period) - 1
+        if prev_period < 1:
+            prev_period = 12
+            prev_year -= 1
+        try:
+            return reign_period_label(prev_year, prev_period)
+        except (TypeError, ValueError):
+            return ""
+
     def record_log(self, state: GameState, message: str) -> None:
         self.conn.execute(
             "INSERT INTO turn_logs (turn, year, period, message) VALUES (?, ?, ?, ?)",

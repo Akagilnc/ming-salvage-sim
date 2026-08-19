@@ -136,6 +136,10 @@ class _FakeSession:
     def abandon_chat_turn_scene(self, *_a, **_k):
         return None
 
+    def can_summon(self, character):
+        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        return GameSession.can_summon(self, character)
+
 
 def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     bind_skills_content(content)
