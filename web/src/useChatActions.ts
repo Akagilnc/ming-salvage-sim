@@ -368,11 +368,14 @@ export function useChatActions({
 
   const retryStoryExtraction = async () => {
     // #501：原地重试补跑叙事抽取。
+    // #1312：SSE stage 分段进度反馈（既有 settle 同形），禁干等无反馈。
     if (busy) return;
     setBusy("重试补写账本");
     setError("");
     try {
-      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll);
+      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll, {
+        onStage: (text) => setBusy(text || "重试补写账本"),
+      });
       setExtractionPendingCount(Number(data?.count || 0));
       const healed = String(data?.player_hint || "").trim();
       setExtractionHealedHint(healed);

@@ -152,7 +152,10 @@ describe("读心投递（#499 经真实 useAudienceChat 生产控制器）", () 
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (String(url).includes("/api/audience/extraction/retry")) {
         retried = true;
-        return jsonResp({ count: 0 });
+        return sse([
+          { event: "stage", data: { content: "补写召对账本（1/1）" } },
+          { event: "done", data: { night_id: 24, count: 0, pending: [] } },
+        ]);
       }
       if (String(url).includes("/api/ministers/") && String(url).endsWith("/chat")) return jsonResp({
         minister: MINISTER, history: [], suggestions: [], can_undo_last_chat: false,

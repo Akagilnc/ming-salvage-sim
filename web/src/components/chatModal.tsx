@@ -396,7 +396,7 @@ export function ChatModal({
               退出召对
             </button>
             <button className="secondary-action composer-retreat" onClick={() => onSend(currentMinister.name, "退朝")} disabled={!!busy}>
-              退朝
+              散夜
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}
           </div>
