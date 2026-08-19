@@ -366,7 +366,7 @@ class LLMConfig:
     advanced_thinking_level: str = ""  # legacy input only; unified reasoning_strength owns reasoning
     reasoning_strength: str = ""  # 抽象推理强度：off/low/medium/high；空=沿用后端默认/旧配置
     channel: str = ""  # ""=沿用旧 env 探针；api=OpenAI 兼容 API；cli=本地 CLI runner
-    cli_runner: str = ""  # agy | codex | claude
+    cli_runner: str = ""  # agy | codex | claude | cursor | kimi | grok（名单真源=_CLI_BACKENDS）
     cli_model: str = ""  # CLI runner 的模型名/档位，由具体后端解释
     cli_timeout_seconds: float = CLI_DEFAULT_TIMEOUT_SECONDS  # CLI 子进程超时，同模块常量直接引用
 
