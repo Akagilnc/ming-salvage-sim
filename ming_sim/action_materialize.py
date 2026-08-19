@@ -535,6 +535,8 @@ def _structured_appointment_from_ctx(ctx: MaterializeCtx) -> Optional[Dict[str, 
     """P5：先读结构化 intent / multi 候选，有则免 LLM 抽取。
 
     返回 appointment 形 dict（含 appoint_action/name/office…）；无可复用结构返 None。
+    注意：None 在「分类器/预分类已跑且无 appointment」与「分类器未跑」两种语义下
+    均可能出现——调用方须用 intent/candidates 是否非 None 区分，见 parallel。
     """
     intent = ctx.intent
     if isinstance(intent, dict) and str(intent.get("kind") or "") == "appointment":
@@ -671,13 +673,17 @@ def _stage_office_pending_core(
 
 
 def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Optional[int]:
-    """#1380 处方 A：LLM 分类拟旨通道并行 stage kind=office。
+    """#1380 处方 A：拟旨通道并行 stage kind=office。
 
     仅作用于非前缀（explicit_prefixed=False）的分类/串行拟旨路。
     前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3 / ADR 0028）。
-    Classifier 仍可「拟旨优先于任免」（cli_backend 分类 prompt 规则；ADR/issue 无拍定
-    拆优先文——本缝不改 prompt 优先语义，旁路并行）。
-    P5：先读 ctx.intent / intent_candidates 结构化，再决定是否 LLM 抽取。
+    P5 三态：
+      1) intent/candidates 含 appointment 结构 → 用之，禁 LLM；
+      2) 分类器/预分类已跑（intent 或 candidates 非 None）且无 appointment
+         → 结构化缺席即定论，禁 LLM（#568 strategy_selection 等）；
+      3) 分类器未跑（二者皆 None）→ 才允许 extract_appointment_action。
+    multi 已含 appointment 时主路径 _materialize_appointment 先落库；本缝以
+    实时 DB 去重并入，禁因 pend_for_minister 快照过期而双 stage（#515/#519）。
     无任免意图 → 不写 office（负向契约）。返回新建/并入的 pending id；无动作返回 None。
     """
     from ming_sim.cli_backend import extract_appointment_action
@@ -685,28 +691,26 @@ def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Option
     # 前缀路零 LLM（#344 US3）——调用方亦应闸，此处双保险
     if ctx.explicit_prefixed:
         return None
-    # 主路径 appointment 已由 _materialize_appointment 物化；禁重复抽取
+    # 主路径 appointment 单项物化中；禁本缝重复
     if ctx.intent_kind == "appointment":
         return None
-    # 主路径已写 office pending → 不并行双落
-    if ctx.out.get("pending_action_id"):
-        # 可能是 directive id；仅当已有 office 行时跳过抽取
-        office_rows = _list_pending_office_rows(
-            ctx.session.db, int(ctx.session.state.turn),
-            pend_for_minister=ctx.pend_for_minister,
-        )
-        if office_rows:
-            return None
 
-    # P5：结构化优先，无则 LLM 抽取
+    # P5：结构化优先
     appt = _structured_appointment_from_ctx(ctx)
     if appt is None:
+        # 分类器/预分类已给出结构化产物且无 appointment → 不得补串行抽取
+        # （#568 点策 draft/strategy_selection 本就有结构，禁 must-not-call 违约）
+        has_structure = ctx.intent is not None or ctx.intent_candidates is not None
+        if has_structure:
+            return None
         appt = extract_appointment_action(
             ctx.player_message, ctx.reply, llm_config=ctx.llm_config,
         )
 
+    # 去重读实时 DB：同回合主路径刚 stage 的 office 不在 apply 入口 pend 快照里
+    stage_ctx = replace(ctx, pend_for_minister=None)
     return _stage_office_pending_core(
-        ctx, appt,
+        stage_ctx, appt,
         require_office_for_appoint=True,
         write_primary_pending_id=False,
     )

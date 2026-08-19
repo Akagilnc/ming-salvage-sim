@@ -1,9 +1,10 @@
 """QA-C P0：#1380 起复当回合落库 + #1355 密令存活钉。
 
-处方 A：LLM 分类拟旨路含任免/起复意图 → 并行 stage kind=office；确认/颁诏走既有
-apply_dossier_promulgation→_commit_office_action。不拆 classifier「拟旨优先于任免」
-（ADR/issue 无拍定文，回执注明；并行 stage 旁路）。
-前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3），不入并行 LLM 抽取。
+处方 A：拟旨路含任免/起复 → 并行/multi stage kind=office；确认/颁诏走既有
+apply_dossier_promulgation→_commit_office_action。
+P5：appointment 须在结构化 intent/candidates 中给出（multi draft+appointment）；
+分类器已跑且无 appointment 结构 → 禁串行 extract_appointment_action（#568）。
+前缀「拟旨如下」任免走随诏 extractor office_changes（#344 US3），不入并行抽取。
 """
 
 from __future__ import annotations
@@ -71,10 +72,11 @@ def _minister_wang_shaohui(db, content):
 
 
 def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkeypatch):
-    """#1380：LLM 分类拟旨路起复袁崇焕 → 并行 office 暂存；确认/颁诏同回合
+    """#1380：拟旨+起复结构化 multi → office 暂存；确认/颁诏同回合
     active + 新职 + office_change_records≥1；跨月 talent_pool 不再罢居。
 
-    非前缀路（#344 US3：前缀任免走 extractor office_changes，不入并行 LLM）。
+    非前缀路（#344 US3：前缀任免走 extractor office_changes）。
+    P5：appointment 走结构化 candidates，禁依赖串行 extract_appointment_action。
     """
     from web_app import in_talent_pool
 
@@ -87,11 +89,9 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
 
     def _backend(prompt, llm_config=None, tag=""):
         if tag == "appointment":
-            return (json.dumps({
-                "任免动作": "任命",
-                "姓名": "袁崇焕",
-                "官职": "辽东巡抚",
-            }, ensure_ascii=False), 1)
+            raise AssertionError(
+                "#1380 P5: structured multi appointment must not call serial extractor"
+            )
         if tag == "draft_intent":
             return (json.dumps({
                 "拟旨意图": "拟旨",
@@ -105,11 +105,19 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
     sess = _fake_session(db, state, content)
     GameSession.apply_cli_conversation_actions(
         sess, ch,
-        # 非前缀：分类器判 draft 后 parallel 抽 appointment
+        # 非前缀：multi draft+appointment 结构化（P5；禁 draft-only 再串行抽任免）
         player_message="起复袁崇焕为辽东巡抚，即日赴任，着吏部拟旨。",
         answer="奉天承运皇帝诏曰，起复袁崇焕为辽东巡抚，钦此。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "draft"},
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "辽东巡抚",
+            },
+        ],
     )
 
     pending = db.list_pending_actions(state.turn)
@@ -150,15 +158,15 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
 
 
 def test_draft_without_appointment_intent_does_not_stage_office(game, monkeypatch):
-    """#1380 负向：无任免意图的拟旨不得误建 office 案卷（LLM 分类路）。"""
+    """#1380 负向：无任免结构化的拟旨不得误建 office（P5：禁补串行抽取）。"""
     db, state, content = game
     ch = _minister_wang_shaohui(db, content)
 
     def _backend(prompt, llm_config=None, tag=""):
         if tag == "appointment":
-            return (json.dumps({
-                "任免动作": "无", "姓名": "", "官职": "",
-            }, ensure_ascii=False), 1)
+            raise AssertionError(
+                "draft-only structured path must not call serial appointment extractor"
+            )
         if tag == "draft_intent":
             return (json.dumps({
                 "拟旨意图": "拟旨",
