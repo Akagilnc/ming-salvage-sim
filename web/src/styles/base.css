@@ -1,8 +1,9 @@
 :root {
   color-scheme: light;
+  /* 系统宋体栈优先（无 Google Fonts 外链）；Noto 仅在本机已装时生效 */
   font-family:
-    "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
-  --font-brush: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+    "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+  --font-brush: "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
   font-size: 19px;
   line-height: 1.5;
   color: #1a1410;
