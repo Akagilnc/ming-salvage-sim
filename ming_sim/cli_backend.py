@@ -1497,18 +1497,28 @@ def capture_manual_directive_payload(
         canonical_roster = db._normalize_participant_roster(
             roster, strict_structured=True,
         )
+        # #1279：人物参与人只产 characters 名册可解析的人名。部院/内阁等机构名与
+        # 陛下/朝廷等自称集体名不是人物——在 capture 侧丢弃，不送 ADR 0053 校验缝
+        # （缝本身不动、禁放松主键）。机构语义通道若后开，另接；本缝不抽为人物行。
+        person_roster: List[Dict[str, object]] = []
         for item in canonical_roster:
-            item["character_id"] = _canonical_minister_key(
-                content, str(item["character_id"]), db,
-            )
-            if item.get("delegator_id"):
-                item["delegator_id"] = _canonical_minister_key(
-                    content, str(item["delegator_id"]), db,
-                )
+            cid = str(item.get("character_id") or "").strip()
+            if _is_non_person_participant_name(cid):
+                continue
+            item["character_id"] = _canonical_minister_key(content, cid, db)
+            delegator = str(item.get("delegator_id") or "").strip()
+            if delegator:
+                if _is_non_person_participant_name(delegator):
+                    item["delegator_id"] = None
+                else:
+                    item["delegator_id"] = _canonical_minister_key(
+                        content, delegator, db,
+                    )
+            person_roster.append(item)
         # Reuse the durable roster reference validator here so unknown aliases
         # fail at the manual-entry boundary rather than surviving until issue.
-        db._validate_participant_roster_references(canonical_roster)
-        payload["participant_roster"] = canonical_roster
+        db._validate_participant_roster_references(person_roster)
+        payload["participant_roster"] = person_roster
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
@@ -2007,6 +2017,21 @@ _ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
 def _is_institution_like_name(name: str) -> bool:
     """名字是否像机关/地名：含 部/寺/院… 单字，或 锦衣卫/布政司… 整词。"""
     return bool(_ASSIGNEE_HINT_STOP_RE.search(name) or _ASSIGNEE_HINT_INSTITUTION_RE.search(name))
+
+
+# #1279 人物参与人抽取不变式：只产 characters 名册可解析的人名。
+# 自称/集体名（陛下/皇帝/朝廷）与部院机构名同规则——非人名实体不产人物参与人行。
+_NON_PERSON_PARTICIPANT_NAMES = frozenset({"陛下", "皇帝", "皇上", "圣上", "天子", "朝廷", "朕"})
+
+
+def _is_non_person_participant_name(name: str) -> bool:
+    """机构名/自称/集体名不是人物参与人（ADR 0053 主键只认 characters）。"""
+    n = str(name or "").strip()
+    if not n:
+        return True
+    if n in _NON_PERSON_PARTICIPANT_NAMES:
+        return True
+    return _is_institution_like_name(n)
 
 
 def _extract_assignee_hint(text: str) -> Optional[str]:
