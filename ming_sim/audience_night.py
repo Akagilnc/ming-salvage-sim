@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
+from ming_sim.participant_roster import is_non_person_participant_name
 
 # ── 引擎侧口令标签常量（ADR 0035：确定性写读）──────────────────────────
 TAG_OPEN_NIGHT = "开夜"
@@ -110,7 +111,8 @@ AUDIBILITY_PRIVATE = "御前低语"
 
 # 夜容器时地兜底（#498 AC：时辰/地点须持久且可读）。真实入口（web/CLI attach）多不带玩家
 # 选值——缺省时以 in-world 兜底落库（非空字符串），而非留空串成不可读的裸空。开夜账正文同用。
-DEFAULT_TIME_OF_DAY = "此时"
+# #1339：默认须是时刻/更次口径，禁「此时」这类非时辰词进起居注标题。
+DEFAULT_TIME_OF_DAY = "戌时"
 DEFAULT_LOCATION = "便殿"
 
 # #501 机器可读在场效果（ADR 0035 线上 R2）：在场是机器承重态，其输入不靠解析自由文本。
@@ -414,14 +416,19 @@ def night_archive_metadata(
         for entry in ledgers if _is_command_entry(entry)
         for method in SUMMON_METHODS if method in (entry.get("tags") or [])
     ]
+    # #1331/#1339：involved_people 投影缝复用 raw 非人判定（DRY 单真源）；
+    # 禁 canon 后再滤（司礼监→王承恩）。写入侧 ledger 保留原文，投影侧只列真人。
     people: List[str] = []
     candidate_groups = [entry.get("person_names") or [] for entry in ledgers]
     candidate_groups.extend([turn.get("minister_name")] for turn in turns)
     for names in candidate_groups:
         for raw_name in names:
             name = str(raw_name or "").strip()
-            if name and name not in people:
-                people.append(name)
+            if not name or name in people:
+                continue
+            if is_non_person_participant_name(name):
+                continue
+            people.append(name)
     summon_method = summon_methods[0] if summon_methods else ""
     return {
         # Summon methods remain machine tags; the container contract exposes the

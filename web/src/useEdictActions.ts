@@ -2,22 +2,19 @@ import React from "react";
 import { api } from "./api";
 import type { Directive, GameState } from "./types";
 
-// 诏书台动作群：草案登记/编辑/存改/删除/核定/驳回 + 诏文拟写/存改/返工。
+// 诏书台动作群：草案登记/编辑/存改/删除/核定/驳回。
+// #1341：裸 PATCH /api/decree 与 /api/decree/write 前端死码已删；改稿只走 /api/directives。
 // 全部共享 busy/error 写入与 latest-wins 代次推进（beginDurableMutation 防旧 done 覆盖）。
 export function useEdictActions({
   setBusy,
   setError,
   setState,
   beginDurableMutation,
-  loadState,
-  setDecree,
 }: {
   setBusy: (busy: string) => void;
   setError: (error: string) => void;
   setState: React.Dispatch<React.SetStateAction<GameState | null>>;
   beginDurableMutation: () => void;
-  loadState: () => Promise<unknown>;
-  setDecree: (decree: string) => void;
 }) {
   const [directiveText, setDirectiveText] = React.useState("");
   const [editingDirectiveId, setEditingDirectiveId] = React.useState<number | null>(null);
@@ -129,44 +126,6 @@ export function useEdictActions({
     }
   };
 
-  const writeDecree = async () => {
-    setBusy("拟写正式诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree/write", { method: "POST" });
-      setDecree(data.decree);
-      // write_decree 内部会运行 commit_pending_actions，pending 随之消失；
-      // 因此重新获取包含 directives / pending_directive_count 的完整 state。
-      await loadState();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const saveDecree = async (text: string) => {
-    setBusy("存改诏书");
-    setError("");
-    try {
-      const data = await api<{ decree: string }>("/api/decree", {
-        method: "PATCH",
-        body: JSON.stringify({ decree: text }),
-      });
-      setDecree(data.decree);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const resetDecree = () => {
-    // 返工：丢弃当前诏文回到御案理政幕。后端旧诏文留着无妨，重新生成即覆盖。
-    setDecree("");
-    setError("");
-  };
-
   return {
     directiveText,
     setDirectiveText,
@@ -180,8 +139,5 @@ export function useEdictActions({
     deleteDirective,
     confirmDirective,
     rejectDirective,
-    writeDecree,
-    saveDecree,
-    resetDecree,
   };
 }
