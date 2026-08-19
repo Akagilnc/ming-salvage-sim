@@ -21,6 +21,12 @@ Scenario design (r1 diagnosis):
     python scripts/midzhi_spiral_judge_gate_570.py \
       --runner codex --model gpt-5.6-sol --samples 12 \
       --output docs/evidence/issue-570-midzhi-spiral.json
+
+  # 族尾闸新跑默认 ds-flash 档（api 通道；opus 仅争议复裁与同基对照）：
+  # MING_SIM_API_KEY=... MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1 \
+  #   python scripts/midzhi_spiral_judge_gate_570.py --channel api \
+  #     --model deepseek-v4-flash --samples 6 \
+  #     --output docs/evidence/issue-570-midzhi-spiral-ds-flash.json
 """
 from __future__ import annotations
 
@@ -47,9 +53,13 @@ from ming_sim.decree import (
     llm_promulgation_verdicts,
     validate_promulgation_verdicts,
 )
-from ming_sim.cli_backend import cli_backend_parallel_safe
+from ming_sim.cli_backend import (
+    add_gate_llm_args,
+    cli_backend_parallel_safe,
+    gate_evidence_config,
+    gate_llm_config_from_args,
+)
 from ming_sim.issues import bind_content as bind_issue_content
-from ming_sim.models import LLMConfig
 
 # #561 administrative midzhi — designed to promulgate (stigma path), not a
 # vital 命门 reverse-scale item. Spiral signal needs a decree that CAN pass
@@ -61,8 +71,7 @@ BOARD_DONGLIN_AGENDA = "整肃吏治，慎核边饷"
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runner", choices=("codex", "claude"), required=True)
-    parser.add_argument("--model", required=True)
+    add_gate_llm_args(parser)
     parser.add_argument("--samples", type=int, default=12)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -81,12 +90,8 @@ def _two_sided_sign_p(a_only: int, b_only: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def _config(args: argparse.Namespace) -> LLMConfig:
-    return LLMConfig(
-        api_key="", base_url="", model=args.model, channel="cli",
-        cli_runner=args.runner, cli_model=args.model, cli_timeout_seconds=600,
-        max_tokens=6000, reasoning_strength="high",
-    )
+def _config(args: argparse.Namespace):
+    return gate_llm_config_from_args(args)
 
 
 def _plant_force_history(db: GameDB, state, count: int) -> list[int]:
@@ -261,20 +266,21 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
 
 def main() -> int:
     args = _args()
-    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {
-        "0", "false", "no",
-    }:
-        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-    trace_path = Path(trace_setting).resolve()
-    if trace_path.exists():
-        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
-
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
+    trace_path = None
+    if cfg.channel == "cli":
+        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {
+            "0", "false", "no",
+        }:
+            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
+        trace_path = Path(trace_setting).resolve()
+        if trace_path.exists():
+            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
 
     with tempfile.TemporaryDirectory(prefix="ming-570-spiral-") as tmp:
         workers = min(4, args.samples) if cli_backend_parallel_safe(cfg) else 1
@@ -307,20 +313,23 @@ def main() -> int:
         and (not s["classification"]["clean_rejected"])
         for s in samples
     )
-    trace_records = [
-        json.loads(line)
-        for line in trace_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
     # Spiral: two arms × samples judge calls (do NOT copy 562's 1×samples).
     expected_traces = 2 * args.samples
-    if len(trace_records) != expected_traces or any(
-        record.get("error") is not None for record in trace_records
-    ):
-        raise RuntimeError(
-            f"expected {expected_traces} successful raw trace records "
-            f"(2 arms × {args.samples} samples); got {len(trace_records)}"
-        )
+    if trace_path is not None:
+        trace_records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if len(trace_records) != expected_traces or any(
+            record.get("error") is not None for record in trace_records
+        ):
+            raise RuntimeError(
+                f"expected {expected_traces} successful raw trace records "
+                f"(2 arms × {args.samples} samples); got {len(trace_records)}"
+            )
+    else:
+        trace_records = []
 
     p_value = _two_sided_sign_p(hist_only, clean_only)
     correct_direction = hist_only > clean_only
@@ -372,11 +381,7 @@ def main() -> int:
             "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
             "alpha": 0.05,
             "samples": args.samples,
-            "config": {
-                "channel": "cli", "runner": args.runner, "model": args.model,
-                "reasoning_strength": cfg.reasoning_strength,
-                "max_tokens": cfg.max_tokens,
-            },
+            "config": gate_evidence_config(args, cfg),
             "oos_boundary": (
                 "Acceptance evidence only. No production midzhi threshold, "
                 "counter gate, or ratchet may be added (#556 OOS 中旨闸量化)."

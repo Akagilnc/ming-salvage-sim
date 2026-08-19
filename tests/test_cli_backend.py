@@ -1658,3 +1658,88 @@ def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     )
     with pytest.raises(RuntimeError):
         getattr(cb, runner)("p")
+
+
+# ── #1256 S2 gate LLM args / config / evidence ──
+
+
+def test_gate_llm_config_cli_channel():
+    args = SimpleNamespace(channel="cli", runner="kimi", model="kimi-k2", api_key="", base_url="")
+    cfg = cb.gate_llm_config_from_args(args)
+    assert cfg.channel == "cli"
+    assert cfg.cli_runner == "kimi" and cfg.cli_model == "kimi-k2"
+    assert cfg.api_key == "" and cfg.base_url == ""
+
+
+def test_gate_llm_config_api_from_args_not_persisted_shape(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
+    args = SimpleNamespace(
+        channel="api", runner="", model="deepseek-v4-flash",
+        api_key="sk-test", base_url="https://opencode.ai/zen/v1",
+    )
+    cfg = cb.gate_llm_config_from_args(args)
+    assert cfg.channel == "api"
+    assert cfg.model == "deepseek-v4-flash"
+    assert cfg.api_key == "sk-test"
+    assert cfg.base_url == "https://opencode.ai/zen/v1"
+    assert cfg.cli_runner == ""  # api 不写 runner
+
+
+def test_gate_llm_config_api_from_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
+    cfg = cb.gate_llm_config_from_args(args)
+    assert cfg.api_key == "sk-env" and cfg.base_url == "https://example.test/v1"
+
+
+def test_gate_llm_config_cli_requires_runner():
+    args = SimpleNamespace(channel="cli", runner="", model="m", api_key="", base_url="")
+    with pytest.raises(ValueError, match="--runner"):
+        cb.gate_llm_config_from_args(args)
+
+
+def test_gate_llm_config_api_requires_key_and_url(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("MING_SIM_API_BASE_URL", raising=False)
+    args = SimpleNamespace(channel="api", runner="", model="m", api_key="", base_url="")
+    with pytest.raises(ValueError, match="api-key|API_KEY"):
+        cb.gate_llm_config_from_args(args)
+    args.api_key = "sk-x"
+    with pytest.raises(ValueError, match="base-url|BASE_URL"):
+        cb.gate_llm_config_from_args(args)
+
+
+def test_gate_evidence_config_honest_cli_and_api():
+    cli_args = SimpleNamespace(channel="cli", runner="cursor", model="auto")
+    cli_cfg = cb.gate_llm_config_from_args(cli_args)
+    cli_block = cb.gate_evidence_config(cli_args, cli_cfg)
+    assert cli_block["channel"] == "cli"
+    assert cli_block["runner"] == "cursor"
+    assert cli_block["model"] == "auto"
+
+    api_args = SimpleNamespace(
+        channel="api", runner="codex", model="deepseek-v4-flash",
+        api_key="sk", base_url="https://opencode.ai/zen/v1",
+    )
+    api_cfg = cb.gate_llm_config_from_args(api_args)
+    api_block = cb.gate_evidence_config(api_args, api_cfg)
+    assert api_block["channel"] == "api"
+    assert api_block["runner"] == ""  # api 如实不挂 cli runner 名
+    assert api_block["model"] == "deepseek-v4-flash"
+
+
+def test_add_gate_llm_args_uses_gate_cli_runners():
+    import argparse
+    p = argparse.ArgumentParser()
+    cb.add_gate_llm_args(p)
+    # illegal runner rejected; legal accepted
+    with pytest.raises(SystemExit):
+        p.parse_args(["--runner", "opencode", "--model", "m"])
+    ns = p.parse_args(["--runner", "grok", "--model", "grok-4.5", "--channel", "cli"])
+    assert ns.runner == "grok" and ns.model == "grok-4.5"

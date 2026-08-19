@@ -6,6 +6,11 @@ Not an ordinary CI test: it requires an explicitly selected live CLI provider.
     ../Ming_LLM/.venv/bin/python scripts/break_rank_judge_gate_562.py \
       --runner codex --model gpt-5.6-sol --samples 12 \
       --output docs/evidence/issue-562-break-rank-judge.json
+
+  # api 通道例（OpenCode Go ds-flash；key/base_url env 注入不落库）：
+  # MING_SIM_API_KEY=... MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1 \
+  #   python scripts/break_rank_judge_gate_562.py --channel api \
+  #     --model deepseek-v4-flash --samples 6 --output docs/evidence/issue-562-ds-flash.json
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
+from ming_sim.cli_backend import add_gate_llm_args, gate_evidence_config, gate_llm_config_from_args
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -33,13 +39,12 @@ from ming_sim.decree import (
     validate_promulgation_verdicts,
 )
 from ming_sim.issues import bind_content as bind_issue_content
-from ming_sim.models import Character, LLMConfig
+from ming_sim.models import Character
 
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runner", choices=("codex", "claude"), required=True)
-    parser.add_argument("--model", required=True)
+    add_gate_llm_args(parser)
     parser.add_argument("--samples", type=int, default=12)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -58,12 +63,8 @@ def _two_sided_sign_p(break_only: int, ordinary_only: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def _config(args: argparse.Namespace) -> LLMConfig:
-    return LLMConfig(
-        api_key="", base_url="", model=args.model, channel="cli",
-        cli_runner=args.runner, cli_model=args.model, cli_timeout_seconds=600,
-        max_tokens=6000, reasoning_strength="high",
-    )
+def _config(args: argparse.Namespace):
+    return gate_llm_config_from_args(args)
 
 
 def _character(name: str, office: str, office_type: str) -> Character:
@@ -133,19 +134,22 @@ def _run_sample(index: int, root: str, content: GameContent, cfg: LLMConfig) -> 
 
 def main() -> int:
     args = _args()
-    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {"0", "false", "no"}:
-        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-    trace_path = Path(trace_setting).resolve()
-    if trace_path.exists():
-        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
-
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
+    trace_path = None
+    if cfg.channel == "cli":
+        # 既有 CLI 审计约定；api 通道无 CliChat TRACE，不强制。
+        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {"0", "false", "no"}:
+            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
+        trace_path = Path(trace_setting).resolve()
+        if trace_path.exists():
+            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
     with tempfile.TemporaryDirectory(prefix="ming-562-gate-") as tmp:
+        # 禁动：既有 ThreadPoolExecutor(min(4,samples)) 条件（#1256 庭裁，非本票范围）。
         with ThreadPoolExecutor(max_workers=min(4, args.samples)) as executor:
             futures = [executor.submit(_run_sample, i, tmp, content, cfg) for i in range(args.samples)]
             samples = sorted((future.result() for future in as_completed(futures)), key=lambda row: row["sample"])
@@ -154,9 +158,12 @@ def main() -> int:
     ordinary_rejected = sum(s["classification"]["ordinary_rejected"] for s in samples)
     break_only = sum(s["classification"]["break_rank_rejected"] and not s["classification"]["ordinary_rejected"] for s in samples)
     ordinary_only = sum(s["classification"]["ordinary_rejected"] and not s["classification"]["break_rank_rejected"] for s in samples)
-    trace_records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line]
-    if len(trace_records) != args.samples or any(record.get("error") is not None for record in trace_records):
-        raise RuntimeError(f"expected {args.samples} successful raw trace records; got {len(trace_records)}")
+    if trace_path is not None:
+        trace_records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line]
+        if len(trace_records) != args.samples or any(record.get("error") is not None for record in trace_records):
+            raise RuntimeError(f"expected {args.samples} successful raw trace records; got {len(trace_records)}")
+    else:
+        trace_records = []
     p_value = _two_sided_sign_p(break_only, ordinary_only)
     correct_direction = break_only > ordinary_only
     artifact = {
@@ -165,8 +172,7 @@ def main() -> int:
             "design": "paired independent samples; persisted different office histories are the only rank-condition intervention; opaque target IDs and presentation order are counterbalanced",
             "test": "exact two-sided paired sign test (exact McNemar on discordant pairs)",
             "alpha": 0.05, "samples": args.samples,
-            "config": {"channel": "cli", "runner": args.runner, "model": args.model,
-                       "reasoning_strength": cfg.reasoning_strength, "max_tokens": cfg.max_tokens},
+            "config": gate_evidence_config(args, cfg),
         },
         "summary": {
             "break_rank_rejections": break_rejected,
