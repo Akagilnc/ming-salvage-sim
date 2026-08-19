@@ -98,7 +98,7 @@ export function EdictModal({
           <textarea
             value={directiveText}
             onChange={(event) => onDirectiveTextChange(event.target.value)}
-            placeholder="例如：命毕自严核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
+            placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
           />
           <button className="desk-add-btn" onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>
             <Edit3 size={14} />新增草案
