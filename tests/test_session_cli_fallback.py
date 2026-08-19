@@ -263,6 +263,59 @@ def test_tool_call_staged_new_secret_order_merges_minister_reply(game, monkeypat
     assert "封存兵部辽饷册" in payload["content"]
 
 
+def test_opening_seed_secret_orders_have_no_ceremonial_answer(game):
+    """#1274 K1 seed 开局合约：生产开局同核不预置脏 content（无答奏拼进正文的 seed 密令）。
+
+    诊断：开局无静态 secret_orders seed；若将来有 seed，content 亦不得含答奏标志。
+    """
+    db, _state, _ = game
+    orders = db.list_secret_orders()
+    # 当前生产开局：零条预置密令（答奏污染来自召对抽取/暂存合并缝，非 seed 数据）
+    assert orders == [] or all(
+        all(m not in str(o.get("content") or "") for m in ("谨领圣谕", "闻命如雷"))
+        for o in orders
+    )
+
+
+def test_tool_call_staged_secret_order_excludes_ceremonial_answer(game, monkeypatch):
+    """#1274 K1：staged 合并缝不得把「谨领圣谕」类答奏拼进 content；补全字段保留。"""
+    db, state, _ = game
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    minister = "李若琏"
+    pid = db.stage_pending_action(
+        state.turn, kind="secret_order", action="新建", minister_name=minister, target_id=None,
+        payload={
+            "title": "密查关宁欠饷",
+            "content": "密查关宁欠饷。",
+            "assignee": minister,
+            "tags": [],
+            # 漏填期限：由命令文本回填（显式 0 会被保留，见 keeps_explicit_zero 测）
+        },
+    )
+
+    result = _result()
+    result.pending_action_id = pid
+    result.answer = (
+        "臣李若琏，谨领圣谕，闻命如雷。"
+        "臣当密访关宁诸将，核其欠饷册籍。"
+    )
+
+    _session(db, state, llm_config=SimpleNamespace(channel="api"))._cli_backend_fallback_actions(
+        result,
+        SimpleNamespace(name=minister, office_type="锦衣卫"),
+        "密令如下：密查关宁欠饷。\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册",
+    )
+
+    payload = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    body = payload["content"]
+    assert "密查关宁欠饷" in body
+    assert "密访" in body or "核" in body
+    for banned in ("谨领圣谕", "闻命如雷"):
+        assert banned not in body, (banned, body)
+    assert payload["tags"] == ["关宁", "欠饷"]
+    assert payload["deadline_months"] == 3
+
+
 def test_tool_call_staged_secret_order_merge_updates_reply_assignee(game, monkeypatch):
     """tool-call 新密令也要从大臣补充里回填承办人。"""
     db, state, _ = game
@@ -2589,7 +2642,10 @@ def test_secret_prefix_upserts_not_duplicates_and_refreshes(game, monkeypatch):
             "SELECT content FROM secret_orders WHERE minister_name=? AND status='active'", (who,)
         ).fetchall()
     }
-    assert contents == {"查甲；臣领旨一。", "改查甲；臣领旨二。"}
+    # #1274 K1：content 只留密令本体；「臣领旨一/二」答奏不入正文
+    assert contents == {"查甲", "改查甲"}
+    for body in contents:
+        assert "领旨" not in body
     assert refreshed.count(who) == 2
 
 

@@ -1918,19 +1918,30 @@ class GameSession:
         content = str(payload.get("content") or "").strip()
         command = GameSession._secret_order_command_material(player_message)
         reply = (minister_reply or "").strip()
+        from ming_sim.cli_backend import (
+            _choose_assignee,
+            _merge_secret_content,
+            _minister_material_clauses,
+            _secret_metadata_from_command,
+            _strip_secret_content_acknowledgments,
+        )
+        # #1274 K1：回话只并入实质补充，答奏（谨领圣谕…）不进 content。
+        reply_material = "\n".join(_minister_material_clauses(reply))
         existing_key = GameSession._normalized_content_key(content)
         parts = [content]
         changed = False
-        for material in (command, reply):
+        for material in (command, reply_material):
             material_key = GameSession._normalized_content_key(material)
             if material_key and material_key not in existing_key:
                 parts.append(material)
         if len(parts) > 1:
-            from ming_sim.cli_backend import _merge_secret_content
-
             payload["content"] = _merge_secret_content(*parts)
             changed = True
-        from ming_sim.cli_backend import _choose_assignee, _secret_metadata_from_command
+        # 写前单缝净化：已暂存脏 content（LLM/旧合并夹答奏）同样剥净。
+        cleaned = _strip_secret_content_acknowledgments(str(payload.get("content") or ""))
+        if cleaned != str(payload.get("content") or "").strip():
+            payload["content"] = cleaned
+            changed = True
 
         assignee = _choose_assignee(
             str(payload.get("assignee") or ""),

@@ -1966,23 +1966,70 @@ _ACKNOWLEDGMENT_CLAUSE_EXACT = frozenset({
     "钦此", "遵命", "遵旨", "遵行", "领旨", "领命", "领密旨", "领讫",
     "谨遵", "谨领", "敢不", "叩谢", "叩首", "谢恩", "拜受", "拜谢",
     "唯命", "即办", "即行", "即遵", "即遵行", "加紧",
+    # #1274 K1：顿号/逗号切开后的答奏碎片（「臣李若琏，谨领圣谕，闻命如雷」）
+    "谨领圣谕", "领圣谕", "闻命如雷", "叩首领旨", "领命如山", "敢不从命",
+    "唯命是听", "遵奉", "钦遵",
 })
+# 自称+姓名整句（拆分后的「臣李若琏」）——纯称谓碎片，非任务补充。
+_ACK_SPEAKER_ONLY_RE = re.compile(
+    r"^(?:臣|妾|微臣|老臣|末将|卑职|奴婢|下官|小臣)[\u4e00-\u9fa5·]{0,4}$"
+)
 # material 分句前导虚词/连接词：核验补充是否被 LLM 正文覆盖时，去前导词后再做子串匹配。
 _SUPPLEMENT_PREFIX_RE = re.compile(r"^[须再并且即便宜遂着请可授委令命差派先以此又当]{1,4}")
+
+
+def _is_acknowledgment_clause(clause: str) -> bool:
+    """分句是否纯答奏/领命碎片（#1274 K1：逗号切开后的「谨领圣谕」亦算）。"""
+    c = (clause or "").strip()
+    if not c:
+        return True
+    if c in _ACKNOWLEDGMENT_CLAUSE_EXACT or _ACKNOWLEDGMENT_CLAUSE_RE.match(c):
+        return True
+    if _ACK_SPEAKER_ONLY_RE.match(c):
+        return True
+    return False
 
 
 def _minister_material_clauses(reply: str) -> List[str]:
     """从大臣回话里抽出有实质内容的分句（剥掉领命/应答语）。
 
     #397 Step6 R3（Codex P1）：大臣补充不止承办人——如「须先封存兵部辽饷册」「再密访关宁
-    诸将」等要点也须保留。抽出这些 material 分句用于校验 LLM 正文是否完整反映。"""
+    诸将」等要点也须保留。抽出这些 material 分句用于校验 LLM 正文是否完整反映。
+    #1274 K1：多逗号答奏（臣李若琏，谨领圣谕，闻命如雷）拆分后各碎片也须剥净。"""
     clauses = [seg.strip() for seg in _CLAUSE_SPLIT.split(reply or "") if seg.strip()]
     material: List[str] = []
     for clause in clauses:
-        if clause in _ACKNOWLEDGMENT_CLAUSE_EXACT or _ACKNOWLEDGMENT_CLAUSE_RE.match(clause):
+        if _is_acknowledgment_clause(clause):
             continue
         material.append(clause)
     return material
+
+
+def _strip_secret_content_acknowledgments(content: str) -> str:
+    """密令正文契约：剥答奏碎片，保留任务本体与标签/期限/方法补全（#1274 K1）。
+
+    单缝写前净化——脏答奏不落库；补全字段行（标签：/期限：/方法：）原样保留。
+    """
+    if not (content or "").strip():
+        return (content or "").strip()
+    out_lines: List[str] = []
+    for raw_line in str(content).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # 补全元数据行（标签/期限/方法…）不走答奏分句剥除，防逗号拆坏标签列表
+        if re.match(r"^(?:标签|tag|tags|期限|限期|deadline|方法|method)\s*[：:]", line, flags=re.IGNORECASE):
+            out_lines.append(line)
+            continue
+        all_clauses = [seg.strip() for seg in _CLAUSE_SPLIT.split(line) if seg.strip()]
+        material = [c for c in all_clauses if not _is_acknowledgment_clause(c)]
+        if not material:
+            continue
+        if len(material) == len(all_clauses):
+            out_lines.append(line)
+        else:
+            out_lines.append("，".join(material))
+    return "\n".join(out_lines)
 
 
 def _content_reflects_minister_supplements(content: str, minister_reply: str) -> bool:
@@ -2488,19 +2535,24 @@ def _extract_secret_order(
     if force_default_assignee and _prior_supplement:
         _supplement_ok = _supplement_ok and _content_reflects_minister_supplements(
             _content_llm, _prior_supplement)
+    # 大臣回话只并入实质补充分句（#1274 K1：禁把「谨领圣谕」类答奏整段拼进正文；
+    # force/非 force 两路同口径，答奏归对话记录）。
+    _current_material = "\n".join(_minister_material_clauses(minister_reply))
     if _emperor_ok and _supplement_ok:
         content = _content_llm
     elif force_default_assignee:
         # 上下文路径兜底：御旨任务 + LLM 内容 + 前文大臣实质补充 + 当前回话的实质分句（不并入
         # 「臣领命」这类纯领命语，避免领命噪声污染正文）。御旨/大臣补充都不丢。
-        _current_material = "\n".join(_minister_material_clauses(minister_reply))
         content = _merge_secret_content(
             _emperor_fallback, _content_llm, _prior_supplement, _current_material)
     else:
-        # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣回话——
+        # 兜底（#397 Step5/Step6）：御旨为主，并入 LLM 内容与大臣实质补充——
         # 御旨绝不丢、大臣补充的承办人/要点也不被合法 LLM 输出吞掉。旧码只在内容为空时
         # 兜底，且 candidate=_content_llm 时不再并入回话 → 大臣补充仍会丢（Step6 修复）。
-        content = _merge_secret_content(_emperor_fallback, _content_llm, minister_reply)
+        # #1274 K1：并入 material 分句而非整段回话，答奏不落库。
+        content = _merge_secret_content(_emperor_fallback, _content_llm, _current_material)
+    # #1274 K1 单缝净化：即便 LLM 内容已夹答奏，写前剥净；标签/期限/方法补全行保留。
+    content = _strip_secret_content_acknowledgments(content)
     # No formal title hard-cap: keep the full extracted title; only synthesize a
     # short fallback when the extractor omitted 标题 entirely.
     title = str(obj.get("标题") or "").strip() or (content or player_command)[:14]
