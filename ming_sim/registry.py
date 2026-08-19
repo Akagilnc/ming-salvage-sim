@@ -232,7 +232,9 @@ def build_character_knowledge_brief(character: Character, context: CourtContext)
     prompt assembly change cannot accidentally reintroduce a global rail.
     """
     knowledge = context.db.get_character_knowledge(context.state, character.name)
-    return render_character_knowledge(knowledge, character.name)
+    return render_character_knowledge(
+        knowledge, character.name, db=context.db, state=context.state,
+    )
 
 
 def build_secret_order_brief(character: Character, context: CourtContext) -> str:
