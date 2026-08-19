@@ -287,7 +287,7 @@ export type GameState = {
   directives: Directive[];
   pending_count: number;
   pending_directive_count?: number;  // 对话式拟旨暂存数（pending_actions kind=directive）
-  pending_secret_order_count?: number;  // 兼容旧字段；隐藏的新密令候选不再向前端计数
+  pending_secret_order_count?: number;  // #1376：staged 密令候选数（确认闸门仍在；投影可见）
   pending_non_directive_action_count?: number;  // 可见的非拟旨 pending_actions（不含隐藏新密令候选）
   failed_secret_order_count?: number;
   pending_decisions?: PendingDecision[];

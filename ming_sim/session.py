@@ -2473,7 +2473,15 @@ class GameSession:
         self.db.delete_directive(directive_id)
 
     def pending_count(self) -> int:
-        return self.db.count_pending_directives(self.state)
+        """未核定 turn_directives + staged 密令候选（#1376 投影可见性）。
+
+        拟旨 pending_actions 另由 pending_directive_count 投影；本计数补密令洞，
+        使 API/玩家能看见在途密令候选（确认闸门/落库时序不动）。
+        """
+        n = self.db.count_pending_directives(self.state)
+        pending_actions = self.db.list_pending_actions(self.state.turn)
+        n += sum(1 for a in pending_actions if a["kind"] == "secret_order")
+        return n
 
     # ── 诏书阶段 ──────────────────────────────────────────────────────────
 
