@@ -59,6 +59,7 @@ function renderModal(props: {
   replyRetry?: { chat_turn_id: number; question: string } | null;
   onRetryReply?: (ministerName: string) => void;
   extractionPendingCount?: number;
+  extractionHealedHint?: string;
   onRetryExtraction?: () => void;
   suggestions?: Suggestion[];
   secretOrders?: React.ComponentProps<typeof ChatModal>["secretOrders"];
@@ -123,6 +124,7 @@ function renderModal(props: {
         secretOrders={props.secretOrders ?? []}
         replyRetry={props.replyRetry}
         extractionPendingCount={props.extractionPendingCount}
+        extractionHealedHint={props.extractionHealedHint}
         onInput={(value) => setInput(value)}
         onSend={props.onSend ?? (() => {})}
         onRetryFailure={props.onRetryFailure ?? (() => {})}
@@ -519,6 +521,19 @@ describe("ChatModal — placeholder switches on character type", () => {
     expect(button).toBeTruthy();
     act(() => button?.click());
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1353 closing 自愈：count=0 仍显示可重试/已自愈指引", () => {
+    renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      extractionPendingCount: 0,
+      extractionHealedHint: "待补账本已自愈，可重试收夜或颁诏。",
+    });
+    const note = document.querySelector('[data-testid="extraction-healed"]');
+    expect(note?.textContent).toMatch(/自愈/);
+    expect(note?.textContent).toMatch(/可重试/);
+    expect(document.querySelector('[data-testid="extraction-pending"]')).toBeNull();
   });
 });
 
