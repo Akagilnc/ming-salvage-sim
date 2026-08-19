@@ -7854,8 +7854,7 @@ class GameDB:
 
         与 previous_turn_summary 同源：优先读 turn_reports 已存 year/period，
         经 reign_period_label 投影；无行时按当前 state 回推上一月（与
-        seed_opening_gazette 算法一致）。当前 turn 的年号留给 HUD/菜单，
-        不得混充上月报头。
+        seed_opening_gazette 算法一致）。当前 turn 年号不得混充上月报头。
         """
         previous_turn = int(state.turn) - 1
         if previous_turn < 0:

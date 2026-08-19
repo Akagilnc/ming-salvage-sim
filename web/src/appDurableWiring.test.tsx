@@ -915,8 +915,18 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
   });
 
   it("gazette：核账期邸报（上月）可读且正文=状态口 previous_summary（isFaceReachable 真链）", async () => {
+    // #1356 F4：App 接缝——previous_* 与 turn.reign_period_label 同给，报头不得混充当前月
     stubSettlementFetch(settlementBaseState("player", {
       previous_summary: SNAP_GAZETTE,
+      previous_reign_period_label: "天启七年九月",
+      turn: {
+        year: 1627,
+        period: 10,
+        turn: 5,
+        phase: "player",
+        settlement_display: true,
+        reign_period_label: "天启七年十月",
+      },
       pending_decisions: [],
     }));
     const host = await mountApp();
@@ -924,6 +934,9 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
     });
     expect(host.querySelector('[role="dialog"][aria-label="邸报"]')!.textContent).toContain(SNAP_GAZETTE);
+    const masthead = host.querySelector(".gazette-masthead")?.textContent || "";
+    expect(masthead).toContain("天启七年九月");
+    expect(masthead).not.toContain("天启七年十月");
     // 半程议题仍不泄漏；上月已结只读面可同屏
     expect(host.textContent).not.toContain(MIDCOURSE_ISSUE);
     expect(host.querySelector(".situation-closed-list")).not.toBeNull();

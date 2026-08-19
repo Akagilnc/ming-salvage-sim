@@ -270,7 +270,7 @@ export type GameState = {
     turn: number;
     phase?: string;
     settlement_display?: boolean;
-    /** #1356：后端 reign_period_label 投影（天启七年十月…），前端直显 */
+    /** #1356：后端当前回合年号投影；payload 保留。邸报报头禁用（用 previous_reign_period_label） */
     reign_period_label?: string;
   };
   metrics: Metrics;
