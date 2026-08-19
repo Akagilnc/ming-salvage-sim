@@ -491,6 +491,7 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
     """
     payload = simulator_payload or {}
     turn_header = ""
+    # build_simulator_payload 恒带 turn；缺 label 时只走 reign_period_label()，禁西历字面抬头。
     if isinstance(payload.get("turn"), dict):
         t = payload["turn"]
         label = t.get("reign_period_label")
@@ -500,7 +501,7 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
                 try:
                     label = reign_period_label(int(y), int(p))
                 except (TypeError, ValueError):
-                    label = f"{y} 年 {p} 月"
+                    label = ""
             else:
                 label = ""
         if label:
@@ -508,21 +509,6 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
                 f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
                 f"涉及年月时以此为准。\n"
             )
-    elif payload.get("year") is not None and payload.get("period") is not None:
-        # build_simulator_payload 顶层 year/period 回落：仍喂年号事实，禁西历裸拼
-        y, p = payload.get("year"), payload.get("period")
-        label = payload.get("reign_period_label")
-        if not label:
-            try:
-                label = reign_period_label(int(y), int(p))  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                label = f"{y} 年 {p} 月"
-        turn_no = payload.get("turn_no") or payload.get("turn_index") or ""
-        turn_suffix = f"（第 {turn_no} 回合）" if turn_no != "" else ""
-        turn_header = (
-            f"【本回合年月】{label}{turn_suffix}。"
-            f"涉及年月时以此为准。\n"
-        )
 
     # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
     table_order = ("buildings", "court_roster", "armies", "regions")

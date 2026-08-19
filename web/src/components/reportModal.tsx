@@ -8,7 +8,7 @@ export function ReportModal({
 }: {
   report: string;
   onClose: () => void;
-  /** #1356：后端 reign_period_label 投影；禁前端第二份年号表 */
+  /** #1356：后端 previous_reign_period_label（报文自身月）投影；禁前端第二份年号表 */
   periodLabel?: string;
 }) {
   const activeText = stripOrganicMarkdown(report);

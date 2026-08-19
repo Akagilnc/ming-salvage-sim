@@ -581,7 +581,6 @@ def build_simulator_payload(
             "turn": state.turn,
             "reign_period_label": reign_label,
         },
-        "reign_period_label": reign_label,
         "decree_text": decree_text,
         # ADR 0051/0055: structured dossier rows are the source; decree_text is
         # only a compatibility rendering derived by the settlement caller.

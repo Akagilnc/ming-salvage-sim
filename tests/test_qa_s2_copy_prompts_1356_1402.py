@@ -3,7 +3,7 @@
 四条真缝各一钉：
 1. minister_agent 召对称谓正向口径（陛下/皇上/臣；亲王才殿下）
 2. season_simulator 停自算年号，上下文喂 reign_period_label 事实
-3. ReportModal/gameMenu 报头走 reign_period_label 投影（禁前端第二份年号表）
+3. #1356 邸报报头年月 ≡ 报文自身月（后端 previous_reign_period_label 投影；FE 渲染见 vitest）
 4. web _require_active_minister 改调 can_summon 取文案（删「已尚未登场」平行副本）
 """
 
@@ -46,6 +46,8 @@ def test_season_simulator_uses_fed_reign_label_not_self_compute():
     assert "reign_period_label" in prompt or "本回合年月" in prompt
     # 抬头模板走喂入的年号事实，不再 {year}年{period}月 西历拼
     assert "{year}年{period}月" not in prompt
+    # F2：骨架不得把字段名 {reign_period_label} 原样写入玩家可见第一行
+    assert "{reign_period_label}" not in prompt
 
     from ming_sim.agents import build_simulator_context
     from ming_sim.models import reign_period_label
@@ -69,21 +71,24 @@ def test_season_simulator_uses_fed_reign_label_not_self_compute():
     assert "【本回合年月】1627 年 10 月" not in ctx
 
 
-def test_report_and_menu_project_reign_period_label_no_second_table():
-    """#1356：报头/重开提示走 reign_period_label 投影；前端无第二份年号 epoch 表。"""
+def test_gazette_header_uses_report_own_month_not_current_turn(game):
+    """#1356：报头年月 ≡ 报文自身月；开局九月 / 跨年十二月→正月。
+
+    后端 previous_reign_period_label 与 previous_summary 同源（turn_reports year/period），
+    不得用当前 turn.reign_period_label 混充上月报头。真渲染见 vitest ReportModal。
+    """
     from ming_sim.models import GameState, reign_period_label
 
-    opening = reign_period_label(GameState().year, GameState().period)
-    assert opening == "天启七年十月"
+    db, state, _content = game
 
-    menu = (ROOT / "web/src/components/gameMenu.tsx").read_text(encoding="utf-8")
-    assert opening in menu
-    assert "天启七年十二月" not in menu
-
-    report_modal = (ROOT / "web/src/components/reportModal.tsx").read_text(encoding="utf-8")
-    # 写死「本月故事」须让位给 periodLabel 投影
-    assert "periodLabel" in report_modal
-    assert 'subtitle="本月故事"' not in report_modal
+    # 开局：state=天启七年十月，turn0 九月报文 → 报头必须九月
+    assert state.turn == 1
+    assert (state.year, state.period) == (1627, 10)
+    assert reign_period_label(state.year, state.period) == "天启七年十月"
+    opening_label = db.previous_turn_reign_period_label(state)
+    assert opening_label == "天启七年九月"
+    opening_body = db.previous_turn_summary(state)
+    assert opening_body.startswith("天启七年九月")
 
     # 禁前端第二份年号表：无天启/崇祯 epoch 常量平行表
     web_src = ROOT / "web/src"
@@ -97,6 +102,68 @@ def test_report_and_menu_project_reign_period_label_no_second_table():
         if "CHONGZHEN_EPOCH" in body or "TIANQI_EPOCH" in body:
             offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
+
+    # 菜单重开提示仍钉当前开局月（HUD/菜单用 turn 标签，不混充报头）
+    menu = (ROOT / "web/src/components/gameMenu.tsx").read_text(encoding="utf-8")
+    assert "天启七年十月" in menu
+
+
+def test_gazette_header_cross_year_december_report_under_january_state(game):
+    """#1356 F4：十二月报文 + 正月状态 → 报头十二月（跨年边界）。"""
+    from ming_sim.models import reign_period_label
+
+    db, state, _content = game
+    # 落一条「十二月」报文（turn=N），再把 state 推到正月
+    state.year, state.period, state.turn = 1627, 12, 5
+    db.save_turn_report(state, "天启七年十二月邸报·跨年钉测")
+    # 过月后 state 已是崇祯元年正月
+    state.year, state.period, state.turn = 1628, 1, 6
+    current = reign_period_label(state.year, state.period)
+    assert current == "崇祯元年正月"
+    header = db.previous_turn_reign_period_label(state)
+    assert header == "天启七年十二月"
+    assert header != current
+    body = db.previous_turn_summary(state)
+    assert "十二月" in body
+
+
+def test_state_payload_projects_previous_reign_period_label(game):
+    """#1356：state_payload 挂 previous_reign_period_label；turn 标签仍是当前月。"""
+    import web_app
+    from types import SimpleNamespace
+    from ming_sim.models import reign_period_label
+
+    db, state, content = game
+    assert db.previous_turn_reign_period_label(state) == "天启七年九月"
+
+    # 与 c3 同形轻壳：经 WebGame.state_payload 真投影
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        pending_count=lambda: 0,
+        pending_decisions=lambda: [],
+        victory=lambda: {"status": "ongoing", "summary": ""},
+        previous_summary=db.previous_turn_summary(state),
+        last_decree="",
+        last_report="",
+    )
+    runtime.directive_rows = lambda: []
+    runtime.issue_payloads = lambda: []
+    runtime.legacies_payload = lambda: []
+    runtime.closed_this_turn_payloads = lambda: []
+    runtime.map_nodes = lambda: []
+    runtime.ending_payload = lambda: None
+    runtime.public_character = lambda c: {"name": getattr(c, "name", "")}
+    runtime.character_power_id = lambda c: "ming"
+
+    payload = web_app.WebGame.state_payload(runtime)
+    assert payload["previous_reign_period_label"] == "天启七年九月"
+    assert payload["previous_summary"].startswith("天启七年九月")
+    assert payload["turn"]["reign_period_label"] == reign_period_label(state.year, state.period)
+    assert payload["turn"]["reign_period_label"] == "天启七年十月"
+    assert payload["previous_reign_period_label"] != payload["turn"]["reign_period_label"]
 
 
 def test_require_active_minister_uses_can_summon_copy_no_yi_shangwei(game, monkeypatch):

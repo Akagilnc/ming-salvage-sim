@@ -275,6 +275,8 @@ export type GameState = {
   };
   metrics: Metrics;
   previous_summary: string;
+  /** #1356：邸报报文自身年月标签（与 previous_summary 同源）；报头直显，禁用 turn.reign_period_label 混充 */
+  previous_reign_period_label?: string;
   issues: Issue[];
   legacies: Legacy[];
   closed_this_turn: ClosedIssue[];
