@@ -1384,7 +1384,10 @@ class WebGame:
             "pending_directive_count": sum(
                 1 for a in pending_actions
                 if a["kind"] == "directive"),
-            "pending_secret_order_count": 0,
+            # #1376：staged 密令候选如实入投影（确认闸门/默认准行 by-design 不动）。
+            "pending_secret_order_count": sum(
+                1 for a in pending_actions
+                if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
                 1 for _a in self.db.list_failed_secret_order_actions()),
