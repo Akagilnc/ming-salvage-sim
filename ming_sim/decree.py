@@ -1395,6 +1395,7 @@ def resolve_settling_recovery(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
             simulator_payload=ctx.get("simulator_payload"),
+            secret_orders=_recovered_grouped(ctx.get("secret_orders")),
             dossier_rescript_actions=_chosen_rescript_actions(
                 db.list_pending_decisions(state.turn)
             ),
@@ -1426,6 +1427,7 @@ def _replay_settle(
     decree_text: str,
     narrative: str,
     simulator_payload: object = None,
+    secret_orders: object = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     content=None,
     registry=None,
@@ -1452,6 +1454,7 @@ def _replay_settle(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
+            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
         on_stage=lambda label: _emit("stage", label),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
@@ -1691,6 +1694,7 @@ def _settle_after_narrative(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
+            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),
         on_stage=lambda label: _emit("stage", label),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、
