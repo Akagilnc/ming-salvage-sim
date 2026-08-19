@@ -47,6 +47,35 @@ describe("resolveReasoningSupported", () => {
       cliRunner: "agy",
       backendSupported: true,
       backendCurrent: false,
+      cliReasoningRunners: ["codex", "claude", "grok"],
+    })).toBe(false);
+  });
+
+  it("falls back to true for grok when the capability list includes grok (#1271)", () => {
+    expect(resolveReasoningSupported({
+      currentChannel: "cli",
+      baseUrl: "",
+      model: "",
+      advancedBaseUrl: "",
+      advancedModel: "",
+      cliRunner: "grok",
+      backendSupported: false,
+      backendCurrent: false,
+      cliReasoningRunners: ["codex", "claude", "grok"],
+    })).toBe(true);
+  });
+
+  it("does not hardcode codex/claude when the capability list is empty (#1271)", () => {
+    expect(resolveReasoningSupported({
+      currentChannel: "cli",
+      baseUrl: "",
+      model: "",
+      advancedBaseUrl: "",
+      advancedModel: "",
+      cliRunner: "codex",
+      backendSupported: true,
+      backendCurrent: false,
+      cliReasoningRunners: [],
     })).toBe(false);
   });
 });

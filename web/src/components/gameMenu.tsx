@@ -416,6 +416,7 @@ export function LLMConfigTab() {
     advancedBaseUrl,
     advancedModel,
     cliRunner,
+    cliReasoningRunners: info?.cli_reasoning_runners,
   });
   const reasoningChoices = info?.reasoning_strengths || [
     { value: "", label: "默认" },
@@ -548,6 +549,7 @@ export function LLMConfigTab() {
               <option value="agy">agy（Gemini）</option>
               <option value="codex">codex</option>
               <option value="claude">claude</option>
+              <option value="grok">grok</option>
             </select>
           </label>
           <label className="menu-field">
