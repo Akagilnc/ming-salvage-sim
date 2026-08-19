@@ -45,3 +45,13 @@ describe("#1387 邸报可滚完", () => {
     expect(block).toMatch(/min-height:\s*0/);
   });
 });
+
+describe("#1398 邸报朕知道了视口常显", () => {
+  it("gazette-shell 分栏：document 可滚、dismiss 不随文滚走", () => {
+    const shell = styles.match(/\.gazette-shell\s*\{[^}]*\}/)?.[0] || "";
+    expect(shell).toMatch(/display:\s*flex/);
+    expect(shell).toMatch(/flex-direction:\s*column/);
+    const dismiss = styles.match(/\.gazette-dismiss\s*\{[^}]*\}/)?.[0] || "";
+    expect(dismiss).toMatch(/flex:\s*0\s+0\s+auto/);
+  });
+});

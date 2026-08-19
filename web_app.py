@@ -4440,19 +4440,7 @@ def api_advance_without_edict(
         # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
             # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
-            if body.expected_turn is not None:
-                current_turn = int(getattr(game.state, "turn", 0) or 0)
-                if current_turn != int(body.expected_turn):
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "message": (
-                                f"月份已变更（当前第 {current_turn} 月），"
-                                "与退朝令牌不符，请刷新后再试。"
-                            ),
-                            "turn": current_turn,
-                        },
-                    )
+            _reject_stale_month_token(game, body.expected_turn, token_label="退朝")
             # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
             # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
             # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
@@ -4509,6 +4497,29 @@ def api_advance_without_edict(
 class IssueDecreeRequest(BaseModel):
     # 作弊控制台（Ctrl+~）下的强制结算项；一次性，颁诏即用。普通颁诏留空。
     cheat: str = ""
+    # #1277/#1351：可选回合令牌；缺省兼容无令牌旧客户端。与 advance_without_edict 同口径。
+    expected_turn: Optional[int] = None
+
+
+def _reject_stale_month_token(game, expected_turn: Optional[int], *, token_label: str) -> None:
+    """获锁后、resolve_turn 前：expected_turn 与当前月份不一致 → 人话 409（含当前 turn）。
+
+    #1351 advance / #1277 issue 主路共用；缺省令牌=不比对（兼容旧客户端）。
+    """
+    if expected_turn is None:
+        return
+    current_turn = int(getattr(game.state, "turn", 0) or 0)
+    if current_turn != int(expected_turn):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"月份已变更（当前第 {current_turn} 月），"
+                    f"与{token_label}令牌不符，请刷新后再试。"
+                ),
+                "turn": current_turn,
+            },
+        )
 
 
 @app.post("/api/decree/issue")
@@ -4525,6 +4536,8 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     try:
         # #1241 S1：受理样板收 helper；issue 锁语义 = 阻塞 _game_write_gate（禁改非阻塞）。
         with _settlement_period_entry(game, write_cm=_game_write_gate):
+            # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+            _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
             result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
             failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
@@ -4595,6 +4608,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
             terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
+                # #1277/#1351：获锁后、resolve_turn 前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+                _reject_stale_month_token(game, body.expected_turn, token_label="颁诏")
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
                 decree = game.session.last_decree
@@ -4631,6 +4646,25 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 if game is not None else []
             )
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
+        except HTTPException as e:
+            # #1277：令牌 409 等须保留 detail.turn / status_code，供 FE 复用 advance 的
+            # 「serverTurn>expected → reload 不报错」；禁 str(HTTPException) 丢结构。
+            failures = (
+                _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+                if game is not None else []
+            )
+            detail = e.detail
+            if isinstance(detail, dict):
+                payload = dict(detail)
+                payload.setdefault("status_code", e.status_code)
+                if failures and "pending_action_failures" not in payload:
+                    payload["pending_action_failures"] = failures
+                ev_queue.put(("__error__", payload))
+            else:
+                payload = {"message": str(detail), "status_code": e.status_code}
+                if failures:
+                    payload["pending_action_failures"] = failures
+                ev_queue.put(("__error__", payload))
         except Exception as e:  # noqa: BLE001
             # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
             failures = (

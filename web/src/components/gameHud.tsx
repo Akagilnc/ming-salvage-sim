@@ -197,7 +197,7 @@ export function GameHud({
         caption="史册" sub="历代奏报/诏书"
         onClick={() => gatedModal("history", "history")} />
       <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
-        caption="拟诏·退朝过月"
+        caption={state.directives.length > 0 ? "拟诏·盖玺颁诏过月" : "拟诏·退朝过月"}
         sub={isFaceReachable("edict", settlementDisplay)
           ? (state.directives.length ? `${state.directives.length} 道草案` : "成案并过月")
           : closedReason}

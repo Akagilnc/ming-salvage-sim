@@ -62,24 +62,42 @@ export function useSettlementFlow({
     setSettleThinking("");
     setSettleNarrative("");
     setError("");
+    // #1277/#1351：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
+    // 与 advanceWithoutEdict 同口径；禁前端防抖顶替服务端令牌。
+    const expectedTurn = state?.turn?.turn;
     try {
       // 作弊强制结算项随颁诏一次性穿入；发出即清空，绝不跨回合。
       const cheatPayload = cheatDirective.trim();
+      const body: Record<string, unknown> = { cheat: cheatPayload };
+      if (expectedTurn != null && Number.isFinite(Number(expectedTurn))) {
+        body.expected_turn = Number(expectedTurn);
+      }
       const response = await fetch("/api/decree/issue/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cheat: cheatPayload }),
+        body: JSON.stringify(body),
       });
       if (cheatPayload) {
         setCheatDirective("");
       }
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
-        if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
-          setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
+        const errData = typeof outcome.data === "string" ? { message: outcome.data } : (outcome.data || {});
+        const serverTurn = Number(errData?.turn);
+        if (
+          Number(errData?.status_code) === 409
+          && expectedTurn != null
+          && Number.isFinite(serverTurn)
+          && serverTurn > Number(expectedTurn)
+        ) {
+          window.location.reload();
           return;
         }
-        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
+        if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
+          setError(errData.message || "颁诏失败。");
+          return;
+        }
+        setError(errData.message || "颁诏失败。");
         setBusy("");
         return;
       }
