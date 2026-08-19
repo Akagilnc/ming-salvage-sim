@@ -1011,9 +1011,9 @@ def _apply_economy_list(
         move_origin_ref = str(move.get("origin_ref") or "").strip()
         effective_origin_ref = str(origin_ref or move_origin_ref).strip()
         # #622：旨外标记与 origin_ref 同载体同寿命；路由前统一读取，三分支共用（不得在补饷分叉丢键）。
-        beyond_raw = move.get("beyond_intent")
-        if beyond_raw is None:
-            beyond_raw = move.get("旨外")
+        # #1260：别名读取收敛 simulation 单源（嵌套通道不经 cleaner，须吃全套别名）。
+        from ming_sim.simulation import read_beyond_intent_raw
+        beyond_raw = read_beyond_intent_raw(move)
         raw_purpose = str(move.get("purpose") or "").strip()
         raw_target_kind = str(move.get("target_kind") or "").strip()
         raw_target_id = str(move.get("target_id") or "").strip()

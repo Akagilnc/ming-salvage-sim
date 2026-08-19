@@ -39,6 +39,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "close_issues":     [],  // 结案 issue
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
+  "secret_dossier_participants": [], // #1252 密令案卷参与人追加（personnel_secret 私字段）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
   "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
   "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
@@ -107,6 +108,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
+| `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 ### `fiscal_creates` — 新立月度收支
 | 字段 | 约束 |
@@ -118,12 +120,14 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
+| `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
 - `key` 非空 + `reason` ≤120
 - `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
+- `beyond_intent` 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）：#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
 
 ### `army_delta` — 军队变化
@@ -201,6 +205,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
+| `ongoing_effects.economy[]` | 与顶层 `economy_moves` 同形；#1260 嵌套通道直走 `_apply_economy_list`（不经 `_clean_economy_moves`），`beyond_intent` 吃全套别名 `beyond_intent` / `旨外` / `旨外标记` / `旨外恶果`（真源=simulation 别名表） |
 | `cancellable` | "decree" / "never" / "by_progress" |
 | `narrative` | 立项叙事 |
 
@@ -257,8 +262,22 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 人物承诺型事项也属 `initiative`：如皇帝命臣安抚毛文龙，应立标题类似 `安抚毛文龙·进行中` 的玩家可见 issue，并同时写两件事：`stop_condition` 表达意图阈值（如 `{"character.毛文龙.loyalty":">=65"}`），`ongoing_effects` 表达每月持续动作（如 `{"人物变更":[{"name":"毛文龙","动作":"评定","loyalty":2,"reason":"奉旨持续安抚"}]}`）。只写 `stop_condition`、没有月度动作的载体会被拒收；一次性赏赐、抚恤、拨银若当回合办完，不立 issue，只走 `economy_moves` 与必要的 `人物变更`。
 
 ### `dossier_participants` — S2 案卷参与人追加
-- 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
+- 每项必须带 `dossier_id`、`character_id`、`tier`、`delegator_id`；`tier` 只收 `主办` / `协办` / `知情`，`role` 可选。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
+
+### `secret_dossier_participants` — #1252 密令案卷参与人追加
+
+personnel_secret 模块产出；与公共 `dossier_participants` **分立**（字段名即 provenance，禁止共享槽位 + union 授权）。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
+
+| 字段 | 约束 |
+|---|---|
+| `dossier_id`（别名 `案卷编号`） | **必填**正整数；须落在本批冻结授权集 `secret_dossier_ids_at_input`（由冻结 `secret_orders` 经 `get_dossier_for_secret_order` 解析；缺授权=空闭集，禁 live DB 重建） |
+| `character_id` | **必填**在册人物规范名 |
+| `tier` | **必填**∈｛主办/协办/知情｝ |
+| `delegator_id` | **必填**同案已有主办/协办 |
+| `role` | 可选职分文字 |
+
+读缝：`secret_dossier_rosters`（personnel_secret 私轨；每项 `dossier_id`+`participant_roster`，同 `monthly_dossier_reports` 口径）。键控用 `dossier_id`，不另起 `order_id` 键空间。公共 `dossier_participants` 对密令案卷 id 仍拒（#883 隔离不变）。
 
 ### 背书条目（ADR 0070）
 
@@ -378,7 +397,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
-| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `emperor_fate` |
+| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
 
 ---
 
