@@ -371,6 +371,8 @@ export type LLMConfigInfo = {
   cli_reasoning_strength?: string;
   reasoning_supported?: boolean;
   reasoning_strengths?: ReasoningStrengthChoice[];
+  /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
+  cli_reasoning_runners?: string[];
   has_api_key: boolean;
   cli_runner?: string;
   cli_model?: string;
@@ -555,6 +557,8 @@ export type MenuStatus = {
     cli_reasoning_strength?: string;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
+    /** Backend capability list from cli_backend.CLI_REASONING_STRENGTH_RUNNERS (#1271). */
+    cli_reasoning_runners?: string[];
   };
 };
 

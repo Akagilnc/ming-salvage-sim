@@ -252,6 +252,7 @@ export function ApiSettingsModal({
     cli_reasoning_strength?: string;
     reasoning_supported?: boolean;
     reasoning_strengths?: ReasoningStrengthChoice[];
+    cli_reasoning_runners?: string[];
     channel?: "api" | "cli";
     cli_runner?: string;
     cli_model?: string;
@@ -318,6 +319,7 @@ export function ApiSettingsModal({
     advancedBaseUrl,
     advancedModel,
     cliRunner,
+    cliReasoningRunners: initial?.cli_reasoning_runners,
   });
   const reasoningStrength = channel === "cli" ? cliReasoningStrength : apiReasoningStrength;
   const setReasoningStrength = channel === "cli" ? setCliReasoningStrength : setApiReasoningStrength;
@@ -390,6 +392,7 @@ export function ApiSettingsModal({
                 <option value="agy">agy（Gemini）</option>
                 <option value="codex">codex</option>
                 <option value="claude">claude</option>
+                <option value="grok">grok</option>
               </select>
             </label>
             <label>
