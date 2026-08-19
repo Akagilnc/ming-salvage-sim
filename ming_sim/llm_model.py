@@ -151,7 +151,12 @@ def create_chat_model(
             kwargs["reasoning_effort"] = effort
     # 探针：新配置用 channel 显式选择执行通道；未声明 channel 的旧路径暂沿用 env fallback。
     # CliChat 继承 OpenAIChat，吃同一套 kwargs；reasoning_effort 等 CLI 无关字段被忽略。
-    from ming_sim.cli_backend import CliChat, cli_backend_from_env, is_supported_cli_runner
+    from ming_sim.cli_backend import (
+        CliChat,
+        cli_backend_from_env,
+        is_supported_cli_runner,
+        supported_cli_runners_text,
+    )
     channel = (getattr(llm_config, "channel", "") or "").strip().lower()
     backend = None
     if channel == "cli":
@@ -160,7 +165,10 @@ def create_chat_model(
         backend = cli_backend_from_env()
     if backend is not None and not is_supported_cli_runner(backend):
         # 显式不支持的 runner 在构造期优雅失败，而非首次 invoke 才抛 raw RuntimeError。
-        raise LLMUnavailable(f"未知 CLI runner：{backend}（支持 agy / codex / claude）")
+        # 支持名单文案单一真源 = supported_cli_runners_text()（#1256）。
+        raise LLMUnavailable(
+            f"未知 CLI runner：{backend}（支持 {supported_cli_runners_text()}）"
+        )
     if backend is not None:
         kwargs.pop("reasoning_effort", None)  # CLI 后端不需要，且可能干扰父类校验
         cli_model = (getattr(llm_config, "cli_model", "") or "").strip()

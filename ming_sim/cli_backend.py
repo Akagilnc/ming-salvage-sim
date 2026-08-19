@@ -73,7 +73,16 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-_CLI_BACKENDS = {"agy", "codex", "claude"}
+# #1256：cursor / kimi / grok 本机 CLI runner；opencode 庭裁走 api 通道，不入此名单。
+_CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
+_KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
+_GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
+# 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
+_CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok"})
+# 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
+GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok")
+# 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
+_CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok"})
 _CODEX_REASONING_BY_STRENGTH = {
     "off": "low",
     "low": "low",
@@ -85,6 +94,13 @@ _CLAUDE_THINKING_TOKENS_BY_STRENGTH = {
     "low": "2000",
     "medium": "10000",
     "high": "32000",
+}
+# grok Build CLI --effort 仅 low/med/high（#1256 票面）；抽象 medium → med。
+_GROK_EFFORT_BY_STRENGTH = {
+    "off": "low",
+    "low": "low",
+    "medium": "med",
+    "high": "high",
 }
 
 
@@ -120,11 +136,26 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
         "agy": [
             {"value": "", "label": "默认 · gemini"},
         ],
+        # #1256 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
+        "cursor": [
+            {"value": "", "label": "默认"},
+        ],
+        "kimi": [
+            {"value": "", "label": "默认"},
+        ],
+        "grok": [
+            {"value": "", "label": "默认"},
+        ],
     }
 
 
+def supported_cli_runners_text() -> str:
+    """错误文案用：受支持 runner 名单（单一真源派生，排序稳定）。"""
+    return " / ".join(sorted(_CLI_BACKENDS))
+
+
 def is_supported_cli_runner(name: object) -> bool:
-    """runner 名是否是受支持的 CLI 后端（agy / codex / claude）。"""
+    """runner 名是否是受支持的 CLI 后端（见 _CLI_BACKENDS 单一真源）。"""
     return str(name or "").strip().lower() in _CLI_BACKENDS
 
 
@@ -133,7 +164,9 @@ def is_supported_cli_runner(name: object) -> bool:
 # 裸名 exec "codex"/"claude"/"agy" 会 FileNotFoundError——即便用户已按官方装好。
 # 解析成绝对路径即治本：用绝对路径 exec 不依赖 PATH。解析顺序见 _resolve_cli_bin。
 _EXTRA_BIN_DIRS = [
-    os.path.expanduser("~/.local/bin"),       # codex 官方独立安装 / pipx
+    os.path.expanduser("~/.local/bin"),       # codex 官方独立安装 / pipx / cursor-agent
+    os.path.expanduser("~/.kimi-code/bin"),   # kimi Code CLI
+    os.path.expanduser("~/.grok/bin"),        # Grok Build CLI
     os.path.expanduser("~/.bun/bin"),
     os.path.expanduser("~/.deno/bin"),
     os.path.expanduser("~/.cargo/bin"),
@@ -616,6 +649,104 @@ def _run_claude(
     return out, 1
 
 
+def _run_cursor(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名与其它 runner 对齐；cursor 无 effort 档
+) -> Tuple[str, int]:
+    """调 cursor-agent -p --output-format text（#1256）。
+    模型 --model 透传；--trust 免非交互 workspace 信任闸；干净输出在 stdout。
+    prompt 走 positional（CLI 无 stdin 约定）。"""
+    cmd = [
+        _resolve_cli_bin("cursor", _CURSOR_BIN),
+        "-p", "--output-format", "text", "--trust",
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    cmd.append(prompt)
+    try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计:list-form argv、无 shell=True;runner allowlist、model 独立 argv、prompt 为末位 positional。
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("cursor 调用超时") from exc
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"cursor 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
+    return out, 1
+
+
+def _run_kimi(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,  # noqa: ARG001 — 签名对齐；kimi -p 无 effort 档
+) -> Tuple[str, int]:
+    """调 kimi -p（#1256）。
+    纪律：-p 单用，禁与 --yolo/--auto 组合（本机 kimi 0.36.1 实测 parse 拒收）；
+    干净答案在 stdout，版本/thinking/resume 噪声在 stderr——只取 stdout。
+    prompt 走 -p 参数（非 stdin）。"""
+    cmd = [_resolve_cli_bin("kimi", _KIMI_BIN), "-p", prompt, "--output-format", "text"]
+    if model:
+        cmd.extend(["-m", model])
+    try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计:list-form argv、无 shell=True;runner allowlist、model 独立 argv、prompt 为 -p 值。
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("kimi 调用超时") from exc
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"kimi 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
+    return out, 1
+
+
+def _grok_effort(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _GROK_EFFORT_BY_STRENGTH.get(strength)
+
+
+def _run_grok(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调 Grok Build CLI（#1256 / bench §十二 grok-4.5 腿）。
+    -p/--single 单轮；--output-format plain；-m 透传；--effort 仅 low/med/high。
+    prompt 走 -p 参数。"""
+    cmd = [
+        _resolve_cli_bin("grok", _GROK_BIN),
+        "-p", prompt,
+        "--output-format", "plain",
+    ]
+    if model:
+        cmd.extend(["-m", model])
+    effort = _grok_effort(reasoning_strength)
+    if effort:
+        cmd.extend(["--effort", effort])
+    try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计:list-form argv、无 shell=True;runner allowlist、model/effort 独立 argv、prompt 为 -p 值。
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("grok 调用超时") from exc
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"grok 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
+    return out, 1
+
+
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
     未设或非法 → agy（沿用原默认）。"""
@@ -624,6 +755,12 @@ def _run_backend(prompt: str) -> Tuple[str, int]:
         return _run_codex(prompt)
     if b == "claude":
         return _run_claude(prompt)
+    if b == "cursor":
+        return _run_cursor(prompt)
+    if b == "kimi":
+        return _run_kimi(prompt)
+    if b == "grok":
+        return _run_grok(prompt)
     return _run_agy(prompt)
 
 
@@ -675,6 +812,27 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
                 )
             elif runner == "claude":
                 text, attempts = _run_claude(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
+            elif runner == "cursor":
+                text, attempts = _run_cursor(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
+            elif runner == "kimi":
+                text, attempts = _run_kimi(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
+            elif runner == "grok":
+                text, attempts = _run_grok(
                     prompt,
                     model=model or None,
                     timeout=timeout,
@@ -749,9 +907,9 @@ def describe_effective_model(llm_config: Any = None) -> str:
         runner = None
     if not runner:  # api 通道 / 形态1（空 channel 无 env）：用 cfg.model
         return str(getattr(llm_config, "model", "") or "?")
-    # 只有实际吃 --model 的 runner（codex/claude）才追加 /model；agy 忽略 model、走自身 Gemini ladder，
+    # 只有实际吃 --model 的 runner 才追加 /model；agy 忽略 model、走自身 Gemini ladder，
     # 给它挂个不被消费的 cli_model 反而误导（#84 codex），只显示 runner 名。
-    if runner in ("codex", "claude"):
+    if runner in _CLI_MODEL_RUNNERS:
         from ming_sim.llm_config import cli_model_from_env
         model = (str(getattr(llm_config, "cli_model", "") or "").strip()) or cli_model_from_env(runner)
         return f"{runner}/{model}" if model else runner
@@ -2504,6 +2662,12 @@ class CliChat(OpenAIChat):
             return _run_codex(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "claude":
             return _run_claude(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
+        if self.backend == "cursor":
+            return _run_cursor(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
+        if self.backend == "kimi":
+            return _run_kimi(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
+        if self.backend == "grok":
+            return _run_grok(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "agy":
             return _run_agy(prompt, timeout=timeout)
         raise RuntimeError(f"未知 CLI backend：{self.backend}")
@@ -2672,6 +2836,7 @@ class CliChat(OpenAIChat):
 
 
 def cli_backend_from_env() -> Optional[str]:
-    """读 MING_SIM_LLM_BACKEND，返回 'agy'/'codex'/'claude' 或 None（走原 api 路径）。"""
+    """读 MING_SIM_LLM_BACKEND，返回受支持 runner 名或 None（走原 api 路径）。
+    名单单一真源 = _CLI_BACKENDS（#1256 收敛，禁再硬编码枚举）。"""
     val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
-    return val if val in ("agy", "codex", "claude") else None
+    return val if val in _CLI_BACKENDS else None

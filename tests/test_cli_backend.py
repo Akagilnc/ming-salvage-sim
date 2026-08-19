@@ -1510,3 +1510,151 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cb._extract_secret_order("密查关宁军饷", "臣遵旨", "骆养性")
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
+
+
+# ── #1256 cursor / kimi / grok runners ──
+
+
+def test_cli_backends_include_cursor_kimi_grok():
+    assert {"cursor", "kimi", "grok"} <= set(cb._CLI_BACKENDS)
+    assert cb.is_supported_cli_runner("cursor")
+    assert cb.is_supported_cli_runner("kimi")
+    assert cb.is_supported_cli_runner("grok")
+    assert not cb.is_supported_cli_runner("opencode")  # 庭裁：走 api 通道，不入 runner 清单
+
+
+def test_gate_cli_runners_single_source_excludes_agy():
+    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok")
+    assert "agy" not in cb.GATE_CLI_RUNNERS
+    assert set(cb.GATE_CLI_RUNNERS) <= set(cb._CLI_BACKENDS)
+
+
+def test_new_runners_not_parallel_safe():
+    from ming_sim.models import LLMConfig
+    for runner in ("cursor", "kimi", "grok"):
+        cfg = LLMConfig(
+            api_key="", base_url="", model="m", channel="cli", cli_runner=runner, cli_model="m",
+        )
+        assert cb.cli_backend_parallel_safe(cfg) is False
+
+
+def test_cli_backend_from_env_accepts_new_runners(monkeypatch):
+    for name in ("cursor", "kimi", "grok"):
+        monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
+        assert cb.cli_backend_from_env() == name
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
+    assert cb.cli_backend_from_env() is None
+
+
+def test_run_cursor_flags_and_stdout(monkeypatch):
+    body = "CURSOR_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="noise"))
+    out, n = cb._run_cursor("PROMPT_BODY", model="auto")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd
+    assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "text"
+    assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "auto"
+    assert "--trust" in cmd
+    assert "PROMPT_BODY" in cmd  # positional prompt
+    assert captured["kw"].get("input") in (None, "")  # not stdin
+
+
+def test_run_kimi_prompt_flag_no_yolo_stdout_only(monkeypatch):
+    body = "KIMI_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="kimi version 0.36.1\nTo resume..."))
+    out, n = cb._run_kimi("PROMPT_BODY", model="kimi-k2")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
+    assert "--yolo" not in cmd and "-y" not in cmd and "--auto" not in cmd
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "kimi-k2"
+    # stderr noise must not pollute answer
+    assert "resume" not in out.lower()
+
+
+def test_run_grok_flags_effort_and_plain(monkeypatch):
+    body = "GROK_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr=""))
+    out, n = cb._run_grok("PROMPT_BODY", model="grok-4.5", reasoning_strength="medium")
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "PROMPT_BODY"
+    assert "-m" in cmd and cmd[cmd.index("-m") + 1] == "grok-4.5"
+    assert "--output-format" in cmd and cmd[cmd.index("--output-format") + 1] == "plain"
+    # ticket: effort only low/med/high；medium → med
+    assert "--effort" in cmd and cmd[cmd.index("--effort") + 1] == "med"
+
+
+@pytest.mark.parametrize(
+    "env,attr,out",
+    [
+        ("cursor", "_run_cursor", "CURSOR_OUT"),
+        ("kimi", "_run_kimi", "KIMI_OUT"),
+        ("grok", "_run_grok", "GROK_OUT"),
+    ],
+)
+def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
+    monkeypatch.setenv("MING_SIM_LLM_BACKEND", env)
+    monkeypatch.setattr(cb, attr, lambda p, **kw: (out, 1))
+    assert cb._run_backend("x") == (out, 1)
+
+
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
+    from ming_sim.models import LLMConfig
+
+    seen = {}
+
+    def fake(prompt, model=None, timeout=None, reasoning_strength=None, **kw):
+        seen["args"] = (prompt, model, timeout, reasoning_strength)
+        return (f"{runner}-ok", 1)
+
+    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    cfg = LLMConfig(
+        api_key="", base_url="", model="m", channel="cli",
+        cli_runner=runner, cli_model="mdl-x", cli_timeout_seconds=12.0,
+        reasoning_strength="low",
+    )
+    monkeypatch.setattr(cb, "_trace", lambda rec: None)
+    text, n = cb._run_backend_for_config("P", cfg, tag="t")
+    assert text == f"{runner}-ok" and n == 1
+    assert seen["args"][0] == "P"
+    assert seen["args"][1] == "mdl-x"
+    assert seen["args"][2] == 12.0
+
+
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
+    seen = {}
+
+    def fake(prompt, model=None, timeout=None, reasoning_strength=None, **kw):
+        seen["model"] = model
+        seen["timeout"] = timeout
+        return ("OK", 1)
+
+    monkeypatch.setattr(cb, f"_run_{runner}", fake)
+    chat = cb.CliChat(id="mdl", backend=runner, timeout=99)
+    assert chat._call_cli("p") == ("OK", 1)
+    assert seen["model"] == "mdl" and seen["timeout"] == 99
+
+
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+def test_describe_effective_model_includes_new_runners(runner):
+    from ming_sim.models import LLMConfig
+
+    cfg = LLMConfig(
+        api_key="", base_url="", model="api-fallback", channel="cli",
+        cli_runner=runner, cli_model="live-model",
+    )
+    assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
+
+
+@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok"])
+def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
+    monkeypatch.setattr(
+        cb.subprocess, "run",
+        lambda cmd, **kw: _RcProc(stderr="auth failed", returncode=1),
+    )
+    with pytest.raises(RuntimeError):
+        getattr(cb, runner)("p")
