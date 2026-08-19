@@ -260,6 +260,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("EdictModal — #1431 placeholder 去失实具名", () => {
+  it("御笔 placeholder 不含毕自严等现任错位具名", () => {
+    const { host } = renderEdictModal({ state: baseGameState() });
+    const textarea = host.querySelector<HTMLTextAreaElement>(".desk-compose textarea");
+    expect(textarea).toBeTruthy();
+    const ph = textarea!.placeholder;
+    expect(ph.length).toBeGreaterThan(5);
+    // 数据真源：毕自严=南京户部尚书，非核拨辽饷的户部尚书；placeholder 不得硬编码其名
+    expect(ph).not.toContain("毕自严");
+  });
+});
+
 describe("EdictModal — hidden secret-order default approval", () => {
   it("shows generic no-edict advance without exposing hidden secret-order pending state", () => {
     const onAdvance = vi.fn();

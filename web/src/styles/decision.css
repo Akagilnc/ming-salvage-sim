@@ -43,7 +43,7 @@
   background: rgba(159, 33, 27, 0.14);
   box-shadow: inset 0 0 0 1px rgba(159, 33, 27, 0.45);
 }
-.decision-document .decision-option:focus {
+.decision-document .decision-option:focus-visible {
   outline: 2px solid #1f4e79;
   outline-offset: 2px;
 }
@@ -145,7 +145,7 @@
   box-shadow: inset 0 0 0 1px rgba(210, 163, 74, 0.5);
 }
 
-.decision-option:focus {
+.decision-option:focus-visible {
   outline: 2px solid #7eb6e8;
   outline-offset: 2px;
 }
