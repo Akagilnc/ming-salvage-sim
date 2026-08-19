@@ -64,18 +64,21 @@ const findButton = (host: HTMLElement, text: string) =>
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = ""; });
 
 describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer）", () => {
-  it("第二命令槽 opens the read-only 起居注 and resolves archived attendant portraits from the App roster", async () => {
+  it("#1276 邸报木牌重开 gazette；史册头起居注另入口解析近臣像", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       const u = new URL(String(url), "http://t.local");
       if (u.pathname.endsWith("/api/menu/status")) return jsonResp(MENU_STATUS);
       if (u.pathname.endsWith("/api/secret_orders")) return jsonResp({ orders: [] });
       if (u.pathname.endsWith("/api/saves")) return jsonResp({ saves: [] });
-      if (u.pathname.endsWith("/api/game/state")) return jsonResp(makeState(1, [], [
-        { name: "王承恩", portrait_id: "portrait_court_03" },
-      ]));
+      if (u.pathname.endsWith("/api/game/state")) return jsonResp({
+        ...makeState(1, [], [{ name: "王承恩", portrait_id: "portrait_court_03" }]),
+        previous_summary: "天启七年九月邸报·试重开",
+      });
       if (u.pathname.endsWith("/api/history/turns")) return jsonResp({ turns: [
+        { kind: "month", turn: 0, year: 1627, period: 9, has_report: true, has_directive: false },
         { kind: "night", turn: 1, year: 1627, period: 10, night_id: 31, title: "乾清宫召对", involved_people: ["王承恩"] },
       ] });
+      if (u.pathname.endsWith("/api/history/turn/0")) return jsonResp({ turn: 0, exists: true, report: "月档", directives: [] });
       if (u.pathname.endsWith("/api/audience/scroll")) return jsonResp({ messages: [
         { role: "attendant", speaker: "王承恩", content: "御前低语", audibility: "御前低语" },
       ] });
@@ -83,10 +86,28 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     }));
     const host = document.createElement("div"); document.body.appendChild(host);
     await act(async () => { createRoot(host).render(<App />); });
+    // 自动邸报弹出后关掉，再经木牌重开
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull());
+    });
+    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "邸报")).toBeTruthy());
+    });
+    await click(findButton(host, "邸报"));
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(host.querySelector('[role="dialog"][aria-label="邸报"]')).not.toBeNull();
+        expect(host.textContent).toContain("天启七年九月邸报·试重开");
+      });
+    });
+    await click(host.querySelector('[aria-label="关闭弹窗"]'));
+
+    // 起居注：史册头另入口
+    await click(findButton(host, "史册"));
     await act(async () => {
       await vi.waitFor(() => expect(findButton(host, "起居注")).toBeTruthy());
     });
-
     await click(findButton(host, "起居注"));
     await act(async () => {
       await vi.waitFor(() => {
@@ -821,8 +842,13 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(host.querySelector('[role="dialog"][aria-label="史册：历代奏报与诏书"]')!.textContent).toMatch(/1627\s*年\s*9\s*月/);
     await closeOpenOverlay(host);
 
-    // audience_archive：起居注可开
-    await click(cmdByCaption(host, "起居注"));
+    // audience_archive：史册头起居注另入口可开
+    await click(cmdByCaption(host, "史册"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(findButton(host, "起居注")).toBeTruthy());
+    });
+    await click(findButton(host, "起居注"));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="起居注：召对记录"]')).not.toBeNull());
