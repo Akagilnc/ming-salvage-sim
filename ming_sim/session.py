@@ -2747,7 +2747,11 @@ class GameSession:
             # Dossier rescript choices are capability-bearing options.  Validate the
             # complete batch before persisting any decision so malformed/cross-dossier
             # payloads leave the retry state untouched.
+            # #1418 r2：已 decided 行（崩溃安全先写后跑）不得被空/异载荷覆写——
+            # phase2 续跑重发 resolve 时保留账上 choice，校验与回写均跳过。
             for d in stored:
+                if str(d.get("status") or "") == "decided":
+                    continue
                 if not str(d.get("event_id") or "").startswith("dossier:"):
                     continue
                 idx = int(d["idx"])
@@ -2764,6 +2768,8 @@ class GameSession:
                     raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
             import json as _json
             for d in stored:
+                if str(d.get("status") or "") == "decided":
+                    continue
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
                 if not isinstance(choice, dict):
