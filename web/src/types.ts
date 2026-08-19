@@ -500,6 +500,8 @@ export type ApiErrorDetail = {
   message?: string;
   provider_message?: string;
   status_code?: number | null;
+  /** #1351 A1：advance_without_edict 令牌冲突时服务端当前 turn */
+  turn?: number;
   pending_action_failures?: PendingActionFailure[];
 };
 
