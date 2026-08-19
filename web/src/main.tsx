@@ -686,7 +686,17 @@ export function App() {
       ) : null}
 
       {edictOpen ? (
-        <FullscreenModal title="诏书草案" subtitle="退朝即草案成案并过月" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
+        <FullscreenModal
+          title="诏书草案"
+          subtitle={
+            // #1277：drafts>0 名实自洽——副标题不得再以「退朝」描述过月。
+            (state.directives?.length ?? 0) > 0
+              ? "盖玺颁诏即草案成案并过月"
+              : "退朝即草案成案并过月"
+          }
+          bgClass="modal-bg-edict"
+          onClose={() => setActiveModal("none")}
+        >
           <EdictModal
             state={state}
             directiveText={directiveText}

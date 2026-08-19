@@ -997,6 +997,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     expect(host.querySelector(".court-drawer.open")).toBeNull();
+    // #1277：drafts>0 副标题名实——去「退朝」描述，与页脚盖玺颁诏过月自洽。
+    const edictDialog = host.querySelector('[role="dialog"][aria-label="诏书草案"]');
+    expect(edictDialog?.textContent).toContain("盖玺颁诏即草案成案并过月");
+    expect(edictDialog?.textContent).not.toContain("退朝即草案成案并过月");
   });
 
   it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
