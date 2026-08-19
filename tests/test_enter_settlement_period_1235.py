@@ -796,3 +796,134 @@ def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypa
     assert game.state.turn_phase not in (
         TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
     )
+
+
+# ── 5. SP1 #1241：断线→重连 e2e tracer（#1220 US14）──────────────────────
+
+
+def test_disconnect_mid_settlement_reconnect_coherent(web_game, monkeypatch):
+    """#1241 SP1 / #1220 US14：断线后结算继续，重连状态口自洽。
+
+    接缝：真实颁布 stream 入口 + 既有离线 LLM 替身；客户端弃流后 worker 仍跑完；
+    全新连接 GET /api/game/state 见终态（不丢账、不重跑）。禁仅测试用生产钩子。
+    """
+    import threading
+    import time
+
+    game = web_game
+    minister = _active_minister(game)
+    _fake_settlement_llm(monkeypatch)
+    before = _click_before(game.state)
+    turn_before = int(game.state.turn)
+
+    game.db.add_directive(
+        game.state, None, "着户部核边饷", "t1241-sp1", actor=minister,
+        status="draft",
+        dossier_payload={
+            "dossier_action_type": "policy",
+            "target_kind": "issue",
+            "target_id": "border-pay-1241-sp1",
+        },
+    )
+
+    entered_resolve = threading.Event()
+    release_resolve = threading.Event()
+    stream_done = threading.Event()
+    stream_meta: dict = {}
+
+    real_resolve = game.session.resolve_turn
+
+    def _held_resolve(*a, **k):
+        # 先推一条 stage，让 SSE generate 不堵在首个 queue.get（便于客户端弃流）。
+        on_event = k.get("on_event")
+        if callable(on_event):
+            on_event("stage", "推演中")
+        entered_resolve.set()
+        assert release_resolve.wait(15.0), "测试须放行 resolve"
+        return real_resolve(*a, **k)
+
+    monkeypatch.setattr(game.session, "resolve_turn", _held_resolve)
+
+    def _run_stream_then_drop():
+        """模拟关页/断网：见到结算已进入 resolve 后弃流，不读终态。"""
+        try:
+            async def go():
+                async with _client() as client:
+                    async with client.stream(
+                        "POST", "/api/decree/issue/stream", json={},
+                    ) as resp:
+                        stream_meta["status"] = resp.status_code
+                        # 读到首条 stage（resolve 已入）即弃流
+                        async for _chunk in resp.aiter_text():
+                            if entered_resolve.is_set():
+                                break
+                        # 离开 stream 上下文 = 客户端断开；worker 线程须独立续跑
+
+            asyncio.run(go())
+        except Exception as exc:  # noqa: BLE001
+            stream_meta["err"] = exc
+        finally:
+            stream_done.set()
+
+    t = threading.Thread(target=_run_stream_then_drop, daemon=True)
+    t.start()
+    assert entered_resolve.wait(10.0), "须进入 resolve（点即入+gate 后）"
+
+    # 断线窗：核账展示态已亮、四键为点击前（状态口可观测）
+    assert game.db.get_month_open_snapshot(turn_before) == before
+    mid = game.state_payload()
+    assert mid["turn"]["settlement_display"] is True
+    for k in MONTH_OPEN_KEYS:
+        assert mid["metrics"][k] == before[k]
+
+    # 重连观察（结算仍在办、原 SSE 已弃读）：全新连接见同一张核账脸
+    async def reconnect():
+        async with _client() as client:
+            return await client.get("/api/game/state")
+
+    mid_resp = asyncio.run(reconnect())
+    assert mid_resp.status_code == 200, mid_resp.text
+    mid_state = mid_resp.json()
+    assert mid_state["turn"]["settlement_display"] is True
+    for k in MONTH_OPEN_KEYS:
+        assert mid_state["metrics"][k] == before[k]
+
+    # 放行 worker：客户端已弃读 SSE，结算须在后台继续跑完
+    # （先放行再等弃流线程——否则 ASGI generate 堵在 queue.get，aclose 与 release 死锁）
+    release_resolve.set()
+
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
+        if web_app._settlement_entry_inflight(game) == 0 and not web_app._game_write_gate(game).locked():
+            break
+        time.sleep(0.05)
+    assert web_app._settlement_entry_inflight(game) == 0, "入口须销账（结算 worker 须跑完）"
+    assert not web_app._game_write_gate(game).locked()
+
+    assert stream_done.wait(10.0), "弃流客户端须返回"
+    t.join(2.0)
+    assert "err" not in stream_meta, stream_meta.get("err")
+
+    # 再重连：终态自洽（不接原 SSE）
+    resp = asyncio.run(reconnect())
+    assert resp.status_code == 200, resp.text
+    state = resp.json()
+    # 自洽：月推进完成 → 展示态清；或 awaiting 停窗 → 展示态在且四键仍为点击前
+    # 不丢账：快照回合绑定，不得无展示态却残留本回合快照
+    turn_now = int(state["turn"]["turn"])
+    display = bool(state["turn"].get("settlement_display"))
+    snap = game.db.get_month_open_snapshot(turn_before)
+    if turn_now == turn_before + 1:
+        assert display is False
+        assert snap is None
+        # 活值回归（非冻快照）；不重跑：只推进一回合
+        assert int(game.state.turn) == turn_before + 1
+    elif display:
+        assert turn_now == turn_before
+        assert snap == before
+        for k in MONTH_OPEN_KEYS:
+            assert state["metrics"][k] == before[k]
+    else:
+        raise AssertionError(
+            f"重连态不自洽: turn={turn_now} display={display} snap={snap} phase={state['turn'].get('phase')}"
+        )
