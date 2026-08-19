@@ -1259,13 +1259,17 @@ def test_clichat_invoke_json_constraint_and_no_constraint(monkeypatch):
 
 
 def test_clichat_invoke_error_traced_and_reraised(monkeypatch):
+    """#1299/#1310：runner 失败翻 typed LLMUnavailable；trace 仍记机器原文。"""
+    from ming_sim.exceptions import LLMUnavailable
     cc = cb.CliChat(id="cli-test", backend="agy")
     monkeypatch.setattr(cc, "_call_cli", lambda p: (_ for _ in ()).throw(RuntimeError("cli down")))
     traced = {}
     monkeypatch.setattr(cb, "_trace", lambda rec: traced.update(rec))
-    with pytest.raises(RuntimeError, match="cli down"):
+    with pytest.raises(LLMUnavailable) as ei:
         cc.invoke([SimpleNamespace(role="user", content="x")], Message(role="assistant"))
     assert traced.get("error") == "cli down"
+    assert "cli down" in (ei.value.provider_message or "")
+    assert "cli down" not in ei.value.message
 
 
 def test_clichat_call_cli_dispatch(monkeypatch):

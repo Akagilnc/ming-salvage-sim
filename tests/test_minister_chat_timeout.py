@@ -20,6 +20,7 @@ from agno.models.openai import OpenAIChat
 from agno.exceptions import ModelProviderError
 
 from ming_sim.cli_backend import CliChat
+from ming_sim.exceptions import LLMUnavailable
 from ming_sim.models import CLI_DEFAULT_TIMEOUT_SECONDS, MINISTER_CHAT_CLI_TIMEOUT_SECONDS, LLMConfig
 from ming_sim.registry import create_minister_agent
 import ming_sim.cli_backend as cli_backend
@@ -210,8 +211,10 @@ def test_minister_agent_cli_timeout_capped(monkeypatch):
         agent = create_minister_agent(_make_character(), cfg, ctx, ctx.db)
 
     assert isinstance(agent.model, CliChat)
-    with pytest.raises(RuntimeError, match="超时"):
+    # #1299/#1310：runner 超时翻 typed LLMUnavailable；机器「超时」在 provider_message。
+    with pytest.raises(LLMUnavailable) as ei:
         _invoke_minister_model(agent.model)
+    assert "超时" in (ei.value.provider_message or "")
     assert cfg.cli_timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
     assert cfg.timeout_seconds == CLI_DEFAULT_TIMEOUT_SECONDS
 
@@ -255,7 +258,8 @@ def test_minister_agent_does_not_mutate_original_llm_config(monkeypatch):
 
     assert cfg.cli_timeout_seconds == original_cli
     assert cfg.timeout_seconds == original_api
-    with pytest.raises(RuntimeError, match="超时"):
+    with pytest.raises(LLMUnavailable) as ei:
         _invoke_minister_model(agent.model)
+    assert "超时" in (ei.value.provider_message or "")
     assert cfg.cli_timeout_seconds == original_cli
     assert cfg.timeout_seconds == original_api
