@@ -332,6 +332,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
                 ctx.reply,
                 llm_config=ctx.llm_config,
                 draft_count=ctx.candidate_kind_count,
+                content=getattr(session, "content", None),
             )
             ctx.batch_state["drafts"] = list(batch_res.get("drafts") or [])
         drafts = ctx.batch_state["drafts"]
@@ -347,6 +348,7 @@ def _materialize_draft(ctx: MaterializeCtx) -> None:
             has_pending_draft=has_existing_draft,
             existing_draft_text=existing_draft_text,
             existing_candidates=dir_candidates or None,
+            content=getattr(session, "content", None),
         )
         if intent is not None and intent_kind == "draft" and not has_existing_draft:
             # #515 的并行 classifier 已经确定“拟旨”，大臣回话仍是正文真源；
