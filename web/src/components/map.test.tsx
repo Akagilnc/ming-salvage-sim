@@ -71,6 +71,38 @@ describe("NodeIntel monthly tax display", () => {
   });
 });
 
+describe("NodeIntel #1401 theater naming", () => {
+  it("shows region.name when theater carries region (liaodong pin)", () => {
+    const region = makeRegion({ id: "liaodong", name: "辽东 / 宁锦" });
+    const node: MapNode = {
+      id: "liaodong",
+      kind: "theater",
+      x: 57.76,
+      y: 42.21,
+      label: "辽东 / 宁锦",
+      risk: 120,
+      region,
+      armies: [],
+    };
+    const host = renderNodeIntel(node);
+    expect(host.textContent).toContain("辽东 / 宁锦");
+  });
+
+  it("falls back to label when theater has no region", () => {
+    const node: MapNode = {
+      id: "shanhaiguan",
+      kind: "theater",
+      x: 55.52,
+      y: 42.84,
+      label: "山海关",
+      risk: 120,
+      armies: [],
+    };
+    const host = renderNodeIntel(node);
+    expect(host.textContent).toContain("山海关");
+  });
+});
+
 describe("NodeIntel #1352 garrison layout / army-list口径", () => {
   function makeArmy(overrides: Partial<Army> = {}): Army {
     return {
