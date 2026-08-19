@@ -2601,12 +2601,20 @@ class WebGame:
         """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import NIGHT_STATUS_CLOSING, get_open_night
+        from ming_sim.audience_night import (
+            NIGHT_STATUS_CLOSING,
+            _pending_extraction_rows,
+            get_open_night,
+        )
 
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
         night_status = str((open_n or {}).get("status") or "")
-        rows = self.db.list_unextracted_replies(night_id=nid)
+        # #1353：与 close_night drain 挡收夜判定同一真源（list_unextracted via helper）。
+        if nid is not None and int(nid) > 0:
+            rows = _pending_extraction_rows(self.db, int(nid))
+        else:
+            rows = self.db.list_unextracted_replies(night_id=nid)
         pending = [
             {
                 "chat_turn_id": int(r.get("chat_turn_id") or 0),

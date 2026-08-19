@@ -667,6 +667,7 @@ export function App() {
             report={report}
             busy={busy}
             error={error}
+            extractionPendingCount={extractionPendingCount}
             onDirectiveTextChange={setDirectiveText}
             onEditingTextChange={setEditingDirectiveText}
             onCreateDirective={createDirective}
@@ -676,6 +677,7 @@ export function App() {
             onDeleteDirective={deleteDirective}
             onAdvanceWithoutEdict={advanceWithoutEdict}
             onOpenFailureRecovery={openFailureRecovery}
+            onRetryExtraction={retryStoryExtraction}
           />
         </FullscreenModal>
       ) : null}

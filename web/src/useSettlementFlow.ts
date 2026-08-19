@@ -79,7 +79,12 @@ export function useSettlementFlow({
           setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
           return;
         }
-        setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。"));
+        const errMsg = typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "颁诏失败。");
+        setError(errMsg);
+        // #1312/#1353：收夜待补 409 后 loadState 触发拟诏台拉 pending，露出补写 CTA。
+        if (/待补|未抽取|chat_turn/.test(errMsg)) {
+          await loadState();
+        }
         setBusy("");
         return;
       }

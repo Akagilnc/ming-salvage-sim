@@ -216,6 +216,9 @@ function renderEdictModal(props: {
   state: GameState;
   onAdvanceWithoutEdict?: () => void;
   onOpenFailureRecovery?: () => void;
+  extractionPendingCount?: number;
+  onRetryExtraction?: () => void;
+  error?: string;
 }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -230,7 +233,8 @@ function renderEdictModal(props: {
         decree=""
         report=""
         busy=""
-        error=""
+        error={props.error ?? ""}
+        extractionPendingCount={props.extractionPendingCount}
         onDirectiveTextChange={() => {}}
         onEditingTextChange={() => {}}
         onCreateDirective={() => {}}
@@ -240,6 +244,7 @@ function renderEdictModal(props: {
         onDeleteDirective={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
+        onRetryExtraction={props.onRetryExtraction}
       />
     )
   );
@@ -339,6 +344,26 @@ describe("EdictModal — hidden secret-order default approval", () => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onOpenFailureRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1312 颁诏待补后拟诏台露出补写 CTA（同缝 retry）", () => {
+    const onRetry = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({}),
+      extractionPendingCount: 2,
+      onRetryExtraction: onRetry,
+      error: "收夜中止：本夜仍有未抽取落账的回话（待补），chat_turn_ids=[8]。",
+    });
+    const note = host.querySelector('[data-testid="edict-extraction-pending"]');
+    expect(note?.textContent).toMatch(/2 段召对账待补写/);
+    const btn = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("重试补写")
+    ) as HTMLButtonElement | undefined;
+    expect(btn).toBeTruthy();
+    act(() => {
+      btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("prioritizes failed secret-order recovery over generic pending-action hint", () => {
