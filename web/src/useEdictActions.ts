@@ -25,8 +25,13 @@ export function useEdictActions({
 
   const createDirective = async () => {
     if (!directiveText.trim()) return;
-    setBusy("登记诏书草案");
+    // #1300：无反馈时延的呈现补丁——同步 LLM 抽取仍在请求路径内（禁先登记后异步），
+    // 仅把 busy 文案改成可读分段，让长等待不「干等无字」。
+    setBusy("旨意结构抽取中…");
     setError("");
+    const stageTimer = window.setTimeout(() => {
+      setBusy("登记诏书草案…");
+    }, 2500);
     try {
       const data = await api<{ directives: Directive[] }>("/api/directives", {
         method: "POST",
@@ -40,6 +45,7 @@ export function useEdictActions({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      window.clearTimeout(stageTimer);
       setBusy("");
     }
   };
@@ -56,8 +62,12 @@ export function useEdictActions({
 
   const saveDirective = async (directive: Directive) => {
     if (!editingDirectiveText.trim()) return;
-    setBusy("修改草案");
+    // #1300：修改草案同样走同步旨意抽取，呈现分段 busy。
+    setBusy("旨意结构抽取中…");
     setError("");
+    const stageTimer = window.setTimeout(() => {
+      setBusy("修改草案…");
+    }, 2500);
     try {
       const data = await api<{ directives: Directive[] }>(`/api/directives/${directive.id}`, {
         method: "PATCH",
@@ -69,6 +79,7 @@ export function useEdictActions({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      window.clearTimeout(stageTimer);
       setBusy("");
     }
   };

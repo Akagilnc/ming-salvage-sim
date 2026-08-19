@@ -53,6 +53,13 @@ def test_history_payload_preserves_narrative_without_machine_ledger(monkeypatch)
 class _SettlementSession:
     last_decree = "诏曰：国丈家赀约数十万两，仍发帑三十万两、调兵五千赈辽。"
 
+    def __init__(self, state):
+        self.state = state
+
+    def current_phase(self):
+        from ming_sim.models import TurnPhase
+        return TurnPhase(self.state.turn_phase)
+
     def resolve_turn(self, **_kwargs):
         return SimpleNamespace(
             awaiting=True,
@@ -65,8 +72,9 @@ class _SettlementSession:
 
 class _SettlementGame:
     def __init__(self):
-        self.state = SimpleNamespace(turn=9, ended=False)
-        self.session = _SettlementSession()
+        # resolve 路径锁前预检读 awaiting_decision（#1322）；issue 路径不依赖相位。
+        self.state = SimpleNamespace(turn=9, ended=False, turn_phase="awaiting_decision")
+        self.session = _SettlementSession(self.state)
         self.db = SimpleNamespace(list_pending_actions=lambda *_args, **_kwargs: [])
         self._write_gate = threading.Lock()
 
