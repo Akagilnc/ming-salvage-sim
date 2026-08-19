@@ -46,7 +46,6 @@ function makeState(settlementDisplay: boolean, extra: Partial<GameState> = {}): 
     turn: { year: 1627, period: 10, turn: 5, phase: "awaiting_decision", settlement_display: settlementDisplay },
     metrics: { 民心: 50, 皇威: 40 },
     previous_summary: "上月邸报",
-    treasury: "",
     issues: [{ id: 1, kind: "situation", title: "半程军饷议题", status: "open", progress: 10, fail_condition: "" } as never],
     legacies: [],
     closed_this_turn: [{
