@@ -98,7 +98,8 @@ def test_real_http_scroll_merges_ministers_asides_and_story_without_raw_characte
         "辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。",
     }] == ["辽饷如何？", "臣请据实核账。", "万岁爷，他尚有保留。", "边情如何？", "边关尚稳。"]
     assert "杨嗣昌以身家作保。" not in contents
-    assert "帘外忽起雨声。" in contents
+    # #1293a：抽取派生（含非对话复述的故事事实）不上 live 卷轴
+    assert "帘外忽起雨声。" not in contents
     assert {message["speaker"] for message in messages if message["role"] == "minister"} == {"杨嗣昌", "洪承畴"}
 
     allowed_message_fields = {
@@ -204,7 +205,8 @@ def test_scroll_merges_mindreading_and_uses_structured_dedup_boundaries(game):
     assert (aside["speaker"], aside["beat"], aside["audibility"]) == ("王承恩", "aside", an.AUDIBILITY_PRIVATE)
     assert aside["content"] == "万岁爷，他这话留了半分。"
     assert "杨嗣昌以身家作保。" not in [message["content"] for message in scroll]
-    assert "帘外忽起雨声。" in [message["content"] for message in scroll]
+    # #1293a：抽取派生故事事实不上卷轴；王承恩读心旁白仍在
+    assert "帘外忽起雨声。" not in [message["content"] for message in scroll]
 
 
 def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
@@ -222,10 +224,83 @@ def test_extractor_open_tags_do_not_drive_beat_or_soft_boundary(game):
 
     scroll = an.read_night_scroll(db, night_id)
 
-    by_content = {message["content"]: message["beat"] for message in scroll}
-    assert by_content["只是提到了入殿旧事。"] == "scene"
-    assert by_content["又提到了告退旧事。"] == "scene"
+    contents = [message["content"] for message in scroll]
+    # #1293a：抽取派生（含开放 tag 的伪入殿/告退提及）不上卷轴，更不驱动 beat/divider
+    assert "只是提到了入殿旧事。" not in contents
+    assert "又提到了告退旧事。" not in contents
     assert not any(message["beat"] == "divider" and message["speaker"] == "洪承畴" for message in scroll)
+
+
+def test_extraction_derived_facts_stay_off_live_scroll_but_remain_in_ledger(game):
+    """#1293a：结构 provenance（source_chat_turn_id>0）排除抽取派生卡出 live 卷轴。
+
+    正向：对话原话 + beat/旁白/divider/coda 在；转述/抽取散文不在。
+    负向：list_ledger 记忆读端仍见 story facts（抽取照跑照入档）。
+    """
+    db, state, _ = game
+    night_id = open_audience_night(db, state)
+    an.summon_enter(db, night_id, "杨嗣昌")
+    turn_id, _ = append_night_chat(
+        db, state, night_id, "杨嗣昌",
+        "辽饷如何？", "臣请据实核账，不敢欺瞒。", 10,
+    )
+    db.record_mindreading(turn_id, {
+        "reader": "王承恩", "target": "杨嗣昌", "source": "察言观色",
+        "precision": "约略", "narration": "万岁爷，他话里留了半分。",
+    })
+    # 经抽取唯一入口落账——结构上 source_chat_turn_id=轮（非盯文本）
+    paraphrase = "皇帝询问辽饷，杨嗣昌答称当据实核账。"
+    atmosphere = "殿角烛火轻颤。"
+    db.settle_story_extraction(
+        turn_id, night_id,
+        [
+            {
+                "person_names": ["杨嗣昌"],
+                "audibility": "殿上公开",
+                "body": paraphrase,
+                "tags": ["对话摘要"],
+                "presence_effect": "",
+            },
+            {
+                "person_names": [],
+                "audibility": "殿上公开",
+                "body": atmosphere,
+                "tags": ["场景"],
+                "presence_effect": "",
+            },
+        ],
+        10,
+    )
+    an.dismiss_from_audience(db, "杨嗣昌", night_id=night_id)
+
+    scroll = an.read_night_scroll(db, night_id)
+    contents = [m["content"] for m in scroll]
+    beats = {m["beat"] for m in scroll}
+
+    # 正向：原话在
+    assert "辽饷如何？" in contents
+    assert "臣请据实核账，不敢欺瞒。" in contents
+    # 正向：王承恩旁白 / entrance·exit beat / divider / coda 在
+    assert "万岁爷，他话里留了半分。" in contents
+    assert "entrance" in beats
+    assert "exit" in beats
+    assert "divider" in beats
+    assert scroll[-1]["beat"] == "coda"
+    # 正向：抽取转述与派生场景卡零出现
+    assert paraphrase not in contents
+    assert atmosphere not in contents
+    assert not any(
+        m["role"] == "scene" and m["content"] in {paraphrase, atmosphere}
+        for m in scroll
+    )
+
+    # 负向：记忆读端（list_ledger）仍见 story facts
+    ledger_bodies = {
+        e["body"] for e in an.list_ledger(db, night_id)
+        if int(e.get("source_chat_turn_id") or 0) == turn_id
+    }
+    assert paraphrase in ledger_bodies
+    assert atmosphere in ledger_bodies
 
 
 def test_scroll_container_presents_audience_type_from_persisted_summon_method(game):
