@@ -563,6 +563,24 @@ def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
     }
 
 
+def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
+    """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
+
+    Resolve each real secret-order id via get_dossier_for_secret_order. Missing
+    authority is an empty closed set — callers must never rebuild from live DB
+    beyond the frozen order-id batch.
+    """
+    from ming_sim.settlement_payload import iter_secret_order_ids
+
+    out: set[int] = set()
+    for order_id in iter_secret_order_ids(secret_orders):
+        dossier = db.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            continue
+        out.add(int(dossier["id"]))
+    return out
+
+
 def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
     if not isinstance(simulator_payload, dict):
         return None
