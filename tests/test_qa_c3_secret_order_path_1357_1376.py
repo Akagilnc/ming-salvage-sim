@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
 import web_app
 from ming_sim.models import TurnPhase
-from ming_sim.session import ChatTurnResult
+from ming_sim.session import ChatTurnResult, GameSession
 
 
 def _active_minister_name(db, content) -> str:
@@ -59,6 +59,8 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
         _character=lambda name: content.characters[name],
         pending_count=lambda: 0,
     )
+    # #1402：web _require_active_minister 改调 session.can_summon——壳须挂真方法
+    runtime.session.can_summon = MethodType(GameSession.can_summon, runtime.session)
     # Bind real WebGame helpers used by chat body.
     runtime._runtime_write_gate = web_app.WebGame._runtime_write_gate.__get__(runtime)
     runtime._reject_if_settlement_phase = web_app.WebGame._reject_if_settlement_phase.__get__(runtime)

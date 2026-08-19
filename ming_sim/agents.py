@@ -22,7 +22,7 @@ from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
-from ming_sim.models import GameState, LLMConfig
+from ming_sim.models import GameState, LLMConfig, reign_period_label
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
@@ -493,8 +493,34 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
     turn_header = ""
     if isinstance(payload.get("turn"), dict):
         t = payload["turn"]
+        label = t.get("reign_period_label")
+        if not label:
+            y, p = t.get("year"), t.get("period")
+            if y is not None and p is not None:
+                try:
+                    label = reign_period_label(int(y), int(p))
+                except (TypeError, ValueError):
+                    label = f"{y} 年 {p} 月"
+            else:
+                label = ""
+        if label:
+            turn_header = (
+                f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
+                f"涉及年月时以此为准。\n"
+            )
+    elif payload.get("year") is not None and payload.get("period") is not None:
+        # build_simulator_payload 顶层 year/period 回落：仍喂年号事实，禁西历裸拼
+        y, p = payload.get("year"), payload.get("period")
+        label = payload.get("reign_period_label")
+        if not label:
+            try:
+                label = reign_period_label(int(y), int(p))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                label = f"{y} 年 {p} 月"
+        turn_no = payload.get("turn_no") or payload.get("turn_index") or ""
+        turn_suffix = f"（第 {turn_no} 回合）" if turn_no != "" else ""
         turn_header = (
-            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
+            f"【本回合年月】{label}{turn_suffix}。"
             f"涉及年月时以此为准。\n"
         )
 
