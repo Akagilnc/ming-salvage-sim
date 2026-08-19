@@ -3016,6 +3016,43 @@ def _serialized_web_write(game):
         gate.release()
 
 
+@contextlib.contextmanager
+def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
+    """#1241 S1：颁布/退朝/stream 三入口受理样板（begin→accept→await→close→gate）。
+
+    行为零变化硬约束：write_cm **必须**参数化锁获取语义分叉——
+      · advance → `_serialized_web_write`（非阻塞抢锁，撞锁/相位拒 409）
+      · issue / stream → `_game_write_gate`（阻塞 acquire）
+    统一获取语义即破 T2 行为零变化（r2-r7 不变式）。
+
+    成功路径（with 体正常结束/return）保留展示态；异常路径先 exit 再 end
+    （exit 先于 end；created_display 只控 blocking，不门控是否调用 exit）。
+    """
+    settled_ok = False
+    created_display = False
+    entered = False
+    try:
+        # #1235 r4：先登记在办，再 capture——并发 B 在 A gate-free 窗可见 A 仍在办。
+        _begin_settlement_entry(game)
+        entered = True
+        # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
+        created_display = _accept_settlement_period(game)
+        # #498 AC10：gate 外先等在飞回话落档，再 gate-free 收夜即时复查，不自锁。
+        _await_audience_inflight_clear(game)
+        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
+        with write_cm(game):
+            yield
+            # with 体无异常结束（含函数 return）→ 成功，保留展示态/由推进清快照。
+            settled_ok = True
+    finally:
+        if entered and not settled_ok:
+            # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
+            # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
+            _exit_settlement_display_on_failure(game, blocking=created_display)
+        if entered:
+            _end_settlement_entry(game)
+
+
 def _active_db_path_file() -> str:
     """主库路径的真源文件（#396 new_game 切换主库路径用）。"""
     return user_data_path("active_db.txt")
@@ -4221,24 +4258,9 @@ def api_advance_without_edict() -> Dict[str, Any]:
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
     settlement_result = None
-    # #1235：失败必尝试 exit；created_display 仅控 gate 阻塞与否（创建者 blocking 必清，
-    # 非创建者须 in-flight 无他者 + 抢到锁才清；禁以锁闲代理孤儿）。
-    # 成功 settled_ok 保留展示态。
-    settled_ok = False
-    created_display = False
-    entered = False
     try:
-        # #1235 r4：先登记在办，再 capture——并发 B 在 A gate-free 窗可见 A 仍在办。
-        _begin_settlement_entry(game)
-        entered = True
-        # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
-        created_display = _accept_settlement_period(game)
-        # #498 AC10：gate 外先等在飞回话落档（超时 fail-closed，夜保持开），
-        # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
-        _await_audience_inflight_clear(game)
-        # Endorsement LLM must not run under the outer runtime write gate.
-        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-        with _serialized_web_write(game):
+        # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
+        with _settlement_period_entry(game, write_cm=_serialized_web_write):
             if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
@@ -4256,7 +4278,6 @@ def api_advance_without_edict() -> Dict[str, Any]:
                     settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
-        settled_ok = True
     except ValueError as e:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
@@ -4268,13 +4289,6 @@ def api_advance_without_edict() -> Dict[str, Any]:
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
-    finally:
-        if not settled_ok:
-            # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
-            # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-            _exit_settlement_display_on_failure(game, blocking=created_display)
-        if entered:
-            _end_settlement_entry(game)
     return {
         "state": game.state_payload(),
         "awaiting_decision": bool(
@@ -4323,28 +4337,14 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     turn_before = int(getattr(game.state, "turn", 0) or 0)
     failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
     from ming_sim.audience_night import AudienceNightError
-    # #1235：失败必尝试 exit；created_display 仅控 gate 阻塞与否。
-    # awaiting/完成 settled_ok=True 保留（awaiting）或由推进清快照（完成）。
-    settled_ok = False
-    created_display = False
-    entered = False
     try:
-        # #1235 r4：先登记在办，再 capture——并发 B 在 A gate-free 窗可见 A 仍在办。
-        _begin_settlement_entry(game)
-        entered = True
-        # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
-        created_display = _accept_settlement_period(game)
-        # #498 AC10：先在 gate 外等在飞回话落档（fail-closed 于超时），让回话 epilogue
-        # 抢得 write_gate；随后持 gate 收夜只做即时复查（inflight_wait_s=0.0），不自锁。
-        _await_audience_inflight_clear(game)
-        _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-        with _game_write_gate(game):
+        # #1241 S1：受理样板收 helper；issue 锁语义 = 阻塞 _game_write_gate（禁改非阻塞）。
+        with _settlement_period_entry(game, write_cm=_game_write_gate):
             result = game.session.resolve_turn(cheat_directive=body.cheat, inflight_wait_s=0.0)
             decree = game.session.last_decree
             failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
             if result.awaiting:
                 # 决策点暂停：回合未结算，返回决策点让前端弹窗；不刷新、不计 steam。
-                settled_ok = True
                 return {
                     **_settlement_player_payload(
                         decree=decree,
@@ -4362,7 +4362,6 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
             ]
             if not was_ended and game.state.ended:
                 events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-            settled_ok = True
             return steam_events.with_events(_settlement_player_payload(
                 decree=decree,
                 report=report,
@@ -4382,12 +4381,6 @@ def api_issue_decree(body: IssueDecreeRequest = IssueDecreeRequest()) -> Dict[st
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
-    finally:
-        if not settled_ok:
-            # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-            _exit_settlement_display_on_failure(game, blocking=created_display)
-        if entered:
-            _end_settlement_entry(game)
 
 
 @app.post("/api/decree/issue/stream")
@@ -4404,10 +4397,7 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
         ev_queue.put((kind, data))
 
     def worker() -> None:
-        # #1235：失败必尝试 exit；created_display 仅控 gate 阻塞与否。
-        created_display = False
         game = None
-        entered = False
         turn_before = 0
         failed_before: set[int] = set()
         try:
@@ -4415,16 +4405,8 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
-            # #1235 r4：先登记在办，再 capture——并发 B 在 A gate-free 窗可见 A 仍在办。
-            _begin_settlement_entry(game)
-            entered = True
-            # #1235 / ADR 0149：点即入——先 capture 入核账展示态，再等在飞/收夜/结算续跑。
-            created_display = _accept_settlement_period(game)
-            # #498 AC10：gate 外先等在飞回话落档（超时抛 AudienceNightError→__error__，夜保持开），
-            # 再持 gate 收夜即时复查（inflight_wait_s=0.0），不自锁。
-            _await_audience_inflight_clear(game)
-            _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
-            with _game_write_gate(game):
+            # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
+            with _settlement_period_entry(game, write_cm=_game_write_gate):
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
                 decree = game.session.last_decree
@@ -4453,28 +4435,20 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                     pending_action_failures=failures,
                 )))
         except ValueError as e:
-            # exit 须在 end 之前（finally）：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-            if game is not None:
-                _exit_settlement_display_on_failure(game, blocking=created_display)
+            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if game is not None else []
             )
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
-            # #1235：真失败另形——失败即 exit（含 AudienceNightError / SettlementAbort）；
-            # blocking 由 web 创建位决定；非创建者须 in-flight 无他者才可清 session 孤儿。
-            if game is not None:
-                _exit_settlement_display_on_failure(game, blocking=created_display)
+            # #1235：真失败另形——helper 已 exit（含 AudienceNightError / SettlementAbort）。
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if game is not None else []
             )
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
             ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
-        finally:
-            if entered:
-                _end_settlement_entry(game)
 
     async def generate() -> AsyncIterator[str]:
         thread = threading.Thread(target=worker, daemon=True)
