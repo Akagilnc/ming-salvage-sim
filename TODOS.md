@@ -204,4 +204,4 @@
 - **[崇祯元年十二月结算]** B1 阉党 leverage：用手动 SQL `UPDATE factions SET leverage=35 WHERE name='阉党'` 临时修复（叙事支撑=核心退场+四十余党羽清出要津），78→35。〔2026-07-06 核实：根因已闭环——#9 已落地 `set_character_status`→`recompute_faction_leverage` 联动重算（db.py），2026-06-17 关闭；下行为修复前的历史判断，留档勿当现状。〕~~遗留根因未解：长期应让 `db.set_character_status` 在"握实权官职的核心人物"退场时，自动按官职权重联动扣减所属派系 leverage，而非每回合手动 SQL。下次重构结算管线时一并做。~~
 
 - [ ] p4（#1256 r2 复裁记档）：四闸脚本（561/562/spiral570/familytail570）删复制守卫后遗留死 `import os` 四行——下次触动任一脚本时顺手删尽（判词裁：零行为影响不单开循环）。
-- [ ] #1256 grok 闸冒烟 pending-owner-login：owner `grok login --device-code`（或置 XAI_API_KEY）后按 S1 同命令补跑落绿证据 JSON（docs/evidence/issue-1256-grok-smoke.json 现为失败证据），可随首次启用 grok 腿一并补。
+- [x] #1256 grok 闸冒烟 pending-owner-login（2026-08-19 owner 登录后已补跑：通道通，12 检 11 绿；唯一红=midzhi_force_e2e_three_costs 判卷型 n=1，证据如实在案）：owner `grok login --device-code`（或置 XAI_API_KEY）后按 S1 同命令补跑落绿证据 JSON（docs/evidence/issue-1256-grok-smoke.json 现为失败证据），可随首次启用 grok 腿一并补。
