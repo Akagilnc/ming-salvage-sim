@@ -422,6 +422,76 @@ describe("ApiSettingsModal reasoning strength", () => {
     cleanup();
   });
 
+  it("offers grok in the CLI runner dropdown and enables reasoning for it (#1271)", () => {
+    const cleanup = render(
+      <MenuPage
+        status={{
+          has_api_key: false,
+          llm_ready: true,
+          has_running_game: false,
+          has_main_db: false,
+          saves: [],
+          campaigns: [],
+          llm: {
+            channel: "cli",
+            base_url: "",
+            model: "",
+            has_api_key: false,
+            cli_runner: "grok",
+            cli_model: "",
+            cli_model_saved: "",
+            cli_model_choices: { grok: [{ value: "", label: "默认 · grok" }] },
+            cli_timeout_seconds: 240,
+            reasoning_strength: "high",
+            cli_reasoning_strength: "high",
+            reasoning_supported: true,
+            cli_reasoning_runners: ["codex", "claude", "grok"],
+            reasoning_strengths: [
+              { value: "", label: "默认" },
+              { value: "off", label: "关" },
+              { value: "low", label: "低" },
+              { value: "medium", label: "中" },
+              { value: "high", label: "高" },
+            ],
+            max_tokens: 8000,
+            timeout_seconds: 180,
+            thinking_level: "",
+            advanced_model: "",
+            advanced_base_url: "",
+            has_advanced_api_key: false,
+            advanced_thinking_level: "",
+          },
+        }}
+        onRefresh={async () => { throw new Error("not called"); }}
+        onEnterGame={async () => {}}
+        error=""
+        setError={() => {}}
+      />
+    );
+
+    act(() => {
+      Array.from(document.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("模型后端")
+      )?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some((option) => option.value === "codex")
+    );
+    expect(runnerSelect).toBeTruthy();
+    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
+    expect(runnerValues).toContain("grok");
+    expect(runnerValues).not.toContain("cursor");
+    expect(runnerValues).not.toContain("kimi");
+    expect(runnerSelect?.value).toBe("grok");
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（grok 最低=低）");
+    cleanup();
+  });
+
   it("does not expose or save a separate advanced thinking selector", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {

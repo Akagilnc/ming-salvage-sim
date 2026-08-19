@@ -39,6 +39,7 @@ export function resolveReasoningSupported({
   advancedBaseUrl,
   advancedModel,
   cliRunner,
+  cliReasoningRunners,
 }: {
   backendSupported?: boolean;
   backendCurrent?: boolean;
@@ -48,12 +49,16 @@ export function resolveReasoningSupported({
   advancedBaseUrl: string;
   advancedModel: string;
   cliRunner: string;
+  /** Backend capability list (cli_backend.CLI_REASONING_STRENGTH_RUNNERS). No hardcoded runner names. */
+  cliReasoningRunners?: string[];
 }) {
   if (backendCurrent && typeof backendSupported === "boolean") {
     return backendSupported;
   }
   if (currentChannel === "cli") {
-    return cliRunner === "codex" || cliRunner === "claude";
+    // #1271: consume payload capability list; delete codex||claude hardcode (DRY).
+    const runners = cliReasoningRunners ?? [];
+    return runners.includes(cliRunner);
   }
   return fallbackApiReasoningSupported({ baseUrl, model, advancedBaseUrl, advancedModel });
 }
