@@ -147,7 +147,11 @@ def test_web_retry_failed_scene_drain_does_not_hold_write_gate(game):
     rt._write_gate = threading.Lock()
     rt._runtime_write_gate = lambda: rt._write_gate
     rt._audience_turn_in_flight = lambda _n: False
-    rt._mark_pending_write = lambda: False
+    # 整轮 pending 由 retry 本体持有；尾随不起后台线程。
+    rt._drain_cond = threading.Condition()
+    rt._pending_writes_count = 0
+    rt._draining = False
+    rt._spawn_pending_write_thread = lambda *a, **k: False
     rt._spawn_extraction_trail = lambda *a, **k: None
     rt.directive_rows = lambda: []
     rt.directive_payload = lambda row: row

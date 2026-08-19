@@ -267,6 +267,179 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     assert "event: done" in first
 
 
+def test_nonstream_api_chat_keeps_game_state_responsive_while_chat_blocks(monkeypatch):
+    """#1291+#1322: 非流式 chat 同步慢 LLM 在飞时，并发 GET /api/game/state 须在阈内响应。
+
+    根因：async api_chat 在事件循环上直调全同步 get_game().chat()（→ subprocess.run），
+    整站 loop 卡死。对照流式端点 run_in_executor / directives to_thread——本测咬死卸载后
+    的可观测序：state 探针先于阻塞 chat 完成。
+    """
+    events: list[str] = []
+
+    class _SlowLLMGame:
+        """离线慢 LLM 替身：chat 阻塞数十毫秒模拟 cli subprocess.run。"""
+
+        def chat(self, minister_name: str, message: str):
+            time.sleep(0.08)
+            events.append("chat")
+            return {"answer": "臣已知悉。"}
+
+        def state_payload(self):
+            events.append("state")
+            return {"ok": True, "turn": 1}
+
+    monkeypatch.setattr(web_app, "_require_active_minister", lambda minister_name: None)
+    monkeypatch.setattr(web_app, "get_game", lambda: _SlowLLMGame())
+
+    async def drive_concurrent_state_probe():
+        async def state_probe():
+            # 让 chat 先进入阻塞段，再探 state——若 loop 被冻则本协程到不了 api_state
+            await asyncio.sleep(0.01)
+            t0 = time.perf_counter()
+            payload = await web_app.api_state()
+            elapsed = time.perf_counter() - t0
+            events.append("state_done")
+            return payload, elapsed
+
+        chat_result, (state_payload, state_elapsed) = await asyncio.gather(
+            web_app.api_chat("测试大臣", web_app.ChatRequest(message="边饷如何？")),
+            state_probe(),
+        )
+        return chat_result, state_payload, state_elapsed
+
+    chat_result, state_payload, state_elapsed = asyncio.run(drive_concurrent_state_probe())
+
+    # chat 仍在 0.08s 阻塞中时 state 必须已返回（序：state → state_done → chat）
+    assert events == ["state", "state_done", "chat"], (
+        f"event loop 被非流式 chat 冻结（events={events}）；"
+        "期望 state 探针在 chat 完成前响应"
+    )
+    assert state_elapsed < 0.05, f"GET state 过慢（{state_elapsed:.3f}s），疑 loop 仍被占"
+    assert state_payload == {"ok": True, "turn": 1}
+    assert chat_result["answer"] == "臣已知悉。"
+
+
+def _wait_for(predicate, *, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+def test_drain_waits_for_in_flight_nonstream_chat():
+    """非流式 chat 在飞（慢 LLM）时 drain 须等待——pending 覆盖 LLM 窗 + epilogue。
+
+    #1291 卸 threadpool 后事件循环可与回菜单重叠；若不标 pending，drain 当空闲关
+    session，epilogue 落库打到已关连接。对齐 chat_stream 整轮 pending ownership。
+    """
+    allow_finish = threading.Event()
+    chat_entered = threading.Event()
+    closed: list[int] = []
+    character = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _RecordingDB(threading.Event())
+
+    class _SlowChatSession(_FakeSession):
+        def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0):
+            chat_entered.set()
+            assert allow_finish.wait(2.0), "slow nonstream LLM timed out"
+            return SimpleNamespace(
+                answer="臣已知悉。",
+                proposed_directive=None,
+                court_action="",
+                next_minister="",
+                appointed_minister="",
+                registered_minister="",
+                displaced_minister="",
+                secret_order_id=0,
+                pending_action_id=0,
+                pending_action_failures=[],
+                directive_confirmation_ambiguous=None,
+            )
+
+        def close(self):
+            closed.append(1)
+
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _SlowChatSession(character, _FakeAgent(allow_finish), state, db)
+    runtime.chat_history = {character.name: []}
+    runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
+    runtime.directive_rows = lambda: []
+    runtime.directive_payload = lambda row: row
+    runtime.suggestions_for = lambda _c: []
+    runtime.can_undo_last_chat = lambda _name: False
+    # 尾随不进本测范围：只钉主轮 pending 覆盖 LLM 窗。
+    runtime._spawn_pending_write_thread = lambda *a, **k: False
+    runtime._spawn_extraction_trail = lambda *a, **k: None
+    runtime._trail_highlight_judge_after_reply = lambda *a, **k: []
+
+    chat_error: list[BaseException] = []
+    chat_payload: list[dict] = []
+
+    def run_chat():
+        try:
+            chat_payload.append(runtime.chat(character.name, "边饷如何？"))
+        except BaseException as exc:  # noqa: BLE001 — surface any fail for assert
+            chat_error.append(exc)
+
+    chat_thread = threading.Thread(target=run_chat, daemon=True)
+    chat_thread.start()
+    assert chat_entered.wait(2.0), "nonstream chat 未进入慢 LLM 窗"
+    assert runtime._pending_writes_count >= 1, (
+        f"非流式 chat 在飞未标 pending（count={runtime._pending_writes_count}）"
+    )
+
+    drain_done = threading.Event()
+
+    def run_drain():
+        web_app._drain_and_close_session(runtime)
+        drain_done.set()
+
+    drain_thread = threading.Thread(target=run_drain, daemon=True)
+    drain_thread.start()
+
+    assert _wait_for(lambda: getattr(runtime, "_draining", False)), "drain 未置 _draining"
+    # 负向：LLM 仍在飞时 drain 不得关连接
+    assert not drain_done.wait(0.15), "drain 在非流式 chat 仍在飞时就关了 session"
+    assert closed == []
+
+    allow_finish.set()
+    assert drain_done.wait(2.0), "drain 未在 chat 完成后关连接"
+    chat_thread.join(2.0)
+    assert not chat_error, f"nonstream chat failed: {chat_error!r}"
+    assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
+    assert closed == [1]
+    assert runtime._pending_writes_count == 0
+
+
+def test_nonstream_chat_rejects_when_session_draining():
+    """drain 已开始时非流式 chat 不得再登记 pending——对齐 stream 拒绝路，HTTP 503。"""
+    from fastapi import HTTPException
+
+    character = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _RecordingDB(threading.Event())
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _FakeSession(character, _FakeAgent(threading.Event()), state, db)
+    runtime.chat_history = {character.name: []}
+    runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = True
+
+    with pytest.raises(HTTPException) as ei:
+        runtime.chat(character.name, "边饷如何？")
+    assert ei.value.status_code == 503
+    assert "正在关闭" in str(ei.value.detail)
+    assert runtime._pending_writes_count == 0
+
+
 def test_stream_prompt_builder_internal_typeerror_is_not_retried_as_legacy_signature():
     """签名兼容须在调用前判定，不能吞掉 production builder 内部 TypeError。"""
     runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()

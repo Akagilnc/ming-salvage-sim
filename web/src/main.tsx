@@ -470,6 +470,13 @@ export function App() {
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
+  // memorials 面键真源（#1285）；ModalName 仍用既有 "state" 槽承载奏疏列表。
+  // 内容闸走 situation 谓词：核账期面可达但零半程议题泄漏（模态不自判 settlementDisplay）。
+  const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
+  const showMemorialIssues = isFaceReachable("situation", settlementDisplay);
+  const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
+  // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
+  const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
   const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
@@ -562,9 +569,14 @@ export function App() {
         </section>
       ) : null}
 
-      {activeModal === "state" ? (
-        <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={() => setActiveModal("none")}>
-          <StateModal state={state} />
+      {memorialsOpen ? (
+        <FullscreenModal
+          title="奏疏"
+          subtitle={`${showMemorialIssues ? state.issues.length : 0} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
+          bgClass="modal-bg-state"
+          onClose={() => setActiveModal("none")}
+        >
+          <StateModal state={state} showIssues={showMemorialIssues} />
         </FullscreenModal>
       ) : null}
 
@@ -623,7 +635,7 @@ export function App() {
       ) : null}
 
       {edictOpen ? (
-        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
+        <FullscreenModal title="诏书草案" subtitle="退朝即草案成案并过月" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
           <EdictModal
             state={state}
             directiveText={directiveText}
@@ -646,9 +658,9 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {gazetteOpen && (gazetteReport || report) ? (
+      {gazetteOpen && (gazetteReport || state.previous_summary || report) ? (
         <ReportModal
-          report={gazetteReport || report}
+          report={gazetteReport || state.previous_summary || report}
           onClose={() => setActiveModal("none")}
         />
       ) : null}
@@ -657,11 +669,16 @@ export function App() {
         <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
       ) : null}
 
-      {activeModal === "history" ? (
-        <HistoryModal onClose={() => setActiveModal("none")} />
+      {historyOpen ? (
+        <HistoryModal
+          onClose={() => setActiveModal("none")}
+          onOpenAudienceArchive={isFaceReachable("audience_archive", settlementDisplay)
+            ? () => setActiveModal("audience_archive")
+            : undefined}
+        />
       ) : null}
 
-      {activeModal === "audience_archive" ? (
+      {audienceArchiveOpen ? (
         <AudienceArchiveModal ministers={audienceRoster} onClose={() => setActiveModal("none")} />
       ) : null}
 
