@@ -514,6 +514,58 @@
       "output_metric": "民心",
       "output_amount": 1,
       "status": "瘠土小仓，仰赖邻省转运。"
+    },
+    {
+      "id": "liaodong_ningyuan_junchucang",
+      "region_id": "liaodong",
+      "name": "宁远军储仓",
+      "category": "军事",
+      "level": 3,
+      "condition": 40,
+      "maintenance": 1,
+      "risk": 55,
+      "output_metric": "",
+      "output_amount": 0,
+      "status": "关宁前线军粮总汇，欠饷时仓廪亦空，士卒仰望。"
+    },
+    {
+      "id": "liaodong_jinzhou_junqiju",
+      "region_id": "liaodong",
+      "name": "锦州卫军器局",
+      "category": "军事",
+      "level": 2,
+      "condition": 46,
+      "maintenance": 1,
+      "risk": 50,
+      "output_metric": "",
+      "output_amount": 0,
+      "status": "关宁甲仗修造之所，匠户稀少、硝磺常缺。"
+    },
+    {
+      "id": "liaodong_guanning_yizhan",
+      "region_id": "liaodong",
+      "name": "关宁驿道站",
+      "category": "交通",
+      "level": 2,
+      "condition": 38,
+      "maintenance": 1,
+      "risk": 48,
+      "output_metric": "",
+      "output_amount": 0,
+      "status": "山海至宁锦驿递，塘报军情赖此，驿卒疲敝。"
+    },
+    {
+      "id": "liaodong_ningyuan_chengfang",
+      "region_id": "liaodong",
+      "name": "宁远卫城垣",
+      "category": "军事",
+      "level": 4,
+      "condition": 58,
+      "maintenance": 1,
+      "risk": 45,
+      "output_metric": "",
+      "output_amount": 0,
+      "status": "天启六年大捷后城防尚固，红夷炮在城，墙垛需岁修。"
     }
   ]
 }
