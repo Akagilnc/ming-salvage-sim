@@ -19,6 +19,7 @@ export function useSettlementFlow({
   cheatDirective,
   setCheatDirective,
   loadState,
+  refreshExtractionPending,
   surfacePendingActionFailures,
   state,
 }: {
@@ -27,6 +28,8 @@ export function useSettlementFlow({
   cheatDirective: string;
   setCheatDirective: (text: string) => void;
   loadState: () => Promise<GameState | null>;
+  /** #1312/#1353：待补 409 后即时刷 extractionPendingCount，露补写 CTA（不靠 8s 轮询）。 */
+  refreshExtractionPending?: () => Promise<void>;
   surfacePendingActionFailures: (failures?: PendingActionFailure[]) => Promise<boolean>;
   state: GameState | null;
 }) {
@@ -93,11 +96,27 @@ export function useSettlementFlow({
           window.location.reload();
           return;
         }
+        // main #1442：pending_action_failures 落库面优先；本支 #1312/#1353：待补 409 后刷 pending 露补写 CTA。
+        const errMsg = typeof outcome.data === "string" ? outcome.data : (errData.message || "颁诏失败。");
         if (await surfacePendingActionFailures(errData?.pending_action_failures || [])) {
-          setError(errData.message || "颁诏失败。");
+          setError(errMsg);
           return;
         }
-        setError(errData.message || "颁诏失败。");
+        setError(errMsg);
+        // #1312/#1353：收夜待补 409 后即时刷 extractionPendingCount（loadState 不带 count）；
+        // 刷新失败隔离，禁盖 409 原文。
+        if (/待补|未抽取|chat_turn/.test(errMsg)) {
+          try {
+            await loadState();
+          } catch {
+            /* 状态刷新失败不盖 409 原文 */
+          }
+          try {
+            await refreshExtractionPending?.();
+          } catch {
+            /* pending 取数失败不锁面板、不盖原文 */
+          }
+        }
         setBusy("");
         return;
       }
@@ -255,7 +274,21 @@ export function useSettlementFlow({
         setError(detail?.message || "退朝失败。");
         return;
       }
-      setError(err instanceof Error ? err.message : String(err));
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg);
+      // 同 issueDecree：待补 409 即时刷 pending CTA；刷新失败不盖原文。
+      if (/待补|未抽取|chat_turn/.test(errMsg) || /待补|未抽取|chat_turn/.test(String(detail?.message || ""))) {
+        try {
+          await loadState();
+        } catch {
+          /* 状态刷新失败不盖 409 原文 */
+        }
+        try {
+          await refreshExtractionPending?.();
+        } catch {
+          /* pending 取数失败不锁面板、不盖原文 */
+        }
+      }
     } finally {
       setBusy("");
     }
