@@ -4459,6 +4459,9 @@ def api_advance_without_edict(
             settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
+    except HTTPException:
+        # 令牌/相位/锁门 409 等既有 HTTP 面原样上抛，禁被下方 Exception 改包。
+        raise
     except ValueError as e:
         failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
         detail: Any = {"message": str(e), "pending_action_failures": failures} if failures else str(e)
@@ -4470,6 +4473,21 @@ def api_advance_without_edict(
     except (AudienceNightError, ExceptionGroup) as e:
         # #498 AC10 / #612：在飞超时或 close 双支 → 夜保持开、409 可原地重试。
         raise _retryable_audience_close_http(e) from None
+    except Exception as e:  # noqa: BLE001
+        # #1433：同流式颁诏 4616-4623——LLMUnavailable→可读 _llm_error_detail；其余 Exception→str。
+        # HTTP 面 LLM 死走 412（菜单/连通先例）；禁裸 500 无 detail。
+        failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
+        if isinstance(e, LLMUnavailable):
+            detail = _llm_error_detail(e)
+            if failures:
+                detail = {**detail, "pending_action_failures": failures}
+            raise HTTPException(status_code=412, detail=detail) from None
+        message = str(e) or "退朝结算失败，请重试。"
+        detail = (
+            {"message": message, "pending_action_failures": failures}
+            if failures else {"message": message}
+        )
+        raise HTTPException(status_code=500, detail=detail) from None
     return {
         "state": game.state_payload(),
         "awaiting_decision": bool(
