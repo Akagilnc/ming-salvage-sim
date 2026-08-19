@@ -1737,14 +1737,28 @@ class WebGame:
                     payload["history"] = self.chat_projection(minister_name)
             except Exception:
                 # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
-                self.session.abandon_chat_turn_scene(chat_turn_id)
-                with gate:
-                    if chat_turn_id:
-                        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                        self.db.fail_chat_turn(chat_turn_id)
-                        self.chat_history = {name: [] for name in self.session.content.characters}
-                        for name, msgs in self.db.load_all_chat_history().items():
-                            self.chat_history.setdefault(name, []).extend(msgs)
+                # 内层守护对齐流式：二次失败记日志不吞原错；abandon / 终态写分 try，
+                # 终态写尽力而为——abandon 崩不得跳过 fail，否则 turn 卡 generating。
+                try:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
+                except Exception:
+                    logger.exception(
+                        "nonstream chat cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
+                try:
+                    with gate:
+                        if chat_turn_id:
+                            self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                            self.db.fail_chat_turn(chat_turn_id)
+                            self.chat_history = {name: [] for name in self.session.content.characters}
+                            for name, msgs in self.db.load_all_chat_history().items():
+                                self.chat_history.setdefault(name, []).extend(msgs)
+                except Exception:
+                    logger.exception(
+                        "nonstream chat cleanup: fail_chat_turn/reload failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
                 raise
             # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
             close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
@@ -1854,10 +1868,24 @@ class WebGame:
                 # （与 chat 失败尾声同缝），并截断本轮 agno、翻回 interrupted 保持可再重试；
                 # 但**绝不删问话/回话**（AC3/AC4 恢复路径永不删账），不静默 fail 掉最后一句。
                 # #542：running Future 的 cancel/join 必须在 write gate 外；锁内仅 rollback 短写。
-                self.session.abandon_chat_turn_scene(chat_turn_id)
-                with gate:
-                    self._record_chat_rollback_items(chat_turn_id, before_snapshot)
-                    self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                # 内层守护对齐流式/非流 chat：二次失败记日志不吞原错；abandon / 终态写分 try，
+                # 终态写尽力而为——abandon 崩不得跳过 restore，否则 turn 卡 generating。
+                try:
+                    self.session.abandon_chat_turn_scene(chat_turn_id)
+                except Exception:
+                    logger.exception(
+                        "retry cleanup: abandon_chat_turn_scene failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
+                try:
+                    with gate:
+                        self._record_chat_rollback_items(chat_turn_id, before_snapshot)
+                        self.db.restore_interrupted_after_failed_retry(chat_turn_id)
+                except Exception:
+                    logger.exception(
+                        "retry cleanup: restore_interrupted failed chat_turn_id=%s",
+                        chat_turn_id,
+                    )
                 raise
             # #526：回话已落库后收夜。失败响亮上抛，不得回滚已成回话；夜可恢复。
             close_after = getattr(self.session, "close_night_after_chat_if_needed", None)
