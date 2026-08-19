@@ -2737,11 +2737,16 @@ class GameSession:
             ctx_for_event_binding is not None
             and ctx_for_event_binding.get("extracted") is not None
         )
+        # #1374：崩溃安全已把 status=decided + choice 先写。phase2 LLM 失败后重交
+        # （含空 payload / 另一客户端不同 label）必须续跑原裁，禁覆写落档。
+        already_decided = bool(stored) and all(
+            str(d.get("status") or "") == "decided" for d in stored
+        )
         if ctx_for_event_binding is not None:
             stored = bind_decisions_to_candidate_events(
                 stored, ctx_for_event_binding.get("simulator_payload")
             )
-        if not ready_replay:
+        if not ready_replay and not already_decided:
             # Dossier rescript choices are capability-bearing options.  Validate the
             # complete batch before persisting any decision so malformed/cross-dossier
             # payloads leave the retry state untouched.

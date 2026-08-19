@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionRecoveryPanel } from "./decisionRecovery";
-import { PAUSED_DECISION_MSG, replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "../decisionRouting";
+import { PAUSED_DECISION_MSG, replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions, storedChoicesForDecidedResume } from "../decisionRouting";
 import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -130,6 +130,31 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     const route = routeRefreshDecisions("awaiting_decision", [decided]);
     expect(route.pendingDecisions).toBeNull();
     expect(route.error).toBeNull();
+  });
+});
+
+describe("storedChoicesForDecidedResume — awaiting+decided 续跑材料", () => {
+  it("awaiting 全员 decided 且有落档 choice：抽出可续跑选择，不把弹窗当待批", () => {
+    const decided = {
+      ...validDecision,
+      status: "decided",
+      choice: { label: "拨帑速发", hint: "先解燃眉之急。" },
+    };
+    expect(storedChoicesForDecidedResume("awaiting_decision", [decided])).toEqual([
+      { label: "拨帑速发", hint: "先解燃眉之急。" },
+    ]);
+    const route = routeRefreshDecisions("awaiting_decision", [decided]);
+    expect(route.pendingDecisions).toBeNull();
+  });
+
+  it("仍待批 / 非 awaiting / 缺 choice：不得给出续跑材料", () => {
+    expect(storedChoicesForDecidedResume("awaiting_decision", [validDecision])).toBeNull();
+    expect(storedChoicesForDecidedResume("issued", [{
+      ...validDecision, status: "decided", choice: { label: "拨帑速发" },
+    }])).toBeNull();
+    expect(storedChoicesForDecidedResume("awaiting_decision", [{
+      ...validDecision, status: "decided",
+    }])).toBeNull();
   });
 });
 

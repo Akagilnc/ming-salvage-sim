@@ -1,7 +1,7 @@
 import React from "react";
 import { api } from "./api";
 import { consumeSettleStream } from "./settleStream";
-import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
+import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions, storedChoicesForDecidedResume } from "./decisionRouting";
 import { forwardSteamEvents } from "./steamEvents";
 import type { GameState, PendingActionFailure, PendingDecision } from "./types";
 
@@ -31,6 +31,11 @@ export function useSettlementFlow({
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
   const [pausedDecisionError, setPausedDecisionError] = React.useState("");
+  // #1374：awaiting + 全员 decided → 不重开弹窗，但给出落档 choice 供续跑。
+  const decidedResumeChoices = React.useMemo(
+    () => storedChoicesForDecidedResume(state?.turn.phase, state?.pending_decisions || []),
+    [state],
+  );
 
   // 刷新恢复：若回合停在 awaiting_decision 且有未裁决策点，自动重弹决策弹窗。
   React.useEffect(() => {
@@ -138,10 +143,13 @@ export function useSettlementFlow({
       if (outcome.kind === "error") {
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
           setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
+          setBusy("");
+          await loadState();
           return;
         }
         setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
         setBusy("");
+        await loadState();
         return;
       }
       await forwardSteamEvents(outcome.data);
@@ -153,6 +161,7 @@ export function useSettlementFlow({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy("");
+      await loadState();
     }
   };
 
@@ -185,6 +194,7 @@ export function useSettlementFlow({
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    decidedResumeChoices,
     issueDecree,
     submitDecisions,
     retryPendingDecisions,
