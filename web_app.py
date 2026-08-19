@@ -68,7 +68,6 @@ from ming_sim.llm_config import (
 from ming_sim.agents import _dump_llm_messages
 from ming_sim.llm_model import extract_agent_text, verify_llm_available
 from ming_sim.llm_contract import fail_if_llm_error
-from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.session import GameSession
 from ming_sim.session import (
@@ -4454,21 +4453,10 @@ def api_advance_without_edict(
                             "turn": current_turn,
                         },
                     )
-            if game.directive_rows():
-                settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
-            else:
-                advanced = advance_without_edict(
-                    game.state,
-                    game.db,
-                    content=game.content,
-                    registry=getattr(game.session, "registry", None),
-                    inflight_wait_s=0.0,
-                    llm_config=getattr(game.session, "llm_config", None),
-                    write_gate=None,
-                    scene_registry=getattr(game.session, "_scene_registry", None),
-                )
-                if not advanced:
-                    settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
+            # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
+            # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
+            # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
+            settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()
     except ValueError as e:

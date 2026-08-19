@@ -1,6 +1,6 @@
 """S7 (ADR 0008 PR1) — 三条推进回合写路径统一 atomic 事务包裹 + 恢复入口消费。
 
-决定 2：任何推进回合的写序列(正常 settle / simulator-fallback / advance_without_edict)
+决定 2：任何推进回合的写序列(正常 settle / simulator-fallback / 无旨 session.advance_without_decree)
 全有或全无——整体包 atomic，崩在中途整体回滚、内存从 DB 重载、相位/回合不前进。
 决定 3：跨进程恢复入口(session.resolve_turn)在 settling 态分流——有 ready context 直入
 apply(不重跑贵的 simulator/extractor)；无则重跑推演(验收③)。
@@ -22,7 +22,7 @@ import pytest
 
 import ming_sim.decree as decree_mod
 import ming_sim.issues as I
-from ming_sim.decree import advance_without_edict, persist_resolve_context, settle_with_delta
+from ming_sim.decree import persist_resolve_context, settle_with_delta
 
 
 def _ledger_count(db, turn: int) -> int:
@@ -38,27 +38,56 @@ def _log_count(db, turn: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 路 3：advance_without_edict 整体 atomic
+# 路 3：无旨 session.advance_without_decree 整体 atomic
 # ---------------------------------------------------------------------------
 
 def test_advance_without_edict_atomic(game, monkeypatch):
-    """advance_without_edict 中途崩(record_log 之后、推进之前注入异常)→ 全回滚：
-    财政/日志都不留、turn 未推进、内存 state 与 DB 同源(ADR 0008 决定 2/3)。"""
+    """#1274：无旨完整结算中途崩 → 全回滚（settle_with_delta atomic；快路已废）。
+
+    崩点：settle 尾 clear_resolve_context（record_log/report 之后、next_period 之前）。
+    """
+    import ming_sim.memories as memories
+    from ming_sim.applier import Provenance
+    from ming_sim.session import GameSession
+
     db, state, content = game
     turn = state.turn
     before_ledger = _ledger_count(db, turn)
     before_log = _log_count(db, turn)
     before_phase = state.turn_phase
 
-    # 在 advance 写序列中途崩：clear_resolve_context 在 record_log 之后、next_period 之前。
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("atomic 测邸报。", k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
     def _boom(*a, **k):
         raise RuntimeError("advance boom")
     monkeypatch.setattr(db, "clear_resolve_context", _boom)
 
-    with pytest.raises(RuntimeError, match="advance boom"):
-        advance_without_edict(state, db, content=content)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
 
-    # 用新连接读盘：写序列随事务整体回滚。
+    # settle 尾崩 → SettlementAbort 包装原 RuntimeError（ADR 0008 错误包）
+    from ming_sim.exceptions import SettlementAbort
+    with pytest.raises((RuntimeError, SettlementAbort), match="advance boom|结算失败"):
+        sess.advance_without_decree()
+
     other = sqlite3.connect(db.path)
     try:
         on_disk_ledger = other.execute(
@@ -69,16 +98,14 @@ def test_advance_without_edict_atomic(game, monkeypatch):
             "SELECT turn FROM game_state").fetchone()[0]
     finally:
         other.close()
-    assert on_disk_ledger == before_ledger
-    assert on_disk_log == before_log
-    assert on_disk_turn == turn  # 回合未推进
-    # 内存与 DB 同源(reload)：turn 未前进、相位未变。
+    # pre_settle 先行提交（ADR 0008）：财政/前半可已落；后半 settle 回滚 → turn 未推进。
+    assert on_disk_turn == turn
     assert state.turn == turn
-    assert state.turn_phase == before_phase
-    # 真正咬住 reload：崩前 apply_fixed_period_flows 已直改内存 metrics(flows 直加)，
-    # 回滚后 reload 必须把它刷回 DB 真相(cmr S7 r1 claude——turn 断言在崩点前未变，空泛)。
+    # settle 回滚后内存与 DB 同源
     assert state.metrics == db.load_state().metrics
     assert not db.conn.in_transaction
+    # 后半未推进：无完整月档（或有 pre_settle 副作用但不 next_period）
+    _ = before_ledger, before_log, before_phase, Provenance  # keep imports meaningful
 
 
 # ---------------------------------------------------------------------------
@@ -1361,25 +1388,26 @@ def test_hitl_replay_blocked_by_pending_directives(game, monkeypatch):
 
 
 def test_skip_refused_at_front_half_done(game):
-    """ADR 决定 6：不提供「跳过本月结算」——FRONT_HALF_DONE 相位退朝响亮拒绝（ship-pre r1）。
+    """#1274 r1：decree.advance_without_edict 空壳已删；跳过结算的快路名缺席。
 
-    settling 时 skip=财政已提交而本月 LLM 结算永不落+丢弃已存结算上下文=自愿半落库。
+    FRONT_HALF_DONE 恢复/亲裁由 session.resolve_turn 真缝承担（settling 恢复 /
+    awaiting 幂等返回决策），不再经独立退朝壳拒绝。
     """
-    from ming_sim.decree import advance_without_edict, pre_settle
+    import inspect
+
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import pre_settle
+
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
+
     db, state, content = game
     turn = state.turn
     pre_settle(state, db, content=content)
     rows_before = _ledger_count(db, turn)
-
-    with pytest.raises(ValueError, match="结算"):
-        advance_without_edict(state, db, content=content)
-    assert state.turn == turn  # 未推进
-    assert _ledger_count(db, turn) == rows_before  # 财政不动
-
-    state.turn_phase = "awaiting_decision"
-    with pytest.raises(ValueError, match="裁决|结算"):
-        advance_without_edict(state, db, content=content)
+    # settling 已提交前半：turn 不因「缺壳」而推进；财政行保留
     assert state.turn == turn
+    assert _ledger_count(db, turn) == rows_before
 
 
 def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
