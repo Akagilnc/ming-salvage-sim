@@ -647,6 +647,53 @@ def period_label(year: int, month: int) -> str:
     return f"{year}年{month}月"
 
 
+# 年号纪年：西历年 → 天启/崇祯汉字年号。state.year 是西历（开局 1627=天启七年）；
+# 崇祯改元逾年，元年=1628。章节记忆/邸报 title 单一真源，禁「崇祯{year}年」字面拼接。
+_CN_DIGITS = "零一二三四五六七八九"
+_CN_MONTH_ORDINAL = {
+    1: "正", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六",
+    7: "七", 8: "八", 9: "九", 10: "十", 11: "十一", 12: "十二",
+}
+# 天启元年=1621；崇祯元年=1628（改元逾年，开局 1627 仍天启七年）。
+_TIANQI_EPOCH_YEAR = 1621
+_CHONGZHEN_EPOCH_YEAR = 1628
+
+
+def _chinese_era_ordinal(n: int) -> str:
+    """年号序数：1→元，2→二，…，10→十，11→十一，17→十七，20→二十。"""
+    n = int(n)
+    if n <= 0:
+        raise ValueError(f"era ordinal must be positive, got {n}")
+    if n == 1:
+        return "元"
+    if n < 10:
+        return _CN_DIGITS[n]
+    if n < 20:
+        return "十" if n == 10 else f"十{_CN_DIGITS[n - 10]}"
+    tens, ones = divmod(n, 10)
+    head = f"{_CN_DIGITS[tens]}十"
+    return head if ones == 0 else f"{head}{_CN_DIGITS[ones]}"
+
+
+def reign_period_label(year: int, month: int) -> str:
+    """西历年月 → 年号纪年呈现（天启七年十月 / 崇祯元年正月 / 崇祯二年三月）。
+
+    映射：year≤1627 → 天启（1621=元年）；year≥1628 → 崇祯（1628=元年）。
+    元年不写「1年」；月份用正/二/…/十二，与票面「十月」「正月」口径对齐。
+    """
+    y = int(year)
+    m = int(month)
+    if m not in _CN_MONTH_ORDINAL:
+        raise ValueError(f"month must be 1..12, got {m}")
+    if y >= _CHONGZHEN_EPOCH_YEAR:
+        era = "崇祯"
+        ordinal = y - _CHONGZHEN_EPOCH_YEAR + 1
+    else:
+        era = "天启"
+        ordinal = y - _TIANQI_EPOCH_YEAR + 1
+    return f"{era}{_chinese_era_ordinal(ordinal)}年{_CN_MONTH_ORDINAL[m]}月"
+
+
 def monthly_amount(amount: int) -> int:
     # 全盘已按月度：base/maint/tax 都是月值，不再除 3。保留函数仅为兼容旧调用点（恒等）。
     return max(0, int(amount))
