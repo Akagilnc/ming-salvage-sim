@@ -582,9 +582,20 @@ def test_real_no_edict_entries_roll_back_every_external_state_after_fiscal_write
     else:
         invoke = session.advance_without_decree
 
-    # RuntimeError is intentionally not translated by the endpoint (HTTP layer maps it to 500).
-    with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
-        invoke()
+    # cli：session 层 RuntimeError 原样穿透。
+    # web：#1433 可读错误包契约——Exception → 500 + {"message": str(e)}（回滚语义不变）。
+    if entry == "web":
+        with pytest.raises(web_app.HTTPException) as exc_info:
+            invoke()
+        assert exc_info.value.status_code == 500
+        detail = exc_info.value.detail
+        if isinstance(detail, dict):
+            assert "post-fiscal failure 566" in str(detail.get("message") or detail)
+        else:
+            assert "post-fiscal failure 566" in str(detail)
+    else:
+        with pytest.raises(RuntimeError, match="post-fiscal failure 566"):
+            invoke()
 
     assert observed == {"fiscal_written": True, "metrics_written": True}
     after = _rollback_snapshot(db, state, pending_ids)

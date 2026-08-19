@@ -373,19 +373,31 @@ def _validate_promulgation_verdict_item(
     }
     try:
         decision = row.get("decision")
-        if decision == "promulgated" and rejection_only_fields & row.keys():
-            raise ValueError("顺颁判决不得携带打回专属字段")
-        marker = row.get("midzhi_unpromulgatable", False)
+        mode = modes.get(dossier_id) if isinstance(dossier_id, int) else None
+        # Work on a shallow copy: 顺颁 may strip LLM noise without mutating caller input.
+        item: Dict[str, object] = dict(row)
+        if decision == "promulgated":
+            # #1397 / r6: 颁布判官 LLM 常在 decision=promulgated 上夹带打回形解释字段
+            # （reason/gatekeeper_id/primary_opponents/criteria_snapshot 等）。decision 已
+            # 钉顺颁，这些字段是产出噪声而非语义；硬拒会在 pre_settle 落 settling 后
+            # SettlementAbort 卡死整月。剥离已知噪声， downstream 按干净顺颁继续。
+            # 真正未知键与打回契约仍硬拒（见下方 exact-key / rejection 校验）。
+            for key in rejection_only_fields:
+                item.pop(key, None)
+            item.pop("legal_reason_code", None)
+            # ordinary 顺颁必须省略 affected_parties；中旨顺颁保留（ADR 0055 反应）。
+            if mode != "midzhi":
+                item.pop("affected_parties", None)
+        marker = item.get("midzhi_unpromulgatable", False)
         if not isinstance(marker, bool):
             raise ValueError("中旨亦不可颁标记必须为 bool")
-        mode = modes.get(dossier_id) if isinstance(dossier_id, int) else None
         if marker:
             if mode is not None:
                 if decision != "rejected" or mode != "midzhi":
                     raise ValueError("中旨亦不可颁只能标记中旨打回判决")
             elif decision != "rejected":
                 raise ValueError("中旨亦不可颁只能标记打回判决")
-        if any(isinstance(key, str) and key.startswith("resistance_") for key in row):
+        if any(isinstance(key, str) and key.startswith("resistance_") for key in item):
             raise ValueError("颁布判决不得携带阻力数值字段")
         # Exact verdict-key enforcement (#561) when mode is known from proposed set.
         if mode is not None:
@@ -397,22 +409,22 @@ def _validate_promulgation_verdict_item(
                 allowed_keys.update({"affected_parties", "legal_reason_code"})
                 if mode == "midzhi":
                     allowed_keys.add("midzhi_unpromulgatable")
-            unknown_keys = set(row) - allowed_keys
+            unknown_keys = set(item) - allowed_keys
             if unknown_keys:
                 raise ValueError(f"颁布判决含未知字段：{sorted(unknown_keys)}")
             validate_verdict_affected_parties(
-                row, mode, faction_names=faction_names, class_names=class_names,
+                item, mode, faction_names=faction_names, class_names=class_names,
             )
         else:
-            affected = row.get("affected_parties", [])
+            affected = item.get("affected_parties", [])
             if not isinstance(affected, list):
                 raise ValueError("受损方必须为 typed 清单")
             validate_affected_parties(
                 affected, faction_names=faction_names, class_names=class_names,
             )
-        if row.get("decision") == "rejected":
+        if item.get("decision") == "rejected":
             validate_rejection_verdict(
-                row, {"cabinet_drafting", "palace_rescript", "six_offices"},
+                item, {"cabinet_drafting", "palace_rescript", "six_offices"},
                 faction_names=faction_names,
                 class_names=class_names,
                 character_ids=gatekeeper_ids,
@@ -421,11 +433,11 @@ def _validate_promulgation_verdict_item(
                 source_snapshot = context_dossiers[dossier_id].get(
                     "criteria_snapshot_source"
                 )
-                if row.get("criteria_snapshot") != source_snapshot:
+                if item.get("criteria_snapshot") != source_snapshot:
                     raise ValueError("打回判决 criteria_snapshot 与判官输入原值不一致")
     except ValueError as exc:
         raise LLMContractError(str(exc)) from exc
-    return row
+    return item
 
 
 def validate_promulgation_verdicts(

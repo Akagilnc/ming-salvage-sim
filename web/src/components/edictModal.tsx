@@ -20,6 +20,7 @@ export function EdictModal({
   onSaveDirective,
   onDeleteDirective,
   onAdvanceWithoutEdict,
+  onIssueDecree,
   onOpenFailureRecovery,
   onRetryExtraction,
 }: {
@@ -41,12 +42,15 @@ export function EdictModal({
   onSaveDirective: (directive: Directive) => void;
   onDeleteDirective: (directiveId: number) => void;
   onAdvanceWithoutEdict: () => void;
+  /** #1277：有草案时主钮走盖玺颁诏（issueDecree）；0 草案仍退朝。 */
+  onIssueDecree: () => void;
   onOpenFailureRecovery: () => void;
   onRetryExtraction?: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
   const draftDirectives = state.directives;
+  const hasDrafts = draftDirectives.length > 0;
   const hasPendingConversationalDraft = (state.pending_directive_count ?? 0) > 0;
   const hasNonEdictPendingActions = (state.pending_non_directive_action_count ?? 0) > 0;
   const hasFailedSecretOrders = (state.failed_secret_order_count ?? 0) > 0;
@@ -103,7 +107,7 @@ export function EdictModal({
           <textarea
             value={directiveText}
             onChange={(event) => onDirectiveTextChange(event.target.value)}
-            placeholder="例如：命毕自严核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
+            placeholder="例如：命户部核拨关宁、山海关、蓟镇辽饷一百五十二万两..."
           />
           <button className="desk-add-btn" onClick={onCreateDirective} disabled={!!busy || !directiveText.trim()}>
             <Edit3 size={14} />新增草案
@@ -121,8 +125,13 @@ export function EdictModal({
       </div>
 
       <div className="desk-footer">
-        <button className="seal-btn-compose" onClick={onAdvanceWithoutEdict} disabled={!!busy}>
-          退朝结束本月 →
+        {/* #1277：drafts>0 名实相符——盖玺颁诏过月→issueDecree；0 草案保留退朝。 */}
+        <button
+          className={hasDrafts ? "seal-btn-issue" : "seal-btn-compose"}
+          onClick={hasDrafts ? onIssueDecree : onAdvanceWithoutEdict}
+          disabled={!!busy}
+        >
+          {hasDrafts ? "盖玺颁诏过月 →" : "退朝结束本月 →"}
         </button>
       </div>
     </div>
