@@ -1649,6 +1649,17 @@ class WebGame:
         # 锁前查仅为快速失败；权威判定须在持 gate 后、建任何 chat turn/开夜/写库之前复查——
         # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
         self._reject_if_settlement_phase()
+        # #396/#1291：非流式 LLM 窗不持 write_gate（AC10）。threadpool 卸出后回菜单/新局
+        # drain 可并发——必须整轮标 pending，否则 drain 关连接、epilogue 写 closed DB。
+        # 与 chat_stream 同缝；关档中迟到的写入拒收。
+        if not self._mark_pending_write():
+            raise HTTPException(status_code=409, detail="当前会话正在关闭，请回菜单重新进入。")
+        try:
+            return self._chat_after_pending_claimed(minister_name, text)
+        finally:
+            self._complete_pending_write()
+
+    def _chat_after_pending_claimed(self, minister_name: str, text: str) -> Dict[str, Any]:
         gate = self._runtime_write_gate()
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
