@@ -2906,7 +2906,7 @@ def _exit_settlement_display_on_failure(game, *, blocking: bool = False) -> None
       - 其他入口仍在办（in-flight > 1）→ 立即返回（r4：gate-free 窗锁闲≠孤儿，禁代清）；
       - 仅本请求在办且 non-blocking 抢到锁 → 可清 session 再创建孤儿（r3 C）；
       - 撞锁立即返回（r2 持锁防代清）。
-    失败路径须无条件尝试本函数；created_display 只控 blocking，不再门控是否调用。
+    已 begin（in-flight 已登记）后的失败路径须尝试本函数；未 begin 者无快照可退且会破 in-flight 算术，不得调用；created_display 只控 blocking，不再门控是否调用。
     清快照期间持 entry_lock，使并发 begin 不得插在「见 in-flight==1」与 clear 之间。"""
     db = getattr(game, "db", None)
     state = getattr(game, "state", None)
