@@ -2,6 +2,9 @@ import type { PendingDecision } from "./types";
 
 export const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。";
 
+/** #1307：settling 窗口 pending_decisions=[] 是正常中间态，不报错、不喊重拉。 */
+export const SETTLING_WAIT_MSG = "";
+
 /** #1374：phase2 已落 decided（先写后跑）——不可再当待批弹窗，禁「可再提交」假象。 */
 export function isDecisionAlreadyDecided(event: unknown): boolean {
   if (!event || typeof event !== "object") return false;
@@ -59,6 +62,10 @@ export function routeRefreshDecisions(
   phase: string | undefined,
   events: unknown[],
 ): DecisionRouteOutcome {
+  // #1307：settling 中间态 pending=[] 正常——轮询/等待呈现，不报错不喊重拉。
+  if (phase === "settling") {
+    return { pendingDecisions: null, error: SETTLING_WAIT_MSG || null };
+  }
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
@@ -77,6 +84,10 @@ export function routeRetryDecisions(
   phase: string | undefined,
   events: unknown[],
 ): DecisionRouteOutcome {
+  // #1307：settling 重拉也不报错；空批红只在 awaiting_decision 才响亮。
+  if (phase === "settling") {
+    return { pendingDecisions: [], error: "" };
+  }
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: [], error: "" };
   }

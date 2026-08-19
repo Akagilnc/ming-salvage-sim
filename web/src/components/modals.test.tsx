@@ -262,7 +262,7 @@ describe("EdictModal — hidden secret-order default approval", () => {
       onAdvanceWithoutEdict: onAdvance,
     });
     const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝")
+      item.textContent?.includes("退朝结束本月")
     ) as HTMLButtonElement | undefined;
 
     expect(button).toBeTruthy();
@@ -283,10 +283,27 @@ describe("EdictModal — hidden secret-order default approval", () => {
       onAdvanceWithoutEdict: onAdvance,
     });
     const button = Array.from(host.querySelectorAll("button")).find((item) =>
-      item.textContent?.includes("退朝")
+      item.textContent?.includes("退朝结束本月")
     ) as HTMLButtonElement | undefined;
 
     expect(button).toBeTruthy();
+  });
+
+  it("#1277 页脚如实表达退朝=草案成案+过月，不假装另有颁诏钮", () => {
+    const onAdvance = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
+      onAdvanceWithoutEdict: onAdvance,
+    });
+    expect(host.textContent).toContain("发饷辽东");
+    expect(host.textContent).toMatch(/退朝结束本月/);
+    expect(host.textContent).not.toContain("盖玺颁布");
+    expect(host.textContent).not.toContain("待朱批");
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝结束本月")
+    ) as HTMLButtonElement | undefined;
+    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onAdvance).toHaveBeenCalledTimes(1);
   });
 
   it("does not review already-approved conversational directives", () => {
@@ -297,7 +314,7 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).not.toContain("准");
     expect(host.textContent).not.toContain("驳");
     expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toContain("退朝");
+    expect(host.textContent).toContain("退朝结束本月");
     expect(host.textContent).not.toContain("返工改稿");
     expect(host.textContent).not.toContain("盖玺颁布");
   });
@@ -340,7 +357,7 @@ describe("EdictModal — hidden secret-order default approval", () => {
 });
 
 describe("ChatModal — #545 final composer contract", () => {
-  it("keeps temporary leave separate and sends retreat through the chat command seam", () => {
+  it("#1278 召对收夜钮称散夜，仍走 chat 口令「退朝」seam，不与拟诏台退朝撞名", () => {
     const onSend = vi.fn();
     const onClose = vi.fn();
     const host = renderModal({ minister: MINISTER_MOCK, portraitPrefix: "minister_", onSend, onClose });
@@ -349,14 +366,17 @@ describe("ChatModal — #545 final composer contract", () => {
     expect(host.textContent).not.toContain("任免");
     const buttons = Array.from(host.querySelectorAll("button"));
     const leave = buttons.find((button) => button.textContent?.includes("退出召对")) as HTMLButtonElement;
-    const retreat = buttons.find((button) => button.textContent?.includes("退朝")) as HTMLButtonElement;
+    const retreat = buttons.find((button) => button.textContent?.includes("散夜")) as HTMLButtonElement;
     expect(leave).toBeTruthy();
     expect(retreat).toBeTruthy();
+    // 召对 chrome 不再显示与拟诏台同名的「退朝」
+    expect(buttons.some((button) => (button.textContent || "").trim() === "退朝")).toBe(false);
 
     act(() => leave.click());
     expect(onClose).toHaveBeenCalledOnce();
     expect(onSend).not.toHaveBeenCalled();
     act(() => retreat.click());
+    // 机制零改动：仍发后端 COURT_BREAK_COMMANDS 既认词
     expect(onSend).toHaveBeenCalledWith("周延儒", "退朝");
   });
 });
@@ -556,6 +576,30 @@ describe("ChatModal — organic markdown display cleanup", () => {
     const messages = Array.from(document.querySelectorAll(".chat-message p"));
     expect(messages[0]?.textContent).toBe("朕要看 **原文**。");
     expect(messages[1]?.textContent).toBe("臣谨奏：\n钱粮已足。");
+  });
+
+  it("#1280 scene/attendant 角色气泡同走 stripOrganicMarkdown", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        night_id: 23,
+        messages: [
+          { role: "scene", speaker: "", content: "殿内 **烛影** 摇曳\n- 夜风入户", beat: "scene" },
+          { role: "attendant", speaker: "王承恩", content: "**低声**：边报已至。", beat: "aside", audibility: "御前低语" },
+        ],
+      }),
+    }));
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      ministers: [{ ...MINISTER_MOCK, name: "王承恩" }],
+      portraitPrefix: "minister_",
+      currentNightId: 23,
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelector(".chat-message.scene p")?.textContent).toBe("殿内 烛影 摇曳\n夜风入户");
+    expect(host.querySelector(".chat-message.attendant p")?.textContent).toBe("低声：边报已至。");
+    expect(host.textContent).not.toContain("**");
+    expect(host.textContent).not.toMatch(/(^|\n)-\s/);
   });
 });
 

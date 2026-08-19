@@ -103,6 +103,13 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.error).toBe(PAUSED_DECISION_MSG);
   });
 
+  it("#1307 settling with empty pending is a normal intermediate — no error, no 重新拉取", () => {
+    const route = routeRefreshDecisions("settling", []);
+    expect(route.pendingDecisions).toBeNull();
+    expect(route.error).toBeNull();
+    expect(route.error).not.toBe(PAUSED_DECISION_MSG);
+  });
+
   it("skips routing when phase is not awaiting_decision on refresh", () => {
     const route = routeRefreshDecisions("issued", [validDecision]);
     expect(route.pendingDecisions).toBeNull();
@@ -138,6 +145,13 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     const route = routeRetryDecisions("issued", []);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe("");
+  });
+
+  it("#1307 settling retry keeps quiet intermediate — empty pending is not 重新拉取 error", () => {
+    const route = routeRetryDecisions("settling", []);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe("");
+    expect(route.error).not.toContain("重新拉取");
   });
 
   it("recovers into the decision modal when valid decisions arrive on retry", () => {

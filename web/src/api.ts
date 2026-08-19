@@ -23,11 +23,14 @@ export class ApiRequestError extends Error {
 export const normalizeApiError = (error: any, fallback: string): ApiErrorDetail => {
   const detail = error?.detail ?? error;
   if (detail && typeof detail === "object") {
+    const turnRaw = detail.turn;
+    const turnNum = typeof turnRaw === "number" ? turnRaw : Number(turnRaw);
     return {
       code: detail.code,
       message: detail.message || detail.detail || fallback,
       provider_message: detail.provider_message,
       status_code: detail.status_code,
+      turn: Number.isFinite(turnNum) ? turnNum : undefined,
       pending_action_failures: Array.isArray(detail.pending_action_failures)
         ? detail.pending_action_failures
         : undefined,
@@ -43,7 +46,9 @@ export const api = async <T,>(path: string, options?: RequestInit): Promise<T> =
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new ApiRequestError(normalizeApiError(error, response.statusText), response.statusText);
+    const normalized = normalizeApiError(error, response.statusText);
+    if (normalized.status_code == null) normalized.status_code = response.status;
+    throw new ApiRequestError(normalized, response.statusText);
   }
   const payload = await response.json();
   void forwardSteamEvents(payload);
