@@ -267,7 +267,6 @@ export type GameState = {
   turn: { year: number; period: number; turn: number; phase?: string; settlement_display?: boolean };
   metrics: Metrics;
   previous_summary: string;
-  treasury: string;
   issues: Issue[];
   legacies: Legacy[];
   closed_this_turn: ClosedIssue[];

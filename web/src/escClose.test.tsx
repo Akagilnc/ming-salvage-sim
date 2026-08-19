@@ -17,7 +17,7 @@ const MENU_STATUS = {
 const acct = () => ({ balance: 0, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0 });
 const makeState = () => ({
   turn: { year: 1627, period: 10, turn: 1, phase: "summoning" },
-  metrics: {}, previous_summary: "", treasury: "", issues: [], legacies: [], closed_this_turn: [],
+  metrics: {}, previous_summary: "", issues: [], legacies: [], closed_this_turn: [],
   budget: { 国库: acct(), 内库: acct() }, region_warning: "", army_warning: "", power_warning: "", powers: [],
   victory_status: { status: "", summary: "" }, ending: null, events: [], regions: [], armies: [],
   map_nodes: [], ministers: [], consorts: [], directives: [], pending_count: 0, last_decree: "", last_report: "",
