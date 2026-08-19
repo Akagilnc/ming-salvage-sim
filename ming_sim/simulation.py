@@ -7,7 +7,7 @@ import copy
 import re
 import sqlite3
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Mapping, Optional
 
 from agno.agent import Agent
 
@@ -102,6 +102,7 @@ ITEM_FIELD_ALIASES = {
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
+    # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
     "旨外标记": "beyond_intent", "旨外恶果": "beyond_intent",
     "id": "id", "编号": "id",
@@ -1053,6 +1054,31 @@ def _payload_for_module(
     }
 
 
+def read_beyond_intent_raw(item: object) -> object:
+    """#1260 旨外别名读取单源：真源=ITEM_FIELD_ALIASES 中映射到 beyond_intent 的键。
+
+    返回第一个在场别名的原值；皆无 → None。不判真假（coerce 归写端/读端）。
+    flows 嵌套通道与 due_review 效果行共用，禁再手抄 旨外 子集。
+    """
+    if not isinstance(item, Mapping):
+        return None
+    # 稳定顺序：canonical 键优先，其余按别名表声明序。
+    aliases = [
+        key for key, canon in ITEM_FIELD_ALIASES.items()
+        if canon == "beyond_intent"
+    ]
+    ordered: List[str] = []
+    if "beyond_intent" in aliases:
+        ordered.append("beyond_intent")
+    for key in aliases:
+        if key not in ordered:
+            ordered.append(key)
+    for key in ordered:
+        if key in item:
+            return item[key]
+    return None
+
+
 def _canonical_item_fields(value: object) -> object:
     if isinstance(value, list):
         return [_canonical_item_fields(item) for item in value]
@@ -1281,6 +1307,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1338,6 +1367,9 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1364,6 +1396,9 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
