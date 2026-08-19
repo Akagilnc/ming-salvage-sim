@@ -395,6 +395,7 @@ describe("EdictModal — hidden secret-order default approval", () => {
     });
     const note = host.querySelector('[data-testid="edict-extraction-pending"]');
     expect(note?.textContent).toMatch(/2 段召对账待补写/);
+    expect(host.querySelector(".error-line")?.textContent).toContain("收夜中止");
     const btn = Array.from(host.querySelectorAll("button")).find((item) =>
       item.textContent?.includes("重试补写")
     ) as HTMLButtonElement | undefined;

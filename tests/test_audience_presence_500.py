@@ -141,7 +141,8 @@ def test_court_break_writes_no_exit_ledger(game, monkeypatch):
     closed_nid: dict[str, int] = {}
 
     # #526：CLI 退朝走收夜；本测只证「无个人告退账」，收夜本体 stub 成功。
-    def _close_ok(court_action: str) -> None:
+    # #1353：生产 epilogue 传 write_gate=…；假体须收 **kwargs，禁 TypeError。
+    def _close_ok(court_action: str, **_kwargs) -> None:
         assert court_action == "court_break"
         open_n = an.get_open_night(db)
         assert open_n is not None
