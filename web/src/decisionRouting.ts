@@ -1,4 +1,4 @@
-import type { PendingDecision } from "./types";
+import type { DecisionChoice, PendingDecision } from "./types";
 
 export const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。";
 
@@ -6,6 +6,32 @@ export const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决�
 export function isDecisionAlreadyDecided(event: unknown): boolean {
   if (!event || typeof event !== "object") return false;
   return String((event as { status?: unknown }).status || "") === "decided";
+}
+
+function isResumeChoice(choice: unknown): choice is DecisionChoice {
+  if (!choice || typeof choice !== "object") return false;
+  const label = (choice as DecisionChoice).label;
+  return typeof label === "string" && label.length > 0;
+}
+
+/**
+ * awaiting + 全员 decided 且每条有落档 choice → 续跑 phase2 的材料。
+ * 刷新不得重开批红弹窗，但必须能把已落档亲裁再送进 submit（LLM 失败/重载后否则卡死）。
+ */
+export function storedChoicesForDecidedResume(
+  phase: string | undefined,
+  events: unknown[],
+): DecisionChoice[] | null {
+  if (phase !== "awaiting_decision") return null;
+  if (events.length === 0 || !events.every(isDecisionAlreadyDecided)) return null;
+  const choices: DecisionChoice[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i] as { idx?: unknown; choice?: unknown };
+    if (event.idx !== i) return null;
+    if (!isResumeChoice(event.choice)) return null;
+    choices.push(event.choice);
+  }
+  return choices;
 }
 
 export function pendingDecisionsFrom(events: unknown[]): PendingDecision[] {

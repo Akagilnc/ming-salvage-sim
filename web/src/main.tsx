@@ -211,6 +211,7 @@ export function App() {
     pendingDecisions,
     decisionFailures,
     pausedDecisionError,
+    decidedResumeChoices,
     issueDecree,
     submitDecisions,
     retryPendingDecisions,
@@ -718,6 +719,21 @@ export function App() {
         <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
           <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
+            续跑结算
+          </button>
+        </div>
+      ) : null}
+
+      {/* #1374：亲裁已落档、phase2 未完——不重开批红弹窗，给出与 settling 同形的续跑。
+          同会话在办（busy=月末结算）不重复出示，避免叠在 SettlementLock 上诱双发。 */}
+      {state.turn.phase === "awaiting_decision" && decidedResumeChoices && !sessionSettlingBusy ? (
+        <div className="recovery-banner" data-testid="decision-decided-resume">
+          <span>亲裁已落档，结算未完。</span>
+          <button
+            className="seal-btn-issue"
+            onClick={() => submitDecisions(decidedResumeChoices)}
+            disabled={!!busy}
+          >
             续跑结算
           </button>
         </div>

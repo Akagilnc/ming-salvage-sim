@@ -666,6 +666,33 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     expect(host2.querySelector('[data-testid="decision-modal"]')!.textContent).toContain("辽东战守");
   });
 
+  it("awaiting_decision + 全员 decided：不重开批红弹窗，续跑入口可点", async () => {
+    stubSettlementFetch(settlementBaseState("awaiting_decision", {
+      pending_decisions: [{
+        ...validDecision,
+        status: "decided",
+        choice: { label: "固守", hint: "稳" },
+      }],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="decision-decided-resume"]')).not.toBeNull());
+    });
+    expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
+    const resume = host.querySelector('[data-testid="decision-decided-resume"] button') as HTMLButtonElement | null;
+    expect(resume).not.toBeNull();
+    expect(resume!.disabled).toBe(false);
+    expect(resume!.textContent).toContain("续跑结算");
+
+    document.body.innerHTML = "";
+    const host2 = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="decision-decided-resume"]')).not.toBeNull());
+    });
+    expect(host2.querySelector('[data-testid="decision-modal"]')).toBeNull();
+    expect((host2.querySelector('[data-testid="decision-decided-resume"] button') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("awaiting_decision + 损坏 pending：DecisionRecoveryPanel 可点；刷新重挂后仍在", async () => {
     stubSettlementFetch(settlementBaseState("awaiting_decision", {
       pending_decisions: [{ broken: true }],
