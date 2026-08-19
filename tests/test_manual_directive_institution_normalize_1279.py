@@ -1,8 +1,8 @@
 """#1279 / QA A-2 拟诏部院归一：capture seam 人物参与人 raw 层三分流。
 
 不变式：
-- 裸机构 token 整词 fullmatch（六部/都察院/内阁/锦衣卫/司礼监/东厂…）→ 不产人物行
-  （禁 canon 后放行：司礼监/锦衣卫/东厂 恰为人名 alias）
+- 裸机构 token 整词 fullmatch（六部/都察院/内阁/寺监院府/厂卫/六科…）→ 不产人物行
+  （禁 canon 后放行：司礼监/锦衣卫/东厂 恰为人名 alias；词表按明代衙门闭集扩）
 - 自称/集体闭集（陛下/皇帝/朝廷/朕…）→ 不产
 - 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 走 canon 留人名
 - 禁复用 _is_institution_like_name 子串字集判参与人
@@ -153,7 +153,11 @@ def test_capture_manual_directive_keeps_surname_title_aliases(
     [
         "陛下", "皇帝", "朝廷",
         "户部", "兵部", "内阁", "都察院",
-        "司礼监", "锦衣卫", "东厂",
+        "司礼监", "锦衣卫", "东厂", "西厂",
+        # r2 词表空洞亲证：闭集外明代衙门整词 → 不产人物行、零 409
+        "大理寺", "翰林院", "钦天监", "通政使司", "通政司",
+        "太仆寺", "光禄寺", "鸿胪寺", "太常寺",
+        "国子监", "太医院", "宗人府", "五军都督府", "六科",
     ],
 )
 def test_capture_manual_directive_drops_collective_and_institution_names(
@@ -186,10 +190,14 @@ def test_non_person_filter_does_not_use_institution_substring_class():
     assert cli_backend._is_non_person_participant_name("韩阁老") is False
     assert cli_backend._is_non_person_participant_name("毕户部") is False
     assert cli_backend._is_non_person_participant_name("曹太监") is False
-    # 裸机构整词 / 自称仍非人
+    # 裸机构整词 / 自称仍非人（含 r2 扩入的寺监院府）
     assert cli_backend._is_non_person_participant_name("司礼监") is True
     assert cli_backend._is_non_person_participant_name("户部") is True
     assert cli_backend._is_non_person_participant_name("陛下") is True
+    assert cli_backend._is_non_person_participant_name("大理寺") is True
+    assert cli_backend._is_non_person_participant_name("翰林院") is True
+    assert cli_backend._is_non_person_participant_name("通政使司") is True
+    assert cli_backend._is_non_person_participant_name("西厂") is True
 
 
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
