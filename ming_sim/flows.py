@@ -7,6 +7,7 @@ import json
 import math
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
+from ming_sim.assets import format_wanliang_amount
 from ming_sim.constants import SALARY_RATE_ANCHOR, TURN_UNIT
 from ming_sim.db import GameDB
 from ming_sim.error_pack import settlement_abort_message, write_error_pack
@@ -467,8 +468,14 @@ def compute_budget_lines(
         "内库": {"income": [], "expense": []},
     }
     budget["国库"]["income"].extend(hub_income_lines)
+    # #1366：substrate_hub 下此行=边饷hub 国库实拨（中央份额+京运损耗），
+    # 异于 army_report「全军名义应发」合计；legacy 下才是应发总和。呈现须标明口径。
+    if db.fiscal_engine() == "legacy":
+        army_pay_note = "各军月度名义应发军饷合计"
+    else:
+        army_pay_note = "边饷hub国库实拨（中央份额与京运损耗；非全军名义应发合计）"
     budget["国库"]["expense"].append(
-        {"name": "各军军饷", "amount": int(army_total), "note": "各军月度维护/军饷合计"}
+        {"name": "各军军饷", "amount": int(army_total), "note": army_pay_note}
     )
     budget["国库"]["expense"].extend(hub_expense_lines)
     # 皇庄＝fiscal_config 基准（开局校准月额）＋ calc_province_fiscal 的没收藩田增量（开局 0）。
@@ -840,7 +847,7 @@ def _auto_pay_arrears_by_priority(
         pay_cap = min(payable_arrears, remaining)
         spent_now = _pay_single_army_arrears(
             db, state, row, account, pay_cap, category,
-            f"{reason}（按优先级分给{name}{pay_cap}万两）",
+            f"{reason}（按优先级分给{name}{format_wanliang_amount(pay_cap)}万两）",
             "诏拨补饷", "按优先级", origin_ref=origin_ref,
             beyond_intent=beyond_intent,
         )
@@ -944,7 +951,7 @@ def _pay_single_army_arrears(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)""",
         (state.turn, state.year, state.period, str(row["id"]), "arrears",
          str(current_arrears), str(new_arrears), new_arrears - current_arrears,
-         f"诏拨补饷{paid:g}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
+         f"诏拨补饷{format_wanliang_amount(paid)}万两{f'（{log_suffix}）' if log_suffix else ''}", actor),
     )
     if origin_ref:
         db.conn.execute("UPDATE army_logs SET origin_ref=? WHERE id=last_insert_rowid()", (origin_ref,))
@@ -1095,10 +1102,13 @@ def _apply_economy_list(
                 if current_arrears > 0:
                     reason_text = (
                         f"{row['name']}欠饷不足1万两，"
-                        f"{abs(delta)}万两未拨"
+                        f"{format_wanliang_amount(abs(delta))}万两未拨"
                     )
                 else:
-                    reason_text = f"{row['name']}已无欠饷，{abs(delta)}万两未拨"
+                    reason_text = (
+                        f"{row['name']}已无欠饷，"
+                        f"{format_wanliang_amount(abs(delta))}万两未拨"
+                    )
                 applied.append({
                     "account": account, "delta": 0,
                     "reason": reason_text,
@@ -1307,7 +1317,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 (central_arrears, new_arrears, new_morale, army_id),
             )
             if shortfall > 0:
-                reason_tag = f"{TURN_UNIT}中央军饷欠发{shortfall}万两"
+                reason_tag = (
+                    f"{TURN_UNIT}中央军饷欠发"
+                    f"{format_wanliang_amount(shortfall)}万两"
+                )
             else:
                 reason_tag = f"{TURN_UNIT}中央军饷足额"
             db.conn.executemany(
@@ -1395,7 +1408,10 @@ def apply_fixed_period_flows(db: GameDB, state: GameState) -> List[Dict[str, obj
                 (new_arrears, new_morale, army_id),
             )
             if shortfall > 0:
-                reason_tag = f"{TURN_UNIT}军饷欠发{shortfall}万两"
+                reason_tag = (
+                    f"{TURN_UNIT}军饷欠发"
+                    f"{format_wanliang_amount(shortfall)}万两"
+                )
             else:
                 reason_tag = f"{TURN_UNIT}军饷足额"
             db.conn.executemany(
