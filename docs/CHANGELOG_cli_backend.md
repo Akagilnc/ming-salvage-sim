@@ -105,3 +105,12 @@ MING_SIM_LLM_BACKEND=agy MING_SIM_DB=data/probe.db \
   - **B2**:agy 没设 cwd,继承游戏仓库当 workspace → 自治探查源码、英文行动计划泄进大臣对话(孙承宗开口说英文)+ 元游戏泄漏。修法 = cwd 隔离到空目录 + prompt 加固 + 剥英文兜底。
   - **B3**:大臣聊天里「拟旨/下密令」不入档(动作工具无 function-calling)。修法 = 文本协议桥接,合成 tool_call 复用现有入档逻辑。查询类不受影响(盘面已注入)。
 - **红线**:本改动**仅本地探针**。公开/商用前须净重写,且在此之前不 push 到公开仓库(沿用项目 CLAUDE.md)。
+
+---
+
+## 7. #1256 闸脚本 runner 扩缝（2026-08-19）
+
+- `cli_backend` 新增 `cursor` / `kimi` / `grok` 三 runner（opencode **不**入清单，走 api 通道）。
+- 名单单源：`_CLI_BACKENDS` / `GATE_CLI_RUNNERS`；新 runner 不入 `_PARALLEL_SAFE_CLI_RUNNERS`（串行）。
+- 四闸脚本 `--channel api|cli` + choices 共享；ds-flash 群友基线走 OpenCode Go `https://opencode.ai/zen/v1`。
+- 用法与基线纪律见 [`LLM_BACKEND_BENCH.md` §十三](LLM_BACKEND_BENCH.md)；端点核实 [`evidence/issue-1256-opencode-go-ds-flash-api.json`](evidence/issue-1256-opencode-go-ds-flash-api.json)。
