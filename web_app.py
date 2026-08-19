@@ -1361,6 +1361,9 @@ class WebGame:
                          self.state.year, self.state.period)},
             "metrics": display_metrics,
             "previous_summary": self.previous_summary,
+            # #1356：邸报报头年月 ≡ 报文自身月（turn_reports 已存 year/period 投影）；
+            # 当前 turn.reign_period_label 留 HUD/菜单，不得混充上月报头。
+            "previous_reign_period_label": self.db.previous_turn_reign_period_label(self.state),
             # #1241 SP2：删 state_payload.treasury（零消费残口；判词 r1：treasury_report
             # 留 knowledge/simulation/tools 三缝，不动 settlement_display/budget 投影）。
             "issues": self.issue_payloads(),

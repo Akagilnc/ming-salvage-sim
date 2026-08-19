@@ -153,7 +153,11 @@ function renderModal(props: {
   return host;
 }
 
-function renderReportModal(props: { report: string; onClose?: () => void }) {
+function renderReportModal(props: {
+  report: string;
+  onClose?: () => void;
+  periodLabel?: string;
+}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -161,6 +165,7 @@ function renderReportModal(props: { report: string; onClose?: () => void }) {
     root.render(
       <ReportModal
         report={props.report}
+        periodLabel={props.periodLabel}
         onClose={props.onClose ?? (() => {})}
       />
     )
@@ -1251,6 +1256,27 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-dismiss")).not.toBeNull();
     act(() => dismiss!.click());
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("#1356 报头吃报文自身月 periodLabel，不吃当前 turn 月", () => {
+    // 上月报文 + 状态口当前月：报头必须=报文月（开局九月 / 跨年十二月）
+    const hostSept = renderReportModal({
+      report: "天启七年九月邸报\n\n一、新君嗣位",
+      periodLabel: "天启七年九月",
+    });
+    const mastSept = hostSept.querySelector(".gazette-masthead")?.textContent || "";
+    expect(mastSept).toContain("天启七年九月");
+    expect(mastSept).not.toContain("天启七年十月");
+
+    const hostDec = renderReportModal({
+      report: "天启七年十二月邸报·跨年",
+      periodLabel: "天启七年十二月",
+    });
+    const mastDec = hostDec.querySelector(".gazette-masthead")?.textContent || "";
+    expect(mastDec).toContain("天启七年十二月");
+    // 正月状态不得混充报头
+    expect(mastDec).not.toContain("崇祯元年正月");
+    expect(mastDec).not.toContain("天启七年正月");
   });
 });
 
