@@ -4102,7 +4102,10 @@ async def api_chat(minister_name: str, request: ChatRequest) -> Dict[str, Any]:
     _require_active_minister(minister_name)
     from ming_sim.audience_night import AudienceNightError
     try:
-        return get_game().chat(minister_name, request.message)
+        # #1291+#1322: 全同步 chat（→ session → cli subprocess.run）须卸出事件循环，
+        # 与 retry_interrupted_reply / secret_order 同构 run_in_threadpool；
+        # 流式路走 run_in_executor，directives 走 to_thread——禁在 async handler 内直调。
+        return await run_in_threadpool(get_game().chat, minister_name, request.message)
     except AudienceNightError as e:
         # CLOSING / night admission → 409 (retryable); same family as stream path.
         raise _retryable_audience_close_http(e) from None
