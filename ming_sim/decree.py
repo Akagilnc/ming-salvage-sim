@@ -874,56 +874,6 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
     )
 
 
-def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None,
-                          llm_config=None, write_gate=None,
-                          scene_registry=None) -> bool:
-    """退朝 prep-only：相位门 + 月初快照 + 收夜。
-
-    #1274 QA J-1 / owner B-2：无旨月 = decrees=[] 的正常月，禁止 16ms 快跳结算。
-    本函数不再推进回合 / 不写月档 / 不跑财政——恒返回 False，由调用方
-    （session.advance_without_decree / resolve_directives）走 pre_settle +
-    simulator + settle_with_delta 全链（ADR 0004）。#1416 快路 save_turn_report
-    随分支消亡，月档只由 settle_with_delta 正常链落（DRY，禁两条结算路）。
-
-    ADR 决定 6：不提供「跳过本月结算」。前半段已提交后退朝=欠账不可跳过。
-    """
-    if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
-            raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
-        raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
-    # #1234/#1235：退朝入口点击受理即独立提交月初快照（任何突变之前，含 auto_close）。
-    db.capture_month_open_snapshot(state)
-    # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
-    # 放在结算链外：收夜自有写与错误包，不与推进事务半嵌。
-    # #503：收夜 beat 生产路径接通编排缝。
-    from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-    from ming_sim.beat_orchestration import create_llm_beat_generator
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    # Forward llm_config/write_gate so close-night can catch up ordinary story
-    # facts and run the gate-free endorsement-only batch. Callers must not hold
-    # an outer non-reentrant runtime write gate while passing nullcontext.
-    # #503/#542：收夜 beat 与开夜/入殿共用真实 scene LLM adapter。
-    effective_llm = llm_config if llm_config is not None else getattr(db, "llm_config", None)
-    # No usable config → skip adapter construction (None would AttributeError on base_url).
-    beat_generator = (
-        create_llm_beat_generator(effective_llm) if effective_llm is not None else None
-    )
-    # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
-    try:
-        auto_close_open_night(db, state, content=content, registry=registry,
-                              wait_timeout_s=inflight_wait_s,
-                              beat_generator=beat_generator,
-                              llm_config=effective_llm, write_gate=write_gate,
-                              scene_registry=scene_registry)
-    except AudienceNightError:
-        # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
-        exit_settlement_display_on_failure(db, state)
-        raise
-    # 快路已废：恒 False → 调用方走 resolve 全链（无旨月完整结算）。
-    return False
-
-
 def resolve_directives(
     state: GameState,
     db: GameDB,
@@ -983,7 +933,7 @@ def resolve_directives(
     # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
     # 早退、占位同键 upsert，语义不变。
     # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
-    # 重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。见 atomic_and_reload。
+    # 重载刷净内存；reload 再炸链上抛。见 atomic_and_reload。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
             auto_triggered = pre_settle(
@@ -1735,8 +1685,8 @@ def atomic_and_reload(
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
-    抽自结算管线 ~6 处同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
-    advance_without_edict / resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
+    抽自结算管线同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
+    resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
@@ -1840,7 +1790,7 @@ def pre_settle(
     #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
     #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
     # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
-    #   （settle_with_delta / advance_without_edict / fallback）各自在 atomic 内 commit；
+    #   （settle_with_delta / fallback）各自在 atomic 内 commit；
     #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []

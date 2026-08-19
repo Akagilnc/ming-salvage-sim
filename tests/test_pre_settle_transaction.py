@@ -222,8 +222,15 @@ def test_enter_review_does_not_clobber_settling(game):
 
 
 def test_advance_without_edict_refused_after_settling(game):
-    """前半段已提交后退朝被拒（ADR 决定 6 不提供跳过；ship-pre r1 改约，废除 skip 语义）。"""
-    from ming_sim.decree import advance_without_edict, pre_settle
+    """#1274 r1：空壳已删；settling 恢复归 session.resolve_turn，不再经独立退朝壳拒绝。"""
+    import inspect
+
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import pre_settle
+
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
+
     db, state, content = game
     turn = state.turn
     pre_settle(state, db)  # 真跑：落财政 + settling
@@ -231,15 +238,10 @@ def test_advance_without_edict_refused_after_settling(game):
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
     assert rows_after_pre > 0
     assert state.turn_phase == "settling"
-
-    with pytest.raises(ValueError, match="结算"):
-        advance_without_edict(state, db, content=content)
-
+    assert state.turn == turn
     rows_final = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
-    assert rows_final == rows_after_pre  # 财政不动
-    assert state.turn == turn  # 未推进
-    assert state.turn_phase == "settling"  # 相位保留，待重试颁诏
+    assert rows_final == rows_after_pre
 
 
 # ---------------------------------------------------------------------------
@@ -356,17 +358,34 @@ def test_sticky_phases_cover_awaiting_decision(game):
 
 
 def test_advance_without_edict_refused_at_awaiting(game):
-    """awaiting 退朝被拒——须先裁决月末抉择（ADR 决定 6；ship-pre r1 改约）。"""
-    from ming_sim.decree import advance_without_edict, pre_settle
+    """#1274 r1：空壳已删；awaiting 由 session.resolve_turn 幂等返回决策，不经退朝壳拒绝。"""
+    import inspect
+
+    import ming_sim.decree as decree_mod
+    from ming_sim.decree import pre_settle
+    from ming_sim.session import GameSession
+
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
+
     db, state, content = game
     turn = state.turn
     pre_settle(state, db)  # 真落财政 + settling
     state.turn_phase = "awaiting_decision"  # HITL 暂停后的相位
+    db.save_state(state)
     rows_before = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]
 
-    with pytest.raises(ValueError, match="裁决"):
-        advance_without_edict(state, db, content=content)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    result = sess.advance_without_decree()
+    assert result is not None and result.awaiting is True
 
     rows_after = db.conn.execute(
         "SELECT COUNT(*) FROM economy_ledger WHERE turn=?", (turn,)).fetchone()[0]

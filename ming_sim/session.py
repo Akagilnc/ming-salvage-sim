@@ -2506,7 +2506,7 @@ class GameSession:
             raise ValueError("当前在月末亲裁阶段，请先裁决已存决策点，不能拟诏。")
         self._refuse_if_settling()
         # #498 AC8：拟诏（write_decree）不是收夜触发器——收夜只在真实颁诏/过回合边界
-        # （resolve_turn / advance_without_edict）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
+        # （resolve_turn / advance_without_decree）发生。夜内可拟多道旨并继续斟酌（#497/#502）。
         # 守门须早于 commit（BUG 2）：有未核定的显式 pending directive 时，先响亮拒绝，
         # 再 commit 对话式拟旨——否则被拒的调用已把对话草案落成 draft 副作用、无回滚。
         # 拟诏是 preview：只据已 draft 的候选生成诏书，绝不在此把未表态 pending 默认同意成 draft
