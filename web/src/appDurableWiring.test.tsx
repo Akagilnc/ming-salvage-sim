@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./main";
+import { SETTLEMENT_CLOSED_REASON } from "./settlementPresentation";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom 无布局：给 stage 非零尺寸，使 GameHud ready=true（地图/局势框/上月已结入口可挂）。
@@ -824,15 +825,16 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(haremCard?.disabled).toBe(true);
     await closeOpenOverlay(host);
 
-    // memorials：奏疏木牌 → 当前危机/奏疏列表（SituationPanel；源=issues，非 last_report）
+    // memorials：只读可达；内容闸吃 situation——核账期零半程泄漏（#1236 正向断言）
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
     });
     const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
-    expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
-    expect(memorialsDialog.querySelector(".situation-panel")).not.toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.querySelector(".situation-list")).toBeNull();
+    expect(memorialsDialog.textContent).toContain(SETTLEMENT_CLOSED_REASON);
     expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
 
@@ -918,5 +920,24 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
+  });
+
+  it("#1285 非核账：奏疏模态呈 situation 议题列表（同 settlementBaseState 工厂）", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    await click(cmdByCaption(host, "奏疏"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
+    });
+    const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
+    expect(memorialsDialog.querySelector(".situation-panel")).not.toBeNull();
+    expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
   });
 });

@@ -179,8 +179,9 @@ export function GameHud({
       })}
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
-      <CommandSlot slotKey="奏疏" img="奏疏" badge={state.issues.length}
-        caption="奏疏" sub={`${state.issues.length} 件待览`}
+      {/* 奏疏 badge/sub 同源 situation 谓词：核账期零半程件数，禁平行计数源 */}
+      <CommandSlot slotKey="奏疏" img="奏疏" badge={showSituation ? state.issues.length : 0}
+        caption="奏疏" sub={showSituation ? `${state.issues.length} 件待览` : "0 件待览"}
         onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"
         caption="邸报" sub="上月抄报"

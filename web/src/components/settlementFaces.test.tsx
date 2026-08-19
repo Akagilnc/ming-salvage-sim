@@ -116,6 +116,17 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
       (b.getAttribute("aria-label") || "").startsWith("密令"),
     );
     expect(secretCmd?.querySelector(".hud2-cmd-badge")).toBeNull();
+    // 奏疏 badge/sub 同源 situation：核账期 badge=0，勿报半程 N
+    const memorialBtn = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
+    );
+    const memorialCap = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
+    );
+    expect(memorialBtn?.querySelector(".hud2-cmd-badge")).toBeNull();
+    expect(memorialCap?.textContent).toMatch(/0\s*件待览/);
+    expect(memorialCap?.getAttribute("aria-label")).toMatch(/0\s*件待览/);
+    expect(memorialCap?.textContent).not.toContain("半程");
     // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
     expect(host.textContent).not.toContain("半程军饷议题");
     expect(host.querySelector(".situation-list")).toBeNull();
