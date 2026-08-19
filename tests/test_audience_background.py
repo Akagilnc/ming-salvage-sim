@@ -296,8 +296,8 @@ def test_background_audience_reply_preserves_emperor_mode_after_observer_departu
     assert dossiers[0]["mode"] == expected_mode
 
 
-def test_stream_tool_staged_secret_order_merges_minister_reply(game):
-    """#413/#405：web streaming tool-call 新密令也要保留玩家任务 + 大臣补充正文。"""
+def test_stream_tool_staged_secret_order_merges_emperor_not_reply(game):
+    """#413/#405/#1274 K1：web streaming tool-call 并御旨；reply 不入 content。"""
     db, state, content = game
     minister_name = "毕自严"
     tool_payload = json.dumps({
@@ -329,7 +329,8 @@ def test_stream_tool_staged_secret_order_merges_minister_reply(game):
     assert "密查辽饷去向" in staged["content"]
     assert "三月内回奏" in staged["content"]
     assert "不可声张" in staged["content"]
-    assert "封存兵部辽饷册" in staged["content"]
+    # reply 散文补充未走 tool/extractor 字段 → 不入 content
+    assert "封存兵部辽饷册" not in staged["content"]
 
 
 def test_stream_confirmation_ignores_same_turn_secret_order_tool_output(game, monkeypatch):
