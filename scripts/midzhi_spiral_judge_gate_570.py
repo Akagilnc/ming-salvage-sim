@@ -58,8 +58,10 @@ from ming_sim.cli_backend import (
     cli_backend_parallel_safe,
     gate_evidence_config,
     gate_llm_config_from_args,
+    require_fresh_cli_trace,
 )
 from ming_sim.issues import bind_content as bind_issue_content
+from ming_sim.models import LLMConfig
 
 # #561 administrative midzhi — designed to promulgate (stigma path), not a
 # vital 命门 reverse-scale item. Spiral signal needs a decree that CAN pass
@@ -90,7 +92,7 @@ def _two_sided_sign_p(a_only: int, b_only: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def _config(args: argparse.Namespace):
+def _config(args: argparse.Namespace) -> LLMConfig:
     return gate_llm_config_from_args(args)
 
 
@@ -271,16 +273,7 @@ def main() -> int:
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
-    trace_path = None
-    if cfg.channel == "cli":
-        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {
-            "0", "false", "no",
-        }:
-            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-        trace_path = Path(trace_setting).resolve()
-        if trace_path.exists():
-            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    trace_path = require_fresh_cli_trace(cfg)
 
     with tempfile.TemporaryDirectory(prefix="ming-570-spiral-") as tmp:
         workers = min(4, args.samples) if cli_backend_parallel_safe(cfg) else 1

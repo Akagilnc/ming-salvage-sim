@@ -53,9 +53,10 @@ from ming_sim.cli_backend import (
     cli_backend_parallel_safe,
     gate_evidence_config,
     gate_llm_config_from_args,
+    require_fresh_cli_trace,
 )
 from ming_sim.issues import bind_content as bind_issue_content
-from ming_sim.models import Character
+from ming_sim.models import Character, LLMConfig
 
 _LOG = logging.getLogger("issue-570-acceptance")
 _BLOCKED_LAYERS = frozenset({"cabinet_drafting", "palace_rescript", "six_offices"})
@@ -81,7 +82,7 @@ def _args() -> argparse.Namespace:
     return args
 
 
-def _config(args: argparse.Namespace):
+def _config(args: argparse.Namespace) -> LLMConfig:
     return gate_llm_config_from_args(args)
 
 
@@ -496,16 +497,7 @@ def main() -> int:
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
-    trace_path = None
-    if cfg.channel == "cli":
-        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {
-            "0", "false", "no",
-        }:
-            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-        trace_path = Path(trace_setting).resolve()
-        if trace_path.exists():
-            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    trace_path = require_fresh_cli_trace(cfg)
 
     with tempfile.TemporaryDirectory(prefix="ming-570-accept-") as tmp:
         workers = min(4, args.samples) if cli_backend_parallel_safe(cfg) else 1

@@ -1,0 +1,63 @@
+{
+  "experiment": "cursor --trust removal probe (#1256 S2)",
+  "production_cwd_shape": "cli_backend._run_cursor subprocess cwd=_AGY_CWD (empty temp sandbox)",
+  "ticket_rule": "先无 --trust 按票面形状跑；通则删；仅当复现信任闸失败才保留",
+  "cases": [
+    {
+      "name": "no-trust fresh empty cwd",
+      "command": [
+        "cursor-agent",
+        "-p",
+        "--output-format",
+        "text",
+        "--model",
+        "auto",
+        "reply with exactly: OK"
+      ],
+      "cwd": "/tmp/ming-cursor-trust-rpdYMQ",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "\n⚠ Workspace Trust Required\n\n  Cursor Agent can execute code and access files in this directory.\n  Do you trust the contents of this directory?\n\n    /private/tmp/ming-cursor-trust-rpdYMQ\n\n  To proceed, you can either:\n    • Run 'agent' interactively to decide\n    • Pass --trust, --yolo, or -f if you trust this directory\n"
+    },
+    {
+      "name": "with-trust fresh empty cwd",
+      "command": [
+        "cursor-agent",
+        "-p",
+        "--output-format",
+        "text",
+        "--trust",
+        "--model",
+        "auto",
+        "reply with exactly: OK"
+      ],
+      "cwd": "/tmp/ming-cursor-trust-rpdYMQ",
+      "exit_code": 0,
+      "stdout": "OK\n",
+      "stderr": ""
+    },
+    {
+      "name": "no-trust stable _AGY_CWD (already trusted from prior smoke)",
+      "command": [
+        "cursor-agent",
+        "-p",
+        "--output-format",
+        "text",
+        "--model",
+        "auto",
+        "reply with exactly: OK"
+      ],
+      "cwd": "/var/folders/nb/ml2z6k013psg7rdtt0t6g91m0000gn/T/ming_agy_sandbox",
+      "exit_code": 0,
+      "stdout": "OK\n",
+      "stderr": "",
+      "note": "stable path already trusted after earlier --trust use; does not prove safe removal"
+    }
+  ],
+  "decision": "KEEP --trust",
+  "reason": "fresh empty sandbox cwd (ticket shape) fails with Workspace Trust Required without --trust; with --trust succeeds",
+  "evidence_pointers": [
+    "docs/evidence/issue-1256-cursor-trust-experiment.json",
+    "docs/evidence/issue-1256-cursor-smoke.json (live gate with --trust retained in code)"
+  ]
+}

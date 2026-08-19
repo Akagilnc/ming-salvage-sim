@@ -29,7 +29,12 @@ sys.path.insert(0, str(ROOT))
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
-from ming_sim.cli_backend import add_gate_llm_args, gate_evidence_config, gate_llm_config_from_args
+from ming_sim.cli_backend import (
+    add_gate_llm_args,
+    gate_evidence_config,
+    gate_llm_config_from_args,
+    require_fresh_cli_trace,
+)
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -39,7 +44,7 @@ from ming_sim.decree import (
     validate_promulgation_verdicts,
 )
 from ming_sim.issues import bind_content as bind_issue_content
-from ming_sim.models import Character
+from ming_sim.models import Character, LLMConfig
 
 
 def _args() -> argparse.Namespace:
@@ -63,7 +68,7 @@ def _two_sided_sign_p(break_only: int, ordinary_only: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def _config(args: argparse.Namespace):
+def _config(args: argparse.Namespace) -> LLMConfig:
     return gate_llm_config_from_args(args)
 
 
@@ -139,15 +144,7 @@ def main() -> int:
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
-    trace_path = None
-    if cfg.channel == "cli":
-        # 既有 CLI 审计约定；api 通道无 CliChat TRACE，不强制。
-        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {"0", "false", "no"}:
-            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-        trace_path = Path(trace_setting).resolve()
-        if trace_path.exists():
-            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    trace_path = require_fresh_cli_trace(cfg)
     with tempfile.TemporaryDirectory(prefix="ming-562-gate-") as tmp:
         # 禁动：既有 ThreadPoolExecutor(min(4,samples)) 条件（#1256 庭裁，非本票范围）。
         with ThreadPoolExecutor(max_workers=min(4, args.samples)) as executor:
