@@ -381,6 +381,22 @@ export function App() {
     }
   }, [settlementDisplay, activeModal]);
 
+  // #1342：hooks 须在 early return 之前。开底部命令模态时收起全部抽屉。
+  const closeAllDrawers = React.useCallback(() => {
+    setDrawerOpen(false);
+    setHaremDrawerOpen(false);
+    setArmyDrawerOpen(false);
+    setRegionDrawerOpen(false);
+    setBuildingDrawerOpen(false);
+    setEconomyDrawerOpen(false);
+    setAppointmentDrawerOpen(false);
+  }, []);
+  const openModal = React.useCallback((modal: ModalName) => {
+    closeAllDrawers();
+    setMapIntelOpen(false);
+    setActiveModal(modal);
+  }, [closeAllDrawers]);
+
   if (appView === "menu") {
     return (
       <MenuPage
@@ -497,7 +513,7 @@ export function App() {
         activeDrawerKey={activeDrawerKey}
         navHandlers={navHandlers}
         secretOrderActiveCount={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review").length}
-        onOpenModal={setActiveModal}
+        onOpenModal={openModal}
         onClosedFaceAttempt={(reason) => setError(reason)}
       />
 

@@ -153,7 +153,7 @@ function renderModal(props: {
   return host;
 }
 
-function renderReportModal(props: { report: string }) {
+function renderReportModal(props: { report: string; onClose?: () => void }) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -161,11 +161,12 @@ function renderReportModal(props: { report: string }) {
     root.render(
       <ReportModal
         report={props.report}
-        onClose={() => {}}
+        onClose={props.onClose ?? (() => {})}
       />
     )
   );
   mountedRoots.push({ root, host });
+  return host;
 }
 
 const EMPTY_BUDGET_ACCOUNT: BudgetAccount = {
@@ -356,6 +357,27 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).toContain("密令落库失败");
     expect(host.textContent).not.toContain("尚有召对事项候旨");
     expect(button).toBeTruthy();
+  });
+});
+
+describe("ChatModal — #1370 empty audience chrome", () => {
+  it("空对话区呈等候/引导 chrome，带稳定 chat-stage 标记，不代笔开场白", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ night_id: 0, messages: [] }),
+    }));
+    const host = renderModal({
+      minister: MINISTER_MOCK,
+      portraitPrefix: "minister_",
+      scrollMode: "audience",
+      currentNightId: 0,
+    });
+    await act(async () => { await Promise.resolve(); });
+    const stage = host.querySelector("[data-testid=chat-stage]") || host.querySelector(".chat-stage");
+    expect(stage).not.toBeNull();
+    expect(stage!.textContent || "").toMatch(/请陛下问话|等候开口/);
+    // P7：不得落叙事开场白模板
+    expect(stage!.textContent || "").not.toMatch(/臣.*叩见|恭请圣安/);
   });
 });
 
@@ -1213,6 +1235,22 @@ describe("ReportModal — narrative settlement bulletin", () => {
 
     expect(document.body.textContent).not.toContain("实账");
     expect(document.body.textContent).not.toContain("账目明细");
+  });
+
+  it("#1387 底部有朕知道了主按钮可达关闭，不靠右上小 X", () => {
+    const onClose = vi.fn();
+    const host = renderReportModal({
+      report: "一、边报\n\n二、钱粮\n\n三、探子回报\n下文应可滚完",
+      onClose,
+    });
+    const dismiss = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了") || (b.textContent || "").includes("收卷"),
+    ) as HTMLButtonElement | undefined;
+    expect(dismiss).toBeTruthy();
+    expect(host.querySelector(".gazette-document")).not.toBeNull();
+    expect(host.querySelector(".gazette-dismiss")).not.toBeNull();
+    act(() => dismiss!.click());
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 

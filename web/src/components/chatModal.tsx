@@ -298,8 +298,12 @@ export function ChatModal({
       </aside>
 
       <section className="modal-pane chat-main">
-        <div className="chat-log" ref={chatLogRef} onScroll={handleScroll}>
+        <div className="chat-log chat-stage" ref={chatLogRef} onScroll={handleScroll} data-testid="chat-stage">
           {audienceType ? <div className="audience-type-label">{audienceType}</div> : null}
+          {/* #1370：空对话区只给等候/引导 chrome（ADR 0046），不代笔叙事开场白（P7）。 */}
+          {!displayMessages.length && !busy && !streamingMinisterMessage && effectiveScrollState.kind !== "loading" && effectiveScrollState.kind !== "error" && (
+            <div className="chat-empty-chrome" role="status">请陛下问话</div>
+          )}
           <ScrollMessages messages={displayMessages} ministerName={currentMinister.name} ministers={ministers} />
           {(scrollState.kind === "error" || (scrollState.kind === "night" && scrollState.refreshError)) && (
             <div className="chat-system-note danger" role="alert">召对记录读取失败，请稍后重试。</div>
