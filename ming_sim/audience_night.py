@@ -514,19 +514,17 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
 
     for entry in ledgers:
         tags = set(entry.get("tags") or [])
-        # #1293a：抽取派生账（source_chat_turn_id>0）按结构 provenance 不上 live 卷轴；
-        # 与 cascade_echo 同形——生产点已打标（settle_story_extraction 写 source），
-        # 此处唯一滤除；禁盯 body 文本判转述。口令/框架账（0）照常投影。
-        if int(entry.get("source_chat_turn_id") or 0) > 0:
+        # #1293a：非口令/框架账（_is_command_entry 补集，含抽取派生与其它
+        # source>0 留痕如路径应答）一律不上 live/档案同源卷轴；禁盯 body。
+        if not _is_command_entry(entry):
             continue
-        command = _is_command_entry(entry)
-        if command and TAG_OPEN_NIGHT in tags:
+        if TAG_OPEN_NIGHT in tags:
             beat = "opening"
-        elif command and TAG_CLOSE_NIGHT in tags:
+        elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
-        elif (command and TAG_ENTER in tags) or entry.get("presence_effect") == PRESENCE_ENTER:
+        elif TAG_ENTER in tags:
             beat = "entrance"
-        elif (command and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT:
+        elif TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"
