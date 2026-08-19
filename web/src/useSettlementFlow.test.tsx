@@ -64,6 +64,7 @@ type HookApi = ReturnType<typeof useSettlementFlow>;
 
 function mountHarness(opts: {
   loadState: () => Promise<GameState | null>;
+  refreshExtractionPending?: () => Promise<void>;
   initial?: GameState;
 }) {
   const hookRef = { current: null as HookApi | null };
@@ -90,6 +91,7 @@ function mountHarness(opts: {
       cheatDirective,
       setCheatDirective,
       loadState,
+      refreshExtractionPending: opts.refreshExtractionPending,
       surfacePendingActionFailures: async () => false,
       state,
     });
@@ -285,6 +287,37 @@ describe("#1277 useSettlementFlow — issueDecree 令牌与 409 幂等", () => {
     expect(String(url)).toContain("/api/decree/issue/stream");
     expect(reload).toHaveBeenCalledTimes(1);
     expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+    cleanup();
+  });
+});
+
+describe("#1312/#1353 useSettlementFlow — 待补 409 刷 pending CTA", () => {
+  it("issueDecree 待补 409：刷 extractionPending；loadState 失败不盖 409 原文", async () => {
+    const pendingMsg = "收夜中止：本夜仍有未抽取落账的回话（待补），chat_turn_ids=[8]。";
+    const fetchMock = vi.fn(async () =>
+      sseErrorResponse({ message: pendingMsg, status_code: 409 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const refreshExtractionPending = vi.fn(async () => undefined);
+    const loadState = vi.fn(async () => {
+      throw new Error("loadState boom");
+    });
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState,
+      refreshExtractionPending,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.issueDecree();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(loadState).toHaveBeenCalledTimes(1);
+    expect(refreshExtractionPending).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toContain("收夜中止");
+    expect(host.querySelector("[data-testid=error]")?.textContent).not.toContain("loadState boom");
     cleanup();
   });
 });

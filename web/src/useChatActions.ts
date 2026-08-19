@@ -466,6 +466,7 @@ export function useChatActions({
     replyRetry,
     extractionPendingCount,
     extractionHealedHint,
+    refreshExtractionPending,
     canUndoLastChat,
     composerHint,
     setComposerHint,

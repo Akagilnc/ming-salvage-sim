@@ -149,6 +149,7 @@ export function App() {
     replyRetry,
     extractionPendingCount,
     extractionHealedHint,
+    refreshExtractionPending,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -223,6 +224,7 @@ export function App() {
     cheatDirective,
     setCheatDirective,
     loadState,
+    refreshExtractionPending,
     surfacePendingActionFailures,
     state,
   });
