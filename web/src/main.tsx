@@ -471,7 +471,9 @@ export function App() {
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
   // memorials 面键真源（#1285）；ModalName 仍用既有 "state" 槽承载奏疏列表。
+  // 内容闸走 situation 谓词：核账期面可达但零半程议题泄漏（模态不自判 settlementDisplay）。
   const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
+  const showMemorialIssues = isFaceReachable("situation", settlementDisplay);
   const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
   // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
   const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
@@ -570,11 +572,11 @@ export function App() {
       {memorialsOpen ? (
         <FullscreenModal
           title="奏疏"
-          subtitle={`${state.issues.length} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
+          subtitle={`${showMemorialIssues ? state.issues.length : 0} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
           bgClass="modal-bg-state"
           onClose={() => setActiveModal("none")}
         >
-          <StateModal state={state} />
+          <StateModal state={state} showIssues={showMemorialIssues} />
         </FullscreenModal>
       ) : null}
 
