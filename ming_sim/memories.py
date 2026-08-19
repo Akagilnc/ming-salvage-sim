@@ -17,9 +17,8 @@ from agno.agent import Agent
 
 from ming_sim.agents import run_agent_text
 from ming_sim.assets import strip_json_fence
-from ming_sim.constants import TURN_UNIT
 from ming_sim.db import GameDB
-from ming_sim.models import GameState
+from ming_sim.models import GameState, reign_period_label
 from ming_sim.token_stats import tlog
 
 
@@ -277,7 +276,7 @@ def record_chapter_memory(
     失败降级：直接用 effect_brief + 邸报首段拼一段保底章节（铁律：不抛断游戏）。
     返回 memory_id（0=未落库）。
     """
-    title = f"崇祯{state.year}年{state.period}{TURN_UNIT}"
+    title = reign_period_label(state.year, state.period)
     effect = effect_brief(applied)
     body = ""
     tags: list[str] = []

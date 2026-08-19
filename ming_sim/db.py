@@ -35,7 +35,7 @@ from ming_sim.decree_vocabulary import (
 from ming_sim.matching import match_army_id_from_text, match_region_id_from_text
 from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
-    loads_effect_dict, monthly_amount, period_label,
+    loads_effect_dict, monthly_amount, period_label, reign_period_label,
 )
 from ming_sim.exceptions import LLMContractError
 from ming_sim.intelligence import OFFICE_SLOTS
@@ -9814,7 +9814,7 @@ class GameDB:
             subject_type="court",
             subject_id="chapter",
             event_type="chapter_summary",
-            title=str(title or f"崇祯{state.year}年{state.period}月")[:40],
+            title=str(title or reign_period_label(state.year, state.period))[:40],
             outcome=str(title or "")[:80],
             sentiment="neutral",
             importance=5,
