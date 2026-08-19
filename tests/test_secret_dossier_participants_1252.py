@@ -356,3 +356,38 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
     # Frozen secret_orders must carry the real order so recovery can re-derive.
     from ming_sim.settlement_payload import iter_secret_order_ids
     assert order_id in iter_secret_order_ids(ctx["secret_orders"])
+
+
+# ── S3: prompt 正向特征化 + DELTA_SCHEMA ─────────────────────
+
+
+def test_s3_prompt_characterizes_secret_dossier_participants():
+    """personnel_secret prompt 正向声明私字段与读缝。"""
+    from pathlib import Path
+
+    prompt = Path("content/prompts/score_extractor_personnel_secret.md").read_text(
+        encoding="utf-8",
+    )
+    assert "secret_dossier_participants" in prompt
+    assert "secret_dossier_rosters" in prompt
+    # Must not tell the model to put secret roster writes on the public field.
+    assert "dossier_participants" not in prompt or "secret_dossier_participants" in prompt
+    # Field ownership list includes the new field.
+    assert "secret_dossier_participants" in prompt.split("字段所有权")[1].split("## ")[0]
+
+
+def test_s3_delta_schema_documents_secret_field_and_module_table():
+    """DELTA_SCHEMA 新节 + 模块字段表收录私字段。"""
+    from pathlib import Path
+
+    doc = Path("docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
+    assert "secret_dossier_participants" in doc
+    assert "secret_dossier_rosters" in doc
+    # Module table row for personnel_secret includes the field.
+    table_section = doc.split("## 模块归属")[1].split("## ")[0]
+    assert "secret_dossier_participants" in table_section
+    # Public issues row must NOT list the secret field (no shared slot).
+    issues_line = next(
+        line for line in table_section.splitlines() if "`issues`" in line
+    )
+    assert "secret_dossier_participants" not in issues_line
