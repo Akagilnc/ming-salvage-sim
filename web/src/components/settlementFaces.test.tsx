@@ -5,7 +5,9 @@ import { GameHud } from "./gameHud";
 import { SettlementLock } from "./settlementLock";
 import { MinisterCardList, AppointmentDrawer } from "./drawers";
 import {
+  AWAITING_CLOSED_REASON,
   SETTLEMENT_CLOSED_REASON,
+  WANG_AWAITING_SLIP,
   WANG_SETTLEMENT_SLIP,
 } from "../settlementPresentation";
 import type { GameState, Minister } from "../types";
@@ -41,9 +43,13 @@ const acct = () => ({
   balance: 100, income: [], expense: [], income_total: 0, expense_total: 0, net: 0, movements: [], movements_total: 0,
 });
 
-function makeState(settlementDisplay: boolean, extra: Partial<GameState> = {}): GameState {
+function makeState(
+  settlementDisplay: boolean,
+  extra: Partial<GameState> = {},
+  phase: string = "settling",
+): GameState {
   return {
-    turn: { year: 1627, period: 10, turn: 5, phase: "awaiting_decision", settlement_display: settlementDisplay },
+    turn: { year: 1627, period: 10, turn: 5, phase, settlement_display: settlementDisplay },
     metrics: { 民心: 50, 皇威: 40 },
     previous_summary: "上月邸报",
     issues: [{ id: 1, kind: "situation", title: "半程军饷议题", status: "open", progress: 10, fail_condition: "" } as never],
@@ -101,6 +107,7 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
 
     expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_SETTLEMENT_SLIP);
     expect(host.textContent).toContain("· 核账");
+    expect(host.textContent).not.toContain("· 待批");
     // 关闭组：省/兵
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
     const armyBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "军队列表");
@@ -187,6 +194,35 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(attempts).toEqual([SETTLEMENT_CLOSED_REASON]);
   });
+
+  it("#1323 awaiting_decision：递话/角标文案为有本待批；锁面机制仍关", () => {
+    const attempts: string[] = [];
+    const host = mount(
+      <GameHud
+        stageRef={() => {}}
+        ready={true}
+        state={makeState(true, {}, "awaiting_decision")}
+        mapNodes={[]}
+        mapSelectedId=""
+        onSelectMapNode={() => {}}
+        activeDrawerKey=""
+        navHandlers={{
+          court: () => {}, harem: () => {}, army: () => {}, region: () => {},
+          building: () => {}, economy: () => {}, appointment: () => {},
+        }}
+        secretOrderActiveCount={0}
+        onOpenModal={() => {}}
+        onClosedFaceAttempt={(r) => attempts.push(r)}
+      />,
+    );
+    expect(host.querySelector("[data-testid=wang-settlement-slip]")?.textContent).toContain(WANG_AWAITING_SLIP);
+    expect(host.textContent).toContain("· 待批");
+    expect(host.textContent).not.toContain("· 核账");
+    const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表")!;
+    expect(regionBtn.getAttribute("aria-disabled")).toBe("true");
+    act(() => { regionBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(attempts).toEqual([AWAITING_CLOSED_REASON]);
+  });
 });
 
 describe("#1236 roster chat entry stripped in settlement_display", () => {
@@ -206,14 +242,41 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
           emptyNote=""
           onOpenChat={(m) => opened.push(m.name)}
           chatEntryEnabled={false}
+          phase="settling"
         />,
       );
     });
     const card = host.querySelector("button.minister-card") as HTMLButtonElement;
     expect(card.disabled).toBe(true);
+    expect(card.getAttribute("title")).toBe(SETTLEMENT_CLOSED_REASON);
     act(() => { card.click(); });
     expect(opened).toEqual([]);
     expect(host.textContent).toContain("周延儒"); // 名册仍在
+  });
+
+  it("#1323 awaiting：MinisterCardList title 吃 settlementClosedReason(phase)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ layout: "{}" }) } as Response)));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mounted.push({ root, host });
+    await act(async () => {
+      root.render(
+        <MinisterCardList
+          list={[minister()]}
+          portraitPrefix="minister_"
+          selectedMinister=""
+          emptyNote=""
+          onOpenChat={() => {}}
+          chatEntryEnabled={false}
+          phase="awaiting_decision"
+        />,
+      );
+    });
+    const card = host.querySelector("button.minister-card") as HTMLButtonElement;
+    expect(card.disabled).toBe(true);
+    expect(card.getAttribute("title")).toBe(AWAITING_CLOSED_REASON);
+    expect(card.getAttribute("title")).not.toMatch(/核账/);
   });
 
   it("AppointmentDrawer 任免行核账期只读", () => {
@@ -225,13 +288,32 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
         onOpenChat={(m) => opened.push(m.name)}
         onClose={() => {}}
         chatEntryEnabled={false}
+        phase="settling"
       />,
     );
     expect(host.textContent).toContain("温体仁");
     const row = host.querySelector("button.right-drawer-row-minister") as HTMLButtonElement;
     expect(row.disabled).toBe(true);
+    expect(row.getAttribute("title")).toBe(SETTLEMENT_CLOSED_REASON);
     act(() => { row.click(); });
     expect(opened).toEqual([]);
+  });
+
+  it("#1323 awaiting：AppointmentDrawer title 吃 settlementClosedReason(phase)", () => {
+    const host = mount(
+      <AppointmentDrawer
+        ministers={[minister("温体仁")]}
+        open={true}
+        onOpenChat={() => {}}
+        onClose={() => {}}
+        chatEntryEnabled={false}
+        phase="awaiting_decision"
+      />,
+    );
+    const row = host.querySelector("button.right-drawer-row-minister") as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+    expect(row.getAttribute("title")).toBe(AWAITING_CLOSED_REASON);
+    expect(row.getAttribute("title")).not.toMatch(/核账/);
   });
 });
 

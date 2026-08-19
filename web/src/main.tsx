@@ -29,11 +29,12 @@ import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
+import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
   isFaceReachable,
   isSettlementDisplay,
-  SETTLEMENT_CLOSED_REASON,
+  settlementClosedReason,
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
 } from "./settlementPresentation";
@@ -147,6 +148,7 @@ export function App() {
     activeChatFailures,
     replyRetry,
     extractionPendingCount,
+    extractionHealedHint,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -212,6 +214,7 @@ export function App() {
     pausedDecisionError,
     issueDecree,
     submitDecisions,
+    resumePhase2,
     retryPendingDecisions,
     advanceWithoutEdict,
   } = useSettlementFlow({
@@ -417,7 +420,7 @@ export function App() {
   const selectMapNode = (nodeId: string) => {
     // #1236：地图节点详情属关闭组——核账期不点选开详（底图装饰可留）。
     if (state && !isFaceReachable("node_intel", isSettlementDisplay(state.turn))) {
-      setError(SETTLEMENT_CLOSED_REASON);
+      setError(settlementClosedReason(state.turn.phase));
       return;
     }
     setSelectedNodeId(nodeId);
@@ -521,6 +524,7 @@ export function App() {
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       <ArmyDrawer
@@ -558,6 +562,7 @@ export function App() {
         onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (
@@ -607,6 +612,7 @@ export function App() {
             secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
+            extractionHealedHint={extractionHealedHint}
             onInput={setInput}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}
@@ -707,7 +713,7 @@ export function App() {
           onOpenMinister={(name) => {
             // 密令内转召对亦属 chat_entry 关闭组
             if (!chatEntryEnabled) {
-              setError(SETTLEMENT_CLOSED_REASON);
+              setError(settlementClosedReason(state?.turn.phase));
               return;
             }
             setActiveModal("chat");
@@ -726,11 +732,22 @@ export function App() {
       ) : null}
 
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。 */}
-      {state.turn.phase === "settling" ? (
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2：all-decided + settlement_display 仍真 → 同条续跑面，改发 resolve_decisions/stream。 */}
+      {state.turn.phase === "settling"
+        || needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+        ? (
         <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
-          <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
+          <button
+            className="seal-btn-issue"
+            onClick={
+              needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+                ? resumePhase2
+                : issueDecree
+            }
+            disabled={!!busy}
+          >
             续跑结算
           </button>
         </div>

@@ -1032,6 +1032,8 @@ class WebGame:
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
+        # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
+        # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
 
     # ── 自定义立绘 ────────────────────────────────────────────────────────
     def find_character(self, name: str) -> Optional[Character]:
@@ -2557,13 +2559,18 @@ class WebGame:
 
     def pending_story_extractions(self) -> Dict[str, Any]:
         """#501 AC8：待补抽取的玩家可见状态（本开夜 turn ids + 大臣名 + 计数）——显眼提示的取数源，
-        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。"""
+        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。
+
+        #1353/#1381：夜停 closing 且待补已自愈（count=0）时附 player_hint——
+        玩家面「可重试/已自愈」指引；fail-closed 数源与收夜门不动。
+        """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import get_open_night
+        from ming_sim.audience_night import NIGHT_STATUS_CLOSING, get_open_night
 
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
+        night_status = str((open_n or {}).get("status") or "")
         rows = self.db.list_unextracted_replies(night_id=nid)
         pending = [
             {
@@ -2573,7 +2580,17 @@ class WebGame:
             }
             for r in rows
         ]
-        return {"night_id": int(nid or 0), "count": len(pending), "pending": pending}
+        out: Dict[str, Any] = {
+            "night_id": int(nid or 0),
+            "count": len(pending),
+            "pending": pending,
+        }
+        if night_status:
+            out["night_status"] = night_status
+        # 自愈后 closing 残留：count=0 仍须可见「可重试收夜/颁诏」，禁静默无态。
+        if night_status == NIGHT_STATUS_CLOSING and len(pending) == 0:
+            out["player_hint"] = "待补账本已自愈，可重试收夜或颁诏。"
+        return out
 
     def retry_story_extractions(self, on_event=None) -> Dict[str, Any]:
         """#501 AC8：玩家原地重试补跑——并入既有补跑通道（catch_up），不造第二套失败总线。
@@ -3111,15 +3128,29 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with write_cm(game):
             yield
-            # with 体无异常结束（含函数 return）→ 成功，保留展示态/由推进清快照。
+            # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
+            # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接，
+            # 使并发 B 进 atomic 时 DELETE 不得落进 B 事务。
+            # clear_orphan 同谓词：settling/awaiting 保留；summoning 残留不得挡拟诏。
+            # settled_ok 须在 clear 完成后才置真——clear 抛错走失败 exit，
+            # 禁「成功态 + 死遮罩」留 settlement_display=true 于常态相位。
+            db = getattr(game, "db", None)
+            state = getattr(game, "state", None)
+            if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+                from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+                clear_orphan_month_open_snapshot(db, state)
+            # with 体无异常结束且 clear 已完成（或无需 clear）→ 成功。
             settled_ok = True
     finally:
-        if entered and not settled_ok:
-            # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
-            # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-            _exit_settlement_display_on_failure(game, blocking=created_display)
-        if entered:
-            _end_settlement_entry(game)
+        # 嵌套 try/finally：exit/clear 抛错仍须销账 inflight（验收：clear 抛 → inflight 归零）。
+        try:
+            if entered and not settled_ok:
+                # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
+                # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
+                _exit_settlement_display_on_failure(game, blocking=created_display)
+        finally:
+            if entered:
+                _end_settlement_entry(game)
 
 
 def _active_db_path_file() -> str:
@@ -4532,6 +4563,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
+            # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
+            # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
+            terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
@@ -4539,27 +4573,29 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:
                     # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                    ev_queue.put(("__decisions__", _settlement_player_payload(
+                    terminal = ("__decisions__", _settlement_player_payload(
                         decree=decree,
                         decisions=result.decisions,
                         pending_action_failures=failures,
-                    )))
-                    return
-                report = result.report
-                game.refresh_turn()
-                events = [
-                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                ]
-                if not was_ended and game.state.ended:
-                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", _settlement_player_payload(
-                    decree=decree,
-                    report=report,
-                    steam_events=events,
-                    pending_action_failures=failures,
-                )))
+                    ))
+                else:
+                    report = result.report
+                    game.refresh_turn()
+                    events = [
+                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                    ]
+                    if not was_ended and game.state.ended:
+                        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                    terminal = ("__done__", _settlement_player_payload(
+                        decree=decree,
+                        report=report,
+                        steam_events=events,
+                        pending_action_failures=failures,
+                    ))
+            if terminal is not None:
+                ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (
@@ -4613,16 +4649,24 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
         ev_queue.put((kind, data))
 
     def worker() -> None:
+        game = None
+        turn_before = 0
+        failed_before: set[int] = set()
         try:
             game = get_game()
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
-            # #1322：相位快速预检前移到抢锁前（假 200/锁排队拖成数十秒）；
-            # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款，锁语义不动。
+            # #1322：相位快速预检前移到受理/抢锁前（假 200/锁排队拖成数十秒）；
+            # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款。
             if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
                 raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
-            with _game_write_gate(game):
+            # #1374：与 issue/stream 同款受理样板——phase2 窗有核账展示态；
+            # decided 先写后跑的崩溃安全时序仍在 session.submit_decisions 内，不动。
+            # 锁语义 = 阻塞 _game_write_gate（与 issue/stream 同，禁改非阻塞）。
+            # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
+            terminal: Optional[tuple[str, Any]] = None
+            with _settlement_period_entry(game, write_cm=_game_write_gate):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
                 )
@@ -4636,24 +4680,25 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", _settlement_player_payload(
+                terminal = ("__done__", _settlement_player_payload(
                     decree=decree,
                     report=report,
                     steam_events=events,
                     pending_action_failures=failures,
-                )))
+                ))
+            if terminal is not None:
+                ev_queue.put(terminal)
         except ValueError as e:
+            # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
-                else []
+                if game is not None else []
             )
             ev_queue.put(("__error__", {"message": str(e), "pending_action_failures": failures} if failures else str(e)))
         except Exception as e:  # noqa: BLE001
             failures = (
                 _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
-                if "game" in locals() and "turn_before" in locals() and "failed_before" in locals()
-                else []
+                if game is not None else []
             )
             message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
             ev_queue.put(("__error__", {"message": message, "pending_action_failures": failures} if failures else message))
