@@ -1,7 +1,12 @@
-"""#1279 拟诏部院归一：capture seam 不把机构/自称/集体名抽成人物参与人。
+"""#1279 / QA A-2 拟诏部院归一：capture seam 人物参与人 raw 层三分流。
 
-不变式：人物参与人抽取只产 characters 名册可解析的人名；非人名实体不产人物参与人行。
-禁放松 ADR 0053 主键校验缝（db.py _validate_participant_roster_references）。
+不变式：
+- 裸机构 token 整词 fullmatch（六部/都察院/内阁/锦衣卫/司礼监/东厂…）→ 不产人物行
+  （禁 canon 后放行：司礼监/锦衣卫/东厂 恰为人名 alias）
+- 自称/集体闭集（陛下/皇帝/朝廷/朕…）→ 不产
+- 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 走 canon 留人名
+- 禁复用 _is_institution_like_name 子串字集判参与人
+- 禁放松 ADR 0053 主键校验缝（db.py _validate_participant_roster_references）
 """
 
 from __future__ import annotations
@@ -56,6 +61,17 @@ def _web_create(game_tuple, monkeypatch, text: str):
     ))
 
 
+def _capture_ids(game, monkeypatch, *, text: str, roster):
+    import ming_sim.cli_backend as cli_backend
+
+    db, _state, content = game
+    _mock_draft_intent(monkeypatch, text=text, roster=roster)
+    payload = cli_backend.capture_manual_directive_payload(
+        text, None, db=db, content=content,
+    )
+    return [str(item["character_id"]) for item in (payload.get("participant_roster") or [])]
+
+
 def test_capture_manual_directive_drops_ministry_name_as_participant(game, monkeypatch):
     """着户部… 不得把「户部」当人物参与人拒收；成案零 409。"""
     import ming_sim.cli_backend as cli_backend
@@ -102,46 +118,78 @@ def test_web_create_directive_accepts_ministry_subject_without_409(game, monkeyp
 
 def test_capture_manual_directive_keeps_real_person_participant(game, monkeypatch):
     """着毕自严… 仍照常抽人（名册可解析人名保留）。"""
-    import ming_sim.cli_backend as cli_backend
-
-    db, _state, content = game
-    text = "着毕自严核清太仓实存，边饷优先"
-    _mock_draft_intent(
-        monkeypatch, text=text,
+    ids = _capture_ids(
+        game, monkeypatch,
+        text="着毕自严核清太仓实存，边饷优先",
         roster=[{"character_id": "毕自严", "tier": "主办", "role": "核太仓"}],
     )
+    assert ids == ["毕自严"]
 
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
+
+@pytest.mark.parametrize(
+    "alias,canonical",
+    [
+        ("韩阁老", "韩爌"),
+        ("毕户部", "毕自严"),
+        ("温阁老", "温体仁"),
+        ("曹太监", "曹化淳"),
+        ("王兵部", "王在晋"),
+    ],
+)
+def test_capture_manual_directive_keeps_surname_title_aliases(
+    game, monkeypatch, alias, canonical,
+):
+    """带姓称谓别名不得当机构丢；走 canon 留人名（回归别名面，不只钉 aliases[0] 本名）。"""
+    ids = _capture_ids(
+        game, monkeypatch,
+        text=f"着{alias}核办边饷",
+        roster=[{"character_id": alias, "tier": "主办"}],
     )
-    roster = payload.get("participant_roster") or []
-    assert [item["character_id"] for item in roster] == ["毕自严"]
+    assert ids == [canonical]
 
 
-@pytest.mark.parametrize("name", ["陛下", "皇帝", "朝廷", "内阁", "都察院", "兵部"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "陛下", "皇帝", "朝廷",
+        "户部", "兵部", "内阁", "都察院",
+        "司礼监", "锦衣卫", "东厂",
+    ],
+)
 def test_capture_manual_directive_drops_collective_and_institution_names(
     game, monkeypatch, name,
 ):
-    """自称/集体名与部院机构名均不成为人物参与人。"""
-    import ming_sim.cli_backend as cli_backend
-
-    db, _state, content = game
-    text = f"着{name}核办边饷"
-    _mock_draft_intent(
-        monkeypatch, text=text,
+    """自称/集体与裸机构整词均不成为人物参与人（含厂卫——禁 canon 后放行）。"""
+    ids = _capture_ids(
+        game, monkeypatch,
+        text=f"着{name}核办边饷",
         roster=[
             {"character_id": name, "tier": "主办"},
             {"character_id": "毕自严", "tier": "协办"},
         ],
     )
-
-    payload = cli_backend.capture_manual_directive_payload(
-        text, None, db=db, content=content,
-    )
-    roster = payload.get("participant_roster") or []
-    ids = [str(item["character_id"]) for item in roster]
     assert name not in ids
+    assert "王承恩" not in ids
+    assert "田尔耕" not in ids
+    assert "魏忠贤" not in ids
     assert ids == ["毕自严"]
+
+
+def test_non_person_filter_does_not_use_institution_substring_class():
+    """参与人缝禁复用 _is_institution_like_name 子串字集（防韩阁老含「阁」被误伤）。"""
+    import ming_sim.cli_backend as cli_backend
+
+    # assignee-hint 子串仍拒识带机关字的线索（本职不变）
+    assert cli_backend._is_institution_like_name("韩阁老") is True
+    assert cli_backend._is_institution_like_name("毕户部") is True
+    # 参与人 raw 三分流：带姓称谓别名不是裸机构，不得判非人
+    assert cli_backend._is_non_person_participant_name("韩阁老") is False
+    assert cli_backend._is_non_person_participant_name("毕户部") is False
+    assert cli_backend._is_non_person_participant_name("曹太监") is False
+    # 裸机构整词 / 自称仍非人
+    assert cli_backend._is_non_person_participant_name("司礼监") is True
+    assert cli_backend._is_non_person_participant_name("户部") is True
+    assert cli_backend._is_non_person_participant_name("陛下") is True
 
 
 def test_adr0053_unknown_person_still_rejected_at_capture(game, monkeypatch):
