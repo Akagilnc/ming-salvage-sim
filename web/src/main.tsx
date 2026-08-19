@@ -33,7 +33,7 @@ import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
   isFaceReachable,
   isSettlementDisplay,
-  SETTLEMENT_CLOSED_REASON,
+  settlementClosedReason,
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
 } from "./settlementPresentation";
@@ -417,7 +417,7 @@ export function App() {
   const selectMapNode = (nodeId: string) => {
     // #1236：地图节点详情属关闭组——核账期不点选开详（底图装饰可留）。
     if (state && !isFaceReachable("node_intel", isSettlementDisplay(state.turn))) {
-      setError(SETTLEMENT_CLOSED_REASON);
+      setError(settlementClosedReason(state.turn.phase));
       return;
     }
     setSelectedNodeId(nodeId);
@@ -690,7 +690,7 @@ export function App() {
           onOpenMinister={(name) => {
             // 密令内转召对亦属 chat_entry 关闭组
             if (!chatEntryEnabled) {
-              setError(SETTLEMENT_CLOSED_REASON);
+              setError(settlementClosedReason(state?.turn.phase));
               return;
             }
             setActiveModal("chat");

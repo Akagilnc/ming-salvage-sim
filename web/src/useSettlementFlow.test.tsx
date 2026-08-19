@@ -136,7 +136,7 @@ afterEach(() => {
 });
 
 describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口", () => {
-  it("decisions 分支 await loadState：·核账出现 + 四键为月初值，且不 reload", async () => {
+  it("decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload", async () => {
     const loadState = vi.fn(async () => awaitingState);
     const reload = vi.fn();
     Object.defineProperty(window, "location", {
@@ -166,7 +166,7 @@ describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口",
     expect(reload).not.toHaveBeenCalled();
 
     // 同会话不 reload：状态口投影驱动 HUD
-    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 核账");
+    expect(host.querySelector("[data-testid=year-month]")?.textContent).toBe("1627 年 10 月 · 待批");
     expect(host.querySelector("[data-testid=settlement-display]")?.textContent).toBe("true");
     expect(host.querySelector("[data-testid=treasury]")?.textContent).toBe("1781");
     expect(host.querySelector("[data-testid=inner]")?.textContent).toBe("320");
