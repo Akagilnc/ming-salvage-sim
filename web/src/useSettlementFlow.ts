@@ -187,7 +187,12 @@ export function useSettlementFlow({
     // #1351 A1：携客户端所见 turn 作令牌；409 且服务端已更大 → 视作已推进刷新，不报假错。
     const expectedTurn = state?.turn?.turn;
     try {
-      const data = await api<{ state: GameState; pending_action_failures?: PendingActionFailure[] }>(
+      const data = await api<{
+        state: GameState;
+        awaiting_decision?: boolean;
+        decisions?: PendingDecision[];
+        pending_action_failures?: PendingActionFailure[];
+      }>(
         "/api/decree/advance_without_edict",
         {
           method: "POST",
@@ -199,6 +204,17 @@ export function useSettlementFlow({
         },
       );
       if (await surfacePendingActionFailures(data.pending_action_failures || [])) {
+        return;
+      }
+      // #1433 / #1337 hop 族：退朝若停在批红，消费 awaiting_decision/decisions（同 issueDecree），
+      // 不盲 reload——整页刷新只在月完成；批红面经 loadState 状态口投影不丢。
+      if (data.awaiting_decision) {
+        const failures = data.pending_action_failures || [];
+        setDecisionFailures(failures);
+        const route = routeIssueDecisions(data.decisions || []);
+        if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+        if (route.error !== null) setPausedDecisionError(route.error);
+        await loadState();
         return;
       }
       window.location.reload();
