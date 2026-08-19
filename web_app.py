@@ -1027,6 +1027,12 @@ class WebGame:
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
+        # #1343/#1378/#1379/#1388：月推进后/中途残留的月初快照，在无入口在办时清掉。
+        # 单谓词不动（settlement_display⇔快照在）；只收生命周期缝——summoning 期不该挡拟诏。
+        # 点即入在办（inflight>0）或 settling/awaiting 恢复窗：保留，与 clear_orphan 同谓词。
+        if _settlement_entry_inflight(self) == 0:
+            from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+            clear_orphan_month_open_snapshot(self.db, self.state)
 
     # ── 自定义立绘 ────────────────────────────────────────────────────────
     def find_character(self, name: str) -> Optional[Character]:
@@ -3054,6 +3060,15 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
             # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
             # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
             _exit_settlement_display_on_failure(game, blocking=created_display)
+        elif entered and settled_ok:
+            # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
+            # clear_orphan 同谓词：settling/awaiting 保留；summoning 残留不得挡拟诏。
+            # 单谓词不动（展示态仍=快照在）；只收生命周期缝。
+            db = getattr(game, "db", None)
+            state = getattr(game, "state", None)
+            if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
+                from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
+                clear_orphan_month_open_snapshot(db, state)
         if entered:
             _end_settlement_entry(game)
 
