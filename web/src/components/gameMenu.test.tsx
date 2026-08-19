@@ -185,6 +185,43 @@ describe("LLMConfigTab — channel-gated field rendering", () => {
     cleanup();
   });
 
+  it("offers grok in the CLI runner dropdown and enables reasoning for it (#1271)", async () => {
+    mockFetch({
+      ...BASE_LLM_RESPONSE,
+      channel: "cli",
+      cli_runner: "grok",
+      reasoning_strength: "high",
+      reasoning_supported: true,
+      cli_reasoning_runners: ["codex", "claude", "grok"],
+      persisted: {
+        ...BASE_LLM_RESPONSE.persisted,
+        channel: "cli",
+        cli_runner: "grok",
+        cli_model: "",
+        cli_timeout_seconds: 240,
+        cli_reasoning_strength: "high",
+      },
+    });
+    const { cleanup } = render(<LLMConfigTab />);
+    await act(async () => {});
+
+    const runnerSelect = Array.from(document.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some((option) => option.value === "codex")
+    );
+    expect(runnerSelect).toBeTruthy();
+    const runnerValues = Array.from(runnerSelect?.options || []).map((option) => option.value);
+    expect(runnerValues).toContain("grok");
+    expect(runnerValues).not.toContain("cursor");
+    expect(runnerValues).not.toContain("kimi");
+    expect(runnerSelect?.value).toBe("grok");
+
+    const strength = document.querySelector<HTMLSelectElement>('select[name="reasoning_strength"]');
+    expect(strength?.disabled).toBe(false);
+    const offOption = Array.from(strength?.options || []).find((option) => option.value === "off");
+    expect(offOption?.textContent).toBe("关（grok 最低=低）");
+    cleanup();
+  });
+
   it("clears the legacy thinking_level shadow on save so the unified selector owns reasoning (#358 cmr)", async () => {
     // 旧档持有 thinking_level=high、reasoning_strength 空。统一选择器以旧值迁移初始化，
     // 保存时须清掉旧 thinking_level，否则它仍作隐藏旋钮、用户选「默认」也清不掉。
