@@ -354,7 +354,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     await click(Array.from(secondHost.querySelectorAll("button")).find((b) => b.textContent?.includes("温体仁")));
     await tick();
-    await click(findButton(secondHost, "退朝"));
+    await click(findButton(secondHost, "散夜"));
     await act(async () => {
       await vi.waitFor(() => expect(paths.filter((path) => path.endsWith("/chat/stream")).length).toBeGreaterThanOrEqual(2));
     });
@@ -442,7 +442,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
     await tick();
     expect(host.querySelector(".hud2-stage")).not.toBeNull();  // 进入游戏视图（旧草案在飞刷新已发出、挂起）
 
-    await click(findButton(host, "拟诏/结束回合"));  // 开诏书草案模态
+    await click(findButton(host, "拟诏"));  // 开诏书草案模态
     await tick();
     expect(findButton(host, "删")).toBeTruthy();      // 旧草案可删
     await click(findButton(host, "删"));              // 真实 deleteDirective：DELETE + beginDurableMutation + setState([])
@@ -499,7 +499,7 @@ describe("App 持久投影 wiring（#499 真实 App 挂载 durable-race tracer�
       expect(secretDialog(host)).toBeNull();
 
       // 计时期间执行一次真实变更（删草案）：deleteDirective 调 beginDurableMutation 推进代次
-      await act(async () => { (findButton(host, "拟诏/结束回合"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => { (findButton(host, "拟诏"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       await act(async () => { (findButton(host, "删"))?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });   // DELETE 完成、代次已推进
@@ -759,7 +759,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "密令"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏/结束回合"));
+    await click(cmdByCaption(host, "拟诏·退朝过月"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
 
@@ -910,7 +910,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
     });
     await closeOpenOverlay(host);
-    await click(cmdByCaption(host, "拟诏/结束回合"));
+    await click(cmdByCaption(host, "拟诏·退朝过月"));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());

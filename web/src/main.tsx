@@ -623,7 +623,7 @@ export function App() {
       ) : null}
 
       {edictOpen ? (
-        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
+        <FullscreenModal title="诏书草案" subtitle="退朝即草案成案并过月" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
           <EdictModal
             state={state}
             directiveText={directiveText}
