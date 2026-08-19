@@ -1086,7 +1086,12 @@ class WebGame:
             "source": row["source"],
             "status": row["status"],
             "notes": row["notes"],
-            "authority": row["notes"] or "",
+            # #1319(a)：authority 按真源投影；不得把 notes 备注别名为权威来源。
+            "authority": (
+                str(row["authority"] or "").strip()
+                if hasattr(row, "keys") and "authority" in row.keys()
+                else ""
+            ),
         }
 
     def directive_rows(self):
@@ -2512,9 +2517,10 @@ class WebGame:
         ]
         return {"night_id": int(nid or 0), "count": len(pending), "pending": pending}
 
-    def retry_story_extractions(self) -> Dict[str, Any]:
+    def retry_story_extractions(self, on_event=None) -> Dict[str, Any]:
         """#501 AC8：玩家原地重试补跑——并入既有补跑通道（catch_up），不造第二套失败总线。
-        gate 外调（drain 内部按写抢 runtime write_gate）；返回重试后的待补状态。"""
+        gate 外调（drain 内部按写抢 runtime write_gate）；返回重试后的待补状态。
+        #1312：可选 on_event(kind, data) 透传既有 stage 形分段进度（禁新机制）。"""
         from ming_sim.audience_night import get_open_night
 
         open_n = get_open_night(self.db) if hasattr(self.db, "conn") else None
@@ -2524,6 +2530,7 @@ class WebGame:
             llm_config=getattr(self.session, "llm_config", None),
             write_gate=self._runtime_write_gate(),
             night_id=nid,
+            on_event=on_event,
         )
         return self.pending_story_extractions()
 
@@ -3005,7 +3012,11 @@ def _serialized_web_write(game):
     session._refuse_if_settling/相位门只查相位、守不住 pre_settle 窗口）都经本 CM 串行；结算入口
     （resolve_turn/submit_decisions）走阻塞版 _game_write_gate（在自己的 worker 线程里持锁）。"""
     state = getattr(game, "state", None)
-    if getattr(state, "turn_phase", None) in FRONT_HALF_DONE_PHASES:
+    phase = getattr(state, "turn_phase", None)
+    if phase in FRONT_HALF_DONE_PHASES:
+        # #1306：分相位文案——awaiting_decision 是等批红（结算未在跑），settling 才是月末结算中。
+        if phase == TurnPhase.AWAITING_DECISION.value:
+            raise HTTPException(status_code=409, detail="等待批红，请待批红完成后再操作。")
         raise HTTPException(status_code=409, detail="月末结算进行中，请待结算完成后再操作。")
     gate = _game_write_gate(game)
     if not gate.acquire(blocking=False):
@@ -4071,9 +4082,40 @@ async def api_pending_story_extractions() -> Dict[str, Any]:
 
 
 @app.post("/api/audience/extraction/retry")
-async def api_retry_story_extractions() -> Dict[str, Any]:
-    """#501 AC8：玩家原地重试补跑（含 LLM 调用 → threadpool，不冻结 event loop）。"""
-    return await run_in_threadpool(get_game().retry_story_extractions)
+async def api_retry_story_extractions() -> StreamingResponse:
+    """#501 AC8：玩家原地重试补跑（含 LLM 调用）。
+
+    #1312：既有 SSE stage/done 形推分段进度（与 settle stream 同消费形）；
+    worker 仍在线程跑，不冻结 event loop。禁新机制。
+    """
+    ev_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+
+    def on_event(kind: str, data: str) -> None:
+        ev_queue.put((kind, data))
+
+    def worker() -> None:
+        try:
+            result = get_game().retry_story_extractions(on_event=on_event)
+            ev_queue.put(("__done__", result))
+        except Exception as e:  # noqa: BLE001
+            message = _llm_error_detail(e) if isinstance(e, LLMUnavailable) else str(e)
+            ev_queue.put(("__error__", {"message": message}))
+
+    async def generate() -> AsyncIterator[str]:
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        loop = asyncio.get_running_loop()
+        while True:
+            kind, data = await loop.run_in_executor(None, ev_queue.get)
+            if kind == "__done__":
+                yield sse_event("done", data if isinstance(data, dict) else {"result": data})
+                break
+            if kind == "__error__":
+                yield sse_event("error", data if isinstance(data, dict) else {"message": data})
+                break
+            yield sse_event(kind, {"content": data})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/api/ministers/{minister_name}/secret_order")
@@ -4499,6 +4541,10 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             was_ended = bool(game.state.ended)
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
+            # #1322：相位快速预检前移到抢锁前（假 200/锁排队拖成数十秒）；
+            # 锁内 submit_decisions 仍做权威复查——与既有 TOCTOU 双查同款，锁语义不动。
+            if game.session.current_phase() != TurnPhase.AWAITING_DECISION:
+                raise ValueError("当前不在待裁决策阶段，无法提交亲裁。")
             with _game_write_gate(game):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
