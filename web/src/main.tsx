@@ -201,7 +201,7 @@ export function App() {
     cancelEditDirective,
     saveDirective,
     deleteDirective,
-  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation, loadState, setDecree });
+  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation });
 
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。

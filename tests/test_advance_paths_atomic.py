@@ -1397,7 +1397,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        lambda: sess.set_decree("改诏"),
+        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
         lambda: sess.write_decree(),
     ):
         with pytest.raises(ValueError, match="结算|亲裁"):
