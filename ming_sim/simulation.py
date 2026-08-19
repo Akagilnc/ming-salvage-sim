@@ -65,6 +65,7 @@ TOP_LEVEL_ALIASES = {
     "结案局势": "close_issues",
     "案卷执行": "dossier_executions",
     "案卷参与人": "dossier_participants",
+    "密令案卷参与人": "secret_dossier_participants",
     "拨帑对账": "dossier_reconciliations",
     "政敌检举": "faction_denunciations",
     "检举条目": "faction_denunciations",
@@ -715,6 +716,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_closes": [],
     "dossier_executions": [],
     "dossier_participants": [],
+    "secret_dossier_participants": [],
     "dossier_reconciliations": [],
     "faction_denunciations": [],
     "authority_changes": [],
@@ -732,7 +734,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
-        "dossier_progress_reports", "emperor_fate",
+        "dossier_progress_reports", "secret_dossier_participants", "emperor_fate",
     },
 }
 

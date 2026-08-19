@@ -7006,6 +7006,7 @@ def apply_score_extraction(
     llm_config: Any = None,
     candidate_event_ids_at_input: Optional[set[str]] = None,
     dossier_ids_at_input: Optional[set[int]] = None,
+    secret_dossier_ids_at_input: Optional[set[int]] = None,
 ) -> Dict[str, object]:
     """落地结算 agent 输出的 JSON 到 state 与 db。
 
@@ -7075,6 +7076,59 @@ def apply_score_extraction(
             })
         except (TypeError, ValueError, KeyError) as exc:
             dossier_participant_results.append({
+                "rejected": True, "category": "invalid_participant_roster",
+                "reason": str(exc), "item": item,
+            })
+
+    # #1252: independent secret-dossier roster field (field name = provenance).
+    # Authority is a separate frozen closed set; never union with public set.
+    secret_dossier_participant_results: List[Dict[str, object]] = []
+    if not isinstance(secret_dossier_ids_at_input, set):
+        secret_dossier_ids_at_input = set()
+    for item in extracted.get("secret_dossier_participants") or []:
+        if not isinstance(item, dict):
+            secret_dossier_participant_results.append({
+                "rejected": True, "category": "invalid_shape", "item": item,
+            })
+            continue
+        try:
+            dossier_id = _parse_sqlite_id(item.get("dossier_id"))
+            if dossier_id not in secret_dossier_ids_at_input:
+                raise ValueError("密令案卷不在本批可见输入")
+            character_id = str(item.get("character_id") or "").strip()
+            delegator_id = str(item.get("delegator_id") or "").strip()
+            tier = str(item.get("tier") or "").strip()
+            if not character_id:
+                raise ValueError("追加参与人物不能为空")
+            if tier not in {"主办", "协办", "知情"}:
+                raise ValueError("追加参与层级必须为主办/协办/知情")
+            if not delegator_id:
+                raise ValueError("追加参与人必须注明委派人")
+            added = db.append_decree_dossier_participants(dossier_id, [{
+                "character_id": character_id,
+                "tier": tier,
+                "role": str(item.get("role") or "").strip(),
+                "delegator_id": delegator_id,
+            }], state=state, commit=False)
+            if not added:
+                existing = db.get_decree_dossier(dossier_id) or {}
+                if not any(
+                    row.get("character_id") == character_id
+                    and row.get("tier") == tier
+                    and row.get("role") == str(item.get("role") or "").strip()
+                    and row.get("delegator_id") == delegator_id
+                    for row in existing.get("participant_roster", [])
+                ):
+                    raise ValueError("参与人未实际加入案卷")
+            persisted = added[0] if added else {
+                "character_id": character_id, "tier": tier,
+            }
+            secret_dossier_participant_results.append({
+                "dossier_id": dossier_id,
+                "character_id": persisted["character_id"], "tier": persisted["tier"],
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            secret_dossier_participant_results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
@@ -8291,8 +8345,9 @@ def apply_score_extraction(
         "power_changes": power_changes,
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
-        "dossier_participants": dossier_participant_results,
-        "breach_plea_resolutions": breach_plea_resolutions,
+                "dossier_participants": dossier_participant_results,
+        "secret_dossier_participants": secret_dossier_participant_results,
+"breach_plea_resolutions": breach_plea_resolutions,
         "credit_event_resolutions": credit_event_resolutions,
         "authority_changes": authority_change_results,
         "world_advance": extracted.get("world_advance") or {},
