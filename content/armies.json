@@ -3,7 +3,7 @@
     "manpower_unit": "人",
     "salary_rate_unit": "两/兵·月（月饷 army_needed=ceil(manpower×salary_rate/10000)，万两/月）",
     "score_unit": "0-100（arrears 例外，单位为累计欠饷万两、整数、无上限）",
-    "note": "MVP 军队盘面为历史近似，不追求完整编制；核心服务于问话、调度、拨饷和月末结算。月饷由引擎按 army_needed=ceil(manpower×salary_rate/10000) 派生（salary_rate 为每军名义月饷率；开局全国月饷合计=sum(army_needed ceil)≈72万/月、年约864万，贴近崇祯实际军费需求；名义不取整和约66.5、ceil 累积使实扣总额略高）。arrears 字段=累计欠饷万两，flows 月末按差额累加。"
+    "note": "MVP 军队盘面为历史近似，不追求完整编制；核心服务于问话、调度、拨饷和月末结算。月饷由引擎按 army_needed=ceil(manpower×salary_rate/10000) 派生（salary_rate 为每军名义月饷率；开局全国月饷合计=sum(army_needed ceil)≈72万/月、年约864万，贴近崇祯实际军费需求；名义不取整和约66.5、ceil 累积使实扣总额略高）。arrears 字段=累计欠饷万两，flows 月末按差额累加。firearm_equipment=火器饱和度0-100（鸟铳/三眼铳/佛郎机归此轴）；cannon_equipment=随军红夷级重炮门数0-12（城防炮另挂 region.cannon）。缺省由 content loader 回落火器30/炮0，本表显式给差异化开局值。"
   },
   "armies": [
     {
@@ -22,6 +22,8 @@
       "arrears": 21,
       "mobility": 35,
       "loyalty": 48,
+      "firearm_equipment": 48,
+      "cannon_equipment": 2,
       "status": "拱卫京师但空额、克扣和操练废弛严重。",
       "owner_power": "ming",
       "salary_rate": 1.0
@@ -31,7 +33,7 @@
       "name": "关宁军 / 宁锦防线",
       "station": "辽东 / 宁远锦州",
       "theater": "辽东",
-      "commander": "袁崇焕",
+      "commander": "祖大寿、何可纲、赵率教",
       "controller": "祖大寿、何可纲、赵率教",
       "troop_type": "边军、骑兵、火器兵、炮兵",
       "manpower": 72000,
@@ -42,6 +44,8 @@
       "arrears": 60,
       "mobility": 48,
       "loyalty": 55,
+      "firearm_equipment": 72,
+      "cannon_equipment": 8,
       "status": "宁锦守线尚可，欠饷严重，主动大举出击风险极高。",
       "owner_power": "ming",
       "salary_rate": 2.0
@@ -62,6 +66,8 @@
       "arrears": 6,
       "mobility": 28,
       "loyalty": 58,
+      "firearm_equipment": 58,
+      "cannon_equipment": 6,
       "status": "京师门户，守强攻弱，需与宁锦军饷联动。",
       "owner_power": "ming",
       "salary_rate": 1.1
@@ -82,6 +88,8 @@
       "arrears": 30,
       "mobility": 54,
       "loyalty": 50,
+      "firearm_equipment": 38,
+      "cannon_equipment": 2,
       "status": "边饷紧、旱灾重，防蒙古与后金绕袭压力并存。",
       "owner_power": "ming",
       "salary_rate": 1.5
@@ -102,6 +110,8 @@
       "arrears": 16,
       "mobility": 50,
       "loyalty": 49,
+      "firearm_equipment": 42,
+      "cannon_equipment": 2,
       "status": "京师屏障，欠饷和军纪问题会直接牵动京畿。",
       "owner_power": "ming",
       "salary_rate": 1.55
@@ -122,6 +132,8 @@
       "arrears": 6,
       "mobility": 62,
       "loyalty": 46,
+      "firearm_equipment": 56,
+      "cannon_equipment": 3,
       "status": "可支援辽东和海运，但虚实难辨，兵变风险需防。",
       "owner_power": "ming",
       "salary_rate": 1.4
@@ -131,7 +143,7 @@
       "name": "东江镇",
       "station": "辽海 / 皮岛",
       "theater": "辽东侧翼",
-      "commander": "毛文龙旧部",
+      "commander": "毛文龙",
       "controller": "边镇",
       "troop_type": "水师、岛兵、游击兵",
       "manpower": 30000,
@@ -142,6 +154,8 @@
       "arrears": 16,
       "mobility": 72,
       "loyalty": 38,
+      "firearm_equipment": 44,
+      "cannon_equipment": 1,
       "status": "牵制后金有用，但自主性强、报功报饷虚实难辨。",
       "owner_power": "ming",
       "salary_rate": 1.2
@@ -162,6 +176,8 @@
       "arrears": 25,
       "mobility": 50,
       "loyalty": 34,
+      "firearm_equipment": 28,
+      "cannon_equipment": 0,
       "status": "饥荒、裁驿和欠饷交叠，易与地方民变互相点燃。",
       "owner_power": "ming",
       "salary_rate": 1.4
@@ -182,6 +198,8 @@
       "arrears": 4,
       "mobility": 45,
       "loyalty": 52,
+      "firearm_equipment": 30,
+      "cannon_equipment": 1,
       "status": "江南财赋重地，军力可守不可远征，士绅牵制明显。",
       "owner_power": "ming",
       "salary_rate": 0.75
@@ -202,6 +220,8 @@
       "arrears": 4,
       "mobility": 70,
       "loyalty": 45,
+      "firearm_equipment": 50,
+      "cannon_equipment": 4,
       "status": "海防与海贸灰区纠缠，能巡海但难离本省太久。",
       "owner_power": "ming",
       "salary_rate": 1.25
@@ -222,6 +242,8 @@
       "arrears": 4,
       "mobility": 68,
       "loyalty": 47,
+      "firearm_equipment": 52,
+      "cannon_equipment": 4,
       "status": "可守海口与护商，远离本地会受地方掣肘。",
       "owner_power": "ming",
       "salary_rate": 1.25
@@ -242,6 +264,8 @@
       "arrears": 4,
       "mobility": 60,
       "loyalty": 32,
+      "firearm_equipment": 14,
+      "cannon_equipment": 0,
       "status": "山地作战有用，听调取决于土司关系和赏赐名分。",
       "owner_power": "ming",
       "salary_rate": 0.8
@@ -262,6 +286,8 @@
       "arrears": 0,
       "mobility": 82,
       "loyalty": 72,
+      "firearm_equipment": 22,
+      "cannon_equipment": 0,
       "status": "努尔哈赤旧部仍强，皇太极新立，诸贝勒共议牵制汗权。",
       "owner_power": "houjin"
     },
@@ -281,6 +307,8 @@
       "arrears": 0,
       "mobility": 42,
       "loyalty": 46,
+      "firearm_equipment": 46,
+      "cannon_equipment": 4,
       "status": "尚未成后世汉八旗规模，但铸炮、通译、招降明边价值渐增。",
       "owner_power": "houjin"
     },
@@ -300,6 +328,8 @@
       "arrears": 0,
       "mobility": 86,
       "loyalty": 38,
+      "firearm_equipment": 12,
+      "cannon_equipment": 0,
       "status": "诸部离心，仍有机动优势；若后金压迫过甚，可能西走或倒向一方。",
       "owner_power": "mongol"
     },
@@ -319,6 +349,8 @@
       "arrears": 0,
       "mobility": 45,
       "loyalty": 55,
+      "firearm_equipment": 36,
+      "cannon_equipment": 1,
       "status": "丁卯之役后谨慎自保，明后金之间左右支应。",
       "owner_power": "korea"
     },
@@ -338,6 +370,8 @@
       "arrears": 0,
       "mobility": 66,
       "loyalty": 42,
+      "firearm_equipment": 8,
+      "cannon_equipment": 0,
       "status": "小股啸聚初成气候，若陕西赈抚失措，极易滚成大股流寇。",
       "owner_power": "bandits"
     }
