@@ -52,7 +52,8 @@ export function GameHud({
     navHandlers[navKey]?.();
   };
 
-  const gatedModal = (faceKey: "memorials" | "gazette" | "audience_archive" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
+  // audience_archive 不走底部木牌：史册头起居注入口在 main 接 isFaceReachable 单闸。
+  const gatedModal = (faceKey: "memorials" | "gazette" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
     if (!isFaceReachable(faceKey, settlementDisplay)) {
       noticeClosed();
       return;
@@ -152,18 +153,16 @@ export function GameHud({
         <span className="hud2-val">菜单</span>
       </button>
 
-      {/* 右侧竖排部院导航 */}
+      {/* 右侧竖排部院导航。#1282 owner「先隐」：礼木牌不渲染（HUD_SLOTS.导航.礼部 面槽保留，待礼制面立项）。 */}
       {([
-        ["政", "court", "court_roster", "朝堂·召见大臣"],
-        ["吏", "appointment", "appointment_roster", "官员任免"],
-        ["省", "region", "region", "省份列表"],
-        ["兵", "army", "army", "军队列表"],
-        ["户", "economy", "economy", "经济面板"],
-        ["工", "building", "building", "建筑列表"],
-        ["礼", "appointment", "appointment_roster", "礼部"],
-        ["后", "harem", "harem_roster", "后宫"],
-      ] as const).map(([label, navKey, faceKey, title], idx) => {
-        const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫"] as const)[idx];
+        ["政", "court", "court_roster", "朝堂·召见大臣", "政"],
+        ["吏", "appointment", "appointment_roster", "官员任免", "吏部"],
+        ["省", "region", "region", "省份列表", "省份"],
+        ["兵", "army", "army", "军队列表", "兵部"],
+        ["户", "economy", "economy", "经济面板", "户部"],
+        ["工", "building", "building", "建筑列表", "工部"],
+        ["后", "harem", "harem_roster", "后宫", "后宫"],
+      ] as const).map(([label, navKey, faceKey, title, slotKey]) => {
         const reachable = isFaceReachable(faceKey, settlementDisplay);
         return (
           <button key={slotKey}

@@ -470,6 +470,11 @@ export function App() {
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
+  // memorials 面键真源（#1285）；ModalName 仍用既有 "state" 槽承载奏疏列表。
+  const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
+  const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
+  // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
+  const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
   const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
@@ -562,8 +567,13 @@ export function App() {
         </section>
       ) : null}
 
-      {activeModal === "state" ? (
-        <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={() => setActiveModal("none")}>
+      {memorialsOpen ? (
+        <FullscreenModal
+          title="奏疏"
+          subtitle={`${state.issues.length} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
+          bgClass="modal-bg-state"
+          onClose={() => setActiveModal("none")}
+        >
           <StateModal state={state} />
         </FullscreenModal>
       ) : null}
@@ -657,14 +667,16 @@ export function App() {
         <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
       ) : null}
 
-      {activeModal === "history" ? (
+      {historyOpen ? (
         <HistoryModal
           onClose={() => setActiveModal("none")}
-          onOpenAudienceArchive={() => setActiveModal("audience_archive")}
+          onOpenAudienceArchive={isFaceReachable("audience_archive", settlementDisplay)
+            ? () => setActiveModal("audience_archive")
+            : undefined}
         />
       ) : null}
 
-      {activeModal === "audience_archive" ? (
+      {audienceArchiveOpen ? (
         <AudienceArchiveModal ministers={audienceRoster} onClose={() => setActiveModal("none")} />
       ) : null}
 
