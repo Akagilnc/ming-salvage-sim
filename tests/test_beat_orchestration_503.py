@@ -832,14 +832,12 @@ def test_close_night_routes_scene_through_chat_turn_registry(game, monkeypatch):
 
 
 def test_advance_without_edict_auto_close_uses_caller_scene_registry(game, monkeypatch):
-    """#542 CI6: advance_without_edict 自动收夜经调用方既有 registry start_close→join 落账。"""
-    from ming_sim.decree import advance_without_edict
+    """#542 CI6: session.resolve_turn 自动收夜经调用方既有 registry start_close→join 落账。"""
+    from ming_sim.session import GameSession
 
     db, state, content = game
     night = an.open_night(db, state, time_of_day="戌时", location="乾清宫")
     night_id = int(night["id"])
-    # Usable config present → construct generator (factory monkeypatched offline).
-    db.llm_config = object()
     registry = bo.ChatTurnSceneRegistry(ThreadPoolExecutor(max_workers=2))
     seen_start: list[int] = []
     real_start = registry.start_close
@@ -849,14 +847,31 @@ def test_advance_without_edict_auto_close_uses_caller_scene_registry(game, monke
         return real_start(db_, state_, **kwargs)
 
     monkeypatch.setattr(registry, "start_close", _track_start)
-    monkeypatch.setattr(
-        bo, "create_llm_beat_generator",
-        lambda _cfg: (lambda inputs: f"decree-advance-close-{inputs.beat_kind}"),
-    )
+    beat_gen = lambda inputs: f"decree-advance-close-{inputs.beat_kind}"
 
-    advance_without_edict(
-        state, db, content=content, scene_registry=registry, inflight_wait_s=0.0,
-    )
+    class _Stop(Exception):
+        pass
+
+    def _stop_after_close(*_a, **_k):
+        raise _Stop("stop-after-auto-close")
+
+    # 收夜后停在结算前：只钉 registry 收夜缝，不跑全链 simulator。
+    # session 模块绑定 resolve_directives 名，须 patch session 侧。
+    import ming_sim.session as session_mod
+    monkeypatch.setattr(session_mod, "resolve_directives", _stop_after_close)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = registry
+    sess._beat_generator = beat_gen
+    sess.auto_save = lambda *a, **k: None
+
+    with pytest.raises(_Stop, match="stop-after-auto-close"):
+        sess.advance_without_decree(inflight_wait_s=0.0)
 
     assert seen_start and seen_start[0] > 0
     assert an.get_open_night(db) is None
@@ -1255,8 +1270,9 @@ def test_start_open_enter_releases_claim_when_discover_raises(game, monkeypatch)
 
 
 def test_auto_close_entries_skip_generator_when_llm_config_missing(game, monkeypatch):
-    """C5/C7: no usable LLM config → do not construct generator; no open night still advances."""
-    from ming_sim.decree import advance_without_edict, pre_settle
+    """C5/C7: no usable LLM config → do not construct generator; session 真缝同约。"""
+    from ming_sim.decree import pre_settle
+    from ming_sim.session import GameSession
 
     db, state, content = game
     assert an.get_open_night(db) is None
@@ -1278,14 +1294,11 @@ def test_auto_close_entries_skip_generator_when_llm_config_missing(game, monkeyp
     import ming_sim.decree as decree_mod
     monkeypatch.setattr(decree_mod, "auto_close_open_night", _capture_auto_close, raising=False)
 
-    # Keep settlement body out of scope: force front-half-done early return after auto-close.
-    # pre_settle calls auto-close before the FRONT_HALF_DONE guard? No — guard is first.
-    # So call with summoning and abort settlement by raising NeedsFullSettlement path...
-    # Thinner seam: invoke the two call sites' construction contract via monkeypatched auto_close.
     state.turn_phase = "summoning"
-    # Patch pre_settle/advance body after auto-close by making atomic_and_reload a no-op raise stop.
     class _Stop(Exception):
         pass
+
+    real_atomic = decree_mod.atomic_and_reload
 
     @contextlib.contextmanager
     def _stop_atomic(*_a, **_k):
@@ -1298,8 +1311,23 @@ def test_auto_close_entries_skip_generator_when_llm_config_missing(game, monkeyp
     assert created["n"] == 0
     assert seen_generators and seen_generators[-1] is None
 
-    with pytest.raises(_Stop):
-        advance_without_edict(state, db, content=content, inflight_wait_s=0.0, llm_config=None)
+    # #1274 r1：session.resolve_turn 真缝；无 _beat_generator / llm_config 时 beat_generator=None。
+    def _stop_resolve(*_a, **_k):
+        raise _Stop("stop-after-session-auto-close")
+
+    import ming_sim.session as session_mod
+    monkeypatch.setattr(session_mod, "resolve_directives", _stop_resolve)
+    monkeypatch.setattr(decree_mod, "atomic_and_reload", real_atomic)
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    with pytest.raises(_Stop, match="stop-after-session-auto-close"):
+        sess.advance_without_decree(inflight_wait_s=0.0)
     assert created["n"] == 0
     assert seen_generators[-1] is None
 

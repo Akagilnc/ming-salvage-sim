@@ -1,8 +1,9 @@
 """#542 r4: SETTLEMENT_FLOW scene_registry contract + unused close-scene wrapper deletion.
 
 Seams:
-- docs/SETTLEMENT_FLOW.md must document production scene_registry on the three
-  settlement auto-close owners (advance_without_edict / pre_settle / resolve_directives).
+- docs/SETTLEMENT_FLOW.md must document production scene_registry on the
+  settlement auto-close owners (pre_settle / resolve_directives；session.resolve_turn
+  持有 _scene_registry 转发)。#1274 r1：decree.advance_without_edict 空壳已删。
 - GameSession / beat_orchestration must not keep zero-call production wrappers that
   bypass the start/join parallel path used by close_night.
 """
@@ -14,7 +15,7 @@ import inspect
 from pathlib import Path
 
 from ming_sim import beat_orchestration as bo
-from ming_sim.decree import advance_without_edict, pre_settle, resolve_directives
+from ming_sim.decree import pre_settle, resolve_directives
 from ming_sim.session import GameSession
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,12 +30,19 @@ def test_settlement_flow_documents_scene_registry_contract_on_three_seams():
     """C1: settlement contract names scene_registry + ownership + fail + join-before-finalize."""
     text = _flow_text()
     for name, fn in (
-        ("advance_without_edict", advance_without_edict),
         ("pre_settle", pre_settle),
         ("resolve_directives", resolve_directives),
     ):
         assert "scene_registry" in inspect.signature(fn).parameters, name
         assert f"{name}" in text and "scene_registry" in text
+
+    # session 真缝：resolve_turn / advance_without_decree 持有 _scene_registry
+    assert "resolve_turn" in text or "advance_without_decree" in text
+    assert hasattr(GameSession, "resolve_turn")
+    assert hasattr(GameSession, "advance_without_decree")
+    # 空壳已删
+    import ming_sim.decree as decree_mod
+    assert not hasattr(decree_mod, "advance_without_edict")
 
     # Caller ownership: session-held ChatTurnSceneRegistry; never a second registry.
     assert "scene_registry" in text

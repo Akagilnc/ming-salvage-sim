@@ -1,43 +1,73 @@
-"""#1345/#1382 A2 — 快路 advance_without_edict 落正式月档（save_turn_report）。
+"""#1345/#1382 A2 → #1274 QA J-1 改写。
 
-接缝：
-1. decree.advance_without_edict 快路 atomic 内补 save_turn_report（与推进同事务）
-2. 史册 /api/history/turn exists:true；previous_turn_summary 首支命中原文
-3. record_public_knowledge_event 邸报按既有先例落
-4. 禁 save_turn_extraction / mark_directives_issued；不回填历史被吃月份
+原钉：快路 advance_without_edict 落正式月档（save_turn_report）。
+#1274 owner B-2：快路已废；无旨月走完整结算链，月档由 settle_with_delta 正常链落
+（DRY，禁两条结算路）。本文件改钉正常链月档 + 令牌防双发。
 """
 
 from __future__ import annotations
 
+import contextlib
+from types import SimpleNamespace
+
 import pytest
 
+import ming_sim.decree as decree_mod
+import ming_sim.memories as memories
 from ming_sim.constants import TURN_UNIT
-from ming_sim.decree import advance_without_edict
+from ming_sim.session import GameSession
 
 
-EXPECTED_NO_EDICT_MESSAGE = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
+def _canned(monkeypatch, narrative="本月退朝未下正式圣旨，边事自演。"):
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: (narrative, k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
+
+def _session(db, state, content):
+    session = GameSession.__new__(GameSession)
+    session.db, session.state, session.content = db, state, content
+    session.registry = session.llm_config = session.agno_db = None
+    session.deaths_this_turn, session.debuts_this_turn = [], []
+    session.last_decree = session.last_report = ""
+    session._decree_draft_fingerprint = ()
+    session._scene_registry = None
+    session._beat_generator = None
+    session.auto_save = lambda *a, **k: None
+    return session
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_fast_path_writes_turn_report_and_public_gazette(game):
-    """快路推进后：closed turn 有正式 turn_report + 邸报公共知识事件。"""
+def test_no_edict_full_chain_writes_turn_report_and_public_gazette(game, monkeypatch):
+    """无旨完整结算后：closed turn 有正式 turn_report + 邸报公共知识事件。"""
     db, state, content = game
     closed_turn = int(state.turn)
+    narrative = "本月退朝未下正式圣旨，边事自演。"
+    _canned(monkeypatch, narrative)
 
-    ok = advance_without_edict(state, db, content=content)
-    assert ok is True
+    result = _session(db, state, content).advance_without_decree()
+    assert result is not None and result.awaiting is False
     assert int(state.turn) == closed_turn + 1
 
     report = db.get_turn_report(closed_turn)
-    assert report == EXPECTED_NO_EDICT_MESSAGE
+    assert report is not None
+    assert "边事自演" in report or "退朝未下正式圣旨" in report
 
-    # 史册读端：turn_reports 入月时间线 → exists 材料齐全
     archives = db.list_monthly_archives()
     month = next((row for row in archives if int(row["turn"]) == closed_turn), None)
     assert month is not None
     assert month["has_report"] is True
 
-    # 邸报公共知识（save_turn_report 顺带）
     row = db.conn.execute(
         """
         SELECT title, body, source_id FROM character_knowledge_events
@@ -47,61 +77,54 @@ def test_fast_path_writes_turn_report_and_public_gazette(game):
         (closed_turn, "邸报"),
     ).fetchone()
     assert row is not None
-    assert EXPECTED_NO_EDICT_MESSAGE in str(row["body"] or "")
     assert str(row["source_id"] or "") == f"turn_report:{closed_turn}:public"
 
-    # 禁伪造 extractor / issued 草案
-    assert db.get_turn_extraction(closed_turn) is None
-    assert db.list_directives_by_turn(closed_turn) == []
-
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_fast_path_previous_turn_summary_hits_verbatim(game):
-    """推进后 previous_turn_summary 首支命中「本月退朝未下正式圣旨」原文。"""
+def test_no_edict_previous_turn_summary_hits_narrative(game, monkeypatch):
+    """推进后 previous_turn_summary 命中 simulator 叙事。"""
     db, state, content = game
-    advance_without_edict(state, db, content=content)
+    narrative = "本月退朝未下正式圣旨，诸事仍待来月处置——世界自演。"
+    _canned(monkeypatch, narrative)
+    _session(db, state, content).advance_without_decree()
 
     summary = db.previous_turn_summary(state)
-    assert summary.startswith(EXPECTED_NO_EDICT_MESSAGE) or summary == EXPECTED_NO_EDICT_MESSAGE
-    assert "本月退朝未下正式圣旨" in summary
+    assert "退朝未下正式圣旨" in summary or "世界自演" in summary
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_fast_path_history_turn_api_exists_true(game, monkeypatch):
-    """Web 史册单月读口：exists:true 且 report 为正式档原文。"""
+def test_no_edict_history_turn_api_exists_true(game, monkeypatch):
+    """Web 史册单月读口：exists:true 且 report 为正式档。"""
+    import asyncio
     import web_app
 
     db, state, content = game
     closed_turn = int(state.turn)
-    advance_without_edict(state, db, content=content)
+    narrative = "史册无旨月邸报。"
+    _canned(monkeypatch, narrative)
+    _session(db, state, content).advance_without_decree()
 
     runtime = type("R", (), {"db": db, "state": state})()
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
 
-    # api_history_turn 是 async def
-    import asyncio
     payload = asyncio.run(web_app.api_history_turn(closed_turn))
     assert payload["exists"] is True
-    assert payload["report"] == EXPECTED_NO_EDICT_MESSAGE
+    assert payload["report"]
+    assert "史册无旨月" in payload["report"] or "邸报" in payload["report"]
 
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_double_token_only_one_month_archive(game, monkeypatch):
     """A1×A2 联验：同令牌连发两次 → 第二次 409，史册只多一档月报。"""
-    import contextlib
-    from types import SimpleNamespace
-
     import web_app
     from fastapi import HTTPException
 
     db, state, content = game
     start = int(state.turn)
     before_archives = len(db.list_monthly_archives())
+    _canned(monkeypatch, "令牌联验无旨月邸报。")
 
-    session = SimpleNamespace(
-        registry=None, llm_config=None, _scene_registry=None,
-        resolve_turn=lambda **_k: (_ for _ in ()).throw(AssertionError("no resolve")),
-    )
+    session = _session(db, state, content)
     runtime = SimpleNamespace(
         db=db, state=state, content=content, session=session,
         directive_rows=lambda: [], refresh_turn=lambda: None,
@@ -119,31 +142,14 @@ def test_double_token_only_one_month_archive(game, monkeypatch):
     assert ei.value.status_code == 409
     assert int(state.turn) == start + 1
     assert len(db.list_monthly_archives()) == before_archives + 1
-    assert db.get_turn_report(start) == EXPECTED_NO_EDICT_MESSAGE
+    assert db.get_turn_report(start)
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_fast_path_report_rolls_back_with_advance_atomic(game, monkeypatch):
-    """save_turn_report 与推进同事务：中途崩则 report 不留盘。"""
-    import sqlite3
+def test_advance_without_edict_shell_absent():
+    """#1274 r1：decree.advance_without_edict 空壳已删（prep 归 resolve_turn）。"""
+    import inspect
 
-    db, state, content = game
-    closed_turn = int(state.turn)
+    import ming_sim.decree as decree_mod
 
-    def _boom(*_a, **_k):
-        raise RuntimeError("advance boom after report")
-
-    monkeypatch.setattr(db, "clear_resolve_context", _boom)
-
-    with pytest.raises(RuntimeError, match="advance boom"):
-        advance_without_edict(state, db, content=content)
-
-    other = sqlite3.connect(db.path)
-    try:
-        on_disk = other.execute(
-            "SELECT report FROM turn_reports WHERE turn=?", (closed_turn,),
-        ).fetchone()
-    finally:
-        other.close()
-    assert on_disk is None
-    assert int(state.turn) == closed_turn
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)

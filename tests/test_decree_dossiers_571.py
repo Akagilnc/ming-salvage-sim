@@ -1044,6 +1044,7 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
     game, monkeypatch,
 ):
     import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
 
     db, state, content = game
     monkeypatch.setattr(
@@ -1051,6 +1052,22 @@ def test_real_resolve_entry_without_pending_dossiers_skips_promulgation_llm(
         "llm_promulgation_verdicts",
         lambda *a, **k: pytest.fail("无待判案卷不得调用颁布判决 seam"),
     )
+    # #1274：空旨走完整结算链；只罐装外部 LLM 缝（同 1345/566），原断言不动。
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("本月无待判案卷邸报。", k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
 
     result = decree_mod.resolve_directives(
         state, db, None, None, [], "", content=content,
@@ -1992,7 +2009,7 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     session.db = db
     session.state = state
     called = []
-    session.resolve_turn = lambda: called.append("resolve")
+    session.resolve_turn = lambda **_k: called.append("resolve")
 
     session.advance_without_decree()
 

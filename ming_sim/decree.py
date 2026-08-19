@@ -850,15 +850,19 @@ def project_dossiers_for_simulator(
 
 
 def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
-    """Whether advancing this month requires the normal simulator/extractor rail."""
+    """Whether the month has durable work that must enter resolve_directives.
+
+    Used by resolve_turn's draft-gate bypass (long secret orders / proposed
+    dossiers / monthly progress nudges).  No longer gates a no-edict fast path
+    — empty-decree months always take the full pre_settle+simulator+settle rail
+    (#1274 QA J-1 / owner B-2).
+    """
     executing_work = False
     for row in db.list_decree_dossiers(status="executing"):
         payload = row.get("payload")
         if not isinstance(payload, dict):
             payload = json.loads(str(row.get("payload_json") or "{}"))
-        # Terminal immediate actions (notably short secret orders) are already
-        # materialized and must retain the no-edict fast path.  Other executing
-        # dossiers remain simulator continuation context under the #560 policy.
+        # Non-terminal executing dossiers remain simulator continuation context.
         if dossier_action_policy(row.get("action_type"), payload)["execution_surface"] != "terminal":
             executing_work = True
             break
@@ -868,97 +872,6 @@ def _requires_full_settlement(state: GameState, db: GameDB) -> bool:
         row.get("kind") == "directive"
         for row in db.list_pending_actions(state.turn)
     )
-
-
-class _NeedsFullSettlement(Exception):
-    """Abort the speculative fast transaction and retry on the full rail."""
-
-
-def advance_without_edict(state: GameState, db: GameDB, *, content=None, registry=None,
-                          inflight_wait_s: float | None = None,
-                          llm_config=None, write_gate=None,
-                          scene_registry=None) -> bool:
-    # 退朝未下正式诏书也是月末:先 commit 本回合暂存的结构化写动作(颁诏前未撤回即通过,
-    # ADR 0006),否则暂存成孤儿、随 next_period 永久丢失(CMR P1)。须在 next_period 前。
-    # content/registry 供 office(任免)落库注册新臣;无则任免落不了(标 failed,不静默)。
-    #
-    # ADR 0008 S7（决定 2）：整条推进尾包进单事务——任何一步崩则全回滚（commit_pending_actions
-    # / 财政 / record_log / clear / 推进写序列全有或全无，不许半写）。回滚后内存从 DB 重载
-    # （同 pre_settle 先例），链式 re-raise 不吞（fail-loud，ADR 0005）。pre_settle 自己的
-    # atomic 与本路不嵌套（advance 路上 pre_settle 不在调用栈），各包裹层自治。
-    # ADR 决定 6：不提供「跳过本月结算」。前半段已提交后退朝=财政已落而本月 LLM 结算
-    # 永不落+丢弃已存结算上下文=自愿半落库（ship-pre r1，废除 S4 时代的「安全推进」语义）。
-    if state.turn_phase in FRONT_HALF_DONE_PHASES:
-        if state.turn_phase == TurnPhase.AWAITING_DECISION.value:
-            raise ValueError("月末重大抉择待裁决，请先裁决后完成结算，不能退朝跳过。")
-        raise ValueError("月末结算已开始（前半段已入账），请重试颁诏完成结算，不能退朝跳过。")
-    # #1234/#1235：退朝入口点击受理即独立提交月初快照（任何突变之前，含 auto_close）。
-    db.capture_month_open_snapshot(state)
-    # #498：过回合遇开夜 → 顺势自动收夜（在飞 fail-closed 会挡住本路，夜保持开）。
-    # 放在 atomic 外：收夜自有写与错误包，不与推进事务半嵌。
-    # #503：收夜 beat 生产路径接通编排缝。
-    from ming_sim.audience_night import AudienceNightError, auto_close_open_night
-    from ming_sim.beat_orchestration import create_llm_beat_generator
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    # Forward llm_config/write_gate so close-night can catch up ordinary story
-    # facts and run the gate-free endorsement-only batch. Callers must not hold
-    # an outer non-reentrant runtime write gate while passing nullcontext.
-    # #503/#542：收夜 beat 与开夜/入殿共用真实 scene LLM adapter。
-    effective_llm = llm_config if llm_config is not None else getattr(db, "llm_config", None)
-    # No usable config → skip adapter construction (None would AttributeError on base_url).
-    beat_generator = (
-        create_llm_beat_generator(effective_llm) if effective_llm is not None else None
-    )
-    # #542：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；不在此新建。
-    try:
-        auto_close_open_night(db, state, content=content, registry=registry,
-                              wait_timeout_s=inflight_wait_s,
-                              beat_generator=beat_generator,
-                              llm_config=effective_llm, write_gate=write_gate,
-                              scene_registry=scene_registry)
-    except AudienceNightError:
-        # #1235 真失败另形：0036 收夜 fail-closed 后人话中止 + 出展示态。
-        exit_settlement_display_on_failure(db, state)
-        raise
-    # atomic + 最外层回滚后从 DB 重载刷净内存（state.metrics 直加 / next_period / turn_phase
-    # 留脏）：公共内核见 atomic_and_reload（ADR 0008 决定 3，reload 再炸链上抛 cmr S5 r2）。
-    try:
-        with atomic_and_reload(db, state, content=content, registry=registry):
-            db.commit_pending_actions(state, content=content, registry=registry)
-            # Classification is only valid after every pending kind has materialized.
-            # If the DB truth requires the expensive rail, abort this transaction so
-            # pre_settle owns materialization and every associated side effect.
-            if _requires_full_settlement(state, db):
-                raise _NeedsFullSettlement
-            fiscal_levies = apply_historical_fiscal_rates(state, db, commit=False)
-            if fiscal_levies:
-                tlog(
-                    f"[fiscal-levy] 本回合饷率事件前置落账 {len(fiscal_levies)} 条："
-                    f"{[(t['id'], t.get('terminal_reason') or t['terminal_state']) for t in fiscal_levies]}"
-                )
-            apply_fixed_period_flows(db, state)
-            message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
-            db.record_log(state, message)
-            print("\n" + message)
-            # #1345/#1382 A2：快路正式月档——与推进同事务；禁 extractor/issued 伪造。
-            # knowledge_items 缺省 None：无结算叙事源时以 message 正文入 turn_reports + 邸报。
-            # （knowledge_items=[] 会走源投影空串，空月无 settlement sources 不可用。）
-            db.save_turn_report(state, message, commit=False)
-            # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
-            # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
-            db.clear_resolve_context(state.turn)
-            # #1234：月推进完成，快照按回合绑定在同一 atomic 内过期（禁 commit 后再清）。
-            db.clear_month_open_snapshot(state.turn)
-            state.next_period()
-            # settling 随推进复位，同 settle_with_delta（cmr S4 r1 F1）。
-            state.turn_phase = TurnPhase.SUMMONING.value
-            db.save_state(state)
-    except _NeedsFullSettlement:
-        return False
-    except BaseException as exc:
-        raise_fixed_period_flow_abort_if_needed(db, state, exc)
-        raise
-    return True
 
 
 def resolve_directives(
@@ -999,13 +912,9 @@ def resolve_directives(
         if on_event:
             on_event(kind, data)
 
-    if (not directives and not _requires_full_settlement(state, db)
-            and not db.list_pending_actions(state.turn)):
-        advance_without_edict(
-            state, db, content=content, registry=registry,
-            scene_registry=scene_registry,
-        )
-        return ResolveResult(awaiting=False, report=f"本{TURN_UNIT}未颁正式诏书。")
+    # #1274 QA J-1：无旨（directives=[]）不再分流快路——与有旨月同走
+    # pre_settle + simulator + settle_with_delta 全链（ADR 0004；decrees=[]）。
+    # source 由调用方灌注：退朝无旨 = system_simulation；皇帝下旨 = player_decree。
 
     before_turn = state.turn
 
@@ -1024,7 +933,7 @@ def resolve_directives(
     # ——要么两者都见，要么整段回滚重来。恢复重推演路重进时 pre_settle 幂等守门
     # 早退、占位同键 upsert，语义不变。
     # pre_settle 自己的 atomic 在此嵌套（depth>0）时跳过 reload，由本层（最外层）真回滚后
-    # 重载刷净内存（同 advance_without_edict 先例）；reload 再炸链上抛。见 atomic_and_reload。
+    # 重载刷净内存；reload 再炸链上抛。见 atomic_and_reload。
     try:
         with atomic_and_reload(db, state, content=content, registry=registry):
             auto_triggered = pre_settle(
@@ -1776,8 +1685,8 @@ def atomic_and_reload(
 ) -> "Iterator[_AtomicOutcome]":
     """`with atomic(db)` + 「最外层异常回滚后从 DB 重载内存」的公共内核（ADR 0008 S4）。
 
-    抽自结算管线 ~6 处同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
-    advance_without_edict / resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
+    抽自结算管线同款 try/atomic/except-reload-reraise（pre_settle / settle_with_delta /
+    resolve_directives 前括号 + fallback + HITL 暂停三件 + driver.run_settle）。
 
     语义（逐处保真）：
     - body 包进 `with atomic(db)`，正常退出由 atomic 统一提交（嵌套时由最外层落定）。
@@ -1881,7 +1790,7 @@ def pre_settle(
     #   已定，动作必须先于 simulator 提交；extractor 后炸时前半段保持已落是 ADR 决定 2
     #   明文设计（「pre_settle 的效果在中止/重试时保持已落，这是设计而非缺陷」），非半写。
     # ② 前半段已提交后（本守门内）新 stage 的动作=推进回合的终端写路
-    #   （settle_with_delta / advance_without_edict / fallback）各自在 atomic 内 commit；
+    #   （settle_with_delta / fallback）各自在 atomic 内 commit；
     #   早退路在事务外 commit 会让重推演路上 extractor 再炸时动作已提交而回合未推进。
     if state.turn_phase in FRONT_HALF_DONE_PHASES:
         return []

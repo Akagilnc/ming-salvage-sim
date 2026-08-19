@@ -175,25 +175,22 @@
 
 ## 无诏推进（玩家退朝未下旨）
 
+#1274 QA J-1 / owner B-2：无旨月 = decrees=[] 的**正常月**，禁止 16ms 快跳。
+日历走一个月，朝政也必须发生（simulator 邸报 / 种子局势 / 议题惯性 / 结局判定全链）。
+
 ```
-advance_without_edict(state, db, *, content=None, registry=None, scene_registry=None, ...):
-  前半段已完成（turn_phase ∈ FRONT_HALF_DONE_PHASES）→ 直接 raise：
-    结算欠账不可退朝跳过，只能续跑 / 重新推演（awaiting 态则先亲裁）——ADR 0008 决定 6
-  auto_close_open_night(db, state, ..., scene_registry=)
-    # #498 同上：退朝遇开夜也顺势自动收夜，放在 atomic 外
-    # #542 scene_registry：调用方既有 ChatTurnSceneRegistry（session._scene_registry）；
-    #   不在此新建。close scene = start → endorsement 并行 → 终局前 join（join-before-finalize）；
-    #   失败 abandon/fail_chat_turn、夜保持 OPEN、本路 fail-closed 上抛（不进推进尾）。
-  否则整条推进尾包单事务 atomic：
-    db.commit_pending_actions(...)                # 聊天暂存动作先落库，否则成孤儿
-    apply_fixed_period_flows(db, state)           # 只走固定 tick
-    db.record_log(...)
-    db.clear_resolve_context(state.turn)          # 清 stale 重试真源
-    state.next_period() ; turn_phase = summoning ; db.save_state(state)
-  崩 → 回滚 + reload_state_from_db 刷内存 → 链上抛
+session.advance_without_decree / POST /api/decree/advance_without_edict:
+  有草案/pending → resolve_turn（同颁诏）
+  无草案 → resolve_turn(allow_empty_decree=True, source=system_simulation)
+           → accept_settlement_period + auto_close_open_night(..., scene_registry=)
+           → resolve_directives(directives=[], decree_text="")
+           → pre_settle + simulator + settle_with_delta   # ADR 0004 同核
+  # #1274 r1：decree.advance_without_edict 空壳已删；prep（快照+收夜）归 resolve_turn。
+  # #498 退朝遇开夜顺势自动收夜；#542 scene_registry 调用方所有（session._scene_registry）
 ```
 
-不结算、不推 issue 惯性、不判结局——保留给"这个月没事，朕退朝"的情况。
+hitl_min_decisions：无旨月 simulator 仍可产局势决策 → 批红；真零决策则既有空批/all-decided 链路走通。
+批量跳 N 月 = 另票 #1425，本片不做。
 
 ## 崩溃 / 中止恢复（ADR 0008 PR1，v0.8.0.0）
 
@@ -216,7 +213,7 @@ advance_without_edict(state, db, *, content=None, registry=None, scene_registry=
 - **assert turn==before_turn+1**：phase2 完整跑完必须推进一回合，没推进就是 bug。
 - **HITL 暂停时不要推进**：return awaiting=True 时 state.turn 不动，玩家亲裁后续跑 phase2 才推。
 - **结算只判一次结局**：state.ended=True 后保持不动，继续推月只走 fixed flows。
-- **三条推进尾同款**（settle_with_delta / advance_without_edict / simulator 失败 fallback）：各自 atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」，缺一条就是恢复入口的雷。
+- **推进尾同款**（settle_with_delta / simulator 失败 fallback 仍归 settle 核）：atomic 内同笔做完「清 resolve_context → next_period → 相位复位 summoning → save_state」。#1274：无旨月推进只经 settle_with_delta（decree.advance_without_edict 空壳已删）。
 - **回滚后必 reload**：事务回滚只回 SQLite，内存副作用（metrics 直加 / 脏 settling 相位）必须 `reload_state_from_db` 刷净——脏 settling 被 pre_settle 守门跳过=下月财政永久丢。atomic 体内禁止 reload（读到未提交脏写）；嵌套时只有最外层回滚后才重载。
 - **毒 payload 不入真源**：`persist_resolve_context` 前必过 `validate_delta_shape`；shape 垃圾走 SettlementAbort+错误包，不许静默吞、也不许钉进 ready=1 重试真源。
 - **settling 可见 ⟹ context 行可见**：settling 相位与 resolve_context 行（引擎 ready=0 占位 / driver ready=1）必须同一事务提交，两边（resolve_directives / run_settle）都不许拆成两笔——拆了就是「相位卡 settling、恢复入口无米下锅、玩家手改旨意原文蒸发」。
@@ -233,8 +230,8 @@ advance_without_edict(state, db, *, content=None, registry=None, scene_registry=
 
 | 文件 | 看什么 |
 |---|---|
-| `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；`advance_without_edict`；三者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
-| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（`pre_settle` / `advance_without_edict` / `resolve_directives` 起手，#498）；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
+| `ming_sim/decree.py` | `resolve_directives` + `_settle_after_narrative` 编排；可复用核 `pre_settle` / `settle_with_delta`；二者均转发调用方 `scene_registry`（#542）；`resolve_settling_recovery` / `persist_resolve_context` 恢复机械 |
+| `ming_sim/audience_night.py` | `auto_close_open_night` / `close_night`：颁诏 / 退朝遇开夜时顺势自动收夜（`session.resolve_turn` / `pre_settle` / `resolve_directives` 起手，#498）；`scene_registry` 调用方所有，start→并行→终局前 join，失败 OPEN fail-closed |
 | `ming_sim/beat_orchestration.py` | `ChatTurnSceneRegistry` + `start_close_scene_on_registry` / `join_close_scene_on_registry`：收夜 scene 进既有 registry，不自建第二 executor（#542） |
 | `ming_sim/applier.py` | `atomic` 事务边界（`_SuspendableConnection`：内层 commit 暂停、executescript 拒绝、嵌套深度计数）+ `RejectionCollector` 拒收留痕契约 |
 | `ming_sim/error_pack.py` | `write_error_pack` 五件套诊断包 / `clear_for_resimulation` 重新推演逃生口 |

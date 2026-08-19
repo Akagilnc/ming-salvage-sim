@@ -4716,11 +4716,15 @@ def test_pre_settle_cutover_substrate_bad_state_uses_settlement_abort_error_pack
 def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pack(
     fresh_game, monkeypatch, tmp_path
 ):
+    """#1274：无旨完整结算 pre_settle 遇坏 fiscal 态 → SettlementAbort 错误包。"""
+    import ming_sim.decree as decree_mod
     import ming_sim.error_pack as error_pack_mod
-    from ming_sim.decree import advance_without_edict
+    import ming_sim.memories as memories
     from ming_sim.models import TurnPhase
+    from ming_sim.session import GameSession
 
     db, state = fresh_game
+    content = getattr(db, "content", None)
     monkeypatch.setattr(error_pack_mod, "user_data_dir", lambda: tmp_path)
     row = db.conn.execute("SELECT fiscal FROM regions WHERE id='shaanxi'").fetchone()
     fiscal = json.loads(str(row["fiscal"]))
@@ -4733,8 +4737,29 @@ def test_advance_without_edict_cutover_bad_state_uses_settlement_abort_error_pac
     before_turn = state.turn
     before_phase = state.turn_phase
 
+    # canned LLM；崩应在 pre_settle fiscal，到不了 simulator
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应到 simulator")),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+
     with pytest.raises(SettlementAbort) as exc_info:
-        advance_without_edict(state, db)
+        sess.advance_without_decree()
 
     abort = exc_info.value
     assert abort.stage == "fixed_fiscal"
