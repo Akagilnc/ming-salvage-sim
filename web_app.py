@@ -1113,36 +1113,57 @@ class WebGame:
         ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
-        """地图节点投影。#1401：一军一挂（region 优先，theater 只收无 region 军）；
-        与 region 同 id 的 theater 合入带 region 字段的 theater 节点，禁无名/双 id。"""
+        """地图节点投影。#1401：一军一挂（theater 关键词优先，未命中再 region 首命中）；
+        与 region 同 id 的 theater 合入带 region 字段的 theater 节点，禁无名/双 id。
+        纯 theater 针（东江/宣大/山海关）有军则 emit，恢复地图可选。"""
         region_positions = {
             "beizhili": (55.5, 41.2), "nanzhili": (70, 41), "shandong": (56.8, 47.9),
             "shanxi": (48.8, 45.2), "henan": (58, 46), "shaanxi": (51, 38),
             "zhejiang": (73.7, 57.9), "jiangxi": (67, 55), "huguang": (59, 59),
             "sichuan": (57, 52), "fujian": (73.2, 65.1), "guangdong": (62.5, 73.6),
             "guangxi": (53.9, 69.6), "yunnan": (47, 69), "guizhou": (52, 56),
-            # #1401：辽东/沈阳贴脸——辽东略西南、沈阳/辽阳略东北拉开
-            "liaodong": (58.5, 39.2), "dongjiang_area": (68.9, 43.7),
-            "shenyang_liaoyang": (64.5, 35.0), "jianzhou": (64.6, 31.0),
+            # liaodong 与 theater 同 id 时走 theater_positions，此键仅兜底未合并路径
+            "liaodong": (61.0, 37.6), "dongjiang_area": (68.9, 43.7),
+            "shenyang_liaoyang": (61.3, 39.6), "jianzhou": (64.6, 31.0),
             "korea": (67.0, 44.8), "mongol_chahar": (47.0, 31.0), "nurgan": (58.2, 21.2),
             "outer_mongolia": (43.0, 24.0), "western_regions": (25.0, 40.0),
             "tibet": (31.0, 57.0), "amur_frontier": (70.0, 24.0),
             "japan": (83.0, 49.0), "southwest_frontier": (45.0, 75.0),
             "taiwan": (78, 67),
         }
+        # 屏幕真源：liaodong 合并节点读此表；与沈阳 path/label 拉开（非改无读点的 region_positions）
         theater_positions = {
             "liaodong": (57.76, 42.21), "dongjiang": (63.95, 42.39),
             "xuan_da": (50.49, 40.08), "shanhaiguan": (55.52, 42.84),
         }
         armies = self.db.army_payload(danger_order=True)
         regions = self.db.region_payload()
-        # 一军一挂：先按 region 认领（首个命中即止），theater 只收未被认领的军
+        # 一军一挂：theater 关键词优先（命中不进 region claimed）；未命中再 region 首命中
         claimed_army_ids: set[str] = set()
+        theater_armies: Dict[str, List[Dict[str, Any]]] = {
+            tid: [] for tid in theater_positions
+        }
+        for army in armies:
+            aid = str(army["id"])
+            chosen: str | None = None
+            # 军 id 与 theater id 同名时优先挂本 theater（东江/宣大/山海关）
+            if aid in theater_positions and self._army_belongs_to_theater(army, aid):
+                chosen = aid
+            else:
+                for tid in theater_positions:
+                    if self._army_belongs_to_theater(army, tid):
+                        chosen = tid
+                        break
+            if chosen is not None:
+                theater_armies[chosen].append(army)
+                claimed_army_ids.add(aid)
         region_armies: Dict[str, List[Dict[str, Any]]] = {
             str(region["id"]): [] for region in regions
         }
         for army in armies:
             aid = str(army["id"])
+            if aid in claimed_army_ids:
+                continue
             for region in regions:
                 if self._army_belongs_to_region(army, region):
                     rid = str(region["id"])
@@ -1153,11 +1174,11 @@ class WebGame:
         theater_ids_emitted: set[str] = set()
         for region in regions:
             rid = str(region["id"])
-            stationed = region_armies.get(rid, [])
             buildings = self.db.building_payload(rid)
             risk = int(region["unrest"]) + int(region["military_pressure"]) + (100 - int(region["public_support"]))
             if rid in theater_positions:
-                # 与 theater 同 id：合并为带 region 的 theater 节点（禁双 id / 无名 pin）
+                # 与 theater 同 id：合并为带 region 的 theater 节点；收 theater 优先军 + 残余 region 军
+                stationed = list(theater_armies.get(rid, [])) + list(region_armies.get(rid, []))
                 x, y = theater_positions[rid]
                 nodes.append({
                     "id": rid,
@@ -1172,6 +1193,7 @@ class WebGame:
                 })
                 theater_ids_emitted.add(rid)
             else:
+                stationed = region_armies.get(rid, [])
                 x, y = region_positions.get(rid, (50, 50))
                 node_kind = "region" if str(region.get("controlled_by") or "ming") == "ming" else "external"
                 nodes.append({
@@ -1187,11 +1209,7 @@ class WebGame:
         for node_id, (x, y) in theater_positions.items():
             if node_id in theater_ids_emitted:
                 continue
-            stationed = [
-                a for a in armies
-                if str(a["id"]) not in claimed_army_ids
-                and self._army_belongs_to_theater(a, node_id)
-            ]
+            stationed = list(theater_armies.get(node_id, []))
             if stationed:
                 nodes.append({
                     "id": node_id,
@@ -1215,14 +1233,27 @@ class WebGame:
         )
 
     def _army_belongs_to_theater(self, army: Dict[str, Any], theater_id: str) -> bool:
+        """theater 归属。禁裸「辽东」扫全字段——否则 辽东侧翼/门户/外线 误挂 liaodong，
+        挤掉东江等专用针且夺走建州/沈阳外军。"""
+        if str(army["id"]) == theater_id:
+            return True
         text = f"{army['id']} {army['name']} {army['station']} {army['theater']}"
         mapping = {
-            "liaodong": ("辽东", "宁锦", "关宁"),
+            # 不用裸「辽东」：theater/station 精确口径见下
+            "liaodong": ("宁锦", "关宁"),
             "dongjiang": ("东江", "皮岛"),
             "xuan_da": ("宣大", "宣府", "大同"),
             "shanhaiguan": ("山海关",),
         }
-        return any(word in text for word in mapping.get(theater_id, ()))
+        if any(word in text for word in mapping.get(theater_id, ())):
+            return True
+        if theater_id == "liaodong":
+            station = str(army.get("station") or "")
+            theater = str(army.get("theater") or "")
+            # 关宁等：theater 恰为「辽东」或 station 以「辽东」起首（不含侧翼/门户/外线）
+            if theater == "辽东" or station.startswith("辽东"):
+                return True
+        return False
 
     def _theater_label(self, theater_id: str) -> str:
         return {
