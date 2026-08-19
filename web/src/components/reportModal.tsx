@@ -4,19 +4,23 @@ import { stripOrganicMarkdown } from "../format";
 export function ReportModal({
   report,
   onClose,
+  periodLabel,
 }: {
   report: string;
   onClose: () => void;
+  /** #1356：后端 previous_reign_period_label（报文自身月）投影；禁前端第二份年号表 */
+  periodLabel?: string;
 }) {
   const activeText = stripOrganicMarkdown(report);
+  const masthead = periodLabel || "邸报";
   return (
-    <FullscreenModal title="邸报" subtitle="本月故事" bgClass="modal-bg-gazette" onClose={onClose} hideTitle>
+    <FullscreenModal title="邸报" subtitle={masthead} bgClass="modal-bg-gazette" onClose={onClose} hideTitle>
       {/* #1398：dismiss 移出滚容器，视口常显，长文滚底不再把「朕知道了」埋掉。 */}
       <div className="gazette-shell">
         <article className="gazette-document modal-scroll">
           <div className="gazette-masthead">
             <b>邸报</b>
-            <span>本月故事 · 通政使司发抄</span>
+            <span>{masthead} · 通政使司发抄</span>
           </div>
           <pre className="memorial-text">{activeText}</pre>
         </article>
@@ -30,4 +34,3 @@ export function ReportModal({
     </FullscreenModal>
   );
 }
-

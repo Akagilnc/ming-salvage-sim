@@ -196,9 +196,18 @@ def test_consort_excluded_from_court(read_game):
 
 
 def _stub_game(monkeypatch, db, content):
-    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。"""
+    """把 web_app.web_game 换成轻量 stub（复用真 db/content），供 _require_active_minister 端点守门测试。
+
+    #1402：端点改调 session.can_summon 取文案——stub 须挂真 GameSession.can_summon
+    （db + temporary_characters），不得再空壳 SimpleNamespace。
+    """
+    from ming_sim.session import GameSession
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.temporary_characters = {}
     stub = SimpleNamespace(
-        session=SimpleNamespace(temporary_characters={}),
+        session=sess,
         content=content,
         db=db,
         character_power_id=lambda c: web_app._character_power_id(c, db),
@@ -399,16 +408,19 @@ def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
     """密令端点 api_create_secret_order 也须拒宗藩（同 /chat 的 API 直连绕过形态，cmr R5）。"""
     import asyncio
     import pytest
-    from types import SimpleNamespace
+    from types import MethodType, SimpleNamespace
     from fastapi import HTTPException
+    from ming_sim.session import GameSession
     from web_app import SecretOrderRequest
     db, state, content = read_game
     name = next((n for n, c in content.characters.items() if c.office_type == "宗藩"), None)
     if name is None:
         pytest.skip("基底盘面无宗藩人物")
+    sess = SimpleNamespace(content=content, temporary_characters=set(), db=db)
+    sess.can_summon = MethodType(GameSession.can_summon, sess)
     stub = SimpleNamespace(
         content=content,
-        session=SimpleNamespace(content=content, temporary_characters=set()),
+        session=sess,
         character_power_id=lambda c: web_app._character_power_id(c, db),
     )
     monkeypatch.setattr(web_app, "web_game", stub)

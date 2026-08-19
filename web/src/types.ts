@@ -264,9 +264,19 @@ export type PendingDecision = {
 
 export type GameState = {
   /** settlement_display：服务端下发的核账展示态（#1234；快照在⇔true）。客户端哑渲染。 */
-  turn: { year: number; period: number; turn: number; phase?: string; settlement_display?: boolean };
+  turn: {
+    year: number;
+    period: number;
+    turn: number;
+    phase?: string;
+    settlement_display?: boolean;
+    /** #1356：后端当前回合年号投影；payload 保留。邸报报头禁用（用 previous_reign_period_label） */
+    reign_period_label?: string;
+  };
   metrics: Metrics;
   previous_summary: string;
+  /** #1356：邸报报文自身年月标签（与 previous_summary 同源）；报头直显，禁用 turn.reign_period_label 混充 */
+  previous_reign_period_label?: string;
   issues: Issue[];
   legacies: Legacy[];
   closed_this_turn: ClosedIssue[];

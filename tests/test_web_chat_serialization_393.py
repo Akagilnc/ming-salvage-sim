@@ -104,6 +104,11 @@ class _FakeSession:
     def abandon_chat_turn_scene(self, *_a, **_k):
         return None
 
+    def can_summon(self, character):
+        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        from ming_sim.session import GameSession
+        return GameSession.can_summon(self, character)
+
 
 class _RecordingDB:
     def __init__(self, settlement_holding: threading.Event):
@@ -156,6 +161,14 @@ class _RecordingDB:
     def set_message_highlights(self, message_id: int, phrases):
         # #544 生产接口；chat_stream 尾随高亮会调此口（#567 r3 替身补齐）
         return None
+
+    def get_character_status(self, *_a, **_k):
+        # #1402 can_summon 真源依赖：轻壳默认 active
+        return ("active", "")
+
+    def resolve_power_id(self, character):
+        # #1402 can_summon 真源依赖：轻壳无 characters 表，回落同真源默认 ming
+        return getattr(character, "power_id", "ming") or "ming"
 
 
 def _runtime_for_stream_race():

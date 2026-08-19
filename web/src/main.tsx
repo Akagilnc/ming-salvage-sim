@@ -723,6 +723,7 @@ export function App() {
       {gazetteOpen && (gazetteReport || state.previous_summary || report) ? (
         <ReportModal
           report={gazetteReport || state.previous_summary || report}
+          periodLabel={state.previous_reign_period_label || undefined}
           onClose={() => setActiveModal("none")}
         />
       ) : null}

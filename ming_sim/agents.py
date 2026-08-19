@@ -22,7 +22,7 @@ from ming_sim.cli_backend import describe_effective_model
 from ming_sim.llm_config import for_role as _llm_for_role, is_minimax_base_url
 from ming_sim.llm_contract import abort_llm_contract, fail_if_llm_error
 from ming_sim.llm_model import create_chat_model, extract_agent_text
-from ming_sim.models import GameState, LLMConfig
+from ming_sim.models import GameState, LLMConfig, reign_period_label
 from ming_sim.token_stats import record_stream_metrics, tlog
 
 _content: Optional[GameContent] = None
@@ -491,12 +491,24 @@ def build_simulator_context(simulator_payload: Optional[Dict[str, object]]) -> s
     """
     payload = simulator_payload or {}
     turn_header = ""
+    # build_simulator_payload 恒带 turn；缺 label 时只走 reign_period_label()，禁西历字面抬头。
     if isinstance(payload.get("turn"), dict):
         t = payload["turn"]
-        turn_header = (
-            f"【本回合年月】{t.get('year')} 年 {t.get('period')} 月（第 {t.get('turn')} 回合）。"
-            f"涉及年月时以此为准。\n"
-        )
+        label = t.get("reign_period_label")
+        if not label:
+            y, p = t.get("year"), t.get("period")
+            if y is not None and p is not None:
+                try:
+                    label = reign_period_label(int(y), int(p))
+                except (TypeError, ValueError):
+                    label = ""
+            else:
+                label = ""
+        if label:
+            turn_header = (
+                f"【本回合年月】{label}（第 {t.get('turn')} 回合）。"
+                f"涉及年月时以此为准。\n"
+            )
 
     # 盘面表（{cols,rows}）转 TSV，按「稳→变」排序置前；缺失/非表的跳过。
     table_order = ("buildings", "court_roster", "armies", "regions")
