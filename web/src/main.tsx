@@ -472,14 +472,43 @@ export function App() {
     buildingDrawerOpen ? "building" :
     economyDrawerOpen ? "economy" :
     appointmentDrawerOpen ? "appointment" : "";
+  // #1305：nav 互斥——开一关一（同键再点则收起）。
   const navHandlers = {
-    court: () => setDrawerOpen((v) => !v),
-    harem: () => setHaremDrawerOpen((v) => !v),
-    army: () => setArmyDrawerOpen((v) => !v),
-    region: () => setRegionDrawerOpen((v) => !v),
-    building: () => setBuildingDrawerOpen((v) => !v),
-    economy: () => setEconomyDrawerOpen((v) => !v),
-    appointment: () => setAppointmentDrawerOpen((v) => !v),
+    court: () => {
+      const opening = !drawerOpen;
+      closeAllDrawers();
+      if (opening) setDrawerOpen(true);
+    },
+    harem: () => {
+      const opening = !haremDrawerOpen;
+      closeAllDrawers();
+      if (opening) setHaremDrawerOpen(true);
+    },
+    army: () => {
+      const opening = !armyDrawerOpen;
+      closeAllDrawers();
+      if (opening) setArmyDrawerOpen(true);
+    },
+    region: () => {
+      const opening = !regionDrawerOpen;
+      closeAllDrawers();
+      if (opening) setRegionDrawerOpen(true);
+    },
+    building: () => {
+      const opening = !buildingDrawerOpen;
+      closeAllDrawers();
+      if (opening) setBuildingDrawerOpen(true);
+    },
+    economy: () => {
+      const opening = !economyDrawerOpen;
+      closeAllDrawers();
+      if (opening) setEconomyDrawerOpen(true);
+    },
+    appointment: () => {
+      const opening = !appointmentDrawerOpen;
+      closeAllDrawers();
+      if (opening) setAppointmentDrawerOpen(true);
+    },
   };
   const sz = hudStageSize;
   const ready = sz.w > 0 && sz.h > 0;
@@ -675,6 +704,7 @@ export function App() {
             onSaveDirective={saveDirective}
             onDeleteDirective={deleteDirective}
             onAdvanceWithoutEdict={advanceWithoutEdict}
+            onIssueDecree={issueDecree}
             onOpenFailureRecovery={openFailureRecovery}
           />
         </FullscreenModal>
