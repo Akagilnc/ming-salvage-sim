@@ -5,18 +5,19 @@
 本档房同样受 shared 的 canonical 来源总契约约束；不得输出无 `来源引用` 的 durable 条目。财政三段虽非本档房所有权，也不得代写或绕过其逐项来源要求。
 
 - **第 1 步（贴标签）**：`court_roster.status` 已是下狱/罢黜/流放/致仕/已故者，本{{TURN_UNIT}}邸报再提即背景复述，不重复写 `人物变更`；只有状态升级（dismissed→imprisoned→dead 等）才写。
-- **第 2 步（列候选）**：只列 `人物变更`/`new_issues`（仅经常性密令拨款承诺）/`密令副作用`/`密令结案`/`dossier_progress_reports`/`崇祯结局`，其余字段不碰。罢官清党的派系影响交内政档房。
+- **第 2 步（列候选）**：只列 `人物变更`/`new_issues`（仅经常性密令拨款承诺）/`密令副作用`/`密令结案`/`dossier_progress_reports`/`secret_dossier_participants`/`崇祯结局`，其余字段不碰。罢官清党的派系影响交内政档房。
 - **第 3 步（核契约）**：所有朝臣任免、去职、易主、后宫册封、行止去向、人物忠诚软判都走 `人物变更`；`动作`/`status`/`new_power`/`office`/`location`/`transit_to` 取受控枚举与合法 id 集；密令编号只取 `secret_orders` 两组（`在办`/`待核议`）中真实密令条目的 `id`；`entry_kind:"due_commitment"` 是到期待裁承诺，不是密令，不能写 `密令结案`；`崇祯结局` 非明写退位/身死一律 `null`。
 - **第 4 步（自检）**：任命占了独缺实职（首辅/尚书/总督等）而旧任者没同步去职/改任？→ 补，避免双占一缺。同一人物的**有序组合**（先 `处置`(放归/赦还/出宫) 再 `任命`/`调任`）按邸报时序保留，是合法两步；只有自相矛盾的重复（同回合既任命又罢黜同一职）才删错的那条。
 
 ## 字段所有权
 
-本模块只允许输出这 6 个顶层字段：
+本模块只允许输出这 7 个顶层字段：
 - `人物变更`
 - `new_issues`
 - `密令副作用`
 - `密令结案`
 - `dossier_progress_reports`
+- `secret_dossier_participants`
 - `崇祯结局`
 
 严禁输出钱粮、民心皇威、地方、军队、势力变化、四方动向、派系阶级字段。罢官清党的派系影响由内政财政档房处理，本模块只记人事事实；唯一局势例外是经常性密令拨款承诺，按下文写 `new_issues`。
@@ -102,6 +103,15 @@
 
 `monthly_dossier_reports` 是本档房独享的合资格长差案卷（仅精确 tag `护行`/`稽核` 且当前期限至少两月）及 canonical `progress` 历史。每个仍在办案卷每月必须恰好输出一项 `dossier_progress_reports`：`dossier_id` 必须照录输入 id，`progress_band` 与 `memorial_text` 必须依据密令案卷、当月推演事实及既往历史写本月密奏。不得从标题猜测、不得输出未知案卷、不得漏项或重复、不得用“仍在承办”等通用占位文冒充事实；无法形成事实密奏即让本次抽取失败，不得伪造空月成功。此内容未披露，不得写入其他字段。
 
+### 密令案卷参与人追加
+
+`secret_dossier_rosters` 是本档房独享的本批密令案卷读缝：每项含 `dossier_id` 与当前 `participant_roster`。当月推演中密令差事出现新的承办/协办/知情人物时，输出 `secret_dossier_participants` 追加（append-only）：
+- 每项必须带 `dossier_id`、`character_id`、`tier`、`delegator_id`；`tier` 只收 `主办`/`协办`/`知情`，可带 `role`。
+- `dossier_id` 必须照录 `secret_dossier_rosters` 中的 id（与密令案卷同一键空间；不要另起 `order_id` 键）。
+- 委派人须为同案已有主办/协办；人物名为名册规范名。
+- **禁止**把密令案卷参与人写入公共 `dossier_participants`（那是 issues 档房的公开案卷槽，密令 id 会被拒）。
+- 非本批密令案卷、公共旨意案卷 id 一律不写本字段。
+
 ### 经常性密令拨款承诺
 
 - 密令内容或邸报明确写“内库/国库每月 X”“按月拨给 X”“连续 N 月每月拨 X”“直到某事办成前每月拨 X”这类经常性拨款时，必须写 `new_issues`，让拨款走承诺 issue 的 `ongoing_effects.economy`，不写 `fiscal_creates`。
@@ -122,7 +132,7 @@
 
 ## 输出 JSON
 
-六个字段必须出现，列表字段无内容填 `[]`，`崇祯结局` 无内容填 `null`。以下完整示例的 input 已列出并颁布案卷 `dossier:17`（册封田氏、安抚毛文龙）；由该旨意产生的人物效果必须回指此案卷：
+七个字段必须出现，列表字段无内容填 `[]`，`崇祯结局` 无内容填 `null`。以下完整示例的 input 已列出并颁布案卷 `dossier:17`（册封田氏、安抚毛文龙）；由该旨意产生的人物效果必须回指此案卷；密令案卷参与人只写 `secret_dossier_participants`：
 
 ```json
 {
@@ -140,6 +150,7 @@
   "密令副作用": [{"密令编号": 5, "推演备注": "密事已为外廷知晓", "泄漏结论": true}],
   "密令结案": [{"密令编号": 2, "状态": "done", "结果": "实据齐全，可据此拿人定罪"}],
   "dossier_progress_reports": [{"dossier_id": 12, "progress_band": "在途核验", "memorial_text": "据上月关防记录，本月已核第二批饷车至山海关"}],
+  "secret_dossier_participants": [{"dossier_id": 12, "character_id": "黄道周", "tier": "协办", "role": "随员核账", "delegator_id": "孙承宗"}],
   "崇祯结局": null
 }
 ```

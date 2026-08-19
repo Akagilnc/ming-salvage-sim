@@ -179,7 +179,6 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
     turn: { year: 1627, period: 10, turn: 1, phase: "summoning" },
     metrics: {},
     previous_summary: "",
-    treasury: "",
     issues: [],
     legacies: [],
     closed_this_turn: [],

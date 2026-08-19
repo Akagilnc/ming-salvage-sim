@@ -7,7 +7,7 @@ import copy
 import re
 import sqlite3
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Mapping, Optional
 
 from agno.agent import Agent
 
@@ -26,7 +26,10 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict
-from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+from ming_sim.settlement_payload import (
+    augment_secret_orders_with_due_commitments,
+    iter_secret_order_ids,
+)
 from ming_sim.token_stats import tlog
 
 
@@ -62,6 +65,7 @@ TOP_LEVEL_ALIASES = {
     "结案局势": "close_issues",
     "案卷执行": "dossier_executions",
     "案卷参与人": "dossier_participants",
+    "密令案卷参与人": "secret_dossier_participants",
     "拨帑对账": "dossier_reconciliations",
     "政敌检举": "faction_denunciations",
     "检举条目": "faction_denunciations",
@@ -98,6 +102,7 @@ ITEM_FIELD_ALIASES = {
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
+    # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
     "旨外标记": "beyond_intent", "旨外恶果": "beyond_intent",
     "id": "id", "编号": "id",
@@ -712,6 +717,7 @@ EMPTY_EXTRACTION: Dict[str, object] = {
     "secret_order_closes": [],
     "dossier_executions": [],
     "dossier_participants": [],
+    "secret_dossier_participants": [],
     "dossier_reconciliations": [],
     "faction_denunciations": [],
     "authority_changes": [],
@@ -729,7 +735,7 @@ MODULE_FIELDS: Dict[str, set[str]] = {
     },
     "personnel_secret": {
         "人物变更", "new_issues", "secret_order_updates", "secret_order_closes",
-        "dossier_progress_reports", "emperor_fate",
+        "dossier_progress_reports", "secret_dossier_participants", "emperor_fate",
     },
 }
 
@@ -908,6 +914,28 @@ _MODULE_DROP_FIELDS = (
 )
 
 
+
+def secret_dossier_rosters_from_orders(
+    db: GameDB, secret_orders: object,
+) -> List[Dict[str, object]]:
+    """#1252 private read seam: dossier_id + participant_roster for batch secrets.
+
+    Same caliber as monthly_dossier_reports — personnel_secret only. Keyed by
+    dossier_id (not order_id) so the write field can reuse the public roster
+    identity space without a parallel order_id keyspace.
+    """
+    out: List[Dict[str, object]] = []
+    for order_id in iter_secret_order_ids(secret_orders):
+        dossier = db.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            continue
+        out.append({
+            "dossier_id": int(dossier["id"]),
+            "participant_roster": list(dossier.get("participant_roster") or []),
+        })
+    return out
+
+
 def build_extractor_shared_context(
     db: GameDB,
     state: GameState,
@@ -992,6 +1020,10 @@ def build_extractor_shared_context(
         # #566/#883: monthly briefs travel only on the authorized secret rail.
         # This is also the canonical history read seam used after restore.
         slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
+        # #1252/#883: secret-dossier roster read seam — batch only, never public.
+        slim["secret_dossier_rosters"] = secret_dossier_rosters_from_orders(
+            db, compat["secret_orders"],
+        )
     if module == "issues":
         # #567：在途拨帑对账读缝——赈济/拨付 issue 软判打折吃此账，非纯文字。
         slim["grant_reconciliations"] = db.list_open_grant_reconciliations()
@@ -1020,6 +1052,31 @@ def _payload_for_module(
         "module_allowed_fields": sorted(MODULE_FIELDS[module]),
         "instruction": "盘面（regions/armies/buildings/current_state/active_issues/candidate_events 等）看 system 的 simulator_payload；extractor_context 只补 id 校验集与人事/派系元数据。只输出当前模块允许的中文顶层字段 JSON object。",
     }
+
+
+def read_beyond_intent_raw(item: object) -> object:
+    """#1260 旨外别名读取单源：真源=ITEM_FIELD_ALIASES 中映射到 beyond_intent 的键。
+
+    返回第一个在场别名的原值；皆无 → None。不判真假（coerce 归写端/读端）。
+    flows 嵌套通道与 due_review 效果行共用，禁再手抄 旨外 子集。
+    """
+    if not isinstance(item, Mapping):
+        return None
+    # 稳定顺序：canonical 键优先，其余按别名表声明序。
+    aliases = [
+        key for key, canon in ITEM_FIELD_ALIASES.items()
+        if canon == "beyond_intent"
+    ]
+    ordered: List[str] = []
+    if "beyond_intent" in aliases:
+        ordered.append("beyond_intent")
+    for key in aliases:
+        if key not in ordered:
+            ordered.append(key)
+    for key in ordered:
+        if key in item:
+            return item[key]
+    return None
 
 
 def _canonical_item_fields(value: object) -> object:
@@ -1250,6 +1307,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1307,6 +1367,9 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1333,6 +1396,9 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 

@@ -102,6 +102,7 @@ from ming_sim.settlement_payload import (  # noqa: E402
     augment_secret_orders_with_due_commitments,
     bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
+    iter_secret_order_ids,
     parse_decision_blocks,
 )
 
@@ -561,6 +562,22 @@ def _dossier_ids_from_simulator_payload(simulator_payload: object) -> set[int]:
         for item in raw
         if isinstance(item, dict) and str(item.get("id") or "").isdigit()
     }
+
+
+def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> set[int]:
+    """#1252: freeze secret-dossier roster-write authority from batch secret_orders.
+
+    Resolve each real secret-order id via get_dossier_for_secret_order. Missing
+    authority is an empty closed set — callers must never rebuild from live DB
+    beyond the frozen order-id batch.
+    """
+    out: set[int] = set()
+    for order_id in iter_secret_order_ids(secret_orders):
+        dossier = db.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            continue
+        out.add(int(dossier["id"]))
+    return out
 
 
 def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Optional[set[str]]:
@@ -1377,6 +1394,7 @@ def resolve_settling_recovery(
             state, db, agno_db, llm_config, extracted,
             before_turn=before_turn, decree_text=decree_text, narrative=narrative,
             simulator_payload=ctx.get("simulator_payload"),
+            secret_orders=_recovered_grouped(ctx.get("secret_orders")),
             dossier_rescript_actions=_chosen_rescript_actions(
                 db.list_pending_decisions(state.turn)
             ),
@@ -1408,6 +1426,7 @@ def _replay_settle(
     decree_text: str,
     narrative: str,
     simulator_payload: object = None,
+    secret_orders: object = None,
     dossier_rescript_actions: Optional[List[Dict[str, object]]] = None,
     content=None,
     registry=None,
@@ -1434,6 +1453,7 @@ def _replay_settle(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
+            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders),
         ),
         on_stage=lambda label: _emit("stage", label),
         source=source,  # 恢复重放沿用原始来源（#144）：玩家来源拒收恢复后仍给提示，不被记成 system
@@ -1673,6 +1693,7 @@ def _settle_after_narrative(
             d, s, ex, content=ct, registry=rg, llm_config=llm_config,
             candidate_event_ids_at_input=_candidate_event_ids_from_simulator_payload(simulator_payload),
             dossier_ids_at_input=_dossier_ids_from_simulator_payload(simulator_payload),
+            secret_dossier_ids_at_input=secret_dossier_ids_from_secret_orders(d, secret_orders_for_sim),
         ),
         on_stage=lambda label: _emit("stage", label),
         # 来源贯穿（#146 A，整批按触发源）：皇帝下旨触发=player_decree（拒收提示皇帝）、

@@ -2171,6 +2171,15 @@ class GameDB:
         self.ensure_column(
             "economy_ledger", "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
         )
+        # #1260：fiscal 三溯源表同款 beyond_intent（与 economy_ledger 同一迁移落点）。
+        for _fiscal_prov in (
+            "fiscal_config_creations",
+            "fiscal_config_changes",
+            "fiscal_config_tombstones",
+        ):
+            self.ensure_column(
+                _fiscal_prov, "beyond_intent", "INTEGER NOT NULL DEFAULT 0"
+            )
         # Rolling upgrades may already have the column while interrupted/older
         # migrations left individual rows blank.  Re-scan idempotently; only a
         # real dossier is authoritative and an existing origin is never replaced.
@@ -2582,6 +2591,7 @@ class GameDB:
         note: str = "",
         origin_ref: str = "",
         turn: int = 0,
+        beyond_intent: object = 0,
         commit: bool = True,
     ) -> Optional[str]:
         """LLM 推演中凭空新立一个月固定收支项（budget_role=fixed）。
@@ -2622,12 +2632,15 @@ class GameDB:
             "VALUES (?, 100, 'rate', 'fixed', ?, ?, ?, ?, ?, ?)",
             (rate_key, account, direction, display, sort_order, f"{display}实收率%", origin_ref),
         )
+        # #1260：base+rate 两行 creations 同旗（any() 消费者安全；计数型会双计——勿据此改计数语义）。
+        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.executemany(
             "INSERT INTO fiscal_config_creations "
-            "(turn, key, value, kind, origin_ref, reason) VALUES (?, ?, ?, ?, ?, ?)",
+            "(turn, key, value, kind, origin_ref, reason, beyond_intent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240]),
-                (int(turn), rate_key, 100, "rate", origin_ref, note[:240]),
+                (int(turn), base_key, max(0, init_value), "base", origin_ref, note[:240], beyond_flag),
+                (int(turn), rate_key, 100, "rate", origin_ref, note[:240], beyond_flag),
             ],
         )
         if commit:
@@ -2825,7 +2838,7 @@ class GameDB:
 
     def remove_fiscal_item(
         self, key: str, commit: bool = True, *, origin_ref: str = "",
-        reason: str = "", turn: int = 0,
+        reason: str = "", turn: int = 0, beyond_intent: object = 0,
     ) -> Optional[str]:
         """彻底裁撤一个月固定收支项（罢税/裁俸）：删 base+rate 两行。
 
@@ -2857,12 +2870,14 @@ class GameDB:
         # The live catalogue cannot retain provenance after DELETE.  Preserve the
         # removed rows in a narrow append-only audit so origin -> removal is a
         # single indexed lookup rather than an inference from unrelated logs.
+        # #1260：INSERT...SELECT 显式列清单 + beyond_intent 常量（禁 SELECT * 位置漂移）。
+        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.execute(
             """INSERT INTO fiscal_config_tombstones
-               (removed_turn, key, value, kind, origin_ref, reason)
-               SELECT ?, key, value, kind, ?, ? FROM fiscal_config
+               (removed_turn, key, value, kind, origin_ref, reason, beyond_intent)
+               SELECT ?, key, value, kind, ?, ?, ? FROM fiscal_config
                WHERE key IN (?, ?)""",
-            (int(turn), origin_ref, reason[:240], base_key, rate_key),
+            (int(turn), origin_ref, reason[:240], beyond_flag, base_key, rate_key),
         )
         self.conn.execute(
             "DELETE FROM fiscal_config WHERE key IN (?, ?)", (base_key, rate_key)
@@ -11190,11 +11205,10 @@ class GameDB:
         execution_outcome = (
             str(target.get("execution_outcome") or "").strip() if target else ""
         )
-        moves = self.list_economy_moves_for_dossier(int(dossier_id))
-        actual_effect_count = len(moves) + len(
-            self.list_fiscal_effects_for_dossier(int(dossier_id))
-        )
-        beyond = any(bool(row.get("beyond_intent")) for row in moves)
+        # #1260：durable_effects / beyond 单源助手（economy+fiscal），禁再只扫 economy。
+        durable = self.list_dossier_durable_effects(int(dossier_id))
+        actual_effect_count = len(durable)
+        beyond = self.dossier_has_beyond_intent(int(dossier_id))
         fork = is_reported_actual_fork(
             reported_bands=reported_bands,
             beyond_intent=beyond,
@@ -12384,12 +12398,8 @@ class GameDB:
             if source_kind is None:
                 continue
             if source_kind == SOURCE_DEFORMATION_EXPOSURE:
-                moves = self.list_economy_moves_for_dossier(dossier_id)
-                has_beyond = any(
-                    bool(self.coerce_beyond_intent_flag(m.get("beyond_intent")))
-                    for m in moves
-                )
-                if not has_beyond:
+                # #1260：分叉确认扩为 economy+fiscal 单源（纯 fiscal 旨外亦可立案）。
+                if not self.dossier_has_beyond_intent(dossier_id):
                     continue
             for commitment in self.list_commitments_for_dossier(dossier_id):
                 if not str(commitment.get("commitment_kind") or "").strip():
@@ -12526,6 +12536,7 @@ class GameDB:
             "项目经费": "项目月拨",
             "协饷": "协饷月拨",
         }.get(str(payload.get("grant_action") or "").strip(), "奉旨月拨")
+        # #1260：引擎确定性拨帑建项按定义旨内，显式留 beyond_intent=0（禁捏造旗值）。
         created = self.create_fiscal_item(
             f"奉旨月拨{int(dossier_id)}",
             account,
@@ -12535,6 +12546,7 @@ class GameDB:
             note=str(payload.get("reason") or text or display)[:240],
             origin_ref=f"dossier:{int(dossier_id)}",
             turn=int(state.turn),
+            beyond_intent=0,
             commit=False,
         )
         if not created:
@@ -17760,19 +17772,22 @@ class GameDB:
 
     def record_fiscal_config_change(
         self, *, turn: int, key: str, old_value: int, new_value: int,
-        origin_ref: str, reason: str = "",
+        origin_ref: str, reason: str = "", beyond_intent: object = 0,
     ) -> None:
         """Append immutable provenance for a fiscal value change.
 
         The caller owns the surrounding transaction so the history row and live
         configuration can never commit separately.
+
+        beyond_intent：#1260 旨外恶果/受益同列标记（与 origin_ref 同载体，非平行轨）。
         """
+        beyond_flag = self.coerce_beyond_intent_flag(beyond_intent)
         self.conn.execute(
             """INSERT INTO fiscal_config_changes
-               (turn, key, old_value, new_value, delta, origin_ref, reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (turn, key, old_value, new_value, delta, origin_ref, reason, beyond_intent)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (int(turn), key, int(old_value), int(new_value),
-             int(new_value) - int(old_value), origin_ref, reason[:240]),
+             int(new_value) - int(old_value), origin_ref, reason[:240], beyond_flag),
         )
 
     def list_fiscal_effects_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
@@ -17788,8 +17803,31 @@ class GameDB:
             ).fetchall():
                 item = dict(row)
                 item["effect_kind"] = effect_kind
+                # #1260：与 list_economy_moves_for_dossier 同款归一 bool。
+                item["beyond_intent"] = bool(self.coerce_beyond_intent_flag(
+                    item.get("beyond_intent")
+                ))
                 rows.append(item)
         return rows
+
+    def list_dossier_durable_effects(self, dossier_id: int) -> List[Dict[str, object]]:
+        """#1260 单源：案卷 durable_effects = economy + fiscal（已归一 beyond_intent bool）。
+
+        只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
+        """
+        return list(self.list_economy_moves_for_dossier(int(dossier_id))) + list(
+            self.list_fiscal_effects_for_dossier(int(dossier_id))
+        )
+
+    def dossier_has_beyond_intent(self, dossier_id: int) -> bool:
+        """#1260 单源：案卷是否含任何旨外 durable effect（economy 或 fiscal）。
+
+        只供事实，不另立裁决函数。
+        """
+        return any(
+            bool(row.get("beyond_intent"))
+            for row in self.list_dossier_durable_effects(int(dossier_id))
+        )
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
