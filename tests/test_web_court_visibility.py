@@ -420,8 +420,12 @@ def test_vassal_prince_secret_order_rejected(read_game, monkeypatch):
 
 
 def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monkeypatch):
+    """#1357 真缝：长标题经生产 _chat_with_write_gate_held 进入 session.chat 消息。"""
     import asyncio
-    from types import SimpleNamespace
+    from ming_sim.session import ChatTurnResult
+    from tests.test_qa_c3_secret_order_path_1357_1376 import (
+        webgame_shell_for_secret_order,
+    )
     from web_app import SecretOrderRequest
 
     db, state, content = game
@@ -431,15 +435,16 @@ def test_secret_order_endpoint_preserves_long_title_into_confirmation(game, monk
         and db.get_character_status(c.name)[0] == "active"
     )
     seen = {}
-    stub = SimpleNamespace(
-        content=content,
-        state=state,
-        db=db,
-        session=SimpleNamespace(content=content, temporary_characters=set()),
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-        _chat_with_write_gate_held=lambda name, message: seen.update(name=name, message=message) or {"ok": True},
+
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
+        seen.update(name=minister_name, message=message)
+        return ChatTurnResult(answer="臣领旨。")
+
+    runtime = webgame_shell_for_secret_order(
+        db, state, content, session_chat=_session_chat,
     )
-    monkeypatch.setattr(web_app, "web_game", stub)
+    monkeypatch.setattr(web_app, "web_game", runtime)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     title = "超过二十个字的密令标题应完整进入确认与持久化恢复链路甲乙丙丁"
 
     asyncio.run(web_app.api_create_secret_order(

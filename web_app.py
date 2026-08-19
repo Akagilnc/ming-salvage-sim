@@ -1640,6 +1640,24 @@ class WebGame:
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
+        return self._chat_core(minister_name, message, gate_already_held=False)
+
+    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
+        """#1357：兼容密令按钮端点已由 `_serialized_web_write` 持 write_gate。
+
+        与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
+        此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
+        在生成期放闸。
+        """
+        return self._chat_core(minister_name, message, gate_already_held=True)
+
+    def _chat_core(
+        self,
+        minister_name: str,
+        message: str,
+        *,
+        gate_already_held: bool,
+    ) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
@@ -1650,13 +1668,15 @@ class WebGame:
         # 否则 SUMMONING 通过后等 gate 时被结算 worker 改成 AWAITING_DECISION/SETTLING，仍会开夜（TOCTOU）。
         self._reject_if_settlement_phase()
         gate = self._runtime_write_gate()
+        # 调用方已持闸 → nullcontext；否则 prologue/epilogue 各自 with gate。
+        gate_cm = contextlib.nullcontext() if gate_already_held else gate
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
         # #542 r6e：prologue（_start_chat_turn / append）纳入既有 try/except；
         # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
-            with gate:
+            with gate_cm:
                 self._reject_if_settlement_phase()
                 # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
                 if hasattr(self.db, "conn"):
@@ -1685,7 +1705,7 @@ class WebGame:
                 d = result.proposed_directive
                 proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
             scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
-            with gate:
+            with gate_cm:
                 # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
                 with atomic(self.db):
                     self.session.persist_chat_turn_scene(scene_generated)
@@ -1729,7 +1749,7 @@ class WebGame:
         except Exception:
             # drain 在 write_gate 外（与 stream / retry 同序），再短写 fail。
             self.session.abandon_chat_turn_scene(chat_turn_id)
-            with gate:
+            with gate_cm:
                 if chat_turn_id:
                     self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                     self.db.fail_chat_turn(chat_turn_id)
