@@ -364,7 +364,7 @@ def test_web_issue_entry_exposes_settlement_display(game, monkeypatch):
 
 
 def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
-    """真实退朝 API 入口：受理后状态口含核账态 + 快照四键。"""
+    """真实退朝 API 入口：点即入后中途核账态+快照四键；成功回 summoning 后清残留（#1343）。"""
     import threading
 
     db, state, _content = game
@@ -373,14 +373,17 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     runtime.directive_rows = lambda: []
     runtime.refresh_turn = lambda: None
     runtime._write_gate = threading.Lock()
+    mid = {}
 
-    def _capture_then_done(st, database, **_kw):
-        database.capture_month_open_snapshot(st)
+    def _observe_then_done(st, database, **_kw):
+        # 点即入已在 entry accept 完成——推进体入口即可见核账脸与点击前四键。
+        mid["snap"] = database.get_month_open_snapshot(int(st.turn))
+        mid["payload"] = runtime.state_payload()
         st.metrics["国库"] = before["国库"] + 9
         database.save_state(st)
         return True
 
-    monkeypatch.setattr(web_app, "advance_without_edict", _capture_then_done)
+    monkeypatch.setattr(web_app, "advance_without_edict", _observe_then_done)
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
@@ -389,9 +392,12 @@ def test_web_advance_entry_exposes_settlement_display(game, monkeypatch):
     monkeypatch.setattr(web_app, "_new_secret_order_failure_payloads_for_turn", lambda *_a, **_k: [])
 
     result = web_app.api_advance_without_edict()
-    assert result["state"]["turn"]["settlement_display"] is True
-    assert result["state"]["metrics"]["国库"] == before["国库"]
-    assert result["state"]["budget"]["国库"]["balance"] == before["国库"]
+    assert mid["snap"] == before
+    assert mid["payload"]["turn"]["settlement_display"] is True
+    assert mid["payload"]["metrics"]["国库"] == before["国库"]
+    # 成功回常态（summoning）：生命周期缝清残留，拟诏不再被核账门误挡。
+    assert result["state"]["turn"]["settlement_display"] is False
+    assert db.get_month_open_snapshot(int(state.turn)) is None
 
 
 def test_recovery_path_keeps_settlement_display(game, monkeypatch):
