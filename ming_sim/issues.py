@@ -6997,49 +6997,34 @@ def _legacy_person_report_section(result: Dict[str, object]) -> str:
     return ""
 
 
-def apply_score_extraction(
+def _apply_dossier_participant_items(
     db: GameDB,
     state: GameState,
     extracted: Dict[str, object],
-    content=None,
-    registry=None,
-    llm_config: Any = None,
-    candidate_event_ids_at_input: Optional[set[str]] = None,
-    dossier_ids_at_input: Optional[set[int]] = None,
-) -> Dict[str, object]:
-    """落地结算 agent 输出的 JSON 到 state 与 db。
+    *,
+    items_key: str,
+    authority_set: set,
+    not_in_batch_msg: str,
+) -> List[Dict[str, object]]:
+    """Shared control flow for public/secret roster apply; fields stay separate.
 
-    content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
-    缺省则跳过（向后兼容老调用）。"""
-    caller_transaction = db.conn.in_transaction
-    commit_now = not caller_transaction
-    if caller_transaction:
-        _register_runtime_rollback_snapshot(db, state, content, registry)
-    # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
-    extracted, validate_rejections = sanitize_delta_shape(extracted)
-    # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
-    # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
-    from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
-    breach_plea_resolutions = resolve_breach_pleas_from_extraction(
-        db, state, extracted, commit=False,
-    )
-    # #628 / 0079：信用事件写端后置于各模块校验落格之后（见 return 前），
-    # 只消费未 rejected 项——禁为被拒 fulfilled/人事立伪信用档。
-    dossier_participant_results: List[Dict[str, object]] = []
-    # Only the caller's frozen simulator input grants roster-write authority.
-    # Missing authority is an empty closed set; never reconstruct it from live DB.
-    if not isinstance(dossier_ids_at_input, set):
-        dossier_ids_at_input = set()
-    for item in extracted.get("dossier_participants") or []:
+    items_key / authority_set / not_in_batch_msg stay caller-owned — never union
+    the two closed authority sets, never share a field-name or result slot.
+    Missing authority is an empty closed set; never reconstruct from live DB.
+    """
+    results: List[Dict[str, object]] = []
+    if not isinstance(authority_set, set):
+        authority_set = set()
+    for item in extracted.get(items_key) or []:
         if not isinstance(item, dict):
-            dossier_participant_results.append({
+            results.append({
                 "rejected": True, "category": "invalid_shape", "item": item,
             })
             continue
         try:
             dossier_id = _parse_sqlite_id(item.get("dossier_id"))
-            if dossier_id not in dossier_ids_at_input:
-                raise ValueError("案卷不在本批可见输入")
+            if dossier_id not in authority_set:
+                raise ValueError(not_in_batch_msg)
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
             tier = str(item.get("tier") or "").strip()
@@ -7069,15 +7054,65 @@ def apply_score_extraction(
             persisted = added[0] if added else {
                 "character_id": character_id, "tier": tier,
             }
-            dossier_participant_results.append({
+            results.append({
                 "dossier_id": dossier_id,
                 "character_id": persisted["character_id"], "tier": persisted["tier"],
             })
         except (TypeError, ValueError, KeyError) as exc:
-            dossier_participant_results.append({
+            results.append({
                 "rejected": True, "category": "invalid_participant_roster",
                 "reason": str(exc), "item": item,
             })
+    return results
+
+
+def apply_score_extraction(
+    db: GameDB,
+    state: GameState,
+    extracted: Dict[str, object],
+    content=None,
+    registry=None,
+    llm_config: Any = None,
+    candidate_event_ids_at_input: Optional[set[str]] = None,
+    dossier_ids_at_input: Optional[set[int]] = None,
+    secret_dossier_ids_at_input: Optional[set[int]] = None,
+) -> Dict[str, object]:
+    """落地结算 agent 输出的 JSON 到 state 与 db。
+
+    content/registry：若传入则处理 `appointments`——把诏书任命的新人建档入朝。
+    缺省则跳过（向后兼容老调用）。"""
+    caller_transaction = db.conn.in_transaction
+    commit_now = not caller_transaction
+    if caller_transaction:
+        _register_runtime_rollback_snapshot(db, state, content, registry)
+    # 0) 落库前校验/净化容器与可拆项；ADR0015 下可拆坏项逐项拒收，不再整批 abort。
+    extracted, validate_rejections = sanitize_delta_shape(extracted)
+    # #623：召对 extraction 真入口——反悔/坚持消费哭谏条（须先于 cancels 物化，
+    # 使 persist 先结账，cancels 环看到已非 active 而跳过，防双路径）。
+    from ming_sim.breach_plea import resolve_breach_pleas_from_extraction
+    breach_plea_resolutions = resolve_breach_pleas_from_extraction(
+        db, state, extracted, commit=False,
+    )
+    # #628 / 0079：信用事件写端后置于各模块校验落格之后（见 return 前），
+    # 只消费未 rejected 项——禁为被拒 fulfilled/人事立伪信用档。
+    # Only the caller's frozen simulator input grants roster-write authority.
+    # Public/secret field names and authority sets stay separate (no union).
+    dossier_participant_results = _apply_dossier_participant_items(
+        db, state, extracted,
+        items_key="dossier_participants",
+        authority_set=dossier_ids_at_input if isinstance(dossier_ids_at_input, set) else set(),
+        not_in_batch_msg="案卷不在本批可见输入",
+    )
+    # #1252: independent secret-dossier roster field (field name = provenance).
+    secret_dossier_participant_results = _apply_dossier_participant_items(
+        db, state, extracted,
+        items_key="secret_dossier_participants",
+        authority_set=(
+            secret_dossier_ids_at_input
+            if isinstance(secret_dossier_ids_at_input, set) else set()
+        ),
+        not_in_batch_msg="密令案卷不在本批可见输入",
+    )
 
     dossier_execution_results: List[Dict[str, object]] = []
     # #621 接管窗：正式复核所辖案卷禁 extractor 并行终值（防第二真源）。
@@ -8297,6 +8332,7 @@ def apply_score_extraction(
         "issue_summary": issue_summary,
         "dossier_executions": dossier_execution_results,
         "dossier_participants": dossier_participant_results,
+        "secret_dossier_participants": secret_dossier_participant_results,
         "breach_plea_resolutions": breach_plea_resolutions,
         "credit_event_resolutions": credit_event_resolutions,
         "authority_changes": authority_change_results,
