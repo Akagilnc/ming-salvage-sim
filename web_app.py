@@ -3944,17 +3944,12 @@ async def api_state() -> Dict[str, Any]:
 async def api_secret_orders(status: str = "") -> Dict[str, Any]:
     """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。
 
-    #1355：附 failed_secret_order_count，空列表时仍可区分「从未落库/确认失败」与
-    「表内无行」（观测面；不改结案/存活语义）。
+    failed_secret_order_count 真源在 state_payload（~1405）；前端 useDurableProjection
+    只读 state，本端点不重复暴露。
     """
     game = get_game()
     orders = game.db.list_secret_orders(status=status or None)
-    return {
-        "orders": orders,
-        "failed_secret_order_count": sum(
-            1 for _a in game.db.list_failed_secret_order_actions()
-        ),
-    }
+    return {"orders": orders}
 
 
 def _player_visible_pending_actions(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
