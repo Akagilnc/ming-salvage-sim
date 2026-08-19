@@ -27,13 +27,17 @@ export function ScrollMessages({
     const pending = "pending" in message && message.pending;
     const speaker = "speaker" in message ? message.speaker : message.role === "user" ? "朕" : message.role === "attendant" ? "近臣" : ministerName;
     const beat = "beat" in message ? message.beat : "dialogue";
-    if (message.role === "scene") return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
-      {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : message.content ? <p>{message.content}</p> : null}
-    </div>;
+    // #1280 / ADR 0045：scene/attendant 与大臣气泡同走 organic markdown 剥离链。
+    if (message.role === "scene") {
+      const sceneText = stripOrganicMarkdown(message.content);
+      return <div className={`chat-message scene beat-${beat}`} key={`${message.role}-${index}-${message.content}`}>
+        {beat === "divider" ? <div className="scene-divider"><hr aria-label={speaker ? `宣${speaker}` : "分隔"} />{speaker ? <strong>{speaker}</strong> : null}</div> : sceneText ? <p>{sceneText}</p> : null}
+      </div>;
+    }
     const isAside = message.role === "attendant" && "audibility" in message && message.audibility === "御前低语";
     const attendant = isAside ? ministers.find((candidate) => candidate.name === speaker) : undefined;
     const attendantPortrait = attendant ? portraitSources(attendant) : undefined;
-    const text = message.role === "minister" ? stripOrganicMarkdown(message.content) : message.content;
+    const text = message.role === "user" ? message.content : stripOrganicMarkdown(message.content);
     const { action, content } = parseLeadingStageDirection(text);
     // #544 / ADR 0045：只标大臣气泡；短语先过同一剥离链再精确匹配，未命中静默丢弃。
     const rawHighlights = message.role === "minister" && "highlights" in message

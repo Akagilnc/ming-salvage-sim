@@ -269,7 +269,7 @@ def test_worker_cleanup_failure_still_emits_error_and_releases_gate():
 # ── #542 r6e：非流 chat / retry prologue 与流式同清理缝 ─────────────────────
 
 
-def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None):
+def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None, abandon_error=None):
     """Minimal WebGame double for non-stream chat/retry prologue fail paths."""
     abandoned: list[int] = []
     failed: list[int] = []
@@ -321,6 +321,11 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None):
             return start_scene(minister_name, chat_turn_id)
         return None
 
+    def _abandon(ctid):
+        abandoned.append(int(ctid or 0))
+        if abandon_error is not None:
+            raise abandon_error
+
     runtime = object.__new__(web_app.WebGame)
     runtime._write_gate = threading.Lock()
     runtime._drain_cond = threading.Condition()
@@ -336,7 +341,7 @@ def _runtime_for_nonstream_chat(*, start_scene=None, append_error=None):
         start_chat_turn_exit_scene=lambda *_a, **_k: None,
         join_chat_turn_scene=lambda *_a, **_k: [],
         persist_chat_turn_scene=lambda *_a, **_k: None,
-        abandon_chat_turn_scene=lambda ctid: abandoned.append(int(ctid or 0)),
+        abandon_chat_turn_scene=_abandon,
         chat=lambda *a, **k: (_ for _ in ()).throw(
             RuntimeError("session.chat should not run")
         ),
@@ -363,6 +368,22 @@ def test_nonstream_chat_prologue_failure_fails_turn_and_abandons_scene():
     _assert_write_path_free(runtime)
 
 
+def test_nonstream_chat_abandon_secondary_failure_still_fails_turn():
+    """#1408 r2: abandon 二次异常不得跳过 fail 终态写，且原错不叠二次。"""
+    boom = RuntimeError("DB 写盘失败（模拟非流 prologue 崩溃）")
+    abandon_boom = RuntimeError("abandon 二次崩溃")
+    runtime, minister, abandoned, failed, _restored = _runtime_for_nonstream_chat(
+        append_error=boom,
+        abandon_error=abandon_boom,
+    )
+    with pytest.raises(RuntimeError, match="非流 prologue") as excinfo:
+        runtime.chat(minister, "辽东军情如何？")
+    assert excinfo.value is boom
+    assert abandoned == [7]
+    assert failed == [7]
+    _assert_write_path_free(runtime)
+
+
 def test_retry_start_scene_failure_restores_interrupted_and_abandons():
     """#542 r6e: retry reopen 后 start_chat_turn_scene 同步抛错，须 abandon + restore
     interrupted、不 fail，且写路径释放。"""
@@ -377,4 +398,23 @@ def test_retry_start_scene_failure_restores_interrupted_and_abandons():
     assert abandoned == [7]
     assert restored == [7]
     assert failed == []  # retry 失败翻回 interrupted，不 fail
+    _assert_write_path_free(runtime)
+
+
+def test_retry_abandon_secondary_failure_still_restores_interrupted():
+    """#1408 r2: retry 路 abandon 二次异常不得跳过 restore 终态写，且原错不叠二次。"""
+    def _boom_start(_minister, _ctid):
+        raise RuntimeError("start_chat_turn_scene boom")
+
+    abandon_boom = RuntimeError("abandon 二次崩溃")
+    runtime, minister, abandoned, failed, restored = _runtime_for_nonstream_chat(
+        start_scene=_boom_start,
+        abandon_error=abandon_boom,
+    )
+    with pytest.raises(RuntimeError, match="start_chat_turn_scene boom") as excinfo:
+        runtime.retry_interrupted_reply(minister)
+    assert "abandon" not in str(excinfo.value)
+    assert abandoned == [7]
+    assert restored == [7]
+    assert failed == []
     _assert_write_path_free(runtime)
