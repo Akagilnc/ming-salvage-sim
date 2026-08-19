@@ -1234,6 +1234,45 @@ def resolve_directive_mode(
     return "ordinary"
 
 
+def _draft_intent_character_roster_facts(content: Any) -> str:
+    """#1428：把 content.characters 的 name+aliases 编成抽取接地事实块。
+
+    接地=结构化事实注入（ADR 0142）；不在此做散文截断修复/子串归一。
+    参与人 character_id 须填规范名；别名仅作识别线索，输出仍归规范名。
+    资格与 _find_existing_minister / _is_ming_court_minister_character 同口径
+    （ming ∧ 非后宫 ∧ 非 candidate）；无 db 时用 content 静态 power_id（#125 live 翻转不扩）。
+    """
+    characters = getattr(content, "characters", None) if content is not None else None
+    if not characters:
+        return ""
+    from ming_sim.session import _is_ming_court_minister_character
+
+    lines: List[str] = []
+    for key, ch in characters.items():
+        if not _is_ming_court_minister_character(ch):
+            continue
+        name = str(getattr(ch, "name", None) or key or "").strip()
+        if not name:
+            continue
+        aliases = [
+            str(a).strip()
+            for a in (getattr(ch, "aliases", None) or [])
+            if str(a).strip() and str(a).strip() != name
+        ]
+        if aliases:
+            lines.append(f"{name}（别名：{'、'.join(aliases)}）")
+        else:
+            lines.append(name)
+    if not lines:
+        return ""
+    return (
+        "【在册人物规范名+别名】参与人 character_id 必须从此表规范名选取；"
+        "见到别名须归一为对应规范名；不得截短、不得自造未列之名。\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def extract_draft_intent(
     player_message: Optional[str],
     minister_reply: str,
@@ -1242,6 +1281,7 @@ def extract_draft_intent(
     existing_draft_text: str = "",
     existing_candidates: Optional[List[Dict[str, Any]]] = None,
     draft_count: int = 1,
+    content: Any = None,
 ) -> Dict[str, Any]:
     """LLM 判皇帝本轮是否在口头请大臣拟旨（非显式前缀），返回拟旨意图 + 草案文本 + 目标候选。
     失败/无 → {"draft_action": "无", "draft_text": "", "target_candidate": ""}。
@@ -1253,7 +1293,11 @@ def extract_draft_intent(
     合并草案外，还判本轮**新拟独立一道**（target_candidate="新"）还是**补充/修改某一道**
     （target_candidate=该道 id）。指称不明时按候选条数兜底：单条→补那条（沿用 last-write-wins），
     多条→target_candidate="含糊"（交 session 追问哪一道，不静默新建第三道；#502 L7）。
-    无候选时 target_candidate 恒空。"""
+    无候选时 target_candidate 恒空。
+
+    content（#1428）：可选 GameContent；提供时把 characters 的 name+aliases 作结构化
+    事实注入抽取 prompt，接地参与人规范名（禁散文守门族）。"""
+    roster_facts = _draft_intent_character_roster_facts(content)
     if draft_count > 1:
         prompt = (
             "你是信息抽取器，不扮演。皇帝同一句要求拟多道彼此独立的圣旨，大臣已在一段回话中"
@@ -1267,8 +1311,9 @@ def extract_draft_intent(
             '"承办人":"...","期限月数":3,"颁布方式":"普通|中旨直发",'
             '"参与人":[{"character_id":"规范名","tier":"主办|协办|知情","role":"本案职分","delegator_id":null}]}]}\n'
             "不得把同一段文字复制成多道；不得遗漏皇帝要求的任一道拟旨事项。\n\n"
-            "【皇帝】" + (player_message or "（无）") + "\n"
-            "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
+            + roster_facts
+            + "【皇帝】" + (player_message or "（无）") + "\n"
+            + "【大臣完整回话】" + (minister_reply or "（无）") + "\n"
         )
         raw = ""
         try:
@@ -1391,10 +1436,11 @@ def extract_draft_intent(
         + merge_schema_line
         + "}\n"
         "判定要点：皇帝明确让大臣拟旨/起草圣旨→拟旨；仅商议/问询/催办/评论不算。语义判断，别拘字面。\n\n"
+        + roster_facts
         + draft_context
         + candidates_context
         + "【皇帝】" + (player_message or "（无）") + "\n"
-        "【大臣回话】" + (minister_reply or "（无）") + "\n"
+        + "【大臣回话】" + (minister_reply or "（无）") + "\n"
     )
     raw = ""
     try:
@@ -1507,7 +1553,9 @@ def capture_manual_directive_payload(
     )
 
     def _run_extract() -> Dict[str, Any]:
-        return extract_draft_intent(prompt, directive_text, llm_config=llm_config)
+        return extract_draft_intent(
+            prompt, directive_text, llm_config=llm_config, content=content,
+        )
 
     # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
     captured: Dict[str, Any]
