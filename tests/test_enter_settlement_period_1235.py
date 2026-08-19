@@ -597,10 +597,14 @@ def test_exit_settlement_display_acquires_write_gate(web_game):
     assert game.db.get_month_open_snapshot(turn) is None
 
 
-def test_issue_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
-    """#1235 r3：session-reaccept-orphan-after-web-noncreator。
+@pytest.mark.parametrize("entry", [
+    pytest.param("issue", id="issue"),
+    pytest.param("stream", id="stream"),
+])
+def test_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch, entry):
+    """#1235 r3 / #1241 S5：session-reaccept-orphan-after-web-noncreator（issue/stream 同根）。
 
-    A web-accept 真新建并持 gate；B web-accept 得 False 后堵在 issue 阻塞 gate；
+    A web-accept 真新建并持 gate；B web-accept 得 False 后堵在阻塞 gate；
     A 失败 exit 清快照并放锁 → B 进 resolve（session 再 accept 新建）后失败 →
     B finally 虽 created_display=False 仍须 non-blocking 抢到锁并清孤儿。
     """
@@ -635,7 +639,7 @@ def test_issue_session_reaccept_orphan_exits_after_owner_release(web_game, monke
         # 模拟 session.resolve_turn 内二次 accept 后 ValueError（无 session exit 臂）
         created = accept_settlement_period(game.db, game.state)
         saw["session_reaccept"] = created
-        raise ValueError("推演失败·session再创建后注入")
+        raise ValueError(f"推演失败·{entry} session再创建后注入")
 
     monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
 
@@ -649,90 +653,9 @@ def test_issue_session_reaccept_orphan_exits_after_owner_release(web_game, monke
         try:
             async def go():
                 async with _client() as client:
-                    return await client.post("/api/decree/issue", json={})
-
-            resp = asyncio.run(go())
-            b_result["status"] = resp.status_code
-            b_result["body"] = resp.text
-        except Exception as exc:  # noqa: BLE001
-            b_result["err"] = exc
-        finally:
-            b_done.set()
-
-    t = threading.Thread(target=_run_b, daemon=True)
-    t.start()
-    # 等 B 完成 web accept（False）并堵在 issue 阻塞 gate
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline and saw["web_created"] is None:
-        time.sleep(0.01)
-    assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), "B 不得在 A 持锁时完成 issue"
-    assert game.db.get_month_open_snapshot(turn) == before
-
-    # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
-    from ming_sim.month_open_snapshot import exit_settlement_display_on_failure
-    assert exit_settlement_display_on_failure(game.db, game.state) is True
-    assert game.db.get_month_open_snapshot(turn) is None
-    gate.release()
-
-    assert b_done.wait(5.0), "B 在 A 放锁后须完成"
-    t.join(2.0)
-    assert "err" not in b_result, b_result.get("err")
-    assert b_result.get("status") == 400, b_result
-    # B 进 resolve 后 session 再创建了孤儿快照
-    assert saw["session_reaccept"] is True
-    # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
-    assert game.db.get_month_open_snapshot(turn) is None
-    assert game.state_payload()["turn"]["settlement_display"] is False
-    assert game.state.turn_phase not in (
-        TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
-    )
-
-
-def test_stream_session_reaccept_orphan_exits_after_owner_release(web_game, monkeypatch):
-    """#1235 r3：stream 同形——web 非创建 + session 再创建后失败 → 出展示态。"""
-    import threading
-    import time
-
-    from ming_sim.month_open_snapshot import accept_settlement_period
-
-    game = web_game
-    before = _click_before(game.state)
-    turn = int(game.state.turn)
-
-    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
-    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **kw: None)
-
-    saw = {"web_created": None, "session_reaccept": None}
-    b_done = threading.Event()
-    b_result: dict = {}
-
-    real_accept = web_app._accept_settlement_period
-
-    def _track_web_accept(g):
-        created = real_accept(g)
-        if threading.current_thread() is not threading.main_thread():
-            saw["web_created"] = created
-        return created
-
-    monkeypatch.setattr(web_app, "_accept_settlement_period", _track_web_accept)
-
-    def _boom_resolve(*_a, **_k):
-        created = accept_settlement_period(game.db, game.state)
-        saw["session_reaccept"] = created
-        raise ValueError("推演失败·stream session再创建后注入")
-
-    monkeypatch.setattr(game.session, "resolve_turn", _boom_resolve)
-
-    assert web_app._accept_settlement_period(game) is True
-    assert game.db.get_month_open_snapshot(turn) == before
-    gate = web_app._game_write_gate(game)
-    assert gate.acquire(blocking=False), "A 须能持 write_gate"
-
-    def _run_b():
-        try:
-            async def go():
-                async with _client() as client:
+                    if entry == "issue":
+                        resp = await client.post("/api/decree/issue", json={})
+                        return resp.status_code, resp.text
                     async with client.stream(
                         "POST", "/api/decree/issue/stream", json={},
                     ) as resp:
@@ -751,11 +674,12 @@ def test_stream_session_reaccept_orphan_exits_after_owner_release(web_game, monk
 
     t = threading.Thread(target=_run_b, daemon=True)
     t.start()
+    # 等 B 完成 web accept（False）并堵在阻塞 gate
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline and saw["web_created"] is None:
         time.sleep(0.01)
     assert saw["web_created"] is False, "B 须为 web 非创建者"
-    assert not b_done.is_set(), "B 不得在 A 持锁时完成 stream"
+    assert not b_done.is_set(), f"B 不得在 A 持锁时完成 {entry}"
     assert game.db.get_month_open_snapshot(turn) == before
 
     # A 失败 exit 清快照后再放锁（判词序：清后放锁，逼出 B session 再创建）
@@ -767,11 +691,20 @@ def test_stream_session_reaccept_orphan_exits_after_owner_release(web_game, monk
     assert b_done.wait(5.0), "B 在 A 放锁后须完成"
     t.join(2.0)
     assert "err" not in b_result, b_result.get("err")
-    assert b_result.get("status") == 200, b_result
-    assert "error" in (b_result.get("body") or "")
+    if entry == "issue":
+        assert b_result.get("status") == 400, b_result
+    else:
+        assert b_result.get("status") == 200, b_result
+        assert "error" in (b_result.get("body") or "")
+    # B 进 resolve 后 session 再创建了孤儿快照
     assert saw["session_reaccept"] is True
+    # B finally 须清掉该孤儿（created_display=False 不得再跳过 exit）
     assert game.db.get_month_open_snapshot(turn) is None
     assert game.state_payload()["turn"]["settlement_display"] is False
+    if entry == "issue":
+        assert game.state.turn_phase not in (
+            TurnPhase.SETTLING.value, TurnPhase.AWAITING_DECISION.value,
+        )
 
 
 def test_noncreator_exit_must_not_clear_owner_during_gatefree(web_game, monkeypatch):
