@@ -41,8 +41,10 @@ from ming_sim.cli_backend import (
     cli_backend_parallel_safe,
     gate_evidence_config,
     gate_llm_config_from_args,
+    require_fresh_cli_trace,
 )
 from ming_sim.content import GameContent
+from ming_sim.models import LLMConfig
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
 from ming_sim.decree import (
@@ -96,7 +98,7 @@ def _dossier(db: GameDB, state, text: str, *, mode: str = "ordinary") -> int:
     )
 
 
-def _cfg(args: argparse.Namespace):
+def _cfg(args: argparse.Namespace) -> LLMConfig:
     return gate_llm_config_from_args(args)
 
 
@@ -528,15 +530,7 @@ def main() -> int:
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _cfg(args)
-    trace_path: Optional[Path] = None
-    if cfg.channel == "cli":
-        # CLI 路径要求新鲜 trace 文件以便审计 raw 调用；api 通道无 CliChat trace 约定。
-        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {"0", "false", "no"}:
-            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-        trace_path = Path(trace_setting).resolve()
-        if trace_path.exists():
-            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    trace_path = require_fresh_cli_trace(cfg)
 
     with tempfile.TemporaryDirectory(prefix="ming-561-gate-") as tmp:
         # Shared scene + resolve_directives runner; each arm owns one temp DB.

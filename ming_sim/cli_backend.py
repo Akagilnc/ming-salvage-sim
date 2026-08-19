@@ -28,6 +28,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from agno.models.message import Message
@@ -47,7 +48,7 @@ from pydantic import BaseModel
 
 # CLI runner 默认模型单一真源在 models（L0 叶子），此处 re-export 保留
 # `from ming_sim.cli_backend import CODEX_DEFAULT_MODEL` 既有路径（#60）。
-from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL
+from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
 
@@ -2876,15 +2877,13 @@ def gate_llm_config_from_args(
     max_tokens: int = 6000,
     reasoning_strength: str = "high",
     cli_timeout_seconds: float = 600.0,
-) -> Any:
+) -> LLMConfig:
     """四闸脚本 _config/_cfg 单一实现：按 channel 构造 LLMConfig。
 
     channel=cli → runner 必填，api_key/base_url 空。
     channel=api → key/base_url 由 args 或 env 注入（OPENAI_* / MING_SIM_API_*），
     model 透传；runner 不写入 config。
     """
-    from ming_sim.models import LLMConfig
-
     channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
     model = str(getattr(args, "model", "") or "").strip()
     if not model:
@@ -2932,6 +2931,25 @@ def gate_llm_config_from_args(
         max_tokens=max_tokens,
         reasoning_strength=reasoning_strength,
     )
+
+
+def require_fresh_cli_trace(cfg: LLMConfig) -> Optional[Path]:
+    """CLI 通道强制新鲜 MING_SIM_TRACE_PATH；api 通道返回 None。
+
+    四闸脚本共用单源（#1256）；禁用各自复制守卫。行为对齐原 561 变体
+    （MING_SIM_TRACE 用 .strip().lower()）。
+    """
+    if cfg.channel != "cli":
+        return None
+    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {
+        "0", "false", "no",
+    }:
+        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
+    trace_path = Path(trace_setting).resolve()
+    if trace_path.exists():
+        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
+    return trace_path
 
 
 def gate_evidence_config(args: Any, cfg: Any) -> Dict[str, Any]:
