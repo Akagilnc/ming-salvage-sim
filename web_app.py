@@ -1027,12 +1027,8 @@ class WebGame:
 
     def refresh_turn(self) -> None:
         self.session.begin_turn()
-        # #1343/#1378/#1379/#1388：月推进后/中途残留的月初快照，在无入口在办时清掉。
-        # 单谓词不动（settlement_display⇔快照在）；只收生命周期缝——summoning 期不该挡拟诏。
-        # 点即入在办（inflight>0）或 settling/awaiting 恢复窗：保留，与 clear_orphan 同谓词。
-        if _settlement_entry_inflight(self) == 0:
-            from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
-            clear_orphan_month_open_snapshot(self.db, self.state)
+        # #1343 孤儿快照清一处：受理样板成功支（_settlement_period_entry 持 write_cm）。
+        # 生产四调用点皆在 entry 体内（inflight>0），此处再清恒不触发；禁第二清理点。
 
     # ── 自定义立绘 ────────────────────────────────────────────────────────
     def find_character(self, name: str) -> Optional[Character]:
@@ -3068,24 +3064,27 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with write_cm(game):
             yield
-            # with 体无异常结束（含函数 return）→ 成功，保留展示态/由推进清快照。
+            # with 体无异常结束（含函数 return）→ 成功。
             settled_ok = True
-    finally:
-        if entered and not settled_ok:
-            # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
-            # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
-            _exit_settlement_display_on_failure(game, blocking=created_display)
-        elif entered and settled_ok:
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
+            # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接，
+            # 使并发 B 进 atomic 时 DELETE 不得落进 B 事务。
             # clear_orphan 同谓词：settling/awaiting 保留；summoning 残留不得挡拟诏。
-            # 单谓词不动（展示态仍=快照在）；只收生命周期缝。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
             if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
-        if entered:
-            _end_settlement_entry(game)
+    finally:
+        # 嵌套 try/finally：exit/clear 抛错仍须销账 inflight（验收：clear 抛 → inflight 归零）。
+        try:
+            if entered and not settled_ok:
+                # 含 gate/HTTPException 拒收与未映射异常；blocking 由 web 创建位决定。
+                # exit 须在 end 之前：非创建者凭 in-flight>1 识别他者仍在办（r4）。
+                _exit_settlement_display_on_failure(game, blocking=created_display)
+        finally:
+            if entered:
+                _end_settlement_entry(game)
 
 
 def _active_db_path_file() -> str:

@@ -515,6 +515,7 @@ export function App() {
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       <ArmyDrawer
@@ -552,6 +553,7 @@ export function App() {
         onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (
