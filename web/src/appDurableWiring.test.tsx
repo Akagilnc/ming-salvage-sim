@@ -799,7 +799,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(cmdByCaption(host, "密令"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).toBeNull();
-    await click(cmdByCaption(host, "拟诏·退朝过月"));
+    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
     await tick();
     expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).toBeNull();
 
@@ -954,7 +954,7 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="密令进度"]')).not.toBeNull());
     });
     await closeOpenOverlay(host);
-    await click(cmdByCaption(host, "拟诏·退朝过月"));
+    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
@@ -991,11 +991,30 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await click(byAria(host, "朝堂·召见大臣"));
     await tick();
     expect(host.querySelector(".court-drawer.open")).not.toBeNull();
-    await click(cmdByCaption(host, "拟诏·退朝过月"));
+    await click(cmdByCaption(host, "拟诏·盖玺颁诏过月"));
     await tick();
     await act(async () => {
       await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
     });
     expect(host.querySelector(".court-drawer.open")).toBeNull();
+  });
+
+  it("#1305 court/harem nav 互斥：开后宫即关朝堂", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    expect(host.querySelector(".court-drawer.open:not(.harem-drawer)")).not.toBeNull();
+    expect(host.querySelector(".harem-drawer.open")).toBeNull();
+
+    await click(byAria(host, "后宫"));
+    await tick();
+    expect(host.querySelector(".harem-drawer.open")).not.toBeNull();
+    expect(host.querySelector(".court-drawer.open:not(.harem-drawer)")).toBeNull();
   });
 });
