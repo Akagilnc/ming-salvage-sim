@@ -808,9 +808,10 @@ export function NodeIntel({ node }: { node: MapNode }) {
       ) : null}
       <div className="garrison-title">驻军</div>
       {node.armies.length ? (
-        <table className="intel-table">
+        <table className="intel-table intel-table--garrison">
           <thead>
-            <tr><th>番号</th><th>兵种</th><th>兵</th><th>饷</th><th>士气</th><th>欠饷</th></tr>
+            {/* #1352：表头与军队列表口径对齐；兵力/月饷不缩位、不拆字 */}
+            <tr><th>番号</th><th>兵种</th><th>兵力</th><th>月饷</th><th>士气</th><th>欠饷</th></tr>
           </thead>
           <tbody>
             {node.armies.map((army) => {
@@ -819,9 +820,9 @@ export function NodeIntel({ node }: { node: MapNode }) {
                 <tr key={army.id}>
                   <td>{army.name}</td>
                   <td>{army.troop_type}</td>
-                  <td>{army.manpower}</td>
-                  <td>{pay}</td>
-                  <td>{qualitativeArmyStat("morale", army.morale)}</td>
+                  <td className="intel-num">{army.manpower}</td>
+                  <td className="intel-num">{pay}万</td>
+                  <td className="intel-stat">{qualitativeArmyStat("morale", army.morale)}</td>
                   <td>{formatArmyArrears(army)}</td>
                 </tr>
               );

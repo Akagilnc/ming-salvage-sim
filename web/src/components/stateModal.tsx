@@ -12,7 +12,7 @@ export function StateModal({ state, showIssues }: { state: GameState; showIssues
   if (!issues.length) {
     return (
       <article className="state-document modal-scroll">
-        <div className="empty-note">{showIssues ? "暂无待览奏疏。" : SETTLEMENT_CLOSED_REASON}</div>
+        <div className="empty-note">{showIssues ? "本月无疏。" : SETTLEMENT_CLOSED_REASON}</div>
       </article>
     );
   }

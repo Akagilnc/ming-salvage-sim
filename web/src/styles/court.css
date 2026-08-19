@@ -51,7 +51,11 @@
 
 .drawer-scrim {
   position: fixed;
-  inset: 0;
+  /* #1342：底栏五命令安全区——遮罩不得吞拟诏/奏疏等主命令 */
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: max(148px, 22vh);
   z-index: 10;
   border: 0;
   background: rgba(20, 14, 8, 0.62);
@@ -60,7 +64,11 @@
 
 .court-drawer {
   position: fixed;
-  inset: 0;
+  /* #1342：与 scrim 同留底栏安全区，minister-list 不得 intercept 拟诏点击 */
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: max(148px, 22vh);
   z-index: 18;
   display: grid;
   grid-template-rows: auto auto auto 1fr;
@@ -383,7 +391,8 @@
   right: auto;
   bottom: auto;
   z-index: 50;
-  width: min(420px, calc(100vw - 24px));
+  /* #1352：加宽以免驻军六列表头/兵力被挤窄拆字 */
+  width: min(520px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
   padding: 28px 56px 30px;
@@ -403,7 +412,11 @@
   left: auto;
   bottom: auto;
   z-index: 3;
-  background: rgba(250, 242, 220, 0.9);
+  /* #1352：关窗钮在纸色底上更醒目 */
+  background: rgba(40, 24, 10, 0.88);
+  color: #f5e6c0;
+  border: 1px solid rgba(216, 185, 106, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
 .intel-table {
@@ -436,6 +449,27 @@
   color: #3a2410;
   font-weight: 700;
   background: rgba(180, 140, 80, 0.16);
+}
+
+/* #1352：驻军表——表头不拆字、数值列够宽，与军队列表兵力/月饷口径同读 */
+.intel-table--garrison {
+  table-layout: auto;
+  width: 100%;
+}
+.intel-table--garrison thead th {
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+.intel-table--garrison td.intel-num,
+.intel-table--garrison td.intel-stat {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+.intel-table--garrison thead th:nth-child(3),
+.intel-table--garrison thead th:nth-child(4),
+.intel-table--garrison thead th:nth-child(5) {
+  min-width: 3.2em;
 }
 
 .map-intel-panel > * {
