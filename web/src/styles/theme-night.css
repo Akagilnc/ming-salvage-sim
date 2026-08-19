@@ -26,12 +26,44 @@
 }
 
 /* 无卡文书：文字直接坐在案头图上，四周羽化暗晕无硬边；底部留安全边界不顶屏 */
+/* #1387：modal 栅格内可滚完第三段，不裁切探子回报 */
+.modal-bg-gazette.fullscreen-modal {
+  overflow: hidden;
+  grid-template-rows: minmax(0, 1fr);
+}
 .gazette-document {
   margin: 0 auto clamp(24px, 5vh, 56px);
   width: min(1180px, 92%);
-  padding: 26px clamp(20px, 5vw, 90px) 40px;
+  max-height: 100%;
+  min-height: 0;
+  padding: 26px clamp(20px, 5vw, 90px) 28px;
   color: #efe3c2;
   overflow-y: auto;
+  box-sizing: border-box;
+}
+.gazette-dismiss {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+  padding-bottom: 12px;
+}
+.gazette-dismiss-btn {
+  min-width: 9.5em;
+  min-height: 44px;
+  padding: 0 28px;
+  border: 1px solid rgba(216, 185, 106, 0.55);
+  border-radius: 4px;
+  background: linear-gradient(180deg, #8b382b, #5a241d);
+  color: #f5e6c0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.gazette-dismiss-btn:hover {
+  background: linear-gradient(180deg, #a04434, #6a2c22);
+  color: #fff0c8;
 }
 
 .gazette-masthead {

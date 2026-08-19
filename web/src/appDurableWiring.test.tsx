@@ -979,4 +979,23 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
     expect(memorialsDialog.textContent).not.toContain(SETTLEMENT_CLOSED_REASON);
   });
+
+  it("#1342 朝堂抽屉开着时点拟诏：关抽屉并开拟诏台", async () => {
+    stubSettlementFetch({
+      ...settlementBaseState("player"),
+      turn: { year: 1627, period: 10, turn: 5, phase: "player", settlement_display: false },
+      previous_summary: "",
+      pending_decisions: [],
+    });
+    const host = await mountApp();
+    await click(byAria(host, "朝堂·召见大臣"));
+    await tick();
+    expect(host.querySelector(".court-drawer.open")).not.toBeNull();
+    await click(cmdByCaption(host, "拟诏·退朝过月"));
+    await tick();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="诏书草案"]')).not.toBeNull());
+    });
+    expect(host.querySelector(".court-drawer.open")).toBeNull();
+  });
 });

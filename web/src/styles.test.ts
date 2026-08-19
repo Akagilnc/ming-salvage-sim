@@ -19,3 +19,29 @@ describe("窄屏召见布局", () => {
     expect(narrowLayout).toContain("overflow-y: auto;");
   });
 });
+
+describe("#1342 朝堂抽屉不得挡底栏命令", () => {
+  it("drawer-scrim / court-drawer 底部留出命令安全区", () => {
+    const scrim = styles.match(/\.drawer-scrim\s*\{[^}]*\}/)?.[0] || "";
+    const drawer = styles.match(/\.court-drawer\s*\{[^}]*\}/)?.[0] || "";
+    expect(scrim).toMatch(/bottom:\s*(max\(|[1-9]\d|calc)/);
+    expect(drawer).toMatch(/bottom:\s*(max\(|[1-9]\d|calc)/);
+    // 不得再 inset:0 盖死底栏
+    expect(scrim).not.toMatch(/inset:\s*0/);
+    expect(drawer).not.toMatch(/inset:\s*0/);
+  });
+});
+
+describe("#1352 地图驻军表头不拆字", () => {
+  it("garrison intel 表头 nowrap / keep-all", () => {
+    expect(styles).toMatch(/\.intel-table--garrison[^{]*thead th[^{]*\{[^}]*white-space:\s*nowrap/);
+  });
+});
+
+describe("#1387 邸报可滚完", () => {
+  it("gazette-document 在 modal 内 min-height:0 + overflow-y auto", () => {
+    const block = styles.match(/\.gazette-document\s*\{[^}]*\}/g)?.join("\n") || "";
+    expect(block).toMatch(/overflow-y:\s*auto/);
+    expect(block).toMatch(/min-height:\s*0/);
+  });
+});

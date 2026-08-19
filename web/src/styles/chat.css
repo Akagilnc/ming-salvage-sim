@@ -98,6 +98,19 @@
   padding: 4px 6px 4px 4px;
 }
 
+/* #1370：召对空态引导 chrome（系统层，非叙事） */
+.chat-empty-chrome {
+  align-self: center;
+  margin: 18% auto 0;
+  padding: 12px 18px;
+  color: rgba(90, 68, 36, 0.72);
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  border: 1px dashed rgba(111, 83, 46, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 248, 228, 0.42);
+}
+
 .chat-message {
   display: grid;
   gap: 4px;

@@ -420,10 +420,12 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect(hint()).toContain("请择一票拟，或亲笔批示。");
     expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
 
-    // 路二 a：择一票拟 → 可点
+    // 路二 a：择一票拟 → 可点；#1385 底栏文案态须反映已择
     act(() => options()[0].click());
     expect(confirm().disabled).toBe(false);
     expect(options()[0].classList.contains("is-picked")).toBe(true);
+    expect(hint()).toMatch(/已择|落印/);
+    expect(hint()).not.toContain("请择一票拟");
     cleanup();
 
     // 路二 b：仅亲笔批示有内容 → 可点（ADR 0043 留门）
