@@ -157,6 +157,79 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
     assert not in_talent_pool(yuan, db, state.year, state.period)
 
 
+def test_prior_unrelated_office_pending_does_not_block_yuan_reinstatement(
+    game, monkeypatch,
+):
+    """PR #1442 Cursor finding 复现钉（锚 r1 parallel skip @ ~698）。
+
+    主张：skip 用 directive 的 pending_action_id + 前置 pend_for_minister 快照，
+    先前无关 office（钱某）会让新任免（袁崇焕）被误判已处理不 stage。
+
+    r2（7fcf6794）已删「pending_action_id + 任意 office_rows → return None」全局跳过，
+    去重改按 name+office 实时 DB 匹配。本测：先 stage 钱某 office，再拟旨起复袁崇焕，
+    断言两人 office 均在 pending（钱某不挡袁崇焕）。
+    """
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    assert db.get_character_status("袁崇焕")[0] == "offstage"
+
+    # 前置无关 office：同 minister 同回合已有钱某任命 pending（进 apply 入口快照）
+    qian_pid = db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=ch.name, target_id=None,
+        payload={
+            "name": "钱某", "office": "礼部主事", "appointer": ch.name,
+        },
+    )
+    assert qian_pid
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            raise AssertionError(
+                "structured multi appointment must not call serial extractor"
+            )
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "special_decree",
+                "目标类型": "character",
+                "目标ID": "袁崇焕",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="起复袁崇焕为辽东巡抚，即日赴任，着吏部拟旨。",
+        answer="奉天承运皇帝诏曰，起复袁崇焕为辽东巡抚，钦此。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "辽东巡抚",
+            },
+        ],
+    )
+
+    pending = db.list_pending_actions(state.turn)
+    office_rows = [p for p in pending if p["kind"] == "office"]
+    office_names = sorted(
+        str(json.loads(p["payload_json"]).get("name") or "") for p in office_rows
+    )
+    assert "directive" in {p["kind"] for p in pending}
+    assert "钱某" in office_names, "前置钱某 office 不得被吃掉"
+    assert "袁崇焕" in office_names, (
+        "先前无关 office pending（钱某）不得挡起复袁崇焕 stage"
+        f"；实得 office={office_names!r}"
+    )
+    # 钱某行仍在且 id 未变（并入/去重不得误吞）
+    assert any(int(p["id"]) == int(qian_pid) for p in office_rows)
+
+
 def test_draft_without_appointment_intent_does_not_stage_office(game, monkeypatch):
     """#1380 负向：无任免结构化的拟旨不得误建 office（P5：禁补串行抽取）。"""
     db, state, content = game
