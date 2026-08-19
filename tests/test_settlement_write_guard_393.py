@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 import web_app
 from ming_sim.models import TurnPhase, FRONT_HALF_DONE_PHASES
+from ming_sim.session import GameSession
 
 
 class _RecordingDB:
@@ -41,6 +42,10 @@ class _RecordingDB:
 
     def get_character_status(self, *a, **k):
         return ("active", "")
+
+    def resolve_power_id(self, character):
+        # #1402：can_summon 真源读 power；轻壳无 characters 表，回落同真源默认 ming
+        return getattr(character, "power_id", "ming") or "ming"
 
     def kv_set(self, *a, **k):
         self.writes.append("kv_set")
@@ -69,10 +74,12 @@ class _FakeGame:
         minister = SimpleNamespace(name="某大臣", office_type="文官")
         self.content = SimpleNamespace(characters={"某秀女": consort, "某大臣": minister})
         self.session = SimpleNamespace(
-            content=self.content, state=self.state,
+            content=self.content, state=self.state, db=self.db,
             temporary_characters=set(),
             registry=SimpleNamespace(refresh=lambda *a, **k: None, register=lambda *a, **k: None),
         )
+        # #1402：web _require_active_minister 改调 session.can_summon——假壳挂真方法，禁自造文案表
+        self.session.can_summon = MethodType(GameSession.can_summon, self.session)
         self.favorites = set()
         self.chat_history = {}
 
