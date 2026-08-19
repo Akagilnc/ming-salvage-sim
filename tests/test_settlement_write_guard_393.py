@@ -298,8 +298,14 @@ def test_serialized_web_write_cm_contract():
 def test_advance_without_edict_refused_by_phase(monkeypatch):
     """退朝默认提交也会写 pending_actions，必须和写诏一样先过统一 web 写闸。"""
     game = _FakeGame(TurnPhase.SETTLING.value)
+    game.directive_rows = lambda: []  # 无草案 → advance_without_decree 路径
+
+    def _should_not_run(**_k):
+        game.db.writes.append("advance_without_decree")
+        return None
+
+    game.session.advance_without_decree = _should_not_run
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "advance_without_edict", lambda *a, **k: game.db.writes.append("advance_without_edict"))
 
     with pytest.raises(HTTPException) as ei:
         web_app.api_advance_without_edict()
@@ -311,8 +317,14 @@ def test_advance_without_edict_refused_by_phase(monkeypatch):
 def test_advance_without_edict_refused_when_gate_held(monkeypatch):
     """相位尚未落定但结算 worker 已持锁时，退朝端点不得阻塞事件循环等锁。"""
     game = _FakeGame(TurnPhase.SUMMONING.value)
+    game.directive_rows = lambda: []
+
+    def _should_not_run(**_k):
+        game.db.writes.append("advance_without_decree")
+        return None
+
+    game.session.advance_without_decree = _should_not_run
     monkeypatch.setattr(web_app, "get_game", lambda: game)
-    monkeypatch.setattr(web_app, "advance_without_edict", lambda *a, **k: game.db.writes.append("advance_without_edict"))
     game._write_gate.acquire()
     result: dict[str, object] = {}
 

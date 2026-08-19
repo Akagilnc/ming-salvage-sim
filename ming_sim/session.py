@@ -33,11 +33,11 @@ from ming_sim.db import (
     normalize_office,
     resolve_office_type_preserving_title,
 )
+from ming_sim.applier import Provenance
 from ming_sim.decree import (
     ResolveResult,
     _provenance_from_stored,
     _requires_full_settlement,
-    advance_without_edict,
     resolve_decisions_phase2,
     resolve_directives,
     resolve_settling_recovery,
@@ -2527,11 +2527,14 @@ class GameSession:
     # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
-                     inflight_wait_s: float | None = None) -> ResolveResult:
-        """颁诏并推演本回合（phase1）。要求无 pending 残留、≥1 条 draft。
+                     inflight_wait_s: float | None = None,
+                     *, allow_empty_decree: bool = False) -> ResolveResult:
+        """颁诏并推演本回合（phase1）。
 
         on_event(kind, data): 推演过程实时回调，透传给 resolve_directives。
         cheat_directive: 作弊控制台强制结算项，一次性透传给 resolve_directives。
+        allow_empty_decree: 退朝无旨入口（#1274）置 True——directives=[] 仍走完整结算链
+            （source=system_simulation）；颁诏 issue 路径保持默认 False（无草案 → 400）。
 
         返回 ResolveResult：含决策点 → awaiting=True，置 awaiting_decision 态，回合未推进，
         调用方据 result.decisions 弹窗，皇帝裁完调 submit_decisions。无决策点 → awaiting=False，
@@ -2651,10 +2654,8 @@ class GameSession:
             self.last_decree = ""
             self._decree_draft_fingerprint = ()
         settlement_due = _requires_full_settlement(self.state, self.db)
-        # The no-edict fast rail may have speculatively materialized a pending
-        # non-directive action, discovered that it requires full settlement, and
-        # rolled that transaction back.  The pending row is then the durable reason
-        # to enter resolve_directives, whose owning transaction materializes it again.
+        # Pending non-directive actions (secret orders etc.) enter resolve_directives
+        # so pre_settle owns materialization with the rest of the settlement spine.
         pending_action_due = bool(self.db.list_pending_actions(self.state.turn))
         if not directives and not settlement_due and not pending_action_due:
             # 恢复态且有存诏：免草案要求（零草案 settling=driver 档/逃生口降级后是真实态，
@@ -2662,6 +2663,9 @@ class GameSession:
             if (self.state.turn_phase in FRONT_HALF_DONE_PHASES
                     and (self.last_decree or "").strip()):
                 directives = [{"text": self.last_decree}]
+            elif allow_empty_decree or recovered_source is not None:
+                # #1274：无旨月 / 结算中恢复 — decrees=[] 走完整链，不拒。
+                pass
             else:
                 raise ValueError("网页/CLI 端不允许跳过回合：至少一条草案才能颁诏。")
         # P1-1（不变式：不许颁发早于尚未纳入草案的生成稿）：玩家拟诏后又回对话新建草案时，
@@ -2684,9 +2688,12 @@ class GameSession:
         self.last_decree = decree_text
         # 恢复 fallthrough 把存档真源穿透传入（#146 cmr r2）；正常颁诏 recovered_source is None
         # → 省略 source 参数走默认 player_decree（行为不变）。
+        # #1274 退朝无旨：allow_empty_decree + 无草案 → system_simulation（世界自演变静默）。
         resolve_kwargs = {}
         if recovered_source is not None:
             resolve_kwargs["source"] = recovered_source
+        elif allow_empty_decree and not directives and not (decree_text or "").strip():
+            resolve_kwargs["source"] = Provenance.system_simulation
         result = resolve_directives(
             self.state, self.db, self.agno_db, self.llm_config,
             directives, decree_text, deaths_this_turn=self.deaths_this_turn,
@@ -2801,23 +2808,18 @@ class GameSession:
         self.db.save_state(self.state)
         return report
 
-    def advance_without_decree(self):
-        """CLI 退朝；fast 内核以事务内 DB 真源决定是否转完整结算。"""
+    def advance_without_decree(self, inflight_wait_s: float | None = None):
+        """CLI/web 退朝；无旨月亦走完整结算链（#1274 / owner B-2）。
+
+        有草案/pending → 视同颁诏 resolve_turn。
+        无草案 → allow_empty_decree，source=system_simulation，pre_settle+simulator+
+        settle_with_delta 全链照跑（邸报/种子局势/议题惯性/结局判定）；16ms 快路已废。
+        """
         if self.db.list_directives(self.state, statuses=("pending", "draft")):
-            return self.resolve_turn()
-        advanced = advance_without_edict(
-            self.state, self.db,
-            content=getattr(self, "content", None),
-            registry=getattr(self, "registry", None),
-            llm_config=getattr(self, "llm_config", None),
-            write_gate=None,
-            scene_registry=self._scene_registry,
+            return self.resolve_turn(inflight_wait_s=inflight_wait_s)
+        return self.resolve_turn(
+            inflight_wait_s=inflight_wait_s, allow_empty_decree=True,
         )
-        if not advanced:
-            return self.resolve_turn()
-        self.state.turn_phase = TurnPhase.SUMMONING.value
-        self.db.save_state(self.state)
-        return None
 
     def victory(self) -> Dict[str, object]:
         return victory_status(self.db, self.state)

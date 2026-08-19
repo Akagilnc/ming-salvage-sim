@@ -1992,7 +1992,7 @@ def test_cli_no_edict_route_rejudges_held_proposed_dossier(game):
     session.db = db
     session.state = state
     called = []
-    session.resolve_turn = lambda: called.append("resolve")
+    session.resolve_turn = lambda **_k: called.append("resolve")
 
     session.advance_without_decree()
 

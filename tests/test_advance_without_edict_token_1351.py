@@ -6,6 +6,8 @@
    （detail 人话 + 当前 turn；样板 finally 清展示态；不开新锁）
 3. 同令牌连发两次 → 第二次 409，月份只进一格
 4. 不带令牌 → 行为同今（可连进两格）
+
+#1274：端点改走 session.advance_without_decree 完整结算；夹具需 canned LLM。
 """
 
 from __future__ import annotations
@@ -16,19 +18,50 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+import ming_sim.decree as decree_mod
+import ming_sim.memories as memories
 import web_app
 from ming_sim.models import TurnPhase
+from ming_sim.session import GameSession
+
+
+def _canned(monkeypatch):
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("令牌测无旨月邸报。", k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
+
+def _session(db, state, content):
+    session = GameSession.__new__(GameSession)
+    session.db = db
+    session.state = state
+    session.content = content
+    session.registry = None
+    session.llm_config = None
+    session.agno_db = None
+    session.deaths_this_turn = []
+    session.debuts_this_turn = []
+    session.last_decree = ""
+    session.last_report = ""
+    session._decree_draft_fingerprint = ()
+    session._scene_registry = None
+    session._beat_generator = None
+    session.auto_save = lambda *a, **k: None
+    return session
 
 
 def _web_runtime(db, state, content, *, monkeypatch):
-    session = SimpleNamespace(
-        registry=None,
-        llm_config=None,
-        _scene_registry=None,
-        resolve_turn=lambda **_k: (_ for _ in ()).throw(
-            AssertionError("本片快路不应落入 resolve_turn")
-        ),
-    )
+    session = _session(db, state, content)
     runtime = SimpleNamespace(
         db=db,
         state=state,
@@ -47,16 +80,9 @@ def _web_runtime(db, state, content, *, monkeypatch):
         _write_gate=__import__("threading").Lock(),
     )
 
-    @contextlib.contextmanager
-    def _real_serialized(game):
-        # 保留非阻塞抢锁语义，走生产 _serialized_web_write。
-        with web_app._serialized_web_write(game):
-            yield
-
     monkeypatch.setattr(web_app, "get_game", lambda: runtime)
     monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda *_a, **_k: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda *_a, **_k: None)
-    # 不替换 write_cm 工厂本身：entry 内仍用 _serialized_web_write。
     return runtime
 
 
@@ -70,6 +96,7 @@ def test_double_advance_same_token_second_is_409_turn_plus_one(game, monkeypatch
     db, state, content = game
     assert state.turn_phase == TurnPhase.SUMMONING.value
     start = int(state.turn)
+    _canned(monkeypatch)
     _web_runtime(db, state, content, monkeypatch=monkeypatch)
 
     first = web_app.api_advance_without_edict(_body(start))
@@ -92,6 +119,7 @@ def test_advance_without_token_keeps_legacy_double_advance(game, monkeypatch):
     """不带令牌：行为同今——连发两次可各进一格。"""
     db, state, content = game
     start = int(state.turn)
+    _canned(monkeypatch)
     _web_runtime(db, state, content, monkeypatch=monkeypatch)
 
     web_app.api_advance_without_edict()
@@ -105,6 +133,7 @@ def test_mismatched_token_409_clears_display_snapshot(game, monkeypatch):
     """令牌不匹配 409 走样板 finally：展示态快照被清（非成功保留）。"""
     db, state, content = game
     start = int(state.turn)
+    _canned(monkeypatch)
     _web_runtime(db, state, content, monkeypatch=monkeypatch)
 
     # 先成功推进一格，制造 turn 漂移。
