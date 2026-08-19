@@ -8,6 +8,7 @@
 4. write_gate=None 卫兵不被 _gate_cm(nullcontext) 架空
 5. r1：部分 heal 新旧 id 集不同 → converter 409 正文只含鲜集（禁 stale+fresh 拼串）
 6. r1：session/对话口令收夜穿 runtime write_gate，与颁诏 auto_close 待补同行为
+7. r2：重入封顶 close_retry 支切断 drain cause → 409 正文不含已愈 stale ids
 """
 
 from __future__ import annotations
@@ -278,6 +279,67 @@ def test_converter_409_body_only_fresh_ids_after_partial_heal(
     assert ei.value.__cause__ is None or getattr(
         ei.value.__cause__, "code", None
     ) != "pending_extraction"
+
+
+def test_converter_409_body_excludes_stale_on_close_retry_cap(
+    game, tmp_path, monkeypatch,
+):
+    """#1353 r2：重入封顶 close_retry 支切断 drain cause → 409 不含已愈 ids。
+
+    首入 drain pending → 清理窗全愈 → 单次重入 → 重入 drain 再 pending → 再全愈
+    → close_retry。禁 `raise retry_exc from drain_exc` 经 converter __cause__
+    把 stale chat_turn_ids 拼进 409 正文（与 pending API count==0 双源）。
+    """
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
+    )
+    minister = _minister(db, content)
+    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister)
+
+    real_set = an._set_night_fields
+
+    def heal_all_on_open_repend_on_closing(db_, night_id, **fields):
+        # 清理窗全愈 → still=[] 走重入/封顶；重入 CLOSING 再挂回待补让 drain 再报 pending。
+        if fields.get("status") == an.NIGHT_STATUS_OPEN:
+            db_.conn.execute(
+                "UPDATE chat_turns SET extract_status = 'done' "
+                "WHERE night_id = ? AND minister_message_id IS NOT NULL",
+                (int(night_id),),
+            )
+            db_.conn.commit()
+        elif fields.get("status") == an.NIGHT_STATUS_CLOSING:
+            db_.conn.execute(
+                "UPDATE chat_turns SET extract_status = 'pending' WHERE id = ?",
+                (ctid_stale,),
+            )
+            db_.conn.commit()
+        return real_set(db_, night_id, **fields)
+
+    monkeypatch.setattr(an, "_set_night_fields", heal_all_on_open_repend_on_closing)
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
+        )
+    assert ei.value.code == "close_retry", (
+        f"expected close_retry cap, got {ei.value.code}: {ei.value}"
+    )
+    # 封顶支 fresh 单点构造：cause 不得再挂 pending_extraction stale 快照
+    assert ei.value.__cause__ is None or getattr(
+        ei.value.__cause__, "code", None
+    ) != "pending_extraction"
+
+    http_exc = web_app._retryable_audience_close_http(ei.value)
+    assert http_exc.status_code == 409
+    body = str(http_exc.detail)
+    assert str(ctid_stale) not in body, (
+        f"close_retry 409 正文不得含已愈 stale id={ctid_stale}：{body!r}"
+    )
+    assert "chat_turn_ids=" not in body, body
+    # 与 pending API 成对：全愈后 count==0，正文亦无 ids
+    assert int(_pending_api(db)["count"]) == 0
 
 
 def test_close_after_chat_passes_write_gate_like_auto_close(

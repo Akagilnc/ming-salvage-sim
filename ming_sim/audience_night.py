@@ -1316,9 +1316,12 @@ def close_night(
                 code="close_retry",
                 detail={"night_id": int(night_id)},
             )
+            # #1353 r2：重入封顶支同首入支——禁 `from drain_exc`。
+            # drain 内层自构恒带（可能已愈的）chat_turn_ids；converter 走 __cause__
+            # 会把 stale ids 拼进 409 正文，与 pending API count==0 双源（首入支已断，此支漏网）。
             if cleanup_exc is not None:
                 raise retry_exc from cleanup_exc
-            raise retry_exc from drain_exc
+            raise retry_exc
         if cleanup_exc is not None:
             raise drain_exc from cleanup_exc
         raise
