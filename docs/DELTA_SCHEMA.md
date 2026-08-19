@@ -39,6 +39,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
   "close_issues":     [],  // 结案 issue
   "dossier_executions": [], // 执行中案卷的明确结局（S1）
   "dossier_participants": [], // 月末新出场的案卷参与人（S2，append-only）
+  "secret_dossier_participants": [], // #1252 密令案卷参与人追加（personnel_secret 私字段）
   "authority_changes": [], // 授予/收回持有型特权（ADR 0071 / #611）
   "dossier_reconciliations": [], // 在途拨帑对账提案（#567 / ADR 0054）
   "faction_denunciations": [], // 政敌检举条目（#627 / ADR 0077 ID-12）
@@ -260,6 +261,20 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 - 每项必须带 `dossier_id`、`character_id`、`tier`；`tier` 只收 `主办` / `协办` / `知情`，可带 `role` 与 `delegator_id`。
 - 人物与委派人必须是 `characters.name`；写入只追加且精确重复项幂等，不覆盖已有名单。
 
+### `secret_dossier_participants` — #1252 密令案卷参与人追加
+
+personnel_secret 模块产出；与公共 `dossier_participants` **分立**（字段名即 provenance，禁止共享槽位 + union 授权）。settle 内经同一 `append_decree_dossier_participants` 写原语逐项拒收留痕（ADR 0015），不 fail-loud。
+
+| 字段 | 约束 |
+|---|---|
+| `dossier_id`（别名 `案卷编号`） | **必填**正整数；须落在本批冻结授权集 `secret_dossier_ids_at_input`（由冻结 `secret_orders` 经 `get_dossier_for_secret_order` 解析；缺授权=空闭集，禁 live DB 重建） |
+| `character_id` | **必填**在册人物规范名 |
+| `tier` | **必填**∈｛主办/协办/知情｝ |
+| `delegator_id` | **必填**同案已有主办/协办 |
+| `role` | 可选职分文字 |
+
+读缝：`secret_dossier_rosters`（personnel_secret 私轨；每项 `dossier_id`+`participant_roster`，同 `monthly_dossier_reports` 口径）。键控用 `dossier_id`，不另起 `order_id` 键空间。公共 `dossier_participants` 对密令案卷 id 仍拒（#883 隔离不变）。
+
 ### 背书条目（ADR 0070）
 
 背书条目与参与人名单分立：担名≠办事，不入毁约追责。条目字段为 `form`∈｛会签/当面站台/御笔手敕｝、会签/当面站台的具名 `endorser_id`（在册人物），或御笔手敕的 `imperial=true`（不得具名大臣）。写入只接受已存在案卷（单向新指旧；悬空/未知案卷拒收），并绑定来源 `source_chat_turn_id`；精确重复项幂等。
@@ -378,7 +393,7 @@ personnel_secret 模块产出；settle 内经 `record_monthly_dossier_progress` 
 | `internal` | `metric_delta` `economy_moves` `faction_delta` `class_delta` `region_delta` `fiscal_changes` `fiscal_creates` `fiscal_removes` |
 | `military_external` | `army_delta` `new_armies` `power_updates` `world_advance` |
 | `issues` | `issue_advances` `new_issues` `事件结局` `cancels` `close_issues` `dossier_executions` `dossier_participants` `authority_changes` `dossier_reconciliations` `faction_denunciations` |
-| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `emperor_fate` |
+| `personnel_secret` | `人物变更` `secret_order_updates` `secret_order_closes` `dossier_progress_reports` `secret_dossier_participants` `emperor_fate` |
 
 ---
 
