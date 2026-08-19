@@ -98,6 +98,7 @@ ITEM_FIELD_ALIASES = {
     "origin_kind": "origin_kind", "来源类型": "origin_kind",
     "origin_ref": "origin_ref", "来源引用": "origin_ref", "诏书引用": "origin_ref",
     # #622：旨外恶果/受益同列标记（效果行注解，非平行轨）
+    # #1260：别名表全仓一份——flows/due_review 读端改调 read_beyond_intent_raw，禁手抄子集。
     "beyond_intent": "beyond_intent", "旨外": "beyond_intent",
     "旨外标记": "beyond_intent", "旨外恶果": "beyond_intent",
     "id": "id", "编号": "id",
@@ -1250,6 +1251,9 @@ def _clean_fiscal_changes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1307,6 +1311,9 @@ def _clean_fiscal_creates(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
@@ -1333,6 +1340,9 @@ def _clean_fiscal_removes(raw: object) -> List[Dict[str, object]]:
         origin_ref = str(item.get("origin_ref") or "").strip()
         if origin_ref:
             entry["origin_ref"] = origin_ref
+        # #1260：beyond_intent 无损透传（别名已由 _canonical_item_fields 归一）。
+        if "beyond_intent" in item:
+            entry["beyond_intent"] = item["beyond_intent"]
         cleaned.append(entry)
     return cleaned
 
