@@ -288,38 +288,43 @@ def test_silent_new_secret_order_lands_at_checkpoint_without_pending_visibility(
     assert db.list_secret_orders(status="pending") == []
 
 
-def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(read_game, monkeypatch):
-    """#413/#414: 兼容端点只能进入召对确认流,不得直写 pending action 绕过大臣回话。"""
-    import asyncio
+def _secret_order_endpoint_runtime(db, state, content, *, session_chat, monkeypatch):
+    """#1357：密令端点真缝壳——走 WebGame 生产 _chat_with_write_gate_held，
+    只在 session.chat 边界注入 canned（禁 mock 死符号掩 AttributeError）。"""
+    from tests.test_qa_c3_secret_order_path_1357_1376 import (
+        webgame_shell_for_secret_order,
+    )
+    runtime = webgame_shell_for_secret_order(
+        db, state, content, session_chat=session_chat,
+    )
+    monkeypatch.setattr(web_app, "web_game", runtime)
+    monkeypatch.setattr(web_app, "get_game", lambda: runtime)
+    return runtime
 
-    db, state, content = read_game
+
+def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(game, monkeypatch):
+    """#413/#414/#1357: 兼容端点只能进入召对确认流,不得直写 pending action 绕过大臣回话。
+
+    真缝：生产 _chat_with_write_gate_held → chat 语义；LLM 边界 canned。
+    """
+    import asyncio
+    from ming_sim.session import ChatTurnResult
+
+    db, state, content = game
     name = _active_minister_name(db, content)
     calls = []
 
-    def _chat(minister_name, message):
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
         calls.append((minister_name, message))
-        return {
-            "minister": minister_name,
-            "answer": "臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。",
-            "history": [
-                {"role": "user", "content": message},
-                {"role": "minister", "content": "臣领密旨，请陛下定夺。"},
-            ],
-            "pending_action_id": 42,
-            "secret_order_id": 0,
-        }
+        return ChatTurnResult(
+            answer="臣领密旨，拟先封存账册，再密访诸将，请陛下定夺。",
+            pending_action_id=42,
+            secret_order_id=0,
+        )
 
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=types.SimpleNamespace(
-            state=state, content=content, registry=None, temporary_characters=set()),
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-        chat=_chat,
-        _chat_with_write_gate_held=_chat,
+    _secret_order_endpoint_runtime(
+        db, state, content, session_chat=_session_chat, monkeypatch=monkeypatch,
     )
-    monkeypatch.setattr(web_app, "web_game", stub)
 
     result = asyncio.run(web_app.api_create_secret_order(
         name,
@@ -336,31 +341,29 @@ def test_secret_order_endpoint_delegates_to_chat_confirmation_flow(read_game, mo
     assert result["pending_action_id"] == 42
     assert result["secret_order_id"] == 0
     assert db.list_secret_orders() == []
-    assert db.list_pending_actions(state.turn) == []
+    # 本测 canned 回话不 stage；确认闸门仍要求真实落库走 commit，端点不得直写
+    assert not any(
+        a["kind"] == "secret_order" and a["action"] == "新建"
+        for a in db.list_pending_actions(state.turn)
+    )
 
 
-def test_api_create_secret_order_preserves_explicit_zero_deadline(read_game, monkeypatch):
+def test_api_create_secret_order_preserves_explicit_zero_deadline(game, monkeypatch):
     """按钮端点显式传 deadline_months=0 时，也要把 0 月交给统一密令前缀文本。"""
     import asyncio
+    from ming_sim.session import ChatTurnResult
 
-    db, state, content = read_game
+    db, state, content = game
     name = _active_minister_name(db, content)
     calls = []
 
-    def _chat(minister_name, message):
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
         calls.append((minister_name, message))
-        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+        return ChatTurnResult(answer="臣领密旨。", pending_action_id=7, secret_order_id=0)
 
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=types.SimpleNamespace(
-            state=state, content=content, registry=None, temporary_characters=set()),
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-        _chat_with_write_gate_held=_chat,
+    _secret_order_endpoint_runtime(
+        db, state, content, session_chat=_session_chat, monkeypatch=monkeypatch,
     )
-    monkeypatch.setattr(web_app, "web_game", stub)
 
     result = asyncio.run(web_app.api_create_secret_order(
         name,
@@ -375,26 +378,21 @@ def test_api_create_secret_order_preserves_explicit_zero_deadline(read_game, mon
     assert result["pending_action_id"] == 7
 
 
-def test_api_create_secret_order_supports_pydantic_v1_fields_set(read_game, monkeypatch):
+def test_api_create_secret_order_supports_pydantic_v1_fields_set(game, monkeypatch):
     """兼容 Pydantic v1:显式传 deadline_months=0 时字段集合在 __fields_set__。"""
     import asyncio
+    from ming_sim.session import ChatTurnResult
 
-    db, state, content = read_game
+    db, state, content = game
     name = _active_minister_name(db, content)
     calls = []
 
-    def _chat(minister_name, message):
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
         calls.append((minister_name, message))
-        return {"answer": "臣领密旨。", "pending_action_id": 7, "secret_order_id": 0}
+        return ChatTurnResult(answer="臣领密旨。", pending_action_id=7, secret_order_id=0)
 
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=types.SimpleNamespace(
-            state=state, content=content, registry=None, temporary_characters=set()),
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-        _chat_with_write_gate_held=_chat,
+    _secret_order_endpoint_runtime(
+        db, state, content, session_chat=_session_chat, monkeypatch=monkeypatch,
     )
     request = types.SimpleNamespace(
         title="暗查辽饷",
@@ -403,7 +401,6 @@ def test_api_create_secret_order_supports_pydantic_v1_fields_set(read_game, monk
         deadline_months=0,
     )
     setattr(request, "__fields_set__", {"deadline_months"})
-    monkeypatch.setattr(web_app, "web_game", stub)
 
     result = asyncio.run(web_app.api_create_secret_order(name, request))
 
@@ -411,30 +408,24 @@ def test_api_create_secret_order_supports_pydantic_v1_fields_set(read_game, monk
     assert result["pending_action_id"] == 7
 
 
-def test_api_create_secret_order_ignores_malformed_tags(read_game, monkeypatch):
+def test_api_create_secret_order_ignores_malformed_tags(game, monkeypatch):
     """旧按钮端点遇到非 list tags 时不崩溃，按无标签继续走召对闸门。"""
     import asyncio
+    from ming_sim.session import ChatTurnResult
 
-    db, state, content = read_game
+    db, state, content = game
     name = _active_minister_name(db, content)
     calls = []
 
-    def _chat(minister_name, message):
+    def _session_chat(minister_name, message, *, chat_turn_id=0):
         calls.append((minister_name, message))
-        return {"answer": "臣领旨。", "pending_action_id": 7, "secret_order_id": 0}
+        return ChatTurnResult(answer="臣领旨。", pending_action_id=7, secret_order_id=0)
 
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=types.SimpleNamespace(
-            state=state, content=content, registry=None, temporary_characters=set()),
-        character_power_id=lambda c: web_app._character_power_id(c, db),
-        _chat_with_write_gate_held=_chat,
+    _secret_order_endpoint_runtime(
+        db, state, content, session_chat=_session_chat, monkeypatch=monkeypatch,
     )
     req = web_app.SecretOrderRequest(title="暗查辽饷", content="密查辽东军饷侵冒。")
     req.tags = None  # type: ignore[assignment]
-    monkeypatch.setattr(web_app, "web_game", stub)
 
     result = asyncio.run(web_app.api_create_secret_order(name, req))
 
