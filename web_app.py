@@ -533,6 +533,11 @@ class DirectivePatch(BaseModel):
     notes: Optional[str] = None
 
 
+class AdvanceWithoutEdictRequest(BaseModel):
+    """#1351 A1：可选回合令牌；缺省兼容无令牌旧客户端。"""
+    expected_turn: Optional[int] = None
+
+
 def _character_power_id(character: Character, db) -> str:
     """人物所属势力 id：DB 权威，回退内存 power_id，默认 ming。
 
@@ -4262,7 +4267,9 @@ async def api_delete_directive(directive_id: int) -> Dict[str, Any]:
 
 
 @app.post("/api/decree/advance_without_edict")
-def api_advance_without_edict() -> Dict[str, Any]:
+def api_advance_without_edict(
+    body: AdvanceWithoutEdictRequest = AdvanceWithoutEdictRequest(),
+) -> Dict[str, Any]:
     # #498 AC10：内部 _await_audience_inflight_clear 可同步阻塞至多 30s 等在飞回话落档。
     # 用同步 def 交给 FastAPI threadpool 跑，绝不在 async event loop 上跑同步 sleep（会冻结全服务）。
     game = get_game()
@@ -4273,6 +4280,20 @@ def api_advance_without_edict() -> Dict[str, Any]:
     try:
         # #1241 S1：受理样板收 helper；advance 锁语义 = 非阻塞抢锁 409（禁改用阻塞 gate）。
         with _settlement_period_entry(game, write_cm=_serialized_web_write):
+            # #1351 A1：获锁后、推进副作用前比对令牌；不匹配 → 409（样板 finally 清展示态）。
+            if body.expected_turn is not None:
+                current_turn = int(getattr(game.state, "turn", 0) or 0)
+                if current_turn != int(body.expected_turn):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                f"月份已变更（当前第 {current_turn} 月），"
+                                "与退朝令牌不符，请刷新后再试。"
+                            ),
+                            "turn": current_turn,
+                        },
+                    )
             if game.directive_rows():
                 settlement_result = game.session.resolve_turn(inflight_wait_s=0.0)
             else:
