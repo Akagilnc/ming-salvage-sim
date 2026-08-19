@@ -6,6 +6,7 @@ seed 情势，历史 `events` 分支只过纯日历窗口 `_event_window_open` �
 才进候选；无 gate（空 dict）= 纯日历锚定，行为不变。
 """
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,32 @@ def _hist_event(eid, gate):
         trigger_year=1, trigger_month=0,  # 极早历史锚点 → 日历窗口必开
         trigger_gate=gate,
     )
+
+
+@contextmanager
+def _restore_yuan_as_guanning_commander(db, content):
+    """起复并任命袁崇焕掌关宁——mao_wenlong gate 前置（seed 关宁已非袁统帅）。
+
+    同步 DB armies.commander 与 content 绑定对象；退出时还原 content.armies，
+    避免 session 共享 content 泄漏（不回退 seed 统帅口径）。
+    """
+    yuan = content.characters.get("袁崇焕")
+    army = content.armies.get("guanning")
+    prev_yuan_status = yuan.status if yuan is not None else None
+    prev_commander = army.commander if army is not None else None
+    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
+    db.conn.execute("UPDATE armies SET commander=? WHERE id=?", ("袁崇焕", "guanning"))
+    if yuan is not None:
+        yuan.status = "active"
+    if army is not None:
+        army.commander = "袁崇焕"
+    try:
+        yield
+    finally:
+        if yuan is not None:
+            yuan.status = prev_yuan_status
+        if army is not None:
+            army.commander = prev_commander
 
 
 def test_gated_historical_event_excluded_when_unsatisfied(game):
@@ -857,38 +884,37 @@ def test_mao_wenlong_event_excluded_after_player_relocates_mao(game):
         "UPDATE characters SET loyalty=?, status=?, location=?, transit_to='' WHERE name=?",
         (44, "active", "dongjiang_area", "毛文龙"),
     )
-    db.conn.execute("UPDATE characters SET status=? WHERE name=?", ("active", "袁崇焕"))
     content.characters["毛文龙"].loyalty = 44
     content.characters["毛文龙"].status = "active"
     content.characters["毛文龙"].location = "dongjiang_area"
     content.characters["毛文龙"].transit_to = ""
-    content.characters["袁崇焕"].status = "active"
 
-    assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+    with _restore_yuan_as_guanning_commander(db, content):
+        assert any(ev.id == "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
 
-    applied = issues.apply_score_extraction(
-        db,
-        state,
-        {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
-        content=content,
-    )
+        applied = issues.apply_score_extraction(
+            db,
+            state,
+            {"人物变更": [{"origin_ref": "盘面自发", "name": "毛文龙", "动作": "行止", "location": "shaanxi", "reason": "调往陕西剿抚"}]},
+            content=content,
+        )
 
-    assert applied["applied_person_changes"] == [
-        {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": "",
-         "origin_ref": "盘面自发"}
-    ]
-    assert db.conn.execute(
-        "SELECT location FROM characters WHERE name=?",
-        ("毛文龙",),
-    ).fetchone()["location"] == "shaanxi"
-    assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
-    issues.apply_event_terminal_states(state, db)
-    terminal = db.conn.execute(
-        "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
-        ("mao_wenlong",),
-    ).fetchone()
-    assert terminal is not None
-    assert dict(terminal) == {"terminal_state": "avoided", "source": "gate_avoided"}
+        assert applied["applied_person_changes"] == [
+            {"name": "毛文龙", "动作": "行止", "location": "shaanxi", "transit_to": "",
+             "origin_ref": "盘面自发"}
+        ]
+        assert db.conn.execute(
+            "SELECT location FROM characters WHERE name=?",
+            ("毛文龙",),
+        ).fetchone()["location"] == "shaanxi"
+        assert all(ev.id != "mao_wenlong" for ev in issues.gather_candidate_events(state, db))
+        issues.apply_event_terminal_states(state, db)
+        terminal = db.conn.execute(
+            "SELECT terminal_state, source FROM event_triggers WHERE event_id=?",
+            ("mao_wenlong",),
+        ).fetchone()
+        assert terminal is not None
+        assert dict(terminal) == {"terminal_state": "avoided", "source": "gate_avoided"}
 
 
 def test_mao_wenlong_event_excluded_after_player_reassigns_yuan(game):
@@ -916,25 +942,25 @@ def test_mao_wenlong_event_trigger_lands_character_status(game):
     state.year = 1629
     state.period = 6
     db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    cands = issues.gather_candidate_events(state, db)
-    assert any(ev.id == "mao_wenlong" for ev in cands)
-    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
+    with _restore_yuan_as_guanning_commander(db, content):
+        cands = issues.gather_candidate_events(state, db)
+        assert any(ev.id == "mao_wenlong" for ev in cands)
+        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-    out = issues.apply_issue_tracker_output(
-        db,
-        state,
-        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-        content=content,
-    )
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+            content=content,
+        )
 
-    assert out["new_issues"][0]["rejected"] is False
-    assert db.get_character_status("毛文龙")[0] == "dead"
-    assert content.characters["毛文龙"].status == "dead"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-    ).fetchone()[0] == before_logs + 1
+        assert out["new_issues"][0]["rejected"] is False
+        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert content.characters["毛文龙"].status == "dead"
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs + 1
 
 
 def test_strategic_foreign_event_records_trigger_and_lands_soft_result_delta(game):
@@ -2799,28 +2825,29 @@ def test_mao_wenlong_event_trigger_respects_outer_transaction_rollback(game):
     state.year = 1629
     state.period = 6
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
-    db.conn.commit()
-    before_logs = db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-    ).fetchone()[0]
 
-    db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
-        db,
-        state,
-        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-        content=content,
-    )
-    assert out["new_issues"][0]["rejected"] is False
-    db.conn.rollback()
+    with _restore_yuan_as_guanning_commander(db, content):
+        db.conn.commit()
+        before_logs = db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0]
 
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert content.characters["毛文龙"].status == "active"
-    assert not db.has_event_triggered("mao_wenlong")
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-    ).fetchone()[0] == before_logs
+        db.conn.execute("BEGIN")
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+            content=content,
+        )
+        assert out["new_issues"][0]["rejected"] is False
+        db.conn.rollback()
+
+        assert db.get_character_status("毛文龙")[0] == "active"
+        assert content.characters["毛文龙"].status == "active"
+        assert not db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs
 
 
 def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game):
@@ -2830,22 +2857,23 @@ def test_issue_tracker_rollback_restores_bound_content_when_content_omitted(game
     state.year = 1629
     state.period = 6
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
     content.characters["毛文龙"].status = "active"
-    db.conn.commit()
 
-    db.conn.execute("BEGIN")
-    out = issues.apply_issue_tracker_output(
-        db,
-        state,
-        {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
-    )
-    assert out["new_issues"][0]["rejected"] is False
-    assert content.characters["毛文龙"].status == "dead"
-    db.conn.rollback()
+    with _restore_yuan_as_guanning_commander(db, content):
+        db.conn.commit()
 
-    assert db.get_character_status("毛文龙")[0] == "active"
-    assert content.characters["毛文龙"].status == "active"
+        db.conn.execute("BEGIN")
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}]},
+        )
+        assert out["new_issues"][0]["rejected"] is False
+        assert content.characters["毛文龙"].status == "dead"
+        db.conn.rollback()
+
+        assert db.get_character_status("毛文龙")[0] == "active"
+        assert content.characters["毛文龙"].status == "active"
 
 
 def test_issue_tracker_rollback_removes_dynamic_character_attrs(game):
@@ -5720,24 +5748,24 @@ def test_invalid_pending_person_change_does_not_block_event_gate(game):
     state.year = 1629
     state.period = 6
     db.conn.execute("UPDATE characters SET loyalty = ?, status = ? WHERE name = ?", (44, "active", "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
 
-    out = issues.apply_score_extraction(
-        db,
-        state,
-        {
-            "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
-            "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
-        },
-        content=content,
-    )
+    with _restore_yuan_as_guanning_commander(db, content):
+        out = issues.apply_score_extraction(
+            db,
+            state,
+            {
+                "new_issues": [{"origin_kind": "event_pool", "id": "mao_wenlong"}],
+                "人物变更": [{"origin_ref": "盘面自发", "name": "袁崇焕", "动作": "处置", "status": "candidate", "reason": "非法候选"}],
+            },
+            content=content,
+        )
 
-    assert out["issue_summary"]["new_issues"][0]["rejected"] is False
-    assert db.has_event_triggered("mao_wenlong")
-    assert db.get_character_status("毛文龙")[0] == "dead"
-    assert db.get_character_status("袁崇焕")[0] == "active"
-    assert out["applied_person_changes"][0]["rejected"] is True
-    assert out["applied_person_changes"][0]["category"] == "invalid_transition"
+        assert out["issue_summary"]["new_issues"][0]["rejected"] is False
+        assert db.has_event_triggered("mao_wenlong")
+        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert db.get_character_status("袁崇焕")[0] == "active"
+        assert out["applied_person_changes"][0]["rejected"] is True
+        assert out["applied_person_changes"][0]["category"] == "invalid_transition"
 
 
 def test_mao_wenlong_event_obsolete_when_core_subject_already_dead(game):
@@ -5884,25 +5912,26 @@ def test_mao_wenlong_event_pool_duplicate_emit_is_idempotent(game):
     state.year = 1629
     state.period = 6
     db.conn.execute("UPDATE characters SET loyalty = ? WHERE name = ?", (44, "毛文龙"))
-    db.conn.execute("UPDATE characters SET status = ? WHERE name = ?", ("active", "袁崇焕"))
-    before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-    out = issues.apply_issue_tracker_output(
-        db,
-        state,
-        {"new_issues": [
-            {"origin_kind": "event_pool", "id": "mao_wenlong"},
-            {"origin_kind": "event_pool", "id": "mao_wenlong"},
-        ]},
-        content=content,
-    )
+    with _restore_yuan_as_guanning_commander(db, content):
+        before_logs = db.conn.execute("SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)).fetchone()[0]
 
-    assert out["new_issues"][0]["rejected"] is False
-    assert out["new_issues"][1]["rejected"] is True
-    assert "候选" in out["new_issues"][1]["reason"]
-    assert db.get_character_status("毛文龙")[0] == "dead"
-    assert content.characters["毛文龙"].status == "dead"
-    assert db.has_event_triggered("mao_wenlong")
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
-    ).fetchone()[0] == before_logs + 1
+        out = issues.apply_issue_tracker_output(
+            db,
+            state,
+            {"new_issues": [
+                {"origin_kind": "event_pool", "id": "mao_wenlong"},
+                {"origin_kind": "event_pool", "id": "mao_wenlong"},
+            ]},
+            content=content,
+        )
+
+        assert out["new_issues"][0]["rejected"] is False
+        assert out["new_issues"][1]["rejected"] is True
+        assert "候选" in out["new_issues"][1]["reason"]
+        assert db.get_character_status("毛文龙")[0] == "dead"
+        assert content.characters["毛文龙"].status == "dead"
+        assert db.has_event_triggered("mao_wenlong")
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM person_logs WHERE person_name=?", ("毛文龙",)
+        ).fetchone()[0] == before_logs + 1

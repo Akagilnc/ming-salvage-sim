@@ -1,11 +1,14 @@
 """#1281：议题 audiences 案情（stage_text）注入召对见闻。
 
-缺陷：seed「户部亏空」案情=「毕自严具题：太仓存银不足三百万」且 audiences
-含毕自严，但召对毕自严时 LLM 上下文不含此案情——口径随机（当面翻供非骗是乱）。
+缺陷：seed「户部亏空」案情在 audiences 具题人口中，但召对该人时 LLM 上下文不含
+此案情——口径随机（当面翻供非骗是乱）。
 
 修法：议题 originating event 的 audiences 含被召对人时，stage_text 级案情在
 render_character_knowledge 渲染缝读时合成进召对上下文（非平行通道、非模板回话、
 不写入 get_character_knowledge 持久读 events——#492 durable 尾契约）。
+
+#1361 后 seed 具题人/案情改为在任户部尚书郭允厚 + 定性「太仓存银见绌」
+（对齐开局国库实数、禁与 320 恒冲突的「不足三百万」）；本钉随 seed 口径同步。
 """
 
 from __future__ import annotations
@@ -16,7 +19,8 @@ from ming_sim.knowledge import render_character_knowledge
 from ming_sim.session import GameSession
 
 
-CASE_MARKER = "太仓存银不足三百万"
+CASE_MARKER = "太仓存银见绌"
+AUDIENCE_NAME = "郭允厚"
 ISSUE_TITLE = "户部亏空"
 
 
@@ -34,12 +38,12 @@ def _prompt_for(db, state, content, name: str) -> str:
 
 
 def test_audience_prompt_feeds_issue_stage_text_when_summoned_is_in_audiences(game):
-    """正向：audiences 含毕自严 → 渲染缝 / 召对 context 含其具题案情。"""
+    """正向：audiences 含具题户书 → 渲染缝 / 召对 context 含其具题案情。"""
     db, state, content = game
-    rendered = _render_for(db, state, "毕自严")
+    rendered = _render_for(db, state, AUDIENCE_NAME)
     assert CASE_MARKER in rendered
     assert ISSUE_TITLE in rendered
-    prompt = _prompt_for(db, state, content, "毕自严")
+    prompt = _prompt_for(db, state, content, AUDIENCE_NAME)
     assert CASE_MARKER in prompt
     assert ISSUE_TITLE in prompt
 
@@ -69,7 +73,7 @@ def test_issue_audience_case_injection_is_llm_fact_not_player_face_change(game):
     )
 
     # 持久读 API 不得被合成行污染（#492 durable 尾契约）
-    durable = db.get_character_knowledge(state, "毕自严")
+    durable = db.get_character_knowledge(state, AUDIENCE_NAME)
     assert not any(
         str(item.get("kind") or "") == "issue_case"
         or (
@@ -79,9 +83,9 @@ def test_issue_audience_case_injection_is_llm_fact_not_player_face_change(game):
         for item in durable.get("events") or []
     )
 
-    rendered = _render_for(db, state, "毕自严")
+    rendered = _render_for(db, state, AUDIENCE_NAME)
     assert CASE_MARKER in rendered  # 渲染缝事实材料
-    prompt = _prompt_for(db, state, content, "毕自严")
+    prompt = _prompt_for(db, state, content, AUDIENCE_NAME)
     assert CASE_MARKER in prompt  # 召对 prompt 仍含案情
 
     row_after = db.conn.execute(
