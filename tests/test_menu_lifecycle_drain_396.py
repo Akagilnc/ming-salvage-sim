@@ -743,6 +743,92 @@ def test_spawn_pending_write_thread_start_failure_releases_ownership():
     assert runtime._pending_writes_count == 0  # pending ownership 未泄漏
 
 
+@pytest.mark.usefixtures("_atomic_connless_test_shell_compat")
+def test_drain_waits_for_nonstream_chat_llm_window():
+    """非流式 chat() 在 LLM 窗释放 write_gate（#498 AC10）。#1291 把该调用卸到
+    threadpool 后，回菜单/新局 drain 可与 LLM 重叠——若本轮不标 pending，drain 会
+    关连接，epilogue 写 closed DB（#396 Gap B 对流式已守、对非流式漏了）。"""
+    from ming_sim.session import ChatTurnResult
+
+    llm_entered = threading.Event()
+    llm_release = threading.Event()
+    closed: list[int] = []
+
+    char = SimpleNamespace(name="测试大臣")
+    state = SimpleNamespace(turn=1, year=1628, period=1, turn_phase="summoning")
+    db = _GapBDB()
+    db.list_in_flight_chat_turns = lambda **_k: []
+    db.build_chat_projection = lambda minister_name, *_a, **_k: [
+        {"role": m["role"], "content": m["content"], "chat_turn_id": 0}
+        for m in db.messages
+        if m["minister"] == minister_name
+    ]
+
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _GapBSession(
+        {char.name: char}, {char.name: _GapBAgent(threading.Event())}, state, db)
+    runtime.session.close = lambda: closed.append(1)
+
+    def slow_llm(minister_name, message, *, chat_turn_id=0):
+        llm_entered.set()
+        assert llm_release.wait(2.0), "LLM release timed out"
+        return ChatTurnResult(answer="臣已知悉。")
+
+    runtime.session.chat = slow_llm
+    runtime.chat_history = {char.name: []}
+    runtime._write_gate = threading.Lock()
+    runtime._drain_cond = threading.Condition()
+    runtime._pending_writes_count = 0
+    runtime._draining = False
+    runtime.directive_rows = lambda: []
+    runtime.directive_payload = lambda row: row
+    runtime.suggestions_for = lambda _c: []
+    runtime.can_undo_last_chat = lambda _name: False
+    runtime._spawn_pending_write_thread = lambda *_a, **_k: False
+    runtime._spawn_extraction_trail = lambda *_a, **_k: None
+    runtime._trail_highlight_judge_after_reply = lambda *_a, **_k: []
+
+    chat_error: list[BaseException] = []
+    chat_payload: list[dict] = []
+
+    def run_chat():
+        try:
+            chat_payload.append(runtime.chat(char.name, "边饷如何？"))
+        except BaseException as exc:
+            chat_error.append(exc)
+
+    chat_thread = threading.Thread(target=run_chat, daemon=True)
+    chat_thread.start()
+    assert llm_entered.wait(2.0), "non-stream chat never entered LLM window"
+    assert runtime._pending_writes_count >= 1, (
+        f"non-stream chat LLM 窗未标 pending（count={runtime._pending_writes_count}）；"
+        "drain 会关连接"
+    )
+    assert not runtime._write_gate.locked(), "AC10: LLM 窗不得持 write_gate"
+
+    drain_done = threading.Event()
+
+    def run_drain():
+        web_app._drain_and_close_session(runtime)
+        drain_done.set()
+
+    drain_thread = threading.Thread(target=run_drain, daemon=True)
+    drain_thread.start()
+
+    assert not drain_done.wait(0.2), "drain 在非流式 LLM 未完成时关了连接"
+    assert closed == []
+
+    llm_release.set()
+    chat_thread.join(2.0)
+    assert drain_done.wait(2.0), "drain 未在非流式 chat 完成后关连接"
+    assert chat_error == [], f"chat failed: {chat_error}"
+    assert chat_payload and chat_payload[0]["answer"] == "臣已知悉。"
+    assert any(m["role"] == "minister" and "臣已知悉" in m["content"] for m in db.messages)
+    assert closed == [1]
+    assert runtime._pending_writes_count == 0
+    assert not runtime._write_gate.locked()
+
+
 # ── #396 Step5 R4: web_game is None 时 new_game 仍须切换库路径 ───────────
 
 def test_new_game_switches_db_path_when_web_game_is_none(monkeypatch, tmp_path):
