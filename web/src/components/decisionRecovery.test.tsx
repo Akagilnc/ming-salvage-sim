@@ -124,6 +124,13 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.pendingDecisions).toEqual([validDecision]);
     expect(route.error).toBe("");
   });
+
+  it("#1374 phase2 全员 decided：刷新不重开批红弹窗（无「可再提交」假象）", () => {
+    const decided = { ...validDecision, status: "decided" };
+    const route = routeRefreshDecisions("awaiting_decision", [decided]);
+    expect(route.pendingDecisions).toBeNull();
+    expect(route.error).toBeNull();
+  });
 });
 
 describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)", () => {
@@ -143,5 +150,12 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     const route = routeRetryDecisions("awaiting_decision", [{ idx: "still bad" }]);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe(PAUSED_DECISION_MSG);
+  });
+
+  it("#1374 phase2 全员 decided：重拉不报损坏、不重开弹窗", () => {
+    const decided = { ...validDecision, status: "decided" };
+    const route = routeRetryDecisions("awaiting_decision", [decided]);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe("");
   });
 });
