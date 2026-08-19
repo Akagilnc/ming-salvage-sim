@@ -86,6 +86,28 @@ def llm_unavailable_from_error(error: Exception, stage: str = "LLM 连通性检�
     )
 
 
+# #1299/#1310：CLI runner / agent run 失败时玩家可见文案——短、diegetic、可重试；
+# 机器横幅只进 provider_message，永不进 content 叙事通道。
+CLI_RUNNER_PLAYER_MESSAGE = "通传未达，请稍后再召。"
+
+
+def cli_runner_unavailable(
+    error: BaseException,
+    *,
+    backend: str = "",
+) -> LLMUnavailable:
+    """CliChat/runner 自身失败 → typed LLMUnavailable（错误串不得当台词）。"""
+    provider = str(error) if error is not None else ""
+    code = "llm_cli_error"
+    if backend:
+        code = f"llm_cli_{backend}"
+    return LLMUnavailable(
+        CLI_RUNNER_PLAYER_MESSAGE,
+        code=code,
+        provider_message=provider or CLI_RUNNER_PLAYER_MESSAGE,
+    )
+
+
 def create_chat_model(
     llm_config: LLMConfig,
     temperature: float = 0.7,
@@ -201,6 +223,18 @@ def create_agno_db(sqlite_path: str) -> SqliteDb:
     )
 
 
+def _run_output_status_is_error(run_output: object) -> bool:
+    """agno Agent.run 失败时 status=RunStatus.error（值 'ERROR'），content=str(exc)。
+
+    #1299/#1310：此 status 是 runner/provider 失败的权威信号；不得把 content 当叙事放行。
+    """
+    status = getattr(run_output, "status", None)
+    if status is None:
+        return False
+    raw = getattr(status, "value", status)
+    return str(raw).strip().upper() in {"ERROR", "FAILED"}
+
+
 def extract_agent_text(run_output: object) -> str:
     missing = object()
     content = getattr(run_output, "content", missing)
@@ -210,6 +244,14 @@ def extract_agent_text(run_output: object) -> str:
         text = ""
     else:
         text = str(content).strip()
+    # #1299/#1310：治本在缝——ERROR status 翻 typed，错误串永不得进 content 当叙事。
+    # fail_if_llm_error 标记集只覆盖 API 认证错，不再是唯一护栏。
+    if _run_output_status_is_error(run_output):
+        raise LLMUnavailable(
+            CLI_RUNNER_PLAYER_MESSAGE,
+            code="llm_run_error",
+            provider_message=text or "run status=ERROR",
+        )
     fail_if_llm_error(text, "LLM 调用")
     return text
 
