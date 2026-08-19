@@ -33,6 +33,25 @@
   overflow: hidden;
   padding: 4% 6%;
 }
+
+/* #1432：奏疏模态复用 SituationPanel——覆盖根规则 fixed，避免卡飞左上、卷心空白 */
+.state-document .situation-panel {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  width: auto;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+}
 .hud2-issue-quad .situation-closed-list,
 .hud2-issue-quad .situation-group {
   flex: 1 1 auto;
@@ -150,6 +169,8 @@
   position: static;
   top: auto;
   left: auto;
+  right: auto;
+  bottom: auto;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
