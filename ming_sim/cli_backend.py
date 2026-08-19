@@ -2704,8 +2704,14 @@ class CliChat(OpenAIChat):
         try:
             text, attempts = self._call_cli(prompt)
         except Exception as exc:
+            # #1299/#1310：runner 自身失败翻成 typed LLMUnavailable，
+            # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
+            from ming_sim.exceptions import LLMUnavailable
+            from ming_sim.llm_model import cli_runner_unavailable
             error = str(exc)
-            raise
+            if isinstance(exc, LLMUnavailable):
+                raise
+            raise cli_runner_unavailable(exc, backend=self.backend) from exc
         finally:
             dt = round(time.monotonic() - t0, 1)
             assistant_message.metrics.stop_timer()
@@ -2763,15 +2769,24 @@ class CliChat(OpenAIChat):
             return
         prompt = _cli_prompt(messages, response_format, tools)
         held = ""
-        for delta in _iter_codex_stream_chunks(
-            prompt,
-            model=str(getattr(self, "id", "") or ""),
-            timeout=getattr(self, "timeout", None),
-            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-        ):
-            ready, held = _cli_stream_safe_prefix(held + str(delta))
-            if ready:
-                yield ModelResponse(role="assistant", content=ready)
+        try:
+            stream = _iter_codex_stream_chunks(
+                prompt,
+                model=str(getattr(self, "id", "") or ""),
+                timeout=getattr(self, "timeout", None),
+                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+            )
+            for delta in stream:
+                ready, held = _cli_stream_safe_prefix(held + str(delta))
+                if ready:
+                    yield ModelResponse(role="assistant", content=ready)
+        except Exception as exc:
+            # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
+            from ming_sim.exceptions import LLMUnavailable
+            from ming_sim.llm_model import cli_runner_unavailable
+            if isinstance(exc, LLMUnavailable):
+                raise
+            raise cli_runner_unavailable(exc, backend=self.backend) from exc
         text, tool_calls = _cli_recommendation_call(held, tools)
         if text:
             yield ModelResponse(role="assistant", content=text)
