@@ -227,6 +227,68 @@ describe("#1351 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等",
   });
 });
 
+function sseErrorResponse(payload: Record<string, unknown>): Response {
+  const body = [
+    "event: error",
+    `data: ${JSON.stringify(payload)}`,
+    "",
+    "",
+  ].join("\n");
+  return {
+    ok: true,
+    body: {
+      getReader() {
+        let done = false;
+        return {
+          read: async () => {
+            if (done) return { value: undefined, done: true };
+            done = true;
+            return { value: new TextEncoder().encode(body), done: false };
+          },
+        };
+      },
+    },
+  } as unknown as Response;
+}
+
+describe("#1277 useSettlementFlow — issueDecree 令牌与 409 幂等", () => {
+  it("POST 携 state.turn 为 expected_turn；409 且 serverTurn>expected → reload 不设 error", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || "{}"));
+      // 首发成功路径不在本测；直接回 409 陈旧令牌以钉 reload 惯用法。
+      expect(body.expected_turn).toBe(5);
+      expect(body).toMatchObject({ cheat: "" });
+      return sseErrorResponse({
+        message: "月份已变更（当前第 6 月），与颁诏令牌不符，请刷新后再试。",
+        turn: 6,
+        status_code: 409,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+
+    const { host, hookRef, cleanup } = mountHarness({
+      loadState: async () => preClickState,
+      initial: preClickState,
+    });
+
+    await act(async () => {
+      await hookRef.current!.issueDecree();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toContain("/api/decree/issue/stream");
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-testid=error]")?.textContent).toBe("");
+    cleanup();
+  });
+});
+
 describe("#1234 useSettlementFlow — 同会话 awaiting 停窗消费状态口", () => {
   it("decisions 分支 await loadState：·待批出现（#1323）+ 四键为月初值，且不 reload", async () => {
     const loadState = vi.fn(async () => awaitingState);
