@@ -4455,7 +4455,7 @@ def api_advance_without_edict(
                     )
             # #1274 QA J-1：无旨月与有旨月同走完整结算链（session.advance_without_decree
             # → resolve_turn(allow_empty_decree) → pre_settle+simulator+settle）。
-            # 16ms 快路（advance_without_edict 推进）已废；有草案时 advance 内转 resolve_turn。
+            # 16ms 快路已废；decree.advance_without_edict 空壳已删；有草案时 advance 内转 resolve_turn。
             settlement_result = game.session.advance_without_decree(inflight_wait_s=0.0)
             if settlement_result is None or not settlement_result.awaiting:
                 game.refresh_turn()

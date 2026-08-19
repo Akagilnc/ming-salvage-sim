@@ -264,12 +264,28 @@ def test_capture_before_mutation_on_resolve_turn_entry(game, monkeypatch):
 
 
 def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
-    """退朝入口：advance_without_edict 在任何突变前持久化点击前四键。"""
-    import ming_sim.decree as dm
+    """退朝入口：session.advance_without_decree → resolve_turn 在任何突变前持久化点击前四键。"""
+    from ming_sim.session import GameSession
     import ming_sim.audience_night as an
 
     db, state, content = game
     before = _click_before_metrics(state)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = None
+    sess.agno_db = None
+    sess.deaths_this_turn = []
+    sess.debuts_this_turn = []
+    sess.last_decree = ""
+    sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._beat_generator = None
+    sess._scene_registry = None
+    sess.auto_save = lambda *_a, **_k: None
 
     def _boom(*_a, **_k):
         raise RuntimeError("stop-after-capture-advance")
@@ -277,7 +293,7 @@ def test_capture_before_mutation_on_advance_without_edict(game, monkeypatch):
     monkeypatch.setattr(an, "auto_close_open_night", _boom)
 
     with pytest.raises(RuntimeError, match="stop-after-capture-advance"):
-        dm.advance_without_edict(state, db, content=content)
+        sess.advance_without_decree()
 
     assert db.get_month_open_snapshot(int(state.turn)) == before
 

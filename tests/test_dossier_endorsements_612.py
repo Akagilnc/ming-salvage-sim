@@ -18,7 +18,7 @@ from ming_sim.audience_extraction import (
     trail_extraction_after_reply,
 )
 from ming_sim.db import GameDB
-from ming_sim.decree import advance_without_edict, build_promulgation_judge_context
+from ming_sim.decree import build_promulgation_judge_context
 
 
 def _minister(db):
@@ -968,8 +968,9 @@ def test_no_edict_chain_binds_endorsement_after_draft(game, monkeypatch):
             }]}, ensure_ascii=False)
 
     monkeypatch.setattr(agents_mod, "create_endorsement_extractor_agent", lambda cfg: _Endorse())
-    advance_without_edict(
-        state, db, content=content, registry=None, inflight_wait_s=0.0,
+    # #1274 r1：收夜 endorsement 归 resolve_turn 同缝 auto_close（空壳已删；本测只钉收夜背书）。
+    an.auto_close_open_night(
+        db, state, content=content, registry=None, wait_timeout_s=0.0,
         llm_config=object(), write_gate=threading.Lock(),
     )
     assert len(endorse_calls) == 1

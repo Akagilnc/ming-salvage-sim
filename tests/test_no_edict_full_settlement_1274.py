@@ -20,7 +20,7 @@ import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
 from ming_sim.applier import Provenance
-from ming_sim.decree import advance_without_edict, resolve_directives
+from ming_sim.decree import resolve_directives
 from ming_sim.session import GameSession
 
 
@@ -153,14 +153,12 @@ def test_no_edict_advance_runs_full_settlement_chain(game, monkeypatch):
 
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_no_edict_fast_path_branch_is_dead(game, monkeypatch):
-    """负向：advance_without_edict / resolve_directives 不再提供跳过 simulator 的快路。"""
-    # 1) 源码层：快路推进体已死（恒 return False；无 next_period / 无 _NeedsFullSettlement）
-    src = inspect.getsource(advance_without_edict)
-    assert "return False" in src
-    assert "return True" not in src
-    assert "state.next_period" not in src
-    assert "_NeedsFullSettlement" not in src
-    assert "apply_fixed_period_flows" not in src
+    """负向：decree.advance_without_edict 空壳已删；空旨 resolve 必经 simulator。"""
+    # 1) grep 级缺席：生产码不再定义/导出 advance_without_edict 快路壳
+    import ming_sim.decree as decree_pkg
+    assert not hasattr(decree_pkg, "advance_without_edict")
+    src = inspect.getsource(decree_pkg)
+    assert "def advance_without_edict" not in src
 
     # 2) 行为层：空旨 resolve_directives 必调 simulator
     db, state, content = game

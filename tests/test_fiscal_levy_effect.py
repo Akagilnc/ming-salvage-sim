@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from ming_sim.decree import advance_without_edict, pre_settle
+from ming_sim.decree import pre_settle
 from ming_sim.exceptions import SettlementAbort
 from ming_sim.flows import army_needed
 from ming_sim.issues import apply_historical_fiscal_rates

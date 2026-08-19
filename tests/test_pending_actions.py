@@ -29,9 +29,43 @@ _POLICY_FIELDS = {
 import web_app
 import ming_sim.cli_backend as cb
 import ming_sim.issues as issues
-from ming_sim.decree import advance_without_edict, pre_settle
+from ming_sim.decree import pre_settle
 from ming_sim.session import GameSession, TurnPhase, _pending_action_failure_payload
 from tests.dossier_test_helpers import promulgate_proposed_appointments
+
+
+def _canned_no_edict_settlement(monkeypatch):
+    """#1274：无旨全链只罐装外部 LLM 缝。"""
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("本月退朝无旨邸报。", k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object(),
+    )
+    monkeypatch.setattr(
+        decree_mod, "extract_scores_by_modules_with_agno",
+        lambda *a, **k: ({}, "out", "in"),
+    )
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+
+
+def _session_for(db, state, content):
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    return sess
 
 
 @pytest.fixture(autouse=True)
@@ -554,8 +588,9 @@ def test_undo_chat_turn_removes_staged_pending_action(game):
     assert db.list_pending_actions(state.turn) == []        # 暂存行被删,不会再颁诏落库
 
 
-def test_advance_without_edict_commits_staged(game):
-    """CMR P1:只暂存、不颁正式诏书也推进月份的路径(advance_without_edict)必须先 commit 暂存,
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_advance_without_edict_commits_staged(game, monkeypatch):
+    """CMR P1:只暂存、不颁正式诏书也推进月份的路径(session.advance_without_decree)必须先 commit 暂存,
     否则暂存动作成孤儿、随回合推进永久丢失。"""
     db, state, content = game
     name = _active_minister_name(db, content)
@@ -565,7 +600,8 @@ def test_advance_without_edict_commits_staged(game):
                             payload={"new_title": "退朝前改", "new_content": "退朝前内容", "deadline_months": 0})
     turn_before = state.turn
 
-    advance_without_edict(state, db)   # 退朝未下正式圣旨
+    _canned_no_edict_settlement(monkeypatch)
+    _session_for(db, state, content).advance_without_decree()   # 退朝未下正式圣旨
 
     assert state.turn == turn_before + 1                     # 月份推进了
     row = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
@@ -674,9 +710,9 @@ def test_pending_actions_endpoint_hides_new_secret_order_candidates(game, monkey
     assert hidden_pid not in [a["id"] for a in listed["actions"]]
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monkeypatch):
     """web 退朝无诏入口要能提交隐藏的新密令候选，支撑不回默认同意。"""
-    import asyncio
     import web_app
 
     db, state, content = game
@@ -692,11 +728,13 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
             "deadline_months": 3,
         },
     )
+    _canned_no_edict_settlement(monkeypatch)
+    session = _session_for(db, state, content)
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=session,
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: [],
@@ -712,9 +750,9 @@ def test_web_advance_without_edict_lands_hidden_pending_secret_order(game, monke
     assert db.list_pending_actions(1) == []
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_advance_without_edict_returns_failed_secret_order_payload(game, monkeypatch):
     """web 退朝默认提交密令失败时，要返回可重试 failure payload。"""
-    import asyncio
     import web_app
 
     db, state, content = game
@@ -735,11 +773,13 @@ def test_web_advance_without_edict_returns_failed_secret_order_payload(game, mon
         "create_secret_order",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("durable write failed")),
     )
+    _canned_no_edict_settlement(monkeypatch)
+    session = _session_for(db, state, content)
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
-        session=types.SimpleNamespace(registry=None),
+        session=session,
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
         directive_rows=lambda: [],
@@ -758,28 +798,31 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
 
     #1235 T2 点即入使 advance 入口必写 capture；须用可写 game 夹具（read_game
     query_only 会在 accept INSERT 响亮失败，属夹具错配非产品只读容错）。
+    #1274 r1：钉 session.advance_without_decree 真缝抛 SettlementAbort。
     """
-    import asyncio
     import pytest
     import web_app
     from ming_sim.exceptions import SettlementAbort
 
     db, state, content = game
-    stub = types.SimpleNamespace(
-        db=db,
-        state=state,
-        content=content,
-        session=types.SimpleNamespace(registry=None),
-        refresh_turn=lambda: None,
-        state_payload=lambda: {"turn": {"turn": state.turn}},
-        directive_rows=lambda: [],
-    )
 
     def abort_after_failed_action(*_args, **_kwargs):
         raise SettlementAbort("结算中止，可重试。", turn=state.turn, stage="settle")
 
+    session = types.SimpleNamespace(
+        registry=None,
+        advance_without_decree=abort_after_failed_action,
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=session,
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
     monkeypatch.setattr(web_app, "web_game", stub)
-    monkeypatch.setattr(web_app, "advance_without_edict", abort_after_failed_action)
 
     with pytest.raises(web_app.HTTPException) as exc:
         web_app.api_advance_without_edict()
@@ -954,23 +997,23 @@ def test_resolve_turn_previews_only_canonical_default_eligible_directives(game, 
 
 def test_web_advance_without_edict_routes_existing_draft_to_settlement(game, monkeypatch):
     """已有 draft 时 Web 结束回合走正常结算，而不是无诏快进。"""
-    import asyncio
-    import pytest
     import web_app
 
     db, state, content = game
     db.add_directive(state, None, "着户部清核辽饷。", "手动新增")
     calls = []
+
+    def _advance(**_kwargs):
+        calls.append("resolve")
+        return types.SimpleNamespace(awaiting=False, decisions=[])
+
     stub = types.SimpleNamespace(
         db=db,
         state=state,
         content=content,
         session=types.SimpleNamespace(
             registry=None,
-            resolve_turn=lambda **_kwargs: (
-                calls.append("resolve")
-                or types.SimpleNamespace(awaiting=False, decisions=[])
-            ),
+            advance_without_decree=_advance,
         ),
         refresh_turn=lambda: None,
         state_payload=lambda: {"turn": {"turn": state.turn}},
@@ -1774,7 +1817,8 @@ def test_failed_secret_order_does_not_block_later_audience(game, monkeypatch):
     assert len(failed) == 1 and failed[0]["kind"] == "secret_order"
 
 
-def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game, monkeypatch):
     """未处理的 failed 密令暂存跨回合后不再进入当前回合 pending,不阻断退朝推进。"""
     db, state, content = game
     name = _active_minister_name(db, content)
@@ -1787,7 +1831,8 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
     db.conn.execute("UPDATE pending_actions SET status='failed' WHERE id=?", (pending_id,))
     db.conn.commit()
 
-    advance_without_edict(state, db)
+    _canned_no_edict_settlement(monkeypatch)
+    _session_for(db, state, content).advance_without_decree()
 
     assert state.turn == old_turn + 1
     assert db.list_pending_actions(state.turn) == []
@@ -1795,6 +1840,7 @@ def test_unresolved_failed_secret_order_is_ignored_after_turn_boundary(game):
     assert len(old_failed) == 1 and old_failed[0]["id"] == pending_id
 
 
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game, monkeypatch):
     """#415: checkpoint/default approval failure must remain visible and retryable after turn advance."""
     db, state, content = game
@@ -1811,7 +1857,8 @@ def test_default_approval_secret_order_failure_surfaces_after_turn_boundary(game
         raise RuntimeError("AUDIT_INJECTED_DURABLE_WRITE_FAILURE")
 
     monkeypatch.setattr(db, "create_secret_order", _poison)
-    advance_without_edict(state, db)
+    _canned_no_edict_settlement(monkeypatch)
+    _session_for(db, state, content).advance_without_decree()
 
     assert state.turn == old_turn + 1
     failed = db.list_failed_secret_order_actions(name)

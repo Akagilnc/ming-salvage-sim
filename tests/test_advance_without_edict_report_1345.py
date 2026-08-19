@@ -15,7 +15,6 @@ import pytest
 import ming_sim.decree as decree_mod
 import ming_sim.memories as memories
 from ming_sim.constants import TURN_UNIT
-from ming_sim.decree import ResolveResult, advance_without_edict
 from ming_sim.session import GameSession
 
 
@@ -146,17 +145,11 @@ def test_double_token_only_one_month_archive(game, monkeypatch):
     assert db.get_turn_report(start)
 
 
-@pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_advance_without_edict_prep_only_no_report(game, monkeypatch):
-    """prep-only advance_without_edict 不落月档、不推进（结算归 resolve 全链）。"""
-    import ming_sim.audience_night as an
+def test_advance_without_edict_shell_absent():
+    """#1274 r1：decree.advance_without_edict 空壳已删（prep 归 resolve_turn）。"""
+    import inspect
 
-    db, state, content = game
-    closed_turn = int(state.turn)
-    monkeypatch.setattr(an, "auto_close_open_night", lambda *a, **k: None)
+    import ming_sim.decree as decree_mod
 
-    ok = advance_without_edict(state, db, content=content)
-    assert ok is False
-    assert int(state.turn) == closed_turn
-    report = db.get_turn_report(closed_turn)
-    assert not report  # None 或空串：prep-only 不落月档
+    assert not hasattr(decree_mod, "advance_without_edict")
+    assert "def advance_without_edict" not in inspect.getsource(decree_mod)
