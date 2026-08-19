@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Set
 
 from ming_sim.models import effect_dict_has_work
 
@@ -285,6 +285,42 @@ def augment_secret_orders_with_due_commitments(
             pending.append(item)
     groups.setdefault("在办", [])
     return groups
+
+
+def iter_secret_order_ids(secret_orders: object) -> List[int]:
+    """Yield real secret-order ids from the frozen grouped (or flat) batch.
+
+    Skips due_commitment synthetic entries (#48 form③ channel reuse). Accepts
+    the grouped dict shape used by personnel_secret rail and the legacy flat
+    list shape still seen in old resolve_context rows.
+    """
+    rows: List[object]
+    if isinstance(secret_orders, dict):
+        rows = []
+        for value in secret_orders.values():
+            if isinstance(value, list):
+                rows.extend(value)
+    elif isinstance(secret_orders, list):
+        rows = list(secret_orders)
+    else:
+        return []
+    out: List[int] = []
+    seen: Set[int] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("entry_kind") or "") == "due_commitment":
+            continue
+        raw = item.get("id") if item.get("id") is not None else item.get("order_id")
+        try:
+            order_id = int(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if order_id <= 0 or order_id in seen:
+            continue
+        seen.add(order_id)
+        out.append(order_id)
+    return out
 
 
 def _format_decision_directive(decisions: List[Dict[str, object]]) -> str:

@@ -26,7 +26,10 @@ from ming_sim.issues import (
     normalize_event_outcome_labels_or_error,
 )
 from ming_sim.models import GameState, loads_effect_dict
-from ming_sim.settlement_payload import augment_secret_orders_with_due_commitments
+from ming_sim.settlement_payload import (
+    augment_secret_orders_with_due_commitments,
+    iter_secret_order_ids,
+)
 from ming_sim.token_stats import tlog
 
 
@@ -908,6 +911,28 @@ _MODULE_DROP_FIELDS = (
 )
 
 
+
+def secret_dossier_rosters_from_orders(
+    db: GameDB, secret_orders: object,
+) -> List[Dict[str, object]]:
+    """#1252 private read seam: dossier_id + participant_roster for batch secrets.
+
+    Same caliber as monthly_dossier_reports — personnel_secret only. Keyed by
+    dossier_id (not order_id) so the write field can reuse the public roster
+    identity space without a parallel order_id keyspace.
+    """
+    out: List[Dict[str, object]] = []
+    for order_id in iter_secret_order_ids(secret_orders):
+        dossier = db.get_dossier_for_secret_order(int(order_id))
+        if dossier is None:
+            continue
+        out.append({
+            "dossier_id": int(dossier["id"]),
+            "participant_roster": list(dossier.get("participant_roster") or []),
+        })
+    return out
+
+
 def build_extractor_shared_context(
     db: GameDB,
     state: GameState,
@@ -992,6 +1017,10 @@ def build_extractor_shared_context(
         # #566/#883: monthly briefs travel only on the authorized secret rail.
         # This is also the canonical history read seam used after restore.
         slim["monthly_dossier_reports"] = db.list_monthly_dossier_progress_nudges()
+        # #1252/#883: secret-dossier roster read seam — batch only, never public.
+        slim["secret_dossier_rosters"] = secret_dossier_rosters_from_orders(
+            db, compat["secret_orders"],
+        )
     if module == "issues":
         # #567：在途拨帑对账读缝——赈济/拨付 issue 软判打折吃此账，非纯文字。
         slim["grant_reconciliations"] = db.list_open_grant_reconciliations()
