@@ -589,10 +589,13 @@ def rush_staged_commitment_stage(
     )
     archetype = person_integrity_archetype(host["integrity"])
     opp = "none"
-    if dossier_id is not None and hasattr(db, "list_economy_moves_for_dossier"):
+    if dossier_id is not None and hasattr(db, "list_dossier_durable_effects"):
+        # #1260：durable_effects 合并单源（economy+fiscal）。
+        effects = list(db.list_dossier_durable_effects(int(dossier_id)))
+        opp = derive_opportunity_band(effects)
+    elif dossier_id is not None and hasattr(db, "list_economy_moves_for_dossier"):
+        # 旧夹具兜底：仅 economy 面（无单源助手时）。
         effects = list(db.list_economy_moves_for_dossier(int(dossier_id)))
-        if hasattr(db, "list_fiscal_effects_for_dossier"):
-            effects = effects + list(db.list_fiscal_effects_for_dossier(int(dossier_id)))
         opp = derive_opportunity_band(effects)
 
     remonstrance_written = False

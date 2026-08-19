@@ -11205,11 +11205,10 @@ class GameDB:
         execution_outcome = (
             str(target.get("execution_outcome") or "").strip() if target else ""
         )
-        moves = self.list_economy_moves_for_dossier(int(dossier_id))
-        actual_effect_count = len(moves) + len(
-            self.list_fiscal_effects_for_dossier(int(dossier_id))
-        )
-        beyond = any(bool(row.get("beyond_intent")) for row in moves)
+        # #1260：durable_effects / beyond 单源助手（economy+fiscal），禁再只扫 economy。
+        durable = self.list_dossier_durable_effects(int(dossier_id))
+        actual_effect_count = len(durable)
+        beyond = self.dossier_has_beyond_intent(int(dossier_id))
         fork = is_reported_actual_fork(
             reported_bands=reported_bands,
             beyond_intent=beyond,
@@ -12399,12 +12398,8 @@ class GameDB:
             if source_kind is None:
                 continue
             if source_kind == SOURCE_DEFORMATION_EXPOSURE:
-                moves = self.list_economy_moves_for_dossier(dossier_id)
-                has_beyond = any(
-                    bool(self.coerce_beyond_intent_flag(m.get("beyond_intent")))
-                    for m in moves
-                )
-                if not has_beyond:
+                # #1260：分叉确认扩为 economy+fiscal 单源（纯 fiscal 旨外亦可立案）。
+                if not self.dossier_has_beyond_intent(dossier_id):
                     continue
             for commitment in self.list_commitments_for_dossier(dossier_id):
                 if not str(commitment.get("commitment_kind") or "").strip():
@@ -17814,6 +17809,25 @@ class GameDB:
                 ))
                 rows.append(item)
         return rows
+
+    def list_dossier_durable_effects(self, dossier_id: int) -> List[Dict[str, object]]:
+        """#1260 单源：案卷 durable_effects = economy + fiscal（已归一 beyond_intent bool）。
+
+        只供事实，不参与裁决形状。四读端改调此处，禁再各写一份合并。
+        """
+        return list(self.list_economy_moves_for_dossier(int(dossier_id))) + list(
+            self.list_fiscal_effects_for_dossier(int(dossier_id))
+        )
+
+    def dossier_has_beyond_intent(self, dossier_id: int) -> bool:
+        """#1260 单源：案卷是否含任何旨外 durable effect（economy 或 fiscal）。
+
+        只供事实，不另立裁决函数。
+        """
+        return any(
+            bool(row.get("beyond_intent"))
+            for row in self.list_dossier_durable_effects(int(dossier_id))
+        )
 
     def list_economy_moves_for_dossier(self, dossier_id: int) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
