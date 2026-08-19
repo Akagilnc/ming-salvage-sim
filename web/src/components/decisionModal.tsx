@@ -161,7 +161,7 @@ export function DecisionModal({
           </button>
         </section>
         <div className="decision-actions">
-          <span className="decision-hint-line">{decided ? "" : requiresListedChoice ? "此疏须择一票拟。" : "请择一票拟，或亲笔批示。"}</span>
+          <span className="decision-hint-line">{decided ? "已择，落印即行。" : requiresListedChoice ? "此疏须择一票拟。" : "请择一票拟，或亲笔批示。"}</span>
         </div>
       </article>
     </section>
