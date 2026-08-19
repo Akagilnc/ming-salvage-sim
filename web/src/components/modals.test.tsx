@@ -215,6 +215,7 @@ function baseGameState(overrides: Partial<GameState> = {}): GameState {
 function renderEdictModal(props: {
   state: GameState;
   onAdvanceWithoutEdict?: () => void;
+  onIssueDecree?: () => void;
   onOpenFailureRecovery?: () => void;
 }) {
   const host = document.createElement("div");
@@ -239,6 +240,7 @@ function renderEdictModal(props: {
         onSaveDirective={() => {}}
         onDeleteDirective={() => {}}
         onAdvanceWithoutEdict={props.onAdvanceWithoutEdict ?? (() => {})}
+        onIssueDecree={props.onIssueDecree ?? (() => {})}
         onOpenFailureRecovery={props.onOpenFailureRecovery ?? (() => {})}
       />
     )
@@ -305,21 +307,47 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(button).toBeTruthy();
   });
 
-  it("#1277 页脚如实表达退朝=草案成案+过月，不假装另有颁诏钮", () => {
+  it("#1277 drafts>0 主钮盖玺颁诏过月 → issueDecree，不走退朝", () => {
     const onAdvance = vi.fn();
+    const onIssue = vi.fn();
     const { host } = renderEdictModal({
       state: baseGameState({ directives: [{ id: 8, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "发饷辽东", source: "chat", status: "pending", notes: "", authority: "" }] }),
       onAdvanceWithoutEdict: onAdvance,
+      onIssueDecree: onIssue,
     });
     expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toMatch(/退朝结束本月/);
-    expect(host.textContent).not.toContain("盖玺颁布");
+    expect(host.textContent).toMatch(/盖玺颁诏过月/);
     expect(host.textContent).not.toContain("待朱批");
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("盖玺颁诏过月")
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeTruthy();
+    // 有草案时页脚不得再挂「退朝结束本月」主钮
+    const retreat = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("退朝结束本月")
+    );
+    expect(retreat).toBeFalsy();
+    act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onIssue).toHaveBeenCalledTimes(1);
+    expect(onAdvance).not.toHaveBeenCalled();
+  });
+
+  it("#1277 0 草案保留退朝结束本月 → advanceWithoutEdict", () => {
+    const onAdvance = vi.fn();
+    const onIssue = vi.fn();
+    const { host } = renderEdictModal({
+      state: baseGameState({ directives: [] }),
+      onAdvanceWithoutEdict: onAdvance,
+      onIssueDecree: onIssue,
+    });
     const button = Array.from(host.querySelectorAll("button")).find((item) =>
       item.textContent?.includes("退朝结束本月")
     ) as HTMLButtonElement | undefined;
+    expect(button).toBeTruthy();
+    expect(host.textContent).not.toMatch(/盖玺颁诏过月/);
     act(() => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(onAdvance).toHaveBeenCalledTimes(1);
+    expect(onIssue).not.toHaveBeenCalled();
   });
 
   it("does not review already-approved conversational directives", () => {
@@ -330,9 +358,8 @@ describe("EdictModal — hidden secret-order default approval", () => {
     expect(host.textContent).not.toContain("准");
     expect(host.textContent).not.toContain("驳");
     expect(host.textContent).toContain("发饷辽东");
-    expect(host.textContent).toContain("退朝结束本月");
+    expect(host.textContent).toMatch(/盖玺颁诏过月/);
     expect(host.textContent).not.toContain("返工改稿");
-    expect(host.textContent).not.toContain("盖玺颁布");
   });
 
   it("offers durable recovery entry for failed secret orders", () => {
@@ -1262,6 +1289,26 @@ describe("ReportModal — narrative settlement bulletin", () => {
     expect(host.querySelector(".gazette-document")).not.toBeNull();
     expect(host.querySelector(".gazette-dismiss")).not.toBeNull();
     act(() => dismiss!.click());
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("#1398 朕知道了视口常显：不埋在长文滚底", () => {
+    const onClose = vi.fn();
+    const longReport = Array.from({ length: 48 }, (_, i) =>
+      `第${i + 1}段·边报钱粮探子回报——${"详文".repeat(24)}`,
+    ).join("\n\n");
+    const host = renderReportModal({ report: longReport, onClose });
+    const scroll = host.querySelector(".gazette-document") as HTMLElement | null;
+    const dismissWrap = host.querySelector(".gazette-dismiss") as HTMLElement | null;
+    const dismissBtn = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.textContent || "").includes("朕知道了"),
+    ) as HTMLButtonElement | undefined;
+    expect(scroll).not.toBeNull();
+    expect(dismissWrap).not.toBeNull();
+    expect(dismissBtn).toBeTruthy();
+    // 吸底/视口常显：dismiss 不得是滚容器后代（长文滚底才见）
+    expect(scroll!.contains(dismissWrap)).toBe(false);
+    act(() => dismissBtn!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
