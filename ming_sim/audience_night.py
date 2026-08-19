@@ -13,6 +13,7 @@ import contextlib
 import json
 import time
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ming_sim.error_pack import error_packs_root
@@ -1012,6 +1013,48 @@ def _commit_night_approved(
     return list(applied or [])
 
 
+def _pending_extraction_rows(db: Any, night_id: int) -> List[Dict[str, Any]]:
+    """#1353 单真源：挡收夜判定与 pending 呈现共用 list_unextracted_replies。"""
+    if not hasattr(db, "list_unextracted_replies"):
+        return []
+    rows = db.list_unextracted_replies(night_id=int(night_id)) or []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if isinstance(r, Mapping):
+            out.append(dict(r))
+    return out
+
+
+def _raise_pending_extraction(
+    db: Any,
+    night_id: int,
+    *,
+    rows: Optional[Sequence[Mapping[str, Any]]] = None,
+    missing_deps: bool = False,
+) -> None:
+    """由当前 list_unextracted 快照构造 pending_extraction（禁 stale ids）。"""
+    snap = list(rows) if rows is not None else _pending_extraction_rows(db, int(night_id))
+    ids = [int(r.get("chat_turn_id") or 0) for r in snap]
+    if missing_deps:
+        message = (
+            f"收夜中止：本夜仍有 {len(ids)} 条待补抽取，且无 LLM/写锁可清空"
+            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
+        )
+    else:
+        message = (
+            "收夜中止：本夜仍有未抽取落账的回话（待补），"
+            f"chat_turn_ids={ids}。夜保持开启，可原地重试补跑。"
+        )
+    pack = write_audience_error_pack(
+        kind="pending_extraction", message=message,
+        detail={"night_id": int(night_id), "chat_turn_ids": ids},
+    )
+    raise AudienceNightError(
+        message, code="pending_extraction", error_pack_path=pack,
+        detail={"night_id": int(night_id), "chat_turn_ids": ids},
+    )
+
+
 def _drain_story_extraction_or_fail_closed(
     db: Any, night_id: int, *, llm_config: Any, write_gate: Any,
     extractor_agent: Any = None,
@@ -1020,6 +1063,9 @@ def _drain_story_extraction_or_fail_closed(
 
     只补 story/presence；不含 endorsement batch。有待补 → 强制同步补跑；仍有 →
     fail-closed。LLM 在 write_gate 外跑（drain 内 settle 才短持锁）。
+
+    write_gate 必须是调用方原始锁（或 None）——禁传入 _gate_cm(nullcontext)，
+    否则 `write_gate is None` 卫兵被架空（#1353 嫌疑缝②）。
     """
     if not hasattr(db, "count_pending_story_extractions"):
         return
@@ -1027,20 +1073,7 @@ def _drain_story_extraction_or_fail_closed(
     if pending <= 0:
         return
     if llm_config is None or write_gate is None:
-        rows = db.list_unextracted_replies(night_id=int(night_id))
-        ids = [int(r.get("chat_turn_id") or 0) for r in rows]
-        message = (
-            f"收夜中止：本夜仍有 {pending} 条待补抽取，且无 LLM/写锁可清空"
-            f"（chat_turn_ids={ids}）。夜保持开启，可原地重试补跑。"
-        )
-        pack = write_audience_error_pack(
-            kind="pending_extraction", message=message,
-            detail={"night_id": int(night_id), "chat_turn_ids": ids},
-        )
-        raise AudienceNightError(
-            message, code="pending_extraction", error_pack_path=pack,
-            detail={"night_id": int(night_id), "chat_turn_ids": ids},
-        )
+        _raise_pending_extraction(db, int(night_id), missing_deps=True)
     from ming_sim.audience_extraction import drain_pending_before_close
 
     drain_pending_before_close(
@@ -1076,6 +1109,7 @@ def close_night(
     endorsement_extractor_agent: Any = None,
     scene_registry: Any = None,
     close_chat_turn_id: int = 0,
+    _healed_drain_retry: bool = False,
 ) -> Dict[str, Any]:
     """收夜：短写前提 → 无锁普通补抽 + 夜级 endorsement-only 批 → 短写终局。
 
@@ -1214,23 +1248,21 @@ def close_night(
 
     # ── Phase 2: gate-free ordinary catch-up + endorsement-only LLM ────────
     # Ordinary story drain (LLM outside settle lock). Failure reopen keeps drafts.
-    # Close scene already started: drain/join on failure; never swallow cleanup.
+    # Close scene already started: drain 失败走 abandon（与 early cleanup 同形），
+    # 禁 join 拉长窗口致并发 heal 与 stale chat_turn_ids 双源（#1353）。
     try:
         _drain_story_extraction_or_fail_closed(
-            db, int(night_id), llm_config=llm_config, write_gate=gate,
+            db, int(night_id), llm_config=llm_config, write_gate=write_gate,
             extractor_agent=extractor_agent,
         )
     except Exception as drain_exc:
         cleanup_exc: BaseException | None = None
         if close_started and reg is not None:
             try:
-                from ming_sim import beat_orchestration as beats
-                beats.join_close_scene_on_registry(
-                    db,
-                    scene_registry=reg,
-                    chat_turn_id=int(close_ctid),
-                    scaffold_owned=bool(close_scaffold_owned),
-                )
+                if hasattr(reg, "abandon"):
+                    reg.abandon(int(close_ctid))
+                if close_scaffold_owned and hasattr(db, "fail_chat_turn"):
+                    db.fail_chat_turn(int(close_ctid))
             except BaseException as exc:
                 cleanup_exc = exc
         with gate:
@@ -1238,6 +1270,52 @@ def close_night(
                 db, night_id, status=NIGHT_STATUS_OPEN, closed_at=None,
                 close_commit_cursor=0,
             )
+        # #1353：清理后按 list_unextracted 单真源重拍——error.ids 与 pending API 必同集。
+        is_pending_block = (
+            isinstance(drain_exc, AudienceNightError)
+            and getattr(drain_exc, "code", None) == "pending_extraction"
+        )
+        if is_pending_block:
+            still = _pending_extraction_rows(db, int(night_id))
+            if still:
+                try:
+                    _raise_pending_extraction(db, int(night_id), rows=still)
+                except AudienceNightError as fresh:
+                    if cleanup_exc is not None:
+                        raise fresh from cleanup_exc
+                    raise fresh from drain_exc
+            # 并发 trail 已愈：夜已 OPEN，单次重入收夜（禁无限递归）。
+            if not _healed_drain_retry:
+                return close_night(
+                    db,
+                    state,
+                    night_id=int(night_id),
+                    content=content,
+                    registry=registry,
+                    auto=auto,
+                    body=body,
+                    wait_timeout_s=wait_timeout_s,
+                    crash_after_step=crash_after_step,
+                    on_step=on_step,
+                    beat_generator=beat_generator,
+                    knowledge_provider=knowledge_provider,
+                    llm_config=llm_config,
+                    write_gate=write_gate,
+                    extractor_agent=extractor_agent,
+                    endorsement_extractor_agent=endorsement_extractor_agent,
+                    scene_registry=scene_registry,
+                    close_chat_turn_id=0,
+                    _healed_drain_retry=True,
+                )
+            retry_msg = "收夜中止：请原地重试收夜或颁诏。"
+            retry_exc = AudienceNightError(
+                retry_msg,
+                code="close_retry",
+                detail={"night_id": int(night_id)},
+            )
+            if cleanup_exc is not None:
+                raise retry_exc from cleanup_exc
+            raise retry_exc from drain_exc
         if cleanup_exc is not None:
             raise drain_exc from cleanup_exc
         raise

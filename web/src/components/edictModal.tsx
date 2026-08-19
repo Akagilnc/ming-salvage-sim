@@ -11,6 +11,7 @@ export function EdictModal({
   report,
   busy,
   error,
+  extractionPendingCount = 0,
   onDirectiveTextChange,
   onEditingTextChange,
   onCreateDirective,
@@ -20,6 +21,7 @@ export function EdictModal({
   onDeleteDirective,
   onAdvanceWithoutEdict,
   onOpenFailureRecovery,
+  onRetryExtraction,
 }: {
   state: GameState;
   directiveText: string;
@@ -29,6 +31,8 @@ export function EdictModal({
   report: string;
   busy: string;
   error: string;
+  /** #1312/#1353：颁诏 409 待补时拟诏台可见 CTA（与召对面同一 retry 接线）。 */
+  extractionPendingCount?: number;
   onDirectiveTextChange: (value: string) => void;
   onEditingTextChange: (value: string) => void;
   onCreateDirective: () => void;
@@ -38,6 +42,7 @@ export function EdictModal({
   onDeleteDirective: (directiveId: number) => void;
   onAdvanceWithoutEdict: () => void;
   onOpenFailureRecovery: () => void;
+  onRetryExtraction?: () => void;
 }) {
   // Conversational directives are approved when the audience turn settles (ADR 0049).
   // Historical `pending` labels are therefore ordinary drafts here, never a second review gate.
@@ -105,6 +110,13 @@ export function EdictModal({
           </button>
           {busy && <div className="busy-line"><Loader2 size={15} />{busy}...</div>}
           {error && <div className="error-line" role="alert">{error}</div>}
+          {/* #1312：颁诏/退朝被待补挡时，拟诏台给出与召对面同缝的补写 CTA。 */}
+          {!!extractionPendingCount && extractionPendingCount > 0 && onRetryExtraction && (
+            <div className="empty-note failed-secret-note" role="alert" data-testid="edict-extraction-pending">
+              <span>本夜有 {extractionPendingCount} 段召对账待补写，须补写后方可收夜颁诏。</span>
+              <button type="button" onClick={onRetryExtraction} disabled={!!busy}>重试补写</button>
+            </div>
+          )}
         </section>
       </div>
 

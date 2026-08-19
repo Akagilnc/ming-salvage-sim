@@ -129,9 +129,9 @@ export function useChatActions({
     }
   }, []);
 
-  // 召对面板打开时拉一次待补状态，并在打开期间低频刷新（补跑/回话完成后可自愈）。
+  // 召对/拟诏台打开时拉待补状态（#1312 颁诏 409 后拟诏台 CTA 同缝），低频刷新可自愈。
   React.useEffect(() => {
-    if (activeModal !== "chat") return;
+    if (activeModal !== "chat" && activeModal !== "edict") return;
     void refreshExtractionPending();
     const id = window.setInterval(() => {
       void refreshExtractionPending();
