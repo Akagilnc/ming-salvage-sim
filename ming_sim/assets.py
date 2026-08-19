@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import textwrap
@@ -53,6 +54,24 @@ def format_money(value: int) -> str:
 def format_money_delta(value: int) -> str:
     sign = "+" if value > 0 else ""
     return f"{sign}{format_money(value)}"
+
+
+def format_wanliang_amount(value: object) -> str:
+    """奏报口吻的万两数额：收整为整数或一位小数，杜绝 IEEE 浮点残渣。
+
+    军饷 shortfall 等中间量常为 float；f-string 原始插值会把
+    1.2000000000000002 写进 army_logs.reason → previous_summary。
+    """
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    if not math.isfinite(amount):
+        amount = 0.0
+    rounded = round(amount, 1)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:.1f}"
 
 
 def require_dict(data: object, path: str) -> Dict[str, object]:

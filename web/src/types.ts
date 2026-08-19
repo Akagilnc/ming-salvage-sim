@@ -445,7 +445,9 @@ export type ReplyRetry = {
   question: string;
 };
 
-/** #501：待补叙事抽取状态（显眼提示 + 原地重试）。 */
+/** #501：待补叙事抽取状态（显眼提示 + 原地重试）。
+ * #1353/#1381：closing + count=0 时附 player_hint（已自愈可重试）。
+ */
 export type ExtractionPendingStatus = {
   night_id: number;
   count: number;
@@ -454,6 +456,8 @@ export type ExtractionPendingStatus = {
     minister_name: string;
     night_id: number;
   }>;
+  night_status?: string;
+  player_hint?: string;
 };
 
 export type ChatIdentity = { campaign_id: string; night_id: number; chat_turn_id: number };
@@ -500,6 +504,8 @@ export type ApiErrorDetail = {
   message?: string;
   provider_message?: string;
   status_code?: number | null;
+  /** #1351 A1：advance_without_edict 令牌冲突时服务端当前 turn */
+  turn?: number;
   pending_action_failures?: PendingActionFailure[];
 };
 

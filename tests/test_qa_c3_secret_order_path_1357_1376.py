@@ -72,9 +72,9 @@ def webgame_shell_for_secret_order(db, state, content, *, session_chat):
     runtime.directive_payload = lambda row: row
     runtime.suggestions_for = lambda _ch: []
     runtime.can_undo_last_chat = lambda _name: False
+    # 读心/抽取尾随不进本密令路测范围；高亮判官写库缝必须真走（禁 no-op stub 掩死锁）。
     runtime._spawn_pending_write_thread = lambda *_a, **_k: None
     runtime._spawn_extraction_trail = lambda *_a, **_k: None
-    runtime._trail_highlight_judge_after_reply = lambda *_a, **_k: None
     runtime.character_power_id = lambda c: web_app._character_power_id(c, db)
     # Production methods under test — NOT mocked.
     runtime.chat = web_app.WebGame.chat.__get__(runtime)
@@ -135,26 +135,64 @@ def test_secret_order_endpoint_production_path_no_attribute_error(game, monkeypa
     assert db.list_secret_orders() == []
 
 
-def test_webgame_chat_with_write_gate_held_is_callable_when_gate_held(game):
-    """调用方已持 write_gate 时，_chat_with_write_gate_held 不得因重入死锁/抛 AttributeError。"""
+def test_webgame_chat_with_write_gate_held_is_callable_when_gate_held(game, monkeypatch):
+    """调用方已持 write_gate 时，_chat_with_write_gate_held 不得因重入死锁。
+
+    真持闸负向：外层持非可重入 Lock → 跑完整 _chat_core（含高亮判官写库缝）。
+    只 canned run_highlight_judge LLM 边界；超时守护证不挂死。
+    """
     db, state, content = game
     name = _active_minister_name(db, content)
     seen: list[str] = []
+    judge_calls: list[int] = []
 
     def _session_chat(minister_name, message, *, chat_turn_id=0):
         seen.append(message)
-        return ChatTurnResult(answer="臣领旨。")
+        return ChatTurnResult(answer="臣领旨。边情已探。")
+
+    def _canned_judge(*, minister_reply, llm_config=None, agent=None, timeout_s=8.0):
+        del llm_config, agent, timeout_s
+        judge_calls.append(1)
+        assert "边情" in str(minister_reply)
+        return ["边情"]
+
+    monkeypatch.setattr(web_app, "run_highlight_judge", _canned_judge)
 
     runtime = _webgame_shell(db, state, content, session_chat=_session_chat)
     assert hasattr(runtime, "_chat_with_write_gate_held")
+    # 必须真走生产判官写库缝，不得壳上 no-op stub 掩死锁。
+    assert runtime._trail_highlight_judge_after_reply.__func__ is (
+        web_app.WebGame._trail_highlight_judge_after_reply
+    )
 
-    with runtime._runtime_write_gate():
-        payload = runtime._chat_with_write_gate_held(
-            name, "密令如下：探听边情\n着尔密访。"
-        )
+    box: dict = {}
+    err: list[BaseException] = []
+
+    def _run_held() -> None:
+        try:
+            with runtime._runtime_write_gate():
+                box["payload"] = runtime._chat_with_write_gate_held(
+                    name, "密令如下：探听边情\n着尔密访。"
+                )
+        except BaseException as exc:  # noqa: BLE001 — surface any fail for assert
+            err.append(exc)
+
+    worker = threading.Thread(target=_run_held, daemon=True)
+    worker.start()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive(), (
+        "DEADLOCK: _chat_with_write_gate_held 在外层已持 write_gate 时挂死"
+        "（疑 _trail_highlight_judge_after_reply 同线程二次 acquire）"
+    )
+    assert not err, f"held-gate chat failed: {err!r}"
+    payload = box["payload"]
 
     assert seen == ["密令如下：探听边情\n着尔密访。"]
-    assert payload["answer"] == "臣领旨。"
+    assert payload["answer"] == "臣领旨。边情已探。"
+    assert judge_calls == [1], "高亮判官 LLM 边界未跑到（壳 stub 掩死锁？）"
+    mid = int(payload.get("minister_message_id") or 0)
+    assert mid > 0
+    assert db.get_message_highlights(mid) == ["边情"]
 
 
 # ── #1376 投影洞 ────────────────────────────────────────────────────────────

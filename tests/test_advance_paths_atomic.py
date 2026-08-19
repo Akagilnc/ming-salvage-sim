@@ -768,6 +768,75 @@ def test_hitl_ready_replay_retry_keeps_original_event_choice(game, monkeypatch):
         "ready-replay 重试不得用新选择覆写事件账"
 
 
+def test_submit_decisions_does_not_overwrite_already_decided_rows(game, monkeypatch):
+    """#1418 r2：phase2 失败后续跑——已 decided 行不得被空/异载荷覆写。
+
+    崩溃安全先写后跑：choice 已落 status=decided，但 extracted 未就绪（非 ready_replay）。
+    重发 resolve（空 choices 或改裁）须保留账上原 choice，再进 phase2。
+    """
+    import json
+    import ming_sim.session as session_mod
+    from ming_sim.session import GameSession
+
+    db, state, content = game
+    turn = state.turn
+    original = {"label": "斩", "note": "原裁断"}
+    # phase1 HITL 暂停上下文（无 extracted）——与真实 awaiting 存档同形
+    db.save_resolve_context(
+        turn, "HITL诏", "待续邸报", {"candidate_events": []},
+        secret_orders=[], relevant_memories=[],
+    )
+    ctx = db.get_resolve_context(turn)
+    assert ctx is not None
+    assert ctx.get("extracted") is None
+    db.save_pending_decisions(turn, [{
+        "title": "毛文龙裁断", "context": "c",
+        "options": [{"label": "斩", "hint": ""}, {"label": "留", "hint": ""}],
+    }])
+    # 模拟先写后跑：status=decided + choice 已落
+    db.conn.execute(
+        "UPDATE pending_decisions SET choice_json=?, status='decided' WHERE turn=? AND idx=0",
+        (json.dumps(original, ensure_ascii=False), turn),
+    )
+    db.conn.commit()
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+
+    seen = []
+
+    def _phase2(_state, _db, *_args, **_kwargs):
+        rows = _db.list_pending_decisions(turn)
+        assert rows and rows[0]["status"] == "decided"
+        assert rows[0]["choice"] == original, "phase2 读到的须是原 choice"
+        seen.append(dict(rows[0]["choice"] or {}))
+        # 不清 pending——便于第二刀再读；真实 phase2 成功后会 clear
+        return "ok"
+
+    monkeypatch.setattr(session_mod, "resolve_decisions_phase2", _phase2)
+
+    sess = GameSession.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.last_decree = "HITL诏"
+    sess.agno_db = None
+    sess.llm_config = None
+    sess.content = content
+    sess.registry = None
+
+    # ① 空载荷续跑不得清空
+    assert sess.submit_decisions([]) == "ok"
+    assert db.list_pending_decisions(turn)[0]["choice"] == original
+
+    # 复位 awaiting 再试异载荷（模拟 phase2 再次失败后的续跑）
+    state.turn_phase = "awaiting_decision"
+    db.save_state(state)
+    # ② 异载荷改裁不得覆写
+    assert sess.submit_decisions([{"label": "留", "note": "改裁"}]) == "ok"
+    assert db.list_pending_decisions(turn)[0]["choice"] == original, \
+        "已 decided 行不得被异载荷覆写"
+    assert seen == [original, original]
+
+
 def test_submit_dossier_rescript_does_not_create_event_trigger(game, monkeypatch):
     import ming_sim.session as session_mod
     from ming_sim.session import GameSession
@@ -1328,7 +1397,7 @@ def test_draft_mutators_frozen_at_front_half_done(game, monkeypatch):
         lambda: sess.add_directive("新草案"),
         lambda: sess.update_directive(1, "改"),
         lambda: sess.delete_directive(1),
-        lambda: sess.set_decree("改诏"),
+        # #1341：set_decree 已删；冻结面只覆盖逐道草案变更器 + write_decree
         lambda: sess.write_decree(),
     ):
         with pytest.raises(ValueError, match="结算|亲裁"):

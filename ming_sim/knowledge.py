@@ -15,6 +15,48 @@ from typing import Any, Dict
 from ming_sim.participant_roster import participant_roster_names
 
 
+def _issue_audience_names(db: Any, issue: Any) -> set[str]:
+    """Resolve seed-event audiences for an issue (read-model only).
+
+    Opening/seed situations list knowers on the originating event's ``audiences``
+    field.  Issues themselves do not duplicate that column; look up via
+    ``origin_kind=event_pool`` → events table, then content fallback.
+    """
+    try:
+        origin_kind = str(issue["origin_kind"] or "")
+        origin_ref = str(issue["origin_ref"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        return set()
+    if origin_kind != "event_pool" or not origin_ref:
+        return set()
+    raw: object = None
+    if hasattr(db, "conn"):
+        try:
+            row = db.conn.execute(
+                "SELECT audiences FROM events WHERE id=?", (origin_ref,),
+            ).fetchone()
+        except Exception:
+            row = None
+        if row is not None:
+            raw = row["audiences"]
+    if raw is None:
+        content = getattr(db, "content", None)
+        event_by_id = getattr(content, "event_by_id", None) or {}
+        ev = event_by_id.get(origin_ref)
+        if ev is not None:
+            raw = getattr(ev, "audiences", None) or []
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            return set()
+    if not isinstance(raw, (list, tuple)):
+        return set()
+    return {str(name).strip() for name in raw if str(name).strip()}
+
+
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
     """Return the validated content setting for this office's current-state rail."""
     configured = getattr(getattr(db, "content", None), "office_knowledge_domains", {}).get(office_type, ())
@@ -115,20 +157,96 @@ def _prose(text: object) -> str:
     return str(text or "")
 
 
-def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
+def _issue_audience_case_events(
+    db: Any,
+    state: Any,
+    character_name: str,
+    *,
+    known_source_ids: set[str] | None = None,
+) -> list[Dict[str, object]]:
+    """#1281 prompt-only synthesis: seed-event audience sees issue stage_text.
+
+    Read-time only.  Must never be folded into ``build_character_knowledge`` /
+    ``get_character_knowledge`` events — those APIs return durable rows only
+    (#492 near_minister tail contract).
+    """
+    known = set(known_source_ids or ())
+    synthesized: list[Dict[str, object]] = []
+    active_issues = (
+        db.list_active_issues() if hasattr(db, "list_active_issues") else []
+    )
+    for issue in active_issues:
+        try:
+            source_id = f"issue:{int(issue['id'])}"
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if source_id in known:
+            continue
+        try:
+            stage = _prose(issue["stage_text"]).strip()
+        except (KeyError, IndexError, TypeError):
+            stage = ""
+        if not stage or character_name not in _issue_audience_names(db, issue):
+            continue
+        if not knowledge_row_visible_to(
+            db,
+            {"source_id": source_id, "excluded_names": "[]",
+             "office_type": "", "office": ""},
+            character_name,
+        ):
+            continue
+        try:
+            origin_turn = int(issue["origin_turn"] or state.turn)
+        except (KeyError, IndexError, TypeError, ValueError):
+            origin_turn = int(state.turn)
+        synthesized.append({
+            "turn": origin_turn,
+            "year": int(state.year) if origin_turn == int(state.turn) else 0,
+            "period": int(state.period) if origin_turn == int(state.turn) else 0,
+            "kind": "issue_case",
+            "title": issue["title"],
+            "body": stage,
+            "source_id": source_id,
+        })
+        known.add(source_id)
+    return synthesized
+
+
+def render_character_knowledge(
+    knowledge: Dict[str, object],
+    character_name: str,
+    *,
+    db: Any = None,
+    state: Any = None,
+) -> str:
     """Render one character's projected knowledge for an audience prompt.
 
     This is the single presentation seam for both live session prompts and
     minister-agent prompts.  The projection has already enforced access
     control; this function only de-duplicates sources, orders them, and caps
-    the prompt material.
+    the prompt material.  #1281 issue stage_text for seed-event audiences is
+    synthesized here (read-time) when ``db``/``state`` are supplied — never
+    written into the durable knowledge projection.
     """
     lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
     for key, value in (knowledge.get("world") or {}).items():
         if value:
             lines.append(f"{key}：{value}")
+    event_items = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
+    if db is not None and state is not None:
+        known_source_ids = {
+            str(item.get("source_id") or "")
+            for item in event_items
+            if item.get("source_id")
+        }
+        event_items = [
+            *event_items,
+            *_issue_audience_case_events(
+                db, state, character_name, known_source_ids=known_source_ids,
+            ),
+        ]
     by_source = {}
-    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+    for item in event_items:
         source_id = str(item.get("source_id") or "")
         key = (source_id, item.get("title") or "", item.get("body") or "") if source_id else (
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""

@@ -1505,7 +1505,9 @@ class GameSession:
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
         try:
-            brief = render_character_knowledge(knowledge, character.name)
+            brief = render_character_knowledge(
+                knowledge, character.name, db=self.db, state=self.state,
+            )
         except Exception:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
@@ -2521,13 +2523,8 @@ class GameSession:
         self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return decree
 
-    def set_decree(self, text: str) -> str:
-        """兼容入口：非空最终正文一律拒绝；须由逐道旨意入口新增或修改旨稿。"""
-        self._refuse_if_settling()
-        text = (text or "").strip()
-        if not text:
-            raise ValueError("诏书正文不能为空。")
-        raise ValueError("最终诏书正文不可单独设置；请使用逐道旨意入口新增或修改旨稿。")
+    # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
+    # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None) -> ResolveResult:
@@ -2753,7 +2750,11 @@ class GameSession:
             # Dossier rescript choices are capability-bearing options.  Validate the
             # complete batch before persisting any decision so malformed/cross-dossier
             # payloads leave the retry state untouched.
+            # #1418 r2：已 decided 行（崩溃安全先写后跑）不得被空/异载荷覆写——
+            # phase2 续跑重发 resolve 时保留账上 choice，校验与回写均跳过。
             for d in stored:
+                if str(d.get("status") or "") == "decided":
+                    continue
                 if not str(d.get("event_id") or "").startswith("dossier:"):
                     continue
                 idx = int(d["idx"])
@@ -2770,6 +2771,8 @@ class GameSession:
                     raise ValueError("批红选择必须是本案提供的强颁、收回或留中选项")
             import json as _json
             for d in stored:
+                if str(d.get("status") or "") == "decided":
+                    continue
                 idx = int(d["idx"])
                 choice = choices[idx] if idx < len(choices) else None
                 if not isinstance(choice, dict):

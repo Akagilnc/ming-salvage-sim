@@ -29,11 +29,12 @@ import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
+import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
   isFaceReachable,
   isSettlementDisplay,
-  SETTLEMENT_CLOSED_REASON,
+  settlementClosedReason,
   shouldAutoOpenClosedIssuesAfterSettlement,
   shouldAutoOpenSecretOrdersAfterSettlement,
 } from "./settlementPresentation";
@@ -147,6 +148,7 @@ export function App() {
     activeChatFailures,
     replyRetry,
     extractionPendingCount,
+    extractionHealedHint,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -199,7 +201,7 @@ export function App() {
     cancelEditDirective,
     saveDirective,
     deleteDirective,
-  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation, loadState, setDecree });
+  } = useEdictActions({ setBusy, setError, setState, beginDurableMutation });
 
   // 颁诏结算流（useSettlementFlow.ts）：盖玺颁诏/退朝/HITL 决策点续裁/失败重拉。
   // hook 必须在 menu/loading 早退之前调用。
@@ -212,6 +214,7 @@ export function App() {
     pausedDecisionError,
     issueDecree,
     submitDecisions,
+    resumePhase2,
     retryPendingDecisions,
     advanceWithoutEdict,
   } = useSettlementFlow({
@@ -417,7 +420,7 @@ export function App() {
   const selectMapNode = (nodeId: string) => {
     // #1236：地图节点详情属关闭组——核账期不点选开详（底图装饰可留）。
     if (state && !isFaceReachable("node_intel", isSettlementDisplay(state.turn))) {
-      setError(SETTLEMENT_CLOSED_REASON);
+      setError(settlementClosedReason(state.turn.phase));
       return;
     }
     setSelectedNodeId(nodeId);
@@ -470,6 +473,13 @@ export function App() {
   const edictOpen = activeModal === "edict" && isFaceReachable("edict", settlementDisplay);
   const chatOpen = activeModal === "chat" && isFaceReachable("chat_entry", settlementDisplay);
   const gazetteOpen = activeModal === "report" && isFaceReachable("gazette", settlementDisplay);
+  // memorials 面键真源（#1285）；ModalName 仍用既有 "state" 槽承载奏疏列表。
+  // 内容闸走 situation 谓词：核账期面可达但零半程议题泄漏（模态不自判 settlementDisplay）。
+  const memorialsOpen = activeModal === "state" && isFaceReachable("memorials", settlementDisplay);
+  const showMemorialIssues = isFaceReachable("situation", settlementDisplay);
+  const historyOpen = activeModal === "history" && isFaceReachable("history", settlementDisplay);
+  // C：起居注入口单闸 = isFaceReachable(audience_archive)；不再经 gameHud.gatedModal 死枝。
+  const audienceArchiveOpen = activeModal === "audience_archive" && isFaceReachable("audience_archive", settlementDisplay);
   const closedIssuesOpen = closedModal.length > 0 && isFaceReachable("closed_issues", settlementDisplay);
   const mapIntelVisible = mapIntelOpen && selectedNode && isFaceReachable("node_intel", settlementDisplay);
   const regionOpen = regionDrawerOpen && isFaceReachable("region", settlementDisplay);
@@ -514,6 +524,7 @@ export function App() {
         onOpenChat={openChat}
         onUploadPortrait={uploadPortrait}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       <ArmyDrawer
@@ -551,6 +562,7 @@ export function App() {
         onOpenChat={openChat}
         onClose={() => setAppointmentDrawerOpen(false)}
         chatEntryEnabled={chatEntryEnabled}
+        phase={state.turn.phase}
       />
 
       {mapIntelVisible ? (
@@ -562,9 +574,14 @@ export function App() {
         </section>
       ) : null}
 
-      {activeModal === "state" ? (
-        <FullscreenModal title="国势与奏报" subtitle={`${state.turn.year} 年 ${state.turn.period} 月`} bgClass="modal-bg-state" onClose={() => setActiveModal("none")}>
-          <StateModal state={state} />
+      {memorialsOpen ? (
+        <FullscreenModal
+          title="奏疏"
+          subtitle={`${showMemorialIssues ? state.issues.length : 0} 件待览 · ${state.turn.year} 年 ${state.turn.period} 月`}
+          bgClass="modal-bg-state"
+          onClose={() => setActiveModal("none")}
+        >
+          <StateModal state={state} showIssues={showMemorialIssues} />
         </FullscreenModal>
       ) : null}
 
@@ -595,6 +612,7 @@ export function App() {
             secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
+            extractionHealedHint={extractionHealedHint}
             onInput={setInput}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}
@@ -623,7 +641,7 @@ export function App() {
       ) : null}
 
       {edictOpen ? (
-        <FullscreenModal title="诏书草案" subtitle="本月指令与退朝" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
+        <FullscreenModal title="诏书草案" subtitle="退朝即草案成案并过月" bgClass="modal-bg-edict" onClose={() => setActiveModal("none")}>
           <EdictModal
             state={state}
             directiveText={directiveText}
@@ -646,9 +664,9 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {gazetteOpen && (gazetteReport || report) ? (
+      {gazetteOpen && (gazetteReport || state.previous_summary || report) ? (
         <ReportModal
-          report={gazetteReport || report}
+          report={gazetteReport || state.previous_summary || report}
           onClose={() => setActiveModal("none")}
         />
       ) : null}
@@ -657,11 +675,16 @@ export function App() {
         <EndingModal ending={state.ending} onClose={() => { setEndingDismissed(true); setActiveModal("none"); }} />
       ) : null}
 
-      {activeModal === "history" ? (
-        <HistoryModal onClose={() => setActiveModal("none")} />
+      {historyOpen ? (
+        <HistoryModal
+          onClose={() => setActiveModal("none")}
+          onOpenAudienceArchive={isFaceReachable("audience_archive", settlementDisplay)
+            ? () => setActiveModal("audience_archive")
+            : undefined}
+        />
       ) : null}
 
-      {activeModal === "audience_archive" ? (
+      {audienceArchiveOpen ? (
         <AudienceArchiveModal ministers={audienceRoster} onClose={() => setActiveModal("none")} />
       ) : null}
 
@@ -690,7 +713,7 @@ export function App() {
           onOpenMinister={(name) => {
             // 密令内转召对亦属 chat_entry 关闭组
             if (!chatEntryEnabled) {
-              setError(SETTLEMENT_CLOSED_REASON);
+              setError(settlementClosedReason(state?.turn.phase));
               return;
             }
             setActiveModal("chat");
@@ -709,11 +732,22 @@ export function App() {
       ) : null}
 
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。 */}
-      {state.turn.phase === "settling" ? (
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2：all-decided + settlement_display 仍真 → 同条续跑面，改发 resolve_decisions/stream。 */}
+      {state.turn.phase === "settling"
+        || needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+        ? (
         <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
-          <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
+          <button
+            className="seal-btn-issue"
+            onClick={
+              needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+                ? resumePhase2
+                : issueDecree
+            }
+            disabled={!!busy}
+          >
             续跑结算
           </button>
         </div>

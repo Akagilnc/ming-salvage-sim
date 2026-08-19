@@ -2,6 +2,7 @@ import React from "react";
 import { Crown, Landmark, MapPinned, ScrollText, Star, Swords, X } from "lucide-react";
 import { MinisterPortrait, PortraitUploadButton, RightDrawer, cacheBust, courtSlots, loadCourtPos, saveCourtPos, snapToSlot } from "./hud";
 import { formatArmyArrears, formatMoney, formatSignedMoney, qualitativeArmyStat } from "../format";
+import { settlementClosedReason } from "../settlementPresentation";
 import type { Army, Building, GameState, MapNode, Minister, Region } from "../types";
 
 export function MinisterCardList({
@@ -13,6 +14,7 @@ export function MinisterCardList({
   onUploadPortrait,
   courtMode = false,
   chatEntryEnabled = true,
+  phase,
 }: {
   list: Minister[];
   portraitPrefix: string;
@@ -23,7 +25,10 @@ export function MinisterCardList({
   courtMode?: boolean;
   /** #1236：核账期拔召对写入口，名册仍只读保留。 */
   chatEntryEnabled?: boolean;
+  /** #1323：关闭理由按 phase 分口吻（awaiting≠核账）。 */
+  phase?: string;
 }) {
+  const closedTitle = chatEntryEnabled ? undefined : settlementClosedReason(phase);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [positions, setPositions] = React.useState<Record<string, { px: number; py: number }>>({});
   const savedPosRef = React.useRef<Record<string, { px: number; py: number }> | null>(null);
@@ -206,7 +211,7 @@ export function MinisterCardList({
               className={`minister-card ${selectedMinister === minister.name ? "selected" : ""} ${ousted ? "ousted" : ""}`}
               disabled={!chatEntryEnabled}
               aria-disabled={!chatEntryEnabled}
-              title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+              title={closedTitle}
               onClick={() => { if (chatEntryEnabled) onOpenChat(minister); }}>
               <div className="minister-card-portrait-wrap">
                 <MinisterPortrait primary={dedicated} fallback={poolFallback} name={minister.name} />
@@ -260,7 +265,7 @@ export function MinisterCardList({
             onMouseDown={(e) => { if (chatEntryEnabled) onMouseDown(e, minister.name); }}
             disabled={!chatEntryEnabled}
             aria-disabled={!chatEntryEnabled}
-            title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+            title={closedTitle}
             onClick={(e) => {
               if (!chatEntryEnabled) return;
               if (didDrag.current) { e.preventDefault(); return; }
@@ -548,6 +553,7 @@ export function AppointmentDrawer({
   onOpenChat,
   onClose,
   chatEntryEnabled = true,
+  phase,
 }: {
   ministers: Minister[];
   open: boolean;
@@ -555,8 +561,11 @@ export function AppointmentDrawer({
   onClose: () => void;
   /** #1236：核账期拔任免行召对写入口。 */
   chatEntryEnabled?: boolean;
+  /** #1323：关闭理由按 phase 分口吻（awaiting≠核账）。 */
+  phase?: string;
 }) {
   const [q, setQ] = React.useState("");
+  const closedTitle = chatEntryEnabled ? undefined : settlementClosedReason(phase);
   const offices = ["内阁", "吏部", "户部", "礼部", "兵部", "刑部", "工部"];
   const byOffice = new Map<string, Minister[]>();
   for (const office of offices) byOffice.set(office, []);
@@ -588,7 +597,7 @@ export function AppointmentDrawer({
                   className="right-drawer-row right-drawer-row-minister"
                   disabled={!chatEntryEnabled}
                   aria-disabled={!chatEntryEnabled}
-                  title={chatEntryEnabled ? undefined : "档房核账中，暂不宣召"}
+                  title={closedTitle}
                   onClick={() => { if (chatEntryEnabled) onOpenChat(m); }}
                 >
                   <div className="right-drawer-minister-row">
@@ -609,7 +618,7 @@ export function AppointmentDrawer({
 }
 
 export function CourtDrawer({
-  state: _state,
+  state,
   ministers,
   ministerGroup,
   selectedMinister,
@@ -634,6 +643,7 @@ export function CourtDrawer({
 }) {
   const [q, setQ] = React.useState("");
   const filtered = q ? ministers.filter((m) => m.name.includes(q) || (m.office || "").includes(q)) : ministers;
+  const phase = state.turn.phase;
   return (
     <>
       {open && <button className="drawer-scrim" aria-label="收起" onClick={onClose} />}
@@ -668,6 +678,7 @@ export function CourtDrawer({
           courtMode={ministerGroup === "内阁+六部" || ministerGroup === "收藏"}
           onUploadPortrait={onUploadPortrait}
           chatEntryEnabled={chatEntryEnabled}
+          phase={phase}
         />
       </aside>
     </>
@@ -684,6 +695,7 @@ export function HaremDrawer({
   onOpenChat,
   onUploadPortrait,
   chatEntryEnabled = true,
+  phase,
 }: {
   consorts: Minister[];
   haremGroup: string;
@@ -695,6 +707,8 @@ export function HaremDrawer({
   onUploadPortrait: (ministerName: string, file: File) => Promise<void>;
   /** #1236：核账期拔召对写入口，名册只读。 */
   chatEntryEnabled?: boolean;
+  /** #1323：关闭理由按 phase 分口吻（awaiting≠核账）。 */
+  phase?: string;
 }) {
   const [q, setQ] = React.useState("");
   const filtered = q ? consorts.filter((c) => c.name.includes(q)) : consorts;
@@ -731,6 +745,7 @@ export function HaremDrawer({
           onOpenChat={onOpenChat}
           onUploadPortrait={onUploadPortrait}
           chatEntryEnabled={chatEntryEnabled}
+          phase={phase}
         />
       </aside>
     </>

@@ -203,7 +203,10 @@ def assemble_beat_inputs(
     knowledge = provider(subject) if subject else {}
     from ming_sim.knowledge import render_character_knowledge
 
-    perspectival_world = render_character_knowledge(knowledge, subject) if subject else ""
+    perspectival_world = (
+        render_character_knowledge(knowledge, subject, db=db, state=state)
+        if subject else ""
+    )
     court_tension = _court_tension(knowledge)
 
     characterization = ""
@@ -270,7 +273,10 @@ def create_llm_beat_generator(llm_config: Any) -> BeatGenerator:
 
     instructions = [
         "你是御前召对的叙事声音。依据人物自身可知的朝局与殿上前情，让场景从具体人物、时地和局势中自然长出。",
-        "开场只立局势与悬念，不预告后来结果；收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
+        # #1295/#1314(2)：开场/入殿只立局势与悬念——与 production_beat_generator 同口径，
+        # 不写皇帝答复、不预演奏对（entrance 在玩家首句落库前生成，LLM 无从知问话）。
+        "开场与入殿只立局势与悬念，不预告后来结果；入殿写人物入殿气象，不写皇帝答复、不预演奏对；"
+        "收束忠于已经发生的史实。玩家可见文案不要把召对硬称为夜。",
     ]
 
     def generate(inputs: BeatInputs) -> str:

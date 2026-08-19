@@ -79,16 +79,16 @@ export function EdictModal({
                 )}
               </div>
             ))}
-            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝或在右侧御笔自拟。</div>}
-            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，退朝时按既有规则成案。</div>}
+            {!draftDirectives.length && !hasPendingConversationalDraft && !hasNonEdictPendingActions && !hasFailedSecretOrders && <div className="empty-note">本月尚无明发诏令，可退朝结束本月或在右侧御笔自拟。</div>}
+            {!draftDirectives.length && hasPendingConversationalDraft && <div className="empty-note pending-draft-hint">大臣已奉旨起草，退朝结束本月时按既有规则成案。</div>}
             {!draftDirectives.length && !hasPendingConversationalDraft && hasFailedSecretOrders && (
               <div className="empty-note failed-secret-note">
-                <span>尚有密令落库失败可稍后处理；可先退朝，不阻断本月推进。</span>
+                <span>尚有密令落库失败可稍后处理；可先退朝结束本月，不阻断推进。</span>
                 <button type="button" onClick={onOpenFailureRecovery} disabled={!!busy}>处理</button>
               </div>
             )}
             {!draftDirectives.length && !hasPendingConversationalDraft && !hasFailedSecretOrders && hasNonEdictPendingActions && (
-              <div className="empty-note">尚有召对事项候旨，退朝后按沉默准行处理。</div>
+              <div className="empty-note">尚有召对事项候旨，退朝结束本月后按沉默准行处理。</div>
             )}
           </div>
         </section>
@@ -110,7 +110,7 @@ export function EdictModal({
 
       <div className="desk-footer">
         <button className="seal-btn-compose" onClick={onAdvanceWithoutEdict} disabled={!!busy}>
-          退朝 →
+          退朝结束本月 →
         </button>
       </div>
     </div>

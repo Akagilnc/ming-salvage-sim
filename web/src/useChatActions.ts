@@ -80,6 +80,8 @@ export function useChatActions({
   const [chatFailures, setChatFailures] = React.useState<PendingActionFailure[]>([]);
   const [replyRetry, setReplyRetry] = React.useState<ReplyRetry | null>(null);
   const [extractionPendingCount, setExtractionPendingCount] = React.useState(0);
+  /** #1353/#1381：closing 夜待补自愈后的玩家面指引（count=0 仍须可见）。 */
+  const [extractionHealedHint, setExtractionHealedHint] = React.useState("");
   const [canUndoLastChat, setCanUndoLastChat] = React.useState(false);
   const [composerHint, setComposerHint] = React.useState("");
   const [input, setInput] = React.useState("");
@@ -117,9 +119,11 @@ export function useChatActions({
 
   const refreshExtractionPending = React.useCallback(async () => {
     // #501：本开夜待补叙事抽取——显眼提示取数；失败静默（不挡召对）。
+    // #1353/#1381：closing + count=0 读 player_hint，给「已自愈/可重试」面。
     try {
       const data = await api<ExtractionPendingStatus>("/api/audience/extraction/pending");
       setExtractionPendingCount(Number(data?.count || 0));
+      setExtractionHealedHint(String(data?.player_hint || "").trim());
     } catch {
       /* 取数失败不锁面板 */
     }
@@ -364,13 +368,21 @@ export function useChatActions({
 
   const retryStoryExtraction = async () => {
     // #501：原地重试补跑叙事抽取。
+    // #1312：SSE stage 分段进度反馈（既有 settle 同形），禁干等无反馈。
     if (busy) return;
     setBusy("重试补写账本");
     setError("");
     try {
-      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll);
+      const data = await retryAudienceStoryExtraction(invalidateAudienceScroll, {
+        onStage: (text) => setBusy(text || "重试补写账本"),
+      });
       setExtractionPendingCount(Number(data?.count || 0));
-      if ((data?.count || 0) === 0) setChatNotice("待补账本已补写完毕。");
+      const healed = String(data?.player_hint || "").trim();
+      setExtractionHealedHint(healed);
+      if ((data?.count || 0) === 0) {
+        // #1353：closing 自愈优先用服务端 player_hint；否则通用补写完毕句。
+        setChatNotice(healed || "待补账本已补写完毕。");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -453,6 +465,7 @@ export function useChatActions({
     activeChatFailures,
     replyRetry,
     extractionPendingCount,
+    extractionHealedHint,
     canUndoLastChat,
     composerHint,
     setComposerHint,

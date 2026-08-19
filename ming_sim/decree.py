@@ -940,6 +940,10 @@ def advance_without_edict(state: GameState, db: GameDB, *, content=None, registr
             message = f"本{TURN_UNIT}退朝未下正式圣旨，诸事仍待来{TURN_UNIT}处置。"
             db.record_log(state, message)
             print("\n" + message)
+            # #1345/#1382 A2：快路正式月档——与推进同事务；禁 extractor/issued 伪造。
+            # knowledge_items 缺省 None：无结算叙事源时以 message 正文入 turn_reports + 邸报。
+            # （knowledge_items=[] 会走源投影空串，空月无 settlement sources 不可用。）
+            db.save_turn_report(state, message, commit=False)
             # 推进回合的路都得清本回合 resolve_context：崩溃重试后改走此路时，留下的
             # ready=1 行会被恢复入口当「未完成回合」重放=double-apply（cmr S2+S3 r4）。
             db.clear_resolve_context(state.turn)
