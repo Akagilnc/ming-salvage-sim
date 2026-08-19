@@ -2840,3 +2840,120 @@ def cli_backend_from_env() -> Optional[str]:
     名单单一真源 = _CLI_BACKENDS（#1256 收敛，禁再硬编码枚举）。"""
     val = (os.environ.get("MING_SIM_LLM_BACKEND") or "").strip().lower()
     return val if val in _CLI_BACKENDS else None
+
+
+# ── 闸脚本 LLM 参数/配置（#1256）：四脚本共用，禁各自复制 choices/_config ──
+
+
+def add_gate_llm_args(parser: Any) -> None:
+    """给闸脚本 argparse 加 --channel/--runner/--model/--base-url/--api-key。
+
+    --runner choices = GATE_CLI_RUNNERS 单一真源；channel=cli 时必填 runner，
+    channel=api 时 runner 可空（api_key/base_url 由参数或 env 注入，不落库）。
+    """
+    parser.add_argument(
+        "--channel", choices=("cli", "api"), default="cli",
+        help="执行通道：cli=本机 runner；api=OpenAI 兼容（ds-flash/OpenCode Go 等）",
+    )
+    parser.add_argument(
+        "--runner", choices=GATE_CLI_RUNNERS, default="",
+        help="CLI runner（channel=cli 时必填；channel=api 时忽略）",
+    )
+    parser.add_argument("--model", required=True, help="模型名（cli 透传 --model；api 透传 model）")
+    parser.add_argument(
+        "--base-url", default="",
+        help="api 通道 base_url；空则读 OPENAI_BASE_URL / MING_SIM_API_BASE_URL",
+    )
+    parser.add_argument(
+        "--api-key", default="",
+        help="api 通道 key；空则读 OPENAI_API_KEY / MING_SIM_API_KEY（不落库）",
+    )
+
+
+def gate_llm_config_from_args(
+    args: Any,
+    *,
+    max_tokens: int = 6000,
+    reasoning_strength: str = "high",
+    cli_timeout_seconds: float = 600.0,
+) -> Any:
+    """四闸脚本 _config/_cfg 单一实现：按 channel 构造 LLMConfig。
+
+    channel=cli → runner 必填，api_key/base_url 空。
+    channel=api → key/base_url 由 args 或 env 注入（OPENAI_* / MING_SIM_API_*），
+    model 透传；runner 不写入 config。
+    """
+    from ming_sim.models import LLMConfig
+
+    channel = str(getattr(args, "channel", "") or "cli").strip().lower() or "cli"
+    model = str(getattr(args, "model", "") or "").strip()
+    if not model:
+        raise ValueError("--model is required")
+    if channel == "api":
+        api_key = (
+            str(getattr(args, "api_key", "") or "").strip()
+            or (os.environ.get("OPENAI_API_KEY") or "").strip()
+            or (os.environ.get("MING_SIM_API_KEY") or "").strip()
+        )
+        base_url = (
+            str(getattr(args, "base_url", "") or "").strip()
+            or (os.environ.get("OPENAI_BASE_URL") or "").strip()
+            or (os.environ.get("MING_SIM_API_BASE_URL") or "").strip()
+        )
+        if not api_key:
+            raise ValueError("channel=api requires --api-key or OPENAI_API_KEY/MING_SIM_API_KEY")
+        if not base_url:
+            raise ValueError(
+                "channel=api requires --base-url or OPENAI_BASE_URL/MING_SIM_API_BASE_URL"
+            )
+        return LLMConfig(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            channel="api",
+            max_tokens=max_tokens,
+            reasoning_strength=reasoning_strength,
+        )
+    if channel != "cli":
+        raise ValueError(f"unsupported --channel: {channel}")
+    runner = str(getattr(args, "runner", "") or "").strip().lower()
+    if not runner:
+        raise ValueError("--runner is required when --channel=cli")
+    if runner not in GATE_CLI_RUNNERS:
+        raise ValueError(f"unsupported --runner: {runner} (choices={GATE_CLI_RUNNERS})")
+    return LLMConfig(
+        api_key="",
+        base_url="",
+        model=model,
+        channel="cli",
+        cli_runner=runner,
+        cli_model=model,
+        cli_timeout_seconds=cli_timeout_seconds,
+        max_tokens=max_tokens,
+        reasoning_strength=reasoning_strength,
+    )
+
+
+def gate_evidence_config(args: Any, cfg: Any) -> Dict[str, Any]:
+    """证据 JSON 的 config 块：channel/runner/model 如实（#1256）。"""
+    channel = str(getattr(cfg, "channel", "") or getattr(args, "channel", "") or "").strip().lower()
+    runner = ""
+    if channel == "cli":
+        runner = str(
+            getattr(cfg, "cli_runner", "") or getattr(args, "runner", "") or ""
+        ).strip().lower()
+    model = str(
+        getattr(cfg, "cli_model", "")
+        or getattr(cfg, "model", "")
+        or getattr(args, "model", "")
+        or ""
+    ).strip()
+    block: Dict[str, Any] = {
+        "channel": channel or "cli",
+        "runner": runner,
+        "model": model,
+        "reasoning_strength": str(getattr(cfg, "reasoning_strength", "") or ""),
+    }
+    if getattr(cfg, "max_tokens", None) is not None:
+        block["max_tokens"] = int(cfg.max_tokens)
+    return block

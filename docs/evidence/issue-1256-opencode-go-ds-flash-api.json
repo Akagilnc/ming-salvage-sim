@@ -1,0 +1,53 @@
+{
+  "gate": "issue-1256-opencode-go-ds-flash-api-endpoint-smoke",
+  "verified_at": "2026-08-19T12:53:21+0900",
+  "endpoint": {
+    "base_url": "https://opencode.ai/zen/v1",
+    "openai_compatible": true,
+    "models_path": "/models",
+    "chat_completions_path": "/chat/completions",
+    "auth": "Bearer <opencode auth.json opencode-go.key via env; not persisted>",
+    "model_id_form": "bare id (deepseek-v4-flash), NOT opencode-go/deepseek-v4-flash"
+  },
+  "models_list": {
+    "has_deepseek_v4_flash": true,
+    "has_deepseek_v4_flash_free": true,
+    "deepseek_ids": [
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash-free"
+    ]
+  },
+  "smoke": {
+    "channel": "api",
+    "runner": "",
+    "model": "deepseek-v4-flash-free",
+    "via": "gate_llm_config_from_args + create_chat_model + Agent.run (+ raw HTTP twin)",
+    "agent_response_preview": "通过",
+    "raw_http_content_preview": "通过",
+    "response_preview": "通过",
+    "dur_s": 3.11,
+    "ok": true,
+    "note": "free twin used because paid deepseek-v4-flash returned CreditsError on this account"
+  },
+  "paid_baseline_probe": {
+    "model": "deepseek-v4-flash",
+    "status": "error:401",
+    "detail": "{\"type\":\"error\",\"error\":{\"type\":\"CreditsError\",\"message\":\"Insufficient balance. Manage your billing here: https://opencode.ai/workspace/wrk_01KW3Q8J6FHVTC4WAB1GWPKGJ0/billing\"}}",
+    "note": "群友基线档 id=deepseek-v4-flash 写死；端点与鉴权形状已由 -free 冒烟与 /models 列表核实。"
+  },
+  "evidence_config_block": {
+    "channel": "api",
+    "runner": "",
+    "model": "deepseek-v4-flash-free",
+    "reasoning_strength": "high",
+    "max_tokens": 6000
+  },
+  "usage": {
+    "env": [
+      "MING_SIM_API_KEY=<opencode-go key from ~/.local/share/opencode/auth.json>",
+      "MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1"
+    ],
+    "gate_example": "python scripts/family_tail_acceptance_570.py --channel api --model deepseek-v4-flash --samples 1 --output docs/evidence/....json"
+  }
+}

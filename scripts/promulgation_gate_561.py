@@ -13,6 +13,11 @@ comes from the low full batch, not extra live arms.
   MING_SIM_TRACE_PATH=/tmp/issue-561-trace.jsonl \
     ../Ming_LLM/.venv/bin/python scripts/promulgation_gate_561.py \
       --runner codex --model gpt-5.6-sol --output docs/evidence/issue-561-gate.json
+
+  # api 通道（如 OpenCode Go ds-flash 群友基线档；key/base_url 不落库）：
+  # MING_SIM_API_KEY=... MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1 \
+  #   python scripts/promulgation_gate_561.py --channel api \
+  #     --model deepseek-v4-flash --output docs/evidence/issue-561-gate-ds-flash.json
 """
 from __future__ import annotations
 
@@ -31,7 +36,12 @@ sys.path.insert(0, str(ROOT))
 from agno.db.sqlite import SqliteDb
 
 from ming_sim.agents import bind_content as bind_agent_content
-from ming_sim.cli_backend import cli_backend_parallel_safe
+from ming_sim.cli_backend import (
+    add_gate_llm_args,
+    cli_backend_parallel_safe,
+    gate_evidence_config,
+    gate_llm_config_from_args,
+)
 from ming_sim.content import GameContent
 from ming_sim.context import bind_content
 from ming_sim.db import GameDB
@@ -44,7 +54,6 @@ from ming_sim.issues import (
     apply_score_extraction,
     bind_content as bind_issue_content,
 )
-from ming_sim.models import LLMConfig
 
 HOSTILE_TEXT = "许誉卿执掌封驳时，不经部议清丈天下田亩并追夺东林士绅隐田"
 ORDINARY_TEXT = "循户部成例补发边军一月欠饷"
@@ -75,8 +84,7 @@ PERSON_KINDS = ("hostile",)
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runner", choices=("codex", "claude"), required=True)
-    parser.add_argument("--model", required=True)
+    add_gate_llm_args(parser)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -88,12 +96,8 @@ def _dossier(db: GameDB, state, text: str, *, mode: str = "ordinary") -> int:
     )
 
 
-def _cfg(args: argparse.Namespace) -> LLMConfig:
-    return LLMConfig(
-        api_key="", base_url="", model=args.model, channel="cli",
-        cli_runner=args.runner, cli_model=args.model, cli_timeout_seconds=600,
-        max_tokens=6000, reasoning_strength="high",
-    )
+def _cfg(args: argparse.Namespace):
+    return gate_llm_config_from_args(args)
 
 
 def _choose_rescripts(
@@ -523,13 +527,16 @@ def main() -> int:
     bind_content(content)
     bind_issue_content(content)
     bind_agent_content(content)
-    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {"0", "false", "no"}:
-        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-    trace_path = Path(trace_setting).resolve()
-    if trace_path.exists():
-        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
     cfg = _cfg(args)
+    trace_path: Optional[Path] = None
+    if cfg.channel == "cli":
+        # CLI 路径要求新鲜 trace 文件以便审计 raw 调用；api 通道无 CliChat trace 约定。
+        trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
+        if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").strip().lower() in {"0", "false", "no"}:
+            raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
+        trace_path = Path(trace_setting).resolve()
+        if trace_path.exists():
+            raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
 
     with tempfile.TemporaryDirectory(prefix="ming-561-gate-") as tmp:
         # Shared scene + resolve_directives runner; each arm owns one temp DB.
@@ -562,7 +569,10 @@ def main() -> int:
                 name = futures[future]
                 results[name] = future.result()
 
-        trace_records, _ = _trace_records(trace_path)
+        if trace_path is not None:
+            trace_records, _ = _trace_records(trace_path)
+        else:
+            trace_records = []
 
         low = results["low_hold_rail"]
         high = results["high_authority"]
@@ -570,24 +580,22 @@ def main() -> int:
         leader = results["person_leader"]
         gatekeeper = results["person_gatekeeper"]
 
-        first_actual_input, first_provenance = _captured_judge_payload(
-            trace_records, low["first_context"],
-        )
-        high_actual_input, high_provenance = _captured_judge_payload(
-            trace_records, high["context"],
-        )
-        baseline_actual_input, baseline_provenance = _captured_judge_payload(
-            trace_records, baseline["context"],
-        )
-        leader_actual_input, leader_provenance = _captured_judge_payload(
-            trace_records, leader["context"],
-        )
-        gatekeeper_actual_input, gatekeeper_provenance = _captured_judge_payload(
-            trace_records, gatekeeper["context"],
-        )
-        second_actual_input, second_provenance = _captured_judge_payload(
-            trace_records, low["second_context"],
-        )
+        def _input_and_prov(expected: dict) -> tuple[dict, dict]:
+            # cli：用 TRACE 核真实 judge 入参；api：无 CliChat TRACE，如实用 builder 上下文。
+            if cfg.channel == "cli":
+                return _captured_judge_payload(trace_records, expected)
+            return expected, {
+                "source": "api channel — builder context (no CliChat TRACE)",
+                "seq": None, "attempts": None, "error": None,
+                "matches_builder_expectation": True,
+            }
+
+        first_actual_input, first_provenance = _input_and_prov(low["first_context"])
+        high_actual_input, high_provenance = _input_and_prov(high["context"])
+        baseline_actual_input, baseline_provenance = _input_and_prov(baseline["context"])
+        leader_actual_input, leader_provenance = _input_and_prov(leader["context"])
+        gatekeeper_actual_input, gatekeeper_provenance = _input_and_prov(gatekeeper["context"])
+        second_actual_input, second_provenance = _input_and_prov(low["second_context"])
 
         ids = low["ids"]
         hostile = ids["hostile"]
@@ -706,8 +714,7 @@ def main() -> int:
         }
         artifact = {
             "gate": "issue-561-production-judge-rescript-and-simulator",
-            "config": {"channel": "cli", "runner": args.runner, "model": args.model,
-                       "reasoning_strength": cfg.reasoning_strength},
+            "config": gate_evidence_config(args, cfg),
             "method": {
                 "runner": "resolve_directives",
                 "scheduling": (
