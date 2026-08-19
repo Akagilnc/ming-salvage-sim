@@ -1501,18 +1501,29 @@ def capture_manual_directive_payload(
         canonical_roster = db._normalize_participant_roster(
             roster, strict_structured=True,
         )
+        # #1279 / QA A-2：人物参与人只产 characters 名册可解析的人名。
+        # 过滤顺序钉 raw character_id（canon 前）：裸机构整词 / 自称集体先丢，
+        # 避免司礼监→王承恩；通过者再 canon，再送 ADR 0053（缝本身零动）。
+        # 带姓称谓别名（韩阁老/毕户部…）不得当机构丢——走 canon 留人名。
+        person_roster: List[Dict[str, object]] = []
         for item in canonical_roster:
-            item["character_id"] = _canonical_minister_key(
-                content, str(item["character_id"]), db,
-            )
-            if item.get("delegator_id"):
-                item["delegator_id"] = _canonical_minister_key(
-                    content, str(item["delegator_id"]), db,
-                )
+            cid = str(item.get("character_id") or "").strip()
+            if _is_non_person_participant_name(cid):
+                continue
+            item["character_id"] = _canonical_minister_key(content, cid, db)
+            delegator = str(item.get("delegator_id") or "").strip()
+            if delegator:
+                if _is_non_person_participant_name(delegator):
+                    item["delegator_id"] = None
+                else:
+                    item["delegator_id"] = _canonical_minister_key(
+                        content, delegator, db,
+                    )
+            person_roster.append(item)
         # Reuse the durable roster reference validator here so unknown aliases
         # fail at the manual-entry boundary rather than surviving until issue.
-        db._validate_participant_roster_references(canonical_roster)
-        payload["participant_roster"] = canonical_roster
+        db._validate_participant_roster_references(person_roster)
+        payload["participant_roster"] = person_roster
     if payload.get("dossier_action_type") == "dismiss_assignment":
         # Manual CLI/Web directives bypass pending office actions, so preserve
         # the same structured materialization fields at this capture seam.
@@ -2002,15 +2013,56 @@ _ASSIGNEE_ACTION_RUN_RE = re.compile(
 # 布政司…）时才拒（#401 R1 CodeRabbit major：旧 [..卫..司..] 把任何含 卫/司 的真名误判机关）。
 _ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局省州府县营阁监科室库厂仓]")
 # 卫/司 类机关整词（单字留作姓、整词才判机关）。阁/监/院 等仍由上面的单字集兜住。
+# 词表单源：assignee-hint 子串 search 与参与人裸机构 fullmatch 共用，防漂移。
+# 通政使司/通政司、镇抚司系等同署异称并收录，免只认简称。
+_ASSIGNEE_HINT_INSTITUTION_TOKENS = (
+    "锦衣卫", "府军卫", "羽林卫", "金吾卫", "腾骧卫",
+    "布政司", "按察司", "通政司", "通政使司", "都司", "市舶司", "盐课司",
+    "北镇抚司", "南镇抚司", "镇抚司", "尚宝司", "行人司",
+)
 _ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
-    r"锦衣卫|府军卫|羽林卫|金吾卫|腾骧卫"
-    r"|布政司|按察司|通政司|都司|市舶司|盐课司"
+    "|".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)
 )
 
 
 def _is_institution_like_name(name: str) -> bool:
-    """名字是否像机关/地名：含 部/寺/院… 单字，或 锦衣卫/布政司… 整词。"""
+    """名字是否像机关/地名：含 部/寺/院… 单字，或 锦衣卫/布政司… 整词。
+
+    仅供 assignee-hint / 祈使承办人线索拒识。人物参与人过滤不得复用本函数——
+    单字 stop-class 会误伤带姓称谓别名（韩阁老/毕户部/曹太监）。
+    """
     return bool(_ASSIGNEE_HINT_STOP_RE.search(name) or _ASSIGNEE_HINT_INSTITUTION_RE.search(name))
+
+
+# #1279 / QA A-2 人物参与人抽取：raw 层三分流（canon 前判定，ADR 0053 缝不动）。
+# ① 裸机构 token 整词 fullmatch → 不产人物行（司礼监/锦衣卫/东厂 恰为人名 alias，
+#    禁「先 canon 再过滤」——会把机构名放行成王承恩/田尔耕/魏忠贤）。
+# ② 自称/集体闭集 → 不产。
+# ③ 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 非①②，走 canon 留人名。
+_NON_PERSON_PARTICIPANT_NAMES = frozenset({"陛下", "皇帝", "皇上", "圣上", "天子", "朝廷", "朕"})
+# 明代中枢/部院寺监/厂卫 + 卫/司整词源。fullmatch 闭集，不用单字 stop-class search。
+# 词表据 characters/offices 语料与 #1279 亲证空洞扩；手段仍 raw fullmatch，不回子串。
+_BARE_INSTITUTION_PARTICIPANT_NAMES = frozenset({
+    "吏部", "户部", "礼部", "兵部", "刑部", "工部",
+    "内阁", "都察院", "六科", "翰林院", "詹事府",
+    "大理寺", "太常寺", "太仆寺", "光禄寺", "鸿胪寺",
+    "太医院", "钦天监", "国子监", "宗人府",
+    "五军都督府", "都督府",
+    "司礼监", "东厂", "西厂",
+    "御马监", "内官监", "尚膳监", "司设监",
+}) | frozenset(_ASSIGNEE_HINT_INSTITUTION_TOKENS)
+
+
+def _is_non_person_participant_name(name: str) -> bool:
+    """raw 层：裸机构整词 / 自称集体 → 非人物参与人；带姓称谓别名放行走 canon。"""
+    n = str(name or "").strip()
+    if not n:
+        return True
+    if n in _NON_PERSON_PARTICIPANT_NAMES:
+        return True
+    if n in _BARE_INSTITUTION_PARTICIPANT_NAMES:
+        return True
+    return False
 
 
 def _extract_assignee_hint(text: str) -> Optional[str]:
@@ -2704,8 +2756,14 @@ class CliChat(OpenAIChat):
         try:
             text, attempts = self._call_cli(prompt)
         except Exception as exc:
+            # #1299/#1310：runner 自身失败翻成 typed LLMUnavailable，
+            # 错误串不得进 content 当叙事（agno 吞 Exception 会把 str(e) 塞 content）。
+            from ming_sim.exceptions import LLMUnavailable
+            from ming_sim.llm_model import cli_runner_unavailable
             error = str(exc)
-            raise
+            if isinstance(exc, LLMUnavailable):
+                raise
+            raise cli_runner_unavailable(exc, backend=self.backend) from exc
         finally:
             dt = round(time.monotonic() - t0, 1)
             assistant_message.metrics.stop_timer()
@@ -2763,15 +2821,24 @@ class CliChat(OpenAIChat):
             return
         prompt = _cli_prompt(messages, response_format, tools)
         held = ""
-        for delta in _iter_codex_stream_chunks(
-            prompt,
-            model=str(getattr(self, "id", "") or ""),
-            timeout=getattr(self, "timeout", None),
-            reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
-        ):
-            ready, held = _cli_stream_safe_prefix(held + str(delta))
-            if ready:
-                yield ModelResponse(role="assistant", content=ready)
+        try:
+            stream = _iter_codex_stream_chunks(
+                prompt,
+                model=str(getattr(self, "id", "") or ""),
+                timeout=getattr(self, "timeout", None),
+                reasoning_strength=str(getattr(self, "reasoning_strength", "") or "").strip().lower() or None,
+            )
+            for delta in stream:
+                ready, held = _cli_stream_safe_prefix(held + str(delta))
+                if ready:
+                    yield ModelResponse(role="assistant", content=ready)
+        except Exception as exc:
+            # #1299/#1310：流式 runner 失败同翻 typed，禁机器横幅进 delta/content。
+            from ming_sim.exceptions import LLMUnavailable
+            from ming_sim.llm_model import cli_runner_unavailable
+            if isinstance(exc, LLMUnavailable):
+                raise
+            raise cli_runner_unavailable(exc, backend=self.backend) from exc
         text, tool_calls = _cli_recommendation_call(held, tools)
         if text:
             yield ModelResponse(role="assistant", content=text)
