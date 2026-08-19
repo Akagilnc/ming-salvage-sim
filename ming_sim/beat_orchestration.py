@@ -203,7 +203,10 @@ def assemble_beat_inputs(
     knowledge = provider(subject) if subject else {}
     from ming_sim.knowledge import render_character_knowledge
 
-    perspectival_world = render_character_knowledge(knowledge, subject) if subject else ""
+    perspectival_world = (
+        render_character_knowledge(knowledge, subject, db=db, state=state)
+        if subject else ""
+    )
     court_tension = _court_tension(knowledge)
 
     characterization = ""

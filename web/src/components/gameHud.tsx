@@ -52,7 +52,8 @@ export function GameHud({
     navHandlers[navKey]?.();
   };
 
-  const gatedModal = (faceKey: "memorials" | "audience_archive" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
+  // audience_archive 不走底部木牌：史册头起居注入口在 main 接 isFaceReachable 单闸。
+  const gatedModal = (faceKey: "memorials" | "gazette" | "secret_orders" | "history" | "edict" | "menu", modal: ModalName) => {
     if (!isFaceReachable(faceKey, settlementDisplay)) {
       noticeClosed();
       return;
@@ -152,18 +153,16 @@ export function GameHud({
         <span className="hud2-val">菜单</span>
       </button>
 
-      {/* 右侧竖排部院导航 */}
+      {/* 右侧竖排部院导航。#1282 owner「先隐」：礼木牌不渲染（HUD_SLOTS.导航.礼部 面槽保留，待礼制面立项）。 */}
       {([
-        ["政", "court", "court_roster", "朝堂·召见大臣"],
-        ["吏", "appointment", "appointment_roster", "官员任免"],
-        ["省", "region", "region", "省份列表"],
-        ["兵", "army", "army", "军队列表"],
-        ["户", "economy", "economy", "经济面板"],
-        ["工", "building", "building", "建筑列表"],
-        ["礼", "court", "court_roster", "礼部"],
-        ["后", "harem", "harem_roster", "后宫"],
-      ] as const).map(([label, navKey, faceKey, title], idx) => {
-        const slotKey = (["政","吏部","省份","兵部","户部","工部","礼部","后宫"] as const)[idx];
+        ["政", "court", "court_roster", "朝堂·召见大臣", "政"],
+        ["吏", "appointment", "appointment_roster", "官员任免", "吏部"],
+        ["省", "region", "region", "省份列表", "省份"],
+        ["兵", "army", "army", "军队列表", "兵部"],
+        ["户", "economy", "economy", "经济面板", "户部"],
+        ["工", "building", "building", "建筑列表", "工部"],
+        ["后", "harem", "harem_roster", "后宫", "后宫"],
+      ] as const).map(([label, navKey, faceKey, title, slotKey]) => {
         const reachable = isFaceReachable(faceKey, settlementDisplay);
         return (
           <button key={slotKey}
@@ -180,12 +179,13 @@ export function GameHud({
       })}
 
       {/* 底部 5 命令物件（扣图填进木牌） */}
-      <CommandSlot slotKey="奏疏" img="奏疏" badge={state.events.length}
-        caption="奏疏" sub={`${state.events.length} 件待览`}
+      {/* 奏疏 badge/sub 同源 situation 谓词：核账期零半程件数，禁平行计数源 */}
+      <CommandSlot slotKey="奏疏" img="奏疏" badge={showSituation ? state.issues.length : 0}
+        caption="奏疏" sub={showSituation ? `${state.issues.length} 件待览` : "0 件待览"}
         onClick={() => gatedModal("memorials", "state")} />
       <CommandSlot slotKey="邸报" img="邸报"
-        caption="起居注" sub="历次召对记录"
-        onClick={() => gatedModal("audience_archive", "audience_archive")} />
+        caption="邸报" sub="上月抄报"
+        onClick={() => gatedModal("gazette", "report")} />
       <CommandSlot slotKey="密令" img="密令"
         badge={secretBadge}
         caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : SETTLEMENT_CLOSED_REASON}
@@ -194,9 +194,9 @@ export function GameHud({
         caption="史册" sub="历代奏报/诏书"
         onClick={() => gatedModal("history", "history")} />
       <CommandSlot slotKey="拟诏" img="拟诏" badge={isFaceReachable("edict", settlementDisplay) ? state.directives.length : 0}
-        caption="拟诏/结束回合"
+        caption="拟诏·退朝过月"
         sub={isFaceReachable("edict", settlementDisplay)
-          ? (state.directives.length ? `${state.directives.length} 道` : "本回合")
+          ? (state.directives.length ? `${state.directives.length} 道草案` : "成案并过月")
           : SETTLEMENT_CLOSED_REASON}
         onClick={() => gatedModal("edict", "edict")} />
 

@@ -301,8 +301,9 @@ def assert_night_accepts_player_input(
     if night is None:
         return None
     if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        # #1301：玩家面文案去裸 night_id（结构化 detail 已有）；diegetic 可读。
         raise AudienceNightError(
-            f"本夜收夜中，暂不能{what}：{int(night['id'])}",
+            f"本夜收夜中，暂不能{what}。",
             code="night_closing",
             detail={"night_id": int(night["id"]), "what": what},
         )

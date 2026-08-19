@@ -1505,7 +1505,9 @@ class GameSession:
             except Exception:
                 return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
         try:
-            brief = render_character_knowledge(knowledge, character.name)
+            brief = render_character_knowledge(
+                knowledge, character.name, db=self.db, state=self.state,
+            )
         except Exception:
             return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
         if brief:
