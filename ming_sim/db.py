@@ -17915,13 +17915,28 @@ class GameDB:
                 tuple(referenced),
             ).fetchall()
         }
+        from ming_sim.participant_roster import is_non_person_participant_name
+
+        def _roster_ref_error(label: str, name: str) -> ValueError:
+            # #1380：拒「皇帝」等非人通称时给人话提示，禁裸「参与人物不存在：皇帝」
+            if is_non_person_participant_name(name):
+                return ValueError(
+                    f"{label}不存在：{name}。"
+                    f"人物参与人须为朝堂名册中的大臣姓名，"
+                    f"不可填「{name}」等非人通称或机构名。"
+                )
+            return ValueError(
+                f"{label}不存在：{name}。"
+                f"请填写朝堂名册中已有的大臣姓名。"
+            )
+
         for item in entries:
             character_id = str(item.get("character_id") or "").strip()
             delegator_id = str(item.get("delegator_id") or "").strip()
             if character_id not in known:
-                raise ValueError(f"参与人物不存在：{character_id}")
+                raise _roster_ref_error("参与人物", character_id)
             if delegator_id and delegator_id not in known:
-                raise ValueError(f"委派人不存在：{delegator_id}")
+                raise _roster_ref_error("委派人", delegator_id)
 
     def _character_knowledge_events(self, character_name: str, *, include_exclusions: bool = False) -> List[Dict[str, object]]:
         rows = self.conn.execute(
