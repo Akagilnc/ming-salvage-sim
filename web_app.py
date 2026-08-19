@@ -1396,7 +1396,12 @@ class WebGame:
             "pending_directive_count": sum(
                 1 for a in pending_actions
                 if a["kind"] == "directive"),
-            "pending_secret_order_count": 0,
+            # #1376：staged 密令候选如实入投影计数（可见性）。
+            # #414 默认准行口径不变：确认闸门/落库时序仍走收夜·退朝 commit，
+            # 本字段不把候选升成 player-facing secret_orders 行，禁静默漂成恒 0。
+            "pending_secret_order_count": sum(
+                1 for a in pending_actions
+                if a["kind"] == "secret_order"),
             "pending_non_directive_action_count": len(visible_non_directive_pending),
             "failed_secret_order_count": sum(
                 1 for _a in self.db.list_failed_secret_order_actions()),
@@ -1652,6 +1657,24 @@ class WebGame:
     def chat(self, minister_name: str, message: str) -> Dict[str, Any]:
         # #498 AC10：LLM 生成不持 write_gate，使颁诏入口可观测 in-flight 并有界超时；
         # 仅 prologue/epilogue 写库持锁。
+        return self._chat_core(minister_name, message, gate_already_held=False)
+
+    def _chat_with_write_gate_held(self, minister_name: str, message: str) -> Dict[str, Any]:
+        """#1357：兼容密令按钮端点已由 `_serialized_web_write` 持 write_gate。
+
+        与 `chat()` 同语义，但不得再 acquire 非可重入 Lock（会死锁）。
+        此兼容路径在外层闸内跑完整轮（含 LLM）；公开 chat/chat_stream 仍按 AC10
+        在生成期放闸。
+        """
+        return self._chat_core(minister_name, message, gate_already_held=True)
+
+    def _chat_core(
+        self,
+        minister_name: str,
+        message: str,
+        *,
+        gate_already_held: bool,
+    ) -> Dict[str, Any]:
         if minister_name not in self.content.characters and minister_name not in self.session.temporary_characters:
             raise HTTPException(status_code=404, detail=f"未找到大臣：{minister_name}")
         text = message.strip()
@@ -1663,13 +1686,15 @@ class WebGame:
         self._reject_if_settlement_phase()
         # 整轮（含 LLM 无锁窗 + epilogue）共用一次 pending ownership——对齐 chat_stream。
         # #1291 卸到 threadpool 后事件循环可与回菜单/新局重叠；不标 pending 则 drain 当空闲
-        # 关连接，epilogue 落库打到已关连接。
+        # 关连接，epilogue 落库打到已关连接。公开 chat 与持闸密令路共用 mark→try/finally complete。
         if not self._mark_pending_write():
             raise HTTPException(
                 status_code=503,
                 detail="当前会话正在关闭，请回菜单重新进入。",
             )
         gate = self._runtime_write_gate()
+        # 调用方已持闸 → nullcontext；否则 prologue/epilogue 各自 with gate。
+        gate_cm = contextlib.nullcontext() if gate_already_held else gate
         chat_turn_id = 0
         before_snapshot: Dict[str, Any] = {}
         accepted_turn = 0
@@ -1677,7 +1702,7 @@ class WebGame:
         # 与流式 L2414-2428 同缝——drain 在 write_gate 外，再 abandon + fail。
         try:
             try:
-                with gate:
+                with gate_cm:
                     self._reject_if_settlement_phase()
                     # #612：CLOSING 冻结新对话——与 stream 共用唯一玩家输入准入真源，无平行 status 判断。
                     if hasattr(self.db, "conn"):
@@ -1706,7 +1731,7 @@ class WebGame:
                     d = result.proposed_directive
                     proposed = {"id": d.id, "text": d.text, "status": d.status, "notes": d.notes}
                 scene_generated = self.session.join_chat_turn_scene(chat_turn_id)
-                with gate:
+                with gate_cm:
                     # 慢 scene 等待在 gate 外；短事务内与回话全有或全无。
                     with atomic(self.db):
                         self.session.persist_chat_turn_scene(scene_generated)
@@ -1740,11 +1765,13 @@ class WebGame:
                     # #501：叙事抽取落账与读心并行尾随（各自 pending ownership，P5）。
                     self._spawn_extraction_trail(minister_name, answer_text, chat_turn_id)
                 # #544：非流式折进等待窗——判官以超时封顶后与回话同到；超时则空清单先行。
+                # 持闸路须把已持闸态传到判官写库缝，禁同线程二次 acquire 非可重入 Lock。
                 if message_id and answer_text:
                     self._trail_highlight_judge_after_reply(
                         answer_text,
                         message_id=message_id,
                         chat_turn_id=chat_turn_id,
+                        gate_already_held=gate_already_held,
                     )
                     payload["history"] = self.chat_projection(minister_name)
             except Exception:
@@ -1759,7 +1786,7 @@ class WebGame:
                         chat_turn_id,
                     )
                 try:
-                    with gate:
+                    with gate_cm:
                         if chat_turn_id:
                             self._record_chat_rollback_items(chat_turn_id, before_snapshot)
                             self.db.fail_chat_turn(chat_turn_id)
@@ -2439,11 +2466,13 @@ class WebGame:
         message_id: int,
         chat_turn_id: int = 0,
         timeout_s: float = DEFAULT_HIGHLIGHT_JUDGE_TIMEOUT_S,
+        gate_already_held: bool = False,
     ) -> List[str]:
         """#544 / ADR 0045：回话完成后同通道高亮判官。超时/坏输出 → []，落库短语。
 
         判官失败边界在 run_highlight_judge（带日志）；此处只收窄写库 sqlite 异常并 warning。
-        写库走 runtime write_gate。匹配/剥离在前端，此处只存短语。
+        写库走 runtime write_gate；调用方已持闸时传 gate_already_held=True，禁同线程二次 acquire。
+        匹配/剥离在前端，此处只存短语。
         """
         del chat_turn_id  # 撤回先 DELETE chat_messages，UPDATE 0 行即安全；无需 status 跳写 gate
         mid = int(message_id or 0)
@@ -2455,8 +2484,15 @@ class WebGame:
             llm_config=getattr(self.session, "llm_config", None),
             timeout_s=timeout_s,
         ) or [])
+        # 持闸态是 _chat_core span 一等参数：密令兼容路外层已持非可重入 Lock，
+        # 此处再 with write_gate 会永久挂死（外层 finally 永不 release）。
+        gate_cm = (
+            contextlib.nullcontext()
+            if gate_already_held
+            else self._runtime_write_gate()
+        )
         try:
-            with self._runtime_write_gate():
+            with gate_cm:
                 self.db.set_message_highlights(mid, phrases)
         except sqlite3.Error as exc:
             logger.warning(

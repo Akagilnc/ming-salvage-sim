@@ -84,9 +84,10 @@ class _FakeGame:
             self.db.writes.append("chat")
         return {}
 
-    def _chat_with_write_gate_held(self, *a, **k):
+    def _chat_with_write_gate_held(self, minister_name, message):
+        """Fake 侧真实缝：调用方已持闸时直接记写，不重入 _serialized_web_write。"""
         self.db.writes.append("chat")
-        return {}
+        return {"answer": "臣领旨。", "minister": minister_name, "message": message}
 
     def character_power_id(self, character):
         return "ming"
@@ -395,7 +396,10 @@ def test_secret_order_endpoint_refused_when_gate_held_before_chat(monkeypatch):
 
 
 def test_secret_order_endpoint_offloads_chat_work(monkeypatch):
-    """兼容密令按钮端点仍是 async 路由，但同步召对/写入必须离开事件循环线程。"""
+    """兼容密令按钮端点仍是 async 路由，但同步召对/写入必须离开事件循环线程。
+
+    #1357：不再 monkeypatch 死符号；走 FakeGame 上与生产同名的真方法。
+    """
     game = _FakeGame(TurnPhase.SUMMONING.value)
     monkeypatch.setattr(web_app, "get_game", lambda: game)
     calls: list[str] = []
@@ -404,17 +408,12 @@ def test_secret_order_endpoint_offloads_chat_work(monkeypatch):
         calls.append("threadpool")
         return fn(*args, **kwargs)
 
-    def _chat_with_write_gate_held(_minister, _message):
-        game.db.writes.append("chat")
-        return {"answer": "臣领旨。"}
-
     monkeypatch.setattr(web_app, "run_in_threadpool", fake_run_in_threadpool)
-    game._chat_with_write_gate_held = _chat_with_write_gate_held
 
     result = _invoke(web_app.api_create_secret_order(
         "某大臣", web_app.SecretOrderRequest(title="密", content="内容")))
 
-    assert result == {"answer": "臣领旨。"}
+    assert result["answer"] == "臣领旨。"
     assert calls == ["threadpool"]
     assert game.db.writes == ["chat"]
 
