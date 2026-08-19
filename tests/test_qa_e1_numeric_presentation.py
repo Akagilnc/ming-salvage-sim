@@ -192,12 +192,14 @@ def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
     ).fetchone()
     army_id = row["id"]
 
-    # IEEE 残渣 + 多位小数摊分结果
+    # IEEE 残渣 + 多位小数摊分 + 零值/负值分支（生产：round(float(x or 0), 1)）
     samples = (
         (1.2000000000000002, 1.2),
         (1.5217391304347827, 1.5),
         (12.5, 12.5),
         (11.978260869565217, 12.0),
+        (0, 0.0),
+        (-1.234, -1.2),
     )
     for raw, expected in samples:
         db.conn.execute(
@@ -210,3 +212,16 @@ def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
         assert got == expected, f"raw={raw!r} → arrears 投影应得 {expected!r}，得 {got!r}"
         text = repr(got) if isinstance(got, float) else str(got)
         assert not _FLOAT_GARBAGE.search(text), f"arrears 投影仍含浮点残渣：{got!r}"
+
+    # None → or 0 回落：列 NOT NULL 不可直写，替身 row 走 army_payload 同一投影式
+    base = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
+    none_row = {key: base[key] for key in base.keys()}
+    none_row["arrears"] = None
+    original_rows = db.army_rows
+    try:
+        db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
+        payload = {army["id"]: army for army in db.army_payload()}
+        got = payload[army_id]["arrears"]
+        assert got == 0.0, f"raw=None → arrears 投影应得 0.0，得 {got!r}"
+    finally:
+        db.army_rows = original_rows  # type: ignore[method-assign]
