@@ -182,10 +182,9 @@ def build_due_review_input(db: Any, todo: Dict[str, object]) -> Dict[str, object
         # 读端方法属 GameDB 契约面：抛错=代码/schema bug，响亮上抛（ADR 0005），
         # 不得吞成「空证据」误导裁决。催办/监督缺源仍按空列表降级。
         progress_reports = list(db.list_dossier_progress(int(branch["dossier_id"])))
+        # #1260：durable_effects 合并单源（economy+fiscal）。
         durable_effects = list(
-            db.list_economy_moves_for_dossier(int(branch["dossier_id"]))
-        ) + list(
-            db.list_fiscal_effects_for_dossier(int(branch["dossier_id"]))
+            db.list_dossier_durable_effects(int(branch["dossier_id"]))
         )
         # #625：监督事实底只读注入（解 A）；不改 decide_due_review_verdict。
         supervision_pack = unpack_supervision_surface(
@@ -374,12 +373,14 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
 
 
 def effect_has_beyond_intent(effect: object) -> bool:
-    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。"""
+    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。
+
+    #1260：别名读取收敛 simulation 单源（禁手抄 旨外 子集）。
+    """
     if not isinstance(effect, dict):
         return False
-    raw = effect.get("beyond_intent")
-    if raw is None:
-        raw = effect.get("旨外")
+    from ming_sim.simulation import read_beyond_intent_raw
+    raw = read_beyond_intent_raw(effect)
     return bool(GameDB.coerce_beyond_intent_flag(raw))
 
 

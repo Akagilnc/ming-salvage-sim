@@ -108,6 +108,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `delta` | int（无损整数串 `"5"` 可）；0/缺省/null = 无操作不记拒；bool/float/坏串 → 整项拒收留痕（v0.8.x PR2-S3）|
 | `reason` | ≤120 字 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；每次调整独立留存来源历史 |
+| `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 ### `fiscal_creates` — 新立月度收支
 | 字段 | 约束 |
@@ -119,12 +120,14 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `display` | 缺省=key 去 `_base`/`_rate` 后缀（归一 stem）|
 | `reason` | ≤120 字 |
 | `origin_ref` | **必填** `dossier:<id>` 或 `盘面自发`；base/rate 两行共享此唯一来源 |
+| `beyond_intent` | 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）；#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否 |
 
 > 用于「新设关税岁额折月二十万」「新立宗藩裁革月省禄米三十万」这类**常设新增**。一次性进账（抄没/缴获）不属此类，归 `economy_moves`。
 
 ### `fiscal_removes` — 裁撤月度收支
 - `key` 非空 + `reason` ≤120
 - `origin_ref` **必填**，只能是 `dossier:<id>` 或 `盘面自发`；裁撤历史永久留存
+- `beyond_intent` 可选 bool/0/1（别名 `旨外` / `旨外标记` / `旨外恶果`）：#1260 旨外恶果/受益标记；与 `origin_ref` 同效果行落库。到期复核机械读此标记落 `transformed`（0072）。缺省=否
 - 整项永久取消才属此类；只降税率/削禄米不算（用 `fiscal_changes`）。
 
 ### `army_delta` — 军队变化
@@ -202,6 +205,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
+| `ongoing_effects.economy[]` | 与顶层 `economy_moves` 同形；#1260 嵌套通道直走 `_apply_economy_list`（不经 `_clean_economy_moves`），`beyond_intent` 吃全套别名 `beyond_intent` / `旨外` / `旨外标记` / `旨外恶果`（真源=simulation 别名表） |
 | `cancellable` | "decree" / "never" / "by_progress" |
 | `narrative` | 立项叙事 |
 

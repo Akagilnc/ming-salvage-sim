@@ -7844,6 +7844,7 @@ def apply_score_extraction(
         removed_key = db.remove_fiscal_item(
             key, commit=commit_now, origin_ref=origin_ref,
             reason=str(remove.get("reason") or ""), turn=state.turn,
+            beyond_intent=remove.get("beyond_intent"),
         )
         if removed_key is None:
             # 查无此项 = 正常业务拒绝,逐项拒收留痕(不再 print 静默跳;ADR 决定 1 / S3)。
@@ -7932,6 +7933,7 @@ def apply_score_extraction(
             note=str(create.get("reason") or "")[:120],
             origin_ref=origin_ref,
             turn=state.turn,
+            beyond_intent=create.get("beyond_intent"),
             commit=commit_now,
         )
         if new_key is None:
@@ -8047,6 +8049,7 @@ def apply_score_extraction(
         db.record_fiscal_config_change(
             turn=state.turn, key=key, old_value=current, new_value=new_val,
             origin_ref=origin_ref, reason=str(change.get("reason") or ""),
+            beyond_intent=change.get("beyond_intent"),
         )
         # dynamic 税（辽饷/盐税/商税/田赋）实收走 region.fiscal，改 fiscal_config 不生效；
         # 按 new/old 比例同步缩放各省实收字段，使调额当真改变下月入账。皇庄读 config，无需联动。
@@ -8086,6 +8089,8 @@ def apply_score_extraction(
                 turn=state.turn, key=str(change["key"]),
                 old_value=int(change["old"]), new_value=int(change["new"]),
                 origin_ref=str(change["origin_ref"]), reason=str(change["reason"]),
+                beyond_intent=change["item"].get("beyond_intent")
+                if isinstance(change.get("item"), dict) else 0,
             )
             applied_fiscal.append({
                 "key": change["key"],
