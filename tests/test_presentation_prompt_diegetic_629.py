@@ -37,6 +37,12 @@ S2_PROMPT_WHITELIST: dict[str, tuple[str, ...]] = {
         "没有军事",  # 文末略章说明
         # base 侧更名过渡锚（旧章名行被替换时仍算白名单内）
         "承诺复核",
+        # #1344 夹带：停 LLM 自算年号，改喂 reign_period_label 事实
+        "先判当前日期",  # base 旧行
+        "直填年号纪年",  # base 旧行
+        "{year}年{period}月",  # base 抬头模板旧行
+        "reign_period_label",  # head 新行
+        "本回合年月",  # head 新行
     ),
     "content/prompts/minister_agent.md": (
         "## 召对场面用词",

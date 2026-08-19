@@ -25,7 +25,7 @@ from ming_sim.issues import (
     issue_to_payload,
     normalize_event_outcome_labels_or_error,
 )
-from ming_sim.models import GameState, loads_effect_dict
+from ming_sim.models import GameState, loads_effect_dict, reign_period_label
 from ming_sim.settlement_payload import (
     augment_secret_orders_with_due_commitments,
     iter_secret_order_ids,
@@ -570,9 +570,18 @@ def build_simulator_payload(
             raw.pop(field)
         court_rows.append(raw)
     court_roster = _auto_table(court_rows)
+    reign_label = reign_period_label(state.year, state.period)
     return {
         "year": state.year,
         "period": state.period,
+        # #1344：年号纪年事实单真源；context/prompt 直喂，禁 LLM 自算
+        "turn": {
+            "year": state.year,
+            "period": state.period,
+            "turn": state.turn,
+            "reign_period_label": reign_label,
+        },
+        "reign_period_label": reign_label,
         "decree_text": decree_text,
         # ADR 0051/0055: structured dossier rows are the source; decree_text is
         # only a compatibility rendering derived by the settlement caller.
@@ -843,7 +852,12 @@ def _extractor_context_payload(
     # ADR 0009 人才池视图：与 simulator 盘面共用 _talent_pool_rows（防两处漂移）。
     offstage_ministers = _talent_pool_rows(db, state)
     return {
-        "turn": {"year": state.year, "period": state.period, "turn": state.turn},
+        "turn": {
+            "year": state.year,
+            "period": state.period,
+            "turn": state.turn,
+            "reign_period_label": reign_period_label(state.year, state.period),
+        },
         "narrative": narrative,
         "decree_text": decree_text,
         "active_issues": issues_brief,

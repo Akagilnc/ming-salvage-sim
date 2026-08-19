@@ -96,8 +96,8 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES,
     LLMConfig,
     TurnPhase,
-    is_vassal_prince,
     loads_effect_dict,
+    reign_period_label,
 )
 from ming_sim import steam_events
 
@@ -1355,7 +1355,10 @@ class WebGame:
         return {
             "turn": {"year": self.state.year, "period": self.state.period,
                      "turn": self.state.turn, "phase": self.state.turn_phase,
-                     "settlement_display": settlement_display},
+                     "settlement_display": settlement_display,
+                     # #1356：年号纪年投影单真源，前端报头直显，禁第二份 epoch 表
+                     "reign_period_label": reign_period_label(
+                         self.state.year, self.state.period)},
             "metrics": display_metrics,
             "previous_summary": self.previous_summary,
             # #1241 SP2：删 state_payload.treasury（零消费残口；判词 r1：treasury_report
@@ -4120,18 +4123,12 @@ def _require_active_minister(minister_name: str) -> None:
     if minister_name not in get_game().content.characters:
         raise HTTPException(status_code=404, detail=f"未找到人物：{minister_name}")
     character = get_game().content.characters[minister_name]
-    # 宗藩（就藩藩王）已被 visible_in_court 挡出朝堂/任免列表，但 /chat 端点须同步拒绝，
-    # 否则可绕列表直接按名经 API 召对（用户 2026-06-14 拍：宗室不可召见）。后宫不在此拒——
-    # 嫔妃 chat 复用本端点，加 后宫 会误伤选妃后的召对路径。
-    if is_vassal_prince(character):
-        raise HTTPException(status_code=409, detail=f"{minister_name}为就藩宗室，非朝廷命官，无法召见。")
-    if get_game().character_power_id(character) != "ming":
-        raise HTTPException(status_code=409, detail=f"{minister_name}不属大明朝廷，无法召见。")
-    status, reason = get_game().db.get_character_status(minister_name)
-    if status != "active":
-        label = _STATUS_LABEL_WEB.get(status, status)
-        detail = f"{minister_name}已{label}，无法召见。" + (reason or "")
-        raise HTTPException(status_code=409, detail=detail.strip())
+    # #1402：召见闸文案单一真源 = session.can_summon（含宗藩/非大明/非 active）。
+    # 旧副本多一个「已」字，offstage 产「已尚未登场」；后宫仍由 can_summon 放行
+    # （不拒 office_type=后宫，嫔妃 chat 复用本端点）。
+    ok, reason = get_game().session.can_summon(character)
+    if not ok:
+        raise HTTPException(status_code=409, detail=(reason or "").strip())
 
 
 @app.get("/api/audience/scroll")
