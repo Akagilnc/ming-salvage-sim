@@ -111,8 +111,11 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     const courtBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
     expect(courtBtn?.getAttribute("aria-disabled")).toBe("false");
     expect(courtBtn?.getAttribute("data-settlement-face")).toBe("readonly");
-    // 密令角标清零
-    expect(host.querySelector(".hud2-cmd-badge")).toBeNull();
+    // 密令角标清零（核账期 secret_orders 关闭；勿被奏疏 issues badge 误伤）
+    const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("密令"),
+    );
+    expect(secretCmd?.querySelector(".hud2-cmd-badge")).toBeNull();
     // situation 关闭 / closed_issues 只读：半程议题不渲染，上月已结仍在
     expect(host.textContent).not.toContain("半程军饷议题");
     expect(host.querySelector(".situation-list")).toBeNull();
@@ -142,7 +145,11 @@ describe("#1236 GameHud face gates eat settlement_display", () => {
     expect(host.querySelector("[data-testid=wang-settlement-slip]")).toBeNull();
     const regionBtn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "省份列表");
     expect(regionBtn?.getAttribute("aria-disabled")).toBe("false");
-    expect(host.querySelector(".hud2-cmd-badge")?.textContent).toBe("3");
+    // 密令木牌角标（奏疏/拟诏也可能有 badge，勿用全局首枚）
+    const secretCmd = Array.from(host.querySelectorAll("button.hud2-cmd")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("密令"),
+    );
+    expect(secretCmd?.querySelector(".hud2-cmd-badge")?.textContent).toBe("3");
   });
 
   it("关闭组点击触发戏内理由回调", () => {
@@ -214,6 +221,91 @@ describe("#1236 roster chat entry stripped in settlement_display", () => {
     expect(row.disabled).toBe(true);
     act(() => { row.click(); });
     expect(opened).toEqual([]);
+  });
+});
+
+describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
+  function mountHud(opts: {
+    state?: GameState;
+    onOpenModal?: (modal: string) => void;
+    navHandlers?: Record<string, () => void>;
+  } = {}) {
+    const opened: string[] = [];
+    const navCalls: string[] = [];
+    const host = mount(
+      <GameHud
+        stageRef={() => {}}
+        ready={true}
+        state={opts.state ?? makeState(false, {
+          issues: [
+            { id: 1, kind: "situation", title: "户部亏空", status: "open", progress: 10, fail_condition: "" } as never,
+            { id: 2, kind: "situation", title: "辽东索饷", status: "open", progress: 10, fail_condition: "" } as never,
+            { id: 3, kind: "situation", title: "陕西流寇起", status: "open", progress: 10, fail_condition: "" } as never,
+          ],
+          events: [],
+        })}
+        mapNodes={[]}
+        mapSelectedId=""
+        onSelectMapNode={() => {}}
+        activeDrawerKey=""
+        navHandlers={opts.navHandlers ?? {
+          court: () => navCalls.push("court"),
+          harem: () => navCalls.push("harem"),
+          army: () => navCalls.push("army"),
+          region: () => navCalls.push("region"),
+          building: () => navCalls.push("building"),
+          economy: () => navCalls.push("economy"),
+          appointment: () => navCalls.push("appointment"),
+        }}
+        secretOrderActiveCount={0}
+        onOpenModal={(modal) => {
+          opened.push(modal);
+          opts.onOpenModal?.(modal);
+        }}
+      />,
+    );
+    return { host, opened, navCalls };
+  }
+
+  it("#1276 邸报木牌 caption/动作对齐 gazette，不再挂起居注", () => {
+    const { host, opened } = mountHud();
+    const dibao = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("邸报"),
+    );
+    expect(dibao).toBeTruthy();
+    expect(dibao?.textContent).toContain("邸报");
+    expect(dibao?.textContent).toContain("上月抄报");
+    expect(dibao?.textContent).not.toContain("起居注");
+    // 起居注不得再占命令木牌 caption
+    const mislabeled = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      b.textContent?.includes("起居注"),
+    );
+    expect(mislabeled).toBeFalsy();
+    act(() => { dibao?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(opened).toEqual(["report"]);
+  });
+
+  it("#1282 政→朝堂、礼→任免，不再同挂 court_roster", () => {
+    const { host, navCalls } = mountHud();
+    const zheng = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
+    const li = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "礼部");
+    expect(zheng).toBeTruthy();
+    expect(li).toBeTruthy();
+    act(() => { zheng?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    act(() => { li?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(navCalls).toEqual(["court", "appointment"]);
+  });
+
+  it("#1285 奏疏 badge/副文接 issues 待览源，开局三危机可见", () => {
+    const { host } = mountHud();
+    const memorial = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("奏疏"),
+    );
+    expect(memorial).toBeTruthy();
+    expect(memorial?.textContent).toMatch(/3\s*件待览/);
+    // badge 挂在木牌按钮上（events=[] 时仍应显示 issues 数）
+    const badge = host.querySelector(".hud2-cmd-badge");
+    expect(badge?.textContent).toBe("3");
   });
 });
 

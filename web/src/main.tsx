@@ -646,9 +646,9 @@ export function App() {
         </FullscreenModal>
       ) : null}
 
-      {gazetteOpen && (gazetteReport || report) ? (
+      {gazetteOpen && (gazetteReport || state.previous_summary || report) ? (
         <ReportModal
-          report={gazetteReport || report}
+          report={gazetteReport || state.previous_summary || report}
           onClose={() => setActiveModal("none")}
         />
       ) : null}
@@ -658,7 +658,10 @@ export function App() {
       ) : null}
 
       {activeModal === "history" ? (
-        <HistoryModal onClose={() => setActiveModal("none")} />
+        <HistoryModal
+          onClose={() => setActiveModal("none")}
+          onOpenAudienceArchive={() => setActiveModal("audience_archive")}
+        />
       ) : null}
 
       {activeModal === "audience_archive" ? (
