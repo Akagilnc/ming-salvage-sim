@@ -147,6 +147,7 @@ export function App() {
     activeChatFailures,
     replyRetry,
     extractionPendingCount,
+    extractionHealedHint,
     canUndoLastChat,
     composerHint,
     setComposerHint,
@@ -595,6 +596,7 @@ export function App() {
             secretOrders={secretOrders.filter((o) => o.status === "active" || o.status === "pending_review")}
             replyRetry={replyRetry}
             extractionPendingCount={extractionPendingCount}
+            extractionHealedHint={extractionHealedHint}
             onInput={setInput}
             onSend={sendChat}
             onRetryFailure={retryPendingAction}

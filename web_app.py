@@ -2505,13 +2505,18 @@ class WebGame:
 
     def pending_story_extractions(self) -> Dict[str, Any]:
         """#501 AC8：待补抽取的玩家可见状态（本开夜 turn ids + 大臣名 + 计数）——显眼提示的取数源，
-        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。"""
+        对齐密令失败语义（DB 可读 + 可原地重试）。无开夜则回全库待补。测试替身无 conn 时空。
+
+        #1353/#1381：夜停 closing 且待补已自愈（count=0）时附 player_hint——
+        玩家面「可重试/已自愈」指引；fail-closed 数源与收夜门不动。
+        """
         if not hasattr(self.db, "conn"):
             return {"night_id": 0, "count": 0, "pending": []}
-        from ming_sim.audience_night import get_open_night
+        from ming_sim.audience_night import NIGHT_STATUS_CLOSING, get_open_night
 
         open_n = get_open_night(self.db)
         nid = int(open_n["id"]) if open_n else None
+        night_status = str((open_n or {}).get("status") or "")
         rows = self.db.list_unextracted_replies(night_id=nid)
         pending = [
             {
@@ -2521,7 +2526,17 @@ class WebGame:
             }
             for r in rows
         ]
-        return {"night_id": int(nid or 0), "count": len(pending), "pending": pending}
+        out: Dict[str, Any] = {
+            "night_id": int(nid or 0),
+            "count": len(pending),
+            "pending": pending,
+        }
+        if night_status:
+            out["night_status"] = night_status
+        # 自愈后 closing 残留：count=0 仍须可见「可重试收夜/颁诏」，禁静默无态。
+        if night_status == NIGHT_STATUS_CLOSING and len(pending) == 0:
+            out["player_hint"] = "待补账本已自愈，可重试收夜或颁诏。"
+        return out
 
     def retry_story_extractions(self) -> Dict[str, Any]:
         """#501 AC8：玩家原地重试补跑——并入既有补跑通道（catch_up），不造第二套失败总线。
