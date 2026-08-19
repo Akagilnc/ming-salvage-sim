@@ -1298,8 +1298,9 @@ def test_auto_close_entries_skip_generator_when_llm_config_missing(game, monkeyp
     assert created["n"] == 0
     assert seen_generators and seen_generators[-1] is None
 
-    with pytest.raises(_Stop):
-        advance_without_edict(state, db, content=content, inflight_wait_s=0.0, llm_config=None)
+    # #1274：advance_without_edict 已 prep-only（无 atomic 结算体）；llm_config=None 仍不建 generator。
+    ok = advance_without_edict(state, db, content=content, inflight_wait_s=0.0, llm_config=None)
+    assert ok is False
     assert created["n"] == 0
     assert seen_generators[-1] is None
 

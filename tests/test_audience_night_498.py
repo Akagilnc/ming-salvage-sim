@@ -240,17 +240,49 @@ def test_standing_roster_skips_dead(game):
 # ── AC8：公开入口顺势收夜（GameSession.resolve_turn / advance）────────
 
 
-def test_advance_without_edict_auto_closes(game):
-    """AC8：过回合（真实 advance_without_edict 入口）顺势收夜（王承恩代宣）。"""
+def test_advance_without_edict_auto_closes(game, monkeypatch):
+    """AC8：过回合（真实退朝入口）顺势收夜（王承恩代宣）。
+
+    #1274：advance_without_edict 仍做 prep 收夜；完整推进走 session 全链。
+    本测钉收夜语义——prep 即关夜；另以 canned 全链确认可推进。
+    """
+    import ming_sim.decree as decree_mod
+    import ming_sim.memories as memories
+    from ming_sim.session import GameSession
+
     db, state, content = game
     night = an.open_night(db, state, location="便殿")
     state.turn_phase = TurnPhase.SUMMONING.value
     before = state.turn
-    advance_without_edict(state, db, content=content)
+
+    # prep-only 即应收夜
+    ok = advance_without_edict(state, db, content=content)
+    assert ok is False
     closed = an.get_night(db, night["id"])
     assert closed["status"] == "closed"
     close_e = _find_entries(an.list_ledger(db, night["id"]), TAG_CLOSE_NIGHT)
     assert close_e and TAG_AUTO_CLOSE in close_e[0]["tags"]
+
+    # 完整结算推进（夜已关，全链 canned）
+    monkeypatch.setattr(decree_mod, "create_season_simulator_agent", lambda *a, **k: None)
+    monkeypatch.setattr(
+        decree_mod, "simulate_season_with_payload",
+        lambda *a, **k: ("收夜后无旨月邸报。", k.get("simulator_payload") or {}),
+    )
+    monkeypatch.setattr(decree_mod, "create_json_sanitizer_agent", lambda *a, **k: None)
+    monkeypatch.setattr(decree_mod, "create_score_extractor_module_agent", lambda *a, **k: object())
+    monkeypatch.setattr(decree_mod, "extract_scores_by_modules_with_agno", lambda *a, **k: ({}, "o", "i"))
+    monkeypatch.setattr(decree_mod, "create_chapter_memory_agent", lambda *a, **k: None)
+    monkeypatch.setattr(memories, "run_agent_text", lambda *a, **k: '{"body":"月记","tags":[]}')
+    sess = GameSession.__new__(GameSession)
+    sess.db, sess.state, sess.content = db, state, content
+    sess.registry = sess.llm_config = sess.agno_db = None
+    sess.deaths_this_turn, sess.debuts_this_turn = [], []
+    sess.last_decree = sess.last_report = ""
+    sess._decree_draft_fingerprint = ()
+    sess._scene_registry = sess._beat_generator = None
+    sess.auto_save = lambda *a, **k: None
+    sess.advance_without_decree()
     assert state.turn == before + 1
 
 

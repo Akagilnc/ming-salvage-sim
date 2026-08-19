@@ -28,6 +28,8 @@ def _production_session(db, state, content):
     session.deaths_this_turn, session.debuts_this_turn = [], []
     session.last_decree = session.last_report = ""
     session._decree_draft_fingerprint = ()
+    session._scene_registry = None
+    session._beat_generator = None
     session.auto_save = lambda *args, **kwargs: None
     return session
 
@@ -123,6 +125,10 @@ def test_cli_no_edict_runs_private_monthly_extractor_and_restores_history(game, 
         sess.registry = sess.llm_config = sess.agno_db = None
         sess.deaths_this_turn, sess.debuts_this_turn = [], []
         sess.last_decree = sess.last_report = ""
+        sess._decree_draft_fingerprint = ()
+        sess._scene_registry = None
+        sess._beat_generator = None
+        sess.auto_save = lambda *a, **k: None
         return sess
 
     turns = []
@@ -372,18 +378,18 @@ def test_pending_long_secret_order_routes_real_cli_to_full_settlement(game, monk
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
-def test_pending_short_secret_order_uses_real_cli_fast_advance(game, monkeypatch, action):
-    import ming_sim.decree as decree
-
+def test_pending_short_secret_order_uses_full_settlement_no_monthly_progress(
+    game, monkeypatch, action,
+):
+    """#1274：短差不再走快路；完整结算后 deadline_span=1 且无月度进度轨。"""
     db, state, content = game
     turn = state.turn
     pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
-    monkeypatch.setattr(
-        decree, "create_score_extractor_module_agent",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("短差不得调用 extractor")),
-    )
+    extractor_calls = []
+    _canned_monthly_settlement(monkeypatch, extractor_calls)
 
-    assert _production_session(db, state, content).advance_without_decree() is None
+    result = _production_session(db, state, content).advance_without_decree()
+    assert result is not None and result.awaiting is False
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["status"] == "committed"
@@ -395,6 +401,7 @@ def test_pending_short_secret_order_uses_real_cli_fast_advance(game, monkeypatch
     ).fetchone()
     assert stored["deadline_span"] == 1
     dossier_id = int(db.get_dossier_for_secret_order(order["id"])["id"])
+    # 短差 terminal：月度 nudge 不入轨 → progress 空（与长差对照）
     assert db.list_dossier_progress(dossier_id) == []
 
 
@@ -436,19 +443,18 @@ def test_web_no_edict_endpoint_routes_real_long_order_to_full_settlement(game, m
 
 
 @pytest.mark.parametrize("action", ["新建", "更新"])
-def test_web_short_order_fast_path_never_calls_extractor(game, monkeypatch, action):
+@pytest.mark.usefixtures("_offline_scene_beat_generator")
+def test_web_short_order_full_settlement_no_monthly_progress(game, monkeypatch, action):
+    """#1274：Web 短差亦走完整结算；无月度 progress 轨。"""
     from contextlib import contextmanager
     from types import SimpleNamespace
-    import ming_sim.decree as decree
     import web_app
 
     db, state, content = game
     turn = state.turn
     pending_id, target_id = _stage_routed_secret_order(db, state, action, deadline=1)
-    monkeypatch.setattr(
-        decree, "create_score_extractor_module_agent",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("Web 短差不得调用 extractor")),
-    )
+    extractor_calls = []
+    _canned_monthly_settlement(monkeypatch, extractor_calls)
     session = _production_session(db, state, content)
     web_game = SimpleNamespace(
         db=db, state=state, content=content, session=session,
@@ -466,6 +472,7 @@ def test_web_short_order_fast_path_never_calls_extractor(game, monkeypatch, acti
     response = web_app.api_advance_without_edict()
 
     assert response["awaiting_decision"] is False
+    assert extractor_calls == [turn]  # 全链必经 extractor（快路已死）
     assert db.conn.execute(
         "SELECT status FROM pending_actions WHERE id=?", (pending_id,),
     ).fetchone()["status"] == "committed"
