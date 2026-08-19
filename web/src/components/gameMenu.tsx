@@ -200,7 +200,7 @@ export function ResetTab({ onAfterReset }: { onAfterReset: () => void }) {
     <section className="menu-section">
       <h3>重开新局</h3>
       <p className="menu-hint">
-        清空主 DB（聊天记录、回合奏报、局势、ledger 全清），重置到天启七年十月开局。
+        清空主 DB（聊天记录、回合奏报、局势、ledger 全清），重置到开局。
         <b>不可撤销</b>。要保留当前局，先到「保存存档」存一份。
       </p>
       <p className="menu-hint">输入「重开」二字以解锁按钮：</p>

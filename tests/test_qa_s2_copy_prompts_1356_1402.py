@@ -103,10 +103,6 @@ def test_gazette_header_uses_report_own_month_not_current_turn(game):
             offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
 
-    # 菜单重开提示仍钉当前开局月（HUD/菜单用 turn 标签，不混充报头）
-    menu = (ROOT / "web/src/components/gameMenu.tsx").read_text(encoding="utf-8")
-    assert "天启七年十月" in menu
-
 
 def test_gazette_header_cross_year_december_report_under_january_state(game):
     """#1356 F4：十二月报文 + 正月状态 → 报头十二月（跨年边界）。"""
