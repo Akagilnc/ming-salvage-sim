@@ -149,6 +149,107 @@ def test_draft_reinstatement_yuan_stages_office_and_lands_same_turn(game, monkey
     assert not in_talent_pool(yuan, db, state.year, state.period)
 
 
+def test_draft_reinstatement_not_blocked_by_unrelated_prior_office(game, monkeypatch):
+    """同大臣本回合已有无关 office pending 时，拟旨路起复不得被
+    parallel「已有任意 office 行」闸误吞——否则第二道任免只活在邸报（P1）。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    db.stage_pending_action(
+        state.turn, kind="office", action="任命",
+        minister_name=ch.name, target_id=None,
+        payload={"name": "钱某", "office": "礼部主事", "appointer": ch.name},
+    )
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            return (json.dumps({
+                "任免动作": "任命",
+                "姓名": "袁崇焕",
+                "官职": "辽东巡抚",
+            }, ensure_ascii=False), 1)
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "special_decree",
+                "目标类型": "character",
+                "目标ID": "袁崇焕",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="起复袁崇焕为辽东巡抚，即日赴任，着吏部拟旨。",
+        answer="奉天承运皇帝诏曰，起复袁崇焕为辽东巡抚，钦此。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent={"kind": "draft"},
+    )
+
+    office_pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "office"]
+    names = {
+        json.loads(p["payload_json"]).get("name")
+        for p in office_pending
+    }
+    assert "钱某" in names
+    assert "袁崇焕" in names, (
+        "已有无关 office pending 不得挡住拟旨路并行起复"
+    )
+
+
+def test_multi_intent_draft_appointment_does_not_double_stage_office(game, monkeypatch):
+    """一句多旨 [draft, appointment] 且本大臣已有 staged directive（ pend 快照非空）
+    时，appointment 主路径已落库则 parallel 不得再双落同一人。"""
+    db, state, content = game
+    ch = _minister_wang_shaohui(db, content)
+    db.stage_pending_action(
+        state.turn, kind="directive", action="拟旨",
+        minister_name=ch.name, target_id=None,
+        payload={"text": "草案甲", "actor": ch.name},
+    )
+
+    def _backend(prompt, llm_config=None, tag=""):
+        if tag == "appointment":
+            return (json.dumps({
+                "任免动作": "任命",
+                "姓名": "袁崇焕",
+                "官职": "辽东巡抚",
+            }, ensure_ascii=False), 1)
+        if tag == "draft_intent":
+            return (json.dumps({
+                "拟旨意图": "拟旨",
+                "动作类型": "special_decree",
+                "目标类型": "character",
+                "目标ID": "袁崇焕",
+            }, ensure_ascii=False), 1)
+        return ("{}", 1)
+
+    monkeypatch.setattr(cb, "_run_backend_for_config", _backend)
+    sess = _fake_session(db, state, content)
+    GameSession.apply_cli_conversation_actions(
+        sess, ch,
+        player_message="拟旨核清边饷，并起复袁崇焕为辽东巡抚。",
+        answer="臣遵旨拟旨，并请起复袁崇焕。",
+        has_directive=False, secret_order_id=None,
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "袁崇焕",
+                "office": "辽东巡抚",
+            },
+        ],
+    )
+
+    office_pending = [p for p in db.list_pending_actions(state.turn) if p["kind"] == "office"]
+    yuan_rows = [
+        p for p in office_pending
+        if json.loads(p["payload_json"]).get("name") == "袁崇焕"
+    ]
+    assert len(yuan_rows) == 1, f"同一起复不得双落 office，got {len(yuan_rows)}"
+
+
 def test_draft_without_appointment_intent_does_not_stage_office(game, monkeypatch):
     """#1380 负向：无任免意图的拟旨不得误建 office 案卷（LLM 分类路）。"""
     db, state, content = game

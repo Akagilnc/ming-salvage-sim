@@ -50,6 +50,9 @@ class MaterializeCtx:
     batch_state: Dict[str, Any] = field(default_factory=dict)
     conversation_intent_handled: bool = False
     draft_staged: bool = False
+    # #1380：本管线已物化 office（主路径或 parallel）。parallel 只认此旗，
+    # 不得把「本大臣任何既有 office pending」当成已处理而吞掉另一道起复。
+    office_staged: bool = False
     # ADR 0028 / #520：最近相关召对上下文（与分类器同源喂料，案卷 text 取链）
     recent_context: str = ""
     # #568：当前对话轮 id（session.chat/web/CLI 作用域透传）；点策 origin 结构化排除本轮
@@ -110,11 +113,14 @@ def run_materialize_pipeline(ctx: MaterializeCtx) -> None:
                 multi_intent_batch=multi_batch,
                 conversation_intent_handled=False,
                 draft_staged=False,
+                office_staged=False,
             )
             fn(candidate_ctx)
             ctx.out.update(candidate_out)
             if candidate_ctx.draft_staged:
                 ctx.draft_staged = True
+            if candidate_ctx.office_staged:
+                ctx.office_staged = True
         # #1380：拟旨优先后仍须并行 office（仅 LLM 分类路；前缀路禁，见 #344 US3）
         if _draft_path_took_effect(ctx) and not ctx.explicit_prefixed:
             parallel_stage_office_from_appointment_intent(ctx)
@@ -618,6 +624,7 @@ def _stage_office_pending_core(
                 resolved = int(pending_id or existing_hits[0]["id"])
             else:
                 resolved = int(existing_hits[0]["id"])
+            ctx.office_staged = True
             if write_primary_pending_id:
                 ctx.out["pending_action_id"] = resolved
             return resolved
@@ -665,6 +672,7 @@ def _stage_office_pending_core(
     if not pending_id:
         return None
     resolved = int(pending_id)
+    ctx.office_staged = True
     if write_primary_pending_id:
         ctx.out["pending_action_id"] = resolved
     return resolved
@@ -685,18 +693,9 @@ def parallel_stage_office_from_appointment_intent(ctx: MaterializeCtx) -> Option
     # 前缀路零 LLM（#344 US3）——调用方亦应闸，此处双保险
     if ctx.explicit_prefixed:
         return None
-    # 主路径 appointment 已由 _materialize_appointment 物化；禁重复抽取
-    if ctx.intent_kind == "appointment":
+    # 本管线已物化 office（主路径或 multi 候选）才跳过；禁把既有无关 office 当已处理。
+    if ctx.intent_kind == "appointment" or ctx.office_staged:
         return None
-    # 主路径已写 office pending → 不并行双落
-    if ctx.out.get("pending_action_id"):
-        # 可能是 directive id；仅当已有 office 行时跳过抽取
-        office_rows = _list_pending_office_rows(
-            ctx.session.db, int(ctx.session.state.turn),
-            pend_for_minister=ctx.pend_for_minister,
-        )
-        if office_rows:
-            return None
 
     # P5：结构化优先，无则 LLM 抽取
     appt = _structured_appointment_from_ctx(ctx)
@@ -2674,6 +2673,7 @@ def _materialize_appointment(ctx: MaterializeCtx) -> None:
             )
             if pending_id:
                 ctx.out["pending_action_id"] = pending_id
+            ctx.office_staged = True
             # 路径命中后：若本轮仍是完整任命语义且已并入，不再新建第二候选
             if appt.get("appoint_action") in ("任命", "罢免") and appt_name:
                 same = _match_office_row_by_name_office(
