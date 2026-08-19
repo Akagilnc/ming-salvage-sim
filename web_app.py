@@ -1347,7 +1347,8 @@ class WebGame:
                      "settlement_display": settlement_display},
             "metrics": display_metrics,
             "previous_summary": self.previous_summary,
-            "treasury": self.db.treasury_report(self.state),
+            # #1241 SP2：删 state_payload.treasury（零消费残口；判词 r1：treasury_report
+            # 留 knowledge/simulation/tools 三缝，不动 settlement_display/budget 投影）。
             "issues": self.issue_payloads(),
             "legacies": self.legacies_payload(),
             "closed_this_turn": self.closed_this_turn_payloads(),

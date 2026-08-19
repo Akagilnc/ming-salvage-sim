@@ -50,7 +50,7 @@ const acct = () => ({ balance: 0, income: [], expense: [], income_total: 0, expe
 const directive = () => ({ id: 1, event_id: "", event_title: "", actor: "", skill_id: "", skill_name: "", text: "旧草案", source: "", status: "draft", notes: "", authority: "" });
 const makeState = (turn: number, directives: unknown[] = [], ministers: unknown[] = []) => ({
   turn: { year: 1627, period: 10, turn, phase: "summoning" },
-  metrics: {}, previous_summary: "", treasury: "", issues: [], legacies: [], closed_this_turn: [],
+  metrics: {}, previous_summary: "", issues: [], legacies: [], closed_this_turn: [],
   budget: { 国库: acct(), 内库: acct() }, region_warning: "", army_warning: "", power_warning: "", powers: [],
   victory_status: { status: "", summary: "" }, ending: null, events: [], regions: [], armies: [],
   map_nodes: [], ministers, consorts: [], directives, pending_count: 0, last_decree: "", last_report: "",
@@ -554,7 +554,6 @@ const settlementBaseState = (phase: string, extra: Record<string, unknown> = {})
   turn: { year: 1627, period: 10, turn: 5, phase, settlement_display: true },
   metrics: { 民心: SNAP_MINXIN, 皇威: SNAP_HUANGWEI, 国库: SNAP_TREASURY, 内库: SNAP_INNER },
   previous_summary: "",
-  treasury: "",
   issues: [{ id: 9, kind: "situation", title: MIDCOURSE_ISSUE, status: "open", progress: 77, fail_condition: "" }],
   legacies: [{
     id: 1, name: SNAP_LEGACY, narrative_hint: "",
