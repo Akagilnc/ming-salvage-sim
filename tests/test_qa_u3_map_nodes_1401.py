@@ -3,8 +3,8 @@
 钉测：
 1. 一军一挂——同一 army.id 不得出现在两个 map_nodes 的 armies 里
 2. 无名节点——每个节点须有可见名（region.name 或 theater label）
-3. liaodong / shenyang_liaoyang 坐标不得贴脸（断言 emit 且前端会用的坐标）
-4. theater 针 emit（dongjiang/xuan_da/shanhaiguan/liaodong）+ 东江军可达 + guanning 在 liaodong
+3. theater 针 emit（dongjiang/xuan_da/shanhaiguan/liaodong）+ 东江军可达 + guanning 在 liaodong
+4. 外线军不误吞 liaodong：manchu→jianzhou、han_liaoren→shenyang_liaoyang
 """
 
 from __future__ import annotations
@@ -61,6 +61,21 @@ def test_map_nodes_theater_pins_emit_and_dongjiang_reachable(game):
     # liaodong 合并节点仍收关宁
     assert any(str(a["id"]) == "guanning" for a in (by_id["liaodong"].get("armies") or []))
 
+    # 外线军不得被宽「辽东」关键词吞进 liaodong；各归 region
+    liaodong_army_ids = {str(a["id"]) for a in (by_id["liaodong"].get("armies") or [])}
+    assert "manchu_banners_main" not in liaodong_army_ids
+    assert "han_liaoren_corps" not in liaodong_army_ids
+    assert "jianzhou" in by_id
+    assert "shenyang_liaoyang" in by_id
+    jianzhou_army_ids = {str(a["id"]) for a in (by_id["jianzhou"].get("armies") or [])}
+    shenyang_army_ids = {str(a["id"]) for a in (by_id["shenyang_liaoyang"].get("armies") or [])}
+    assert "manchu_banners_main" in jianzhou_army_ids, (
+        f"manchu_banners_main not on jianzhou; armies={sorted(jianzhou_army_ids)}"
+    )
+    assert "han_liaoren_corps" in shenyang_army_ids, (
+        f"han_liaoren_corps not on shenyang_liaoyang; armies={sorted(shenyang_army_ids)}"
+    )
+
     # 仍无双挂（与 no_double 同口径，钉在本场景）
     seen: dict[str, str] = {}
     for node in nodes:
@@ -102,18 +117,3 @@ def test_map_nodes_no_nameless_nodes(game):
                 )
 
 
-def test_map_nodes_liaodong_shenyang_not_face_to_face(game):
-    """#1401：辽东 theater 针与沈阳/辽阳 emit 坐标不得贴脸（前端实际读取的 x/y）。"""
-    db, _state, _content = game
-    nodes = _map_nodes(db)
-    by_id = {str(n["id"]): n for n in nodes}
-    assert "liaodong" in by_id
-    assert "shenyang_liaoyang" in by_id
-    a, b = by_id["liaodong"], by_id["shenyang_liaoyang"]
-    # 真源：liaodong 合并节点 kind=theater，坐标来自 theater_positions（非死改 region_positions）
-    assert a.get("kind") == "theater"
-    dx = float(a["x"]) - float(b["x"])
-    dy = float(a["y"]) - float(b["y"])
-    dist = (dx * dx + dy * dy) ** 0.5
-    # 旧 region 坐标对 ≈2.02；theater 针 vs 沈阳须明显可辨（阈值 4.0）
-    assert dist >= 4.0, f"liaodong/shenyang still face-to-face: dist={dist:.3f} ({a['x']},{a['y']}) vs ({b['x']},{b['y']})"

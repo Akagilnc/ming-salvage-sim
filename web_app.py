@@ -1147,7 +1147,8 @@ class WebGame:
             aid = str(army["id"])
             chosen: str | None = None
             # 军 id 与 theater id 同名时优先挂本 theater（东江/宣大/山海关）
-            if aid in theater_positions and self._army_belongs_to_theater(army, aid):
+            # id∈theater_positions 即本针；helper 内 id 短路是唯一归属真源，此处不重复调用
+            if aid in theater_positions:
                 chosen = aid
             else:
                 for tid in theater_positions:
