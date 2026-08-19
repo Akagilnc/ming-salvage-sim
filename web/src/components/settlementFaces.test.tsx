@@ -307,6 +307,19 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     const badge = host.querySelector(".hud2-cmd-badge");
     expect(badge?.textContent).toBe("3");
   });
+
+  it("#1277 拟诏木牌 caption 如实写退朝过月，不再写结束回合空壳", () => {
+    const { host, opened } = mountHud();
+    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").includes("拟诏"),
+    );
+    expect(edict).toBeTruthy();
+    expect(edict?.textContent).toMatch(/拟诏/);
+    expect(edict?.textContent).toMatch(/退朝过月/);
+    expect(edict?.textContent).not.toContain("结束回合");
+    act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(opened).toEqual(["edict"]);
+  });
 });
 
 describe("#1236 SettlementLock 装饰层自身契约", () => {
