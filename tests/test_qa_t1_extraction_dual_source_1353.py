@@ -6,6 +6,8 @@
 2. drain 失败清理不得把仍挡收夜的 turn 藏出 list_unextracted
 3. drain 失败窗口内并发 heal → 不得留下「报未抽 + pending=0」双源；应续收或对齐
 4. write_gate=None 卫兵不被 _gate_cm(nullcontext) 架空
+5. r1：部分 heal 新旧 id 集不同 → converter 409 正文只含鲜集（禁 stale+fresh 拼串）
+6. r1：session/对话口令收夜穿 runtime write_gate，与颁诏 auto_close 待补同行为
 """
 
 from __future__ import annotations
@@ -223,3 +225,158 @@ def test_issue_409_recovery_pending_pairs_for_retry_cta(game, tmp_path, monkeypa
     )
     after = web_app.WebGame.retry_story_extractions(runtime)
     assert int(after["count"]) >= 1
+
+
+def test_converter_409_body_only_fresh_ids_after_partial_heal(
+    game, tmp_path, monkeypatch,
+):
+    """#1353 r1：部分 heal 后新旧 id 集不同 → converter 渲染正文只含鲜集。
+
+    禁 `raise fresh from drain_exc` 把 stale chat_turn_ids 拼进 409 正文。
+    """
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
+    )
+    minister = _minister(db, content)
+    nid, ctid_stale, _ = _open_night_with_persisted_reply(db, state, minister, reply="甲。")
+    # 同夜第二条待补回话——清理窗只愈其一，制造 stale⊃fresh。
+    ctid_fresh = db.create_chat_turn(state, minister, "sess", 0, night_id=nid)
+    db.persist_minister_reply(minister, int(state.turn), "乙。", ctid_fresh)
+
+    real_set = an._set_night_fields
+
+    def heal_stale_only(db_, night_id, **fields):
+        if fields.get("status") == an.NIGHT_STATUS_OPEN:
+            db_.conn.execute(
+                "UPDATE chat_turns SET extract_status = 'done' WHERE id = ?",
+                (ctid_stale,),
+            )
+            db_.conn.commit()
+        return real_set(db_, night_id, **fields)
+
+    monkeypatch.setattr(an, "_set_night_fields", heal_stale_only)
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        an.close_night(
+            db, state, night_id=nid, llm_config=object(), write_gate=threading.Lock(),
+        )
+    assert ei.value.code == "pending_extraction"
+    fresh_ids = [int(x) for x in (ei.value.detail or {}).get("chat_turn_ids") or []]
+    assert fresh_ids == [ctid_fresh], fresh_ids
+    assert ctid_stale not in fresh_ids
+
+    http_exc = web_app._retryable_audience_close_http(ei.value)
+    assert http_exc.status_code == 409
+    body = str(http_exc.detail)
+    assert f"chat_turn_ids=[{ctid_fresh}]" in body, body
+    assert str(ctid_stale) not in body, (
+        f"409 正文不得含已愈 stale id={ctid_stale}：{body!r}"
+    )
+    # cause 链不得再挂 pending_extraction stale 快照
+    assert ei.value.__cause__ is None or getattr(
+        ei.value.__cause__, "code", None
+    ) != "pending_extraction"
+
+
+def test_close_after_chat_passes_write_gate_like_auto_close(
+    game, tmp_path, monkeypatch,
+):
+    """#1353 r1：口令收夜穿 runtime write_gate，与颁诏 auto_close 待补同形。
+
+    禁因漏传 write_gate 误报「无 LLM/写锁」——卫兵仍在，只是真锁须穿到。
+    """
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
+    )
+    minister = _minister(db, content)
+    nid, ctid, _ = _open_night_with_persisted_reply(db, state, minister)
+
+    from ming_sim.session import GameSession
+
+    gate = threading.Lock()
+    seen: dict = {}
+
+    real_close = an.close_night
+
+    def track_close(*a, **k):
+        seen["write_gate"] = k.get("write_gate")
+        return real_close(*a, **k)
+
+    monkeypatch.setattr(an, "close_night", track_close)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._scene_registry = None
+    sess._write_gate = gate
+
+    with pytest.raises(an.AudienceNightError) as ei_cmd:
+        # 显式穿锁（web epilogue 形）
+        sess.close_night_after_chat_if_needed("court_break", write_gate=gate)
+    assert ei_cmd.value.code == "pending_extraction"
+    assert seen.get("write_gate") is gate
+    msg_cmd = str(ei_cmd.value)
+    assert "无 LLM/写锁" not in msg_cmd, msg_cmd
+    assert ctid in [
+        int(x) for x in (ei_cmd.value.detail or {}).get("chat_turn_ids") or []
+    ]
+
+    # 夜仍 open + 待补 —— 颁诏 auto_close 同 gate 同文案族
+    assert an.get_night(db, nid)["status"] == an.NIGHT_STATUS_OPEN
+    seen.clear()
+    with pytest.raises(an.AudienceNightError) as ei_edict:
+        an.auto_close_open_night(
+            db, state, llm_config=object(), write_gate=gate,
+        )
+    assert ei_edict.value.code == "pending_extraction"
+    assert seen.get("write_gate") is gate
+    assert "无 LLM/写锁" not in str(ei_edict.value)
+    # 两路 detail 同鲜集
+    assert (ei_cmd.value.detail or {}).get("chat_turn_ids") == (
+        ei_edict.value.detail or {}
+    ).get("chat_turn_ids")
+
+
+def test_close_after_chat_session_write_gate_fallback(game, tmp_path, monkeypatch):
+    """session._write_gate 回落：未显式传 write_gate 时仍穿既有锁。"""
+    db, state, content = game
+    monkeypatch.setenv("MING_SIM_USER_DATA_DIR", str(tmp_path / "ud"))
+    monkeypatch.setattr(
+        agents_mod, "create_audience_extractor_agent", lambda *a, **k: _BoomAgent()
+    )
+    minister = _minister(db, content)
+    _open_night_with_persisted_reply(db, state, minister)
+
+    from ming_sim.session import GameSession
+
+    gate = threading.Lock()
+    seen: dict = {}
+    real_close = an.close_night
+
+    def track_close(*a, **k):
+        seen["write_gate"] = k.get("write_gate")
+        return real_close(*a, **k)
+
+    monkeypatch.setattr(an, "close_night", track_close)
+
+    sess = object.__new__(GameSession)
+    sess.db = db
+    sess.state = state
+    sess.content = content
+    sess.registry = None
+    sess.llm_config = object()
+    sess._scene_registry = None
+    sess._write_gate = gate
+
+    with pytest.raises(an.AudienceNightError) as ei:
+        sess.close_night_after_chat_if_needed("court_break")
+    assert ei.value.code == "pending_extraction"
+    assert seen.get("write_gate") is gate
+    assert "无 LLM/写锁" not in str(ei.value)

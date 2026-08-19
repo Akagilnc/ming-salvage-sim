@@ -1037,6 +1037,7 @@ class GameSession:
             registry=getattr(self, "registry", None),
             wait_timeout_s=0.0,
             llm_config=getattr(self, "llm_config", None),
+            write_gate=getattr(self, "_write_gate", None),
             scene_registry=getattr(self, "_scene_registry", None),
         )
         result.court_action = "court_break"
@@ -1052,10 +1053,17 @@ class GameSession:
             return ask
         return text + "\n" + ask
 
-    def close_night_after_chat_if_needed(self, court_action: str) -> None:
+    def close_night_after_chat_if_needed(
+        self,
+        court_action: str,
+        *,
+        write_gate: Any = None,
+    ) -> None:
         """#526：回话落库后由 Web/CLI epilogue 触发高置信收夜（收夜=封窗=提交）。
 
         失败按 ADR 0005 响亮上抛——不得静默当成已退朝；夜保持可恢复。
+        write_gate：既有 runtime 写锁（Web `_runtime_write_gate` / CLI `_cli_write_gate`）；
+        未显式传入时回落 session._write_gate。禁第二锁；缺锁由 close_night 卫兵响亮。
         """
         if str(court_action or "") != "court_break":
             return
@@ -1063,12 +1071,14 @@ class GameSession:
 
         if get_open_night(self.db) is None:
             return
+        gate = write_gate if write_gate is not None else getattr(self, "_write_gate", None)
         close_night(
             self.db, self.state,
             content=getattr(self, "content", None),
             registry=getattr(self, "registry", None),
             wait_timeout_s=0.0,
             llm_config=getattr(self, "llm_config", None),
+            write_gate=gate,
             scene_registry=getattr(self, "_scene_registry", None),
         )
 

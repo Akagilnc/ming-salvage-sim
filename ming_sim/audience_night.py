@@ -1279,11 +1279,14 @@ def close_night(
             still = _pending_extraction_rows(db, int(night_id))
             if still:
                 try:
+                    # close_night 单点构造 escaping error：禁 `from drain_exc`——
+                    # drain 内层自构可能带 stale chat_turn_ids；converter 走 __cause__
+                    # 会把 stale+fresh 拼进 409 正文（#1353 r1）。
                     _raise_pending_extraction(db, int(night_id), rows=still)
                 except AudienceNightError as fresh:
                     if cleanup_exc is not None:
                         raise fresh from cleanup_exc
-                    raise fresh from drain_exc
+                    raise fresh
             # 并发 trail 已愈：夜已 OPEN，单次重入收夜（禁无限递归）。
             if not _healed_drain_retry:
                 return close_night(

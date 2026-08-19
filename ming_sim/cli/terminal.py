@@ -622,12 +622,14 @@ def minister_chat(session: GameSession, character: Character) -> str:
             close_fn = getattr(session, "close_night_after_chat_if_needed", None)
             try:
                 if close_fn is not None:
-                    close_fn("court_break")
+                    close_fn("court_break", write_gate=_cli_write_gate(session))
                 else:
                     auto_close_open_night(
                         session.db, session.state,
                         content=getattr(session, "content", None),
                         wait_timeout_s=0.0,
+                        write_gate=_cli_write_gate(session),
+                        llm_config=getattr(session, "llm_config", None),
                     )
             except AudienceNightError as err:
                 print(f"\n收夜未成：{err}\n")
