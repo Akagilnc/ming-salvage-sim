@@ -4429,22 +4429,8 @@ def api_advance_without_edict(
     }
 
 
-class EditDecreeRequest(BaseModel):
-    decree: str
-
-
-@app.patch("/api/decree")
-async def api_edit_decree(body: EditDecreeRequest) -> Dict[str, Any]:
-    """兼容入口；存在逐道草案时拒绝以合并正文绕过可执行案卷。"""
-    game = get_game()
-    try:
-        # 与会话写同走串行门，避免在结算冻结窗口里改诏书正文
-        # （cmr Gate2 F-A 残面 / Finding2 冻结窗一致性）。
-        with _serialized_web_write(game):
-            decree = game.session.set_decree(body.decree)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    return {"decree": decree}
+# #1341/#1338：PATCH /api/decree 已删（web/src 零真实调用方；裸设总诏绕过 directives
+# 结构化违 P1）。OpenAPI 随路由消失。拟诏/改稿只走 POST|PATCH /api/directives。
 
 
 class IssueDecreeRequest(BaseModel):

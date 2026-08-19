@@ -2515,13 +2515,8 @@ class GameSession:
         self._decree_draft_fingerprint = self._draft_fingerprint(directives)
         return decree
 
-    def set_decree(self, text: str) -> str:
-        """兼容入口：非空最终正文一律拒绝；须由逐道旨意入口新增或修改旨稿。"""
-        self._refuse_if_settling()
-        text = (text or "").strip()
-        if not text:
-            raise ValueError("诏书正文不能为空。")
-        raise ValueError("最终诏书正文不可单独设置；请使用逐道旨意入口新增或修改旨稿。")
+    # #1341/#1338：set_decree 已删——裸设总诏正文绕过逐道草案结构化，违 P1；
+    # Web PATCH /api/decree 同步拆除。改稿只走 add_directive / update_directive。
 
     def resolve_turn(self, decree: str = "", on_event=None, cheat_directive: str = "",
                      inflight_wait_s: float | None = None) -> ResolveResult:

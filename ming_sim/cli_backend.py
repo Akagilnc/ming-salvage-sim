@@ -51,6 +51,12 @@ from pydantic import BaseModel
 from ming_sim.models import CODEX_DEFAULT_MODEL, CLAUDE_DEFAULT_MODEL, LLMConfig
 from ming_sim.constants import DOSSIER_LINK_TYPES
 from ming_sim.decree_vocabulary import DIRECTIVE_ACTION_TYPES
+from ming_sim.participant_roster import (
+    BARE_INSTITUTION_PARTICIPANT_NAMES as _BARE_INSTITUTION_PARTICIPANT_NAMES,
+    INSTITUTION_PARTICIPANT_TOKENS as _ASSIGNEE_HINT_INSTITUTION_TOKENS,
+    NON_PERSON_PARTICIPANT_NAMES as _NON_PERSON_PARTICIPANT_NAMES,
+    is_non_person_participant_name as _is_non_person_participant_name,
+)
 
 # #529 owns interim-office capture/materialization.  Keep the #471 dossier
 # vocabulary compatible, but do not let manual/draft extraction create it yet.
@@ -1462,25 +1468,66 @@ def extract_draft_intent(
     }
 
 
+# 手工拟诏 capture 有界等待（#1327）：须 < 客户端 30s；超时降级 special_decree，禁重试护栏。
+MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S = 20.0
+
+
+def _manual_special_decree_payload(mode: str) -> Dict[str, object]:
+    return {
+        "dossier_action_type": "special_decree",
+        "target_kind": "policy",
+        "target_id": "manual-directive",
+        "mode": mode,
+    }
+
+
 def capture_manual_directive_payload(
     text: str, llm_config: Any = None, *, existing_mode: object = None,
     db: Any = None, content: Any = None,
+    capture_timeout_s: float | None = None,
 ) -> Dict[str, object]:
-    """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。"""
-    directive_text = str(text or "")
-    captured = extract_draft_intent(
-        f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}",
-        directive_text,
-        llm_config=llm_config,
+    """Web/CLI 手工下旨共用既有草稿抽取 seam；在写入边界归一人物引用。
+
+    #1327：空载（无可抽取正文）零 LLM 直落 special_decree；非空载 LLM 有界等待，
+    超时/失败降级既有 special_decree 路（草案照落，不新增重试）。
+    """
+    directive_text = str(text or "").strip()
+    fallback_mode = resolve_directive_mode(text, None, existing_mode)
+    # 空载短路：无正文可抽 → 直落草案结构，零 LLM 调用（P5：禁为省写把可短路 LLM 串回）。
+    if not directive_text:
+        return _manual_special_decree_payload(fallback_mode)
+
+    timeout_s = (
+        MANUAL_DIRECTIVE_CAPTURE_TIMEOUT_S
+        if capture_timeout_s is None
+        else float(capture_timeout_s)
     )
+    prompt = (
+        f"请据此拟旨，并从以下已成旨文抽取结构，不得改写：\n{directive_text}"
+    )
+
+    def _run_extract() -> Dict[str, Any]:
+        return extract_draft_intent(prompt, directive_text, llm_config=llm_config)
+
+    # 有界等待：超时不堵死 HTTP/CLI；后台线程不 join（shutdown wait=False）。
+    captured: Dict[str, Any]
+    try:
+        if timeout_s <= 0:
+            captured = _run_extract()
+        else:
+            pool = ThreadPoolExecutor(max_workers=1)
+            try:
+                fut = pool.submit(_run_extract)
+                captured = fut.result(timeout=timeout_s)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+    except Exception as exc:
+        _log(f"手工拟诏 capture 有界降级 special_decree：{exc}")
+        return _manual_special_decree_payload(fallback_mode)
+
     declared_mode = resolve_directive_mode(text, captured.get("mode"), existing_mode)
     if captured.get("draft_action") != "拟旨":
-        return {
-            "dossier_action_type": "special_decree",
-            "target_kind": "policy",
-            "target_id": "manual-directive",
-            "mode": declared_mode,
-        }
+        return _manual_special_decree_payload(declared_mode)
     payload = {
         "dossier_action_type": captured.get("dossier_action_type"),
         "target_kind": captured.get("target_kind"),
@@ -1532,12 +1579,7 @@ def capture_manual_directive_payload(
     if not all(str(payload.get(key) or "").strip() for key in (
         "dossier_action_type", "target_kind", "target_id",
     )):
-        return {
-            "dossier_action_type": "special_decree",
-            "target_kind": "policy",
-            "target_id": "manual-directive",
-            "mode": declared_mode,
-        }
+        return _manual_special_decree_payload(declared_mode)
     return payload
 
 
@@ -2012,14 +2054,7 @@ _ASSIGNEE_ACTION_RUN_RE = re.compile(
 # 卫/司 同是常见姓（卫景瑗 / 司马…），单字出现不得误拒——只在构成可识别机关词（锦衣卫 /
 # 布政司…）时才拒（#401 R1 CodeRabbit major：旧 [..卫..司..] 把任何含 卫/司 的真名误判机关）。
 _ASSIGNEE_HINT_STOP_RE = re.compile(r"[部寺院局省州府县营阁监科室库厂仓]")
-# 卫/司 类机关整词（单字留作姓、整词才判机关）。阁/监/院 等仍由上面的单字集兜住。
-# 词表单源：assignee-hint 子串 search 与参与人裸机构 fullmatch 共用，防漂移。
-# 通政使司/通政司、镇抚司系等同署异称并收录，免只认简称。
-_ASSIGNEE_HINT_INSTITUTION_TOKENS = (
-    "锦衣卫", "府军卫", "羽林卫", "金吾卫", "腾骧卫",
-    "布政司", "按察司", "通政司", "通政使司", "都司", "市舶司", "盐课司",
-    "北镇抚司", "南镇抚司", "镇抚司", "尚宝司", "行人司",
-)
+# 卫/司 类机关整词：单源 INSTITUTION_PARTICIPANT_TOKENS（participant_roster）。
 _ASSIGNEE_HINT_INSTITUTION_RE = re.compile(
     "|".join(re.escape(token) for token in _ASSIGNEE_HINT_INSTITUTION_TOKENS)
 )
@@ -2030,39 +2065,14 @@ def _is_institution_like_name(name: str) -> bool:
 
     仅供 assignee-hint / 祈使承办人线索拒识。人物参与人过滤不得复用本函数——
     单字 stop-class 会误伤带姓称谓别名（韩阁老/毕户部/曹太监）。
+    非人参与人判定见 participant_roster.is_non_person_participant_name（#1279/#1391）。
     """
     return bool(_ASSIGNEE_HINT_STOP_RE.search(name) or _ASSIGNEE_HINT_INSTITUTION_RE.search(name))
 
 
-# #1279 / QA A-2 人物参与人抽取：raw 层三分流（canon 前判定，ADR 0053 缝不动）。
-# ① 裸机构 token 整词 fullmatch → 不产人物行（司礼监/锦衣卫/东厂 恰为人名 alias，
-#    禁「先 canon 再过滤」——会把机构名放行成王承恩/田尔耕/魏忠贤）。
-# ② 自称/集体闭集 → 不产。
-# ③ 带姓称谓别名（韩阁老/毕户部/温阁老/曹太监/王兵部…）→ 非①②，走 canon 留人名。
-_NON_PERSON_PARTICIPANT_NAMES = frozenset({"陛下", "皇帝", "皇上", "圣上", "天子", "朝廷", "朕"})
-# 明代中枢/部院寺监/厂卫 + 卫/司整词源。fullmatch 闭集，不用单字 stop-class search。
-# 词表据 characters/offices 语料与 #1279 亲证空洞扩；手段仍 raw fullmatch，不回子串。
-_BARE_INSTITUTION_PARTICIPANT_NAMES = frozenset({
-    "吏部", "户部", "礼部", "兵部", "刑部", "工部",
-    "内阁", "都察院", "六科", "翰林院", "詹事府",
-    "大理寺", "太常寺", "太仆寺", "光禄寺", "鸿胪寺",
-    "太医院", "钦天监", "国子监", "宗人府",
-    "五军都督府", "都督府",
-    "司礼监", "东厂", "西厂",
-    "御马监", "内官监", "尚膳监", "司设监",
-}) | frozenset(_ASSIGNEE_HINT_INSTITUTION_TOKENS)
-
-
-def _is_non_person_participant_name(name: str) -> bool:
-    """raw 层：裸机构整词 / 自称集体 → 非人物参与人；带姓称谓别名放行走 canon。"""
-    n = str(name or "").strip()
-    if not n:
-        return True
-    if n in _NON_PERSON_PARTICIPANT_NAMES:
-        return True
-    if n in _BARE_INSTITUTION_PARTICIPANT_NAMES:
-        return True
-    return False
+# 兼容旧测/调用：闭集与判定真源在 participant_roster（上表 import 别名）。
+# _NON_PERSON_PARTICIPANT_NAMES / _BARE_INSTITUTION_PARTICIPANT_NAMES /
+# _is_non_person_participant_name 由模块顶 import 绑定。
 
 
 def _extract_assignee_hint(text: str) -> Optional[str]:

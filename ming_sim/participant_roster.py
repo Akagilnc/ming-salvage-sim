@@ -1,9 +1,55 @@
-"""Canonical read projection for persisted participant rosters."""
+"""Canonical read projection for persisted participant rosters.
+
+Also owns the raw-layer non-person participant name gate shared by manual
+directive capture (#1279 / QA A-2) and night-archive involved_people projection
+(#1331/#1339). Filter before canon — never after (司礼监→王承恩 trap).
+"""
 
 from __future__ import annotations
 
 import json
 from typing import Dict, List, Mapping
+
+# 卫/司 类机关整词（单字留作姓、整词才判机关）。词表单源：assignee-hint 子串与
+# 参与人裸机构 fullmatch 共用，防漂移。
+INSTITUTION_PARTICIPANT_TOKENS = (
+    "锦衣卫", "府军卫", "羽林卫", "金吾卫", "腾骧卫",
+    "布政司", "按察司", "通政司", "通政使司", "都司", "市舶司", "盐课司",
+    "北镇抚司", "南镇抚司", "镇抚司", "尚宝司", "行人司",
+)
+
+# #1279 / QA A-2 / #1391：raw 层三分流（canon 前判定，ADR 0053 缝不动）。
+# ① 裸机构 token 整词 fullmatch → 非人
+# ② 自称/泛称/集体通名闭集 → 非人（#1391 补「大臣」等）
+# ③ 带姓称谓别名（韩阁老/毕户部…）→ 非①②，走 canon 留人名
+NON_PERSON_PARTICIPANT_NAMES = frozenset({
+    # 自称 / 帝称
+    "陛下", "皇帝", "皇上", "圣上", "天子", "朝廷", "朕",
+    # 泛称 / 集体通名（#1391 票面 + #1331/#1339 起居注混入）
+    "大臣", "群臣", "众臣", "诸臣", "边将", "朝鲜边军",
+})
+# 明代中枢/部院寺监/厂卫 + 卫/司整词。fullmatch 闭集，不用单字 stop-class search。
+BARE_INSTITUTION_PARTICIPANT_NAMES = frozenset({
+    "吏部", "户部", "礼部", "兵部", "刑部", "工部",
+    "内阁", "都察院", "六科", "翰林院", "詹事府",
+    "大理寺", "太常寺", "太仆寺", "光禄寺", "鸿胪寺",
+    "太医院", "钦天监", "国子监", "宗人府",
+    "五军都督府", "都督府",
+    "司礼监", "东厂", "西厂",
+    "御马监", "内官监", "尚膳监", "司设监",
+}) | frozenset(INSTITUTION_PARTICIPANT_TOKENS)
+
+
+def is_non_person_participant_name(name: str) -> bool:
+    """raw 层：裸机构整词 / 自称泛称集体 → 非人物参与人；带姓称谓别名放行走 canon。"""
+    n = str(name or "").strip()
+    if not n:
+        return True
+    if n in NON_PERSON_PARTICIPANT_NAMES:
+        return True
+    if n in BARE_INSTITUTION_PARTICIPANT_NAMES:
+        return True
+    return False
 
 
 def resolve_dossier_owner_name(dossier: Mapping[str, object]) -> str:
