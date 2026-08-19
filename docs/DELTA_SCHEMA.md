@@ -204,6 +204,7 @@ v0.8.0.0 起（ADR 0008 PR1）：**shape 级垃圾**（非 dict、损坏 JSON、
 | `stop_condition` | dict；落库到 `issues.stop_condition` 时以 JSON 字符串保存。条件 dict 用 `{"army.guanning.arrears":"<=0"}` 这种形态：key 带表/对象/字段，operator 写在 value 内 |
 | `bar_good_meaning` / `bar_bad_meaning` | 文案 |
 | `ongoing_effects` / `effect_on_resolve` / `effect_on_fail` | dict，月度持续/结案/失败效果 |
+| `ongoing_effects.economy[]` | 与顶层 `economy_moves` 同形；#1260 嵌套通道直走 `_apply_economy_list`（不经 `_clean_economy_moves`），`beyond_intent` 吃全套别名 `beyond_intent` / `旨外` / `旨外标记` / `旨外恶果`（真源=simulation 别名表） |
 | `cancellable` | "decree" / "never" / "by_progress" |
 | `narrative` | 立项叙事 |
 

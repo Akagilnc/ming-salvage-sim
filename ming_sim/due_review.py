@@ -373,12 +373,14 @@ def dossiers_with_pending_due_review(db: Any, state: Any) -> set[int]:
 
 
 def effect_has_beyond_intent(effect: object) -> bool:
-    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。"""
+    """#622：效果行同列「旨外恶果/受益」标记（#558 origin 同一载体，非平行轨）。
+
+    #1260：别名读取收敛 simulation 单源（禁手抄 旨外 子集）。
+    """
     if not isinstance(effect, dict):
         return False
-    raw = effect.get("beyond_intent")
-    if raw is None:
-        raw = effect.get("旨外")
+    from ming_sim.simulation import read_beyond_intent_raw
+    raw = read_beyond_intent_raw(effect)
     return bool(GameDB.coerce_beyond_intent_flag(raw))
 
 
