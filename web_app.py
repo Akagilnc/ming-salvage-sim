@@ -3128,17 +3128,19 @@ def _settlement_period_entry(game, *, write_cm: Callable[[Any], Any]):
         _auto_close_open_night_gate_free(game, inflight_wait_s=0.0)
         with write_cm(game):
             yield
-            # with 体无异常结束（含函数 return）→ 成功。
-            settled_ok = True
             # #1343/#1378/#1379/#1388：成功回常态后兜底清残留快照。
             # 持 write_cm 同门（与失败支 _game_write_gate 同形）——禁无门直写共享连接，
             # 使并发 B 进 atomic 时 DELETE 不得落进 B 事务。
             # clear_orphan 同谓词：settling/awaiting 保留；summoning 残留不得挡拟诏。
+            # settled_ok 须在 clear 完成后才置真——clear 抛错走失败 exit，
+            # 禁「成功态 + 死遮罩」留 settlement_display=true 于常态相位。
             db = getattr(game, "db", None)
             state = getattr(game, "state", None)
             if db is not None and state is not None and hasattr(db, "clear_month_open_snapshot"):
                 from ming_sim.month_open_snapshot import clear_orphan_month_open_snapshot
                 clear_orphan_month_open_snapshot(db, state)
+            # with 体无异常结束且 clear 已完成（或无需 clear）→ 成功。
+            settled_ok = True
     finally:
         # 嵌套 try/finally：exit/clear 抛错仍须销账 inflight（验收：clear 抛 → inflight 归零）。
         try:
@@ -4561,6 +4563,9 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
             turn_before = int(game.state.turn)
             failed_before = _failed_secret_order_ids_for_turn(game, turn_before)
             # #1241 S1：受理样板收 helper；stream 锁语义 = 阻塞 _game_write_gate（与 issue 同）。
+            # 终态 __done__/__decisions__ 须在 entry（含 clear）成功后才入队——
+            # 与 settled_ok 同核：clear 抛错走 __error__，禁先推成功终态。
+            terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
                 result = game.session.resolve_turn(
                     on_event=on_event, cheat_directive=body.cheat, inflight_wait_s=0.0)
@@ -4568,27 +4573,29 @@ async def api_issue_decree_stream(body: IssueDecreeRequest = IssueDecreeRequest(
                 failures = _new_secret_order_failure_payloads_for_turn(game, turn_before, failed_before)
                 if result.awaiting:
                     # 决策点暂停：邸报已流式推完，再推 decisions 让前端弹窗；本回合未结算、不刷新、不计 steam。
-                    ev_queue.put(("__decisions__", _settlement_player_payload(
+                    terminal = ("__decisions__", _settlement_player_payload(
                         decree=decree,
                         decisions=result.decisions,
                         pending_action_failures=failures,
-                    )))
-                    return
-                report = result.report
-                game.refresh_turn()
-                events = [
-                    steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
-                    steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
-                    steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
-                ]
-                if not was_ended and game.state.ended:
-                    events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", _settlement_player_payload(
-                    decree=decree,
-                    report=report,
-                    steam_events=events,
-                    pending_action_failures=failures,
-                )))
+                    ))
+                else:
+                    report = result.report
+                    game.refresh_turn()
+                    events = [
+                        steam_events.add_stat(steam_events.STAT_DECREES_ISSUED),
+                        steam_events.add_stat(steam_events.STAT_TURNS_PLAYED),
+                        steam_events.set_stat(steam_events.STAT_MAX_TURN_REACHED, int(game.state.turn)),
+                    ]
+                    if not was_ended and game.state.ended:
+                        events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
+                    terminal = ("__done__", _settlement_player_payload(
+                        decree=decree,
+                        report=report,
+                        steam_events=events,
+                        pending_action_failures=failures,
+                    ))
+            if terminal is not None:
+                ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (
@@ -4657,6 +4664,8 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
             # #1374：与 issue/stream 同款受理样板——phase2 窗有核账展示态；
             # decided 先写后跑的崩溃安全时序仍在 session.submit_decisions 内，不动。
             # 锁语义 = 阻塞 _game_write_gate（与 issue/stream 同，禁改非阻塞）。
+            # 终态 __done__ 须在 entry（含 clear）成功后才入队——与 settled_ok 同核。
+            terminal: Optional[tuple[str, Any]] = None
             with _settlement_period_entry(game, write_cm=_game_write_gate):
                 report = game.session.submit_decisions(
                     body.choices, on_event=on_event, cheat_directive=body.cheat
@@ -4671,12 +4680,14 @@ async def api_resolve_decisions_stream(body: ResolveDecisionsRequest) -> Streami
                 ]
                 if not was_ended and game.state.ended:
                     events.append(steam_events.add_stat(steam_events.STAT_ENDINGS_REACHED))
-                ev_queue.put(("__done__", _settlement_player_payload(
+                terminal = ("__done__", _settlement_player_payload(
                     decree=decree,
                     report=report,
                     steam_events=events,
                     pending_action_failures=failures,
-                )))
+                ))
+            if terminal is not None:
+                ev_queue.put(terminal)
         except ValueError as e:
             # exit/end 已由 _settlement_period_entry 在异常路径完成（若已 begin）。
             failures = (

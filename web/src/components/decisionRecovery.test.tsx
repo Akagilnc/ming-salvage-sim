@@ -138,6 +138,12 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     expect(route.pendingDecisions).toBeNull();
     expect(route.error).toBeNull();
   });
+
+  it("fail-closed：畸形 {status:decided} 不得清空决策态，须显示 PAUSED_DECISION_MSG", () => {
+    const route = routeRefreshDecisions("awaiting_decision", [{ status: "decided" }]);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe(PAUSED_DECISION_MSG);
+  });
 });
 
 describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-corrupted)", () => {
@@ -171,5 +177,11 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     const route = routeRetryDecisions("awaiting_decision", [decided]);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe("");
+  });
+
+  it("fail-closed：畸形 {status:decided} 重拉不得静默清空，须显示 PAUSED_DECISION_MSG", () => {
+    const route = routeRetryDecisions("awaiting_decision", [{ status: "decided" }]);
+    expect(route.pendingDecisions).toEqual([]);
+    expect(route.error).toBe(PAUSED_DECISION_MSG);
   });
 });

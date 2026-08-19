@@ -126,7 +126,11 @@ def test_success_clear_holds_write_gate_not_peer_txn(game, monkeypatch):
 
 
 def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
-    """验收：成功支 clear 抛错仍执行 _end_settlement_entry（inflight 归零）。"""
+    """验收：成功支 clear 抛错仍执行 _end_settlement_entry（inflight 归零）。
+
+    且 settled_ok 不得在 clear 前预置真——clear 抛须走失败 exit，
+    禁「成功态 + 死遮罩」绕过失败收口。
+    """
     db, state, content = game
     runtime = _shell(db, state, content)
     state.turn_phase = TurnPhase.SUMMONING.value
@@ -136,6 +140,15 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
     monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
     monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
     monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    exit_calls = {"n": 0}
+    real_exit = web_app._exit_settlement_display_on_failure
+
+    def _spy_exit(g, *, blocking=False):
+        exit_calls["n"] += 1
+        return real_exit(g, blocking=blocking)
+
+    monkeypatch.setattr(web_app, "_exit_settlement_display_on_failure", _spy_exit)
 
     def _boom_clear(_t):
         raise RuntimeError("clear boom")
@@ -151,6 +164,7 @@ def test_success_clear_throw_still_ends_inflight(game, monkeypatch):
 
     assert raised is not None and "clear boom" in str(raised)
     assert web_app._settlement_entry_inflight(runtime) == 0, "clear 抛错后 inflight 须归零"
+    assert exit_calls["n"] == 1, "clear 抛须走失败 exit（settled_ok 未在 clear 前预置）"
 
 
 def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
@@ -178,6 +192,42 @@ def test_failure_exit_throw_still_ends_inflight(game, monkeypatch):
 
     assert raised is not None and "exit boom" in str(raised)
     assert web_app._settlement_entry_inflight(runtime) == 0
+
+
+def test_success_clear_throw_via_orphan_exits_display(game, monkeypatch):
+    """负向：clear_orphan 抛错后 settled_ok 仍假 → 失败 exit 清常态死遮罩。
+
+    与 boom db.clear 不同：此处只炸 orphan 包装，exit 走真 clear 可清快照。
+    """
+    db, state, content = game
+    runtime = _shell(db, state, content)
+    state.turn_phase = TurnPhase.SUMMONING.value
+    db.save_state(state)
+    db.capture_month_open_snapshot(state)
+    assert runtime.state_payload()["turn"]["settlement_display"] is True
+
+    monkeypatch.setattr(web_app, "_accept_settlement_period", lambda _g: True)
+    monkeypatch.setattr(web_app, "_await_audience_inflight_clear", lambda _g: None)
+    monkeypatch.setattr(web_app, "_auto_close_open_night_gate_free", lambda _g, **_k: None)
+
+    import ming_sim.month_open_snapshot as mos
+
+    def _boom_orphan(_db, _state):
+        raise RuntimeError("orphan clear boom")
+
+    monkeypatch.setattr(mos, "clear_orphan_month_open_snapshot", _boom_orphan)
+
+    raised = None
+    try:
+        with web_app._settlement_period_entry(runtime, write_cm=_blocking_gate):
+            pass
+    except RuntimeError as exc:
+        raised = exc
+
+    assert raised is not None and "orphan clear boom" in str(raised)
+    assert web_app._settlement_entry_inflight(runtime) == 0
+    assert db.get_month_open_snapshot(int(state.turn)) is None
+    assert runtime.state_payload()["turn"]["settlement_display"] is False
 
 
 def test_refresh_turn_no_longer_clears_orphan(game):

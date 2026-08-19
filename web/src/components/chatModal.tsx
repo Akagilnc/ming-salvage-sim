@@ -230,7 +230,7 @@ export function ChatModal({
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount, extractionHealedHint]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;

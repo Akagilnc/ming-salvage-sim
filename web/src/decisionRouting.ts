@@ -5,9 +5,11 @@ export const PAUSED_DECISION_MSG = "本回合仍在等待批红，但待批决�
 /** #1307：settling 窗口 pending_decisions=[] 是正常中间态，不报错、不喊重拉。 */
 export const SETTLING_WAIT_MSG = "";
 
-/** #1374：phase2 已落 decided（先写后跑）——不可再当待批弹窗，禁「可再提交」假象。 */
+/** #1374：phase2 已落 decided（先写后跑）——不可再当待批弹窗，禁「可再提交」假象。
+ * fail-closed：须完整校验结构（同 pending）；畸形 `{status:"decided"}` 不得绕过。
+ */
 export function isDecisionAlreadyDecided(event: unknown): boolean {
-  if (!event || typeof event !== "object") return false;
+  if (!isPendingDecision(event)) return false;
   return String((event as { status?: unknown }).status || "") === "decided";
 }
 
