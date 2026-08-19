@@ -285,27 +285,32 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(opened).toEqual(["report"]);
   });
 
-  it("#1282 政→朝堂、礼→任免，不再同挂 court_roster", () => {
+  it("#1282 owner 先隐：礼木牌不渲染；政仍走朝堂；礼部槽位资源保留待立项", () => {
     const { host, navCalls } = mountHud();
     const zheng = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "朝堂·召见大臣");
     const li = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "礼部");
     expect(zheng).toBeTruthy();
-    expect(li).toBeTruthy();
+    expect(li).toBeFalsy(); // 隐掉，不删 HUD_SLOTS.导航.礼部
+    const navLabels = Array.from(host.querySelectorAll("button.hud2-nav")).map((b) => b.textContent?.trim());
+    expect(navLabels).not.toContain("礼");
+    expect(navLabels).toEqual(expect.arrayContaining(["政", "吏", "后"]));
     act(() => { zheng?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    act(() => { li?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(navCalls).toEqual(["court", "appointment"]);
+    expect(navCalls).toEqual(["court"]);
   });
 
-  it("#1285 奏疏 badge/副文接 issues 待览源，开局三危机可见", () => {
-    const { host } = mountHud();
+  it("#1285 奏疏 badge/副文接 issues；木牌 gatedModal face=memorials 打开 state 槽", () => {
+    const { host, opened } = mountHud();
     const memorial = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
       (b.getAttribute("aria-label") || "").startsWith("奏疏"),
     );
     expect(memorial).toBeTruthy();
     expect(memorial?.textContent).toMatch(/3\s*件待览/);
-    // badge 挂在木牌按钮上（events=[] 时仍应显示 issues 数）
+    // badge 挂在木牌按钮上（events=[] 时仍应显示 issues 数；禁平行 badge 源）
     const badge = host.querySelector(".hud2-cmd-badge");
     expect(badge?.textContent).toBe("3");
+    act(() => { memorial?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    // ModalName 仍用 state 槽承载奏疏面（main 以 memorials 面键门控）
+    expect(opened).toEqual(["state"]);
   });
 
   it("#1277 拟诏木牌 caption 如实写退朝过月，不再写结束回合空壳", () => {

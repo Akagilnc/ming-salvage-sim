@@ -824,13 +824,16 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     expect(haremCard?.disabled).toBe(true);
     await closeOpenOverlay(host);
 
-    // memorials：奏疏/国势吃月初奏报
+    // memorials：奏疏木牌 → 当前危机/奏疏列表（SituationPanel；源=issues，非 last_report）
     await click(cmdByCaption(host, "奏疏"));
     await tick();
     await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="国势与奏报"]')).not.toBeNull());
+      await vi.waitFor(() => expect(host.querySelector('[role="dialog"][aria-label="奏疏"]')).not.toBeNull());
     });
-    expect(host.querySelector('[role="dialog"][aria-label="国势与奏报"]')!.textContent).toContain(SNAP_MEMORIAL);
+    const memorialsDialog = host.querySelector('[role="dialog"][aria-label="奏疏"]')!;
+    expect(memorialsDialog.textContent).toContain(MIDCOURSE_ISSUE);
+    expect(memorialsDialog.querySelector(".situation-panel")).not.toBeNull();
+    expect(memorialsDialog.textContent).not.toContain(SNAP_MEMORIAL);
     await closeOpenOverlay(host);
 
     // history：史册可开，月档列表来自状态口同源只读 API
