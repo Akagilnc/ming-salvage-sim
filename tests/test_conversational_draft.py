@@ -970,19 +970,22 @@ def test_last_write_wins_uses_has_pending_draft_flag(game, monkeypatch):
     assert json.loads(pend[0]["payload_json"])["text"] == "第一版草稿，加上监察御史随行"
 
 
-def test_draft_request_with_appointment_content_stages_directive_not_office(game, monkeypatch):
-    """「帮我拟旨，授某人为某官」是拟旨请求，任免内容应留在草案里走 extractor，
-    不能先被口头任免抽取抢成 kind=office pending。"""
+def test_draft_request_with_appointment_content_stages_directive_and_office(game, monkeypatch):
+    """#1380：拟旨含任免内容须 directive+office 双 stage（「诏出人不动」病反例）。
+
+    旧名 stages_directive_not_office 编码的是 #1380 拍定要改的旧行为
+    （任免只埋草案、不 stage office → 颁诏后人不落职）。法源 #1380 / QA-C P0。
+    P5：appointment 走结构化 multi candidates，禁串行 extract_appointment_action。
+    """
     db, state, content = game
     name = _active_minister_name(db, content)
     ch = next(c for c in content.characters.values() if getattr(c, "name", None) == name)
 
     def _capture(prompt, llm_config=None, tag=""):
         if tag == "appointment":
-            return (json.dumps(
-                {"任免动作": "任命", "姓名": "史可法", "官职": "兵部尚书"},
-                ensure_ascii=False,
-            ), 1)
+            raise AssertionError(
+                "#1380 P5: structured multi appointment must not call serial extractor"
+            )
         if tag == "draft_intent":
             return (json.dumps({"拟旨意图": "拟旨", "动作类型": "policy", "目标类型": "issue", "目标ID": "test-policy"}, ensure_ascii=False), 1)
         return ("{}", 1)
@@ -994,12 +997,26 @@ def test_draft_request_with_appointment_content_stages_directive_not_office(game
         player_message="帮我拟一道旨，授史可法为兵部尚书。",
         answer="奉天承运皇帝诏曰，授史可法为兵部尚书，总理部务，钦此。",
         has_directive=False, secret_order_id=None,
-        preclassified_intent={"kind": "draft"},
+        preclassified_intent=[
+            {"kind": "draft"},
+            {
+                "kind": "appointment",
+                "appoint_action": "任命",
+                "name": "史可法",
+                "office": "兵部尚书",
+            },
+        ],
     )
 
     pending = db.list_pending_actions(state.turn)
-    assert [p["kind"] for p in pending] == ["directive"]
-    assert "史可法" in json.loads(pending[0]["payload_json"])["text"]
+    kinds = sorted(p["kind"] for p in pending)
+    assert kinds == ["directive", "office"], (
+        f"#1380 拟旨含任免须 directive+office，实际={kinds}"
+    )
+    directive = next(p for p in pending if p["kind"] == "directive")
+    office = next(p for p in pending if p["kind"] == "office")
+    assert "史可法" in json.loads(directive["payload_json"])["text"]
+    assert json.loads(office["payload_json"]).get("name") == "史可法"
 
 
 def test_structured_verdict_alone_routes_natural_language_action(game, monkeypatch):

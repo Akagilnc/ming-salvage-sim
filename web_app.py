@@ -3942,8 +3942,13 @@ async def api_state() -> Dict[str, Any]:
 
 @app.get("/api/secret_orders")
 async def api_secret_orders(status: str = "") -> Dict[str, Any]:
-    """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。"""
-    orders = get_game().db.list_secret_orders(status=status or None)
+    """列出密令。status 为空返回全部，否则按 active/done/failed 过滤。
+
+    failed_secret_order_count 真源在 state_payload（~1405）；前端 useDurableProjection
+    只读 state，本端点不重复暴露。
+    """
+    game = get_game()
+    orders = game.db.list_secret_orders(status=status or None)
     return {"orders": orders}
 
 
