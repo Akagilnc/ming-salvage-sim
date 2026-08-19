@@ -322,6 +322,66 @@ def test_secret_ack_only_reply_does_not_force_merge(monkeypatch):
     assert so["assignee"] == "李若琏"
 
 
+def test_secret_content_excludes_ceremonial_answer_keeps_completion(monkeypatch):
+    """#1274 K1：content=补全后密令本体；「谨领圣谕」类答奏整段不入 content。
+
+    标签/期限/方法补全为设计保留；答奏归对话/回执，不落密令正文。
+    """
+    task = "密查关宁欠饷"
+    answer = (
+        "臣李若琏，谨领圣谕，闻命如雷。"
+        "臣当密访关宁诸将，核其欠饷册籍，三月内据实回奏。"
+    )
+    # LLM 脏内容：把答奏拼进正文（召对抽取常见漂移）
+    dirty = (
+        f"{task}\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册\n"
+        f"{answer}"
+    )
+    so = _resolve_secret(
+        monkeypatch,
+        answer,
+        f"密令如下：{task}\n标签：关宁, 欠饷\n期限：3月\n方法：密访核册",
+        default="李若琏",
+        payload=_so_json(
+            标题=task, 内容=dirty, 承办人="李若琏", 期限月数=3, 标签=["关宁", "欠饷"],
+        ),
+    )
+    assert so is not None
+    body = so["content"]
+    assert task in body
+    # 负向：答奏标志整段不入 content
+    for banned in ("谨领圣谕", "闻命如雷", "臣李若琏，谨领"):
+        assert banned not in body, (banned, body)
+    # 补全字段保留（结构化 + 正文方法）
+    assert so["deadline_months"] == 3
+    assert "关宁" in so["tags"] and "欠饷" in so["tags"]
+    assert "密访" in body or "核" in body
+    assert so["assignee"] == "李若琏"
+
+
+def test_secret_content_merge_fallback_strips_ceremonial_answer(monkeypatch):
+    """#1274 K1：御旨守门失败走兜底合并时，仍不得把答奏原文拼进 content。"""
+    task = "密查关宁欠饷"
+    answer = "臣李若琏，谨领圣谕，闻命如雷。"
+    # LLM 跑题 → 触发兜底合并 emperor + llm + reply
+    so = _resolve_secret(
+        monkeypatch,
+        answer,
+        f"密令如下：{task}，三月内回奏，着李若琏暗查",
+        default="李若琏",
+        payload=_so_json(
+            标题=task, 内容="臣已领旨办理。", 承办人="李若琏", 期限月数=3, 标签=["关宁"],
+        ),
+    )
+    assert so is not None
+    body = so["content"]
+    assert task in body
+    assert "谨领圣谕" not in body
+    assert "闻命如雷" not in body
+    assert so["deadline_months"] == 3
+    assert "关宁" in so["tags"]
+
+
 @pytest.mark.parametrize(
     "reply",
     [
