@@ -1,4 +1,4 @@
-"""#1274 QA A-3：seed 数据残余（#1283 stage_text + #1289 巡抚实名）。
+"""#1274 QA A-3/A-3b：seed 数据残余（#1283/#1289 + #1284/#1308 史实尾单）。
 
 只钉 content 静态口径；seed 仅对新档生效，不碰 DB/引擎。
 """
@@ -118,3 +118,38 @@ def test_li_daiwen_office_forbids_unproven_province_tokens():
         assert banned not in (ch.office or ""), (
             f"李待问 office 臆补了未核地望 {banned!r}: {ch.office!r}"
         )
+
+
+def test_lai_zongdao_remains_opening_libu_shangshu():
+    """#1284：1627.10 史实礼部尚书=来宗道（兼东阁），保留不改。"""
+    _, characters = load_character_content()
+    lai = characters["来宗道"]
+    assert "礼部尚书" in (lai.office or ""), lai.office
+    assert "东阁大学士" in (lai.office or ""), lai.office
+
+
+def test_zhang_fengyi_office_strips_future_title():
+    """#1308 残余：张凤翼 office 不得含「后…」未来官职；只留当期名分。
+
+仓内 raw/portrait 仅有「总督」+生涯「后兵部尚书」旁注，无 1627 地望实据，
+故清成光秃「总督」，禁臆补宣大/保定等（同李待问不臆补地望）。
+"""
+    _, characters = load_character_content()
+    ch = characters["张凤翼"]
+    office = ch.office or ""
+    assert "后" not in office, f"仍含未来官职旁注: {office!r}"
+    assert "兵部尚书" not in office, f"未来兵书不得入当期 office: {office!r}"
+    assert office == "总督", f"当期名分偏离仓内可核口径: {office!r}"
+
+
+def test_qian_qianyi_seed_office_records_bajiu_dismissal():
+    """#1308 残余：钱谦益 seed office 须记削籍罢居（非空）；运行时空 office 是 ADR 0009 清洗。
+
+仓内 raw/minister/portrait 一致：前礼部右侍郎，罢居常熟（天启科场案削籍在野）。
+"""
+    _, characters = load_character_content()
+    ch = characters["钱谦益"]
+    office = ch.office or ""
+    assert office.strip(), "seed office 不得空——运行时 dismissed 清空是 migration，不是 seed 缺史实"
+    assert "罢居" in office, office
+    assert "礼部" in office and "侍郎" in office, office
