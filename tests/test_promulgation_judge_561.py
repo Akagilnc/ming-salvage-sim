@@ -230,15 +230,157 @@ def test_promulgation_verdict_rejects_unknown_fields(game, decision):
         )
 
 
-def test_promulgated_verdict_rejects_rejection_only_fields(game):
+def test_promulgated_verdict_strips_rejection_only_noise(game):
+    """#1397：顺颁夹带打回专属字段 → 剥离后过闸，不卡 settling。
+
+    r6 三局 rejection_reports 实证：LLM 在 decision=promulgated 上塞
+    reason/gatekeeper_id/primary_opponents/criteria_snapshot/affected_parties。
+    """
     db, state, _content = game
     dossier_id = _dossier(db, state)
     dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "gatekeeper_id": "许誉卿",
+        "primary_opponents": [{"kind": "faction", "key": "阉党"}],
+        "reason": "有御笔手敕背书；该案未见越制破格条款。",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+        "affected_parties": [
+            {"kind": "faction", "key": "阉党", "direction": "negative", "intensity": "strong"},
+        ],
+        "blocked_layer": "six_offices",
+        "legal_reason_code": "",
+        "midzhi_unpromulgatable": False,
+    }
+    original_keys = set(noisy)
 
-    with pytest.raises(decree_mod.LLMContractError, match="不得携带打回专属字段"):
-        decree_mod.validate_promulgation_verdicts([
-            {"dossier_id": dossier_id, "decision": "promulgated", "reason": "已封驳"},
-        ], dossiers, db)
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{"dossier_id": dossier_id, "decision": "promulgated"}]
+    # 调用方输入不被原地改写（error-pack / rejection 审计仍见原文）。
+    assert set(noisy) == original_keys
+
+
+def test_promulgated_midzhi_keeps_affected_parties_while_stripping_rejection_noise(game):
+    """中旨顺颁：剥离打回噪声，保留 ADR 0055 要求的 affected_parties。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state, mode="midzhi")
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+    parties = [
+        {"kind": "faction", "key": "东林", "direction": "negative", "intensity": "weak"},
+    ]
+    noisy = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "affected_parties": parties,
+        "reason": "中旨行政旨照过",
+        "gatekeeper_id": "黄立极",
+        "primary_opponents": [{"kind": "faction", "key": "东林"}],
+        "blocked_layer": "six_offices",
+        "criteria_snapshot": {
+            "imperial_authority_band": context["imperial_authority_band"],
+            "appointment_tenure": "",
+            "authorization_ids": [],
+            "endorsement_entry_ids": [],
+        },
+    }
+
+    cleaned = decree_mod.validate_promulgation_verdicts(
+        [noisy], dossiers, db, prepared_context=context,
+    )
+
+    assert cleaned == [{
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "affected_parties": parties,
+    }]
+
+
+def test_promulgated_true_path_clean_verdict_passes(game):
+    """#1397 钉测：干净顺颁真路径（仅 dossier_id+decision）过闸。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    assert decree_mod.validate_promulgation_verdicts(
+        [{"dossier_id": dossier_id, "decision": "promulgated"}],
+        dossiers, db, prepared_context=context,
+    ) == [{"dossier_id": dossier_id, "decision": "promulgated"}]
+
+
+def test_rejected_verdict_still_requires_full_rejection_contract(game):
+    """#1397 负向边界：打回契约不因顺颁容错而放松。"""
+    db, state, _content = game
+    dossier_id = _dossier(db, state)
+    dossiers = db.list_decree_dossiers(status="proposed")
+    context = decree_mod.build_promulgation_judge_context(db, state, dossiers)
+
+    with pytest.raises(
+        decree_mod.LLMContractError,
+        match=r"affected_parties 必须为非空|完整 typed 判据快照|未知字段",
+    ):
+        decree_mod.validate_promulgation_verdicts(
+            [{"dossier_id": dossier_id, "decision": "rejected", "reason": "仅有缘由"}],
+            dossiers, db, prepared_context=context,
+        )
+
+
+def test_resolve_directives_tolerates_r6_shaped_promulgated_noise(game, monkeypatch):
+    """#1397 真路径：resolve 在 LLM 夹带打回字段时仍落 pending 顺颁，不 SettlementAbort。"""
+    db, state, content = game
+    dossier_id = _dossier(db, state, "拨辽饷以济关宁")
+    context_holder: dict = {}
+
+    monkeypatch.setattr(decree_mod, "create_promulgation_judge_agent", lambda *a, **k: object())
+
+    def canned(_agent, prompt, tag):
+        ctx = json.loads(prompt)
+        context_holder["band"] = ctx["imperial_authority_band"]
+        # Mirror r6 rejection_reports item_json shape (attempt12 dossier 3/4).
+        return json.dumps({"verdicts": [{
+            "dossier_id": dossier_id,
+            "decision": "promulgated",
+            "gatekeeper_id": "许誉卿",
+            "primary_opponents": [{"kind": "faction", "key": "阉党"}],
+            "reason": "有御笔手敕背书；该案未见越制破格条款；无既往批红强颁前科。",
+            "criteria_snapshot": {
+                "imperial_authority_band": ctx["imperial_authority_band"],
+                "appointment_tenure": "",
+                "authorization_ids": [],
+                "endorsement_entry_ids": [],
+            },
+            "affected_parties": [
+                {"kind": "faction", "key": "军队", "direction": "positive", "intensity": "strong"},
+                {"kind": "faction", "key": "阉党", "direction": "negative", "intensity": "strong"},
+            ],
+        }]})
+
+    monkeypatch.setattr(decree_mod, "run_agent_text", canned)
+    _stop_after_promulgation(db, monkeypatch)
+
+    try:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "拨饷", content=content,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "after promulgation"
+    else:
+        raise AssertionError("resolve should reach the post-promulgation tracer")
+
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": dossier_id, "decision": "promulgated"},
+    ]
 
 
 def test_gate_reconsideration_removes_only_named_opponent_and_keeps_real_bench(game):

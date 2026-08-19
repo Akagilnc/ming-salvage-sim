@@ -305,20 +305,17 @@ def test_public_resolve_seam_audits_numeric_verdict_rejection(game, contaminatio
     assert report["source"] == "player_decree"
 
 
-@pytest.mark.parametrize("contamination", [
-    {"resistance_score": 99.5},
-    {"affected_parties": "东林"},
-])
-def test_public_resolve_seam_rejects_polluted_promulgated_verdict_without_mutation(
-    game, contamination,
+def test_public_resolve_seam_rejects_resistance_fields_on_promulgated_without_mutation(
+    game,
 ):
+    """阻力数值字段仍属硬拒边界（非打回专属噪声）。"""
     db, state, content = game
     dossier_id = _stage_policy_dossier(db, state)
     baseline = db.get_decree_dossier(dossier_id)
     raw = {
         "dossier_id": dossier_id,
         "decision": "promulgated",
-        **contamination,
+        "resistance_score": 99.5,
     }
 
     with pytest.raises(SettlementAbort) as exc_info:
@@ -336,6 +333,39 @@ def test_public_resolve_seam_rejects_polluted_promulgated_verdict_without_mutati
     assert db.get_pending_promulgation_verdicts(state.turn) == []
     assert db.get_decree_dossier(dossier_id) == baseline
     assert db.list_decree_dossier_decisions(dossier_id) == []
+
+
+def test_public_resolve_seam_strips_ordinary_promulgated_affected_parties_noise(
+    game, monkeypatch,
+):
+    """#1397：ordinary 顺颁夹带 affected_parties（含畸形值）→ 剥离后落 pending，不 abort。"""
+    db, state, content = game
+    dossier_id = _stage_policy_dossier(db, state)
+    raw = {
+        "dossier_id": dossier_id,
+        "decision": "promulgated",
+        "affected_parties": "东林",
+    }
+    original = dict(raw)
+    monkeypatch.setattr(
+        db, "list_decree_dossiers_for_simulation",
+        lambda _turn: (_ for _ in ()).throw(RuntimeError("after promulgation")),
+    )
+
+    try:
+        decree_mod.resolve_directives(
+            state, db, None, None, [object()], "清核河工", content=content,
+            promulgation_verdict_provider=lambda *_: [raw],
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "after promulgation"
+    else:
+        raise AssertionError("resolve should reach the post-promulgation tracer")
+
+    assert raw == original  # provider 输入不被原地改写
+    assert db.get_pending_promulgation_verdicts(state.turn) == [
+        {"dossier_id": dossier_id, "decision": "promulgated"},
+    ]
 
 
 def test_public_resolve_seam_audits_only_invalid_provider_item_not_valid_or_exempt(game):
