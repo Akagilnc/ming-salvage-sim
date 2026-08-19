@@ -186,3 +186,61 @@ minister 大臣奏对全文见 [docs/raw/02_narratives/minister__*.txt](raw/02_n
 2. **hy3**：中文奏对确实强但对 ds-flash 无档位优势；:free 7/21 到期、20 RPM/日限硬顶——白嫖期可当对照样本，不进承重选型。
 3. **ds-flash 作为群友事实基线**，正式进本文档基线行——后续任何叙事后端候选先过它这一关。
 4. 本卷（prompt.txt）固化为**叙事考察标准卷**，后续候选模型按同卷加测。
+
+---
+
+## 十三、2026-08-19 增补：judge-in-loop 闸脚本 runner / 通道用法（#1256）
+
+闸脚本形制族（`scripts/promulgation_gate_561.py`、`break_rank_judge_gate_562.py`、`midzhi_spiral_judge_gate_570.py`、`family_tail_acceptance_570.py`）共享 CLI runner 缝；dispatch 只在 `ming_sim/cli_backend.py`，脚本只传名。
+
+### 基线纪律（owner 令）
+
+- **族尾闸（#570）新跑默认 ds-flash 档**：便宜、群友事实基线（§十二）。
+- **opus / 高价 CLI 仅争议复裁与同基对照**，不作为族尾闸默认腿。
+- **opencode 不入 runner 清单**：OpenCode Go 凭证是 API key，走既有 `channel=api`（key + base_url），不要再造 `opencode` CLI runner。
+
+### CLI runners（`--channel cli`，默认）
+
+| `--runner` | 本机 invocation（模型 `--model` 透传） | 备注 |
+|---|---|---|
+| `codex` | `codex exec -` stdin | 既有；唯一 `_PARALLEL_SAFE` |
+| `claude` | `claude -p --output-format text` | 既有 |
+| `cursor` | `cursor-agent -p --output-format text --trust` | #1256；串行 |
+| `kimi` | `kimi -p <prompt>`（**禁**与 `--yolo`/`--auto` 组合；只取 stdout） | #1256；串行 |
+| `grok` | `grok -p <prompt> --output-format plain [--effort low\|med\|high]` | #1256 / §十二 grok-4.5 腿；串行 |
+
+choices 单一真源：`ming_sim.cli_backend.GATE_CLI_RUNNERS`。非法名 argparse 拒收；`opencode` 不在 choices。
+
+```bash
+# CLI 例（需新鲜 MING_SIM_TRACE_PATH）
+MING_SIM_TRACE_PATH=/tmp/gate-trace.jsonl \
+  python scripts/family_tail_acceptance_570.py \
+    --runner kimi --model <alias> --samples 1 \
+    --output docs/evidence/issue-570-acceptance-kimi.json
+```
+
+### API 通道（`--channel api`）— ds-flash / OpenCode Go
+
+OpenCode Go OpenAI 兼容端点（#1256 实测写死）：
+
+- **base_url**：`https://opencode.ai/zen/v1`
+- **model id**：裸名 `deepseek-v4-flash`（**不要** `opencode-go/deepseek-v4-flash`）
+- **key**：`~/.local/share/opencode/auth.json` 的 `opencode-go.key`，经 `--api-key` 或 env（`MING_SIM_API_KEY` / `OPENAI_API_KEY`）注入，**不落库**
+- 端点核实 + 冒烟记录：[`docs/evidence/issue-1256-opencode-go-ds-flash-api.json`](evidence/issue-1256-opencode-go-ds-flash-api.json)
+
+```bash
+# 族尾闸新跑默认 ds-flash 档
+export MING_SIM_API_KEY="$(python3 -c 'import json,pathlib;print(json.loads(pathlib.Path.home().joinpath(".local/share/opencode/auth.json").read_text())["opencode-go"]["key"])')"
+export MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1
+python scripts/family_tail_acceptance_570.py --channel api \
+  --model deepseek-v4-flash --samples 1 \
+  --output docs/evidence/issue-570-acceptance-ds-flash.json
+
+# 争议复裁 / 同基对照才上 opus（CLI）
+MING_SIM_TRACE_PATH=/tmp/gate-opus.jsonl \
+  python scripts/family_tail_acceptance_570.py \
+    --runner claude --model claude-opus-4-8 --samples 1 \
+    --output docs/evidence/issue-570-acceptance-opus-rejudge.json
+```
+
+证据 JSON 的 `method.config` / 顶层 `config` 块：`channel` / `runner` / `model` 如实（api 时 `runner=""`）。
