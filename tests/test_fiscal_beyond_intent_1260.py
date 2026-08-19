@@ -18,7 +18,7 @@ from ming_sim.due_review import (
     apply_pending_due_reviews,
     decide_due_review_verdict,
 )
-from ming_sim.issues import apply_score_extraction
+from ming_sim.issues import apply_issue_inertia_and_ongoing, apply_score_extraction
 from ming_sim.simulation import _sanitize_module_output
 from ming_sim.staged_commitment import write_due_staged_commitment_todos
 
@@ -550,3 +550,50 @@ def test_s2_decide_due_review_shape_unchanged_with_helper():
         "criterion_text": "正额",
     })
     assert verdict2["outcome"] == "fulfilled"
+
+
+# ── S3：嵌套通道别名 ────────────────────────────────────────────────
+
+
+def test_s3_nested_ongoing_economy_alias_旨外恶果_lands_ledger(game):
+    """嵌套通道 ongoing_effects.economy 用「旨外恶果」别名 → ledger beyond_intent=1。"""
+    db, state, _ = game
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    db.conn.execute("UPDATE legacies SET status='cleared' WHERE status='active'")
+    state.metrics["国库"] = 500
+    db.save_state(state)
+
+    ledger_before = db.conn.execute("SELECT COUNT(*) FROM economy_ledger").fetchone()[0]
+    db.insert_issue(
+        state,
+        kind="initiative",
+        title="嵌套旨外恶果月拨",
+        origin_kind="decree",
+        origin_ref="decree:turn-1:nested-beyond-1260",
+        bar_value=0,
+        inertia=0,
+        stage_text="每月借名浮收。",
+        ongoing_effects={
+            "economy": [{
+                "account": "国库",
+                "delta": -8,
+                "category": "借名月拨",
+                "reason": "嵌套旨外恶果",
+                # 嵌套路不经 cleaner；只认全套别名单源
+                "旨外恶果": True,
+            }]
+        },
+        end_turn=state.turn + 3,
+        commitment_kind="until_stop",
+        cancellable="decree",
+    )
+
+    apply_issue_inertia_and_ongoing(db, state)
+
+    rows = db.conn.execute(
+        "SELECT beyond_intent, reason, delta FROM economy_ledger "
+        "WHERE id > ? AND reason='嵌套旨外恶果' ORDER BY id",
+        (ledger_before,),
+    ).fetchall()
+    assert rows, "嵌套 ongoing economy 须落 ledger"
+    assert all(int(r["beyond_intent"]) == 1 for r in rows), [dict(r) for r in rows]

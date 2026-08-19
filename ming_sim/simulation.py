@@ -7,7 +7,7 @@ import copy
 import re
 import sqlite3
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Mapping, Optional
 
 from agno.agent import Agent
 
@@ -1021,6 +1021,31 @@ def _payload_for_module(
         "module_allowed_fields": sorted(MODULE_FIELDS[module]),
         "instruction": "盘面（regions/armies/buildings/current_state/active_issues/candidate_events 等）看 system 的 simulator_payload；extractor_context 只补 id 校验集与人事/派系元数据。只输出当前模块允许的中文顶层字段 JSON object。",
     }
+
+
+def read_beyond_intent_raw(item: object) -> object:
+    """#1260 旨外别名读取单源：真源=ITEM_FIELD_ALIASES 中映射到 beyond_intent 的键。
+
+    返回第一个在场别名的原值；皆无 → None。不判真假（coerce 归写端/读端）。
+    flows 嵌套通道与 due_review 效果行共用，禁再手抄 旨外 子集。
+    """
+    if not isinstance(item, Mapping):
+        return None
+    # 稳定顺序：canonical 键优先，其余按别名表声明序。
+    aliases = [
+        key for key, canon in ITEM_FIELD_ALIASES.items()
+        if canon == "beyond_intent"
+    ]
+    ordered: List[str] = []
+    if "beyond_intent" in aliases:
+        ordered.append("beyond_intent")
+    for key in aliases:
+        if key not in ordered:
+            ordered.append(key)
+    for key in ordered:
+        if key in item:
+            return item[key]
+    return None
 
 
 def _canonical_item_fields(value: object) -> object:
