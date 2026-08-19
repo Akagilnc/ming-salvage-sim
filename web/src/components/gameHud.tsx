@@ -1,11 +1,11 @@
 import {
   isFaceReachable,
   isSettlementDisplay,
+  settlementClosedReason,
   settlementFaceAccess,
+  wangSettlementSlipText,
   wangSettlementSlipVisible,
   yearMonthLabel,
-  SETTLEMENT_CLOSED_REASON,
-  WANG_SETTLEMENT_SLIP,
 } from "../settlementPresentation";
 import { BudgetHover, CommandSlot, HUD_BG, HUD_SLOTS, LegacyBar } from "./hud";
 import { GrandMap } from "./map";
@@ -41,8 +41,11 @@ export function GameHud({
   onClosedFaceAttempt?: (reason: string) => void;
 }) {
   // #1236：全部门控唯一谓词 = 状态口 settlement_display（禁 busy/phase 充真源）。
+  // #1323：关闭理由/递话正文按 phase 分口吻——只改文案层，锁面谓词不动。
   const settlementDisplay = isSettlementDisplay(state.turn);
-  const noticeClosed = () => onClosedFaceAttempt?.(SETTLEMENT_CLOSED_REASON);
+  const phase = state.turn.phase;
+  const closedReason = settlementClosedReason(phase);
+  const noticeClosed = () => onClosedFaceAttempt?.(closedReason);
 
   const gatedNav = (faceKey: "court_roster" | "appointment_roster" | "harem_roster" | "region" | "army" | "economy" | "building", navKey: string) => {
     if (!isFaceReachable(faceKey, settlementDisplay)) {
@@ -169,7 +172,7 @@ export function GameHud({
           <button key={slotKey}
             className={`hud2-slot hud2-nav${activeDrawerKey === navKey ? " active" : ""}${reachable ? "" : " settlement-closed"}`}
             style={HUD_SLOTS.导航[slotKey]}
-            title={reachable ? title : SETTLEMENT_CLOSED_REASON}
+            title={reachable ? title : closedReason}
             aria-label={title}
             aria-disabled={!reachable}
             data-settlement-face={settlementFaceAccess(faceKey, settlementDisplay)}
@@ -188,7 +191,7 @@ export function GameHud({
         onClick={() => gatedModal("audience_archive", "audience_archive")} />
       <CommandSlot slotKey="密令" img="密令"
         badge={secretBadge}
-        caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : SETTLEMENT_CLOSED_REASON}
+        caption="密令" sub={isFaceReachable("secret_orders", settlementDisplay) ? "进行中密令" : closedReason}
         onClick={() => gatedModal("secret_orders", "secret_orders")} />
       <CommandSlot slotKey="史册" img="史册"
         caption="史册" sub="历代奏报/诏书"
@@ -197,14 +200,14 @@ export function GameHud({
         caption="拟诏/结束回合"
         sub={isFaceReachable("edict", settlementDisplay)
           ? (state.directives.length ? `${state.directives.length} 道` : "本回合")
-          : SETTLEMENT_CLOSED_REASON}
+          : closedReason}
         onClick={() => gatedModal("edict", "edict")} />
 
-      {/* #1236 P4：王承恩核账递话条——同谓词；一句正向奏疏口吻，无进度条/百分比/秒数 */}
+      {/* #1236 P4：王承恩递话条——显隐同谓词；#1323 正文按 phase 分口吻 */}
       {showWangSlip ? (
         <div className="wang-settlement-slip" role="status" aria-live="polite" data-testid="wang-settlement-slip">
           <span className="wang-settlement-slip-speaker">王承恩</span>
-          <span className="wang-settlement-slip-body">{WANG_SETTLEMENT_SLIP}</span>
+          <span className="wang-settlement-slip-body">{wangSettlementSlipText(phase)}</span>
         </div>
       ) : null}
     </div>

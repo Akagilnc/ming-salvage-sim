@@ -8,14 +8,18 @@ export const shouldAutoOpenSecretOrdersAfterSettlement = (
 
 export const shouldAutoOpenClosedIssuesAfterSettlement = () => false;
 
-/** #1234：年月核账态标 —— 全由服务端 settlement_display 下发驱动，客户端不自判。 */
+/** #1234：年月核账态标 —— 展示态仍唯一由 settlement_display 驱动；#1323 文案层按 phase 分口吻。 */
 export function yearMonthLabel(turn: {
   year: number;
   period: number;
   settlement_display?: boolean;
+  phase?: string;
 }): string {
   const base = `${turn.year} 年 ${turn.period} 月`;
-  return turn.settlement_display ? `${base} · 核账` : base;
+  if (!turn.settlement_display) return base;
+  // #1323 owner 拍 a：awaiting 是有本待批，不是核账中——只改标文，锁面谓词不动。
+  if (turn.phase === "awaiting_decision") return `${base} · 待批`;
+  return `${base} · 核账`;
 }
 
 /**
@@ -112,15 +116,31 @@ export function isFaceReachable(key: SettlementFaceKey, settlementDisplay: boole
   return settlementFaceAccess(key, settlementDisplay) !== "closed";
 }
 
-/** 关闭组入口的戏内理由（王承恩口吻一句）。 */
+/** 关闭组入口的戏内理由（王承恩口吻一句）——核账默认句。 */
 export const SETTLEMENT_CLOSED_REASON = "档房正在核账，此簿暂不呈御前。";
+
+/** #1323：awaiting_decision 关闭组理由——有本待批 + 批红入口指引（锁面机制照旧）。 */
+export const AWAITING_CLOSED_REASON = "有本待批，请先于批红处裁示。";
 
 /**
  * 王承恩核账递话条正文（P4：一句正向奏疏口吻；无进度条/百分比/秒数）。
- * 显隐唯一谓词 = settlement_display。
+ * 显隐唯一谓词 = settlement_display；正文按 phase 分口吻（#1323）。
  */
 export const WANG_SETTLEMENT_SLIP = "奴婢正在督办各部核账，事情在办，请皇爷稍候。";
 
+/** #1323 owner 拍 a：待批窗递话——有本待批 + 批红入口，禁模板长文。 */
+export const WANG_AWAITING_SLIP = "有本待批，请皇爷于批红处裁示。";
+
 export function wangSettlementSlipVisible(settlementDisplay: boolean): boolean {
   return settlementFaceAccess("wang_slip", settlementDisplay) === "present";
+}
+
+/** 递话条正文：仅文案层按 phase 分；显隐仍只看 settlement_display。 */
+export function wangSettlementSlipText(phase?: string): string {
+  return phase === "awaiting_decision" ? WANG_AWAITING_SLIP : WANG_SETTLEMENT_SLIP;
+}
+
+/** 关闭组戏内理由：awaiting 与核账分口吻；门控谓词仍是 settlement_display。 */
+export function settlementClosedReason(phase?: string): string {
+  return phase === "awaiting_decision" ? AWAITING_CLOSED_REASON : SETTLEMENT_CLOSED_REASON;
 }
