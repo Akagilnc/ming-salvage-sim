@@ -802,6 +802,114 @@ def test_game_llm_config_uses_advanced_model_for_api_reasoning_capability(monkey
     assert result["reasoning_supported"] is True
 
 
+# --- #1271 S3: grok reasoning_strength 存取 round-trip + 三端 payload 名单 ---
+
+
+def test_1271_menu_save_cli_grok_high_round_trip(monkeypatch):
+    """#1271：POST channel=cli/cli_runner=grok/reasoning_strength=high 存取 round-trip。"""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    saved = []
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda cfg: None)
+    monkeypatch.setattr(web_app, "save_runtime_llm", lambda *a, **k: saved.append((a, k)))
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {})
+
+    result = asyncio.run(web_app.api_menu_save_llm(web_app.LlmSetupRequest(
+        base_url="",
+        model="",
+        api_key="",
+        channel="cli",
+        cli_runner="grok",
+        cli_model="",
+        cli_timeout_seconds=240,
+        reasoning_strength="high",
+    )))
+
+    assert result["ok"] is True
+    assert result["llm"]["channel"] == "cli"
+    assert result["llm"]["cli_runner"] == "grok"
+    assert result["llm"]["reasoning_strength"] == "high"
+    assert saved and saved[0][1]["channel"] == "cli"
+    assert saved[0][1]["cli_runner"] == "grok"
+    assert saved[0][1]["reasoning_strength"] == "high"
+
+
+def test_1271_three_endpoints_grok_reasoning_supported_and_capability_list(monkeypatch):
+    """#1271：status/GET/POST 三端 reasoning_supported=True + payload 名单含 grok。"""
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    monkeypatch.setattr(web_app, "_has_main_db", lambda: False)
+    monkeypatch.setattr(web_app, "_scan_saves", lambda: [])
+    monkeypatch.setattr(web_app, "_scan_campaigns", lambda: [])
+    monkeypatch.setattr(web_app, "_main_db_campaign_id", lambda: "")
+    monkeypatch.setattr(web_app, "load_runtime_game", lambda: {"hitl_min_decisions": 1})
+    monkeypatch.setattr(web_app, "load_runtime_llm", lambda: {
+        "channel": "cli",
+        "api": {"base_url": "", "model": "", "api_key": ""},
+        "cli": {"runner": "grok", "model": "", "timeout_seconds": "240", "reasoning_strength": "high"},
+        "reasoning_strength": "high",
+    })
+
+    status = asyncio.run(web_app.api_menu_status())
+    assert status["llm"]["cli_runner"] == "grok"
+    assert status["llm"]["reasoning_strength"] == "high"
+    assert status["llm"]["reasoning_supported"] is True
+    assert "grok" in status["llm"]["cli_reasoning_runners"]
+    assert set(status["llm"]["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+
+    cfg = LLMConfig(
+        api_key="",
+        base_url="",
+        model="",
+        channel="cli",
+        cli_runner="grok",
+        cli_model="",
+        cli_timeout_seconds=240,
+        reasoning_strength="high",
+    )
+    monkeypatch.setattr(web_app, "web_game", SimpleNamespace(
+        session=SimpleNamespace(llm_config=cfg),
+    ))
+    get_result = asyncio.run(web_app.api_get_llm_config())
+    assert get_result["cli_runner"] == "grok"
+    assert get_result["reasoning_strength"] == "high"
+    assert get_result["reasoning_supported"] is True
+    assert "grok" in get_result["cli_reasoning_runners"]
+    assert set(get_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+
+    fake = SimpleNamespace(
+        build_llm_config=lambda *a, **k: cfg,
+        commit_llm_config=lambda c: c,
+    )
+    monkeypatch.setattr(web_app, "get_game", lambda: fake)
+    monkeypatch.setattr(web_app, "_verify_llm_configs_or_raise", lambda c: None)
+    post_result = asyncio.run(web_app.api_set_llm_config(web_app.LLMConfigRequest(
+        channel="cli",
+        cli_runner="grok",
+        cli_timeout_seconds=240,
+        reasoning_strength="high",
+    )))
+    assert post_result["cli_runner"] == "grok"
+    assert post_result["reasoning_strength"] == "high"
+    assert post_result["reasoning_supported"] is True
+    assert "grok" in post_result["cli_reasoning_runners"]
+    assert set(post_result["cli_reasoning_runners"]) == set(CLI_REASONING_STRENGTH_RUNNERS)
+
+
+def test_1271_cli_supports_reasoning_strength_has_no_literal_set():
+    """#1271 验收①：grep 谓词无字面量集合 + 委派 CLI_REASONING_STRENGTH_RUNNERS。"""
+    import inspect
+
+    from ming_sim.llm_config import cli_supports_reasoning_strength
+
+    src = inspect.getsource(cli_supports_reasoning_strength)
+    assert "CLI_REASONING_STRENGTH_RUNNERS" in src
+    assert '{"codex"' not in src and "{'codex'" not in src
+    assert '"codex", "claude"' not in src
+
+
 def _count_llm_calls(monkeypatch):
     """#1228 行为验收：统计连通 smoke / CLI 后端真实调用次数（不断言墙钟）。"""
     import ming_sim.cli_backend as _cb

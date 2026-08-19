@@ -197,7 +197,9 @@ def api_supports_reasoning_strength(base_url: str, model: str) -> bool:
 
 
 def cli_supports_reasoning_strength(runner: str) -> bool:
-    return str(runner or "").strip().lower() in {"codex", "claude"}
+    # #1271：懒导入委派 cli_backend 单源（同文件 load_llm_config :251 先例），禁本处手写名单。
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
+    return str(runner or "").strip().lower() in CLI_REASONING_STRENGTH_RUNNERS
 
 
 def normalize_thinking_level(level: str) -> str:
