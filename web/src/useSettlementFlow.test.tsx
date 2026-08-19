@@ -158,7 +158,7 @@ describe("#1351 useSettlementFlow — advanceWithoutEdict 令牌与 409 幂等",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(String(url)).toContain("/api/decree/advance_without_edict");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ expected_turn: 5 });
