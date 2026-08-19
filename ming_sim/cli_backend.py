@@ -103,6 +103,10 @@ _GROK_EFFORT_BY_STRENGTH = {
     "medium": "med",
     "high": "high",
 }
+# 支持 reasoning_strength 传输的 CLI runner 单源（#1271）：与上方三张 *_BY_STRENGTH
+# 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
+# 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
+CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok"})
 
 
 def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
