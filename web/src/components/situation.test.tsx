@@ -247,6 +247,11 @@ describe("#1432 StateModal 奏疏卷心列表可见", () => {
     expect(modalOverride).toBeTruthy();
     expect(modalOverride!.style.position).not.toBe("fixed");
     expect(["static", "relative", "absolute"]).toContain(modalOverride!.style.position);
+    // 完整中和 fixed 四向 inset（漏 bottom 时基规则/媒体查询 bottom 仍可能拴住）
+    expect(modalOverride!.style.top).toBe("auto");
+    expect(modalOverride!.style.left).toBe("auto");
+    expect(modalOverride!.style.right).toBe("auto");
+    expect(modalOverride!.style.bottom).toBe("auto");
 
     cleanup();
   });
