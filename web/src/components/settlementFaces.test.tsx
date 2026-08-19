@@ -406,17 +406,27 @@ describe("QA A-1 #1276/#1282/#1285 GameHud HUD 对齐", () => {
     expect(opened).toEqual(["state"]);
   });
 
-  it("#1277 拟诏木牌 caption 如实写退朝过月，不再写结束回合空壳", () => {
-    const { host, opened } = mountHud();
-    const edict = Array.from(host.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+  it("#1277 拟诏木牌：0 草案写退朝过月；有草案同步盖玺颁诏过月", () => {
+    // makeState 默认带 1 道草案；0 草案须显式清空
+    const { host: host0, opened } = mountHud({
+      state: makeState(false, { directives: [] }),
+    });
+    const edict0 = Array.from(host0.querySelectorAll(".hud2-cmd-caption")).find((b) =>
       (b.getAttribute("aria-label") || "").includes("拟诏"),
     );
-    expect(edict).toBeTruthy();
-    expect(edict?.textContent).toMatch(/拟诏/);
-    expect(edict?.textContent).toMatch(/退朝过月/);
-    expect(edict?.textContent).not.toContain("结束回合");
-    act(() => { edict?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(edict0).toBeTruthy();
+    expect(edict0?.textContent).toMatch(/拟诏·退朝过月/);
+    expect(edict0?.textContent).not.toContain("结束回合");
+    act(() => { edict0?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(opened).toEqual(["edict"]);
+
+    // 有草案（makeState 默认）：木牌与拟诏台主钮同步为盖玺颁诏过月
+    const { host: hostDraft } = mountHud();
+    const edict1 = Array.from(hostDraft.querySelectorAll(".hud2-cmd-caption")).find((b) =>
+      (b.getAttribute("aria-label") || "").includes("拟诏"),
+    );
+    expect(edict1?.textContent).toMatch(/拟诏·盖玺颁诏过月/);
+    expect(edict1?.textContent).not.toMatch(/退朝过月/);
   });
 });
 

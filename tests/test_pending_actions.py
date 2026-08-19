@@ -831,6 +831,88 @@ def test_web_advance_without_edict_settlement_abort_returns_409(game, monkeypatc
     assert exc.value.detail == "结算中止，可重试。"
 
 
+def test_web_advance_without_edict_llm_unavailable_returns_412_detail(game, monkeypatch):
+    """#1433：LLM 死时退朝 412 + 可读 detail，非裸 500。
+
+    有草案时 advance_without_decree→resolve_turn 全链可抛 LLMUnavailable；
+    except 清单须映射 412+_llm_error_detail（同菜单/流式颁诏口径）。
+    """
+    import pytest
+    import web_app
+    from ming_sim.exceptions import LLMUnavailable
+
+    db, state, content = game
+
+    def boom(*_args, **_kwargs):
+        raise LLMUnavailable(
+            "LLM 调用失败：模型后端不可用。",
+            provider_message="connection refused",
+            status_code=503,
+        )
+
+    session = types.SimpleNamespace(
+        registry=None,
+        advance_without_decree=boom,
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=session,
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        web_app.api_advance_without_edict()
+
+    assert exc.value.status_code == 412
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail.get("code") == "llm_unavailable"
+    assert "模型后端不可用" in str(detail.get("message") or "")
+    assert detail.get("provider_message") == "connection refused"
+
+
+def test_web_advance_without_edict_generic_exception_returns_readable_detail(game, monkeypatch):
+    """#1433：其余 Exception 不得裸 500；须可读 message 错误包（流式颁诏同型）。"""
+    import pytest
+    import web_app
+
+    db, state, content = game
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("cli runner exploded mid-settlement")
+
+    session = types.SimpleNamespace(
+        registry=None,
+        advance_without_decree=boom,
+    )
+    stub = types.SimpleNamespace(
+        db=db,
+        state=state,
+        content=content,
+        session=session,
+        refresh_turn=lambda: None,
+        state_payload=lambda: {"turn": {"turn": state.turn}},
+        directive_rows=lambda: [],
+    )
+    monkeypatch.setattr(web_app, "web_game", stub)
+
+    with pytest.raises(web_app.HTTPException) as exc:
+        web_app.api_advance_without_edict()
+
+    assert exc.value.status_code == 500
+    detail = exc.value.detail
+    # 可读错误包：dict 带 message，或至少含原文——禁 FastAPI 默认空 detail 裸 500
+    if isinstance(detail, dict):
+        assert "cli runner exploded" in str(detail.get("message") or detail)
+    else:
+        assert "cli runner exploded" in str(detail)
+
+
 @pytest.mark.usefixtures("_offline_scene_beat_generator")
 def test_web_advance_without_edict_default_approves_into_one_dossier(game, monkeypatch):
     """Web 真实结束入口经生产 resolve/commit，把默认同意拟旨成唯一案卷并推进回合。"""

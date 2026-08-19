@@ -477,14 +477,18 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
       || ruleExact(".decision-option:hover");
     const pickedRule = ruleExact(".decision-document .decision-option.is-picked")
       || ruleExact(".decision-option.is-picked");
+    // #1434②：开屏 autofocus 的 :focus 不得冒充已选；焦点环走 :focus-visible
     const focusRule = ruleExact(".decision-document .decision-option:focus-visible")
-      || ruleExact(".decision-option:focus-visible")
-      || ruleExact(".decision-document .decision-option:focus")
-      || ruleExact(".decision-option:focus");
+      || ruleExact(".decision-option:focus-visible");
+    const bareFocusRules = cssRulesMatching("decision-option").filter((rule) =>
+      /\.decision-option:focus(?!-visible)/.test(rule.selectorText)
+      || /\.decision-document \.decision-option:focus(?!-visible)/.test(rule.selectorText),
+    );
 
     expect(hoverRule).toBeTruthy();
     expect(pickedRule).toBeTruthy();
     expect(focusRule).toBeTruthy();
+    expect(bareFocusRules).toEqual([]);
 
     const hoverKey = `${hoverRule!.style.borderColor}|${hoverRule!.style.background}|${hoverRule!.style.boxShadow}`;
     const pickedKey = `${pickedRule!.style.borderColor}|${pickedRule!.style.background}|${pickedRule!.style.boxShadow}`;
@@ -497,7 +501,13 @@ describe("DecisionModal #1202 seal-is-confirm first screen + pick affordance", (
     expect((focusRule!.style.outline || focusRule!.style.outlineColor || "").length).toBeGreaterThan(0);
 
     const options = document.querySelectorAll<HTMLButtonElement>(".decision-option");
+    // 真渲染：程序聚焦 ≠ 已选（is-picked 只由点击/择票拟写入）
     expect(options[0].classList.contains("is-picked")).toBe(false);
+    act(() => options[0].focus());
+    expect(document.activeElement).toBe(options[0]);
+    expect(options[0].classList.contains("is-picked")).toBe(false);
+    expect(document.querySelectorAll(".decision-option.is-picked")).toHaveLength(0);
+
     act(() => options[0].click());
     expect(options[0].classList.contains("is-picked")).toBe(true);
     // Picked uses fill/border cue; focus rule uses outline — different channels.
