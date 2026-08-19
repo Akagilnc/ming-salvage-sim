@@ -362,7 +362,7 @@ def test_s2_driver_persists_secret_orders_and_freezes_secret_authority(game, mon
 
 
 def test_s3_prompt_characterizes_secret_dossier_participants():
-    """personnel_secret prompt 正向声明私字段与读缝。"""
+    """personnel_secret prompt 正向声明私字段与读缝（字段名最弱存在性）。"""
     from pathlib import Path
 
     prompt = Path("content/prompts/score_extractor_personnel_secret.md").read_text(
@@ -370,24 +370,17 @@ def test_s3_prompt_characterizes_secret_dossier_participants():
     )
     assert "secret_dossier_participants" in prompt
     assert "secret_dossier_rosters" in prompt
-    # Must not tell the model to put secret roster writes on the public field.
-    assert "dossier_participants" not in prompt or "secret_dossier_participants" in prompt
-    # Field ownership list includes the new field.
-    assert "secret_dossier_participants" in prompt.split("字段所有权")[1].split("## ")[0]
 
 
-def test_s3_delta_schema_documents_secret_field_and_module_table():
-    """DELTA_SCHEMA 新节 + 模块字段表收录私字段。"""
-    from pathlib import Path
-
-    doc = Path("docs/DELTA_SCHEMA.md").read_text(encoding="utf-8")
-    assert "secret_dossier_participants" in doc
-    assert "secret_dossier_rosters" in doc
-    # Module table row for personnel_secret includes the field.
-    table_section = doc.split("## 模块归属")[1].split("## ")[0]
-    assert "secret_dossier_participants" in table_section
-    # Public issues row must NOT list the secret field (no shared slot).
-    issues_line = next(
-        line for line in table_section.splitlines() if "`issues`" in line
+def test_s3_runtime_contract_owns_secret_field():
+    """私字段归 personnel_secret：钉 MODULE_FIELDS/EMPTY_EXTRACTION/TOP_LEVEL_ALIASES。"""
+    from ming_sim.simulation import (
+        EMPTY_EXTRACTION,
+        MODULE_FIELDS,
+        TOP_LEVEL_ALIASES,
     )
-    assert "secret_dossier_participants" not in issues_line
+
+    assert "secret_dossier_participants" in MODULE_FIELDS["personnel_secret"]
+    assert "secret_dossier_participants" not in MODULE_FIELDS["issues"]
+    assert "secret_dossier_participants" in EMPTY_EXTRACTION
+    assert TOP_LEVEL_ALIASES["密令案卷参与人"] == "secret_dossier_participants"

@@ -102,6 +102,7 @@ from ming_sim.settlement_payload import (  # noqa: E402
     augment_secret_orders_with_due_commitments,
     bind_decisions_to_candidate_events,
     group_secret_orders_for_sim,
+    iter_secret_order_ids,
     parse_decision_blocks,
 )
 
@@ -570,8 +571,6 @@ def secret_dossier_ids_from_secret_orders(db: GameDB, secret_orders: object) -> 
     authority is an empty closed set — callers must never rebuild from live DB
     beyond the frozen order-id batch.
     """
-    from ming_sim.settlement_payload import iter_secret_order_ids
-
     out: set[int] = set()
     for order_id in iter_secret_order_ids(secret_orders):
         dossier = db.get_dossier_for_secret_order(int(order_id))

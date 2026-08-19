@@ -288,7 +288,7 @@ def augment_secret_orders_with_due_commitments(
 
 
 def iter_secret_order_ids(secret_orders: object) -> List[int]:
-    """Yield real secret-order ids from the frozen grouped (or flat) batch.
+    """Return real secret-order ids from the frozen grouped (or flat) batch.
 
     Skips due_commitment synthetic entries (#48 form③ channel reuse). Accepts
     the grouped dict shape used by personnel_secret rail and the legacy flat
