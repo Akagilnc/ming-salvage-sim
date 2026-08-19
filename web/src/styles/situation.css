@@ -40,6 +40,7 @@
   top: auto;
   left: auto;
   right: auto;
+  bottom: auto;
   z-index: auto;
   width: auto;
   max-width: 100%;
@@ -168,6 +169,8 @@
   position: static;
   top: auto;
   left: auto;
+  right: auto;
+  bottom: auto;
   display: inline-flex;
   flex-direction: column;
   align-items: flex-start;
