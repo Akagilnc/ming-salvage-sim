@@ -173,6 +173,21 @@ def _find_candidate_by_name(content: GameContent, name: str) -> Optional[str]:
     return None
 
 
+def _is_ming_court_minister_character(character: Any, *, power_id: Optional[str] = None) -> bool:
+    """朝臣 canon 资格：非后宫 ∧ 非 candidate ∧ power=ming。
+
+    与 _find_existing_minister 资格同口径（#1428 事实块/校验 DRY）。
+    power_id 传入则用之（DB resolve 权威，#125）；否则读 content 静态 character.power_id
+    （与 seed 一致；招抚 live 翻转属既有 #125 口径，无 db 调用方不扩）。
+    """
+    pid = power_id if power_id is not None else getattr(character, "power_id", None)
+    return (
+        getattr(character, "office_type", None) != "后宫"
+        and getattr(character, "status", None) != "candidate"
+        and str(pid or "") == "ming"
+    )
+
+
 def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Optional[str]:
     """铨选查重：拟任者是否已在册（非 candidate）。精确名 → aliases 命中。
     不做子串互含——'李标' vs '标' 那种巧合会误拒同义改写。
@@ -185,14 +200,16 @@ def _find_existing_minister(content: GameContent, name: str, db: "GameDB") -> Op
     外藩(皇太极 DB houjin)resolve_power_id≠ming 仍不接，防误黜外藩的保护不丢。"""
     if name in content.characters:
         c = content.characters[name]
-        if c.office_type != "后宫" and c.status != "candidate" and db.resolve_power_id(c) == "ming":
+        if _is_ming_court_minister_character(c, power_id=db.resolve_power_id(c)):
             return name
     for key, c in content.characters.items():
         # 先 in-memory 短路（office/candidate/别名命中），别名命中才查库 resolve_power_id——
         # 避免对每个人物都打一次 DB（N+1，gemini PR#130 R1 medium）。
         if c.office_type == "后宫" or c.status == "candidate":
             continue
-        if name in (c.aliases or []) and db.resolve_power_id(c) == "ming":
+        if name not in (c.aliases or []):
+            continue
+        if _is_ming_court_minister_character(c, power_id=db.resolve_power_id(c)):
             return key
     return None
 
