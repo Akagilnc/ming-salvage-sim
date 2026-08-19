@@ -128,6 +128,29 @@ def test_lai_zongdao_remains_opening_libu_shangshu():
     assert "东阁大学士" in (lai.office or ""), lai.office
 
 
+def test_wen_tiren_opening_office_is_libu_you_shilang():
+    """#1284：1627.10 温体仁史实=礼部右侍郎（崇祯元年方迁尚书；升迁走游戏内任免，无 timeline）。"""
+    _, characters = load_character_content()
+    wen = characters["温体仁"]
+    assert (wen.office or "") == "礼部右侍郎", wen.office
+
+
+def test_seed_has_exactly_one_active_libu_shangshu():
+    """#1284 不变式：active seed 精确分项「礼部尚书」恰一人（来宗道），无双尚书叠座。
+
+    「前礼部尚书」等前衔/罢居串不算当期占缺（normalize 分项精确等值）。
+    """
+    _, characters = load_character_content()
+    holders = [
+        name
+        for name, ch in characters.items()
+        if (ch.status or "") == "active"
+        and "礼部尚书"
+        in [p.strip() for p in normalize_office(ch.office or "").split(",") if p.strip()]
+    ]
+    assert holders == ["来宗道"], f"开局礼部尚书 holders={holders!r}（须唯一来宗道）"
+
+
 def test_zhang_fengyi_office_strips_future_title():
     """#1308 残余：张凤翼 office 不得含「后…」未来官职；只留当期名分。
 

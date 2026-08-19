@@ -112,7 +112,7 @@ name	office	office_type	faction	status	power_id	location
 王绍徽	吏部尚书	吏部	阉党	active	ming	
 毕自严	户部右侍郎,督理钱粮稽查(密授)	户部	皇党	active	ming	
 杨嗣昌	户部郎中	户部	皇党	active	ming	
-温体仁	礼部尚书	礼部	皇党	active	ming	
+温体仁	礼部右侍郎	礼部	皇党	active	ming	
 钱龙锡	前礼部尚书,罢居松江	礼部	东林	active	ming	
 刘鸿训	册封朝鲜使归途	待铨	东林	active	ming	
 钱谦益	前礼部右侍郎,罢居常熟	礼部	东林	active	ming	

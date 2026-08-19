@@ -640,7 +640,7 @@ Composition/framing: Use a pose silhouette that cannot collapse into the same de
 
 #### 温体仁 `minister_温体仁.png`
 
-人物：温体仁，礼部尚书，工于揣摩、善于逢迎的文臣，以参钱谦益关节案入局，后排挤周延儒、长期当国。
+人物：温体仁，礼部右侍郎，工于揣摩、善于逢迎的文臣，以参钱谦益关节案入局，后排挤周延儒、长期当国。
 
 历史锚点：宫中暖阁召对中，他坐在屏风旁，把一封弹章从袖下不动声色压进自己案角的暗色封匣下。
 
