@@ -2,13 +2,17 @@
 
 真缝：
 - army_logs.reason → turn_army_summary / previous_summary 路径上的欠发文案
+- 省源分账 reason / turn_army_summary delta（#1383 残余）
+- API armies.arrears 只读投影（#1363 同源呈现面）
 - budget「各军军饷」vs army_report「应发」呈现口径标注
 """
 
 from __future__ import annotations
 
+import json
 import re
 
+from ming_sim.assets import format_wanliang_amount
 from ming_sim.flows import apply_fixed_period_flows, army_needed, compute_budget_lines
 
 
@@ -16,6 +20,8 @@ from ming_sim.flows import apply_fixed_period_flows, army_needed, compute_budget
 _FLOAT_GARBAGE = re.compile(r"\d+\.\d{3,}")
 # 奏报口吻：整数或恰好一位小数
 _WANLIANG_AMOUNT = re.compile(r"欠发(\d+(?:\.\d)?)万两")
+# 省源分账 reason 内嵌万两数额
+_PROVINCE_WANLIANG = re.compile(r"(摊新增欠|偿还)(\d+(?:\.\d+)?)万两")
 
 
 def test_army_pay_shortfall_reason_has_no_float_garbage(game):
@@ -70,3 +76,152 @@ def test_budget_army_pay_and_warning_due_calibers_are_labeled(read_game):
         f"预算各军军饷 note 须标明 hub/实拨口径，得 {note!r}"
     )
     assert "应发" in report, "army_warning 须标明应发口径"
+
+
+def _seed_province_pay_split_scenario(db) -> None:
+    """触发省源分账 reason 真路径（与 fiscal bridge 同源夹具，最小可复现）。"""
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 1, is_tusi = 1, province_pay_share = 0,
+            central_pay_share = 0, pay_source_region = '',
+            province_pay_arrears = 0, central_pay_arrears = 0, arrears = 0
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 1.0,
+            central_pay_share = 0.0, province_pay_arrears = 0,
+            central_pay_arrears = 0, arrears = 0,
+            station = '福建', manpower = 10000, salary_rate = 5
+        WHERE id = 'fujian_navy'
+        """
+    )
+    db.conn.execute(
+        """
+        UPDATE armies
+        SET self_funded_pay = 0, is_tusi = 0, owner_power = 'ming',
+            pay_source_region = 'shaanxi', province_pay_share = 0.65,
+            central_pay_share = 0.35, province_pay_arrears = 6.5,
+            central_pay_arrears = 3.5, arrears = 10,
+            station = '北直隶 / 客防', manpower = 10000, salary_rate = 10
+        WHERE id = 'shaanxi_army'
+        """
+    )
+    row = db.conn.execute(
+        "SELECT fiscal FROM regions WHERE id = 'shaanxi'"
+    ).fetchone()
+    fiscal = json.loads(str(row["fiscal"] or "{}"))
+    fiscal["settle"] = {
+        "st": {
+            "省库库银": 0,
+            "C_地方截留": 0,
+            "C_中饱": 0,
+            "C_漂没": 0,
+            "C_eff损耗": 0,
+            "民欠旧赋": 0,
+            "军饷欠": 999,
+            "官俸欠": 0,
+            "宗禄欠": 0,
+            "官民田": 0,
+            "隐田": 0,
+        },
+        "p": {
+            "正赋应征": 0,
+            "三饷应征": 0,
+            "火耗率": 0,
+            "逋赋率": 0,
+            "起运定额": 0,
+            "拨付gross": 8,
+            "中饱率": 0,
+            "漂没率": 0,
+            "Due": {"军饷": 999, "官俸": 0, "宗禄": 0, "赈济": 0},
+        },
+    }
+    db.conn.execute(
+        "UPDATE regions SET fiscal = ? WHERE id = 'shaanxi'",
+        (json.dumps(fiscal, ensure_ascii=False),),
+    )
+    db.conn.commit()
+
+
+def test_province_pay_split_reason_and_summary_have_no_float_garbage(game):
+    """#1383 残余：省源分账 reason 真路径 + turn_army_summary delta 无 IEEE 残渣。"""
+    db, state, _ = game
+    _seed_province_pay_split_scenario(db)
+    db.settle_province_tick("shaanxi")
+
+    reasons = [
+        str(row["reason"] or "")
+        for row in db.conn.execute(
+            """
+            SELECT reason FROM army_logs
+            WHERE field = 'province_pay_arrears'
+              AND reason LIKE '%省源军饷分账%'
+            """
+        ).fetchall()
+    ]
+    assert reasons, "省源分账真路径应写入 province_pay_arrears reason"
+
+    for reason in reasons:
+        assert not _FLOAT_GARBAGE.search(reason), f"省源 reason 含浮点垃圾：{reason}"
+        for _kind, amount in _PROVINCE_WANLIANG.findall(reason):
+            assert re.fullmatch(r"\d+(\.\d)?", amount), (
+                f"省源万两须为整数或一位小数，得 {amount!r} in {reason}"
+            )
+            # 与 format_wanliang_amount 单真源同形
+            raw = float(amount)
+            assert amount == format_wanliang_amount(raw), (
+                f"省源数额须走 format_wanliang_amount，得 {amount!r}"
+            )
+
+    summary = db.turn_army_summary(state.turn)
+    assert "省源" in summary or "欠饷" in summary
+    assert not _FLOAT_GARBAGE.search(summary), (
+        f"turn_army_summary delta/reason 含浮点垃圾：{summary}"
+    )
+
+
+def test_army_payload_arrears_projection_rounds_to_one_decimal(game):
+    """#1363：API armies.arrears 只读投影收整，杜绝原始浮点残渣。"""
+    db, _state, _ = game
+    row = db.conn.execute(
+        "SELECT id FROM armies WHERE owner_power='ming' ORDER BY id LIMIT 1"
+    ).fetchone()
+    army_id = row["id"]
+
+    # IEEE 残渣 + 多位小数摊分 + 零值/负值分支（生产：round(float(x or 0), 1)）
+    samples = (
+        (1.2000000000000002, 1.2),
+        (1.5217391304347827, 1.5),
+        (12.5, 12.5),
+        (11.978260869565217, 12.0),
+        (0, 0.0),
+        (-1.234, -1.2),
+    )
+    for raw, expected in samples:
+        db.conn.execute(
+            "UPDATE armies SET arrears=?, province_pay_arrears=?, central_pay_arrears=0 WHERE id=?",
+            (raw, raw, army_id),
+        )
+        db.conn.commit()
+        payload = {army["id"]: army for army in db.army_payload()}
+        got = payload[army_id]["arrears"]
+        assert got == expected, f"raw={raw!r} → arrears 投影应得 {expected!r}，得 {got!r}"
+        text = repr(got) if isinstance(got, float) else str(got)
+        assert not _FLOAT_GARBAGE.search(text), f"arrears 投影仍含浮点残渣：{got!r}"
+
+    # None → or 0 回落：列 NOT NULL 不可直写，替身 row 走 army_payload 同一投影式
+    base = db.conn.execute("SELECT * FROM armies WHERE id=?", (army_id,)).fetchone()
+    none_row = {key: base[key] for key in base.keys()}
+    none_row["arrears"] = None
+    original_rows = db.army_rows
+    try:
+        db.army_rows = lambda limit=None, danger_order=False: [none_row]  # type: ignore[method-assign]
+        payload = {army["id"]: army for army in db.army_payload()}
+        got = payload[army_id]["arrears"]
+        assert got == 0.0, f"raw=None → arrears 投影应得 0.0，得 {got!r}"
+    finally:
+        db.army_rows = original_rows  # type: ignore[method-assign]

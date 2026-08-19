@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Seq
 from ming_sim.applier import atomic, safe_json_dumps, sanitize_sqlite_text
 from ming_sim.appointment_tenure import appointment_tenure_from
 from ming_sim.authority_privileges import AUTHORITY_PRIVILEGE_SQL_IN
-from ming_sim.assets import format_money, format_money_delta
+from ming_sim.assets import format_money, format_money_delta, format_wanliang_amount
 from ming_sim.constants import (
     ARMY_FIELD_ALIASES, ARMY_FIELD_LABELS, ARMY_QUANTITY_FIELDS, ARMY_SCORE_FIELDS, ARMY_TEXT_FIELDS,
     BUILDING_CATEGORIES, BUILDING_FIELD_LABELS, BUILDING_OUTPUT_METRICS,
@@ -4363,12 +4363,14 @@ class GameDB:
                 reason_parts = []
                 if new_debt_by_army[army_id] > 1e-9:
                     reason_parts.append(
-                        f"按本月省份额应付占比摊新增欠{new_debt_by_army[army_id]:g}万两"
+                        f"按本月省份额应付占比摊新增欠"
+                        f"{format_wanliang_amount(new_debt_by_army[army_id])}万两"
                     )
                 repaid_total = action_repaid_by_army[army_id] + surplus_repaid_by_army[army_id]
                 if repaid_total > 1e-9:
                     reason_parts.append(
-                        f"按省份额欠余额占比偿还{repaid_total:g}万两"
+                        f"按省份额欠余额占比偿还"
+                        f"{format_wanliang_amount(repaid_total)}万两"
                     )
                 if reason_parts:
                     reason += "（" + "；".join(reason_parts) + "）"
@@ -6677,7 +6679,8 @@ class GameDB:
                     "morale": int(row["morale"]),
                     "training": int(row["training"]),
                     "equipment": int(row["equipment"]),
-                    "arrears": float(row["arrears"]),
+                    # #1363：只读投影收整到一位小数，杜绝 IEEE 残渣进 API
+                    "arrears": round(float(row["arrears"] or 0), 1),
                     "mobility": int(row["mobility"]),
                     "loyalty": int(row["loyalty"]),
                     "firearm_equipment": int(row["firearm_equipment"]),
@@ -6837,11 +6840,12 @@ class GameDB:
                 parts.append(f"{row['army_name']}{label}改为{row['new_value']}（{row['reason']}）")
             else:
                 delta_num = float(delta)
-                delta_text = str(int(delta_num)) if delta_num.is_integer() else f"{delta_num:g}"
                 sign = "+" if delta_num > 0 else ""
                 if row["field"] == "manpower":
                     parts.append(f"{row['army_name']}{label}{sign}{int(delta_num)}人（{row['reason']}）")
                 else:
+                    # #1383：非整数 delta（省源欠饷等）走万两收整单真源，杜绝 :g IEEE 残渣
+                    delta_text = format_wanliang_amount(delta_num)
                     parts.append(f"{row['army_name']}{label}{sign}{delta_text}（{row['reason']}）")
         return "；".join(parts) + "。"
 
