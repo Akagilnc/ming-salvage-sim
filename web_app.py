@@ -1113,14 +1113,17 @@ class WebGame:
         ]
 
     def map_nodes(self) -> List[Dict[str, Any]]:
+        """地图节点投影。#1401：一军一挂（region 优先，theater 只收无 region 军）；
+        与 region 同 id 的 theater 合入带 region 字段的 theater 节点，禁无名/双 id。"""
         region_positions = {
             "beizhili": (55.5, 41.2), "nanzhili": (70, 41), "shandong": (56.8, 47.9),
             "shanxi": (48.8, 45.2), "henan": (58, 46), "shaanxi": (51, 38),
             "zhejiang": (73.7, 57.9), "jiangxi": (67, 55), "huguang": (59, 59),
             "sichuan": (57, 52), "fujian": (73.2, 65.1), "guangdong": (62.5, 73.6),
             "guangxi": (53.9, 69.6), "yunnan": (47, 69), "guizhou": (52, 56),
-            "liaodong": (61.0, 37.6), "dongjiang_area": (68.9, 43.7),
-            "shenyang_liaoyang": (61.3, 39.6), "jianzhou": (64.6, 31.0),
+            # #1401：辽东/沈阳贴脸——辽东略西南、沈阳/辽阳略东北拉开
+            "liaodong": (58.5, 39.2), "dongjiang_area": (68.9, 43.7),
+            "shenyang_liaoyang": (64.5, 35.0), "jianzhou": (64.6, 31.0),
             "korea": (67.0, 44.8), "mongol_chahar": (47.0, 31.0), "nurgan": (58.2, 21.2),
             "outer_mongolia": (43.0, 24.0), "western_regions": (25.0, 40.0),
             "tibet": (31.0, 57.0), "amur_frontier": (70.0, 24.0),
@@ -1132,18 +1135,73 @@ class WebGame:
             "xuan_da": (50.49, 40.08), "shanhaiguan": (55.52, 42.84),
         }
         armies = self.db.army_payload(danger_order=True)
+        regions = self.db.region_payload()
+        # 一军一挂：先按 region 认领（首个命中即止），theater 只收未被认领的军
+        claimed_army_ids: set[str] = set()
+        region_armies: Dict[str, List[Dict[str, Any]]] = {
+            str(region["id"]): [] for region in regions
+        }
+        for army in armies:
+            aid = str(army["id"])
+            for region in regions:
+                if self._army_belongs_to_region(army, region):
+                    rid = str(region["id"])
+                    region_armies[rid].append(army)
+                    claimed_army_ids.add(aid)
+                    break
         nodes: List[Dict[str, Any]] = []
-        for region in self.db.region_payload():
-            x, y = region_positions.get(str(region["id"]), (50, 50))
-            stationed = [a for a in armies if self._army_belongs_to_region(a, region)]
-            buildings = self.db.building_payload(str(region["id"]))
+        theater_ids_emitted: set[str] = set()
+        for region in regions:
+            rid = str(region["id"])
+            stationed = region_armies.get(rid, [])
+            buildings = self.db.building_payload(rid)
             risk = int(region["unrest"]) + int(region["military_pressure"]) + (100 - int(region["public_support"]))
-            node_kind = "region" if str(region.get("controlled_by") or "ming") == "ming" else "external"
-            nodes.append({"id": region["id"], "kind": node_kind, "x": x, "y": y, "region": region, "armies": stationed, "buildings": buildings, "risk": risk})
+            if rid in theater_positions:
+                # 与 theater 同 id：合并为带 region 的 theater 节点（禁双 id / 无名 pin）
+                x, y = theater_positions[rid]
+                nodes.append({
+                    "id": rid,
+                    "kind": "theater",
+                    "x": x,
+                    "y": y,
+                    "label": self._theater_label(rid),
+                    "region": region,
+                    "armies": stationed,
+                    "buildings": buildings,
+                    "risk": risk,
+                })
+                theater_ids_emitted.add(rid)
+            else:
+                x, y = region_positions.get(rid, (50, 50))
+                node_kind = "region" if str(region.get("controlled_by") or "ming") == "ming" else "external"
+                nodes.append({
+                    "id": rid,
+                    "kind": node_kind,
+                    "x": x,
+                    "y": y,
+                    "region": region,
+                    "armies": stationed,
+                    "buildings": buildings,
+                    "risk": risk,
+                })
         for node_id, (x, y) in theater_positions.items():
-            stationed = [a for a in armies if self._army_belongs_to_theater(a, node_id)]
+            if node_id in theater_ids_emitted:
+                continue
+            stationed = [
+                a for a in armies
+                if str(a["id"]) not in claimed_army_ids
+                and self._army_belongs_to_theater(a, node_id)
+            ]
             if stationed:
-                nodes.append({"id": node_id, "kind": "theater", "x": x, "y": y, "label": self._theater_label(node_id), "armies": stationed, "risk": 120})
+                nodes.append({
+                    "id": node_id,
+                    "kind": "theater",
+                    "x": x,
+                    "y": y,
+                    "label": self._theater_label(node_id),
+                    "armies": stationed,
+                    "risk": 120,
+                })
         return nodes
 
     def _army_belongs_to_region(self, army: Dict[str, Any], region: Dict[str, Any]) -> bool:
