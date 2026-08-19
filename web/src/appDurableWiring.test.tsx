@@ -1020,5 +1020,10 @@ describe("#1236 App readonly zero mid-course leak（逐面审计）", () => {
     await tick();
     expect(host.querySelector(".harem-drawer.open")).not.toBeNull();
     expect(host.querySelector(".court-drawer.open:not(.harem-drawer)")).toBeNull();
+
+    // #1305：同键再点 → 抽屉收起（实现 main.tsx navHandlers opening/closeAll）。
+    await click(byAria(host, "后宫"));
+    await tick();
+    expect(host.querySelector(".harem-drawer.open")).toBeNull();
   });
 });
