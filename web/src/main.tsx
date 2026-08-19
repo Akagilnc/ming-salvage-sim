@@ -29,6 +29,7 @@ import { StateModal } from "./components/stateModal";
 import { filterConsorts, filterMinisters } from "./components/ministerFilters";
 import { DecisionModal } from "./components/decisionModal";
 import { DecisionRecoveryPanel } from "./components/decisionRecovery";
+import { needsPhase2Resume } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps } from "./format";
 import {
   isFaceReachable,
@@ -213,6 +214,7 @@ export function App() {
     pausedDecisionError,
     issueDecree,
     submitDecisions,
+    resumePhase2,
     retryPendingDecisions,
     advanceWithoutEdict,
   } = useSettlementFlow({
@@ -730,11 +732,22 @@ export function App() {
       ) : null}
 
       {/* 必达：续跑入口仍挂既有 phase===settling（及 issueDecree 恢复分流）；展示态门控不误关。
-          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。 */}
-      {state.turn.phase === "settling" ? (
+          ship-pre r4：崩溃/中止后重载时相位停在 settling——last_decree 已被 begin_turn 清空。
+          #1418 r2：all-decided + settlement_display 仍真 → 同条续跑面，改发 resolve_decisions/stream。 */}
+      {state.turn.phase === "settling"
+        || needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+        ? (
         <div className="recovery-banner" data-testid="settle-resume">
           <span>上月结算未完成（进度已保存）。</span>
-          <button className="seal-btn-issue" onClick={issueDecree} disabled={!!busy}>
+          <button
+            className="seal-btn-issue"
+            onClick={
+              needsPhase2Resume(state.turn.phase, state.pending_decisions || [], state.turn.settlement_display)
+                ? resumePhase2
+                : issueDecree
+            }
+            disabled={!!busy}
+          >
             续跑结算
           </button>
         </div>

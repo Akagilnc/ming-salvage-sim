@@ -13,6 +13,26 @@ export function isDecisionAlreadyDecided(event: unknown): boolean {
   return String((event as { status?: unknown }).status || "") === "decided";
 }
 
+/** 全员 decided（结构完整）——phase2 在办/待续的崩溃安全先写态。 */
+export function isAllDecisionsDecided(events: unknown[]): boolean {
+  return events.length > 0 && events.every(isDecisionAlreadyDecided);
+}
+
+/**
+ * #1418 r2：all-decided 且核账展示态仍真 → 需接到既有 settle-resume 续跑面
+ * （重发 resolve_decisions/stream 续 phase2）。
+ * 负向：快照已清（正常完成月 / 真失败退出）不触发。
+ */
+export function needsPhase2Resume(
+  phase: string | undefined,
+  events: unknown[],
+  settlementDisplay?: boolean,
+): boolean {
+  if (phase !== "awaiting_decision") return false;
+  if (!settlementDisplay) return false;
+  return isAllDecisionsDecided(events);
+}
+
 export function pendingDecisionsFrom(events: unknown[]): PendingDecision[] {
   if (events.length === 0) return [];
   const validated: PendingDecision[] = [];
@@ -43,6 +63,8 @@ function isPendingDecision(event: unknown): event is PendingDecision {
 export type DecisionRouteOutcome = {
   pendingDecisions: PendingDecision[] | null;
   error: string | null;
+  /** #1418 r2：接到 settle-resume 续跑面（禁当成功空批清横幅、禁重开批红）。 */
+  resumePhase2?: boolean;
 };
 
 export function replacePendingDecisionsOnRefresh(
@@ -71,9 +93,10 @@ export function routeRefreshDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: null, error: null };
   }
-  // #1374：全员 decided = phase2 在办（崩溃安全先写），不重开批红弹窗、不报损坏。
-  if (events.length > 0 && events.every(isDecisionAlreadyDecided)) {
-    return { pendingDecisions: null, error: null };
+  // #1374/#1418 r2：全员 decided = phase2 在办（崩溃安全先写）——
+  // 不重开批红弹窗；接到 settle-resume 续跑面（由 UI 读 resumePhase2 / needsPhase2Resume）。
+  if (isAllDecisionsDecided(events)) {
+    return { pendingDecisions: null, error: null, resumePhase2: true };
   }
   const decisions = pendingDecisionsFrom(events);
   if (decisions.length === 0) {
@@ -93,9 +116,9 @@ export function routeRetryDecisions(
   if (phase !== "awaiting_decision") {
     return { pendingDecisions: [], error: "" };
   }
-  // #1374：phase2 在办时重拉不弹「可再提交」、不清成错误条。
-  if (events.length > 0 && events.every(isDecisionAlreadyDecided)) {
-    return { pendingDecisions: [], error: "" };
+  // #1418 r2：all-decided 不得 error:"" 当成功清横幅——改路由到 phase2 续跑 affordance。
+  if (isAllDecisionsDecided(events)) {
+    return { pendingDecisions: null, error: null, resumePhase2: true };
   }
   const decisions = pendingDecisionsFrom(events);
   if (decisions.length === 0) {

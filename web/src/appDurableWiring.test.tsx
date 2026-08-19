@@ -710,6 +710,45 @@ describe("#1236 App must-face wiring（settlement_display 真链）", () => {
     });
     expect((host2.querySelector('[data-testid="decision-recovery"] button') as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it("#1418 r2 awaiting + 全员 decided + settlement_display：接到 settle-resume，不重开批红", async () => {
+    const decided = { ...validDecision, status: "decided", choice: { label: "固守" } };
+    stubSettlementFetch(settlementBaseState("awaiting_decision", {
+      pending_decisions: [decided],
+    }));
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
+    });
+    // 续跑面可点；批红弹窗/损坏恢复横幅均不出现
+    expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
+    expect(host.querySelector('[data-testid="decision-recovery"]')).toBeNull();
+    const resume = host.querySelector('[data-testid="settle-resume"] button') as HTMLButtonElement;
+    expect(resume.disabled).toBe(false);
+    expect(resume.textContent).toContain("续跑结算");
+
+    // 刷新重挂仍在
+    document.body.innerHTML = "";
+    const host2 = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host2.querySelector('[data-testid="settle-resume"]')).not.toBeNull());
+    });
+    expect(host2.querySelector('[data-testid="decision-modal"]')).toBeNull();
+  });
+
+  it("#1418 r2 负向：全员 decided 但快照已清 → 不挂 settle-resume", async () => {
+    const decided = { ...validDecision, status: "decided", choice: { label: "固守" } };
+    stubSettlementFetch({
+      ...settlementBaseState("awaiting_decision", { pending_decisions: [decided] }),
+      turn: { year: 1627, period: 10, turn: 5, phase: "awaiting_decision", settlement_display: false },
+    });
+    const host = await mountApp();
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector(".hud2-stage")).not.toBeNull());
+    });
+    expect(host.querySelector('[data-testid="settle-resume"]')).toBeNull();
+    expect(host.querySelector('[data-testid="decision-modal"]')).toBeNull();
+  });
 });
 
 const closeOpenOverlay = async (host: HTMLElement) => {

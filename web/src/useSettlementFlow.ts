@@ -1,7 +1,13 @@
 import React from "react";
 import { ApiRequestError, api } from "./api";
 import { consumeSettleStream } from "./settleStream";
-import { replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "./decisionRouting";
+import {
+  needsPhase2Resume,
+  replacePendingDecisionsOnRefresh,
+  routeIssueDecisions,
+  routeRefreshDecisions,
+  routeRetryDecisions,
+} from "./decisionRouting";
 import { forwardSteamEvents } from "./steamEvents";
 import type { GameState, PendingActionFailure, PendingDecision } from "./types";
 
@@ -103,23 +109,8 @@ export function useSettlementFlow({
     }
   };
 
-  const retryPendingDecisions = async () => {
-    setBusy("重新拉取批红");
-    setPausedDecisionError("");
-    try {
-      const freshState = await loadState();
-      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
-      const route = routeRetryDecisions(freshState.turn.phase, freshState.pending_decisions || []);
-      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
-      if (route.error !== null) setPausedDecisionError(route.error);
-    } catch (err) {
-      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setBusy("");
-    }
-  };
-
-  // 皇帝亲裁完所有决策点：续跑 phase2 结算。choices 按决策点 idx 顺序。
+  // 皇帝亲裁完所有决策点 / phase2 续跑：走 resolve_decisions/stream。
+  // choices 按决策点 idx 顺序；all-decided 续跑可传 []——服务端幂等保留已存 choice。
   const submitDecisions = async (choices: { label?: string; hint?: string; note?: string }[]) => {
     setPendingDecisions([]);
     setDecisionFailures([]);
@@ -136,6 +127,9 @@ export function useSettlementFlow({
       });
       const outcome = await consumeSettle(response);
       if (outcome.kind === "error") {
+        // #1418 r2：同会话 phase2 失败后 loadState，使 settle-resume 续跑面可挂上
+        // （pending=[] 且 error 横幅被清时仍有 affordance）。
+        await loadState();
         if (await surfacePendingActionFailures(outcome.data?.pending_action_failures || [])) {
           setError(typeof outcome.data === "string" ? outcome.data : (outcome.data.message || "结算失败。"));
           return;
@@ -151,7 +145,38 @@ export function useSettlementFlow({
       window.location.reload();
       return;
     } catch (err) {
+      await loadState();
       setError(err instanceof Error ? err.message : String(err));
+      setBusy("");
+    }
+  };
+
+  /** #1418 r2：all-decided 续跑——重发 resolve_decisions/stream（空载荷；服务端用已存 choice）。 */
+  const resumePhase2 = async () => submitDecisions([]);
+
+  const retryPendingDecisions = async () => {
+    setBusy("重新拉取批红");
+    setPausedDecisionError("");
+    try {
+      const freshState = await loadState();
+      if (!freshState) return;  // 陈旧代次被协调器拒收（返 null）→ 拒收陈旧 cargo，不据此路由决策
+      const events = freshState.pending_decisions || [];
+      const route = routeRetryDecisions(freshState.turn.phase, events);
+      // #1418 r2：all-decided 不得当成功空批清横幅——接到 phase2 续跑 affordance。
+      // 移交 resumePhase2 前先放行本函数 busy，避免 finally 清掉续跑中的「月末结算」。
+      if (
+        route.resumePhase2
+        || needsPhase2Resume(freshState.turn.phase, events, freshState.turn.settlement_display)
+      ) {
+        setBusy("");
+        await resumePhase2();
+        return;
+      }
+      if (route.pendingDecisions !== null) setPendingDecisions(route.pendingDecisions);
+      if (route.error !== null) setPausedDecisionError(route.error);
+    } catch (err) {
+      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       setBusy("");
     }
   };
@@ -211,6 +236,7 @@ export function useSettlementFlow({
     pausedDecisionError,
     issueDecree,
     submitDecisions,
+    resumePhase2,
     retryPendingDecisions,
     advanceWithoutEdict,
   };

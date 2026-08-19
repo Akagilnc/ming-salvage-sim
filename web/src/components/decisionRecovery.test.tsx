@@ -2,7 +2,14 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionRecoveryPanel } from "./decisionRecovery";
-import { PAUSED_DECISION_MSG, replacePendingDecisionsOnRefresh, routeIssueDecisions, routeRefreshDecisions, routeRetryDecisions } from "../decisionRouting";
+import {
+  PAUSED_DECISION_MSG,
+  needsPhase2Resume,
+  replacePendingDecisionsOnRefresh,
+  routeIssueDecisions,
+  routeRefreshDecisions,
+  routeRetryDecisions,
+} from "../decisionRouting";
 import type { PendingDecision } from "../types";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -137,6 +144,8 @@ describe("decision routing — refresh entry (routeRefreshDecisions)", () => {
     const route = routeRefreshDecisions("awaiting_decision", [decided]);
     expect(route.pendingDecisions).toBeNull();
     expect(route.error).toBeNull();
+    // #1418 r2：接到续跑 affordance，不当「无事发生」
+    expect(route.resumePhase2).toBe(true);
   });
 
   it("fail-closed：畸形 {status:decided} 不得清空决策态，须显示 PAUSED_DECISION_MSG", () => {
@@ -172,16 +181,44 @@ describe("decision routing — retry (routeRetryDecisions: stale-phase vs still-
     expect(route.error).toBe(PAUSED_DECISION_MSG);
   });
 
-  it("#1374 phase2 全员 decided：重拉不报损坏、不重开弹窗", () => {
+  it("#1418 r2 phase2 全员 decided：重拉不报损坏、不重开弹窗、不得 error:\"\" 清横幅", () => {
     const decided = { ...validDecision, status: "decided" };
     const route = routeRetryDecisions("awaiting_decision", [decided]);
-    expect(route.pendingDecisions).toEqual([]);
-    expect(route.error).toBe("");
+    expect(route.pendingDecisions).toBeNull();
+    // 禁 error:"" 当成功清横幅——改 resumePhase2 信号接到 settle-resume
+    expect(route.error).toBeNull();
+    expect(route.error).not.toBe("");
+    expect(route.resumePhase2).toBe(true);
   });
 
   it("fail-closed：畸形 {status:decided} 重拉不得静默清空，须显示 PAUSED_DECISION_MSG", () => {
     const route = routeRetryDecisions("awaiting_decision", [{ status: "decided" }]);
     expect(route.pendingDecisions).toEqual([]);
     expect(route.error).toBe(PAUSED_DECISION_MSG);
+    expect(route.resumePhase2).toBeFalsy();
+  });
+});
+
+describe("#1418 r2 needsPhase2Resume（all-decided 续跑谓词）", () => {
+  const decided = { ...validDecision, status: "decided" };
+
+  it("awaiting + 全员 decided + settlement_display 真 → 需续跑", () => {
+    expect(needsPhase2Resume("awaiting_decision", [decided], true)).toBe(true);
+  });
+
+  it("负向：快照已清（正常完成月）不触发续跑面", () => {
+    expect(needsPhase2Resume("awaiting_decision", [decided], false)).toBe(false);
+    expect(needsPhase2Resume("awaiting_decision", [decided], undefined)).toBe(false);
+  });
+
+  it("负向：仍有待批 / 非 awaiting / 空批 → 不触发", () => {
+    expect(needsPhase2Resume("awaiting_decision", [validDecision], true)).toBe(false);
+    expect(needsPhase2Resume("settling", [decided], true)).toBe(false);
+    expect(needsPhase2Resume("player", [decided], true)).toBe(false);
+    expect(needsPhase2Resume("awaiting_decision", [], true)).toBe(false);
+  });
+
+  it("负向：畸形 {status:decided} 不得当 all-decided", () => {
+    expect(needsPhase2Resume("awaiting_decision", [{ status: "decided" }], true)).toBe(false);
   });
 });
