@@ -1914,7 +1914,12 @@ def test_manual_directive_capture_rejects_missing_empty_or_invalid_tier_without_
     assert db.list_decree_dossiers() == []
 
 
-def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
+def test_final_decree_edit_path_removed_no_bypass(game):
+    """#1341/#1338：裸设总诏入口已拆——无 set_decree、无 PATCH /api/decree，
+    既有草案正文不被旁路改写；OpenAPI 不再广告死路。"""
+    import inspect
+
+    import web_app
     from ming_sim.session import GameSession
 
     db, state, _content = game
@@ -1927,19 +1932,21 @@ def test_final_decree_edit_cannot_bypass_frozen_dossier(game):
             "execution_surface": "immediate",
         },
     )
-    session = GameSession.__new__(GameSession)
-    session.db = db
-    session.state = state
 
-    with pytest.raises(ValueError, match="逐道旨意入口"):
-        session.set_decree("不再拨款")
+    assert not hasattr(GameSession, "set_decree")
+    assert not hasattr(web_app, "api_edit_decree")
+    assert not hasattr(web_app, "EditDecreeRequest")
+    paths = {getattr(r, "path", None) for r in web_app.app.routes}
+    assert "/api/decree" not in paths or not any(
+        getattr(r, "path", None) == "/api/decree"
+        and "PATCH" in (getattr(r, "methods", None) or set())
+        for r in web_app.app.routes
+    )
+    # 草案正文未被旁路改写
     assert db.get_dossier_for_directive(directive_id) is None
     assert db.list_directives(state)[0]["text"] == "拨十两赈济"
-
-    db.delete_directive(directive_id)
-    with pytest.raises(ValueError, match="逐道旨意入口"):
-        session.set_decree("孤立聚合正文")
-    assert not getattr(session, "last_decree", "")
+    # session 源码不再出现 set_decree 实现（防复活）
+    assert "def set_decree" not in inspect.getsource(GameSession)
 
 
 def test_cli_dossiered_directive_is_not_listed_editable_or_deletable(

@@ -272,8 +272,11 @@ def _retry_runtime(db, state, minister):
     rt.can_undo_last_chat = lambda name: False
     rt.pending_action_failures_for = lambda name: []
     rt._audience_turn_in_flight = lambda name: False
-    # 回话尾随（读心/抽取）在本单元测试外——不起后台线程。
-    rt._mark_pending_write = lambda: False
+    # 整轮 pending 由 retry 本体持有；尾随（读心/抽取）在本单元测试外——不起后台线程。
+    rt._drain_cond = __import__("threading").Condition()
+    rt._pending_writes_count = 0
+    rt._draining = False
+    rt._spawn_pending_write_thread = lambda *a, **k: False
     rt._spawn_extraction_trail = lambda *a, **k: None
     return rt
 

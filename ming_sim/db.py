@@ -6709,7 +6709,8 @@ class GameDB:
             )
         return (
             f"军队警讯：{'；'.join(parts)}。"
-            f"建档兵力合计{int(total_manpower['total'] or 0)}人，{TURN_UNIT}应发军饷合计{format_money(monthly_amount(total_pay))}。"
+            f"建档兵力合计{int(total_manpower['total'] or 0)}人，"
+            f"{TURN_UNIT}名义应发军饷合计{format_money(monthly_amount(total_pay))}。"
         )
 
     def army_detail(self, raw_name: str) -> str:

@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from ming_sim.error_pack import error_packs_root
 from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.models import GameState
+from ming_sim.participant_roster import is_non_person_participant_name
 
 # ── 引擎侧口令标签常量（ADR 0035：确定性写读）──────────────────────────
 TAG_OPEN_NIGHT = "开夜"
@@ -110,7 +111,8 @@ AUDIBILITY_PRIVATE = "御前低语"
 
 # 夜容器时地兜底（#498 AC：时辰/地点须持久且可读）。真实入口（web/CLI attach）多不带玩家
 # 选值——缺省时以 in-world 兜底落库（非空字符串），而非留空串成不可读的裸空。开夜账正文同用。
-DEFAULT_TIME_OF_DAY = "此时"
+# #1339：默认须是时刻/更次口径，禁「此时」这类非时辰词进起居注标题。
+DEFAULT_TIME_OF_DAY = "戌时"
 DEFAULT_LOCATION = "便殿"
 
 # #501 机器可读在场效果（ADR 0035 线上 R2）：在场是机器承重态，其输入不靠解析自由文本。
@@ -301,8 +303,9 @@ def assert_night_accepts_player_input(
     if night is None:
         return None
     if str(night.get("status") or "") == NIGHT_STATUS_CLOSING:
+        # #1301：玩家面文案去裸 night_id（结构化 detail 已有）；diegetic 可读。
         raise AudienceNightError(
-            f"本夜收夜中，暂不能{what}：{int(night['id'])}",
+            f"本夜收夜中，暂不能{what}。",
             code="night_closing",
             detail={"night_id": int(night["id"]), "what": what},
         )
@@ -404,11 +407,6 @@ def list_night_timeline(db: Any, night_id: int) -> List[Dict[str, Any]]:
     return events
 
 
-_DIALOGUE_CARRIED_LEDGER_TAGS = frozenset({
-    "人际动作", "站台", "作保", "背书", "退侍",
-})
-
-
 def night_archive_metadata(
     ledgers: List[Dict[str, Any]], turns: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -418,14 +416,19 @@ def night_archive_metadata(
         for entry in ledgers if _is_command_entry(entry)
         for method in SUMMON_METHODS if method in (entry.get("tags") or [])
     ]
+    # #1331/#1339：involved_people 投影缝复用 raw 非人判定（DRY 单真源）；
+    # 禁 canon 后再滤（司礼监→王承恩）。写入侧 ledger 保留原文，投影侧只列真人。
     people: List[str] = []
     candidate_groups = [entry.get("person_names") or [] for entry in ledgers]
     candidate_groups.extend([turn.get("minister_name")] for turn in turns)
     for names in candidate_groups:
         for raw_name in names:
             name = str(raw_name or "").strip()
-            if name and name not in people:
-                people.append(name)
+            if not name or name in people:
+                continue
+            if is_non_person_participant_name(name):
+                continue
+            people.append(name)
     summon_method = summon_methods[0] if summon_methods else ""
     return {
         # Summon methods remain machine tags; the container contract exposes the
@@ -439,8 +442,11 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
     """Read one audience night as the shared live/archive scroll contract.
 
     The two durable stores remain untouched.  This projection merges them, omits
-    ledger prose already carried verbatim by its dialogue turn, derives scene
-    dividers from exit/next-entry facts, and leaves the coda generation slot empty.
+    extraction-derived ledger cards by structural provenance
+    (`source_chat_turn_id>0`, same shape as cascade_echo production marks — no
+    text-stare paraphrase detection), derives scene dividers from exit/next-entry
+    facts, and leaves the coda generation slot empty. Memory consumers still read
+    `list_ledger` directly and see every story fact.
     """
     night = get_night(db, night_id)
     if night is None:
@@ -473,10 +479,8 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             result["record_id"] = int(record_id)
         return result
 
-    dialogue_by_turn: Dict[int, set[str]] = {}
     events: List[tuple[float, int, Dict[str, Any]]] = []
     for turn in turns:
-        texts: set[str] = set()
         for rank, (column, role, speaker) in enumerate((
             ("user_message_id", "user", "朕"),
             ("minister_message_id", "minister", str(turn.get("minister_name") or "")),
@@ -491,7 +495,6 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
             if row is None:
                 continue
             content = str(row["content"] or "")
-            texts.add(content.strip())
             # #544：只走 GameDB._parse_highlights_json 唯一真源（SELECT 已点名该列）
             hl: List[str] = (
                 list(db._parse_highlights_json(row["highlights_json"]))
@@ -516,27 +519,20 @@ def read_night_scroll(db: Any, night_id: int) -> List[Dict[str, Any]]:
                                 content=narration, beat="aside", chat_turn_id=int(turn["id"]),
                                 record_id=int(record.get("id") or 0)),
                     ))
-        dialogue_by_turn[int(turn["id"])] = texts
 
     for entry in ledgers:
-        source = int(entry.get("source_chat_turn_id") or 0)
         tags = set(entry.get("tags") or [])
-        # 轮级抽取中，人际动作本就是该轮对话/表演的结构化索引，不再重复展示；
-        # 普通故事事实即使同轮产生也保留。正文相等只处理旧数据的逐字重复。
-        carried_action = bool(
-            source and (entry.get("presence_effect") in (PRESENCE_ENTER, PRESENCE_EXIT)
-                        or tags & _DIALOGUE_CARRIED_LEDGER_TAGS)
-        )
-        if carried_action or (source and entry["body"].strip() in dialogue_by_turn.get(source, set())):
+        # #1293a：非口令/框架账（_is_command_entry 补集，含抽取派生与其它
+        # source>0 留痕如路径应答）一律不上 live/档案同源卷轴；禁盯 body。
+        if not _is_command_entry(entry):
             continue
-        command = _is_command_entry(entry)
-        if command and TAG_OPEN_NIGHT in tags:
+        if TAG_OPEN_NIGHT in tags:
             beat = "opening"
-        elif command and TAG_CLOSE_NIGHT in tags:
+        elif TAG_CLOSE_NIGHT in tags:
             beat = "closing"
-        elif (command and TAG_ENTER in tags) or entry.get("presence_effect") == PRESENCE_ENTER:
+        elif TAG_ENTER in tags:
             beat = "entrance"
-        elif (command and TAG_EXIT in tags) or entry.get("presence_effect") == PRESENCE_EXIT:
+        elif TAG_EXIT in tags:
             beat = "exit"
         else:
             beat = "aside" if entry["audibility"] == AUDIBILITY_PRIVATE else "scene"

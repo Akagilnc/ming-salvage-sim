@@ -38,6 +38,7 @@ export function ChatModal({
   secretOrders,
   replyRetry,
   extractionPendingCount,
+  extractionHealedHint,
   onInput,
   onSend,
   onRetryFailure,
@@ -81,6 +82,8 @@ export function ChatModal({
   replyRetry?: { chat_turn_id: number; question: string } | null;
   /** #501：本夜待补叙事抽取条数。 */
   extractionPendingCount?: number;
+  /** #1353/#1381：closing 待补自愈后的可重试指引。 */
+  extractionHealedHint?: string;
   onInput: (value: string) => void;
   onSend: (ministerName: string, text?: string) => void;
   onRetryFailure: (failure: PendingActionFailure) => void;
@@ -227,7 +230,7 @@ export function ChatModal({
     } else if (followsTailRef.current) {
       node.scrollTop = node.scrollHeight;
     }
-  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount]);
+  }, [minister.name, chat, scrollState, pendingUserMessage, streamingMinisterMessage, chatNotice, chatFailures, busy, error, replyRetry, extractionPendingCount, extractionHealedHint]);
 
   const handleScroll = () => {
     const node = chatLogRef.current;
@@ -326,6 +329,12 @@ export function ChatModal({
               </button>
             </div>
           )}
+          {/* #1353/#1381：closing 夜待补已自愈——count=0 仍给可重试指引（fail-closed 机制不动）。 */}
+          {!extractionPendingCount && !!extractionHealedHint && (
+            <div className="chat-system-note" role="status" data-testid="extraction-healed">
+              <span>{extractionHealedHint}</span>
+            </div>
+          )}
           {chatFailures.map((failure) => (
             <div className="chat-system-note danger chat-failure-note" role="alert" key={failure.id}>
               <span>{failure.minister_name && failure.minister_name !== minister.name ? `${failure.minister_name}：` : ""}{failure.message}</span>
@@ -387,7 +396,7 @@ export function ChatModal({
               退出召对
             </button>
             <button className="secondary-action composer-retreat" onClick={() => onSend(currentMinister.name, "退朝")} disabled={!!busy}>
-              退朝
+              散夜
             </button>
             {composerHint && <div className="composer-hint">{composerHint}</div>}
           </div>

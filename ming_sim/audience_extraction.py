@@ -703,18 +703,32 @@ def catch_up_pending_extractions(
     night_id: Optional[int] = None,
     extractor_agent: Any = None,
     allow_closing: bool = False,
+    on_event=None,
 ) -> Dict[str, Any]:
     """补跑普通抽取：对已持久化但账未抽（''/'pending'）的回话逐轮尽力补跑（ADR 0036）。
 
     **从不抛**——补跑失败不锁档（AC8）。只补 story/presence，不触发夜级 endorsement batch。
     allow_closing 仅 close_night ordinary drain 显式开启。
+    #1312：可选 on_event(kind, data) 推既有 stage 形分段进度（与 settle on_event 同款）。
     """
     rows = db.list_unextracted_replies(night_id=night_id)
     extracted = 0
     pending = 0
+    total = len(rows)
+
+    def _emit(kind: str, data: str) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event(kind, data)
+        except Exception:  # noqa: BLE001 — 进度回调失败不得阻断补跑
+            pass
+
     # Source turns are semantically ordered: later turns consume already-settled
     # presence/ledger. Cross-turn catch-up therefore stays serial.
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
+        minister = str(row.get("minister_name") or "") or "臣工"
+        _emit("stage", f"补写召对账本（{index}/{total}）·{minister}")
         result = run_extraction_for_turn(
             db=db,
             minister_name=str(row.get("minister_name") or ""),
