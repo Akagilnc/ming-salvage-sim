@@ -3347,7 +3347,12 @@ def _has_main_db() -> bool:
 async def api_menu_status() -> Dict[str, Any]:
     """菜单页状态：API key 是否配好、上次主 DB 是否存在、存档列表。"""
     runtime = load_runtime_llm()
-    from ming_sim.cli_backend import cli_backend_from_env, cli_model_choices, is_supported_cli_runner
+    from ming_sim.cli_backend import (
+        CLI_REASONING_STRENGTH_RUNNERS,
+        cli_backend_from_env,
+        cli_model_choices,
+        is_supported_cli_runner,
+    )
     env_runner = cli_backend_from_env()
     channel = str(runtime.get("channel") or "").strip().lower()
     if channel not in VALID_CHANNELS:
@@ -3407,6 +3412,8 @@ async def api_menu_status() -> Dict[str, Any]:
             "cli_reasoning_strength": cli_reasoning_strength,
             "reasoning_supported": reasoning_supported,
             "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
+            # #1271：能力名单自 cli_backend 单源导出，供前端 fallback 消费（禁前端硬编码）。
+            "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
             "max_tokens": int(runtime.get("max_tokens") or API_DEFAULT_MAX_TOKENS),
             "timeout_seconds": float(runtime.get("timeout_seconds") or os.environ.get("OPENAI_TIMEOUT_SECONDS") or API_DEFAULT_TIMEOUT_SECONDS),
             "thinking_level": runtime.get("thinking_level") or os.environ.get("OPENAI_THINKING_LEVEL", ""),
@@ -4657,7 +4664,7 @@ async def api_reset_game() -> Dict[str, Any]:
 @app.get("/api/llm/config")
 async def api_get_llm_config() -> Dict[str, Any]:
     """读当前生效的 LLM 配置。api_key 不回传明文，只回是否已设置。"""
-    from ming_sim.cli_backend import cli_model_choices
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS, cli_model_choices
     cfg = get_game().session.llm_config
     saved = load_runtime_llm()
     saved_cli = saved.get("cli") if isinstance(saved.get("cli"), dict) else {}
@@ -4681,6 +4688,8 @@ async def api_get_llm_config() -> Dict[str, Any]:
         "reasoning_strength": cfg.reasoning_strength,
         "reasoning_supported": reasoning_supported,
         "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
+        # #1271：能力名单自 cli_backend 单源导出。
+        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
@@ -4761,6 +4770,7 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
+    from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
     reasoning_supported = (
         cli_supports_reasoning_strength(cfg.cli_runner)
         if cfg.channel == "cli"
@@ -4777,6 +4787,8 @@ async def api_set_llm_config(request: LLMConfigRequest) -> Dict[str, Any]:
         "reasoning_strength": cfg.reasoning_strength,
         "reasoning_supported": reasoning_supported,
         "reasoning_strengths": list(REASONING_STRENGTH_CHOICES),
+        # #1271：能力名单自 cli_backend 单源导出。
+        "cli_reasoning_runners": sorted(CLI_REASONING_STRENGTH_RUNNERS),
         "advanced_model": cfg.advanced_model,
         "advanced_base_url": cfg.advanced_base_url,
         "has_advanced_api_key": _has_real_api_key(cfg.advanced_api_key),
