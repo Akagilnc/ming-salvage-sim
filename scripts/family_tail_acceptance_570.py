@@ -7,6 +7,12 @@ Not an ordinary CI test: requires an explicitly selected live CLI provider.
       --runner codex --model gpt-5.6-sol --samples 1 \
       --output docs/evidence/issue-570-acceptance-anchors.json
 
+  # 族尾闸新跑默认 ds-flash 档（api；opus 仅争议复裁与同基对照）：
+  # MING_SIM_API_KEY=... MING_SIM_API_BASE_URL=https://opencode.ai/zen/v1 \
+  #   python scripts/family_tail_acceptance_570.py --channel api \
+  #     --model deepseek-v4-flash --samples 1 \
+  #     --output docs/evidence/issue-570-acceptance-ds-flash.json
+
 Assertions read structured fields only (P-3):
   - 破格授阁臣: decision=rejected ∧ blocked_layer∈{cabinet_drafting,palace_rescript,six_offices}
     OR (force path) execution_outcome∈{degraded,failed}
@@ -42,7 +48,13 @@ from ming_sim.decree import (
     validate_promulgation_verdicts,
 )
 from ming_sim.decree_vocabulary import render_referenceable_dossier_brief
-from ming_sim.cli_backend import cli_backend_parallel_safe
+from ming_sim.cli_backend import (
+    add_gate_llm_args,
+    cli_backend_parallel_safe,
+    gate_evidence_config,
+    gate_llm_config_from_args,
+    require_fresh_cli_trace,
+)
 from ming_sim.issues import bind_content as bind_issue_content
 from ming_sim.models import Character, LLMConfig
 
@@ -61,8 +73,7 @@ _SYSTEM_LEAK = re.compile(
 
 def _args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runner", choices=("codex", "claude"), required=True)
-    parser.add_argument("--model", required=True)
+    add_gate_llm_args(parser)
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -72,11 +83,7 @@ def _args() -> argparse.Namespace:
 
 
 def _config(args: argparse.Namespace) -> LLMConfig:
-    return LLMConfig(
-        api_key="", base_url="", model=args.model, channel="cli",
-        cli_runner=args.runner, cli_model=args.model, cli_timeout_seconds=600,
-        max_tokens=6000, reasoning_strength="high",
-    )
+    return gate_llm_config_from_args(args)
 
 
 def _character(name: str, office: str, office_type: str) -> Character:
@@ -485,20 +492,12 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     args = _args()
-    trace_setting = os.environ.get("MING_SIM_TRACE_PATH", "").strip()
-    if not trace_setting or os.environ.get("MING_SIM_TRACE", "1").lower() in {
-        "0", "false", "no",
-    }:
-        raise RuntimeError("set MING_SIM_TRACE_PATH to a fresh path with CLI tracing enabled")
-    trace_path = Path(trace_setting).resolve()
-    if trace_path.exists():
-        raise RuntimeError(f"CLI trace path must be fresh: {trace_path}")
-
     content = GameContent.load()
     bind_content(content)
     bind_issue_content(content)
     bind_agent_content(content)
     cfg = _config(args)
+    trace_path = require_fresh_cli_trace(cfg)
 
     with tempfile.TemporaryDirectory(prefix="ming-570-accept-") as tmp:
         workers = min(4, args.samples) if cli_backend_parallel_safe(cfg) else 1
@@ -512,19 +511,22 @@ def main() -> int:
                 key=lambda row: row["sample"],
             )
 
-    trace_records = [
-        json.loads(line)
-        for line in trace_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    # Acceptance gate: one judge call per sample → trace count == samples.
-    if len(trace_records) != args.samples or any(
-        record.get("error") is not None for record in trace_records
-    ):
-        raise RuntimeError(
-            f"expected {args.samples} successful raw trace records; "
-            f"got {len(trace_records)}"
-        )
+    if trace_path is not None:
+        trace_records = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        # Acceptance gate: one judge call per sample → trace count == samples.
+        if len(trace_records) != args.samples or any(
+            record.get("error") is not None for record in trace_records
+        ):
+            raise RuntimeError(
+                f"expected {args.samples} successful raw trace records; "
+                f"got {len(trace_records)}"
+            )
+    else:
+        trace_records = []
 
     # Aggregate checks: every sample must pass every check.
     check_names = sorted(samples[0]["checks"])
@@ -544,11 +546,7 @@ def main() -> int:
                 "(positive non-empty clean + negative detector self-check)."
             ),
             "samples": args.samples,
-            "config": {
-                "channel": "cli", "runner": args.runner, "model": args.model,
-                "reasoning_strength": cfg.reasoning_strength,
-                "max_tokens": cfg.max_tokens,
-            },
+            "config": gate_evidence_config(args, cfg),
             "assertion_targets": {
                 "cabinet": (
                     "rejected ∧ blocked_layer∈cabinet_drafting|palace_rescript|six_offices "
