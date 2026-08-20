@@ -124,6 +124,75 @@ def test_create_chat_model_maps_off_reasoning_to_openai_none(monkeypatch):
     assert model.reasoning_effort == "none"
 
 
+def test_create_chat_model_off_reasoning_uses_none_for_gpt56_not_version_list(monkeypatch):
+    """#1452：关思考档不得靠 gpt-5.1/5.2/5.4/5.5 盯文枚举——gpt-5.6 掉表外会落到 minimal。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://opencode.ai/zen/go/v1",
+        model="gpt-5.6-luna",
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "none"
+
+
+def test_create_chat_model_off_reasoning_keeps_minimal_for_legacy_o1(monkeypatch):
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://api.example.com/v1",
+        model="o1-mini",
+        channel="api",
+        reasoning_strength="off",
+    )
+
+    model = create_chat_model(cfg)
+
+    assert model.reasoning_effort == "minimal"
+
+
+def test_create_chat_model_strips_top_p_for_openai_reasoning_family(monkeypatch):
+    """#1452：luna/gpt-5 推理族拒 top_p（HTTP 400 空 assistant → agno Unknown model error）。
+    召对 registry 固定传 top_p=0.9，工厂必须剥离，temperature 可保留。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://opencode.ai/zen/go/v1",
+        model="gpt-5.6-luna",
+        channel="api",
+    )
+
+    model = create_chat_model(cfg, temperature=0.6, top_p=0.9, max_tokens=8000)
+
+    assert model.temperature == 0.6
+    assert model.max_tokens == 8000
+    assert getattr(model, "top_p", None) is None
+    # request 层同样不得带 top_p
+    params = model.get_request_params()
+    assert "top_p" not in params
+    assert params.get("temperature") == 0.6
+
+
+def test_create_chat_model_keeps_top_p_for_non_reasoning_api_models(monkeypatch):
+    """#1452 零回归：glm/qwen 等非 OpenAI 推理族仍吃 top_p。"""
+    monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
+    cfg = LLMConfig(
+        api_key="sk-test",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen-plus",
+        channel="api",
+    )
+
+    model = create_chat_model(cfg, temperature=0.6, top_p=0.9)
+
+    assert model.top_p == 0.9
+    assert model.get_request_params().get("top_p") == 0.9
+
+
 def test_create_chat_model_leaves_openai_reasoning_default_unset(monkeypatch):
     monkeypatch.delenv("MING_SIM_LLM_BACKEND", raising=False)
     cfg = LLMConfig(
