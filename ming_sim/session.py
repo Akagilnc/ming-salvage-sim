@@ -1878,6 +1878,19 @@ class GameSession:
         return text + "\n请陛下定夺准驳。"
 
     @staticmethod
+    def _ensure_unknown_participant_report_cue(answer: str, report: str) -> str:
+        """#1274 V-1：附上 LLM 已产的查无此人回禀（报告正文本身禁在此写死台词）。"""
+        text = (answer or "").strip()
+        body = (report or "").strip()
+        if not body:
+            return text
+        if body in text:
+            return text
+        if not text:
+            return body
+        return text + "\n" + body
+
+    @staticmethod
     def _ensure_clarification_cue(answer: str, ambiguous: Dict[str, Any]) -> str:
         """#502 AC5：多道并存、准驳指称含糊时，大臣当场追问是哪一道（确定性 post-pass 句，
         不串 LLM）。列出候选摘要供皇帝指名，避免被静默当「不回」。"""
@@ -1907,12 +1920,12 @@ class GameSession:
         return text
 
     def _merge_staged_new_secret_order_content(
-        self, pending_action_id: int, minister_name: str, player_message: str, minister_reply: str,
+        self, pending_action_id: int, minister_name: str, player_message: str,
     ) -> None:
         """Tool/API/哨兵 staged 新密令：与抽取路同一结构化 content 装配（御旨+既有 schema 内容）。
 
         #1274 K1 / ADR 0142：reply 永不入 content 拼装；大臣实质补充须已在 payload.content
-        （extractor/tool 显式字段）。reply 仅供承办人线索与对话记录。
+        （extractor/tool 显式字段）。承办人只取御旨祈使 + 结构化字段（ADR 0117 不接自由文本）。
         """
         if not pending_action_id:
             return
@@ -1937,7 +1950,6 @@ class GameSession:
             return
         content = str(payload.get("content") or "").strip()
         command = GameSession._secret_order_command_material(player_message)
-        reply = (minister_reply or "").strip()
         from ming_sim.cli_backend import (
             _choose_assignee,
             _secret_metadata_from_command,
@@ -1953,11 +1965,10 @@ class GameSession:
             payload["content"] = assembled
             changed = True
 
+        # ADR 0117/0142：承办人只读结构化字段 + 御旨祈使，不接 minister_reply 散文。
         assignee = _choose_assignee(
             str(payload.get("assignee") or ""),
             command,
-            reply,
-            str(payload.get("content") or ""),
             minister_name,
         )
         if assignee and assignee != str(payload.get("assignee") or ""):
@@ -2027,7 +2038,6 @@ class GameSession:
                     preexisting_pending_id,
                     character.name,
                     player_message,
-                    result.answer or "",
                 )
             result.answer = GameSession._ensure_confirmation_cue(result.answer or "")
         if res.get("pending_action_failures"):
@@ -2040,6 +2050,13 @@ class GameSession:
             result.directive_confirmation_ambiguous = res["directive_confirmation_ambiguous"]
             result.answer = GameSession._ensure_clarification_cue(
                 result.answer or "", res["directive_confirmation_ambiguous"])
+        # #1274 V-1：查无此人耗尽 → 大臣戏内回禀；草案不落、对话保留。
+        esc = res.get("unknown_participant_escalate") or {}
+        report = str(esc.get("report") or "").strip()
+        if report:
+            result.answer = GameSession._ensure_unknown_participant_report_cue(
+                result.answer or "", report,
+            )
 
     def _apply_appointment(self, payload: str, appointer: Character) -> Tuple[str, str]:
         """吏部 propose_appointment 落地：建档入库 + 注册 Agent，本回合即可召见。

@@ -1,7 +1,8 @@
 """#1428 拟诏抽取接地：capture/召对 缝把 content.characters name+aliases 作结构化事实喂抽取。
 
-finding：LLM 把「毕自严」截成「毕自」→ _canonical_minister_key 不做子串 → 409。
-修法：接地=结构化事实注入（禁散文守门族 ADR 0142）；未匹配参与人仍整单 409。
+finding：LLM 把「毕自严」截成「毕自」→ _canonical_minister_key 不做子串 → 校验失败。
+修法：接地=结构化事实注入（禁散文守门族 ADR 0142）。
+#1274 V-1：未匹配参与人先走有界纠错重试；耗尽后人话兜底拒收（ADR 0053 缝不松）。
 事实块资格与 canon 同口径（ming ∧ 非后宫 ∧ 非 candidate）。
 """
 
@@ -130,7 +131,7 @@ def test_capture_biziyan_full_name_zero_409(game, monkeypatch):
 
 
 def test_capture_truncation_style_name_still_whole_order_409(game, monkeypatch):
-    """owner 分叉未拍：LLM 若仍吐截断名「毕自」，整单 409 语义不变（禁放宽失配）。"""
+    """纠错耗尽仍吐截断名「毕自」→ 人话兜底拒收（ADR 0053 缝不松；#1274 V-1）。"""
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
@@ -143,19 +144,25 @@ def test_capture_truncation_style_name_still_whole_order_409(game, monkeypatch):
         "目标ID": "liao-pay",
         "参与人": [{"character_id": "毕自", "tier": "主办"}],
     }
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
-    with pytest.raises(ValueError, match="参与人物不存在"):
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「毕自」，乞陛下明示。", 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
+    msg = str(ei.value)
+    assert "毕自" in msg
+    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
+    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
 
 
 def test_capture_unknown_person_still_409(game, monkeypatch):
-    """不存在之人仍整单 409（ADR 0053 缝不松）。"""
+    """纠错耗尽仍吐不存在之人 → 人话兜底拒收（ADR 0053 缝不松；#1274 V-1）。"""
     import ming_sim.cli_backend as cli_backend
 
     db, _state, content = game
@@ -167,15 +174,21 @@ def test_capture_unknown_person_still_409(game, monkeypatch):
         "目标ID": "x",
         "参与人": [{"character_id": "不存在之人甲", "tier": "主办"}],
     }
-    monkeypatch.setattr(
-        cli_backend,
-        "_run_backend_for_config",
-        lambda *_a, **_k: (json.dumps(response, ensure_ascii=False), 1),
-    )
-    with pytest.raises(ValueError, match="参与人物不存在"):
+
+    def backend(prompt, *_a, tag="", **_k):
+        if tag == "participant_escalate_report":
+            return ("通政司启：朝中查无「不存在之人甲」，乞陛下明示。", 1)
+        return (json.dumps(response, ensure_ascii=False), 1)
+
+    monkeypatch.setattr(cli_backend, "_run_backend_for_config", backend)
+    with pytest.raises(ValueError) as ei:
         cli_backend.capture_manual_directive_payload(
             text, None, db=db, content=content,
         )
+    msg = str(ei.value)
+    assert "不存在之人甲" in msg
+    assert any(m in msg for m in ("乞陛下明示", "朝籍", "查无"))
+    assert "参与人物不存在" not in msg  # F5：禁原始 409 泄漏
 
 
 def test_extract_draft_intent_prompt_grounds_roster_when_content_given(game, monkeypatch):

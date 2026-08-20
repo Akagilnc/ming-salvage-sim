@@ -2520,13 +2520,17 @@ class WebGame:
                     tool_pending_action_id,
                     character.name,
                     text,
-                    answer,
                 )
             answer = GameSession._ensure_confirmation_cue(answer)
         # #502 AC5：多道准驳含糊 → 结构化含糊态透进 chat payload + 大臣当场追问哪一道（表面契约可达）。
         directive_ambiguous = res.get("directive_confirmation_ambiguous")
         if directive_ambiguous:
             answer = GameSession._ensure_clarification_cue(answer, directive_ambiguous)
+        # #1274 V-1：查无此人 → 戏内回禀附于回话；不落草案、不回滚整轮。
+        esc = res.get("unknown_participant_escalate") or {}
+        report = str(esc.get("report") or "").strip()
+        if report:
+            answer = GameSession._ensure_unknown_participant_report_cue(answer, report)
         pending_action_failures = list(res.get("pending_action_failures") or [])
         if tool_stage_failures:
             pending_action_failures = pending_action_failures + list(tool_stage_failures)
@@ -4504,6 +4508,9 @@ async def api_create_directive(request: DirectiveRequest) -> Dict[str, Any]:
             )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None  # 恢复窗冻结指引
+    except LLMUnavailable as e:
+        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     return {
         "directive": {"id": dv.id, "text": dv.text, "status": dv.status},
         "directives": [game.directive_payload(item) for item in game.directive_rows()],
@@ -4543,6 +4550,9 @@ async def api_update_directive(directive_id: int, request: DirectivePatch) -> Di
             )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
+    except LLMUnavailable as e:
+        # #1274 V-1 r6 / #1452：回禀产文失败 → 结构化 400，禁裸 500 / 固定戏内模板。
+        raise HTTPException(status_code=400, detail=_llm_error_detail(e)) from None
     return {"directives": [game.directive_payload(item) for item in game.directive_rows()]}
 
 
