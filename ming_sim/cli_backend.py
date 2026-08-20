@@ -80,20 +80,23 @@ _CLAUDE_MODEL = os.environ.get("MING_SIM_CLAUDE_MODEL", CLAUDE_DEFAULT_MODEL)
 # 纯角色扮演/抽取任务不需要工具；禁掉防 claude 绕去调工具兜圈子。
 _CLAUDE_DISALLOWED = ["Bash", "Read", "Edit", "Write", "Glob", "Grep",
                       "WebFetch", "WebSearch", "Task", "NotebookEdit"]
-# #1256：cursor / kimi / grok 本机 CLI runner；opencode 庭裁走 api 通道，不入此名单。
+# #1256：cursor / kimi / grok 本机 CLI runner；#1274-qa-y1 补 pi（owner：电脑上有的 CLI 一起接入）。
+# opencode 庭裁走 api 通道，不入此名单。
 _CURSOR_BIN = os.environ.get("MING_SIM_CURSOR_BIN", "cursor-agent")
 _KIMI_BIN = os.environ.get("MING_SIM_KIMI_BIN", "kimi")
 _GROK_BIN = os.environ.get("MING_SIM_GROK_BIN", "grok")
+_PI_BIN = os.environ.get("MING_SIM_PI_BIN", "pi")
 # 受支持 CLI runner 单一真源（membership + 文案 + env 回落共用）。
-_CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok"})
+_CLI_BACKENDS = frozenset({"agy", "codex", "claude", "cursor", "kimi", "grok", "pi"})
 # 闸脚本 --runner choices 单一真源（不含 agy：闸形制未用）。脚本 import 此元组，禁各自复制。
-GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok")
+GATE_CLI_RUNNERS = ("codex", "claude", "cursor", "kimi", "grok", "pi")
 # 前端 CLI Runner 下拉稳定 UI 顺序；membership 仍以 _CLI_BACKENDS 为唯一准入（#1274 W1）。
 # GATE_CLI_RUNNERS ⊂ 此序（无 agy）；禁在 menuPage/gameMenu 再硬编一份。
-_CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok")
+# #1274-qa-y1：pi 紧随 grok（UI_ORDER∩_CLI_BACKENDS → cli_runner_choices 自动带出）。
+_CLI_RUNNER_UI_ORDER = ("agy", "codex", "claude", "cursor", "kimi", "grok", "pi")
 _CLI_RUNNER_LABELS = {"agy": "agy（Gemini）"}
 # 实际消费 --model / cli_model 的 runner（describe_effective_model 用）；agy 走自身 ladder。
-_CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok"})
+_CLI_MODEL_RUNNERS = frozenset({"codex", "claude", "cursor", "kimi", "grok", "pi"})
 _CODEX_REASONING_BY_STRENGTH = {
     "off": "low",
     "low": "low",
@@ -113,10 +116,18 @@ _GROK_EFFORT_BY_STRENGTH = {
     "medium": "med",
     "high": "high",
 }
-# 支持 reasoning_strength 传输的 CLI runner 单源（#1271）：与上方三张 *_BY_STRENGTH
+# pi CLI --thinking：off/minimal/low/medium/high/xhigh/max（pi --help 实测）；
+# 抽象 off/low/medium/high 与 pi 同名档直传（亦支持 --model provider/id:<thinking> 后缀）。
+_PI_THINKING_BY_STRENGTH = {
+    "off": "off",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
+# 支持 reasoning_strength 传输的 CLI runner 单源（#1271/#1274-y1）：与上方 *_BY_STRENGTH
 # 表同缝。有传输表 = 支持；kimi/cursor 无独立档位旗，不入此集（另票/庭裁）。
 # 导出 frozenset——llm_config 谓词与 web payload 均消费此名，禁第二处手写名单。
-CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok"})
+CLI_REASONING_STRENGTH_RUNNERS = frozenset({"codex", "claude", "grok", "pi"})
 
 
 def cli_runner_choices() -> List[Dict[str, str]]:
@@ -164,7 +175,7 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
         "agy": [
             {"value": "", "label": "默认 · gemini"},
         ],
-        # #1256 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
+        # #1256/#1274-y1 新 runner：策展档未立，只给默认档 + 前端「其他(手填)」逃生；--model 透传。
         "cursor": [
             {"value": "", "label": "默认"},
         ],
@@ -172,6 +183,9 @@ def cli_model_choices() -> Dict[str, List[Dict[str, str]]]:
             {"value": "", "label": "默认"},
         ],
         "grok": [
+            {"value": "", "label": "默认"},
+        ],
+        "pi": [
             {"value": "", "label": "默认"},
         ],
     }
@@ -775,6 +789,52 @@ def _run_grok(
     return out, 1
 
 
+def _pi_thinking(reasoning_strength: Optional[str]) -> Optional[str]:
+    strength = str(reasoning_strength or "").strip().lower()
+    return _PI_THINKING_BY_STRENGTH.get(strength)
+
+
+def _run_pi(
+    prompt: str,
+    model: Optional[str] = None,
+    timeout: Optional[float] = None,
+    reasoning_strength: Optional[str] = None,
+) -> Tuple[str, int]:
+    """调本机 pi CLI 一次性非交互出文（#1274-qa-y1；#1256 漏补）。
+
+    实测旗标（pi --help / 0.84.1）：
+    - `-p/--print` 非交互 process-and-exit；
+    - `--mode text` 默认纯文（显式钉死，避 json/rpc）；
+    - `--model` 支持 provider/id 与可选 `:<thinking>` 后缀；
+    - `--thinking` 独立档 off/minimal/low/medium/high/xhigh/max——抽象 off/low/medium/high 直传；
+    - 干净答案在 stdout，诊断在 stderr——只取 stdout；
+    - prompt 走 positional（与 cursor 同形；非 stdin）。
+    """
+    cmd = [
+        _resolve_cli_bin("pi", _PI_BIN),
+        "-p", "--mode", "text",
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    thinking = _pi_thinking(reasoning_strength)
+    if thinking is not None:
+        cmd.extend(["--thinking", thinking])
+    cmd.append(prompt)
+    try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit,python.lang.security.audit.dangerous-subprocess-use-tainted-env-args
+        # 安全审计:list-form argv、无 shell=True;runner allowlist、model/thinking 独立 argv、prompt 为末位 positional。
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout or _AGY_TIMEOUT, cwd=_AGY_CWD,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("pi 调用超时") from exc
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        raise RuntimeError(f"pi 调用失败（退出码 {proc.returncode}）：{(proc.stderr or '')[:200]}")
+    return out, 1
+
+
 def _run_backend(prompt: str) -> Tuple[str, int]:
     """按 MING_SIM_LLM_BACKEND 分派到对应 CLI（enrich/secret 等非 CliChat 路径用）。
     未设或非法 → agy（沿用原默认）。"""
@@ -789,6 +849,8 @@ def _run_backend(prompt: str) -> Tuple[str, int]:
         return _run_kimi(prompt)
     if b == "grok":
         return _run_grok(prompt)
+    if b == "pi":
+        return _run_pi(prompt)
     return _run_agy(prompt)
 
 
@@ -861,6 +923,13 @@ def _run_backend_for_config(prompt: str, llm_config: Any = None, tag: str = "") 
                 )
             elif runner == "grok":
                 text, attempts = _run_grok(
+                    prompt,
+                    model=model or None,
+                    timeout=timeout,
+                    reasoning_strength=reasoning_strength or None,
+                )
+            elif runner == "pi":
+                text, attempts = _run_pi(
                     prompt,
                     model=model or None,
                     timeout=timeout,
@@ -2660,6 +2729,8 @@ class CliChat(OpenAIChat):
             return _run_kimi(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "grok":
             return _run_grok(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
+        if self.backend == "pi":
+            return _run_pi(prompt, model=model_id, timeout=timeout, reasoning_strength=reasoning_strength)
         if self.backend == "agy":
             return _run_agy(prompt, timeout=timeout)
         raise RuntimeError(f"未知 CLI backend：{self.backend}")

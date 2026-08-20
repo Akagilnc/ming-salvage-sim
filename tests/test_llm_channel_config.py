@@ -598,6 +598,7 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
         ("codex", True),
         ("claude", True),
         ("grok", True),
+        ("pi", True),  # #1274-qa-y1：pi --thinking / model:<thinking>
         ("agy", False),
         ("kimi", False),
         ("cursor", False),
@@ -607,17 +608,17 @@ def test_cli_empty_cli_model_does_not_leak_api_model_to_runner(monkeypatch):
     ],
 )
 def test_cli_supports_reasoning_strength_matrix(runner, expected):
-    """#1271：能力名单含 grok；agy/kimi/cursor 仍 False；codex/claude 不变。"""
+    """#1271/#1274-y1：能力名单含 grok/pi；agy/kimi/cursor 仍 False；codex/claude 不变。"""
     from ming_sim.llm_config import cli_supports_reasoning_strength
 
     assert cli_supports_reasoning_strength(runner) is expected
 
 
 def test_cli_reasoning_strength_runners_single_source_in_cli_backend():
-    """#1271：能力名单单源在 cli_backend（与三张 effort 表同缝），禁第二处手写。"""
+    """#1271：能力名单单源在 cli_backend（与 effort/thinking 表同缝），禁第二处手写。"""
     from ming_sim.cli_backend import CLI_REASONING_STRENGTH_RUNNERS
 
-    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok"})
+    assert CLI_REASONING_STRENGTH_RUNNERS == frozenset({"codex", "claude", "grok", "pi"})
     # 谓词委派同一 frozenset，不是 llm_config 内另写字面量集合
     from ming_sim.llm_config import cli_supports_reasoning_strength
     import inspect
