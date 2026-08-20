@@ -175,8 +175,11 @@ def generate_mindreading_payload(
     llm_config: object,
     *,
     mindreading_agent: Any = None,
-) -> Dict[str, object]:
-    """仅凭纯材料生成尾随旁白；不得读取 DB 或会话状态。"""
+) -> Dict[str, object] | None:
+    """仅凭纯材料生成尾随旁白；不得读取 DB 或会话状态。
+
+    #1474：无真增量时模型空返回 → None（本轮缺席，非失败）。
+    """
     truths = materials.get("truths")
     reader_context = materials.get("reader_context")
     if not isinstance(truths, Mapping) or not isinstance(reader_context, Mapping):
@@ -195,7 +198,8 @@ def generate_mindreading_payload(
         agent = create_mindreading_agent(llm_config)
     subtext = extract_agent_text(agent.run(json.dumps(model_materials, ensure_ascii=False)))
     if not subtext:
-        raise LLMUnavailable("模型返回空文本")
+        # 宁缺毋滥：空返回 = 本轮不递话（合法缺席）
+        return None
 
     return {
         "reader": materials.get("reader"),
