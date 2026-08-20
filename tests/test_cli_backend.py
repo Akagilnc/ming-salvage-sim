@@ -1648,26 +1648,27 @@ def test_secret_extract_traces_exactly_once(monkeypatch):
     assert len(recs) == 1, f"密令提取应恰好 1 条 trace，实 {len(recs)}"
 
 
-# ── #1256 cursor / kimi / grok runners ──
+# ── #1256 cursor / kimi / grok + #1274-qa-y1 pi runners ──
 
 
-def test_cli_backends_include_cursor_kimi_grok():
-    assert {"cursor", "kimi", "grok"} <= set(cb._CLI_BACKENDS)
+def test_cli_backends_include_cursor_kimi_grok_pi():
+    assert {"cursor", "kimi", "grok", "pi"} <= set(cb._CLI_BACKENDS)
     assert cb.is_supported_cli_runner("cursor")
     assert cb.is_supported_cli_runner("kimi")
     assert cb.is_supported_cli_runner("grok")
+    assert cb.is_supported_cli_runner("pi")
     assert not cb.is_supported_cli_runner("opencode")  # 庭裁：走 api 通道，不入 runner 清单
 
 
 def test_gate_cli_runners_single_source_excludes_agy():
-    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok")
+    assert cb.GATE_CLI_RUNNERS == ("codex", "claude", "cursor", "kimi", "grok", "pi")
     assert "agy" not in cb.GATE_CLI_RUNNERS
     assert set(cb.GATE_CLI_RUNNERS) <= set(cb._CLI_BACKENDS)
 
 
 def test_new_runners_not_parallel_safe():
     from ming_sim.models import LLMConfig
-    for runner in ("cursor", "kimi", "grok"):
+    for runner in ("cursor", "kimi", "grok", "pi"):
         cfg = LLMConfig(
             api_key="", base_url="", model="m", channel="cli", cli_runner=runner, cli_model="m",
         )
@@ -1675,7 +1676,7 @@ def test_new_runners_not_parallel_safe():
 
 
 def test_cli_backend_from_env_accepts_new_runners(monkeypatch):
-    for name in ("cursor", "kimi", "grok"):
+    for name in ("cursor", "kimi", "grok", "pi"):
         monkeypatch.setenv("MING_SIM_LLM_BACKEND", name)
         assert cb.cli_backend_from_env() == name
     monkeypatch.setenv("MING_SIM_LLM_BACKEND", "opencode")
@@ -1722,12 +1723,31 @@ def test_run_grok_flags_effort_and_plain(monkeypatch):
     assert "--effort" in cmd and cmd[cmd.index("--effort") + 1] == "med"
 
 
+def test_run_pi_flags_thinking_and_stdout(monkeypatch):
+    """#1274-qa-y1：pi -p 非交互；stdout 取文；reasoning → --thinking；model 透传。"""
+    body = "PI_OK"
+    captured = _capture_run(monkeypatch, _P(stdout=body, stderr="pi log noise"))
+    out, n = cb._run_pi(
+        "PROMPT_BODY", model="openai/gpt-4o", reasoning_strength="medium",
+    )
+    assert out == body and n == 1
+    cmd = captured["cmd"]
+    assert "-p" in cmd or "--print" in cmd
+    assert "--model" in cmd and cmd[cmd.index("--model") + 1] == "openai/gpt-4o"
+    # pi --help：--thinking off|minimal|low|medium|high|xhigh|max；抽象 medium 直传
+    assert "--thinking" in cmd and cmd[cmd.index("--thinking") + 1] == "medium"
+    assert "PROMPT_BODY" in cmd  # positional prompt
+    assert captured["kw"].get("input") in (None, "")  # not stdin
+    assert "noise" not in out.lower()
+
+
 @pytest.mark.parametrize(
     "env,attr,out",
     [
         ("cursor", "_run_cursor", "CURSOR_OUT"),
         ("kimi", "_run_kimi", "KIMI_OUT"),
         ("grok", "_run_grok", "GROK_OUT"),
+        ("pi", "_run_pi", "PI_OUT"),
     ],
 )
 def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
@@ -1736,7 +1756,7 @@ def test_run_backend_dispatch_new_runners(monkeypatch, env, attr, out):
     assert cb._run_backend("x") == (out, 1)
 
 
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     from ming_sim.models import LLMConfig
 
@@ -1760,7 +1780,7 @@ def test_run_backend_for_config_dispatches_new_runners(monkeypatch, runner):
     assert seen["args"][2] == 12.0
 
 
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
     seen = {}
 
@@ -1775,7 +1795,7 @@ def test_clichat_call_cli_dispatches_new_runners(monkeypatch, runner):
     assert seen["model"] == "mdl" and seen["timeout"] == 99
 
 
-@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok"])
+@pytest.mark.parametrize("runner", ["cursor", "kimi", "grok", "pi"])
 def test_describe_effective_model_includes_new_runners(runner):
     from ming_sim.models import LLMConfig
 
@@ -1786,7 +1806,7 @@ def test_describe_effective_model_includes_new_runners(runner):
     assert cb.describe_effective_model(cfg) == f"{runner}/live-model"
 
 
-@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok"])
+@pytest.mark.parametrize("runner", ["_run_cursor", "_run_kimi", "_run_grok", "_run_pi"])
 def test_new_runner_fail_loud_on_bad_exit(monkeypatch, runner):
     monkeypatch.setattr(
         cb.subprocess, "run",
